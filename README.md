@@ -18,7 +18,7 @@
 Запустите эту команду на вашем сервере (под пользователем root):
 
 bash
-curl -sO [https://raw.githubusercontent.com/ВАШ_ЛОГИН/ВАШ_РЕПО/main/install.sh](https://raw.githubusercontent.com/ВАШ_ЛОГИН/ВАШ_РЕПО/main/install.sh) && bash install.sh
+curl -sO [https://raw.githubusercontent.com/efidripy/multiserversubgen/main/install.sh](https://raw.githubusercontent.com/efidripy/multiserversubgen/main/install.sh) && bash install.sh
 
 📋 Системные требования
 ОС: Ubuntu 20.04 / 22.04 / 24.04 (или Debian 11/12).
