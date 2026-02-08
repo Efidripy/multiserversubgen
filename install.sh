@@ -81,7 +81,7 @@ python3 -m venv "$PROJECT_DIR/venv"
 
 # --- ГЕНЕРАЦИЯ MAIN.PY ---
 cat <<EOF > "$PROJECT_DIR/main.py"
-import sqlite3, requests, json, base64, pam, datetime, os
+import sqlite3, requests, json, base64, pam, datetime, os, logging, time
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
@@ -94,6 +94,12 @@ app = FastAPI()
 templates = Jinja2Templates(directory="$HTML_DIR")
 p = pam.pam()
 DB_PATH = os.path.join('$PROJECT_DIR', 'admin.db')
+CACHE_TTL = 30
+emails_cache = {"ts": 0.0, "emails": []}
+links_cache = {}
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("sub_manager")
 
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
@@ -116,6 +122,82 @@ def check_auth(request: Request):
     except: pass
     return None
 
+def fetch_inbounds(node):
+    s = requests.Session(); s.verify = False
+    b_path = node['base_path'].strip('/')
+    prefix = f"/{b_path}" if b_path else ""
+    base_url = f"https://{node['ip']}:{node['port']}{prefix}"
+    try:
+        s.post(f"{base_url}/login", data={"username": node['user'], "password": node['password']}, timeout=5)
+        res = s.get(f"{base_url}/panel/api/inbounds/list", timeout=5)
+        res.raise_for_status()
+        data = res.json()
+        if not data.get("success"):
+            logger.warning("node panel %s returned success=false", node['name'])
+            return []
+        return data.get("obj", [])
+    except requests.RequestException as exc:
+        logger.warning("node panel %s request failed: %s", node['name'], exc)
+    except ValueError as exc:
+        logger.warning("node panel %s invalid JSON: %s", node['name'], exc)
+    return []
+
+def get_emails(nodes):
+    now = time.time()
+    if now - emails_cache["ts"] < CACHE_TTL:
+        return emails_cache["emails"]
+    emails = set()
+    for n in nodes:
+        for ib in fetch_inbounds(n):
+            try:
+                clients = json.loads(ib.get("settings", "{}")).get("clients", [])
+            except (TypeError, ValueError) as exc:
+                logger.warning("Invalid settings JSON for node %s: %s", n['name'], exc)
+                continue
+            for c in clients:
+                if c.get("email"):
+                    emails.add(c.get("email"))
+    emails_list = sorted(list(emails))
+    emails_cache.update({"ts": now, "emails": emails_list})
+    return emails_list
+
+def get_links(nodes, email):
+    now = time.time()
+    cached = links_cache.get(email)
+    if cached and now - cached[0] < CACHE_TTL:
+        return cached[1]
+    links = []
+    for n in nodes:
+        for ib in fetch_inbounds(n):
+            if ib.get("protocol") != "vless":
+                continue
+            try:
+                s_set = json.loads(ib.get("streamSettings", "{}"))
+            except (TypeError, ValueError) as exc:
+                logger.warning("Invalid streamSettings JSON for node %s: %s", n['name'], exc)
+                continue
+            if s_set.get("security") != "reality":
+                continue
+            try:
+                settings = json.loads(ib.get("settings", "{}"))
+            except (TypeError, ValueError) as exc:
+                logger.warning("Invalid settings JSON for node %s: %s", n['name'], exc)
+                continue
+            for c in settings.get("clients", []):
+                if c.get("email") != email:
+                    continue
+                r = s_set.get('realitySettings', {})
+                pbk = r.get('settings', {}).get('publicKey', '')
+                sid = r.get('shortIds', [''])[0] if r.get('shortIds') else ''
+                sni = (r.get('serverNames') or [''])[0]
+                links.append(
+                    f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=reality"
+                    f"&sni={sni}&fp={r.get('fingerprint','chrome')}&pbk={pbk}&sid={sid}"
+                    f"&type={s_set.get('network','tcp')}#{c['email']} ({n['name']})"
+                )
+    links_cache[email] = (now, links)
+    return links
+
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     user = check_auth(request)
@@ -124,25 +206,10 @@ async def index(request: Request):
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
     nodes = conn.execute('SELECT * FROM nodes').fetchall()
     stats = {r['email']: {"count": r['count'], "last": r['last_download']} for r in conn.execute('SELECT * FROM stats').fetchall()}
-    
-    emails = set()
-    for n in nodes:
-        try:
-            s = requests.Session(); s.verify = False
-            b_path = n['base_path'].strip('/')
-            prefix = f"/{b_path}" if b_path else ""
-            base_url = f"https://{n['ip']}:{n['port']}{prefix}"
-            s.post(f"{base_url}/login", data={"username": n['user'], "password": n['password']}, timeout=3)
-            res = s.get(f"{base_url}/panel/api/inbounds/list", timeout=3).json()
-            if res.get("success"):
-                for ib in res.get("obj", []):
-                    clients = json.loads(ib.get("settings", "{}")).get("clients", [])
-                    for c in clients:
-                        if c.get("email"): emails.add(c.get("email"))
-        except: pass
+    emails = get_emails(nodes)
 
     return templates.TemplateResponse("index.html", {
-        "request": request, "nodes": nodes, "emails": sorted(list(emails)), 
+        "request": request, "nodes": nodes, "emails": emails, 
         "stats": stats, "user": user, "web_path": "$WEB_PATH"
     })
 
@@ -154,34 +221,15 @@ async def add_node(request: Request, name=Form(...), url=Form(...), user=Form(..
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute('INSERT INTO nodes (name, ip, port, user, password, base_path) VALUES (?,?,?,?,?,?)', 
                      (name, parsed.hostname, str(parsed.port) if parsed.port else "443", user, password, parsed.path.strip('/')))
+    emails_cache["ts"] = 0
+    links_cache.clear()
     return RedirectResponse(url="./", status_code=303)
 
 @app.get("/sub/{email}")
 async def sub(email: str):
     conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
     nodes = conn.execute('SELECT * FROM nodes').fetchall()
-    links = []
-    for n in nodes:
-        try:
-            s = requests.Session(); s.verify = False
-            b_path = n['base_path'].strip('/')
-            prefix = f"/{b_path}" if b_path else ""
-            base_url = f"https://{n['ip']}:{n['port']}{prefix}"
-            s.post(f"{base_url}/login", data={"username": n['user'], "password": n['password']}, timeout=3)
-            res = s.get(f"{base_url}/panel/api/inbounds/list").json()
-            if res.get("success"):
-                for ib in res.get("obj", []):
-                    if ib.get("protocol") != "vless": continue
-                    s_set = json.loads(ib.get("streamSettings", "{}"))
-                    if s_set.get("security") != "reality": continue
-                    settings = json.loads(ib.get("settings", "{}"))
-                    for c in settings.get("clients", []):
-                        if c.get("email") == email:
-                            r = s_set.get('realitySettings', {})
-                            pbk = r.get('settings', {}).get('publicKey', '')
-                            sid = r.get('shortIds', [''])[0] if r.get('shortIds') else ''
-                            links.append(f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=reality&sni={r.get('serverNames',[''])[0]}&fp={r.get('fingerprint','chrome')}&pbk={pbk}&sid={sid}&type={s_set.get('network','tcp')}#{c['email']} ({n['name']})")
-        except: pass
+    links = get_links(nodes, email)
     if links:
         now = datetime.datetime.now().strftime("%d.%m %H:%M")
         with sqlite3.connect(DB_PATH) as db:
@@ -194,6 +242,8 @@ async def del_node(request: Request, id: int):
     if not check_auth(request): raise HTTPException(status_code=401)
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute('DELETE FROM nodes WHERE id = ?', (id,))
+    emails_cache["ts"] = 0
+    links_cache.clear()
     return RedirectResponse(url="../", status_code=303)
 EOF
 
@@ -270,10 +320,15 @@ cat <<EOF > "$HTML_DIR/index.html"
         </div>
     </div>
     <script>
-        function copy(id) {
-            var copyText = document.getElementById(id);
-            copyText.select();
-            document.execCommand("copy");
+        async function copy(id) {
+            const copyText = document.getElementById(id);
+            const text = copyText.value;
+            try {
+                await navigator.clipboard.writeText(text);
+            } catch (err) {
+                copyText.select();
+                document.execCommand("copy");
+            }
             const btn = document.querySelector('[onclick="copy(\''+id+'\')"]');
             const oldText = btn.innerText;
             btn.innerText = 'OK!';
