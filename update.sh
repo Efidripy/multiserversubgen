@@ -1,0 +1,199 @@
+#!/bin/bash
+
+# --- СКРИПТ ОБНОВЛЕНИЯ MULTI-SERVER MANAGER v3.1 ---
+LOG_FILE="/opt/.sub_manager_install.log"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ "$EUID" -ne 0 ]; then 
+    echo "❌ Запустите от root!"
+    exit 1
+fi
+
+if [ ! -f "$LOG_FILE" ]; then
+    echo "❌ Установка не найдена. Сначала выполните ./install.sh"
+    exit 1
+fi
+
+source "$LOG_FILE"
+
+clear
+echo "======================================================"
+echo "    MULTI-SERVER MANAGER - ОБНОВЛЕНИЕ v3.1"
+echo "======================================================"
+echo "Проект: $PROJECT_NAME"
+echo "Путь: $PROJECT_DIR"
+echo "Порт: $APP_PORT"
+echo "Web путь: /$WEB_PATH/"
+echo "======================================================"
+echo ""
+echo "Выберите режим обновления:"
+echo "  1) Полное обновление (Backend + Frontend)"
+echo "  2) Только Backend модули"
+echo "  3) Только Frontend"
+echo "  4) Обновить Nginx конфигурацию"
+echo "  5) Выход"
+echo ""
+read -p "Ваш выбор [1-5]: " update_choice
+
+if [[ "$update_choice" == "5" ]]; then
+    echo "Выход."
+    exit 0
+fi
+
+# Бекап перед обновлением
+BACKUP_DIR="/var/backups/${PROJECT_NAME}_backup_$(date +%Y%m%d_%H%M%S)"
+echo ""
+echo "🔄 Создание резервной копии..."
+mkdir -p "$BACKUP_DIR"
+cp -r "$PROJECT_DIR"/*.py "$BACKUP_DIR/" 2>/dev/null
+if [ -f "/etc/systemd/system/$PROJECT_NAME.service" ]; then
+    cp "/etc/systemd/system/$PROJECT_NAME.service" "$BACKUP_DIR/"
+fi
+echo "  ✓ Резервная копия: $BACKUP_DIR"
+
+echo ""
+
+# Обновление
+case $update_choice in
+    1) # Полное обновление
+        echo "[1/5] Остановка сервиса..."
+        systemctl stop "$PROJECT_NAME"
+        
+        echo "[2/5] Обновление всех модулей Backend..."
+        cp "$SCRIPT_DIR/backend/"*.py "$PROJECT_DIR/"
+        echo "  ✓ Скопировано $(ls -1 "$SCRIPT_DIR/backend/"*.py | wc -l) модулей"
+        
+        echo "[3/5] Обновление Python-зависимостей..."
+        "$PROJECT_DIR/venv/bin/pip" install --upgrade pip > /dev/null 2>&1
+        "$PROJECT_DIR/venv/bin/pip" install --upgrade fastapi uvicorn requests python-pam urllib3 cryptography > /dev/null 2>&1
+        echo "  ✓ Зависимости обновлены"
+        
+        echo "[4/5] Пересборка Frontend..."
+        cd "$SCRIPT_DIR/frontend"
+        npm install > /dev/null 2>&1
+        npm run build > /dev/null 2>&1
+        rm -rf "$PROJECT_DIR/build"
+        cp -r build "$PROJECT_DIR/"
+        cd - > /dev/null
+        echo "  ✓ Frontend пересобран"
+        
+        echo "[5/5] Перезапуск сервиса..."
+        systemctl daemon-reload
+        systemctl start "$PROJECT_NAME"
+        ;;
+        
+    2) # Только Backend
+        echo "[1/3] Остановка сервиса..."
+        systemctl stop "$PROJECT_NAME"
+        
+        echo "[2/3] Обновление модулей Backend..."
+        cp "$SCRIPT_DIR/backend/"*.py "$PROJECT_DIR/"
+        echo "  ✓ Скопировано $(ls -1 "$SCRIPT_DIR/backend/"*.py | wc -l) модулей"
+        
+        echo "  → Обновление зависимостей..."
+        "$PROJECT_DIR/venv/bin/pip" install --upgrade fastapi uvicorn requests python-pam urllib3 cryptography > /dev/null 2>&1
+        
+        echo "[3/3] Перезапуск сервиса..."
+        systemctl start "$PROJECT_NAME"
+        ;;
+        
+    3) # Только Frontend
+        echo "[1/2] Пересборка Frontend..."
+        cd "$SCRIPT_DIR/frontend"
+        npm install > /dev/null 2>&1
+        npm run build > /dev/null 2>&1
+        echo "  ✓ Сборка завершена"
+        
+        echo "[2/2] Копирование файлов..."
+        rm -rf "$PROJECT_DIR/build"
+        cp -r build "$PROJECT_DIR/"
+        cd - > /dev/null
+        echo "  ✓ Frontend обновлён (может потребоваться очистка кэша браузера Ctrl+Shift+R)"
+        ;;
+        
+    4) # Nginx конфиг
+        echo "[1/2] Обновление Nginx конфигурации..."
+        cp "$SELECTED_CFG" "${SELECTED_CFG}.bak.$(date +%Y%m%d_%H%M%S)"
+        echo "  ✓ Создан бэкап: ${SELECTED_CFG}.bak.$(date +%Y%m%d_%H%M%S)"
+        
+        # Проверить USE_PROXY из настроек
+        if [[ "$USE_PROXY" == "y" || "$USE_PROXY" == "Y" ]]; then
+            # Обновить proxy snippet
+            cat > "/etc/nginx/snippets/${PROJECT_NAME}-proxy.conf" <<SNIPPET
+# Multi-Server Manager API Proxy Configuration
+location ~ "^/$WEB_PATH/api(.*)\$" {
+    proxy_pass http://127.0.0.1:$APP_PORT/api\$1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header X-Forwarded-Host \$host;
+    proxy_intercept_errors off;
+    proxy_buffering off;
+    proxy_request_buffering off;
+}
+SNIPPET
+            echo "  ✓ Обновлен proxy snippet"
+        fi
+        
+        echo "[2/2] Тестирование и перезагрузка Nginx..."
+        if nginx -t 2>/dev/null; then
+            systemctl restart nginx
+            echo "  ✓ Nginx успешно перезагружен"
+        else
+            echo "  ❌ Ошибка в конфигурации Nginx"
+            echo "  Восстанавливаю из бэкапа..."
+            mv "${SELECTED_CFG}.bak.$(date +%Y%m%d_%H%M%S)" "$SELECTED_CFG"
+            nginx -t && systemctl restart nginx
+        fi
+        ;;
+esac
+
+echo ""
+echo "======================================================"
+
+# Проверка статуса (для режимов 1-2)
+if [[ "$update_choice" =~ ^[12]$ ]]; then
+    sleep 2
+    if systemctl is-active --quiet "$PROJECT_NAME"; then
+        echo "✅ ОБНОВЛЕНИЕ ЗАВЕРШЕНО УСПЕШНО!"
+        echo "======================================================"
+        echo ""
+        echo "Статус сервиса:"
+        systemctl status "$PROJECT_NAME" --no-pager -l | head -n 10
+        echo ""
+        echo "Адрес панели: https://$(hostname -f)/$WEB_PATH/"
+    else
+        echo "❌ ОШИБКА! Сервис не запущен"
+        echo "======================================================"
+        echo ""
+        echo "Проверьте логи командой:"
+        echo "  journalctl -u $PROJECT_NAME -n 50 --no-pager"
+        echo ""
+        echo "Резервная копия доступна: $BACKUP_DIR"
+        echo ""
+        read -p "Восстановить из резервной копии? (y/n): " rollback
+        if [[ "$rollback" =~ ^[yYдД]$ ]]; then
+            echo "Восстановление..."
+            systemctl stop "$PROJECT_NAME"
+            cp "$BACKUP_DIR"/*.py "$PROJECT_DIR/"
+            systemctl start "$PROJECT_NAME"
+            sleep 1
+            if systemctl is-active --quiet "$PROJECT_NAME"; then
+                echo "✓ Резервная копия восстановлена, сервис запущен"
+            else
+                echo "❌ Ошибка восстановления. Проверьте логи."
+            fi
+        fi
+    fi
+else
+    echo "✅ ОБНОВЛЕНИЕ ЗАВЕРШЕНО!"
+    echo "======================================================"
+fi
+
+echo ""
+echo "📦 Резервная копия сохранена: $BACKUP_DIR"
+echo ""
+echo "Для удаления старых бэкапов (>7 дней):"
+echo "  find /var/backups/${PROJECT_NAME}_backup_* -type d -mtime +7 -exec rm -rf {} +"
+echo ""
