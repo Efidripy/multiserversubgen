@@ -1,0 +1,513 @@
+/* ============================================================
+   App.css — Modern UI enhancements for Multi-Server Manager
+   Augments Bootstrap 5 using CSS custom properties set by
+   ThemeContext. Inline styles still take precedence, so this
+   file only adds effects (shadows, transitions, radius, etc.)
+   that are not set inline.
+   ============================================================ */
+
+/* ── Smooth font rendering ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.2s ease;
+  margin: 0;
+}
+
+/* ── App layout (sidebar + main) ── */
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 250px;
+  min-width: 250px;
+  display: flex;
+  flex-direction: column;
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 200;
+  transition: transform 0.25s ease;
+  overflow-y: auto;
+}
+
+.sidebar__logo {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 18px 20px 16px;
+  font-size: 0.9rem;
+}
+
+.sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0;
+  flex: 1;
+}
+
+.sidebar__nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 0;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease, border-left-color 0.15s ease;
+  background: transparent;
+}
+
+.sidebar__nav-item:hover {
+  background-color: rgba(128, 128, 128, 0.1) !important;
+}
+
+.sidebar__nav-icon {
+  font-size: 1.05rem;
+  width: 22px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.sidebar__spacer {
+  flex: 1;
+}
+
+.sidebar__footer {
+  padding: 14px 20px;
+}
+
+.sidebar__user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 0.85rem;
+  overflow: hidden;
+}
+
+.sidebar__username {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar__footer-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.sidebar__footer-btn {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.12s ease;
+  text-align: center;
+}
+
+.sidebar__footer-btn:hover {
+  opacity: 0.85;
+  transform: translateY(-1px);
+}
+
+/* Mobile overlay */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 199;
+}
+
+/* ── Main area ── */
+.app-main {
+  flex: 1;
+  margin-left: 250px;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-width: 0;
+}
+
+/* ── Top bar (mobile only — hidden on desktop) ── */
+.app-topbar {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.app-topbar__menu-btn {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.app-topbar__title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Content area ── */
+.app-content {
+  flex: 1;
+  padding: 24px;
+}
+
+/* ── Cards ── */
+.card {
+  border-radius: 12px !important;
+  border-width: 1px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
+  transition: box-shadow 0.2s ease, transform 0.2s ease !important;
+  background-image: linear-gradient(135deg, rgba(20, 184, 166, 0.05) 0%, transparent 100%) !important;
+}
+
+.card:hover {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25) !important;
+}
+
+/* ── Compact server grid ── */
+.server-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.server-card {
+  border: 1px solid;
+  border-radius: 12px;
+  padding: 14px;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+.server-card:hover {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+  transform: translateY(-3px);
+}
+
+.server-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.server-card__name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  font-size: 0.875rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 70%;
+}
+
+.server-card__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.server-card__error {
+  margin: 0 0 8px;
+}
+
+.server-card__metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.server-card__metric {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.server-card__metric-row {
+  display: flex;
+  justify-content: space-between;
+}
+
+.server-card__footer-row {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.server-card__xray {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+/* ── Buttons ── */
+.btn {
+  border-radius: 8px !important;
+  font-weight: 500 !important;
+  transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease !important;
+}
+
+.btn:hover:not(:disabled) {
+  transform: translateY(-1px) !important;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25) !important;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(0) !important;
+  box-shadow: none !important;
+}
+
+.btn:disabled {
+  opacity: 0.55 !important;
+}
+
+/* btn-close (Bootstrap modal × button) — no lift */
+.btn-close {
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* ── Form controls & selects ── */
+.form-control,
+.form-select {
+  border-radius: 8px !important;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease !important;
+}
+
+.form-control:focus,
+.form-select:focus {
+  box-shadow: 0 0 0 3px var(--accent-focus-ring, rgba(20, 184, 166, 0.22)) !important;
+  border-color: var(--accent, #14b8a6) !important;
+  outline: none !important;
+}
+
+/* ── Progress bars ── */
+.progress {
+  border-radius: 999px !important;
+  overflow: hidden;
+}
+
+.progress-bar {
+  border-radius: 999px !important;
+  transition: width 0.5s ease !important;
+}
+
+/* ── Badges ── */
+.badge {
+  border-radius: 6px !important;
+  font-weight: 500 !important;
+  padding: 4px 8px !important;
+  font-size: 0.75em !important;
+}
+
+/* ── Alerts ── */
+.alert {
+  border-radius: 10px !important;
+  border-width: 1px !important;
+}
+
+/* ── Tables ── */
+.table {
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+}
+
+/* Table header — explicit dark background + readable text */
+.table thead th {
+  background-color: var(--bg-secondary, #1e293b) !important;
+  background-image: linear-gradient(180deg, rgba(20, 184, 166, 0.04) 0%, transparent 100%) !important;
+  color: var(--text-secondary, #94a3b8) !important;
+  font-weight: 600 !important;
+  font-size: 0.8rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.04em !important;
+  padding-top: 10px !important;
+  padding-bottom: 10px !important;
+  white-space: nowrap !important;
+  border-bottom: 2px solid var(--border-color, rgba(128, 128, 128, 0.25)) !important;
+}
+
+/* Ensure consistent row background — no zebra striping */
+.table > tbody > tr > td,
+.table > tbody > tr > th {
+  background-color: transparent !important;
+  color: var(--text-primary, #f1f5f9) !important;
+}
+
+/* Subtle border between rows instead of zebra striping */
+.table > tbody > tr {
+  border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
+}
+
+.table-hover > tbody > tr:hover > * {
+  background-color: var(--accent-row-hover, rgba(20, 184, 166, 0.07)) !important;
+  transition: background-color 0.1s ease !important;
+}
+
+/* ── Modals ── */
+.modal-content {
+  border-radius: 14px !important;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45) !important;
+  border-width: 1px !important;
+}
+
+.modal-header {
+  padding: 18px 22px 16px !important;
+}
+
+.modal-body {
+  padding: 16px 22px !important;
+}
+
+.modal-footer {
+  padding: 14px 22px !important;
+}
+
+/* ── Spinners ── */
+.spinner-border {
+  border-width: 0.18em !important;
+}
+
+/* ── Login page ── */
+.login-wrapper .card {
+  border-radius: 16px !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35) !important;
+}
+
+.login-wrapper .card:hover {
+  transform: none !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35) !important;
+}
+
+/* ── Page fade-in when tab changes ── */
+.tab-panel {
+  animation: appFadeIn 0.18s ease both;
+}
+
+@keyframes appFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Scrollbar (Webkit) ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-color, #334155);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent, #14b8a6);
+}
+
+/* ── Responsive — mobile ── */
+@media (max-width: 768px) {
+  /* Sidebar hidden off-screen on mobile, slides in when open */
+  .sidebar {
+    transform: translateX(-100%);
+  }
+
+  .sidebar--open {
+    transform: translateX(0);
+  }
+
+  .sidebar-overlay {
+    display: block;
+  }
+
+  /* Main occupies full width */
+  .app-main {
+    margin-left: 0;
+  }
+
+  /* Show the mobile top bar */
+  .app-topbar {
+    display: flex;
+  }
+
+  .app-content {
+    padding: 16px 12px;
+  }
+
+  .server-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px;
+  }
+
+  .card {
+    border-radius: 10px !important;
+  }
+
+  .table th,
+  .table td {
+    font-size: 0.8rem !important;
+    padding: 6px 8px !important;
+  }
+
+  .btn {
+    font-size: 0.82rem !important;
+  }
+
+  .d-flex.gap-2 {
+    flex-wrap: wrap !important;
+  }
+
+  .modal-dialog {
+    margin: 8px !important;
+  }
+}
+
+@media (min-width: 769px) {
+  /* On desktop, hide the mobile top bar */
+  .app-topbar {
+    display: none;
+  }
+}
+

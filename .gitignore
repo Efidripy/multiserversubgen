@@ -1,0 +1,13 @@
+node_modules/
+frontend/node_modules/
+backend/build/
+frontend/dist/
+*.pyc
+__pycache__/
+*.egg-info/
+.venv/
+venv/
+*.log
+.env
+.env.local
+.env.*.local
