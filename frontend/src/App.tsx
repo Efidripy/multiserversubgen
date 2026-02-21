@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api, { API_BASE } from './api';
 import { NodeManager } from './components/NodeManager';
+import { ServerStatus } from './components/ServerStatus';
 import { SubscriptionManager } from './components/SubscriptionManager';
 import { InboundManager } from './components/InboundManager';
 import { ClientManager } from './components/ClientManager';
@@ -123,7 +124,7 @@ export const App: React.FC = () => {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <NodeManager onReload={() => setKey(prev => prev + 1)} />;
+        return <ServerStatus />;
       case 'servers':
         return <NodeManager onReload={() => setKey(prev => prev + 1)} />;
       case 'inbounds':
