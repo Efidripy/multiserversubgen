@@ -385,7 +385,14 @@ class ClientManager:
             res = s.get(endpoint, timeout=5)
             if res.status_code == 200:
                 data = res.json()
-                return data.get("obj", {})
+                obj = data.get("obj", {})
+                if not isinstance(obj, dict):
+                    logger.warning(
+                        f"Unexpected type for traffic obj on {node['name']}: "
+                        f"expected dict, got {type(obj).__name__}"
+                    )
+                    return {}
+                return obj
         except Exception as exc:
             logger.warning(f"Failed to get client traffic from {node['name']}: {exc}")
         
