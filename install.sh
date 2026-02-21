@@ -2,10 +2,11 @@
 
 # --- КОНФИГУРАЦИЯ ---
 LOG_FILE="/opt/.sub_manager_install.log"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 uninstall() {
     echo -e "\n--- Удаление и откат настроек ---"
-    if [ ! -f "$LOG_FILE" ]; then echo "❌ Лог не найден."; return 1; fi
+    if [ ! -f "$LOG_FILE" ]; then echo "Лог не найден."; return 1; fi
     source "$LOG_FILE"
     systemctl stop "$PROJECT_NAME" 2>/dev/null
     systemctl disable "$PROJECT_NAME" 2>/dev/null
@@ -18,28 +19,88 @@ uninstall() {
         mv "${SELECTED_CFG}.bak" "$SELECTED_CFG"
         nginx -t && systemctl restart nginx
     fi
-    rm -rf "$PROJECT_DIR" "$HTML_DIR" "$LOG_FILE"
-    echo "✅ Система полностью очищена."
+    rm -rf "$PROJECT_DIR" "$LOG_FILE"
+    echo "Система полностью очищена."
+}
+
+update_project() {
+    echo -e "\n--- Обновление проекта ---"
+    if [ ! -f "$LOG_FILE" ]; then echo "Установка не найдена. Запустите установку сначала."; exit 1; fi
+    source "$LOG_FILE"
+    if [ -z "$WEB_PATH" ]; then
+        VITE_BASE="/"
+    else
+        VITE_BASE="/${WEB_PATH}/"
+    fi
+    
+    echo "Остановка сервиса..."
+    systemctl stop "$PROJECT_NAME"
+    
+    echo "Копирование обновленных файлов бэкенда..."
+    cp "$SCRIPT_DIR/backend/"*.py "$PROJECT_DIR/"
+    
+    echo "Обновление Python-зависимостей..."
+    "$PROJECT_DIR/venv/bin/pip" install --upgrade pip wheel setuptools
+    "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt"
+    
+    echo "Пересборка React фронтенда..."
+    cd "$SCRIPT_DIR/frontend"
+    if [ -f "package-lock.json" ]; then
+        npm ci
+    else
+        npm install
+    fi
+    echo "  → TypeScript проверка..."
+    if ! npx --no-install tsc; then
+        echo "❌ Ошибка компиляции TypeScript. Обновление прервано."
+        exit 1
+    fi
+    echo "  → Сборка Vite (VITE_BASE=$VITE_BASE)..."
+    mkdir -p "$PROJECT_DIR/build"
+    if ! VITE_BASE="$VITE_BASE" npx --no-install vite build --outDir "$PROJECT_DIR/build" --emptyOutDir; then
+        echo "❌ Ошибка сборки фронтенда. Обновление прервано."
+        exit 1
+    fi
+    cd - > /dev/null
+    
+    echo "Запуск сервиса..."
+    systemctl daemon-reload
+    systemctl start "$PROJECT_NAME"
+    
+    echo -e "\n✅ ОБНОВЛЕНИЕ ЗАВЕРШЕНО!"
+    systemctl status "$PROJECT_NAME" --no-pager
+    exit 0
 }
 
 if [ -f "$LOG_FILE" ]; then
     source "$LOG_FILE"
     clear
-    echo "ОБНАРУЖЕНА УСТАНОВКА: $PROJECT_NAME"
-    echo "1) Удалить 2) Переустановить 3) Выход"
+    echo "======================================================"
+    echo "    ОБНАРУЖЕНА УСТАНОВКА: $PROJECT_NAME"
+    echo "======================================================"
+    echo "1) Удалить"
+    echo "2) Переустановить полностью"
+    echo "3) Обновить (сохранить данные)"
+    echo "4) Выход"
     read -p "Выбор: " choice
     case $choice in
         1) uninstall; exit 0 ;;
         2) uninstall ;;
+        3) update_project ;;
         *) exit 0 ;;
     esac
 fi
 
 if [ "$EUID" -ne 0 ]; then echo "Запустите от root!"; exit; fi
 
+# Находим текущую директорию скрипта
+if [[ -z "$SCRIPT_DIR" ]]; then
+    SCRIPT_DIR="$PWD"
+fi
+
 clear
 echo "======================================================"
-echo "    MULTI-SERVER MANAGER INSTALLER (v2.1 - 2026)"
+echo "    MULTI-SERVER MANAGER INSTALLER (v3.1 - 2026)"
 echo "======================================================"
 
 read -p "Имя проекта/сервиса (sub-manager): " PROJECT_NAME
@@ -48,341 +109,233 @@ read -p "Локальный порт Python (666): " APP_PORT
 APP_PORT=${APP_PORT:-666}
 read -p "Путь в браузере (my-panel): " WEB_PATH
 WEB_PATH=${WEB_PATH:-my-panel}
-WEB_PATH=$(echo $WEB_PATH | sed 's/\///g') # Убираем слэши если пользователь ввел их
+WEB_PATH=$(echo $WEB_PATH | sed 's/\///g')  # Убираем слэши
+if [ -z "$WEB_PATH" ]; then
+    VITE_BASE="/"
+else
+    VITE_BASE="/${WEB_PATH}/"
+fi
 
 PROJECT_DIR="/opt/$PROJECT_NAME"
-HTML_DIR="/var/www/$PROJECT_NAME"
+
+# Спросить про proxy_pass для API
+read -p "Использовать proxy_pass для API в Nginx? (y/n, по умолчанию y): " USE_PROXY
+USE_PROXY=${USE_PROXY:-y}
 
 echo -e "\nВыберите конфиг Nginx из списка:"
 configs=( /etc/nginx/sites-available/* )
+if [ ${#configs[@]} -eq 0 ]; then
+    echo "Nginx конфиги не найдены."
+    exit 1
+fi
 for i in "${!configs[@]}"; do echo "$i) $(basename "${configs[$i]}")"; done
 read -p "Введите номер: " cfg_idx
+if ! [[ "$cfg_idx" =~ ^[0-9]+$ ]] || [ "$cfg_idx" -ge ${#configs[@]} ]; then
+    echo "Неверный номер."
+    exit 1
+fi
 SELECTED_CFG="${configs[$cfg_idx]}"
 
 # Сохранение параметров
 cat <<EOF > "$LOG_FILE"
 PROJECT_NAME="$PROJECT_NAME"
 PROJECT_DIR="$PROJECT_DIR"
-HTML_DIR="$HTML_DIR"
 SELECTED_CFG="$SELECTED_CFG"
 APP_PORT="$APP_PORT"
 WEB_PATH="$WEB_PATH"
+USE_PROXY="$USE_PROXY"
 EOF
 
 cp "$SELECTED_CFG" "${SELECTED_CFG}.bak"
 
-echo "Установка системных пакетов и Python-библиотек..."
-apt update && apt install -y python3-pip libpam0g-dev fail2ban python3-venv sqlite3 nginx psmisc
-mkdir -p "$PROJECT_DIR" "$HTML_DIR"
+echo "Установка системных пакетов и Python/Node.js..."
+apt update && apt install -y \
+    python3-pip \
+    python3-venv \
+    python3-dev \
+    libpam0g-dev \
+    build-essential \
+    sqlite3 \
+    nginx \
+    fail2ban \
+    psmisc \
+    curl \
+    wget \
+    git
+
+echo "Установка Node.js 20 LTS..."
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || { echo "❌ Не удалось добавить репозиторий NodeSource. Прерывание."; exit 1; }
+apt install -y nodejs || { echo "❌ Не удалось установить Node.js. Прерывание."; exit 1; }
+echo "  → Node.js $(node --version), npm $(npm --version)"
+
+mkdir -p "$PROJECT_DIR"
+
+# Копирование всех файлов бэкенда
+echo "Копирование бэкенда (все модули)..."
+cp "$SCRIPT_DIR/backend/"*.py "$PROJECT_DIR/"
 
 # Создание VENV и установка зависимостей
+echo "Установка Python-зависимостей..."
 python3 -m venv "$PROJECT_DIR/venv"
-"$PROJECT_DIR/venv/bin/pip" install fastapi uvicorn requests python-pam six jinja2 python-multipart urllib3
+"$PROJECT_DIR/venv/bin/pip" install --upgrade pip wheel setuptools
+"$PROJECT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/backend/requirements.txt"
 
-# --- ГЕНЕРАЦИЯ MAIN.PY ---
-cat <<EOF > "$PROJECT_DIR/main.py"
-import sqlite3, requests, json, base64, pam, datetime, os, logging, time
-from fastapi import FastAPI, Request, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
-from fastapi.templating import Jinja2Templates
-from urllib.parse import urlparse
-import urllib3
+# Сборка React фронтенда
+echo "Сборка React фронтенда..."
+mkdir -p "$PROJECT_DIR/build"
+cd "$SCRIPT_DIR/frontend"
+if [ -f "package-lock.json" ]; then
+    npm ci
+else
+    npm install
+fi
+echo "  → TypeScript проверка..."
+if ! npx --no-install tsc; then
+    echo "❌ Ошибка компиляции TypeScript. Установка прервана."
+    exit 1
+fi
+echo "  → Сборка Vite (VITE_BASE=$VITE_BASE)..."
+if ! VITE_BASE="$VITE_BASE" npx --no-install vite build --outDir "$PROJECT_DIR/build" --emptyOutDir; then
+    echo "❌ Ошибка сборки фронтенда. Установка прервана."
+    exit 1
+fi
+cd - > /dev/null
+echo "✓ Frontend собран: $PROJECT_DIR/build"
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# Создание systemd сервиса
+echo "Настройка systemd..."
+cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
+    sed "s|/opt/sub-manager|$PROJECT_DIR|g" | \
+    sed "s|666|$APP_PORT|g" | \
+    sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH|g" > \
+    "/etc/systemd/system/$PROJECT_NAME.service"
 
-app = FastAPI()
-templates = Jinja2Templates(directory="$HTML_DIR")
-p = pam.pam()
-DB_PATH = os.path.join('$PROJECT_DIR', 'admin.db')
-CACHE_TTL = 30
-emails_cache = {"ts": 0.0, "emails": []}
-links_cache = {}
+# Настройка Nginx
+echo "Настройка Nginx..."
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("sub_manager")
+# Создать snippets директорию если не существует
+mkdir -p /etc/nginx/snippets
 
-def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute('''CREATE TABLE IF NOT EXISTS nodes 
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, ip TEXT, port TEXT, 
-                      user TEXT, password TEXT, base_path TEXT DEFAULT '')''')
-        try: conn.execute('ALTER TABLE nodes ADD COLUMN base_path TEXT DEFAULT ""')
-        except: pass
-        conn.execute('CREATE TABLE IF NOT EXISTS stats (email TEXT PRIMARY KEY, count INTEGER DEFAULT 0, last_download TEXT)')
-init_db()
+SNIPPET_FILE="/etc/nginx/snippets/${PROJECT_NAME}.conf"
 
-def check_auth(request: Request):
-    auth_header = request.headers.get("Authorization")
-    if not auth_header: return None
-    try:
-        scheme, credentials = auth_header.split()
-        decoded = base64.b64decode(credentials).decode("utf-8")
-        username, password = decoded.split(":")
-        if p.authenticate(username, password): return username
-    except: pass
-    return None
+# Создать/перезаписать snippet со всеми location блоками (идемпотентно)
+cat > "$SNIPPET_FILE" <<SNIPPET
+# Generated by $PROJECT_NAME installer. Run ./update.sh -> option 4 to regenerate.
+# DO NOT EDIT MANUALLY - changes will be overwritten on update.
 
-def fetch_inbounds(node):
-    s = requests.Session(); s.verify = False
-    b_path = node['base_path'].strip('/')
-    prefix = f"/{b_path}" if b_path else ""
-    base_url = f"https://{node['ip']}:{node['port']}{prefix}"
-    try:
-        s.post(f"{base_url}/login", data={"username": node['user'], "password": node['password']}, timeout=5)
-        res = s.get(f"{base_url}/panel/api/inbounds/list", timeout=5)
-        res.raise_for_status()
-        data = res.json()
-        if not data.get("success"):
-            logger.warning("node panel %s returned success=false", node['name'])
-            return []
-        return data.get("obj", [])
-    except requests.RequestException as exc:
-        logger.warning("node panel %s request failed: %s", node['name'], exc)
-    except ValueError as exc:
-        logger.warning("node panel %s invalid JSON: %s", node['name'], exc)
-    return []
+# --- API proxy (must precede the UI catch-all location) ---
+location ^~ /$WEB_PATH/api/ {
+    proxy_pass http://127.0.0.1:$APP_PORT/api/;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header X-Forwarded-Host \$host;
+    proxy_intercept_errors off;
+    proxy_buffering off;
+    proxy_request_buffering off;
+}
 
-def get_emails(nodes):
-    now = time.time()
-    if now - emails_cache["ts"] < CACHE_TTL:
-        return emails_cache["emails"]
-    emails = set()
-    for n in nodes:
-        for ib in fetch_inbounds(n):
-            try:
-                clients = json.loads(ib.get("settings", "{}")).get("clients", [])
-            except (TypeError, ValueError) as exc:
-                logger.warning("Invalid settings JSON for node %s: %s", n['name'], exc)
-                continue
-            for c in clients:
-                if c.get("email"):
-                    emails.add(c.get("email"))
-    emails_list = sorted(list(emails))
-    emails_cache.update({"ts": now, "emails": emails_list})
-    return emails_list
+# --- Swagger UI / ReDoc docs ---
+location = /$WEB_PATH/docs {
+    proxy_pass http://127.0.0.1:$APP_PORT/docs;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+}
 
-def get_links(nodes, email):
-    now = time.time()
-    cached = links_cache.get(email)
-    if cached and now - cached[0] < CACHE_TTL:
-        return cached[1]
-    links = []
-    for n in nodes:
-        for ib in fetch_inbounds(n):
-            if ib.get("protocol") != "vless":
-                continue
-            try:
-                s_set = json.loads(ib.get("streamSettings", "{}"))
-            except (TypeError, ValueError) as exc:
-                logger.warning("Invalid streamSettings JSON for node %s: %s", n['name'], exc)
-                continue
-            if s_set.get("security") != "reality":
-                continue
-            try:
-                settings = json.loads(ib.get("settings", "{}"))
-            except (TypeError, ValueError) as exc:
-                logger.warning("Invalid settings JSON for node %s: %s", n['name'], exc)
-                continue
-            for c in settings.get("clients", []):
-                if c.get("email") != email:
-                    continue
-                r = s_set.get('realitySettings', {})
-                pbk = r.get('settings', {}).get('publicKey', '')
-                sid = r.get('shortIds', [''])[0] if r.get('shortIds') else ''
-                sni = (r.get('serverNames') or [''])[0]
-                links.append(
-                    f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=reality"
-                    f"&sni={sni}&fp={r.get('fingerprint','chrome')}&pbk={pbk}&sid={sid}"
-                    f"&type={s_set.get('network','tcp')}#{c['email']} ({n['name']})"
-                )
-    links_cache[email] = (now, links)
-    return links
+location ^~ /$WEB_PATH/docs/ {
+    proxy_pass http://127.0.0.1:$APP_PORT/docs/;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+}
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    user = check_auth(request)
-    if not user: raise HTTPException(status_code=401, headers={"WWW-Authenticate": "Basic"})
-    
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
-    nodes = conn.execute('SELECT * FROM nodes').fetchall()
-    stats = {r['email']: {"count": r['count'], "last": r['last_download']} for r in conn.execute('SELECT * FROM stats').fetchall()}
-    emails = get_emails(nodes)
+location = /$WEB_PATH/openapi.json {
+    proxy_pass http://127.0.0.1:$APP_PORT/openapi.json;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+}
 
-    return templates.TemplateResponse("index.html", {
-        "request": request, "nodes": nodes, "emails": emails, 
-        "stats": stats, "user": user, "web_path": "$WEB_PATH"
-    })
+location = /$WEB_PATH/redoc {
+    proxy_pass http://127.0.0.1:$APP_PORT/redoc;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+}
 
-@app.post("/add_node")
-async def add_node(request: Request, name=Form(...), url=Form(...), user=Form(...), password=Form(...)):
-    if not check_auth(request): raise HTTPException(status_code=401)
-    if not url.startswith(('http://', 'https://')): url = 'https://' + url
-    parsed = urlparse(url)
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute('INSERT INTO nodes (name, ip, port, user, password, base_path) VALUES (?,?,?,?,?,?)', 
-                     (name, parsed.hostname, str(parsed.port) if parsed.port else "443", user, password, parsed.path.strip('/')))
-    emails_cache["ts"] = 0
-    links_cache.clear()
-    return RedirectResponse(url="./", status_code=303)
+location = /$WEB_PATH/health {
+    proxy_pass http://127.0.0.1:$APP_PORT/health;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+}
 
-@app.get("/sub/{email}")
-async def sub(email: str):
-    conn = sqlite3.connect(DB_PATH); conn.row_factory = sqlite3.Row
-    nodes = conn.execute('SELECT * FROM nodes').fetchall()
-    links = get_links(nodes, email)
-    if links:
-        now = datetime.datetime.now().strftime("%d.%m %H:%M")
-        with sqlite3.connect(DB_PATH) as db:
-            db.execute('INSERT INTO stats (email, count, last_download) VALUES (?, 1, ?) ON CONFLICT(email) DO UPDATE SET count=count+1, last_download=?', (email, now, now))
-        return PlainTextResponse(content=base64.b64encode("\n".join(links).encode()).decode())
-    return PlainTextResponse(content="Not found", status_code=404)
+# --- React SPA (static files + SPA fallback) ---
+location ^~ /$WEB_PATH/ {
+    alias $PROJECT_DIR/build/;
+    try_files \$uri \$uri/ /$WEB_PATH/index.html;
+}
+SNIPPET
 
-@app.get("/delete_node/{id}")
-async def del_node(request: Request, id: int):
-    if not check_auth(request): raise HTTPException(status_code=401)
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute('DELETE FROM nodes WHERE id = ?', (id,))
-    emails_cache["ts"] = 0
-    links_cache.clear()
-    return RedirectResponse(url="../", status_code=303)
-EOF
+echo "✓ Создан snippet: $SNIPPET_FILE"
 
-# --- ГЕНЕРАЦИЯ INDEX.HTML ---
-cat <<EOF > "$HTML_DIR/index.html"
-<!DOCTYPE html>
-<html lang="ru" data-bs-theme="dark">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <title>VPN Sub Manager</title>
-    <style>
-        body { background-color: #0d1117; color: #c9d1d9; font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; }
-        .card { background-color: #161b22; border: 1px solid #30363d; }
-        .table { color: #c9d1d9; border-color: #30363d; }
-        .form-control { background-color: #0d1117; border: 1px solid #30363d; color: #fff; }
-        .form-control:focus { background-color: #0d1117; border-color: #58a6ff; color: #fff; box-shadow: none; }
-    </style>
-</head>
-<body class="container py-4">
-    <div class="d-flex justify-content-between align-items-center mb-4 border-bottom border-secondary pb-3">
-        <h4>📡 Multi-Server Manager</h4>
-        <span class="badge bg-outline-secondary border text-secondary">Admin: {{ user }}</span>
-    </div>
+# Идемпотентно добавить include в выбранный конфиг nginx (внутри server {})
+INCLUDE_LINE="    include /etc/nginx/snippets/${PROJECT_NAME}.conf;"
+if grep -qF "$INCLUDE_LINE" "$SELECTED_CFG"; then
+    echo "✓ Include уже присутствует в $SELECTED_CFG. Пропускаем."
+else
+    python3 << PYTHON
+import re, sys
 
-    <div class="card p-3 mb-4 shadow-sm">
-        <h6 class="mb-3 text-primary">Добавить node panel Панель</h6>
-        <form action="./add_node" method="post" class="row g-2 small">
-            <div class="col-md-2"><input type="text" name="name" class="form-control" placeholder="Метка (напр. NL)" required></div>
-            <div class="col-md-4"><input type="text" name="url" class="form-control" placeholder="https://ip:port/path/" required></div>
-            <div class="col-md-2"><input type="text" name="user" class="form-control" placeholder="Логин" required></div>
-            <div class="col-md-2"><input type="password" name="password" class="form-control" placeholder="Пароль" required></div>
-            <div class="col-md-2"><button class="btn btn-primary w-100">Добавить</button></div>
-        </form>
-    </div>
+with open('$SELECTED_CFG', 'r') as f:
+    content = f.read()
 
-    <div class="row">
-        <div class="col-md-4">
-            <div class="card p-3 mb-4">
-                <h6 class="text-secondary mb-3">Список узлов</h6>
-                {% for n in nodes %}
-                <div class="d-flex justify-content-between align-items-center mb-2 p-2 border-bottom border-secondary">
-                    <div><strong>{{ n.name }}</strong><br><small class="text-secondary">{{ n.ip }}</small></div>
-                    <a href="./delete_node/{{ n.id }}" class="btn btn-sm btn-outline-danger">×</a>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
-        <div class="col-md-8">
-            <div class="card p-3">
-                <h6 class="text-secondary">Управление подписками</h6>
-                <table class="table table-hover mt-3 small">
-                    <thead><tr><th>Email пользователя</th><th>Статистика</th><th>Ссылка (Base64)</th></tr></thead>
-                    <tbody>
-                        {% for e in emails %}
-                        <tr>
-                            <td class="align-middle"><strong>{{ e }}</strong></td>
-                            <td class="align-middle text-nowrap">
-                                <span class="badge bg-info text-dark">{{ stats[e].count if e in stats else 0 }}</span>
-                                <div style="font-size:0.7rem" class="text-secondary mt-1">{{ stats[e].last if e in stats else '--' }}</div>
-                            </td>
-                            <td class="align-middle w-50">
-                                <div class="input-group input-group-sm">
-                                    <input type="text" id="link-{{ loop.index }}" class="form-control form-control-sm" readonly value="https://{{ request.headers.get('host') }}/{{ web_path }}/sub/{{ e }}">
-                                    <button class="btn btn-outline-primary" onclick="copy('link-{{ loop.index }}')">Copy</button>
-                                </div>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-    <script>
-        async function copy(id) {
-            const copyText = document.getElementById(id);
-            const text = copyText.value;
-            try {
-                await navigator.clipboard.writeText(text);
-            } catch (err) {
-                copyText.select();
-                document.execCommand("copy");
-            }
-            const btn = document.querySelector('[onclick="copy(\''+id+'\')"]');
-            const oldText = btn.innerText;
-            btn.innerText = 'OK!';
-            setTimeout(() => { btn.innerText = oldText; }, 1000);
-        }
-    </script>
-</body>
-</html>
-EOF
+include_line = '\n    include /etc/nginx/snippets/${PROJECT_NAME}.conf;\n'
 
-# --- ЗАПУСК СЕРВИСА ---
-cat <<EOF > "/etc/systemd/system/$PROJECT_NAME.service"
-[Unit]
-Description=$PROJECT_NAME Service
-After=network.target
+# Try to insert after the first server_name directive
+pattern = r'(server_name\s+[^\n;]+;[ \t]*\n)'
+new_content = re.sub(pattern, r'\1' + include_line, content, count=1)
 
-[Service]
-User=root
-WorkingDirectory=$PROJECT_DIR
-ExecStartPre=/usr/bin/bash -c "/usr/bin/fuser -k $APP_PORT/tcp || true"
-ExecStart=$PROJECT_DIR/venv/bin/uvicorn main:app --host 127.0.0.1 --port $APP_PORT
-Restart=always
-RestartSec=5
+if new_content == content:
+    # Fallback: insert before the closing brace of the first server {} block
+    server_match = re.search(r'\bserver\s*\{', content)
+    if not server_match:
+        print('ERROR: Could not find server {} block in $SELECTED_CFG', file=sys.stderr)
+        sys.exit(1)
+    start = server_match.end()
+    depth = 1
+    pos = start
+    while pos < len(content) and depth > 0:
+        if content[pos] == '{':
+            depth += 1
+        elif content[pos] == '}':
+            depth -= 1
+        pos += 1
+    insert_pos = pos - 1  # index of closing brace
+    new_content = content[:insert_pos] + include_line + content[insert_pos:]
 
-[Install]
-WantedBy=multi-user.target
-EOF
-
-systemctl daemon-reload
-systemctl enable --now "$PROJECT_NAME.service"
-
-# --- НАСТРОЙКА NGINX ---
-# Очищаем старые записи именно этого пути
-sed -i "/location .*\/$WEB_PATH/,/}/d" "$SELECTED_CFG"
-# Вставляем новый блок
-sed -i "/server_name/a \\
-    location ^~ /$WEB_PATH/ {\\
-        proxy_pass http://127.0.0.1:$APP_PORT/;\\
-        proxy_set_header Host \$host;\\
-        proxy_set_header X-Real-IP \$remote_addr;\\
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\\
-        proxy_set_header X-Forwarded-Proto \$scheme;\\
-        proxy_intercept_errors off;\\
-    }" "$SELECTED_CFG"
+with open('$SELECTED_CFG', 'w') as f:
+    f.write(new_content)
+print('✓ Include добавлен в $SELECTED_CFG')
+PYTHON
+fi
 
 nginx -t && systemctl restart nginx
 
-# --- FAIL2BAN ---
-cat <<EOF > "/etc/fail2ban/filter.d/multi-manager.conf"
+# Fail2Ban
+cat > /etc/fail2ban/filter.d/multi-manager.conf <<'EOF'
 [Definition]
-failregex = ^<HOST> -.*"GET .*$WEB_PATH/.*" (401|403)
+failregex = ^<HOST> -.*"GET .*/api/v1/.*" (401|403)
 EOF
 
-cat <<EOF > "/etc/fail2ban/jail.d/multi-manager.local"
+cat > /etc/fail2ban/jail.d/multi-manager.local <<EOF
 [multi-manager]
 enabled  = true
 port     = 0-65535
@@ -395,5 +348,26 @@ EOF
 
 systemctl restart fail2ban
 
+# Запуск сервиса
+echo "Запуск сервиса..."
+systemctl daemon-reload
+systemctl enable --now "$PROJECT_NAME.service"
+
 echo -e "\n✅ УСТАНОВКА ЗАВЕРШЕНА!"
-echo "🔗 Админка: https://$(hostname -f)/$WEB_PATH/"
+echo "Адрес: https://$(hostname -f)/$WEB_PATH/"
+echo "Порт: $APP_PORT"
+
+# Self-test: проверка health endpoint
+echo -e "\nПроверка запуска сервиса..."
+HEALTH_STATUS=""
+for i in 1 2 3 4 5; do
+    sleep 2
+    HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/health" 2>/dev/null)
+    [ "$HEALTH_STATUS" = "200" ] && break
+done
+if [ "$HEALTH_STATUS" = "200" ]; then
+    echo "✅ Health check пройден: /health → HTTP $HEALTH_STATUS"
+else
+    echo "❌ Health check не пройден (HTTP $HEALTH_STATUS). Проверьте логи:"
+    echo "   journalctl -u $PROJECT_NAME -n 50 --no-pager"
+fi
