@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+requests
+python-pam
+six
+urllib3
+cryptography
+python-multipart
+aiofiles

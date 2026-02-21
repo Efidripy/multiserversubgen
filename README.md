@@ -1,59 +1,337 @@
-# 🚀 node panel Multi-Server Subscription Manager (v2.1)
+# 🚀 Multi-Server Subscription Manager v3.1
 
-Автоматизированный инсталлятор для управления подписками с нескольких серверов node panel. Скрипт объединяет пользователей (Email) со всех ваших панелей в единые ссылки подписок, поддерживает Reality (VLESS) и ведет статистику скачиваний.
+Комплексная система управления несколькими серверами node panel/Xray с современным React интерфейсом.
 
+## ✨ Что нового в v3.1
 
+### 🎨 Система тем
+- ☀️ Светлая и 🌙 темная тема
+- Автоматическое сохранение выбора
+- Переключатель в навигации
 
-## ✨ Основные функции
-- **Универсальный инсталлятор**: Установка, переустановка и полное удаление одной командой.
-- **Поддержка Reality**: Авто-генерация ссылок (подстановка порта 443, SNI, Flow и ShortID).
-- **GitHub-style UI**: Темная тема интерфейса с кнопками быстрого копирования ссылок.
-- **Безопасность**:
-  - Вход в админку через системных пользователей Linux (**PAM**).
-  - Автоматическая настройка **Fail2Ban** для защиты от брутфорса.
-- **Автоматизация Nginx**: Скрипт сам правит конфиги и настраивает проксирование в подпапку.
+### 📊 Новые компоненты
 
-## 🛠 Быстрая установка
+#### 1. **ClientManager** - Управление клиентами
+- ✅ Batch добавление клиентов (множественная загрузка)
+- 🗑️ Массовое удаление (по статусу: expired, depleted)
+- 🔄 Сброс трафика (индивидуально или всех)
+- 🔍 Фильтрация по узлам, протоколам, статусу
+- 📥 Экспорт в CSV
+- ✔️ Множественный выбор с чекбоксами
 
-Запустите эту команду на вашем сервере (под пользователем root):
+#### 2. **TrafficStats** - Визуализация трафика
+- 📊 Bar charts (Top N клиентов/серверов)
+- 🥧 Pie charts (Upload/Download распределение)
+- 📈 Группировка по: Client / Inbound / Node
+- 🟢 Список онлайн клиентов в реальном времени
+- 📉 Адаптивные графики с Chart.js
 
-bash
-curl -sO [https://raw.githubusercontent.com/efidripy/multiserversubgen/main/install.sh](https://raw.githubusercontent.com/efidripy/multiserversubgen/main/install.sh) && bash install.sh
+#### 3. **BackupManager** - Бэкап/Восстановление
+- 💾 Скачивание backup с каждого сервера
+- 📦 Массовое скачивание всех backup (ZIP архив)
+- 📤 Восстановление database из .db файла
+- ⚠️ Предупреждения при операциях
+- 🤖 Инструкции по автоматизации (cron)
 
-📋 Системные требования
-ОС: Ubuntu 20.04 / 22.04 / 24.04 (или Debian 11/12).
+#### 4. **ServerStatus** - Мониторинг
+- 🖥️ CPU, RAM, Disk usage с прогресс-барами
+- ⚡ Статус Xray (версия, uptime)
+- 🔄 Перезапуск Xray одной кнопкой
+- 🌐 Сетевой трафик в реальном времени
+- ♻️ Auto-refresh с настраиваемым интервалом
 
-Окружение: Установленный Nginx с настроенным доменом и SSL (Certbot).
+#### 5. **InboundManager** - Управление Inbound
+- 📡 Просмотр всех inbound со всех серверов
+- 🎯 Фильтрация по протоколу, security, узлу
+- 📋 Клонирование inbound на другие серверы
+- 🔒 Отображение Reality/TLS конфигураций
 
-Доступ: Права root.
+## 🏗️ Архитектура
 
-❓ Возможные проблемы и решения
-1. Ошибка 404 (Not Found) при открытии админки
-Причина: Неверный WEB_PATH или отсутствие слэша в конце URL.
+```
+┌─────────────────────────────────────────┐
+│         React Frontend (Vite)           │
+│  - 7 табов навигации                    │
+│  - Chart.js графики                      │
+│  - Light/Dark theme                      │
+│  - Bootstrap UI                          │
+└────────────┬────────────────────────────┘
+             │ REST API (Basic Auth)
+┌────────────▼────────────────────────────┐
+│      FastAPI Backend (Python)           │
+│  - 27+ API endpoints                    │
+│  - PAM авторизация                      │
+│  - Multi-threaded requests              │
+└────────────┬────────────────────────────┘
+             │
+    ┌────────┴────────┬────────────────┐
+    │                 │                │
+┌───▼───┐      ┌──────▼──┐      ┌─────▼──┐
+│ node panel │      │ node panel   │      │ node panel  │
+│ Node1 │      │ Node2   │      │ Node3  │
+└───────┘      └─────────┘      └────────┘
+```
 
-Решение: Убедитесь, что вы открываете ссылку со слэшем на конце: https://ваш-домен.com/my-panel/. Также проверьте, что в конфиге Nginx блок location не перекрывается другими правилами.
+## 🚀 Быстрый старт
 
-2. Ошибка 401 (Unauthorized) не показывает окно входа
-Причина: Браузер закешировал ошибку или Nginx перехватывает статус 401.
+### Требования
+- Ubuntu 24.04 (или 20.04+)
+- Root доступ
+- Nginx установлен и настроен
+- Node.js 20+ (устанавливается автоматически скриптом install.sh)
 
-Решение: В скрипте v2.1 добавлена опция proxy_intercept_errors off;. Если проблема осталась, попробуйте открыть страницу в режиме Инкогнито (Ctrl+Shift+N).
+### Установка
+```bash
+git clone <repo-url>
+cd multiserversubgen
+chmod +x install.sh
+sudo ./install.sh
+```
 
-3. Не приходят данные с node panel панелей
-Причина: Закрыты порты API на удаленных серверах или неверный путь (Base Path).
+Скрипт установит:
+- ✅ Python 3 + venv + все зависимости
+- ✅ Node.js + npm + React сборку
+- ✅ Nginx конфигурацию с proxy_pass
+- ✅ Systemd сервис
+- ✅ Fail2ban защиту
 
-Решение: Проверьте, что вы добавили узел в формате https://ip:port/base-path/. Попробуйте зайти в панель node panel с этого же сервера через curl.
+### Обновление
+```bash
+sudo ./update.sh
+```
 
-4. Не пускает под пользователем root
-Причина: В некоторых системах PAM запрещает авторизацию root через сторонние приложения.
+Выберите режим:
+1. Полное обновление (backend + frontend)
+2. Только backend
+3. Только frontend
+4. Только Nginx конфиг
 
-Решение: Создайте обычного пользователя:
+## 📁 Структура проекта
 
-Bash
-useradd -m -s /bin/bash manager && passwd manager
-И используйте его логин/пароль для входа.
+```
+multiserversubgen/
+├── backend/
+│   ├── main.py              # FastAPI приложение
+│   ├── client_manager.py    # Управление клиентами
+│   ├── inbound_manager.py   # Управление inbound
+│   ├── server_monitor.py    # Мониторинг серверов
+│   └── db.py               # База данных
+│
+├── frontend/
+│   ├── src/
+│   │   ├── contexts/
+│   │   │   └── ThemeContext.tsx     # Система тем
+│   │   ├── components/
+│   │   │   ├── App.tsx              # Главное приложение
+│   │   │   ├── ClientManager.tsx    # Управление клиентами
+│   │   │   ├── TrafficStats.tsx     # Статистика трафика
+│   │   │   ├── BackupManager.tsx    # Бэкапы
+│   │   │   ├── ServerStatus.tsx     # Мониторинг
+│   │   │   ├── InboundManager.tsx   # Inbound
+│   │   │   ├── NodeManager.tsx      # Серверы
+│   │   │   └── SubscriptionManager.tsx  # Подписки
+│   │   └── main.tsx
+│   └── package.json
+│
+├── install.sh              # Установщик
+├── update.sh              # Обновление
+├── API_DOCUMENTATION.md   # API документация
+└── COMPONENTS_GUIDE.md    # Руководство по компонентам
+```
 
-🗑 Удаление
-Если вы хотите полностью очистить систему от скрипта, просто запустите install.sh повторно. Система обнаружит установку и предложит пункт 1) Удалить.
+## 🔧 Конфигурация
 
-📜 Лицензия
-Distributed under the MIT License.
+### Backend
+- Порт: `666` (настраивается при установке)
+- Путь: `/opt/sub-manager/` (или custom)
+- Лог: `journalctl -u sub-manager -f`
+
+### Frontend
+- Сборка: `backend/build/`
+- Путь в браузере: `https://your-domain/my-panel/` (настраивается)
+- API прокси через Nginx
+- Subpath поддержка: установщик автоматически выставляет `VITE_BASE` на основе введённого пути. Для ручной сборки используйте `VITE_BASE="/my-panel/" npm run build`
+
+### API Base URL (subpath deployment)
+
+Фронтенд определяет базовый URL для API автоматически:
+
+| Переменная | Приоритет | Описание |
+|---|---|---|
+| `VITE_API_BASE_URL` | 1 (выше) | Явный override. Пример: `https://api.example.com` |
+| `BASE_URL` (= `VITE_BASE`) | 2 (по умолчанию) | Автоматически выводится из пути деплоя |
+
+**Примеры:**
+
+| `VITE_BASE` | Итоговый `API_BASE` | URL API-запросов |
+|---|---|---|
+| `/` (по умолчанию) | `/api` | `https://domain/api/v1/...` |
+| `/my-panel/` | `/my-panel/api` | `https://domain/my-panel/api/v1/...` |
+| `/panel/` | `/panel/api` | `https://domain/panel/api/v1/...` |
+
+Nginx-сниппет, генерируемый установщиком, автоматически совпадает с этими путями:
+```nginx
+location ^~ /my-panel/api/ { proxy_pass http://127.0.0.1:666/api/; ... }
+location ^~ /my-panel/      { alias /opt/sub-manager/build/; ... }
+```
+
+> **⚠️ Важно:** Не открывайте `/api/` на корневом уровне в nginx без необходимости.
+> Это раскрывает API на корне домена и является риском безопасности.
+> Если нужна совместимость, добавьте отдельный location `/api/` явно в vhost-конфиг
+> с пометкой — но это не рекомендуется для production-деплоя.
+
+### База данных
+- SQLite: `/opt/sub-manager/nodes.db`
+- Автоматическое создание при первом запуске
+- Backup через API или BackupManager UI
+
+## 🔐 Безопасность
+
+- ✅ PAM авторизация (системные пользователи)
+- ✅ Basic Auth для всех API эндпоинтов
+- ✅ Fail2ban интеграция (защита от брутфорса)
+- ✅ Nginx rate limiting
+- ⚠️ HTTPS обязателен для production
+
+## 📚 Документация
+
+- **API Documentation:** [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)
+  - 27+ эндпоинтов
+  - Примеры cURL и Python
+  - Описание всех параметров
+
+- **Components Guide:** [COMPONENTS_GUIDE.md](./COMPONENTS_GUIDE.md)
+  - Детальное описание каждого компонента
+  - Список возможностей
+  - API endpoints для каждого компонента
+  - Troubleshooting
+
+## 🎯 API Примеры
+
+> Замените `your-domain/my-panel` на ваш домен и путь деплоя.
+
+### Получить статус серверов
+```bash
+curl -u admin:password https://your-domain/my-panel/api/v1/servers/status
+```
+
+### Batch добавление клиентов
+```bash
+curl -u admin:password -X POST https://your-domain/my-panel/api/v1/clients/batch-add \
+  -H "Content-Type: application/json" \
+  -d '{
+    "inbound_id": 1,
+    "clients": [
+      {"email": "user1@example.com", "total_gb": 50, "expiry_days": 30},
+      {"email": "user2@example.com", "total_gb": 100, "expiry_days": 60}
+    ]
+  }'
+```
+
+### Статистика трафика
+```bash
+curl -u admin:password "https://your-domain/my-panel/api/v1/traffic/stats?group_by=client"
+```
+
+### Скачать все backup
+```bash
+curl -u admin:password https://your-domain/my-panel/api/v1/backup/all \
+  -o backups_$(date +%Y%m%d).zip
+```
+
+## 🧪 Тестирование
+
+### Backend
+```bash
+cd /opt/sub-manager
+source venv/bin/activate
+python3 main.py
+```
+
+### Frontend (dev mode)
+```bash
+cd frontend
+npm run dev
+# Откройте http://localhost:5173
+```
+
+### Production build
+```bash
+cd frontend
+VITE_BASE="/my-panel/" npm run build
+# Файлы в build/ с корректными путями для подпути /my-panel/
+# Для размещения в корне: npm run build (VITE_BASE по умолчанию "/")
+```
+
+## 🐛 Известные проблемы
+
+1. **Chart.js не отображается:**
+   - Проверьте, установлен ли `chart.js` и `react-chartjs-2`
+   - Пересоберите фронтенд: `npm run build`
+
+2. **API возвращает 401:**
+   - Проверьте учетные данные PAM
+   - Убедитесь, что пользователь существует в системе
+
+3. **Backup не скачивается:**
+   - Проверьте доступ к node panel серверам
+   - Убедитесь в правильности credentials
+
+## 🔄 Миграция с v3.0
+
+1. Создайте backup текущей базы
+2. Запустите `sudo ./install.sh` и выберите "Обновить"
+3. Frontend автоматически пересоберется с новыми компонентами
+4. Все данные сохранятся
+
+## 🔄 Миграция: исправление nginx API routing (hotfix)
+
+Если при деплое под подпутём (например `/my-panel/`) UI вызывал API по `/api/v1/...`
+вместо `/my-panel/api/v1/...` — обновитесь до текущей версии:
+
+```bash
+sudo ./install.sh   # выберите "Обновить (сохранить данные)"
+```
+
+**Что изменилось:**
+- `frontend/src/api.ts` — централизованный axios с `API_BASE`, выводимым из `BASE_URL`
+- Все компоненты используют этот инстанс вместо прямых вызовов `axios` с `/api/`
+- `VITE_BASE` правильно влияет на `API_BASE` при сборке
+- Nginx-сниппет по умолчанию **не** открывает `/api/` на корне домена
+
+**Если вы добавляли `/api/` в vhost как workaround:**
+После обновления фронтенда этот location можно убрать из nginx (опционально).
+
+## 📈 Roadmap
+
+- [ ] WebSocket для real-time обновлений
+- [ ] Групповые операции с inbound
+- [ ] Улучшенная subscription генерация (группировка)
+- [ ] Push уведомления
+- [ ] Multi-language support
+- [ ] Mobile приложение
+
+## 👥 Участие в разработке
+
+1. Fork репозитория
+2. Создайте feature branch
+3. Commit изменения
+4. Push в branch
+5. Создайте Pull Request
+
+## 📄 Лицензия
+
+MIT License - используйте свободно!
+
+## 🙏 Благодарности
+
+- [FastAPI](https://fastapi.tiangolo.com/)
+- [React](https://react.dev/)
+- [Chart.js](https://www.chartjs.org/)
+- [node panel](https://github.com/MHSanaei/node panel)
+- [Vite](https://vitejs.dev/)
+- [Bootstrap](https://getbootstrap.com/)
+
+---
+
+**Multi-Server Manager v3.1** - Made with ❤️ by developers, for developers
