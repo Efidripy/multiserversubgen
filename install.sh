@@ -151,9 +151,12 @@ apt update && apt install -y \
     psmisc \
     curl \
     wget \
-    git \
-    nodejs \
-    npm
+    git
+
+echo "Установка Node.js 20 LTS..."
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || { echo "❌ Не удалось добавить репозиторий NodeSource. Прерывание."; exit 1; }
+apt install -y nodejs || { echo "❌ Не удалось установить Node.js. Прерывание."; exit 1; }
+echo "  → Node.js $(node --version), npm $(npm --version)"
 
 mkdir -p "$PROJECT_DIR"
 
