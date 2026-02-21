@@ -555,6 +555,34 @@ async def add_node(request: Request, data: Dict):
     return {"status": "success"}
 
 
+@app.put("/api/v1/nodes/{node_id}")
+async def update_node(node_id: int, request: Request, data: Dict):
+    """Обновить имя узла"""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    name = data.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name cannot be empty")
+
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            result = conn.execute('UPDATE nodes SET name = ? WHERE id = ?', (name, node_id))
+            conn.commit()
+            if result.rowcount == 0:
+                raise HTTPException(status_code=404, detail="Node not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating node: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    emails_cache["ts"] = 0
+    links_cache.clear()
+    return {"status": "success"}
+
+
 @app.delete("/api/v1/nodes/{node_id}")
 async def delete_node(node_id: int, request: Request):
     """Удалить узел"""
