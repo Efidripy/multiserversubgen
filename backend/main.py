@@ -280,7 +280,14 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
         else:
             res = s.get(f"{base_url}/panel/api/inbounds/getClientTraffics/{client_id}", timeout=5)
         if res.status_code == 200:
-            return res.json().get("obj", {})
+            obj = res.json().get("obj", {})
+            if not isinstance(obj, dict):
+                logger.warning(
+                    f"Unexpected type for traffic obj on {node['name']}: "
+                    f"expected dict, got {type(obj).__name__}"
+                )
+                return {}
+            return obj
     except Exception as exc:
         logger.warning(f"Failed to get traffic from {node['name']}: {exc}")
     return {}
