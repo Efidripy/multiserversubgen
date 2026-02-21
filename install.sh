@@ -206,7 +206,8 @@ echo "✓ Frontend собран: $PROJECT_DIR/build"
 echo "Настройка systemd..."
 cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
     sed "s|/opt/sub-manager|$PROJECT_DIR|g" | \
-    sed "s|666|$APP_PORT|g" > \
+    sed "s|666|$APP_PORT|g" | \
+    sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH|g" > \
     "/etc/systemd/system/$PROJECT_NAME.service"
 
 # Настройка Nginx

@@ -29,7 +29,12 @@ from websocket_manager import manager as ws_manager, handle_websocket_message
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-app = FastAPI(title="Multi-Server Sub Manager", version="3.0")
+# Конфигурация
+PROJECT_DIR = os.getenv("PROJECT_DIR", "/opt/sub-manager")
+WEB_PATH = os.getenv("WEB_PATH", "").strip("/")
+root_path = f"/{WEB_PATH}" if WEB_PATH else ""
+
+app = FastAPI(title="Multi-Server Sub Manager", version="3.0", root_path=root_path)
 
 # CORS для локального development
 app.add_middleware(
@@ -39,9 +44,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Конфигурация
-PROJECT_DIR = os.getenv("PROJECT_DIR", "/opt/sub-manager")
 DB_PATH = os.path.join(PROJECT_DIR, "admin.db")
 CACHE_TTL = int(os.getenv("CACHE_TTL", "30"))
 
