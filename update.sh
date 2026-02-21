@@ -16,6 +16,13 @@ fi
 
 source "$LOG_FILE"
 
+# Compute VITE_BASE from stored WEB_PATH
+if [ -z "$WEB_PATH" ]; then
+    VITE_BASE="/"
+else
+    VITE_BASE="/${WEB_PATH}/"
+fi
+
 clear
 echo "======================================================"
 echo "    MULTI-SERVER MANAGER - ОБНОВЛЕНИЕ v3.1"
@@ -80,9 +87,9 @@ case $update_choice in
             echo "  ❌ Ошибка компиляции TypeScript. Обновление прервано."
             exit 1
         fi
-        echo "  → Сборка Vite..."
+        echo "  → Сборка Vite (VITE_BASE=$VITE_BASE)..."
         mkdir -p "$PROJECT_DIR/build"
-        if ! npx --no-install vite build --outDir "$PROJECT_DIR/build" --emptyOutDir; then
+        if ! VITE_BASE="$VITE_BASE" npx --no-install vite build --outDir "$PROJECT_DIR/build" --emptyOutDir; then
             echo "  ❌ Ошибка сборки фронтенда. Обновление прервано."
             exit 1
         fi
@@ -122,9 +129,9 @@ case $update_choice in
             echo "  ❌ Ошибка компиляции TypeScript. Обновление прервано."
             exit 1
         fi
-        echo "  → Сборка Vite..."
+        echo "  → Сборка Vite (VITE_BASE=$VITE_BASE)..."
         mkdir -p "$PROJECT_DIR/build"
-        if ! npx --no-install vite build --outDir "$PROJECT_DIR/build" --emptyOutDir; then
+        if ! VITE_BASE="$VITE_BASE" npx --no-install vite build --outDir "$PROJECT_DIR/build" --emptyOutDir; then
             echo "  ❌ Ошибка сборки фронтенда. Обновление прервано."
             exit 1
         fi

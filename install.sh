@@ -27,6 +27,11 @@ update_project() {
     echo -e "\n--- Обновление проекта ---"
     if [ ! -f "$LOG_FILE" ]; then echo "Установка не найдена. Запустите установку сначала."; exit 1; fi
     source "$LOG_FILE"
+    if [ -z "$WEB_PATH" ]; then
+        VITE_BASE="/"
+    else
+        VITE_BASE="/${WEB_PATH}/"
+    fi
     
     echo "Остановка сервиса..."
     systemctl stop "$PROJECT_NAME"
@@ -50,9 +55,9 @@ update_project() {
         echo "❌ Ошибка компиляции TypeScript. Обновление прервано."
         exit 1
     fi
-    echo "  → Сборка Vite..."
+    echo "  → Сборка Vite (VITE_BASE=$VITE_BASE)..."
     mkdir -p "$PROJECT_DIR/build"
-    if ! npx --no-install vite build --outDir "$PROJECT_DIR/build" --emptyOutDir; then
+    if ! VITE_BASE="$VITE_BASE" npx --no-install vite build --outDir "$PROJECT_DIR/build" --emptyOutDir; then
         echo "❌ Ошибка сборки фронтенда. Обновление прервано."
         exit 1
     fi
@@ -105,6 +110,11 @@ APP_PORT=${APP_PORT:-666}
 read -p "Путь в браузере (my-panel): " WEB_PATH
 WEB_PATH=${WEB_PATH:-my-panel}
 WEB_PATH=$(echo $WEB_PATH | sed 's/\///g')  # Убираем слэши
+if [ -z "$WEB_PATH" ]; then
+    VITE_BASE="/"
+else
+    VITE_BASE="/${WEB_PATH}/"
+fi
 
 PROJECT_DIR="/opt/$PROJECT_NAME"
 
@@ -184,8 +194,8 @@ if ! npx --no-install tsc; then
     echo "❌ Ошибка компиляции TypeScript. Установка прервана."
     exit 1
 fi
-echo "  → Сборка Vite..."
-if ! npx --no-install vite build --outDir "$PROJECT_DIR/build" --emptyOutDir; then
+echo "  → Сборка Vite (VITE_BASE=$VITE_BASE)..."
+if ! VITE_BASE="$VITE_BASE" npx --no-install vite build --outDir "$PROJECT_DIR/build" --emptyOutDir; then
     echo "❌ Ошибка сборки фронтенда. Установка прервана."
     exit 1
 fi
