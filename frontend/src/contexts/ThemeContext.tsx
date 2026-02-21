@@ -38,20 +38,20 @@ export const useTheme = () => {
 const lightTheme = {
   bg: {
     primary: '#ffffff',
-    secondary: '#f6f8fa',
-    tertiary: '#e1e4e8',
+    secondary: '#f8fafc',
+    tertiary: '#e2e8f0',
   },
   text: {
-    primary: '#24292e',
-    secondary: '#586069',
-    tertiary: '#6a737d',
+    primary: '#0f172a',
+    secondary: '#475569',
+    tertiary: '#64748b',
   },
-  border: '#d1d5da',
-  accent: '#0366d6',
-  success: '#28a745',
-  warning: '#ffd33d',
-  danger: '#d73a49',
-  info: '#0366d6',
+  border: '#cbd5e1',
+  accent: '#06b6d4',
+  success: '#22c55e',
+  warning: '#f59e0b',
+  danger: '#ef4444',
+  info: '#06b6d4',
 };
 
 const darkTheme = {
