@@ -7,6 +7,7 @@ import { ServerStatus } from './components/ServerStatus';
 import { ClientManager } from './components/ClientManager';
 import { TrafficStats } from './components/TrafficStats';
 import { BackupManager } from './components/BackupManager';
+import { Sidebar } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
 
 type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'backup' | 'subscriptions';
@@ -19,6 +20,7 @@ export const App: React.FC = () => {
   const [authError, setAuthError] = useState('');
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [key, setKey] = useState(0);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('sub_auth');
@@ -109,28 +111,23 @@ export const App: React.FC = () => {
     );
   }
 
-  const tabs: Array<{id: TabType, label: string, icon: string}> = [
-    { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-    { id: 'servers', label: 'Servers', icon: '🖥️' },
-    { id: 'inbounds', label: 'Inbounds', icon: '📡' },
-    { id: 'clients', label: 'Clients', icon: '👥' },
-    { id: 'traffic', label: 'Traffic', icon: '📈' },
-    { id: 'backup', label: 'Backup', icon: '💾' },
-    { id: 'subscriptions', label: 'Subscriptions', icon: '🔗' },
-  ];
+  const tabTitles: Record<TabType, string> = {
+    dashboard: '📊 Dashboard',
+    servers: '🖥️ Server Management',
+    inbounds: '📡 Inbounds',
+    clients: '👥 Clients',
+    traffic: '📈 Traffic',
+    backup: '💾 Backup',
+    subscriptions: '🔗 Subscriptions',
+  };
 
   const renderTabContent = () => {
     switch (activeTab) {
       case 'dashboard':
-        return (
-          <div>
-            <ServerStatus />
-          </div>
-        );
+        return <ServerStatus />;
       case 'servers':
         return (
           <div>
-            <h4 className="mb-4" style={{ color: colors.accent }}>🖥️ Server Management</h4>
             <NodeManager onReload={() => setKey(prev => prev + 1)} />
             <div className="mt-4">
               <ServerStatus />
@@ -138,11 +135,7 @@ export const App: React.FC = () => {
           </div>
         );
       case 'inbounds':
-        return (
-          <div>
-            <InboundManager onReload={() => setKey(prev => prev + 1)} />
-          </div>
-        );
+        return <InboundManager onReload={() => setKey(prev => prev + 1)} />;
       case 'clients':
         return <ClientManager />;
       case 'traffic':
@@ -150,70 +143,55 @@ export const App: React.FC = () => {
       case 'backup':
         return <BackupManager />;
       case 'subscriptions':
-        return (
-          <div>
-            <h4 className="mb-4" style={{ color: colors.accent }}>🔗 Subscriptions</h4>
-            <SubscriptionManager key={key} apiUrl={getApiUrl()} />
-          </div>
-        );
+        return <SubscriptionManager key={key} apiUrl={getApiUrl()} />;
       default:
         return null;
     }
   };
 
   return (
-    <div className="app-container min-vh-100" style={{ backgroundColor: colors.bg.primary, color: colors.text.primary, fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif' }}>
-      <nav className="navbar border-bottom" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border + ' !important' }}>
-        <div className="container-fluid">
-          <a className="navbar-brand" href="#" style={{ fontSize: '1.2rem', color: colors.text.primary }}>
-            📡 Multi-Server Manager <span className="badge ms-2" style={{ fontSize: '0.7rem', backgroundColor: colors.accent, color: '#ffffff' }}>v3.1</span>
-          </a>
-          <span className="navbar-text" style={{ color: colors.text.secondary }}>
-            <button 
-              className="btn btn-sm me-2"
-              onClick={toggleTheme}
-              title="Toggle theme"
-              style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
-            </button>
-            <span className="me-3">👤 <strong style={{ color: colors.text.primary }}>{user}</strong></span>
-            <button className="btn btn-sm" style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }} onClick={handleLogout}>
-              Logout
-            </button>
-          </span>
-        </div>
-      </nav>
+    <div
+      className="app-layout"
+      style={{
+        backgroundColor: colors.bg.primary,
+        color: colors.text.primary,
+        fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif',
+      }}
+    >
+      <Sidebar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        user={user}
+        onLogout={handleLogout}
+        mobileOpen={mobileSidebarOpen}
+        onMobileClose={() => setMobileSidebarOpen(false)}
+      />
 
-      {/* Tab Navigation */}
-      <div className="border-bottom" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <div className="container-fluid">
-          <ul className="nav nav-tabs border-0" style={{ borderBottom: 'none' }}>
-            {tabs.map(tab => (
-              <li className="nav-item" key={tab.id}>
-                <button
-                  className="nav-link border-0"
-                  onClick={() => setActiveTab(tab.id)}
-                  style={{
-                    backgroundColor: activeTab === tab.id ? colors.bg.primary : 'transparent',
-                    borderBottom: activeTab === tab.id ? `2px solid ${colors.accent}` : 'none',
-                    fontWeight: activeTab === tab.id ? 'bold' : 'normal',
-                    color: activeTab === tab.id ? colors.text.primary : colors.text.secondary,
-                  }}
-                >
-                  {tab.icon} {tab.label}
-                </button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
+      <div className="app-main">
+        {/* Mobile top bar */}
+        <header
+          className="app-topbar"
+          style={{ backgroundColor: colors.bg.secondary, borderBottom: `1px solid ${colors.border}` }}
+        >
+          <button
+            className="app-topbar__menu-btn"
+            onClick={() => setMobileSidebarOpen(true)}
+            aria-label="Open menu"
+            style={{ color: colors.text.primary, backgroundColor: colors.bg.tertiary, border: `1px solid ${colors.border}` }}
+          >
+            ☰
+          </button>
+          <h1 className="app-topbar__title" style={{ color: colors.text.primary }}>
+            {tabTitles[activeTab]}
+          </h1>
+        </header>
 
-      {/* Tab Content */}
-      <div className="container-fluid py-4">
-        <div className="tab-panel">
-          {renderTabContent()}
-        </div>
+        {/* Main content */}
+        <main className="app-content">
+          <div className="tab-panel">
+            {renderTabContent()}
+          </div>
+        </main>
       </div>
     </div>
   );

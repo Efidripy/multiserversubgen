@@ -111,16 +111,6 @@ export const ServerStatus: React.FC = () => {
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
   };
 
-  const formatUptime = (seconds: number) => {
-    const days = Math.floor(seconds / 86400);
-    const hours = Math.floor((seconds % 86400) / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    
-    if (days > 0) return `${days}d ${hours}h`;
-    if (hours > 0) return `${hours}h ${mins}m`;
-    return `${mins}m`;
-  };
-
   const getStatusColor = (percent: number) => {
     if (percent < 50) return '#3fb950';
     if (percent < 80) return '#d29922';
@@ -129,10 +119,10 @@ export const ServerStatus: React.FC = () => {
 
   return (
     <div className="server-status">
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <h4 style={{ color: colors.accent }}>🖥️ Server Status & Monitoring</h4>
-        <div>
-          <div className="form-check form-check-inline">
+      <div className="d-flex justify-content-between align-items-center mb-3">
+        <h4 className="mb-0" style={{ color: colors.accent }}>🖥️ Server Status</h4>
+        <div className="d-flex align-items-center gap-2">
+          <div className="form-check form-check-inline mb-0">
             <input
               className="form-check-input"
               type="checkbox"
@@ -141,7 +131,7 @@ export const ServerStatus: React.FC = () => {
               onChange={(e) => setAutoRefresh(e.target.checked)}
             />
             <label className="form-check-label small" style={{ color: colors.text.secondary }} htmlFor="autoRefresh">
-              Auto-refresh ({refreshInterval}s)
+              Auto ({refreshInterval}s)
             </label>
           </div>
           <button
@@ -150,7 +140,7 @@ export const ServerStatus: React.FC = () => {
             onClick={loadServersStatus}
             disabled={loading}
           >
-            {loading ? '⏳ Loading...' : '🔄 Refresh'}
+            {loading ? '⏳' : '🔄'}
           </button>
         </div>
       </div>
@@ -161,160 +151,108 @@ export const ServerStatus: React.FC = () => {
         </div>
       )}
 
-      <div className="row">
+      <div className="server-grid">
         {servers.map((server, idx) => (
-          <div className="col-md-6 mb-4" key={idx}>
-            <div className="card h-100" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="card-body">
-                {/* Server Header */}
-                <div className="d-flex justify-content-between align-items-center mb-3">
-                  <h5 className="mb-0" style={{ color: colors.accent }}>
-                    {server.available ? '🟢' : '🔴'} {server.node}
-                  </h5>
-                  {server.available && (
-                    <span className="badge" style={{ backgroundColor: colors.success }}>Online</span>
+          <div className="server-card" key={idx} style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+            {/* Card header */}
+            <div className="server-card__header">
+              <div className="server-card__name" style={{ color: colors.text.primary }}>
+                <span
+                  className="server-card__dot"
+                  style={{ backgroundColor: server.available ? '#22c55e' : '#ef4444' }}
+                />
+                {server.node}
+              </div>
+              <span
+                className="badge"
+                style={{ backgroundColor: server.available ? colors.success : colors.danger }}
+              >
+                {server.available ? 'Online' : 'Offline'}
+              </span>
+            </div>
+
+            {!server.available && (
+              <p className="server-card__error small" style={{ color: colors.warning }}>
+                ⚠️ {server.error || 'Connection failed'}
+              </p>
+            )}
+
+            {server.available && server.system && (
+              <div className="server-card__metrics">
+                {/* CPU */}
+                <div className="server-card__metric">
+                  <div className="server-card__metric-row">
+                    <span className="small" style={{ color: colors.text.secondary }}>CPU</span>
+                    <span className="small" style={{ color: getStatusColor(server.system.cpu) }}>
+                      {server.system.cpu.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="progress" style={{ height: '5px', backgroundColor: colors.bg.tertiary }}>
+                    <div className="progress-bar" style={{ width: `${server.system.cpu}%`, backgroundColor: getStatusColor(server.system.cpu) }} />
+                  </div>
+                </div>
+                {/* Memory */}
+                <div className="server-card__metric">
+                  <div className="server-card__metric-row">
+                    <span className="small" style={{ color: colors.text.secondary }}>MEM</span>
+                    <span className="small" style={{ color: getStatusColor(server.system.mem.percent) }}>
+                      {server.system.mem.percent.toFixed(0)}%
+                    </span>
+                  </div>
+                  <div className="progress" style={{ height: '5px', backgroundColor: colors.bg.tertiary }}>
+                    <div className="progress-bar" style={{ width: `${server.system.mem.percent}%`, backgroundColor: getStatusColor(server.system.mem.percent) }} />
+                  </div>
+                </div>
+                {/* Disk */}
+                <div className="server-card__metric">
+                  <div className="server-card__metric-row">
+                    <span className="small" style={{ color: colors.text.secondary }}>DISK</span>
+                    <span className="small" style={{ color: getStatusColor(server.system.disk.percent) }}>
+                      {server.system.disk.percent.toFixed(0)}%
+                    </span>
+                  </div>
+                  <div className="progress" style={{ height: '5px', backgroundColor: colors.bg.tertiary }}>
+                    <div className="progress-bar" style={{ width: `${server.system.disk.percent}%`, backgroundColor: getStatusColor(server.system.disk.percent) }} />
+                  </div>
+                </div>
+
+                {/* Footer row */}
+                <div className="server-card__footer-row">
+                  {server.network && (
+                    <span className="small" style={{ color: colors.text.secondary }}>
+                      ↓ {formatBytes(server.network.download)}
+                    </span>
                   )}
-                  {!server.available && (
-                    <span className="badge" style={{ backgroundColor: colors.danger }}>Offline</span>
+                  {server.timestamp && (
+                    <span className="small" style={{ color: colors.text.secondary }}>
+                      {new Date(server.timestamp).toLocaleTimeString()}
+                    </span>
                   )}
                 </div>
 
-                {!server.available && (
-                  <div className="alert alert-warning" style={{ backgroundColor: colors.warning + '22', borderColor: colors.warning, color: colors.warning }}>
-                    <strong>⚠️ Server unavailable</strong>
-                    <p className="mb-0 small mt-1">{server.error || 'Connection failed'}</p>
-                  </div>
-                )}
-
-                {server.available && server.system && (
-                  <>
-                    {/* CPU & Memory */}
-                    <div className="mb-3">
-                      <div className="d-flex justify-content-between small mb-1">
-                        <span style={{ color: colors.text.secondary }}>CPU Usage</span>
-                        <span style={{ color: getStatusColor(server.system.cpu) }}>
-                          {server.system.cpu.toFixed(1)}%
-                        </span>
-                      </div>
-                      <div className="progress" style={{ height: '8px', backgroundColor: colors.bg.tertiary }}>
-                        <div
-                          className="progress-bar"
-                          style={{ 
-                            width: `${server.system.cpu}%`,
-                            backgroundColor: getStatusColor(server.system.cpu)
-                          }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    <div className="mb-3">
-                      <div className="d-flex justify-content-between small mb-1">
-                        <span style={{ color: colors.text.secondary }}>Memory</span>
-                        <span style={{ color: getStatusColor(server.system.mem.percent) }}>
-                          {formatBytes(server.system.mem.current)} / {formatBytes(server.system.mem.total)} 
-                          ({server.system.mem.percent.toFixed(1)}%)
-                        </span>
-                      </div>
-                      <div className="progress" style={{ height: '8px', backgroundColor: colors.bg.tertiary }}>
-                        <div
-                          className="progress-bar"
-                          style={{ 
-                            width: `${server.system.mem.percent}%`,
-                            backgroundColor: getStatusColor(server.system.mem.percent)
-                          }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    <div className="mb-3">
-                      <div className="d-flex justify-content-between small mb-1">
-                        <span style={{ color: colors.text.secondary }}>Disk</span>
-                        <span style={{ color: getStatusColor(server.system.disk.percent) }}>
-                          {formatBytes(server.system.disk.current)} / {formatBytes(server.system.disk.total)}
-                          ({server.system.disk.percent.toFixed(1)}%)
-                        </span>
-                      </div>
-                      <div className="progress" style={{ height: '8px', backgroundColor: colors.bg.tertiary }}>
-                        <div
-                          className="progress-bar"
-                          style={{ 
-                            width: `${server.system.disk.percent}%`,
-                            backgroundColor: getStatusColor(server.system.disk.percent)
-                          }}
-                        ></div>
-                      </div>
-                    </div>
-
-                    {/* System Info */}
-                    <div className="row g-2 mb-3">
-                      <div className="col-6">
-                        <div className="small" style={{ color: colors.text.secondary }}>Uptime</div>
-                        <div style={{ color: colors.text.primary }}>{formatUptime(server.system.uptime)}</div>
-                      </div>
-                      <div className="col-6">
-                        <div className="small" style={{ color: colors.text.secondary }}>Load Avg</div>
-                        <div style={{ color: colors.text.primary }}>
-                          {server.system.loads.map(l => l.toFixed(2)).join(' ')}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Xray Status */}
-                    {server.xray && (
-                      <div className="border-top pt-3" style={{ borderColor: colors.border }}>
-                        <div className="d-flex justify-content-between align-items-center mb-2">
-                          <div>
-                            <strong style={{ color: colors.text.primary }}>Xray Core</strong>
-                            {server.xray.running ? (
-                              <span className="badge ms-2" style={{ backgroundColor: colors.success }}>Running</span>
-                            ) : (
-                              <span className="badge ms-2" style={{ backgroundColor: colors.danger }}>Stopped</span>
-                            )}
-                          </div>
-                          <button
-                            className="btn btn-sm"
-                            style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: '#000' }}
-                            onClick={() => handleRestartXray(server.node)}
-                            disabled={!server.xray.running}
-                          >
-                            🔄 Restart
-                          </button>
-                        </div>
-                        <div className="row g-2 small">
-                          <div className="col-6">
-                            <span style={{ color: colors.text.secondary }}>Version:</span>
-                            <span style={{ color: colors.text.primary }} className="ms-1">{server.xray.version}</span>
-                          </div>
-                          <div className="col-6">
-                            <span style={{ color: colors.text.secondary }}>Uptime:</span>
-                            <span style={{ color: colors.text.primary }} className="ms-1">{formatUptime(server.xray.uptime)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Network Stats */}
-                    {server.network && (
-                      <div className="border-top pt-3 mt-3" style={{ borderColor: colors.border }}>
-                        <div className="small mb-2" style={{ color: colors.text.secondary }}>Network Traffic</div>
-                        <div className="row g-2 small">
-                          <div className="col-6">
-                            <span style={{ color: colors.text.secondary }}>↓ Download:</span>
-                            <span style={{ color: colors.text.primary }} className="ms-1">{formatBytes(server.network.download)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-
-                {server.timestamp && (
-                  <div className="small mt-3" style={{ color: colors.text.secondary }}>
-                    Last updated: {new Date(server.timestamp).toLocaleTimeString()}
+                {/* Xray + restart */}
+                {server.xray && (
+                  <div className="server-card__xray" style={{ borderTop: `1px solid ${colors.border}` }}>
+                    <span className="small" style={{ color: colors.text.secondary }}>
+                      Xray {server.xray.version}
+                      {server.xray.running ? (
+                        <span className="badge ms-1" style={{ backgroundColor: colors.success }}>▶</span>
+                      ) : (
+                        <span className="badge ms-1" style={{ backgroundColor: colors.danger }}>■</span>
+                      )}
+                    </span>
+                    <button
+                      className="btn btn-sm"
+                      style={{ backgroundColor: colors.warning + '33', borderColor: colors.warning + '66', color: colors.warning, padding: '1px 8px', fontSize: '0.75rem' }}
+                      onClick={() => handleRestartXray(server.node)}
+                      disabled={!server.xray.running}
+                    >
+                      🔄
+                    </button>
                   </div>
                 )}
               </div>
-            </div>
+            )}
           </div>
         ))}
       </div>
