@@ -11,6 +11,7 @@ from typing import List, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
 from xui_session import login_3xui
+from utils import parse_field_as_dict
 
 logger = logging.getLogger("sub_manager")
 
@@ -40,6 +41,11 @@ class InboundManager:
             try:
                 node_inbounds = self._fetch_inbounds_from_node(node)
                 for ib in node_inbounds:
+                    stream = parse_field_as_dict(
+                        ib.get("streamSettings"),
+                        node_id=node["name"],
+                        field_name="streamSettings",
+                    )
                     inbound = {
                         "id": ib.get("id"),
                         "node_name": node["name"],
@@ -48,10 +54,14 @@ class InboundManager:
                         "port": ib.get("port"),
                         "remark": ib.get("remark", ""),
                         "enable": ib.get("enable", True),
-                        "streamSettings": ib.get("streamSettings", {}),
-                        "settings": ib.get("settings", {})
+                        "streamSettings": stream,
+                        "settings": parse_field_as_dict(
+                            ib.get("settings"),
+                            node_id=node["name"],
+                            field_name="settings",
+                        )
                     }
-                    security = ib.get("streamSettings", {}).get("security", "")
+                    security = stream.get("security", "")
                     inbound["security"] = security
                     inbound["is_reality"] = security == "reality"
                     inbounds.append(inbound)
