@@ -89,6 +89,23 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
     localStorage.setItem('app_theme', theme);
     document.body.style.backgroundColor = colors.bg.primary;
     document.body.style.color = colors.text.primary;
+    // Set CSS custom properties for use in App.css
+    const root = document.documentElement;
+    root.style.setProperty('--bg-primary', colors.bg.primary);
+    root.style.setProperty('--bg-secondary', colors.bg.secondary);
+    root.style.setProperty('--bg-tertiary', colors.bg.tertiary);
+    root.style.setProperty('--text-primary', colors.text.primary);
+    root.style.setProperty('--text-secondary', colors.text.secondary);
+    root.style.setProperty('--text-tertiary', colors.text.tertiary);
+    root.style.setProperty('--border-color', colors.border);
+    root.style.setProperty('--accent', colors.accent);
+    root.style.setProperty('--success', colors.success);
+    root.style.setProperty('--warning', colors.warning);
+    root.style.setProperty('--danger', colors.danger);
+    root.style.setProperty('--info', colors.info);
+    // Pre-computed semi-transparent accent variants used in App.css
+    root.style.setProperty('--accent-focus-ring', hexToRgba(colors.accent, 0.22));
+    root.style.setProperty('--accent-row-hover', hexToRgba(colors.accent, 0.07));
   }, [theme, colors]);
 
   const toggleTheme = () => {
@@ -101,3 +118,9 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
     </ThemeContext.Provider>
   );
 };
+
+/** Convert a 6-digit hex colour + alpha to an rgba() string. */
+function hexToRgba(hex: string, alpha: number): string {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+}
