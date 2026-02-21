@@ -36,15 +36,7 @@ update_project() {
     
     echo "Обновление Python-зависимостей..."
     "$PROJECT_DIR/venv/bin/pip" install --upgrade pip wheel setuptools
-    "$PROJECT_DIR/venv/bin/pip" install --upgrade \
-        fastapi \
-        uvicorn[standard] \
-        requests \
-        python-pam \
-        urllib3 \
-        cryptography \
-        python-multipart \
-        aiofiles
+    "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt"
     
     echo "Пересборка React фронтенда..."
     cd "$SCRIPT_DIR/frontend"
@@ -160,15 +152,7 @@ cp "$SCRIPT_DIR/backend/"*.py "$PROJECT_DIR/"
 echo "Установка Python-зависимостей..."
 python3 -m venv "$PROJECT_DIR/venv"
 "$PROJECT_DIR/venv/bin/pip" install --upgrade pip wheel setuptools
-"$PROJECT_DIR/venv/bin/pip" install \
-    fastapi \
-    uvicorn[standard] \
-    requests \
-    python-pam \
-    urllib3 \
-    cryptography \
-    python-multipart \
-    aiofiles
+"$PROJECT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/backend/requirements.txt"
 
 # Сборка React фронтенда
 echo "Сборка React фронтенда..."
@@ -274,3 +258,18 @@ systemctl enable --now "$PROJECT_NAME.service"
 echo -e "\n✅ УСТАНОВКА ЗАВЕРШЕНА!"
 echo "Адрес: https://$(hostname -f)/$WEB_PATH/"
 echo "Порт: $APP_PORT"
+
+# Self-test: проверка health endpoint
+echo -e "\nПроверка запуска сервиса..."
+HEALTH_STATUS=""
+for i in 1 2 3 4 5; do
+    sleep 2
+    HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/health" 2>/dev/null)
+    [ "$HEALTH_STATUS" = "200" ] && break
+done
+if [ "$HEALTH_STATUS" = "200" ]; then
+    echo "✅ Health check пройден: /health → HTTP $HEALTH_STATUS"
+else
+    echo "❌ Health check не пройден (HTTP $HEALTH_STATUS). Проверьте логи:"
+    echo "   journalctl -u $PROJECT_NAME -n 50 --no-pager"
+fi

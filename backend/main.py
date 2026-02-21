@@ -458,6 +458,7 @@ def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[
 # === API Endpoints ===
 
 @app.get("/api/v1/health")
+@app.get("/health")
 async def health():
     """Health check endpoint"""
     return {"status": "healthy", "timestamp": datetime.datetime.now().isoformat()}
