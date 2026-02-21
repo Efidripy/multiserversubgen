@@ -266,13 +266,12 @@ export const ClientManager: React.FC = () => {
   };
   
   const exportToCSV = () => {
-    const headers = ['Email', 'Node', 'Protocol', 'Status', 'Upload (GB)', 'Download (GB)', 'Total (GB)', 'Expiry Date'];
+    const headers = ['Email', 'Node', 'Protocol', 'Status', 'Download (GB)', 'Total (GB)', 'Expiry Date'];
     const rows = filteredClients.map(c => [
       c.email,
       c.node_name,
       c.protocol,
       c.enable ? 'Active' : 'Disabled',
-      (c.up / 1073741824).toFixed(2),
       (c.down / 1073741824).toFixed(2),
       c.total > 0 ? (c.total / 1073741824).toFixed(2) : 'Unlimited',
       c.expiryTime > 0 ? new Date(c.expiryTime).toLocaleDateString() : 'Never'
@@ -493,7 +492,6 @@ export const ClientManager: React.FC = () => {
                   <th style={{ color: colors.text.secondary }}>Node</th>
                   <th style={{ color: colors.text.secondary }}>Protocol</th>
                   <th style={{ color: colors.text.secondary }}>Status</th>
-                  <th style={{ color: colors.text.secondary }}>Upload</th>
                   <th style={{ color: colors.text.secondary }}>Download</th>
                   <th style={{ color: colors.text.secondary }}>Total Limit</th>
                   <th style={{ color: colors.text.secondary }}>Expiry</th>
@@ -503,7 +501,6 @@ export const ClientManager: React.FC = () => {
               <tbody>
                 {filteredClients.map((client) => {
                   const trafficKey = client.node_id != null ? `${client.node_id}:${client.email}` : null;
-                  const uploadBytes = getTrafficBytes(trafficKey, 'upload', client.up);
                   const downloadBytes = getTrafficBytes(trafficKey, 'download', client.down);
                   const isExpired = client.expiryTime > 0 && client.expiryTime < Date.now();
                   const isDepleted = client.total > 0 && (client.up + client.down) >= client.total;
@@ -544,7 +541,6 @@ export const ClientManager: React.FC = () => {
                           <span style={{ color: colors.warning }}>📊 Depleted</span>
                         )}
                       </td>
-                      <td>{uploadBytes != null ? formatBytes(uploadBytes) : <span style={{ color: colors.text.secondary }}>—</span>}</td>
                       <td>{downloadBytes != null ? formatBytes(downloadBytes) : <span style={{ color: colors.text.secondary }}>—</span>}</td>
                       <td>
                         {client.total > 0 ? formatBytes(client.total) : (

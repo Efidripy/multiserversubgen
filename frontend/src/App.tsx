@@ -130,7 +130,7 @@ export const App: React.FC = () => {
       case 'servers':
         return (
           <div>
-            <h4 className="mb-4" style={{ color: '#58a6ff' }}>🖥️ Server Management</h4>
+            <h4 className="mb-4" style={{ color: colors.accent }}>🖥️ Server Management</h4>
             <NodeManager onReload={() => setKey(prev => prev + 1)} />
             <div className="mt-4">
               <ServerStatus />
@@ -152,7 +152,7 @@ export const App: React.FC = () => {
       case 'subscriptions':
         return (
           <div>
-            <h4 className="mb-4" style={{ color: '#58a6ff' }}>🔗 Subscriptions</h4>
+            <h4 className="mb-4" style={{ color: colors.accent }}>🔗 Subscriptions</h4>
             <SubscriptionManager key={key} apiUrl={getApiUrl()} />
           </div>
         );
