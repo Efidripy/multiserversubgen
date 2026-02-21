@@ -67,8 +67,21 @@ class ServerMonitor:
             }
         
         try:
-            # API endpoint для статуса сервера
-            res = s.post(f"{base_url}/server/status", timeout=5)
+            # Primary API endpoint for 3x-ui panel (panel/api path)
+            primary_url = f"{base_url}/panel/api/server/status"
+            res = s.post(primary_url, timeout=5)
+            
+            if res.status_code == 404:
+                # Fallback for older 3x-ui versions
+                fallback_url = f"{base_url}/server/status"
+                logger.debug(f"Primary endpoint 404, falling back to {fallback_url}")
+                res = s.post(fallback_url, timeout=5)
+            
+            if res.status_code != 200:
+                logger.warning(
+                    f"Server status request to {node['name']} returned {res.status_code}; "
+                    f"url={res.url}; body={res.text[:200]!r}"
+                )
             
             if res.status_code == 200:
                 data = res.json()
