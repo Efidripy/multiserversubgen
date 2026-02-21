@@ -82,7 +82,7 @@ export const TrafficStats: React.FC = () => {
                   protocol: ib.protocol,
                   upload: ib.upload,
                   download: ib.download,
-                  total: ib.total,
+                  total: ib.total === 0 ? ib.upload + ib.download : ib.total,
                 });
               });
             } else {
@@ -90,7 +90,7 @@ export const TrafficStats: React.FC = () => {
               const nodeTotal = items.reduce((acc, ib) => ({
                 upload: acc.upload + ib.upload,
                 download: acc.download + ib.download,
-                total: acc.total + ib.total,
+                total: acc.total + (ib.total === 0 ? ib.upload + ib.download : ib.total),
               }), { upload: 0, download: 0, total: 0 });
               nodeStats[n.name] = {
                 email: n.name,
@@ -112,7 +112,15 @@ export const TrafficStats: React.FC = () => {
           params: { group_by: groupBy },
           auth: getAuth()
         });
-        setTrafficData(res.data.traffic || []);
+        const statsObj: Record<string, { upload: number; download: number; total: number }> =
+          res.data.stats || {};
+        const parsed: TrafficData[] = Object.entries(statsObj).map(([email, s]) => ({
+          email,
+          upload: s.upload,
+          download: s.download,
+          total: s.total === 0 ? s.upload + s.download : s.total,
+        }));
+        setTrafficData(parsed);
       }
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load traffic stats');
@@ -130,7 +138,7 @@ export const TrafficStats: React.FC = () => {
       await Promise.all(nodes.map(async n => {
         try {
           const res = await api.get(`/v1/nodes/${n.id}/online-clients`, { auth: getAuth() });
-          const clients: string[] = res.data.online_clients || [];
+          const clients: string[] = res.data.obj || [];
           clients.forEach(email => {
             allOnline.push({ email, node_name: n.name, inbound_id: 0 });
           });
