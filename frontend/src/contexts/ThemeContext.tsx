@@ -56,21 +56,21 @@ const lightTheme = {
 
 const darkTheme = {
   bg: {
-    primary: '#0d1117',
-    secondary: '#161b22',
-    tertiary: '#21262d',
+    primary: '#0f172a',
+    secondary: '#1e293b',
+    tertiary: '#334155',
   },
   text: {
-    primary: '#c9d1d9',
-    secondary: '#8b949e',
-    tertiary: '#6e7681',
+    primary: '#f1f5f9',
+    secondary: '#94a3b8',
+    tertiary: '#64748b',
   },
-  border: '#30363d',
-  accent: '#58a6ff',
-  success: '#3fb950',
-  warning: '#d29922',
-  danger: '#f85149',
-  info: '#1f6feb',
+  border: '#334155',
+  accent: '#14b8a6',
+  success: '#22c55e',
+  warning: '#f59e0b',
+  danger: '#ef4444',
+  info: '#0ea5e9',
 };
 
 interface ThemeProviderProps {

@@ -9,11 +9,8 @@ import {
   Title,
   Tooltip,
   Legend,
-  ArcElement,
-  PointElement,
-  LineElement,
 } from 'chart.js';
-import { Bar, Pie } from 'react-chartjs-2';
+import { Bar } from 'react-chartjs-2';
 
 ChartJS.register(
   CategoryScale,
@@ -21,10 +18,7 @@ ChartJS.register(
   BarElement,
   Title,
   Tooltip,
-  Legend,
-  ArcElement,
-  PointElement,
-  LineElement
+  Legend
 );
 
 interface TrafficData {
@@ -203,13 +197,6 @@ export const TrafficStats: React.FC = () => {
     labels: sortedTraffic.map(d => d.email || d.node_name || 'Unknown'),
     datasets: [
       {
-        label: 'Upload (GB)',
-        data: sortedTraffic.map(d => (d.upload / 1073741824).toFixed(2)),
-        backgroundColor: colors.success + 'CC',
-        borderColor: colors.success,
-        borderWidth: 1,
-      },
-      {
         label: 'Download (GB)',
         data: sortedTraffic.map(d => (d.download / 1073741824).toFixed(2)),
         backgroundColor: colors.accent + 'CC',
@@ -260,39 +247,8 @@ export const TrafficStats: React.FC = () => {
   };
 
   // Traffic Distribution Pie Chart
-  const totalUpload = trafficData.reduce((sum, d) => sum + d.upload, 0);
   const totalDownload = trafficData.reduce((sum, d) => sum + d.download, 0);
-
-  const pieData = {
-    labels: ['Upload', 'Download'],
-    datasets: [
-      {
-        data: [
-          (totalUpload / 1073741824).toFixed(2),
-          (totalDownload / 1073741824).toFixed(2)
-        ],
-        backgroundColor: [colors.success + 'CC', colors.accent + 'CC'],
-        borderColor: [colors.success, colors.accent],
-        borderWidth: 2,
-      },
-    ],
-  };
-
-  const pieOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: 'bottom' as const,
-        labels: {
-          color: colors.text.primary,
-          font: {
-            size: 12
-          }
-        }
-      },
-    },
-  };
+  const totalTraffic = trafficData.reduce((sum, d) => sum + d.total, 0);
 
   return (
     <div className="traffic-stats">
@@ -354,25 +310,19 @@ export const TrafficStats: React.FC = () => {
 
       {/* Stats Summary */}
       <div className="row mb-3">
-        <div className="col-md-3">
-          <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>Total Upload</div>
-            <h4 style={{ color: colors.success }}>{formatBytes(totalUpload)}</h4>
-          </div>
-        </div>
-        <div className="col-md-3">
+        <div className="col-md-4">
           <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
             <div className="small" style={{ color: colors.text.secondary }}>Total Download</div>
             <h4 style={{ color: colors.accent }}>{formatBytes(totalDownload)}</h4>
           </div>
         </div>
-        <div className="col-md-3">
+        <div className="col-md-4">
           <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
             <div className="small" style={{ color: colors.text.secondary }}>Total Traffic</div>
-            <h4 style={{ color: colors.info }}>{formatBytes(totalUpload + totalDownload)}</h4>
+            <h4 style={{ color: colors.info }}>{formatBytes(totalTraffic)}</h4>
           </div>
         </div>
-        <div className="col-md-3">
+        <div className="col-md-4">
           <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
             <div className="small" style={{ color: colors.text.secondary }}>Online Clients</div>
             <h4 style={{ color: colors.warning }}>{onlineClients.length}</h4>
@@ -382,7 +332,7 @@ export const TrafficStats: React.FC = () => {
 
       {/* Charts */}
       <div className="row mb-3">
-        <div className="col-md-8">
+        <div className="col-12">
           <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
             <h6 className="mb-3" style={{ color: colors.text.primary }}>
               Top {topN} by {groupBy === 'client' ? 'Client' : groupBy === 'inbound' ? 'Inbound' : 'Server'}
@@ -394,20 +344,6 @@ export const TrafficStats: React.FC = () => {
                 </div>
               ) : (
                 <Bar data={topClientsData} options={chartOptions} />
-              )}
-            </div>
-          </div>
-        </div>
-        <div className="col-md-4">
-          <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-            <h6 className="mb-3" style={{ color: colors.text.primary }}>Traffic Distribution</h6>
-            <div style={{ height: '400px' }}>
-              {loading ? (
-                <div className="d-flex justify-content-center align-items-center h-100">
-                  <div className="spinner-border"></div>
-                </div>
-              ) : (
-                <Pie data={pieData} options={pieOptions} />
               )}
             </div>
           </div>
@@ -468,7 +404,6 @@ export const TrafficStats: React.FC = () => {
                   <th style={{ color: colors.text.secondary }}>
                     {groupBy === 'client' ? 'Email' : groupBy === 'inbound' ? 'Inbound' : 'Node'}
                   </th>
-                  <th style={{ color: colors.text.secondary }}>Upload</th>
                   <th style={{ color: colors.text.secondary }}>Download</th>
                   <th style={{ color: colors.text.secondary }}>Total</th>
                 </tr>
@@ -487,7 +422,6 @@ export const TrafficStats: React.FC = () => {
                         </span>
                       )}
                     </td>
-                    <td style={{ color: colors.success }}>{formatBytes(item.upload)}</td>
                     <td style={{ color: colors.accent }}>{formatBytes(item.download)}</td>
                     <td>
                       <strong style={{ color: colors.info }}>{formatBytes(item.total)}</strong>
