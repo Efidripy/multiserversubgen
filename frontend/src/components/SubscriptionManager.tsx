@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface Stats {
@@ -35,7 +35,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   const loadEmails = async () => {
     setLoading(true);
     try {
-      const res = await axios.get('/api/v1/emails', {
+      const res = await api.get('/v1/emails', {
         auth: { username: getAuth().user, password: getAuth().password }
       });
       setEmails(res.data.emails || []);
@@ -49,7 +49,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   
   const loadNodes = async () => {
     try {
-      const res = await axios.get('/api/v1/nodes', {
+      const res = await api.get('/v1/nodes', {
         auth: { username: getAuth().user, password: getAuth().password }
       });
       setNodes(res.data || []);
@@ -125,8 +125,8 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   
   const buildSubscriptionUrl = (email: string, isGrouped: boolean = false) => {
     const baseUrl = isGrouped 
-      ? `${apiUrl}/api/v1/sub-grouped/${email}`
-      : `${apiUrl}/api/v1/sub/${email}`;
+      ? `${apiUrl}/v1/sub-grouped/${email}`
+      : `${apiUrl}/v1/sub/${email}`;
     
     const params = new URLSearchParams();
     if (filterProtocol) params.append('protocol', filterProtocol);
