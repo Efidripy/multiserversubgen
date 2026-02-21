@@ -24,7 +24,7 @@ export const useWebSocket = ({
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelsRef = useRef<string[]>(channels);
 
   // Update channels ref when channels change
@@ -39,7 +39,7 @@ export const useWebSocket = ({
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
       const port = '666'; // Backend port
-      const wsUrl = `${protocol}//${host}:${port}/ws`;
+      const wsUrl = url || `${protocol}//${host}:${port}/ws`;
 
       wsRef.current = new WebSocket(wsUrl);
 
@@ -84,7 +84,7 @@ export const useWebSocket = ({
     } catch (error) {
       console.error('Failed to create WebSocket:', error);
     }
-  }, [enabled, onMessage, reconnectInterval]);
+  }, [url, enabled, onMessage, reconnectInterval]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
