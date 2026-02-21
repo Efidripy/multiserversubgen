@@ -16,6 +16,9 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({ name: '', url: '', user: '', password: '' });
   const [error, setError] = useState('');
+  const [editingNode, setEditingNode] = useState<Node | null>(null);
+  const [editingName, setEditingName] = useState('');
+  const [showEditModal, setShowEditModal] = useState(false);
 
   const loadNodes = async () => {
     try {
@@ -65,6 +68,36 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
       onReload();
     } catch (err) {
       console.error('Failed to delete node:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditClick = (node: Node) => {
+    setEditingNode(node);
+    setEditingName(node.name);
+    setShowEditModal(true);
+  };
+
+  const handleSaveName = async () => {
+    if (!editingNode) return;
+    const trimmed = editingName.trim();
+    if (!trimmed) {
+      setError('Name cannot be empty');
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      await api.put(`/v1/nodes/${editingNode.id}`, { name: trimmed }, {
+        auth: { username: getAuth().user, password: getAuth().password }
+      });
+      setShowEditModal(false);
+      setEditingNode(null);
+      loadNodes();
+      onReload();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to update node');
     } finally {
       setLoading(false);
     }
@@ -150,13 +183,52 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
               <br />
               <small style={{ color: colors.text.secondary }}>{n.ip}:{n.port}</small>
             </div>
-            <button className="btn btn-sm" style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }} onClick={() => handleDelete(n.id)}>
-              ×
-            </button>
+            <div className="d-flex gap-1">
+              <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} onClick={() => handleEditClick(n)} aria-label="Edit server name">
+                ✏️
+              </button>
+              <button className="btn btn-sm" style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }} onClick={() => handleDelete(n.id)}>
+                ×
+              </button>
+            </div>
           </div>
         ))}
         {nodes.length === 0 && <p className="text-center py-3" style={{ color: colors.text.secondary }}>Нет добавленных узлов</p>}
       </div>
+
+      {showEditModal && editingNode && (
+        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+              <div className="modal-header" style={{ borderColor: colors.border }}>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>Переименовать сервер</h6>
+                <button type="button" className="btn-close" aria-label="Close" onClick={() => setShowEditModal(false)} />
+              </div>
+              <div className="modal-body">
+                {error && <div className="alert alert-danger" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>{error}</div>}
+                <p className="small mb-1" style={{ color: colors.text.secondary }}>Текущее имя: <strong style={{ color: colors.text.primary }}>{editingNode.name}</strong></p>
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="Новое имя"
+                  value={editingName}
+                  onChange={(e) => setEditingName(e.target.value)}
+                  style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                  autoFocus
+                />
+              </div>
+              <div className="modal-footer" style={{ borderColor: colors.border }}>
+                <button className="btn btn-sm" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }} onClick={() => setShowEditModal(false)}>
+                  Отмена
+                </button>
+                <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} onClick={handleSaveName} disabled={loading}>
+                  {loading ? '...' : 'Сохранить'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
