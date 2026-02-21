@@ -20,6 +20,7 @@ import urllib3
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from crypto import encrypt, decrypt
+from xui_session import login_3xui
 from inbound_manager import InboundManager
 from client_manager import ClientManager
 from server_monitor import ServerMonitor
@@ -118,12 +119,18 @@ def fetch_inbounds(node: Dict) -> List[Dict]:
         except Exception as e:
             logger.warning(f"Failed to decrypt password for node {node['name']}: {e}")
     
+    if not login_3xui(s, base_url, node['user'], node_password):
+        logger.warning(f"3X-UI {node['name']} login failed")
+        return []
+
     try:
-        s.post(f"{base_url}/login", 
-               data={"username": node['user'], "password": node_password}, 
-               timeout=5)
         res = s.get(f"{base_url}/panel/api/inbounds/list", timeout=5)
-        res.raise_for_status()
+        if res.status_code != 200:
+            logger.warning(
+                f"3X-UI {node['name']} inbounds list returned status {res.status_code}; "
+                f"response (first 200 chars): {res.text[:200]!r}"
+            )
+            return []
         data = res.json()
         
         if not data.get("success"):
@@ -203,7 +210,9 @@ def add_inbound_to_node(node: Dict, inbound_config: Dict) -> bool:
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
     
     try:
-        s.post(f"{base_url}/login", data={"username": node['user'], "password": decrypt(node.get('password', ''))})
+        if not login_3xui(s, base_url, node['user'], decrypt(node.get('password', ''))):
+            logger.warning(f"Failed to login for add_inbound on {node['name']}")
+            return False
         res = s.post(f"{base_url}/panel/api/inbounds/add", json=inbound_config, timeout=5)
         return res.status_code == 200
     except Exception as exc:
@@ -220,7 +229,9 @@ def add_client_to_inbound(node: Dict, inbound_id: int, client_config: Dict) -> b
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
     
     try:
-        s.post(f"{base_url}/login", data={"username": node['user'], "password": decrypt(node.get('password', ''))})
+        if not login_3xui(s, base_url, node['user'], decrypt(node.get('password', ''))):
+            logger.warning(f"Failed to login for add_client on {node['name']}")
+            return False
         payload = {"id": inbound_id, "settings": {"clients": [client_config]}}
         res = s.post(f"{base_url}/panel/api/inbounds/addClient", json=payload, timeout=5)
         return res.status_code == 200
@@ -238,7 +249,9 @@ def delete_client_from_inbound(node: Dict, inbound_id: int, client_id: str) -> b
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
     
     try:
-        s.post(f"{base_url}/login", data={"username": node['user'], "password": decrypt(node.get('password', ''))})
+        if not login_3xui(s, base_url, node['user'], decrypt(node.get('password', ''))):
+            logger.warning(f"Failed to login for delete_client on {node['name']}")
+            return False
         res = s.post(f"{base_url}/panel/api/inbounds/{inbound_id}/delClient/{client_id}", timeout=5)
         return res.status_code == 200
     except Exception as exc:
@@ -255,7 +268,9 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
     
     try:
-        s.post(f"{base_url}/login", data={"username": node['user'], "password": decrypt(node.get('password', ''))})
+        if not login_3xui(s, base_url, node['user'], decrypt(node.get('password', ''))):
+            logger.warning(f"Failed to login for get_traffic on {node['name']}")
+            return {}
         if protocol in ("vless", "vmess"):
             res = s.get(f"{base_url}/panel/api/inbounds/getClientTrafficsById/{client_id}", timeout=5)
         else:

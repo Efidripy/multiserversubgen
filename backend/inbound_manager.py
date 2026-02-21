@@ -5,7 +5,12 @@
 import requests
 import json
 import logging
+import sys
+from pathlib import Path
 from typing import List, Dict, Optional
+
+sys.path.insert(0, str(Path(__file__).parent))
+from xui_session import login_3xui
 
 logger = logging.getLogger("sub_manager")
 
@@ -64,11 +69,17 @@ class InboundManager:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            s.post(f"{base_url}/login", data={"username": node['user'], "password": self.decrypt(node.get('password', ''))})
+            if not login_3xui(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+                logger.warning(f"3X-UI login failed for node {node['name']}")
+                return []
             res = s.get(f"{base_url}/panel/api/inbounds/list", timeout=5)
             if res.status_code == 200:
                 data = res.json()
                 return data.get("obj", []) if data.get("success", False) else []
+            logger.warning(
+                f"3X-UI {node['name']} inbounds list returned status {res.status_code}; "
+                f"response (first 200 chars): {res.text[:200]!r}"
+            )
         except Exception as exc:
             logger.warning(f"Request failed for {node['name']}: {exc}")
         
@@ -91,8 +102,9 @@ class InboundManager:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            s.post(f"{base_url}/login", 
-                  data={"username": node['user'], "password": self.decrypt(node.get('password', ''))})
+            if not login_3xui(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+                logger.warning(f"3X-UI login failed for node {node['name']}")
+                return False
             res = s.post(f"{base_url}/panel/api/inbounds/add", 
                         json=config, timeout=5)
             return res.status_code == 200
@@ -155,8 +167,9 @@ class InboundManager:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            s.post(f"{base_url}/login", 
-                  data={"username": node['user'], "password": self.decrypt(node.get('password', ''))})
+            if not login_3xui(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+                logger.warning(f"3X-UI login failed for node {node['name']}")
+                return False
             res = s.post(f"{base_url}/panel/api/inbounds/del/{inbound_id}", 
                         timeout=5)
             return res.status_code == 200
@@ -173,8 +186,9 @@ class InboundManager:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            s.post(f"{base_url}/login", 
-                  data={"username": node['user'], "password": self.decrypt(node.get('password', ''))})
+            if not login_3xui(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+                logger.warning(f"3X-UI login failed for node {node['name']}")
+                return False
             res = s.post(f"{base_url}/panel/api/inbounds/resetClientTraffic/{inbound_id}", 
                         timeout=5)
             return res.status_code == 200
@@ -200,8 +214,9 @@ class InboundManager:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            s.post(f"{base_url}/login", 
-                  data={"username": node['user'], "password": self.decrypt(node.get('password', ''))})
+            if not login_3xui(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+                logger.warning(f"3X-UI login failed for node {node['name']}")
+                return False
             
             # Получить текущую конфигурацию инбаунда
             inbounds = self._fetch_inbounds_from_node(node)
