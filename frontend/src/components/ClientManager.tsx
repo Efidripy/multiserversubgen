@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface Client {
@@ -58,7 +58,7 @@ export const ClientManager: React.FC = () => {
     setError('');
     
     try {
-      const res = await axios.get('/api/v1/clients', {
+      const res = await api.get('/v1/clients', {
         auth: getAuth()
       });
       
@@ -118,7 +118,7 @@ export const ClientManager: React.FC = () => {
     }));
     
     try {
-      await axios.post('/api/v1/clients/batch-add', {
+      await api.post('/v1/clients/batch-add', {
         inbound_id: parseInt(batchInboundId),
         clients: clientsToAdd
       }, {
@@ -164,7 +164,7 @@ export const ClientManager: React.FC = () => {
     
     setLoading(true);
     try {
-      await axios.post('/api/v1/clients/batch-delete', {
+      await api.post('/v1/clients/batch-delete', {
         client_ids: clientsToDelete,
         filter: type === 'selected' ? null : type
       }, {
@@ -191,11 +191,11 @@ export const ClientManager: React.FC = () => {
     setLoading(true);
     try {
       if (clientId) {
-        await axios.post(`/api/v1/clients/${clientId}/reset-traffic`, {}, {
+        await api.post(`/v1/clients/${clientId}/reset-traffic`, {}, {
           auth: getAuth()
         });
       } else {
-        await axios.post('/api/v1/automation/reset-all-traffic', {}, {
+        await api.post('/v1/automation/reset-all-traffic', {}, {
           auth: getAuth()
         });
       }
