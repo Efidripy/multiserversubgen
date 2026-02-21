@@ -3,7 +3,6 @@ import api, { API_BASE } from './api';
 import { NodeManager } from './components/NodeManager';
 import { SubscriptionManager } from './components/SubscriptionManager';
 import { InboundManager } from './components/InboundManager';
-import { ServerStatus } from './components/ServerStatus';
 import { ClientManager } from './components/ClientManager';
 import { TrafficStats } from './components/TrafficStats';
 import { BackupManager } from './components/BackupManager';
@@ -124,16 +123,9 @@ export const App: React.FC = () => {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <ServerStatus />;
+        return <NodeManager onReload={() => setKey(prev => prev + 1)} />;
       case 'servers':
-        return (
-          <div>
-            <NodeManager onReload={() => setKey(prev => prev + 1)} />
-            <div className="mt-4">
-              <ServerStatus />
-            </div>
-          </div>
-        );
+        return <NodeManager onReload={() => setKey(prev => prev + 1)} />;
       case 'inbounds':
         return <InboundManager onReload={() => setKey(prev => prev + 1)} />;
       case 'clients':
