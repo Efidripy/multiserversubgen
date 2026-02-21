@@ -23,6 +23,7 @@ from crypto import encrypt, decrypt
 from xui_session import login_3xui
 from inbound_manager import InboundManager
 from client_manager import ClientManager
+from utils import parse_field_as_dict
 from server_monitor import ServerMonitor
 from websocket_manager import manager as ws_manager, handle_websocket_message
 
@@ -153,11 +154,9 @@ def get_emails(nodes: List[Dict]) -> List[str]:
     emails = set()
     for n in nodes:
         for ib in fetch_inbounds(n):
-            try:
-                clients = json.loads(ib.get("settings", "{}")).get("clients", [])
-            except (TypeError, ValueError) as exc:
-                logger.warning(f"Invalid settings JSON for node {n['name']}: {exc}")
-                continue
+            clients = parse_field_as_dict(
+                ib.get("settings"), node_id=n["name"], field_name="settings"
+            ).get("clients", [])
             for c in clients:
                 if c.get("email"):
                     emails.add(c.get("email"))
@@ -183,6 +182,9 @@ def get_all_inbounds(nodes: List[Dict]) -> List[Dict]:
     inbounds = []
     for n in nodes:
         for ib in fetch_inbounds(n):
+            stream = parse_field_as_dict(
+                ib.get("streamSettings"), node_id=n["name"], field_name="streamSettings"
+            )
             inbound = {
                 "id": ib.get("id"),
                 "node_name": n["name"],
@@ -191,10 +193,12 @@ def get_all_inbounds(nodes: List[Dict]) -> List[Dict]:
                 "port": ib.get("port"),
                 "remark": ib.get("remark", ""),
                 "enable": ib.get("enable", True),
-                "streamSettings": ib.get("streamSettings", {}),
-                "settings": ib.get("settings", {})
+                "streamSettings": stream,
+                "settings": parse_field_as_dict(
+                    ib.get("settings"), node_id=n["name"], field_name="settings"
+                )
             }
-            security = ib.get("streamSettings", {}).get("security", "")
+            security = stream.get("security", "")
             inbound["security"] = security
             inbound["is_reality"] = security == "reality"
             inbounds.append(inbound)
@@ -386,11 +390,9 @@ def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[
             if protocol_filter and protocol != protocol_filter:
                 continue
             
-            try:
-                s_set = json.loads(ib.get("streamSettings", "{}"))
-            except (TypeError, ValueError) as exc:
-                logger.warning(f"Invalid streamSettings JSON for node {n['name']}: {exc}")
-                continue
+            s_set = parse_field_as_dict(
+                ib.get("streamSettings"), node_id=n["name"], field_name="streamSettings"
+            )
             
             security = s_set.get("security", "")
             if protocol not in ("vless", "vmess", "trojan"):
@@ -398,11 +400,9 @@ def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[
             if security not in ("reality", "tls"):
                 continue
             
-            try:
-                settings = json.loads(ib.get("settings", "{}"))
-            except (TypeError, ValueError) as exc:
-                logger.warning(f"Invalid settings JSON for node {n['name']}: {exc}")
-                continue
+            settings = parse_field_as_dict(
+                ib.get("settings"), node_id=n["name"], field_name="settings"
+            )
             
             for c in settings.get("clients", []):
                 if c.get("email") != email:
