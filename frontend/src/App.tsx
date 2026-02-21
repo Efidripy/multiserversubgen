@@ -114,11 +114,11 @@ export const App: React.FC = () => {
   const tabTitles: Record<TabType, string> = {
     dashboard: '📊 Dashboard',
     servers: '🖥️ Server Management',
-    inbounds: '📡 Inbounds',
+    inbounds: '🔌 Inbounds',
     clients: '👥 Clients',
     traffic: '📈 Traffic',
     backup: '💾 Backup',
-    subscriptions: '🔗 Subscriptions',
+    subscriptions: '📜 Subscriptions',
   };
 
   const renderTabContent = () => {

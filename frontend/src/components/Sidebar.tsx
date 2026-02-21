@@ -15,11 +15,11 @@ interface SidebarProps {
 const navItems: Array<{ id: TabType; label: string; icon: string }> = [
   { id: 'dashboard', label: 'Dashboard', icon: '📊' },
   { id: 'servers', label: 'Servers', icon: '🖥️' },
-  { id: 'inbounds', label: 'Inbounds', icon: '📡' },
+  { id: 'inbounds', label: 'Inbounds', icon: '🔌' },
   { id: 'clients', label: 'Clients', icon: '👥' },
   { id: 'traffic', label: 'Traffic', icon: '📈' },
   { id: 'backup', label: 'Backup', icon: '💾' },
-  { id: 'subscriptions', label: 'Subscriptions', icon: '🔗' },
+  { id: 'subscriptions', label: 'Subscriptions', icon: '📜' },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({

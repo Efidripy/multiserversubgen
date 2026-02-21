@@ -143,7 +143,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
     <div className="inbound-manager">
       <div className="card p-3 mb-4" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0" style={{ color: colors.accent }}>📡 Inbound Management</h5>
+          <h5 className="mb-0" style={{ color: colors.accent }}>🔌 Inbound Management</h5>
           <button 
             className="btn btn-sm" 
             style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
