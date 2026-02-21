@@ -19,6 +19,7 @@ interface BatchPreviewRow {
 export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) => {
   const { colors } = useTheme();
   const [nodes, setNodes] = useState<Node[]>([]);
+  const [nodeStatuses, setNodeStatuses] = useState<Record<number, boolean | null>>({});
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [addMode, setAddMode] = useState<'form' | 'batch'>('form');
@@ -38,10 +39,30 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
         auth: { username: getAuth().user, password: getAuth().password }
       });
       setNodes(res.data);
+      loadNodeStatuses(res.data);
     } catch (err) {
       console.error('Failed to load nodes:', err);
       setError('Failed to load nodes');
     }
+  };
+
+  const loadNodeStatuses = async (nodeList: Node[]) => {
+    const initial: Record<number, boolean | null> = {};
+    nodeList.forEach(n => { initial[n.id] = null; });
+    setNodeStatuses(initial);
+    const results = await Promise.all(nodeList.map(async n => {
+      try {
+        await api.get(`/v1/nodes/${n.id}/server-status`, {
+          auth: { username: getAuth().user, password: getAuth().password }
+        });
+        return [n.id, true] as const;
+      } catch {
+        return [n.id, false] as const;
+      }
+    }));
+    const final: Record<number, boolean> = {};
+    results.forEach(([id, status]) => { final[id] = status; });
+    setNodeStatuses(final);
   };
 
   useEffect(() => {
@@ -334,23 +355,26 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
 
       <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <h6 className="mb-3" style={{ color: colors.text.secondary }}>Список узлов</h6>
-        {nodes.map((n) => (
-          <div key={n.id} className="d-flex justify-content-between align-items-center mb-2 p-2 border-bottom" style={{ borderColor: colors.border }}>
-            <div>
-              <strong style={{ color: colors.text.primary }}>{n.name}</strong>
-              <br />
-              <small style={{ color: colors.text.secondary }}>{n.ip}:{n.port}</small>
+        {nodes.map((n) => {
+          const status = nodeStatuses[n.id];
+          const dotColor = status === true ? '#22c55e' : status === false ? '#ef4444' : colors.text.secondary;
+          return (
+            <div key={n.id} className="d-flex align-items-center gap-2 mb-2 p-2 border-bottom" style={{ borderColor: colors.border }}>
+              <span style={{ width: '10px', height: '10px', borderRadius: '50%', flexShrink: 0, backgroundColor: dotColor, display: 'inline-block' }} />
+              <strong style={{ color: colors.text.primary, flexShrink: 0 }}>{n.name}</strong>
+              <span style={{ color: colors.text.secondary }}>|</span>
+              <span style={{ color: colors.text.secondary, flexShrink: 0 }}>{n.ip}:{n.port}</span>
+              <div className="ms-auto d-flex gap-1 flex-shrink-0">
+                <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} onClick={() => handleEditClick(n)} aria-label="Edit node">
+                  ✏️
+                </button>
+                <button className="btn btn-sm" style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }} onClick={() => handleDelete(n.id)} aria-label="Delete node">
+                  ×
+                </button>
+              </div>
             </div>
-            <div className="d-flex gap-1">
-              <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} onClick={() => handleEditClick(n)} aria-label="Edit server name">
-                ✏️
-              </button>
-              <button className="btn btn-sm" style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }} onClick={() => handleDelete(n.id)}>
-                ×
-              </button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
         {nodes.length === 0 && <p className="text-center py-3" style={{ color: colors.text.secondary }}>Нет добавленных узлов</p>}
       </div>
 
