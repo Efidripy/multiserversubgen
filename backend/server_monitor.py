@@ -17,6 +17,200 @@ from xui_session import login_3xui
 logger = logging.getLogger("sub_manager")
 
 
+class ThreeXUIMonitor:
+    """Монитор 3x-UI с cookie-based аутентификацией.
+
+    Использует корректные HTTP-методы согласно 3x-UI API v26.2.6.
+    """
+
+    def __init__(self, decrypt_func):
+        self.decrypt = decrypt_func
+
+    def _get_session(self, node: Dict) -> tuple:
+        """Создать авторизованную сессию для узла.
+
+        Returns:
+            Кортеж (session, base_url) или (None, None) при ошибке.
+        """
+        s = requests.Session()
+        s.verify = False
+        b_path = node.get("base_path", "").strip("/")
+        prefix = f"/{b_path}" if b_path else ""
+        base_url = f"https://{node['ip']}:{node['port']}{prefix}"
+        try:
+            password = self.decrypt(node.get("password", ""))
+            if not login_3xui(s, base_url, node["user"], password):
+                logger.warning(f"ThreeXUIMonitor: failed to login to {node['name']}")
+                return None, None
+        except Exception as exc:
+            logger.warning(f"ThreeXUIMonitor: login error for {node['name']}: {exc}")
+            return None, None
+        return s, base_url
+
+    def get_server_status(self, node: Dict) -> Dict:
+        """GET /panel/api/server/status — статус CPU, RAM, диска, Xray, сети."""
+        s, base_url = self._get_session(node)
+        if not s:
+            return {"node": node["name"], "available": False, "error": "Failed to connect"}
+        try:
+            res = s.get(f"{base_url}/panel/api/server/status", timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("success"):
+                    obj = data.get("obj", {})
+                    mem = obj.get("mem", {})
+                    disk = obj.get("disk", {})
+                    xray = obj.get("xray", {})
+                    return {
+                        "node": node["name"],
+                        "available": True,
+                        "timestamp": datetime.now().isoformat(),
+                        "system": {
+                            "cpu": obj.get("cpu", 0),
+                            "mem": {
+                                "current": mem.get("current", 0),
+                                "total": mem.get("total", 1),
+                                "percent": round(
+                                    mem.get("current", 0) / max(mem.get("total", 1), 1) * 100, 2
+                                ),
+                            },
+                            "disk": {
+                                "current": disk.get("current", 0),
+                                "total": disk.get("total", 1),
+                                "percent": round(
+                                    disk.get("current", 0) / max(disk.get("total", 1), 1) * 100, 2
+                                ),
+                            },
+                            "swap": {
+                                "current": obj.get("swap", {}).get("current", 0),
+                                "total": obj.get("swap", {}).get("total", 0),
+                            },
+                            "uptime": obj.get("uptime", 0),
+                            "loads": obj.get("loads", []),
+                        },
+                        "xray": {
+                            "state": xray.get("state", ""),
+                            "running": xray.get("state", "") == "running",
+                            "version": xray.get("version", ""),
+                            "uptime": xray.get("uptime", 0),
+                        },
+                        "network": {
+                            "upload": obj.get("netTraffic", {}).get("sent", 0),
+                            "download": obj.get("netTraffic", {}).get("recv", 0),
+                        },
+                    }
+            logger.warning(
+                f"ThreeXUIMonitor: server status for {node['name']} returned {res.status_code}"
+            )
+            return {"node": node["name"], "available": False, "error": f"HTTP {res.status_code}"}
+        except Exception as exc:
+            logger.warning(f"ThreeXUIMonitor: get_server_status error for {node['name']}: {exc}")
+            return {"node": node["name"], "available": False, "error": str(exc)}
+
+    def get_inbounds(self, node: Dict) -> Dict:
+        """GET /panel/api/inbounds/list — список inbounds."""
+        s, base_url = self._get_session(node)
+        if not s:
+            return {"node": node["name"], "available": False, "error": "Failed to connect", "inbounds": []}
+        try:
+            res = s.get(f"{base_url}/panel/api/inbounds/list", timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("success"):
+                    return {
+                        "node": node["name"],
+                        "available": True,
+                        "inbounds": data.get("obj", []),
+                    }
+            logger.warning(
+                f"ThreeXUIMonitor: inbounds list for {node['name']} returned {res.status_code}"
+            )
+            return {"node": node["name"], "available": False, "error": f"HTTP {res.status_code}", "inbounds": []}
+        except Exception as exc:
+            logger.warning(f"ThreeXUIMonitor: get_inbounds error for {node['name']}: {exc}")
+            return {"node": node["name"], "available": False, "error": str(exc), "inbounds": []}
+
+    def get_traffic(self, node: Dict) -> Dict:
+        """Трафик по inbounds (up/down из /panel/api/inbounds/list)."""
+        result = self.get_inbounds(node)
+        if not result.get("available"):
+            return result
+        traffic = [
+            {
+                "id": ib.get("id"),
+                "remark": ib.get("remark", ""),
+                "protocol": ib.get("protocol", ""),
+                "upload": ib.get("up", 0),
+                "download": ib.get("down", 0),
+                "total": ib.get("up", 0) + ib.get("down", 0),
+            }
+            for ib in result.get("inbounds", [])
+        ]
+        return {
+            "node": node["name"],
+            "available": True,
+            "traffic": traffic,
+        }
+
+    def get_online_clients(self, node: Dict) -> Dict:
+        """POST /panel/api/inbounds/onlines — список активных клиентов."""
+        s, base_url = self._get_session(node)
+        if not s:
+            return {"node": node["name"], "available": False, "error": "Failed to connect", "online_clients": []}
+        try:
+            res = s.post(f"{base_url}/panel/api/inbounds/onlines", timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("success"):
+                    return {
+                        "node": node["name"],
+                        "available": True,
+                        "online_clients": data.get("obj", []),
+                    }
+            logger.warning(
+                f"ThreeXUIMonitor: online clients for {node['name']} returned {res.status_code}"
+            )
+            return {"node": node["name"], "available": False, "error": f"HTTP {res.status_code}", "online_clients": []}
+        except Exception as exc:
+            logger.warning(f"ThreeXUIMonitor: get_online_clients error for {node['name']}: {exc}")
+            return {"node": node["name"], "available": False, "error": str(exc), "online_clients": []}
+
+    def get_client_traffic(self, node: Dict, email: str) -> Dict:
+        """GET /panel/api/inbounds/getClientTraffics/{email} — трафик клиента."""
+        s, base_url = self._get_session(node)
+        if not s:
+            return {"node": node["name"], "available": False, "error": "Failed to connect"}
+        try:
+            res = s.get(
+                f"{base_url}/panel/api/inbounds/getClientTraffics/{email}", timeout=5
+            )
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("success"):
+                    obj = data.get("obj")
+                    if not isinstance(obj, dict):
+                        obj = {}
+                    return {
+                        "node": node["name"],
+                        "available": True,
+                        "email": email,
+                        "upload": obj.get("up", 0),
+                        "download": obj.get("down", 0),
+                        "total": obj.get("up", 0) + obj.get("down", 0),
+                        "enable": obj.get("enable", True),
+                        "expiryTime": obj.get("expiryTime", 0),
+                    }
+            logger.warning(
+                f"ThreeXUIMonitor: client traffic for {email}@{node['name']} returned {res.status_code}"
+            )
+            return {"node": node["name"], "available": False, "error": f"HTTP {res.status_code}"}
+        except Exception as exc:
+            logger.warning(
+                f"ThreeXUIMonitor: get_client_traffic error for {email}@{node['name']}: {exc}"
+            )
+            return {"node": node["name"], "available": False, "error": str(exc)}
+
+
 class ServerMonitor:
     def __init__(self, decrypt_func):
         """Инициализация монитора серверов
