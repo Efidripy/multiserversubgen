@@ -185,6 +185,7 @@ body {
   border-width: 1px !important;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15) !important;
   transition: box-shadow 0.2s ease, transform 0.2s ease !important;
+  background-image: linear-gradient(135deg, rgba(20, 184, 166, 0.05) 0%, transparent 100%) !important;
 }
 
 .card:hover {
@@ -344,10 +345,26 @@ body {
   border-spacing: 0 !important;
 }
 
+/* Table header — explicit dark background + readable text */
+.table thead th {
+  background-color: var(--bg-secondary, #1e293b) !important;
+  background-image: linear-gradient(180deg, rgba(20, 184, 166, 0.04) 0%, transparent 100%) !important;
+  color: var(--text-secondary, #94a3b8) !important;
+  font-weight: 600 !important;
+  font-size: 0.8rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.04em !important;
+  padding-top: 10px !important;
+  padding-bottom: 10px !important;
+  white-space: nowrap !important;
+  border-bottom: 2px solid var(--border-color, rgba(128, 128, 128, 0.25)) !important;
+}
+
 /* Ensure consistent row background — no zebra striping */
 .table > tbody > tr > td,
 .table > tbody > tr > th {
   background-color: transparent !important;
+  color: var(--text-primary, #f1f5f9) !important;
 }
 
 /* Subtle border between rows instead of zebra striping */
@@ -358,16 +375,6 @@ body {
 .table-hover > tbody > tr:hover > * {
   background-color: var(--accent-row-hover, rgba(20, 184, 166, 0.07)) !important;
   transition: background-color 0.1s ease !important;
-}
-
-.table th {
-  font-weight: 600 !important;
-  font-size: 0.8rem !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.04em !important;
-  padding-top: 10px !important;
-  padding-bottom: 10px !important;
-  white-space: nowrap !important;
 }
 
 /* ── Modals ── */
