@@ -6,8 +6,13 @@ import requests
 import json
 import logging
 import time
+import sys
+from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
+
+sys.path.insert(0, str(Path(__file__).parent))
+from xui_session import login_node panel
 
 logger = logging.getLogger("sub_manager")
 
@@ -35,9 +40,9 @@ class ServerMonitor:
         
         try:
             password = self.decrypt(node.get('password', ''))
-            s.post(f"{base_url}/login", 
-                  data={"username": node['user'], "password": password},
-                  timeout=5)
+            if not login_node panel(s, base_url, node['user'], password):
+                logger.warning(f"Failed to login to {node['name']}")
+                return None, None
         except Exception as exc:
             logger.warning(f"Failed to login to {node['name']}: {exc}")
             return None, None
