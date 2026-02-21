@@ -13,6 +13,7 @@ from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
 from xui_session import login_node panel
+from utils import parse_field_as_dict
 
 logger = logging.getLogger("sub_manager")
 
@@ -84,7 +85,9 @@ class ClientManager:
                 inbounds = self._fetch_inbounds_from_node(node)
                 for inbound in inbounds:
                     try:
-                        settings = json.loads(inbound.get("settings", "{}"))
+                        settings = parse_field_as_dict(
+                            inbound.get("settings"), node_id=node["name"], field_name="settings"
+                        )
                         clients = settings.get("clients", [])
                         
                         for client in clients:
@@ -111,7 +114,7 @@ class ClientManager:
                             }
                             all_clients.append(client_data)
                     except (TypeError, ValueError) as exc:
-                        logger.warning(f"Invalid settings JSON for inbound in {node['name']}: {exc}")
+                        logger.warning(f"Invalid settings for inbound in {node['name']}: {exc}")
             except Exception as exc:
                 logger.warning(f"Failed to fetch clients from {node['name']}: {exc}")
         
@@ -306,7 +309,9 @@ class ClientManager:
                 
                 for inbound in inbounds:
                     try:
-                        settings = json.loads(inbound.get("settings", "{}"))
+                        settings = parse_field_as_dict(
+                            inbound.get("settings"), node_id=node["name"], field_name="settings"
+                        )
                         clients = settings.get("clients", [])
                         
                         for client in clients:
@@ -404,7 +409,9 @@ class ClientManager:
                 
                 for inbound in inbounds:
                     try:
-                        settings = json.loads(inbound.get("settings", "{}"))
+                        settings = parse_field_as_dict(
+                            inbound.get("settings"), node_id=node["name"], field_name="settings"
+                        )
                         clients = settings.get("clients", [])
                         protocol = inbound.get("protocol", "")
                         
