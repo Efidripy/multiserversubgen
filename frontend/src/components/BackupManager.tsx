@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface Node {
@@ -25,7 +25,7 @@ export const BackupManager: React.FC = () => {
 
   const loadNodes = async () => {
     try {
-      const res = await axios.get('/api/v1/nodes', {
+      const res = await api.get('/v1/nodes', {
         auth: getAuth()
       });
       setNodes(res.data);
@@ -41,7 +41,7 @@ export const BackupManager: React.FC = () => {
     setBackupProgress({ ...backupProgress, [nodeId]: 'downloading' });
 
     try {
-      const res = await axios.get(`/api/v1/backup/${nodeId}`, {
+      const res = await api.get(`/v1/backup/${nodeId}`, {
         auth: getAuth(),
         responseType: 'blob'
       });
@@ -77,7 +77,7 @@ export const BackupManager: React.FC = () => {
     setError('');
 
     try {
-      const res = await axios.get('/api/v1/backup/all', {
+      const res = await api.get('/v1/backup/all', {
         auth: getAuth(),
         responseType: 'blob'
       });
@@ -121,7 +121,7 @@ export const BackupManager: React.FC = () => {
     formData.append('file', importFile);
 
     try {
-      await axios.post(`/api/v1/backup/${selectedNode}/import`, formData, {
+      await api.post(`/v1/backup/${selectedNode}/import`, formData, {
         auth: getAuth(),
         headers: {
           'Content-Type': 'multipart/form-data'

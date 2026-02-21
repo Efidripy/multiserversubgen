@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api, { API_BASE } from './api';
 import { NodeManager } from './components/NodeManager';
 import { SubscriptionManager } from './components/SubscriptionManager';
 import { InboundManager } from './components/InboundManager';
@@ -33,7 +33,7 @@ export const App: React.FC = () => {
   const handleLogin = async () => {
     setAuthError('');
     try {
-      const res = await axios.get('/api/v1/auth/verify', {
+      const res = await api.get('/v1/auth/verify', {
         auth: { username: user, password }
       });
       if (res.data.user) {
@@ -55,7 +55,10 @@ export const App: React.FC = () => {
 
   const getApiUrl = () => {
     const host = typeof window !== 'undefined' ? window.location.host : '';
-    return `https://${host}`;
+    const protocol = typeof window !== 'undefined' ? window.location.protocol : 'https:';
+    // API_BASE may be relative (e.g. "/my-panel/api") or absolute; build a full URL for display
+    const fullApiUrl = API_BASE.startsWith('http') ? API_BASE : `${protocol}//${host}${API_BASE}`;
+    return fullApiUrl;
   };
 
   if (!isAuthenticated) {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface ServerStatus {
@@ -60,7 +60,7 @@ export const ServerStatus: React.FC = () => {
     setError('');
 
     try {
-      const res = await axios.get('/api/v1/servers/status', {
+      const res = await api.get('/v1/servers/status', {
         auth: getAuth()
       });
 
@@ -76,7 +76,7 @@ export const ServerStatus: React.FC = () => {
     if (!window.confirm('Are you sure you want to restart Xray on this server?')) return;
 
     try {
-      await axios.post(`/api/v1/servers/${nodeId}/restart-xray`, {}, {
+      await api.post(`/v1/servers/${nodeId}/restart-xray`, {}, {
         auth: getAuth()
       });
       alert('Xray restart command sent successfully');

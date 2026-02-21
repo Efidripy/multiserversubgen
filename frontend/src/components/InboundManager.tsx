@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface Inbound {
@@ -64,7 +64,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
     setError('');
     
     try {
-      const res = await axios.get('/api/v1/inbounds', {
+      const res = await api.get('/v1/inbounds', {
         auth: getAuth()
       });
       
@@ -82,7 +82,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
     setLoading(true);
     try {
       // Найти node_id по имени узла (требуется расширить API для получения node_id)
-      await axios.delete(`/api/v1/inbounds/${inbound.id}`, {
+      await api.delete(`/v1/inbounds/${inbound.id}`, {
         params: { node_id: 1 }, // Временно, нужен правильный node_id
         auth: getAuth()
       });
@@ -120,7 +120,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
         }
       };
       
-      await axios.post('/api/v1/inbounds/clone', payload, {
+      await api.post('/v1/inbounds/clone', payload, {
         auth: getAuth()
       });
       
