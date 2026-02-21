@@ -107,14 +107,52 @@ export const TrafficStats: React.FC = () => {
 
         setTrafficData(groupBy === 'node' ? Object.values(nodeStats) : allTraffic);
       } else {
-        // group by client – use existing aggregate endpoint
-        const res = await api.get('/v1/traffic/stats', {
-          params: { group_by: groupBy },
-          auth: getAuth()
+        // group by client – fetch traffic per client per node and aggregate by email
+        const [clientsRes, nodesRes] = await Promise.all([
+          api.get('/v1/clients', { auth: getAuth() }),
+          api.get('/v1/nodes', { auth: getAuth() }),
+        ]);
+        const clients: Array<{ email: string; node_name: string }> =
+          clientsRes.data?.clients || [];
+        const nodes: Array<{ id: number; name: string }> = nodesRes.data || [];
+
+        const nodeIdMap: Record<string, number> = {};
+        nodes.forEach(n => { nodeIdMap[n.name] = n.id; });
+
+        // unique (email, nodeId) pairs
+        const seen = new Set<string>();
+        const pairs: Array<{ email: string; nodeId: number }> = [];
+        clients.forEach(c => {
+          const nodeId = nodeIdMap[c.node_name];
+          if (c.email && nodeId !== undefined) {
+            const key = `${c.email}::${nodeId}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              pairs.push({ email: c.email, nodeId });
+            }
+          }
         });
-        const statsObj: Record<string, { upload: number; download: number; total: number }> =
-          res.data.stats || {};
-        const parsed: TrafficData[] = Object.entries(statsObj).map(([email, s]) => ({
+
+        const emailTraffic: Record<string, { upload: number; download: number; total: number }> = {};
+        pairs.forEach(({ email }) => {
+          if (!emailTraffic[email]) {
+            emailTraffic[email] = { upload: 0, download: 0, total: 0 };
+          }
+        });
+        await Promise.all(pairs.map(async ({ email, nodeId }) => {
+          try {
+            const res = await api.get(`/v1/nodes/${nodeId}/client/${encodeURIComponent(email)}/traffic`, { auth: getAuth() });
+            const t = res.data;
+            if (!t.available) return;
+            emailTraffic[email].upload += t.upload || 0;
+            emailTraffic[email].download += t.download || 0;
+            emailTraffic[email].total += t.total || 0;
+          } catch {
+            // skip unavailable nodes
+          }
+        }));
+
+        const parsed: TrafficData[] = Object.entries(emailTraffic).map(([email, s]) => ({
           email,
           upload: s.upload,
           download: s.download,
