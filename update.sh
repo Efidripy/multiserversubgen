@@ -65,7 +65,7 @@ case $update_choice in
         
         echo "[3/5] Обновление Python-зависимостей..."
         "$PROJECT_DIR/venv/bin/pip" install --upgrade pip > /dev/null 2>&1
-        "$PROJECT_DIR/venv/bin/pip" install --upgrade fastapi uvicorn requests python-pam urllib3 cryptography > /dev/null 2>&1
+        "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
         echo "  ✓ Зависимости обновлены"
         
         echo "[4/5] Пересборка Frontend..."
@@ -91,7 +91,7 @@ case $update_choice in
         echo "  ✓ Скопировано $(ls -1 "$SCRIPT_DIR/backend/"*.py | wc -l) модулей"
         
         echo "  → Обновление зависимостей..."
-        "$PROJECT_DIR/venv/bin/pip" install --upgrade fastapi uvicorn requests python-pam urllib3 cryptography > /dev/null 2>&1
+        "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
         
         echo "[3/3] Перезапуск сервиса..."
         systemctl start "$PROJECT_NAME"
