@@ -13,6 +13,7 @@ from typing import List, Dict, Optional
 from fastapi import FastAPI, Request, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from urllib.parse import urlparse
 import urllib3
 
@@ -35,6 +36,9 @@ WEB_PATH = os.getenv("WEB_PATH", "").strip("/")
 root_path = f"/{WEB_PATH}" if WEB_PATH else ""
 
 app = FastAPI(title="Multi-Server Sub Manager", version="3.0", root_path=root_path)
+
+# Gzip compression for responses larger than 1 KB
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS для локального development
 app.add_middleware(
@@ -515,7 +519,7 @@ async def list_nodes(request: Request):
             if node_dict.get('password'):
                 node_dict['password'] = decrypt(node_dict['password'])
             result.append(node_dict)
-        return result
+        return JSONResponse(content=result, headers={"Cache-Control": "private, max-age=300"})
 
 
 @app.post("/api/v1/nodes")
@@ -620,10 +624,10 @@ async def list_emails(request: Request):
         for row in conn.execute('SELECT * FROM stats').fetchall():
             stats[row['email']] = {"count": row['count'], "last": row['last_download']}
         
-        return {
-            "emails": emails,
-            "stats": stats
-        }
+        return JSONResponse(
+            content={"emails": emails, "stats": stats},
+            headers={"Cache-Control": "private, max-age=600"},
+        )
 
 
 @app.get("/api/v1/sub/{email}")
@@ -867,7 +871,10 @@ async def list_inbounds(request: Request, protocol: Optional[str] = None, securi
         if security:
             inbounds = [ib for ib in inbounds if ib['security'] == security]
         
-        return {"inbounds": inbounds, "count": len(inbounds)}
+        return JSONResponse(
+            content={"inbounds": inbounds, "count": len(inbounds)},
+            headers={"Cache-Control": "private, max-age=300"},
+        )
 
 
 @app.post("/api/v1/inbounds")
@@ -1093,7 +1100,10 @@ async def list_clients(request: Request, email: Optional[str] = None):
         nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
         
     clients = client_mgr.get_all_clients(nodes, email_filter=email)
-    return {"clients": clients, "count": len(clients)}
+    return JSONResponse(
+        content={"clients": clients, "count": len(clients)},
+        headers={"Cache-Control": "private, max-age=180"},
+    )
 
 
 @app.post("/api/v1/clients/batch-add")
