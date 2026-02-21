@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface Node {
@@ -19,7 +19,7 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
 
   const loadNodes = async () => {
     try {
-      const res = await axios.get('/api/v1/nodes', {
+      const res = await api.get('/v1/nodes', {
         auth: { username: getAuth().user, password: getAuth().password }
       });
       setNodes(res.data);
@@ -39,7 +39,7 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
     setError('');
     
     try {
-      await axios.post('/api/v1/nodes', formData, {
+      await api.post('/v1/nodes', formData, {
         auth: { username: getAuth().user, password: getAuth().password }
       });
       setShowForm(false);
@@ -58,7 +58,7 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
     
     setLoading(true);
     try {
-      await axios.delete(`/api/v1/nodes/${id}`, {
+      await api.delete(`/v1/nodes/${id}`, {
         auth: { username: getAuth().user, password: getAuth().password }
       });
       loadNodes();

@@ -1,0 +1,60 @@
+name: Frontend – subpath API routing check
+
+on:
+  push:
+    paths:
+      - 'frontend/**'
+  pull_request:
+    paths:
+      - 'frontend/**'
+
+jobs:
+  check-api-base:
+    name: Validate no hardcoded /api/ in subpath build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: TypeScript check
+        working-directory: frontend
+        run: npx --no-install tsc --noEmit
+
+      - name: Build with subpath base (/my-panel/)
+        working-directory: frontend
+        run: VITE_BASE=/my-panel/ npx --no-install vite build --outDir /tmp/subpath-build --emptyOutDir
+
+      # Ensure the built JS does NOT call root-relative /api/ paths.
+      # The pattern '"/api/' would indicate a hardcoded root-relative API path.
+      - name: Assert no root-relative /api/ calls in build output
+        run: |
+          if grep -r '"/api/' /tmp/subpath-build/assets/*.js 2>/dev/null; then
+            echo "❌ Found root-relative /api/ calls in built JS. API_BASE derivation is broken."
+            exit 1
+          fi
+          echo "✅ No root-relative /api/ calls found. Build is subpath-safe."
+
+      # Ensure the subpath prefix (my-panel) is embedded in the build, proving that
+      # BASE_URL / VITE_BASE is correctly wired into the API_BASE expression.
+      # (The value may appear as the computed expression  "/my-panel/".replace(…)+"/api"
+      #  rather than the literal "/my-panel/api", which is also acceptable.)
+      - name: Assert subpath prefix present in build output
+        run: |
+          if ! grep -q 'my-panel' /tmp/subpath-build/assets/*.js 2>/dev/null; then
+            echo "❌ Subpath prefix 'my-panel' not found in built JS. VITE_BASE may not be wired correctly."
+            exit 1
+          fi
+          echo "✅ Subpath prefix found in build. API_BASE is correctly derived from BASE_URL."

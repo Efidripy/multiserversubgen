@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import {
   Chart as ChartJS,
@@ -61,7 +61,7 @@ export const TrafficStats: React.FC = () => {
     setError('');
 
     try {
-      const res = await axios.get('/api/v1/traffic/stats', {
+      const res = await api.get('/v1/traffic/stats', {
         params: { group_by: groupBy },
         auth: getAuth()
       });
@@ -76,7 +76,7 @@ export const TrafficStats: React.FC = () => {
 
   const loadOnlineClients = async () => {
     try {
-      const res = await axios.get('/api/v1/clients/online', {
+      const res = await api.get('/v1/clients/online', {
         auth: getAuth()
       });
 
