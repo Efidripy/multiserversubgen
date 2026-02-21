@@ -12,7 +12,16 @@ interface Client {
   expiryTime: number;
   inbound_id: number;
   node_name: string;
+  node_id?: number;
   protocol: string;
+}
+
+interface TrafficData {
+  upload: number;
+  download: number;
+  total: number;
+  enable: boolean;
+  expiryTime: number;
 }
 
 interface BatchAddClient {
@@ -27,7 +36,10 @@ export const ClientManager: React.FC = () => {
   const [clients, setClients] = useState<Client[]>([]);
   const [filteredClients, setFilteredClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
+  const [trafficLoading, setTrafficLoading] = useState(false);
   const [error, setError] = useState('');
+  // Map of "node_id:email" -> TrafficData
+  const [trafficCache, setTrafficCache] = useState<Record<string, TrafficData | null>>({});
   
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -58,16 +70,60 @@ export const ClientManager: React.FC = () => {
     setError('');
     
     try {
-      const res = await api.get('/v1/clients', {
-        auth: getAuth()
-      });
+      const [clientsRes, nodesRes] = await Promise.all([
+        api.get('/v1/clients', { auth: getAuth() }),
+        api.get('/v1/nodes', { auth: getAuth() })
+      ]);
       
-      setClients(res.data.clients || []);
+      const nodeList: { id: number; name: string }[] = nodesRes.data || [];
+      const nodeNameToId: Record<string, number> = {};
+      nodeList.forEach(n => { nodeNameToId[n.name] = n.id; });
+
+      const rawClients: Client[] = (clientsRes.data.clients || []).map((c: Client) => ({
+        ...c,
+        node_id: nodeNameToId[c.node_name],
+      }));
+
+      setClients(rawClients);
+      loadTraffic(rawClients);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load clients');
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadTraffic = async (clientList: Client[]) => {
+    // Deduplicate by node_id + email
+    const pairs = new Map<string, { node_id: number; email: string }>();
+    clientList.forEach(c => {
+      if (c.node_id != null) {
+        const key = `${c.node_id}:${c.email}`;
+        if (!pairs.has(key)) pairs.set(key, { node_id: c.node_id as number, email: c.email });
+      }
+    });
+
+    if (pairs.size === 0) return;
+
+    setTrafficLoading(true);
+    const results = await Promise.all(
+      Array.from(pairs.entries()).map(async ([key, { node_id, email }]) => {
+        try {
+          const res = await api.get(
+            `/v1/nodes/${node_id}/client/${encodeURIComponent(email)}/traffic`,
+            { auth: getAuth() }
+          );
+          return [key, res.data as TrafficData] as const;
+        } catch {
+          return [key, null] as const;
+        }
+      })
+    );
+
+    const cache: Record<string, TrafficData | null> = {};
+    results.forEach(([key, data]) => { cache[key] = data; });
+    setTrafficCache(cache);
+    setTrafficLoading(false);
   };
   
   const applyFilters = () => {
@@ -254,6 +310,15 @@ export const ClientManager: React.FC = () => {
     const gb = bytes / 1073741824;
     return gb.toFixed(2) + ' GB';
   };
+
+  /** Returns bytes from cache if loaded, fallback value if not yet loaded, or null if unavailable. */
+  const getTrafficBytes = (key: string | null, field: 'upload' | 'download', fallback: number): number | null => {
+    if (key == null) return fallback;
+    if (!(key in trafficCache)) return fallback; // not yet loaded
+    const entry = trafficCache[key];
+    if (entry == null) return null; // node unreachable
+    return entry[field];
+  };
   
   const nodes = Array.from(new Set(clients.map(c => c.node_name)));
   const protocols = Array.from(new Set(clients.map(c => c.protocol)));
@@ -401,6 +466,12 @@ export const ClientManager: React.FC = () => {
       {/* Client Table */}
       <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         {loading && <div className="text-center py-3"><div className="spinner-border spinner-border-sm"></div></div>}
+        {!loading && trafficLoading && (
+          <div className="text-center py-1 small" style={{ color: colors.text.secondary }}>
+            <div className="spinner-border spinner-border-sm me-1" style={{ width: '0.75rem', height: '0.75rem' }}></div>
+            Загрузка трафика...
+          </div>
+        )}
         
         {!loading && filteredClients.length === 0 && (
           <p className="text-center py-3" style={{ color: colors.text.secondary }}>No clients found</p>
@@ -431,6 +502,9 @@ export const ClientManager: React.FC = () => {
               </thead>
               <tbody>
                 {filteredClients.map((client) => {
+                  const trafficKey = client.node_id != null ? `${client.node_id}:${client.email}` : null;
+                  const uploadBytes = getTrafficBytes(trafficKey, 'upload', client.up);
+                  const downloadBytes = getTrafficBytes(trafficKey, 'download', client.down);
                   const isExpired = client.expiryTime > 0 && client.expiryTime < Date.now();
                   const isDepleted = client.total > 0 && (client.up + client.down) >= client.total;
                   
@@ -470,8 +544,8 @@ export const ClientManager: React.FC = () => {
                           <span style={{ color: colors.warning }}>📊 Depleted</span>
                         )}
                       </td>
-                      <td>{formatBytes(client.up)}</td>
-                      <td>{formatBytes(client.down)}</td>
+                      <td>{uploadBytes != null ? formatBytes(uploadBytes) : <span style={{ color: colors.text.secondary }}>—</span>}</td>
+                      <td>{downloadBytes != null ? formatBytes(downloadBytes) : <span style={{ color: colors.text.secondary }}>—</span>}</td>
                       <td>
                         {client.total > 0 ? formatBytes(client.total) : (
                           <span style={{ color: colors.text.secondary }}>∞</span>
