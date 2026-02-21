@@ -215,3 +215,133 @@ class TestGetClientTrafficHardening:
             traffic = mgr.get_client_traffic(self._node(), "uid", "vmess")
 
         assert traffic == {}
+
+
+# ---------------------------------------------------------------------------
+# ThreeXUIMonitor – new class with GET-based server status
+# ---------------------------------------------------------------------------
+
+class TestThreeXUIMonitor:
+    """Verify ThreeXUIMonitor uses correct HTTP methods per 3x-UI API v26.2.6."""
+
+    def _build_monitor(self):
+        from server_monitor import ThreeXUIMonitor
+        return ThreeXUIMonitor(decrypt_func=lambda x: x)
+
+    def _node(self):
+        return {"name": "n1", "ip": "1.2.3.4", "port": 443,
+                "base_path": "", "user": "admin", "password": "pass"}
+
+    def test_get_server_status_uses_get(self):
+        monitor = self._build_monitor()
+        body = {
+            "success": True,
+            "obj": {
+                "cpu": 15,
+                "mem": {"current": 512, "total": 2048},
+                "disk": {"current": 10, "total": 100},
+                "swap": {"current": 0, "total": 0},
+                "uptime": 7200,
+                "loads": [0.5, 0.4, 0.3],
+                "xray": {"state": "running", "version": "1.8.10", "uptime": 200},
+                "netTraffic": {"sent": 5000, "recv": 10000},
+            }
+        }
+        with patch.object(monitor, '_get_session') as mock_gs:
+            sess = MagicMock()
+            sess.get.return_value = _make_response(200, body)
+            mock_gs.return_value = (sess, "https://1.2.3.4:443")
+
+            result = monitor.get_server_status(self._node())
+
+        sess.get.assert_called_once_with("https://1.2.3.4:443/panel/api/server/status", timeout=5)
+        assert result["available"] is True
+        assert result["xray"]["running"] is True
+        assert result["xray"]["version"] == "1.8.10"
+        assert result["system"]["cpu"] == 15
+
+    def test_get_server_status_login_failure(self):
+        monitor = self._build_monitor()
+        with patch.object(monitor, '_get_session') as mock_gs:
+            mock_gs.return_value = (None, None)
+            result = monitor.get_server_status(self._node())
+        assert result["available"] is False
+
+    def test_get_inbounds_uses_get(self):
+        monitor = self._build_monitor()
+        inbounds = [{"id": 1, "remark": "test", "protocol": "vless", "up": 100, "down": 200}]
+        body = {"success": True, "obj": inbounds}
+        with patch.object(monitor, '_get_session') as mock_gs:
+            sess = MagicMock()
+            sess.get.return_value = _make_response(200, body)
+            mock_gs.return_value = (sess, "https://1.2.3.4:443")
+
+            result = monitor.get_inbounds(self._node())
+
+        sess.get.assert_called_once_with("https://1.2.3.4:443/panel/api/inbounds/list", timeout=5)
+        assert result["available"] is True
+        assert len(result["inbounds"]) == 1
+
+    def test_get_traffic_aggregates_inbounds(self):
+        monitor = self._build_monitor()
+        inbounds = [
+            {"id": 1, "remark": "ib1", "protocol": "vless", "up": 1000, "down": 2000},
+            {"id": 2, "remark": "ib2", "protocol": "trojan", "up": 500, "down": 800},
+        ]
+        body = {"success": True, "obj": inbounds}
+        with patch.object(monitor, '_get_session') as mock_gs:
+            sess = MagicMock()
+            sess.get.return_value = _make_response(200, body)
+            mock_gs.return_value = (sess, "https://1.2.3.4:443")
+
+            result = monitor.get_traffic(self._node())
+
+        assert result["available"] is True
+        assert len(result["traffic"]) == 2
+        assert result["traffic"][0]["total"] == 3000
+        assert result["traffic"][1]["total"] == 1300
+
+    def test_get_online_clients_uses_post(self):
+        monitor = self._build_monitor()
+        body = {"success": True, "obj": ["user@a.com", "user@b.com"]}
+        with patch.object(monitor, '_get_session') as mock_gs:
+            sess = MagicMock()
+            sess.post.return_value = _make_response(200, body)
+            mock_gs.return_value = (sess, "https://1.2.3.4:443")
+
+            result = monitor.get_online_clients(self._node())
+
+        sess.post.assert_called_once_with("https://1.2.3.4:443/panel/api/inbounds/onlines", timeout=5)
+        assert result["available"] is True
+        assert result["online_clients"] == ["user@a.com", "user@b.com"]
+
+    def test_get_client_traffic_uses_get_with_email(self):
+        monitor = self._build_monitor()
+        body = {"success": True, "obj": {"up": 123, "down": 456, "enable": True, "expiryTime": 0}}
+        with patch.object(monitor, '_get_session') as mock_gs:
+            sess = MagicMock()
+            sess.get.return_value = _make_response(200, body)
+            mock_gs.return_value = (sess, "https://1.2.3.4:443")
+
+            result = monitor.get_client_traffic(self._node(), "user@test.com")
+
+        sess.get.assert_called_once_with(
+            "https://1.2.3.4:443/panel/api/inbounds/getClientTraffics/user@test.com", timeout=5
+        )
+        assert result["available"] is True
+        assert result["upload"] == 123
+        assert result["download"] == 456
+        assert result["total"] == 579
+
+    def test_get_client_traffic_non_dict_obj_returns_unavailable(self):
+        monitor = self._build_monitor()
+        body = {"success": True, "obj": None}
+        with patch.object(monitor, '_get_session') as mock_gs:
+            sess = MagicMock()
+            sess.get.return_value = _make_response(200, body)
+            mock_gs.return_value = (sess, "https://1.2.3.4:443")
+
+            result = monitor.get_client_traffic(self._node(), "user@test.com")
+
+        assert result["available"] is True
+        assert result["upload"] == 0
