@@ -344,6 +344,12 @@ body {
   border-spacing: 0 !important;
 }
 
+/* Ensure consistent row background — no zebra striping */
+.table > tbody > tr > td,
+.table > tbody > tr > th {
+  background-color: transparent !important;
+}
+
 /* Subtle border between rows instead of zebra striping */
 .table > tbody > tr {
   border-bottom: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));

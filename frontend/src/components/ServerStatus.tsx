@@ -103,6 +103,16 @@ export const ServerStatus: React.FC = () => {
     }
   };
 
+  const formatUptime = (seconds: number) => {
+    const d = Math.floor(seconds / 86400);
+    const h = Math.floor((seconds % 86400) / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m`;
+    return `${seconds}s`;
+  };
+
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 B';
     const k = 1024;
@@ -223,6 +233,9 @@ export const ServerStatus: React.FC = () => {
                       ↓ {formatBytes(server.network.download)}
                     </span>
                   )}
+                  <span className="small" style={{ color: colors.text.secondary }}>
+                    ⏱ {formatUptime(server.system.uptime)}
+                  </span>
                   {server.timestamp && (
                     <span className="small" style={{ color: colors.text.secondary }}>
                       {new Date(server.timestamp).toLocaleTimeString()}
