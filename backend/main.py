@@ -24,7 +24,7 @@ from xui_session import login_3xui
 from inbound_manager import InboundManager
 from client_manager import ClientManager
 from utils import parse_field_as_dict
-from server_monitor import ServerMonitor
+from server_monitor import ServerMonitor, ThreeXUIMonitor
 from websocket_manager import manager as ws_manager, handle_websocket_message
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -53,6 +53,7 @@ links_cache = {}
 inbound_mgr = InboundManager(decrypt_func=decrypt, encrypt_func=encrypt)
 client_mgr = ClientManager(decrypt_func=decrypt, encrypt_func=encrypt)
 server_monitor = ServerMonitor(decrypt_func=decrypt)
+xui_monitor = ThreeXUIMonitor(decrypt_func=decrypt)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("sub_manager")
@@ -1457,6 +1458,69 @@ async def get_all_databases_backup(request: Request):
         backups.append(backup)
     
     return {"backups": backups, "count": len(backups)}
+
+
+# === Per-node 3x-UI API endpoints ===
+
+
+def _get_node_or_404(node_id: int) -> Dict:
+    """Вспомогательная функция: получить узел по ID или выбросить 404."""
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        node = conn.execute('SELECT * FROM nodes WHERE id = ?', (node_id,)).fetchone()
+        if not node:
+            raise HTTPException(status_code=404, detail="Node not found")
+        return dict(node)
+
+
+@app.get("/api/v1/nodes/{node_id}/server-status")
+async def get_node_server_status(request: Request, node_id: int):
+    """Статус сервера (CPU, RAM, диск, Xray, сеть) через GET /panel/api/server/status"""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    node = _get_node_or_404(node_id)
+    return xui_monitor.get_server_status(node)
+
+
+@app.get("/api/v1/nodes/{node_id}/traffic")
+async def get_node_traffic(request: Request, node_id: int):
+    """Статистика трафика по inbounds узла"""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    node = _get_node_or_404(node_id)
+    return xui_monitor.get_traffic(node)
+
+
+@app.get("/api/v1/nodes/{node_id}/inbounds")
+async def get_node_inbounds(request: Request, node_id: int):
+    """Список inbounds узла через GET /panel/api/inbounds/list"""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    node = _get_node_or_404(node_id)
+    return xui_monitor.get_inbounds(node)
+
+
+@app.get("/api/v1/nodes/{node_id}/online-clients")
+async def get_node_online_clients(request: Request, node_id: int):
+    """Список активных клиентов узла через POST /panel/api/inbounds/onlines"""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    node = _get_node_or_404(node_id)
+    return xui_monitor.get_online_clients(node)
+
+
+@app.get("/api/v1/nodes/{node_id}/client/{email}/traffic")
+async def get_node_client_traffic(request: Request, node_id: int, email: str):
+    """Трафик клиента по email через GET /panel/api/inbounds/getClientTraffics/{email}"""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    node = _get_node_or_404(node_id)
+    return xui_monitor.get_client_traffic(node, email)
 
 
 # === WebSocket API ===

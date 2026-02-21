@@ -37,6 +37,7 @@ interface ServerStatus {
 export const ServerStatus: React.FC = () => {
   const { colors } = useTheme();
   const [servers, setServers] = useState<ServerStatus[]>([]);
+  const [nodeIds, setNodeIds] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -60,11 +61,21 @@ export const ServerStatus: React.FC = () => {
     setError('');
 
     try {
-      const res = await api.get('/v1/servers/status', {
-        auth: getAuth()
-      });
+      const nodesRes = await api.get('/v1/nodes', { auth: getAuth() });
+      const nodes: Array<{ id: number; name: string }> = nodesRes.data || [];
 
-      setServers(res.data.servers || []);
+      const idMap: Record<string, number> = {};
+      nodes.forEach(n => { idMap[n.name] = n.id; });
+      setNodeIds(idMap);
+
+      const statuses = await Promise.all(
+        nodes.map(n =>
+          api.get(`/v1/nodes/${n.id}/server-status`, { auth: getAuth() })
+            .then(r => r.data as ServerStatus)
+            .catch(() => ({ node: n.name, available: false, error: 'Connection failed' } as ServerStatus))
+        )
+      );
+      setServers(statuses);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load server status');
     } finally {
@@ -72,8 +83,14 @@ export const ServerStatus: React.FC = () => {
     }
   };
 
-  const handleRestartXray = async (nodeId: number) => {
+  const handleRestartXray = async (nodeName: string) => {
     if (!window.confirm('Are you sure you want to restart Xray on this server?')) return;
+
+    const nodeId = nodeIds[nodeName];
+    if (!nodeId) {
+      alert('Node ID not found');
+      return;
+    }
 
     try {
       await api.post(`/v1/servers/${nodeId}/restart-xray`, {}, {
@@ -257,7 +274,7 @@ export const ServerStatus: React.FC = () => {
                           <button
                             className="btn btn-sm"
                             style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: '#000' }}
-                            onClick={() => handleRestartXray(idx + 1)}
+                            onClick={() => handleRestartXray(server.node)}
                             disabled={!server.xray.running}
                           >
                             🔄 Restart
