@@ -8,6 +8,7 @@ WorkingDirectory=/opt/sub-manager
 Environment="PROJECT_DIR=/opt/sub-manager"
 Environment="APP_PORT=666"
 Environment="CACHE_TTL=30"
+Environment="WEB_PATH=my-vpn"
 ExecStartPre=/usr/bin/bash -c "/usr/bin/fuser -k 666/tcp || true"
 ExecStart=/opt/sub-manager/venv/bin/uvicorn main:app --host 127.0.0.1 --port 666
 Restart=always
