@@ -299,10 +299,6 @@ export const ServerStatus: React.FC = () => {
                         <div className="small mb-2" style={{ color: colors.text.secondary }}>Network Traffic</div>
                         <div className="row g-2 small">
                           <div className="col-6">
-                            <span style={{ color: colors.text.secondary }}>↑ Upload:</span>
-                            <span style={{ color: colors.text.primary }} className="ms-1">{formatBytes(server.network.upload)}</span>
-                          </div>
-                          <div className="col-6">
                             <span style={{ color: colors.text.secondary }}>↓ Download:</span>
                             <span style={{ color: colors.text.primary }} className="ms-1">{formatBytes(server.network.download)}</span>
                           </div>
