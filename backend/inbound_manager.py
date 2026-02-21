@@ -181,3 +181,132 @@ class InboundManager:
         except Exception as exc:
             logger.warning(f"Failed to reset inbound traffic: {exc}")
             return False
+    
+    def update_inbound(self, node: Dict, inbound_id: int, updates: Dict) -> bool:
+        """Обновить параметры инбаунда
+        
+        Args:
+            node: Конфигурация узла
+            inbound_id: ID инбаунда
+            updates: Обновления (enable, remark, settings и т.д.)
+            
+        Returns:
+            True при успехе
+        """
+        s = requests.Session()
+        s.verify = False
+        b_path = node.get("base_path", "").strip("/")
+        prefix = f"/{b_path}" if b_path else ""
+        base_url = f"https://{node['ip']}:{node['port']}{prefix}"
+        
+        try:
+            s.post(f"{base_url}/login", 
+                  data={"username": node['user'], "password": self.decrypt(node.get('password', ''))})
+            
+            # Получить текущую конфигурацию инбаунда
+            inbounds = self._fetch_inbounds_from_node(node)
+            current = next((ib for ib in inbounds if ib.get('id') == inbound_id), None)
+            
+            if not current:
+                logger.warning(f"Inbound {inbound_id} not found on {node['name']}")
+                return False
+            
+            # Обновить конфигурацию
+            current.update(updates)
+            
+            res = s.post(f"{base_url}/panel/api/inbounds/update/{inbound_id}", 
+                        json=current, timeout=5)
+            return res.status_code == 200
+        except Exception as exc:
+            logger.warning(f"Failed to update inbound on {node['name']}: {exc}")
+            return False
+    
+    def batch_enable_inbounds(self, nodes: List[Dict], inbound_ids: List[int], enable: bool) -> Dict:
+        """Включить/выключить несколько инбаундов
+        
+        Args:
+            nodes: Список узлов
+            inbound_ids: Список ID инбаундов
+            enable: True для включения, False для выключения
+            
+        Returns:
+            Результаты операции
+        """
+        results = []
+        for node in nodes:
+            node_inbounds = self._fetch_inbounds_from_node(node)
+            for inbound in node_inbounds:
+                if inbound.get('id') in inbound_ids:
+                    success = self.update_inbound(node, inbound['id'], {"enable": enable})
+                    results.append({
+                        "node": node["name"],
+                        "inbound_id": inbound['id'],
+                        "remark": inbound.get('remark', ''),
+                        "success": success,
+                        "enabled": enable
+                    })
+        
+        return {
+            "results": results,
+            "total": len(results),
+            "successful": sum(1 for r in results if r['success'])
+        }
+    
+    def batch_update_inbounds(self, nodes: List[Dict], inbound_ids: List[int], updates: Dict) -> Dict:
+        """Массово обновить несколько инбаундов
+        
+        Args:
+            nodes: Список узлов
+            inbound_ids: Список ID инбаундов
+            updates: Обновления для применения
+            
+        Returns:
+            Результаты операции
+        """
+        results = []
+        for node in nodes:
+            node_inbounds = self._fetch_inbounds_from_node(node)
+            for inbound in node_inbounds:
+                if inbound.get('id') in inbound_ids:
+                    success = self.update_inbound(node, inbound['id'], updates)
+                    results.append({
+                        "node": node["name"],
+                        "inbound_id": inbound['id'],
+                        "remark": inbound.get('remark', ''),
+                        "success": success
+                    })
+        
+        return {
+            "results": results,
+            "total": len(results),
+            "successful": sum(1 for r in results if r['success'])
+        }
+    
+    def batch_delete_inbounds(self, nodes: List[Dict], inbound_ids: List[int]) -> Dict:
+        """Массово удалить несколько инбаундов
+        
+        Args:
+            nodes: Список узлов
+            inbound_ids: Список ID инбаундов для удаления
+            
+        Returns:
+            Результаты операции
+        """
+        results = []
+        for node in nodes:
+            node_inbounds = self._fetch_inbounds_from_node(node)
+            for inbound in node_inbounds:
+                if inbound.get('id') in inbound_ids:
+                    success = self.delete_inbound(node, inbound['id'])
+                    results.append({
+                        "node": node["name"],
+                        "inbound_id": inbound['id'],
+                        "remark": inbound.get('remark', ''),
+                        "success": success
+                    })
+        
+        return {
+            "results": results,
+            "total": len(results),
+            "successful": sum(1 for r in results if r['success'])
+        }

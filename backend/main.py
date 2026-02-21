@@ -7,9 +7,10 @@ import datetime
 import os
 import logging
 import time
+import asyncio
 from pathlib import Path
 from typing import List, Dict, Optional
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI, Request, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from urllib.parse import urlparse
@@ -22,6 +23,7 @@ from crypto import encrypt, decrypt
 from inbound_manager import InboundManager
 from client_manager import ClientManager
 from server_monitor import ServerMonitor
+from websocket_manager import manager as ws_manager, handle_websocket_message
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -65,6 +67,19 @@ def init_db():
         except:
             pass
         conn.execute('CREATE TABLE IF NOT EXISTS stats (email TEXT PRIMARY KEY, count INTEGER DEFAULT 0, last_download TEXT)')
+        
+        # Таблица custom subscription groups
+        conn.execute('''CREATE TABLE IF NOT EXISTS subscription_groups 
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT, 
+                      name TEXT UNIQUE NOT NULL,
+                      identifier TEXT UNIQUE NOT NULL,
+                      description TEXT,
+                      email_patterns TEXT,
+                      node_filters TEXT,
+                      protocol_filter TEXT,
+                      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+        
         conn.commit()
 
 
@@ -600,14 +615,35 @@ async def get_sub_grouped(identifier: str, protocol: Optional[str] = None, nodes
         conn.row_factory = sqlite3.Row
         all_nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
         
-        # Фильтрация по nodes
-        if nodes:
-            node_names = [n.strip() for n in nodes.split(',')]
-            all_nodes = [n for n in all_nodes if n['name'] in node_names]
-        
-        # Найти все email содержащие identifier
-        all_emails = get_emails(all_nodes)
-        matching_emails = [e for e in all_emails if identifier.lower() in e.lower()]
+        # Проверить custom group
+        custom_group = conn.execute('SELECT * FROM subscription_groups WHERE identifier = ?', (identifier,)).fetchone()
+        if custom_group:
+            custom_group = dict(custom_group)
+            # Использовать настройки группы
+            if custom_group.get('node_filters'):
+                node_names = json.loads(custom_group['node_filters'])
+                all_nodes = [n for n in all_nodes if n['name'] in node_names]
+            
+            if custom_group.get('protocol_filter'):
+                protocol = custom_group['protocol_filter']
+            
+            # Получить email patterns
+            email_patterns = json.loads(custom_group.get('email_patterns', '[]'))
+            
+            all_emails = get_emails(all_nodes)
+            matching_emails = []
+            for pattern in email_patterns:
+                matching_emails.extend([e for e in all_emails if pattern.lower() in e.lower()])
+            matching_emails = list(set(matching_emails))  # Удалить дубликаты
+        else:
+            # Фильтрация по nodes
+            if nodes:
+                node_names = [n.strip() for n in nodes.split(',')]
+                all_nodes = [n for n in all_nodes if n['name'] in node_names]
+            
+            # Найти все email содержащие identifier
+            all_emails = get_emails(all_nodes)
+            matching_emails = [e for e in all_emails if identifier.lower() in e.lower()]
         
         if not matching_emails:
             return PlainTextResponse(content="No matching clients found", status_code=404)
@@ -629,6 +665,131 @@ async def get_sub_grouped(identifier: str, protocol: Optional[str] = None, nodes
             return PlainTextResponse(content=base64.b64encode("\n".join(all_links).encode()).decode())
         
         return PlainTextResponse(content="Not found", status_code=404)
+
+
+# === Subscription Groups Management API ===
+
+
+@app.get("/api/v1/subscription-groups")
+async def list_subscription_groups(request: Request):
+    """Получить список custom subscription groups"""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        groups = [dict(row) for row in conn.execute('SELECT * FROM subscription_groups ORDER BY created_at DESC').fetchall()]
+        
+        # Распарсить JSON поля
+        for group in groups:
+            group['email_patterns'] = json.loads(group.get('email_patterns', '[]'))
+            group['node_filters'] = json.loads(group.get('node_filters', '[]'))
+        
+        return {"groups": groups, "count": len(groups)}
+
+
+@app.post("/api/v1/subscription-groups")
+async def create_subscription_group(request: Request, data: Dict):
+    """Создать custom subscription group
+    
+    Payload:
+    {
+        "name": "VIP Clients",
+        "identifier": "vip-clients",
+        "description": "VIP clients subscription",
+        "email_patterns": ["vip", "premium"],
+        "node_filters": ["Node1", "Node2"],
+        "protocol_filter": "vless"
+    }
+    """
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    name = data.get("name")
+    identifier = data.get("identifier")
+    description = data.get("description", "")
+    email_patterns = json.dumps(data.get("email_patterns", []))
+    node_filters = json.dumps(data.get("node_filters", []))
+    protocol_filter = data.get("protocol_filter")
+    
+    if not name or not identifier:
+        raise HTTPException(status_code=400, detail="name and identifier required")
+    
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute('''INSERT INTO subscription_groups 
+                          (name, identifier, description, email_patterns, node_filters, protocol_filter)
+                          VALUES (?, ?, ?, ?, ?, ?)''',
+                        (name, identifier, description, email_patterns, node_filters, protocol_filter))
+            conn.commit()
+        return {"status": "success", "identifier": identifier}
+    except Exception as e:
+        logger.error(f"Error creating subscription group: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/api/v1/subscription-groups/{group_id}")
+async def update_subscription_group(request: Request, group_id: int, data: Dict):
+    """Обновить custom subscription group"""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    updates = []
+    params = []
+    
+    if "name" in data:
+        updates.append("name = ?")
+        params.append(data["name"])
+    if "identifier" in data:
+        updates.append("identifier = ?")
+        params.append(data["identifier"])
+    if "description" in data:
+        updates.append("description = ?")
+        params.append(data["description"])
+    if "email_patterns" in data:
+        updates.append("email_patterns = ?")
+        params.append(json.dumps(data["email_patterns"]))
+    if "node_filters" in data:
+        updates.append("node_filters = ?")
+        params.append(json.dumps(data["node_filters"]))
+    if "protocol_filter" in data:
+        updates.append("protocol_filter = ?")
+        params.append(data["protocol_filter"])
+    
+    if not updates:
+        raise HTTPException(status_code=400, detail="No updates provided")
+    
+    updates.append("updated_at = CURRENT_TIMESTAMP")
+    params.append(group_id)
+    
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(f"UPDATE subscription_groups SET {', '.join(updates)} WHERE id = ?", params)
+            conn.commit()
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Error updating subscription group: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/v1/subscription-groups/{group_id}")
+async def delete_subscription_group(request: Request, group_id: int):
+    """Удалить custom subscription group"""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute('DELETE FROM subscription_groups WHERE id = ?', (group_id,))
+            conn.commit()
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"Error deleting subscription group: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # === Inbounds Management API ===
@@ -737,6 +898,130 @@ async def delete_inbound(request: Request, inbound_id: int, node_id: int):
     
     success = inbound_mgr.delete_inbound(node, inbound_id)
     return {"success": success}
+
+
+@app.post("/api/v1/inbounds/batch-enable")
+async def batch_enable_inbounds(request: Request, data: Dict):
+    """Массово включить/выключить инбаунды
+    
+    Payload:
+    {
+        "node_ids": [1, 2],  // или null для всех
+        "inbound_ids": [1, 2, 3],
+        "enable": true
+    }
+    """
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401)
+    
+    node_ids = data.get("node_ids")
+    inbound_ids = data.get("inbound_ids", [])
+    enable = data.get("enable", True)
+    
+    if not inbound_ids:
+        raise HTTPException(status_code=400, detail="inbound_ids required")
+    
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        if node_ids:
+            placeholders = ','.join('?' * len(node_ids))
+            nodes = [dict(n) for n in conn.execute(f'SELECT * FROM nodes WHERE id IN ({placeholders})', node_ids).fetchall()]
+        else:
+            nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
+    
+    result = inbound_mgr.batch_enable_inbounds(nodes, inbound_ids, enable)
+    
+    # Broadcast WebSocket update
+    await ws_manager.broadcast_inbound_update({
+        "action": "batch_enable",
+        "result": result
+    })
+    
+    return result
+
+
+@app.post("/api/v1/inbounds/batch-update")
+async def batch_update_inbounds(request: Request, data: Dict):
+    """Массово обновить инбаунды
+    
+    Payload:
+    {
+        "node_ids": [1, 2],  // или null для всех
+        "inbound_ids": [1, 2, 3],
+        "updates": {
+            "remark": "New Remark",
+            "enable": true
+        }
+    }
+    """
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401)
+    
+    node_ids = data.get("node_ids")
+    inbound_ids = data.get("inbound_ids", [])
+    updates = data.get("updates", {})
+    
+    if not inbound_ids:
+        raise HTTPException(status_code=400, detail="inbound_ids required")
+    
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        if node_ids:
+            placeholders = ','.join('?' * len(node_ids))
+            nodes = [dict(n) for n in conn.execute(f'SELECT * FROM nodes WHERE id IN ({placeholders})', node_ids).fetchall()]
+        else:
+            nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
+    
+    result = inbound_mgr.batch_update_inbounds(nodes, inbound_ids, updates)
+    
+    # Broadcast WebSocket update
+    await ws_manager.broadcast_inbound_update({
+        "action": "batch_update",
+        "result": result
+    })
+    
+    return result
+
+
+@app.post("/api/v1/inbounds/batch-delete")
+async def batch_delete_inbounds(request: Request, data: Dict):
+    """Массово удалить инбаунды
+    
+    Payload:
+    {
+        "node_ids": [1, 2],  // или null для всех
+        "inbound_ids": [1, 2, 3]
+    }
+    """
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401)
+    
+    node_ids = data.get("node_ids")
+    inbound_ids = data.get("inbound_ids", [])
+    
+    if not inbound_ids:
+        raise HTTPException(status_code=400, detail="inbound_ids required")
+    
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        if node_ids:
+            placeholders = ','.join('?' * len(node_ids))
+            nodes = [dict(n) for n in conn.execute(f'SELECT * FROM nodes WHERE id IN ({placeholders})', node_ids).fetchall()]
+        else:
+            nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
+    
+    result = inbound_mgr.batch_delete_inbounds(nodes, inbound_ids)
+    
+    # Broadcast WebSocket update
+    await ws_manager.broadcast_inbound_update({
+        "action": "batch_delete",
+        "result": result
+    })
+    
+    return result
 
 
 # === Clients Management API ===
@@ -1149,6 +1434,60 @@ async def get_all_databases_backup(request: Request):
         backups.append(backup)
     
     return {"backups": backups, "count": len(backups)}
+
+
+# === WebSocket API ===
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint для real-time обновлений"""
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            data = await websocket.receive_json()
+            await handle_websocket_message(websocket, data)
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
+        ws_manager.disconnect(websocket)
+
+
+# Background task для периодической отправки обновлений
+async def broadcast_updates():
+    """Периодически отправлять обновления через WebSocket"""
+    while True:
+        try:
+            await asyncio.sleep(5)  # Каждые 5 секунд
+            
+            # Получаем данные для всех подключенных клиентов
+            if len(ws_manager.active_connections) > 0:
+                with sqlite3.connect(DB_PATH) as conn:
+                    conn.row_factory = sqlite3.Row
+                    nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
+                
+                # Server status update
+                if any("server_status" in ws_manager.subscriptions.get(conn, set()) 
+                       for conn in ws_manager.active_connections):
+                    statuses = server_monitor.get_all_servers_status(nodes)
+                    await ws_manager.broadcast_server_status({"servers": statuses})
+                
+                # Traffic update
+                if any("traffic" in ws_manager.subscriptions.get(conn, set()) 
+                       for conn in ws_manager.active_connections):
+                    stats = client_mgr.get_traffic_stats(nodes, "client")
+                    await ws_manager.broadcast_traffic_update(stats)
+                
+        except Exception as e:
+            logger.error(f"Broadcast updates error: {e}")
+            await asyncio.sleep(5)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Запустить background tasks при старте приложения"""
+    asyncio.create_task(broadcast_updates())
 
 
 if __name__ == "__main__":
