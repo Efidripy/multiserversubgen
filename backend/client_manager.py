@@ -6,8 +6,13 @@ import requests
 import json
 import logging
 import uuid
+import sys
+from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
+
+sys.path.insert(0, str(Path(__file__).parent))
+from xui_session import login_3xui
 
 logger = logging.getLogger("sub_manager")
 
@@ -37,9 +42,9 @@ class ClientManager:
         
         try:
             password = self.decrypt(node.get('password', ''))
-            s.post(f"{base_url}/login", 
-                  data={"username": node['user'], "password": password},
-                  timeout=5)
+            if not login_3xui(s, base_url, node['user'], password):
+                logger.warning(f"Failed to login to {node['name']}")
+                return None, None
         except Exception as exc:
             logger.warning(f"Failed to login to {node['name']}: {exc}")
             return None, None
