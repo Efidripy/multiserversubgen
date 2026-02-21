@@ -211,7 +211,9 @@ export const App: React.FC = () => {
 
       {/* Tab Content */}
       <div className="container-fluid py-4">
-        {renderTabContent()}
+        <div className="tab-panel">
+          {renderTabContent()}
+        </div>
       </div>
     </div>
   );
