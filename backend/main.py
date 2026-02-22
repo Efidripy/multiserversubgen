@@ -522,6 +522,22 @@ async def list_nodes(request: Request):
         return JSONResponse(content=result, headers={"Cache-Control": "private, max-age=300"})
 
 
+@app.get("/api/v1/nodes/list")
+async def list_nodes_simple(request: Request):
+    """Получить упрощённый список узлов (id + name) для выбора в UI"""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        nodes = conn.execute('SELECT id, name FROM nodes').fetchall()
+        return JSONResponse(
+            content=[{"id": n["id"], "name": n["name"]} for n in nodes],
+            headers={"Cache-Control": "private, max-age=300"},
+        )
+
+
 @app.post("/api/v1/nodes")
 async def add_node(request: Request, data: Dict):
     """Добавить новый узел"""
@@ -1140,6 +1156,65 @@ async def batch_add_clients(request: Request, data: Dict):
             nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
     
     results = client_mgr.batch_add_clients(nodes, clients_configs)
+    return results
+
+
+@app.post("/api/v1/clients/add-to-nodes")
+async def add_client_to_nodes(request: Request, data: Dict):
+    """Добавить одного клиента на несколько узлов с автогенерацией UUID и subId=email.
+
+    Payload:
+    {
+        "email": "user@example.com",
+        "flow": "",                      // "", "xtls-rprx-vision", "xtls-rprx-vision-udp443"
+        "inbound_id": 1,
+        "totalGB": 0,
+        "expiryTime": 0,
+        "enable": true,
+        "node_ids": [1, 2, 3]           // null или отсутствует = все серверы
+    }
+    """
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401)
+
+    email = data.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="email is required")
+
+    inbound_id = data.get("inbound_id")
+    if inbound_id is None:
+        raise HTTPException(status_code=400, detail="inbound_id is required")
+
+    flow = data.get("flow", "")
+    totalGB = data.get("totalGB", 0)
+    expiryTime = data.get("expiryTime", 0)
+    enable = data.get("enable", True)
+    node_ids = data.get("node_ids")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        if node_ids:
+            placeholders = ','.join('?' * len(node_ids))
+            nodes = [dict(n) for n in conn.execute(
+                f'SELECT * FROM nodes WHERE id IN ({placeholders})', node_ids
+            ).fetchall()]
+        else:
+            nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
+
+    try:
+        results = client_mgr.add_client_to_multiple_nodes(
+            nodes=nodes,
+            email=email,
+            inbound_id=inbound_id,
+            flow=flow,
+            totalGB=totalGB,
+            expiryTime=expiryTime,
+            enable=enable,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     return results
 
 
