@@ -520,6 +520,77 @@ class ClientManager:
         
         return {"results": results}
     
+    def add_client_to_multiple_nodes(self, nodes: List[Dict], email: str, inbound_id: int,
+                                      flow: str = "", totalGB: int = 0,
+                                      expiryTime: int = 0, enable: bool = True) -> Dict:
+        """Добавить клиента на несколько узлов одновременно с автогенерацией UUID и subId=email.
+
+        Args:
+            nodes: Список узлов для добавления
+            email: Email клиента (используется также как subId)
+            inbound_id: ID инбаунда на каждом узле
+            flow: Поток XTLS ("", "xtls-rprx-vision", "xtls-rprx-vision-udp443")
+            totalGB: Лимит трафика в GB
+            expiryTime: Время истечения в мс
+            enable: Активен ли клиент
+
+        Returns:
+            Словарь с результатами по каждому узлу
+        """
+        valid_flows = {"", "xtls-rprx-vision", "xtls-rprx-vision-udp443"}
+        if flow not in valid_flows:
+            raise ValueError(f"Invalid flow value. Must be one of: {sorted(valid_flows)}")
+
+        results = []
+        total = len(nodes)
+        successful = 0
+        failed = 0
+
+        for node in nodes:
+            # Fetch inbounds to determine protocol
+            inbounds = self._fetch_inbounds_from_node(node)
+            inbound = next((ib for ib in inbounds if ib.get("id") == inbound_id), None)
+
+            if not inbound:
+                results.append({
+                    "node": node["name"],
+                    "success": False,
+                    "error": f"Inbound {inbound_id} not found"
+                })
+                failed += 1
+                continue
+
+            protocol = inbound.get("protocol", "")
+
+            # Build client config — auto-generate UUID; set subId equal to email
+            new_client: Dict = {
+                "email": email,
+                "subId": email,
+                "enable": enable,
+                "expiryTime": expiryTime,
+                "totalGB": totalGB,
+                "flow": flow,
+            }
+
+            if protocol == "trojan":
+                new_client["password"] = str(uuid.uuid4())
+            else:
+                new_client["id"] = str(uuid.uuid4())
+
+            success = self.add_client(node, inbound_id, new_client)
+            entry: Dict = {"node": node["name"], "success": success}
+            if not success:
+                entry["error"] = "Failed to add client"
+                failed += 1
+            else:
+                successful += 1
+            results.append(entry)
+
+        return {
+            "results": results,
+            "summary": {"total": total, "successful": successful, "failed": failed},
+        }
+
     def get_online_clients(self, nodes: List[Dict]) -> List[Dict]:
         """Получить список активных (онлайн) клиентов
         
