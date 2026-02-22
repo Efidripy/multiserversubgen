@@ -340,12 +340,12 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"{flow_param}&type={network}#{c['email']} ({n['name']})"
+                            f"{flow_param}&type={network}#{n['name']}"
                         )
                     else:
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=tls"
-                            f"&sni={sni}&fp={fp}{flow_param}&type={network}#{c['email']} ({n['name']})"
+                            f"&sni={sni}&fp={fp}{flow_param}&type={network}#{n['name']}"
                         )
                 
                 elif protocol == "vmess":
@@ -376,13 +376,13 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
                         links.append(
                             f"trojan://{c['password']}@{n['ip']}:443?security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"&type={network}#{c['email']} ({n['name']})"
+                            f"&type={network}#{n['name']}"
                         )
                     else:
                         sni = ((s_set.get('tlsSettings', {}) or {}).get('serverNames', [''] or [''])[0])
                         links.append(
                             f"trojan://{c['password']}@{n['ip']}:443?security=tls"
-                            f"&sni={sni}&type={s_set.get('network','tcp')}#{c['email']} ({n['name']})"
+                            f"&sni={sni}&type={s_set.get('network','tcp')}#{n['name']}"
                         )
     
     links_cache[email] = (now_link, links)
@@ -439,12 +439,12 @@ def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"{flow_param}&type={network}#{c['email']} ({n['name']})"
+                            f"{flow_param}&type={network}#{n['name']}"
                         )
                     else:
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=tls"
-                            f"&sni={sni}&fp={fp}{flow_param}&type={network}#{c['email']} ({n['name']})"
+                            f"&sni={sni}&fp={fp}{flow_param}&type={network}#{n['name']}"
                         )
                 
                 elif protocol == "vmess":
@@ -475,13 +475,13 @@ def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[
                         links.append(
                             f"trojan://{c['password']}@{n['ip']}:443?security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"&type={network}#{c['email']} ({n['name']})"
+                            f"&type={network}#{n['name']}"
                         )
                     else:
                         sni = ((s_set.get('tlsSettings', {}) or {}).get('serverNames', [''] or [''])[0])
                         links.append(
                             f"trojan://{c['password']}@{n['ip']}:443?security=tls"
-                            f"&sni={sni}&type={s_set.get('network','tcp')}#{c['email']} ({n['name']})"
+                            f"&sni={sni}&type={s_set.get('network','tcp')}#{n['name']}"
                         )
     
     links_cache[cache_key] = (now_link, links)
