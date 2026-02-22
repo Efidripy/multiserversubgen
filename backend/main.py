@@ -333,17 +333,19 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
                     sni = (r.get('serverNames') or [''])[0]
                     fp = r.get('fingerprint', 'chrome')
                     network = s_set.get('network', 'tcp')
+                    flow = c.get('flow', '')
+                    flow_param = f"&flow={flow}" if flow else ""
                     
                     if security == "reality":
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"&type={network}#{c['email']} ({n['name']})"
+                            f"{flow_param}&type={network}#{c['email']} ({n['name']})"
                         )
                     else:
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=tls"
-                            f"&sni={sni}&fp={fp}&type={network}#{c['email']} ({n['name']})"
+                            f"&sni={sni}&fp={fp}{flow_param}&type={network}#{c['email']} ({n['name']})"
                         )
                 
                 elif protocol == "vmess":
@@ -430,17 +432,19 @@ def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[
                     sni = (r.get('serverNames') or [''])[0]
                     fp = r.get('fingerprint', 'chrome')
                     network = s_set.get('network', 'tcp')
+                    flow = c.get('flow', '')
+                    flow_param = f"&flow={flow}" if flow else ""
                     
                     if security == "reality":
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"&type={network}#{c['email']} ({n['name']})"
+                            f"{flow_param}&type={network}#{c['email']} ({n['name']})"
                         )
                     else:
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=tls"
-                            f"&sni={sni}&fp={fp}&type={network}#{c['email']} ({n['name']})"
+                            f"&sni={sni}&fp={fp}{flow_param}&type={network}#{c['email']} ({n['name']})"
                         )
                 
                 elif protocol == "vmess":
