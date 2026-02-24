@@ -333,17 +333,19 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
                     sni = (r.get('serverNames') or [''])[0]
                     fp = r.get('fingerprint', 'chrome')
                     network = s_set.get('network', 'tcp')
+                    flow = c.get('flow', '')
+                    flow_param = f"&flow={flow}" if flow else ""
                     
                     if security == "reality":
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"&type={network}#{c['email']} ({n['name']})"
+                            f"{flow_param}&type={network}#{n['name']}"
                         )
                     else:
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=tls"
-                            f"&sni={sni}&fp={fp}&type={network}#{c['email']} ({n['name']})"
+                            f"&sni={sni}&fp={fp}{flow_param}&type={network}#{n['name']}"
                         )
                 
                 elif protocol == "vmess":
@@ -374,13 +376,13 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
                         links.append(
                             f"trojan://{c['password']}@{n['ip']}:443?security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"&type={network}#{c['email']} ({n['name']})"
+                            f"&type={network}#{n['name']}"
                         )
                     else:
                         sni = ((s_set.get('tlsSettings', {}) or {}).get('serverNames', [''] or [''])[0])
                         links.append(
                             f"trojan://{c['password']}@{n['ip']}:443?security=tls"
-                            f"&sni={sni}&type={s_set.get('network','tcp')}#{c['email']} ({n['name']})"
+                            f"&sni={sni}&type={s_set.get('network','tcp')}#{n['name']}"
                         )
     
     links_cache[email] = (now_link, links)
@@ -430,17 +432,19 @@ def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[
                     sni = (r.get('serverNames') or [''])[0]
                     fp = r.get('fingerprint', 'chrome')
                     network = s_set.get('network', 'tcp')
+                    flow = c.get('flow', '')
+                    flow_param = f"&flow={flow}" if flow else ""
                     
                     if security == "reality":
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"&type={network}#{c['email']} ({n['name']})"
+                            f"{flow_param}&type={network}#{n['name']}"
                         )
                     else:
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=tls"
-                            f"&sni={sni}&fp={fp}&type={network}#{c['email']} ({n['name']})"
+                            f"&sni={sni}&fp={fp}{flow_param}&type={network}#{n['name']}"
                         )
                 
                 elif protocol == "vmess":
@@ -471,13 +475,13 @@ def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[
                         links.append(
                             f"trojan://{c['password']}@{n['ip']}:443?security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"&type={network}#{c['email']} ({n['name']})"
+                            f"&type={network}#{n['name']}"
                         )
                     else:
                         sni = ((s_set.get('tlsSettings', {}) or {}).get('serverNames', [''] or [''])[0])
                         links.append(
                             f"trojan://{c['password']}@{n['ip']}:443?security=tls"
-                            f"&sni={sni}&type={s_set.get('network','tcp')}#{c['email']} ({n['name']})"
+                            f"&sni={sni}&type={s_set.get('network','tcp')}#{n['name']}"
                         )
     
     links_cache[cache_key] = (now_link, links)
@@ -520,6 +524,22 @@ async def list_nodes(request: Request):
                 node_dict['password'] = decrypt(node_dict['password'])
             result.append(node_dict)
         return JSONResponse(content=result, headers={"Cache-Control": "private, max-age=300"})
+
+
+@app.get("/api/v1/nodes/list")
+async def list_nodes_simple(request: Request):
+    """Получить упрощённый список узлов (id + name) для выбора в UI"""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        nodes = conn.execute('SELECT id, name FROM nodes').fetchall()
+        return JSONResponse(
+            content=[{"id": n["id"], "name": n["name"]} for n in nodes],
+            headers={"Cache-Control": "private, max-age=300"},
+        )
 
 
 @app.post("/api/v1/nodes")
@@ -1140,6 +1160,65 @@ async def batch_add_clients(request: Request, data: Dict):
             nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
     
     results = client_mgr.batch_add_clients(nodes, clients_configs)
+    return results
+
+
+@app.post("/api/v1/clients/add-to-nodes")
+async def add_client_to_nodes(request: Request, data: Dict):
+    """Добавить одного клиента на несколько узлов с автогенерацией UUID и subId=email.
+
+    Payload:
+    {
+        "email": "user@example.com",
+        "flow": "",                      // "", "xtls-rprx-vision", "xtls-rprx-vision-udp443"
+        "inbound_id": 1,
+        "totalGB": 0,
+        "expiryTime": 0,
+        "enable": true,
+        "node_ids": [1, 2, 3]           // null или отсутствует = все серверы
+    }
+    """
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401)
+
+    email = data.get("email")
+    if not email:
+        raise HTTPException(status_code=400, detail="email is required")
+
+    inbound_id = data.get("inbound_id")
+    if inbound_id is None:
+        raise HTTPException(status_code=400, detail="inbound_id is required")
+
+    flow = data.get("flow", "")
+    totalGB = data.get("totalGB", 0)
+    expiryTime = data.get("expiryTime", 0)
+    enable = data.get("enable", True)
+    node_ids = data.get("node_ids")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        if node_ids:
+            placeholders = ','.join('?' * len(node_ids))
+            nodes = [dict(n) for n in conn.execute(
+                f'SELECT * FROM nodes WHERE id IN ({placeholders})', node_ids
+            ).fetchall()]
+        else:
+            nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
+
+    try:
+        results = client_mgr.add_client_to_multiple_nodes(
+            nodes=nodes,
+            email=email,
+            inbound_id=inbound_id,
+            flow=flow,
+            totalGB=totalGB,
+            expiryTime=expiryTime,
+            enable=enable,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     return results
 
 
