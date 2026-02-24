@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
+import { AddClientMultiServer } from './AddClientMultiServer';
 
 interface Client {
   id: number;
@@ -324,6 +325,7 @@ export const ClientManager: React.FC = () => {
   
   return (
     <div className="client-manager">
+      <AddClientMultiServer />
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
           <h5 className="mb-0" style={{ color: colors.accent }}>👥 Client Management</h5>
