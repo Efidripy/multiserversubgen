@@ -31,17 +31,24 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   const [groups, setGroups] = useState<SubscriptionGroup[]>([]);
   const [filterProtocol, setFilterProtocol] = useState('');
   const [selectedNodes, setSelectedNodes] = useState<string[]>([]);
+  const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
 
   const loadEmails = async () => {
     setLoading(true);
+    setError('');
+    setSuccessMessage('');
     try {
       const res = await api.get('/v1/emails', {
         auth: { username: getAuth().user, password: getAuth().password }
       });
       setEmails(res.data.emails || []);
       setStats(res.data.stats || {});
-    } catch (err) {
+      setSuccessMessage('Emails refreshed successfully');
+      setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err: any) {
       console.error('Failed to load subscriptions:', err);
+      setError(err.response?.data?.detail || 'Failed to refresh emails');
     } finally {
       setLoading(false);
     }
@@ -153,7 +160,16 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
           <h5 className="mb-0" style={{ color: colors.accent }}>🔗 Subscriptions</h5>
-          <div className="btn-group" role="group">
+          <div className="d-flex align-items-center gap-2">
+            <button
+              className="btn btn-sm"
+              style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+              onClick={loadEmails}
+              disabled={loading}
+            >
+              {loading ? '⏳' : '🔄'} Refresh Emails
+            </button>
+            <div className="btn-group" role="group">
             <button
               className="btn btn-sm"
               style={{
@@ -177,8 +193,19 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               📁 Grouped
             </button>
           </div>
+          </div>
         </div>
         
+        {error && (
+          <div className="alert mb-2" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+            {error}
+          </div>
+        )}
+        {successMessage && (
+          <div className="alert mb-2" style={{ backgroundColor: colors.success + '22', borderColor: colors.success, color: colors.success }}>
+            {successMessage}
+          </div>
+        )}
         {/* Фильтры */}
         <div className="row g-2 mb-2">
           <div className="col-md-3">

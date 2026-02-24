@@ -8,6 +8,7 @@
 - ☀️ Светлая и 🌙 темная тема
 - Автоматическое сохранение выбора
 - Переключатель в навигации
+- [Screenshots](./screens.md)
 
 ### 📊 Новые компоненты
 
@@ -277,8 +278,7 @@ VITE_BASE="/my-panel/" npm run build
    - Проверьте доступ к node panel серверам
    - Убедитесь в правильности credentials
 
-## 🔄 Миграция с v3.0
-
+## 🔄 Миграция с прошлых версий
 1. Создайте backup текущей базы
 2. Запустите `sudo ./install.sh` и выберите "Обновить"
 3. Frontend автоматически пересоберется с новыми компонентами
@@ -334,4 +334,4 @@ MIT License - используйте свободно!
 
 ---
 
-**Multi-Server Manager v3.1** - Made with ❤️ by developers, for developers
+**Multi-Server Manager v3.1** - Made with ❤️
