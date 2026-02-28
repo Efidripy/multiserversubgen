@@ -1,26 +1,28 @@
 type RuntimeAuth = {
   username: string;
   password: string;
+  totpCode: string;
 };
 
 const USERNAME_KEY = 'sub_auth_user';
 const LEGACY_KEY = 'sub_auth';
 
-let runtimeAuth: RuntimeAuth = { username: '', password: '' };
+let runtimeAuth: RuntimeAuth = { username: '', password: '', totpCode: '' };
 
-export function setAuthCredentials(username: string, password: string): void {
-  runtimeAuth = { username, password };
+export function setAuthCredentials(username: string, password: string, totpCode: string = ''): void {
+  runtimeAuth = { username, password, totpCode };
 }
 
 export function clearAuthCredentials(): void {
-  runtimeAuth = { username: '', password: '' };
+  runtimeAuth = { username: '', password: '', totpCode: '' };
 }
 
-export function getAuth(): { username: string; password: string; user: string } {
+export function getAuth(): { username: string; password: string; user: string; totpCode: string } {
   return {
     username: runtimeAuth.username,
     password: runtimeAuth.password,
     user: runtimeAuth.username,
+    totpCode: runtimeAuth.totpCode,
   };
 }
 

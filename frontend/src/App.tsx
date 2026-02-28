@@ -7,16 +7,19 @@ import { InboundManager } from './components/InboundManager';
 import { ClientManager } from './components/ClientManager';
 import { TrafficStats } from './components/TrafficStats';
 import { BackupManager } from './components/BackupManager';
+import { MonitoringDashboard } from './components/MonitoringDashboard';
 import { Sidebar } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
 import { clearAuthCredentials, loadRememberedUsername, rememberUsername, setAuthCredentials } from './auth';
 
-type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'backup' | 'subscriptions';
+type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 
 export const App: React.FC = () => {
   const { theme, toggleTheme, colors } = useTheme();
   const [user, setUser] = useState('');
   const [password, setPassword] = useState('');
+  const [totpCode, setTotpCode] = useState('');
+  const [mfaEnabled, setMfaEnabled] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authError, setAuthError] = useState('');
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
@@ -25,19 +28,26 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     setUser(loadRememberedUsername());
+    api.get('/v1/auth/mfa-status')
+      .then((res) => setMfaEnabled(Boolean(res.data?.enabled)))
+      .catch(() => setMfaEnabled(false));
   }, []);
 
   const handleLogin = async () => {
     setAuthError('');
     try {
+      const headers: Record<string, string> = {};
+      if (totpCode.trim()) headers['X-TOTP-Code'] = totpCode.trim();
       const res = await api.get('/v1/auth/verify', {
-        auth: { username: user, password }
+        auth: { username: user, password },
+        headers,
       });
       if (res.data.user) {
-        setAuthCredentials(user, password);
+        setAuthCredentials(user, password, totpCode.trim());
         setIsAuthenticated(true);
         rememberUsername(user);
         setPassword('');
+        setTotpCode('');
       }
     } catch (err: any) {
       setAuthError(err.response?.data?.detail || 'Authentication failed');
@@ -97,6 +107,21 @@ export const App: React.FC = () => {
                 required
               />
             </div>
+            {mfaEnabled && (
+              <div className="mb-3">
+                <label className="form-label" style={{ color: colors.text.secondary }}>TOTP Code</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  required
+                  inputMode="numeric"
+                  placeholder="123456"
+                />
+              </div>
+            )}
             {authError && <div className="alert alert-danger" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>{authError}</div>}
             <button type="submit" className="btn w-100" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}>
               Sign In
@@ -113,6 +138,7 @@ export const App: React.FC = () => {
     inbounds: '🔌 Inbounds',
     clients: '👥 Clients',
     traffic: '📈 Traffic',
+    monitoring: '📉 Monitoring',
     backup: '💾 Backup',
     subscriptions: '📜 Subscriptions',
   };
@@ -129,6 +155,8 @@ export const App: React.FC = () => {
         return <ClientManager />;
       case 'traffic':
         return <TrafficStats />;
+      case 'monitoring':
+        return <MonitoringDashboard />;
       case 'backup':
         return <BackupManager />;
       case 'subscriptions':

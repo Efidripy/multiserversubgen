@@ -40,3 +40,24 @@ def test_subscription_rate_limit_blocks_after_threshold(monkeypatch):
     allowed, retry_after = main._check_subscription_rate_limit(req, "sub:test@example.com")
     assert allowed is False
     assert retry_after >= 1
+
+
+def test_traffic_stats_cache_hit(monkeypatch):
+    calls = {"n": 0}
+
+    class DummyMgr:
+        def get_traffic_stats(self, nodes, group_by):
+            calls["n"] += 1
+            return {"stats": {"x": {"up": 1, "down": 2, "total": 3, "count": 1}}, "group_by": group_by}
+
+    monkeypatch.setattr(main, "client_mgr", DummyMgr())
+    monkeypatch.setattr(main, "TRAFFIC_STATS_CACHE_TTL", 60)
+    main.traffic_stats_cache.clear()
+
+    nodes = [{"name": "n1"}]
+    first = main.get_cached_traffic_stats(nodes, "client")
+    second = main.get_cached_traffic_stats(nodes, "client")
+
+    assert first["stats"]["x"]["total"] == 3
+    assert second["stats"]["x"]["total"] == 3
+    assert calls["n"] == 1

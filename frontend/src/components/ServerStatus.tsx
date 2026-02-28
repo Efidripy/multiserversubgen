@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 interface ServerStatus {
   node: string;
@@ -43,6 +44,7 @@ export const ServerStatus: React.FC = () => {
   const [error, setError] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval] = useState(30);
+  const [lastDeltaAt, setLastDeltaAt] = useState(0);
 
   useEffect(() => {
     loadServersStatus();
@@ -83,6 +85,19 @@ export const ServerStatus: React.FC = () => {
       setLoading(false);
     }
   };
+
+  useWebSocket({
+    url: '',
+    channels: ['snapshot_delta'],
+    enabled: true,
+    onMessage: (msg) => {
+      if (msg.type !== 'snapshot_delta') return;
+      const now = Date.now();
+      if (now - lastDeltaAt < 1500) return;
+      setLastDeltaAt(now);
+      loadServersStatus();
+    },
+  });
 
   const handleRestartXray = async (nodeName: string) => {
     if (!window.confirm('Are you sure you want to restart Xray on this server?')) return;

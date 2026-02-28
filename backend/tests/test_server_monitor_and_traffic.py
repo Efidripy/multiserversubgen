@@ -217,6 +217,38 @@ class TestGetClientTrafficHardening:
         assert traffic == {}
 
 
+class TestTrafficStatsFastPath:
+    """Verify get_traffic_stats uses clientStats from inbounds/list when available."""
+
+    def _build_manager(self):
+        from client_manager import ClientManager
+        return ClientManager(decrypt_func=lambda x: x)
+
+    def _node(self):
+        return {"name": "n1", "ip": "1.2.3.4", "port": 443,
+                "base_path": "", "user": "admin", "password": "pass"}
+
+    def test_client_stats_aggregated_without_per_client_calls(self):
+        mgr = self._build_manager()
+        inbounds = [{
+            "id": 1,
+            "remark": "ib1",
+            "protocol": "vless",
+            "clientStats": [
+                {"email": "a@test.com", "up": 100, "down": 200},
+                {"email": "b@test.com", "up": 50, "down": 25},
+            ],
+        }]
+
+        with patch.object(mgr, "_fetch_inbounds_from_node", return_value=inbounds):
+            with patch.object(mgr, "get_client_traffic") as mock_get_client_traffic:
+                result = mgr.get_traffic_stats([self._node()], group_by="client")
+
+        mock_get_client_traffic.assert_not_called()
+        assert result["stats"]["a@test.com"]["total"] == 300
+        assert result["stats"]["b@test.com"]["total"] == 75
+
+
 # ---------------------------------------------------------------------------
 # ThreeXUIMonitor – new class with GET-based server status
 # ---------------------------------------------------------------------------

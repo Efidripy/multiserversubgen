@@ -8,6 +8,7 @@ import logging
 import uuid
 import sys
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -19,6 +20,7 @@ from utils import parse_field_as_dict
 logger = logging.getLogger("sub_manager")
 VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
 CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
+TRAFFIC_MAX_WORKERS = max(1, int(os.getenv("TRAFFIC_MAX_WORKERS", "8")))
 
 
 def _requests_verify_value():
@@ -409,6 +411,69 @@ class ClientManager:
         
         return {}
     
+    def _build_stats_for_node(self, node: Dict, group_by: str) -> Dict[str, Dict[str, int]]:
+        """Построить статистику для одного узла."""
+        node_stats: Dict[str, Dict[str, int]] = {}
+        inbounds = self._fetch_inbounds_from_node(node)
+
+        for inbound in inbounds:
+            try:
+                client_stats = inbound.get("clientStats")
+                if isinstance(client_stats, list):
+                    for cstat in client_stats:
+                        if not isinstance(cstat, dict):
+                            continue
+                        up = cstat.get("up", 0) or 0
+                        down = cstat.get("down", 0) or 0
+                        client_email = cstat.get("email", "")
+
+                        if group_by == "client":
+                            key = client_email
+                        elif group_by == "inbound":
+                            key = f"{node['name']}:{inbound.get('remark', inbound.get('id'))}"
+                        else:  # node
+                            key = node["name"]
+
+                        if key not in node_stats:
+                            node_stats[key] = {"up": 0, "down": 0, "total": 0, "count": 0}
+                        node_stats[key]["up"] += up
+                        node_stats[key]["down"] += down
+                        node_stats[key]["total"] += up + down
+                        node_stats[key]["count"] += 1
+                    continue
+
+                # Compatibility fallback for older/non-standard panels.
+                settings = parse_field_as_dict(
+                    inbound.get("settings"), node_id=node["name"], field_name="settings"
+                )
+                clients = settings.get("clients", [])
+                protocol = inbound.get("protocol", "")
+
+                for client in clients:
+                    client_uuid = client.get("id", "")
+                    client_email = client.get("email", "")
+                    traffic = self.get_client_traffic(node, client_uuid, protocol)
+                    up = traffic.get("up", 0)
+                    down = traffic.get("down", 0)
+
+                    if group_by == "client":
+                        key = client_email
+                    elif group_by == "inbound":
+                        key = f"{node['name']}:{inbound.get('remark', inbound.get('id'))}"
+                    else:  # node
+                        key = node["name"]
+
+                    if key not in node_stats:
+                        node_stats[key] = {"up": 0, "down": 0, "total": 0, "count": 0}
+                    node_stats[key]["up"] += up
+                    node_stats[key]["down"] += down
+                    node_stats[key]["total"] += up + down
+                    node_stats[key]["count"] += 1
+            except Exception as exc:
+                logger.warning(f"Error processing inbound stats in {node['name']}: {exc}")
+
+        return node_stats
+
     def get_traffic_stats(self, nodes: List[Dict], group_by: str = "client") -> Dict:
         """Получить агрегированную статистику трафика
         
@@ -419,45 +484,27 @@ class ClientManager:
         Returns:
             Агрегированная статистика
         """
-        stats = {}
-        
-        for node in nodes:
-            try:
-                inbounds = self._fetch_inbounds_from_node(node)
-                
-                for inbound in inbounds:
-                    try:
-                        settings = parse_field_as_dict(
-                            inbound.get("settings"), node_id=node["name"], field_name="settings"
-                        )
-                        clients = settings.get("clients", [])
-                        protocol = inbound.get("protocol", "")
-                        
-                        for client in clients:
-                            client_uuid = client.get("id", "")
-                            client_email = client.get("email", "")
-                            
-                            traffic = self.get_client_traffic(node, client_uuid, protocol)
-                            
-                            if group_by == "client":
-                                key = client_email
-                            elif group_by == "inbound":
-                                key = f"{node['name']}:{inbound.get('remark', inbound.get('id'))}"
-                            else:  # node
-                                key = node["name"]
-                            
-                            if key not in stats:
-                                stats[key] = {"up": 0, "down": 0, "total": 0, "count": 0}
-                            
-                            stats[key]["up"] += traffic.get("up", 0)
-                            stats[key]["down"] += traffic.get("down", 0)
-                            stats[key]["total"] += traffic.get("up", 0) + traffic.get("down", 0)
-                            stats[key]["count"] += 1
-                    except Exception as exc:
-                        logger.warning(f"Error processing inbound stats in {node['name']}: {exc}")
-            except Exception as exc:
-                logger.warning(f"Failed to get stats from {node['name']}: {exc}")
-        
+        stats: Dict[str, Dict[str, int]] = {}
+        if not nodes:
+            return {"stats": stats, "group_by": group_by}
+
+        workers = min(len(nodes), TRAFFIC_MAX_WORKERS)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = {executor.submit(self._build_stats_for_node, node, group_by): node for node in nodes}
+            for future in as_completed(futures):
+                node = futures[future]
+                try:
+                    node_stats = future.result()
+                    for key, item in node_stats.items():
+                        if key not in stats:
+                            stats[key] = {"up": 0, "down": 0, "total": 0, "count": 0}
+                        stats[key]["up"] += item.get("up", 0)
+                        stats[key]["down"] += item.get("down", 0)
+                        stats[key]["total"] += item.get("total", 0)
+                        stats[key]["count"] += item.get("count", 0)
+                except Exception as exc:
+                    logger.warning(f"Failed to get stats from {node.get('name', 'unknown')}: {exc}")
+
         return {"stats": stats, "group_by": group_by}
     
     def reset_client_traffic(self, node: Dict, inbound_id: int, client_email: str) -> bool:
@@ -612,24 +659,30 @@ class ClientManager:
             Список онлайн клиентов
         """
         online_clients = []
-        
-        for node in nodes:
+        if not nodes:
+            return online_clients
+
+        def fetch_node_online(node: Dict) -> List[Dict]:
             s, base_url = self._get_session(node)
             if not s:
-                continue
-            
+                return []
             try:
                 res = s.post(f"{base_url}/panel/api/inbounds/onlines", timeout=5)
                 if res.status_code == 200:
                     data = res.json()
                     if data.get("success"):
-                        online_list = data.get("obj", [])
-                        for client in online_list:
-                            online_clients.append({
-                                "email": client,
-                                "node": node["name"]
-                            })
+                        return [{"email": c, "node": node["name"]} for c in (data.get("obj", []) or [])]
             except Exception as exc:
                 logger.warning(f"Failed to get online clients from {node['name']}: {exc}")
-        
+            return []
+
+        workers = min(len(nodes), TRAFFIC_MAX_WORKERS)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(fetch_node_online, node) for node in nodes]
+            for future in as_completed(futures):
+                try:
+                    online_clients.extend(future.result())
+                except Exception as exc:
+                    logger.warning(f"Failed to aggregate online clients: {exc}")
+
         return online_clients

@@ -14,11 +14,17 @@ from threading import Lock
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from fastapi import FastAPI, Request, HTTPException, Depends, WebSocket, WebSocketDisconnect
-from fastapi.responses import PlainTextResponse, JSONResponse
+from fastapi.responses import PlainTextResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from urllib.parse import urlparse
 import urllib3
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+import pyotp
+try:
+    import redis
+except Exception:
+    redis = None
 
 # Локальный импорт crypto-модуля (для шифрования паролей)
 import sys
@@ -30,6 +36,10 @@ from client_manager import ClientManager
 from utils import parse_field_as_dict
 from server_monitor import ServerMonitor, ThreeXUIMonitor
 from websocket_manager import manager as ws_manager, handle_websocket_message
+from services.node_service import NodeService
+from services.collector import SnapshotCollector
+from routers.observability import build_observability_router
+from routers.live_data import build_live_data_router
 
 # Конфигурация
 PROJECT_DIR = os.getenv("PROJECT_DIR", "/opt/sub-manager")
@@ -45,6 +55,20 @@ CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
 READ_ONLY_MODE = os.getenv("READ_ONLY_MODE", "false").strip().lower() in ("1", "true", "yes", "on")
 SUB_RATE_LIMIT_COUNT = int(os.getenv("SUB_RATE_LIMIT_COUNT", "30"))
 SUB_RATE_LIMIT_WINDOW_SEC = int(os.getenv("SUB_RATE_LIMIT_WINDOW_SEC", "60"))
+TRAFFIC_STATS_CACHE_TTL = int(os.getenv("TRAFFIC_STATS_CACHE_TTL", "10"))
+ONLINE_CLIENTS_CACHE_TTL = int(os.getenv("ONLINE_CLIENTS_CACHE_TTL", "10"))
+REDIS_URL = os.getenv("REDIS_URL", "").strip()
+COLLECTOR_BASE_INTERVAL_SEC = int(os.getenv("COLLECTOR_BASE_INTERVAL_SEC", "5"))
+COLLECTOR_MAX_INTERVAL_SEC = int(os.getenv("COLLECTOR_MAX_INTERVAL_SEC", "60"))
+COLLECTOR_MAX_PARALLEL = int(os.getenv("COLLECTOR_MAX_PARALLEL", "8"))
+AUDIT_QUEUE_BATCH_SIZE = int(os.getenv("AUDIT_QUEUE_BATCH_SIZE", "200"))
+ROLE_VIEWERS_RAW = os.getenv("ROLE_VIEWERS", "").strip()
+ROLE_OPERATORS_RAW = os.getenv("ROLE_OPERATORS", "").strip()
+ROLE_VIEWERS = {u.strip() for u in ROLE_VIEWERS_RAW.split(",") if u.strip()}
+ROLE_OPERATORS = {u.strip() for u in ROLE_OPERATORS_RAW.split(",") if u.strip()}
+ROLE_RANK = {"viewer": 1, "operator": 2, "admin": 3}
+MFA_TOTP_ENABLED = os.getenv("MFA_TOTP_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
+MFA_TOTP_USERS_RAW = os.getenv("MFA_TOTP_USERS", "").strip()
 
 
 def _get_requests_verify_value():
@@ -58,6 +82,25 @@ def _get_requests_verify_value():
 REQUESTS_VERIFY = _get_requests_verify_value()
 if REQUESTS_VERIFY is False:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def _parse_mfa_users(raw: str) -> Dict[str, str]:
+    result: Dict[str, str] = {}
+    if not raw:
+        return result
+    for item in raw.split(","):
+        item = item.strip()
+        if not item or ":" not in item:
+            continue
+        username, secret = item.split(":", 1)
+        username = username.strip()
+        secret = secret.strip().replace(" ", "")
+        if username and secret:
+            result[username] = secret
+    return result
+
+
+MFA_TOTP_USERS = _parse_mfa_users(MFA_TOTP_USERS_RAW)
 
 app = FastAPI(title="Multi-Server Sub Manager", version="3.0", root_path=root_path)
 
@@ -79,15 +122,70 @@ emails_cache = {"ts": 0.0, "emails": []}
 links_cache = {}
 subscription_rate_state = defaultdict(deque)
 subscription_rate_lock = Lock()
+traffic_stats_cache: Dict[str, tuple] = {}
+online_clients_cache = {"ts": 0.0, "data": []}
+_redis_client = None
+audit_worker_task = None
 
 # Инициализация менеджеров
 inbound_mgr = InboundManager(decrypt_func=decrypt, encrypt_func=encrypt)
 client_mgr = ClientManager(decrypt_func=decrypt, encrypt_func=encrypt)
 server_monitor = ServerMonitor(decrypt_func=decrypt)
 xui_monitor = ThreeXUIMonitor(decrypt_func=decrypt)
+node_service = NodeService(DB_PATH)
+snapshot_collector = SnapshotCollector(
+    fetch_nodes=node_service.list_nodes,
+    xui_monitor=xui_monitor,
+    ws_manager=ws_manager,
+    base_interval_sec=COLLECTOR_BASE_INTERVAL_SEC,
+    max_interval_sec=COLLECTOR_MAX_INTERVAL_SEC,
+    max_parallel_polls=COLLECTOR_MAX_PARALLEL,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("sub_manager")
+HTTP_REQUEST_COUNT = Counter(
+    "sub_manager_http_requests_total",
+    "HTTP requests total",
+    ["method", "path", "status"],
+)
+HTTP_REQUEST_LATENCY = Histogram(
+    "sub_manager_http_request_duration_seconds",
+    "HTTP request latency",
+    ["method", "path"],
+)
+
+
+def render_metrics_response():
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+def deps_health_status() -> Dict:
+    redis_ok = False
+    redis_error = None
+    client = _redis_get_client()
+    if client is None:
+        redis_error = "disabled_or_unavailable"
+    else:
+        try:
+            redis_ok = bool(client.ping())
+        except Exception as exc:
+            redis_error = str(exc)
+
+    return {
+        "status": "ok" if snapshot_collector.is_running() else "degraded",
+        "collector_running": snapshot_collector.is_running(),
+        "redis": {"enabled": bool(REDIS_URL), "ok": redis_ok, "error": redis_error},
+    }
+
+
+app.include_router(
+    build_observability_router(
+        get_latest_snapshot=snapshot_collector.latest_snapshot,
+        render_metrics=render_metrics_response,
+        get_deps_health=deps_health_status,
+    )
+)
 
 
 def init_db():
@@ -113,6 +211,10 @@ def init_db():
                       protocol_filter TEXT,
                       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                       updated_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+        conn.execute('''CREATE TABLE IF NOT EXISTS audit_events
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                      payload TEXT NOT NULL)''')
         
         conn.commit()
 
@@ -135,6 +237,113 @@ def check_basic_auth_header(auth_header: Optional[str]) -> Optional[str]:
     except Exception as e:
         logger.warning(f"Auth error: {e}")
     return None
+
+
+def verify_totp_code(username: str, totp_code: Optional[str]) -> bool:
+    if not MFA_TOTP_ENABLED:
+        return True
+    if not totp_code:
+        return False
+    secret = MFA_TOTP_USERS.get(username)
+    if not secret:
+        return False
+    try:
+        return bool(pyotp.TOTP(secret).verify(totp_code.strip(), valid_window=1))
+    except Exception:
+        return False
+
+
+def _redis_get_client():
+    global _redis_client
+    if not REDIS_URL or redis is None:
+        return None
+    if _redis_client is not None:
+        return _redis_client
+    try:
+        _redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+    except Exception as exc:
+        logger.warning(f"Failed to initialize redis client: {exc}")
+        _redis_client = None
+    return _redis_client
+
+
+def _redis_get_json(key: str):
+    client = _redis_get_client()
+    if not client:
+        return None
+    try:
+        raw = client.get(key)
+        if raw is None:
+            return None
+        return json.loads(raw)
+    except Exception as exc:
+        logger.warning(f"Redis get failed for {key}: {exc}")
+        return None
+
+
+def _redis_set_json(key: str, value, ttl: int):
+    client = _redis_get_client()
+    if not client:
+        return
+    try:
+        client.setex(key, ttl, json.dumps(value, ensure_ascii=False))
+    except Exception as exc:
+        logger.warning(f"Redis set failed for {key}: {exc}")
+
+
+def _redis_delete(*keys: str):
+    client = _redis_get_client()
+    if not client:
+        return
+    try:
+        client.delete(*keys)
+    except Exception as exc:
+        logger.warning(f"Redis delete failed: {exc}")
+
+
+def enqueue_audit_event(payload: Dict):
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute(
+                "INSERT INTO audit_events (payload) VALUES (?)",
+                (json.dumps(payload, ensure_ascii=False),),
+            )
+            conn.commit()
+    except Exception as exc:
+        logger.warning(f"Failed to enqueue audit event: {exc}")
+
+
+def _drain_audit_events_batch(limit: int) -> int:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT id, payload FROM audit_events ORDER BY id ASC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        if not rows:
+            return 0
+        ids = []
+        for row in rows:
+            ids.append(row["id"])
+            try:
+                payload = json.loads(row["payload"])
+            except Exception:
+                payload = {"event": "audit", "raw": row["payload"]}
+            logger.info(json.dumps({"event": "audit_log", "payload": payload}, ensure_ascii=False))
+        placeholders = ",".join("?" * len(ids))
+        conn.execute(f"DELETE FROM audit_events WHERE id IN ({placeholders})", ids)
+        conn.commit()
+        return len(ids)
+
+
+async def audit_worker_loop():
+    while True:
+        try:
+            drained = await asyncio.to_thread(_drain_audit_events_batch, AUDIT_QUEUE_BATCH_SIZE)
+            await asyncio.sleep(0.2 if drained > 0 else 1.0)
+        except Exception as exc:
+            logger.error(f"audit worker error: {exc}")
+            await asyncio.sleep(1.0)
 
 
 def extract_basic_auth_username(auth_header: Optional[str]) -> Optional[str]:
@@ -175,8 +384,90 @@ def _check_subscription_rate_limit(request: Request, resource_key: str) -> Tuple
     return True, 0
 
 
+def invalidate_live_stats_cache():
+    traffic_stats_cache.clear()
+    online_clients_cache["ts"] = 0.0
+    online_clients_cache["data"] = []
+    _redis_delete("traffic_stats:client", "traffic_stats:inbound", "traffic_stats:node", "online_clients")
+
+
+def get_cached_traffic_stats(nodes: List[Dict], group_by: str) -> Dict:
+    redis_key = f"traffic_stats:{group_by}"
+    redis_data = _redis_get_json(redis_key)
+    if redis_data is not None:
+        return redis_data
+
+    now = time.time()
+    cached = traffic_stats_cache.get(group_by)
+    if cached and now - cached[0] < TRAFFIC_STATS_CACHE_TTL:
+        return cached[1]
+    data = client_mgr.get_traffic_stats(nodes, group_by)
+    traffic_stats_cache[group_by] = (now, data)
+    _redis_set_json(redis_key, data, TRAFFIC_STATS_CACHE_TTL)
+    return data
+
+
+def get_cached_online_clients(nodes: List[Dict]) -> List[Dict]:
+    redis_data = _redis_get_json("online_clients")
+    if isinstance(redis_data, list):
+        return redis_data
+
+    now = time.time()
+    if now - online_clients_cache["ts"] < ONLINE_CLIENTS_CACHE_TTL:
+        return online_clients_cache["data"]
+    data = client_mgr.get_online_clients(nodes)
+    online_clients_cache["ts"] = now
+    online_clients_cache["data"] = data
+    _redis_set_json("online_clients", data, ONLINE_CLIENTS_CACHE_TTL)
+    return data
+
+
+def get_user_role(username: str) -> str:
+    if username in ROLE_OPERATORS:
+        return "operator"
+    if username in ROLE_VIEWERS:
+        return "viewer"
+    return "admin"
+
+
+def has_min_role(user_role: str, min_role: str) -> bool:
+    return ROLE_RANK.get(user_role, 0) >= ROLE_RANK.get(min_role, 0)
+
+
+def _is_public_endpoint(path: str) -> bool:
+    return (
+        path == "/health"
+        or path == "/api/v1/health"
+        or path == "/api/v1/auth/mfa-status"
+        or path.startswith("/api/v1/sub/")
+        or path.startswith("/api/v1/sub-grouped/")
+    )
+
+
+def _required_role_for_request(method: str, path: str) -> str:
+    if method == "POST" and path.startswith("/api/v1/servers/") and path.endswith("/restart-xray"):
+        return "admin"
+    if method == "POST" and path == "/api/v1/automation/reset-all-traffic":
+        return "admin"
+    if method == "POST" and path == "/api/v1/inbounds/batch-delete":
+        return "admin"
+    if method == "POST" and path == "/api/v1/clients/batch-delete":
+        return "admin"
+    if method == "POST" and path.startswith("/api/v1/backup/database/"):
+        return "admin"
+    if method == "DELETE" and path.startswith("/api/v1/nodes/"):
+        return "admin"
+    if method == "DELETE" and path.startswith("/api/v1/subscription-groups/"):
+        return "admin"
+    if method in {"POST", "PUT", "DELETE", "PATCH"}:
+        return "operator"
+    return "viewer"
+
+
 def check_auth(request: Request) -> Optional[str]:
     """Проверка Basic Auth через PAM."""
+    if hasattr(request.state, "auth_user"):
+        return request.state.auth_user
     return check_basic_auth_header(request.headers.get("Authorization"))
 
 
@@ -186,17 +477,56 @@ async def request_controls_and_audit_middleware(request: Request, call_next):
     start = time.perf_counter()
     path = request.url.path
 
-    if READ_ONLY_MODE and request.method in {"POST", "PUT", "DELETE", "PATCH"} and path.startswith("/api/v1/"):
+    request.state.auth_user = None
+    request.state.auth_role = None
+    request.state.auth_mfa_ok = False
+
+    response = None
+
+    if path.startswith("/api/v1/") and not _is_public_endpoint(path):
+        auth_user = check_basic_auth_header(request.headers.get("Authorization"))
+        if not auth_user:
+            response = JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+        else:
+            auth_role = get_user_role(auth_user)
+            request.state.auth_user = auth_user
+            request.state.auth_role = auth_role
+            mfa_code = request.headers.get("X-TOTP-Code")
+            if not verify_totp_code(auth_user, mfa_code):
+                response = JSONResponse(status_code=401, content={"detail": "MFA required"})
+                request.state.auth_mfa_ok = False
+            else:
+                request.state.auth_mfa_ok = True
+            if response is not None:
+                pass
+            required_role = _required_role_for_request(request.method, path)
+            if response is None and not has_min_role(auth_role, required_role):
+                response = JSONResponse(
+                    status_code=403,
+                    content={"detail": f"Forbidden for role '{auth_role}', requires '{required_role}'"},
+                )
+
+    if response is None and READ_ONLY_MODE and request.method in {"POST", "PUT", "DELETE", "PATCH"} and path.startswith("/api/v1/"):
         response = JSONResponse(
             status_code=403,
             content={"detail": "Read-only mode is enabled"},
         )
-    else:
+    elif response is None:
         response = await call_next(request)
+
+    if (
+        response.status_code < 400
+        and request.method in {"POST", "PUT", "DELETE", "PATCH"}
+        and path.startswith("/api/v1/")
+    ):
+        invalidate_live_stats_cache()
 
     response.headers["X-Request-ID"] = request_id
     duration_ms = round((time.perf_counter() - start) * 1000, 2)
-    logger.info(json.dumps({
+    path_label = path if path.startswith("/api/v1/") else path
+    HTTP_REQUEST_COUNT.labels(request.method, path_label, str(response.status_code)).inc()
+    HTTP_REQUEST_LATENCY.labels(request.method, path_label).observe(duration_ms / 1000.0)
+    audit_payload = {
         "event": "http_access",
         "request_id": request_id,
         "method": request.method,
@@ -204,8 +534,10 @@ async def request_controls_and_audit_middleware(request: Request, call_next):
         "status_code": response.status_code,
         "duration_ms": duration_ms,
         "client_ip": _get_client_ip(request),
-        "user_hint": extract_basic_auth_username(request.headers.get("Authorization")) or "anonymous",
-    }, ensure_ascii=False))
+        "user_hint": request.state.auth_user or extract_basic_auth_username(request.headers.get("Authorization")) or "anonymous",
+        "user_role": request.state.auth_role,
+    }
+    enqueue_audit_event(audit_payload)
     return response
 
 
@@ -601,7 +933,15 @@ async def verify_auth(request: Request):
     user = check_auth(request)
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
-    return {"user": user}
+    if not verify_totp_code(user, request.headers.get("X-TOTP-Code")):
+        raise HTTPException(status_code=401, detail="MFA required")
+    role = getattr(request.state, "auth_role", None) or get_user_role(user)
+    return {"user": user, "role": role, "mfa_enabled": MFA_TOTP_ENABLED}
+
+
+@app.get("/api/v1/auth/mfa-status")
+async def mfa_status():
+    return {"enabled": MFA_TOTP_ENABLED}
 
 
 @app.get("/api/v1/nodes")
@@ -611,15 +951,12 @@ async def list_nodes(request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
     
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        nodes = conn.execute('SELECT * FROM nodes').fetchall()
-        result = []
-        for n in nodes:
-            node_dict = dict(n)
-            node_dict.pop("password", None)
-            result.append(node_dict)
-        return JSONResponse(content=result, headers={"Cache-Control": "private, max-age=300"})
+    nodes = node_service.list_nodes()
+    result = []
+    for node_dict in nodes:
+        node_dict.pop("password", None)
+        result.append(node_dict)
+    return JSONResponse(content=result, headers={"Cache-Control": "private, max-age=300"})
 
 
 @app.get("/api/v1/nodes/list")
@@ -629,13 +966,10 @@ async def list_nodes_simple(request: Request):
     if not user:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        nodes = conn.execute('SELECT id, name FROM nodes').fetchall()
-        return JSONResponse(
-            content=[{"id": n["id"], "name": n["name"]} for n in nodes],
-            headers={"Cache-Control": "private, max-age=300"},
-        )
+    return JSONResponse(
+        content=node_service.list_nodes_simple(),
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @app.post("/api/v1/nodes")
@@ -1455,46 +1789,6 @@ async def reset_client_traffic(request: Request, client_uuid: str, data: Dict):
     return {"success": success}
 
 
-# === Traffic Statistics API ===
-
-
-@app.get("/api/v1/traffic/stats")
-async def get_traffic_stats(request: Request, group_by: str = "client"):
-    """Получить агрегированную статистику трафика
-    
-    Query params:
-        group_by: client, inbound, или node
-    """
-    user = check_auth(request)
-    if not user:
-        raise HTTPException(status_code=401)
-    
-    if group_by not in ["client", "inbound", "node"]:
-        raise HTTPException(status_code=400, detail="group_by must be client, inbound, or node")
-    
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
-    
-    stats = client_mgr.get_traffic_stats(nodes, group_by)
-    return stats
-
-
-@app.get("/api/v1/clients/online")
-async def get_online_clients(request: Request):
-    """Получить список онлайн клиентов"""
-    user = check_auth(request)
-    if not user:
-        raise HTTPException(status_code=401)
-    
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
-    
-    online = client_mgr.get_online_clients(nodes)
-    return {"online_clients": online, "count": len(online)}
-
-
 # === Automation API ===
 
 
@@ -1696,62 +1990,21 @@ async def get_all_databases_backup(request: Request):
 
 def _get_node_or_404(node_id: int) -> Dict:
     """Вспомогательная функция: получить узел по ID или выбросить 404."""
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.row_factory = sqlite3.Row
-        node = conn.execute('SELECT * FROM nodes WHERE id = ?', (node_id,)).fetchone()
-        if not node:
-            raise HTTPException(status_code=404, detail="Node not found")
-        return dict(node)
+    node = node_service.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    return node
 
 
-@app.get("/api/v1/nodes/{node_id}/server-status")
-async def get_node_server_status(request: Request, node_id: int):
-    """Статус сервера (CPU, RAM, диск, Xray, сеть) через GET /panel/api/server/status"""
-    user = check_auth(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    node = _get_node_or_404(node_id)
-    return xui_monitor.get_server_status(node)
-
-
-@app.get("/api/v1/nodes/{node_id}/traffic")
-async def get_node_traffic(request: Request, node_id: int):
-    """Статистика трафика по inbounds узла"""
-    user = check_auth(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    node = _get_node_or_404(node_id)
-    return xui_monitor.get_traffic(node)
-
-
-@app.get("/api/v1/nodes/{node_id}/inbounds")
-async def get_node_inbounds(request: Request, node_id: int):
-    """Список inbounds узла через GET /panel/api/inbounds/list"""
-    user = check_auth(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    node = _get_node_or_404(node_id)
-    return xui_monitor.get_inbounds(node)
-
-
-@app.get("/api/v1/nodes/{node_id}/online-clients")
-async def get_node_online_clients(request: Request, node_id: int):
-    """Список активных клиентов узла через POST /panel/api/inbounds/onlines"""
-    user = check_auth(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    node = _get_node_or_404(node_id)
-    return xui_monitor.get_online_clients(node)
-
-
-@app.get("/api/v1/nodes/{node_id}/client/{email}/traffic")
-async def get_node_client_traffic(request: Request, node_id: int, email: str):
-    """Трафик клиента по email через GET /panel/api/inbounds/getClientTraffics/{email}"""
-    user = check_auth(request)
-    if not user:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    node = _get_node_or_404(node_id)
-    return xui_monitor.get_client_traffic(node, email)
+app.include_router(
+    build_live_data_router(
+        get_node_or_404=_get_node_or_404,
+        get_cached_traffic_stats=get_cached_traffic_stats,
+        get_cached_online_clients=get_cached_online_clients,
+        list_nodes=node_service.list_nodes,
+        xui_monitor=xui_monitor,
+    )
+)
 
 
 # === WebSocket API ===
@@ -1762,6 +2015,20 @@ async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint для real-time обновлений"""
     user = check_basic_auth_header(websocket.headers.get("Authorization"))
     if not user:
+        token = websocket.query_params.get("token")
+        if token:
+            try:
+                decoded = base64.b64decode(token).decode("utf-8")
+                username, password = decoded.split(":", 1)
+                if p.authenticate(username, password):
+                    user = username
+            except Exception:
+                user = None
+    if not user:
+        await websocket.close(code=1008)
+        return
+    ws_totp_code = websocket.query_params.get("totp") or websocket.headers.get("X-TOTP-Code")
+    if not verify_totp_code(user, ws_totp_code):
         await websocket.close(code=1008)
         return
     await ws_manager.connect(websocket)
@@ -1776,40 +2043,25 @@ async def websocket_endpoint(websocket: WebSocket):
         ws_manager.disconnect(websocket)
 
 
-# Background task для периодической отправки обновлений
-async def broadcast_updates():
-    """Периодически отправлять обновления через WebSocket"""
-    while True:
-        try:
-            await asyncio.sleep(5)  # Каждые 5 секунд
-            
-            # Получаем данные для всех подключенных клиентов
-            if len(ws_manager.active_connections) > 0:
-                with sqlite3.connect(DB_PATH) as conn:
-                    conn.row_factory = sqlite3.Row
-                    nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
-                
-                # Server status update
-                if any("server_status" in ws_manager.subscriptions.get(conn, set()) 
-                       for conn in ws_manager.active_connections):
-                    statuses = server_monitor.get_all_servers_status(nodes)
-                    await ws_manager.broadcast_server_status({"servers": statuses})
-                
-                # Traffic update
-                if any("traffic" in ws_manager.subscriptions.get(conn, set()) 
-                       for conn in ws_manager.active_connections):
-                    stats = client_mgr.get_traffic_stats(nodes, "client")
-                    await ws_manager.broadcast_traffic_update(stats)
-                
-        except Exception as e:
-            logger.error(f"Broadcast updates error: {e}")
-            await asyncio.sleep(5)
-
-
 @app.on_event("startup")
 async def startup_event():
     """Запустить background tasks при старте приложения"""
-    asyncio.create_task(broadcast_updates())
+    global audit_worker_task
+    audit_worker_task = asyncio.create_task(audit_worker_loop())
+    await snapshot_collector.start()
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    global audit_worker_task
+    if audit_worker_task:
+        audit_worker_task.cancel()
+        try:
+            await audit_worker_task
+        except asyncio.CancelledError:
+            pass
+        audit_worker_task = None
+    await snapshot_collector.stop()
 
 
 if __name__ == "__main__":

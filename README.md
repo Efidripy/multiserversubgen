@@ -52,7 +52,7 @@
 ```
 ┌─────────────────────────────────────────┐
 │         React Frontend (Vite)           │
-│  - 7 табов навигации                    │
+│  - 8 табов навигации                    │
 │  - Chart.js графики                      │
 │  - Light/Dark theme                      │
 │  - Bootstrap UI                          │
@@ -95,6 +95,8 @@ sudo ./install.sh
 - ✅ Nginx конфигурацию с proxy_pass
 - ✅ Systemd сервис
 - ✅ Fail2ban защиту
+- ✅ Prometheus + Grafana (опционально, по вопросу в установщике)
+  - доступ к Grafana закрыт BasicAuth (логин/пароль задаются в install.sh)
 
 ### Обновление
 ```bash
@@ -152,6 +154,28 @@ multiserversubgen/
   - `CA_BUNDLE_PATH` — путь к кастомному CA bundle (опционально)
   - `READ_ONLY_MODE` (`true/false`) — блокирует `POST/PUT/DELETE/PATCH` для `/api/v1/*`
   - `SUB_RATE_LIMIT_COUNT` + `SUB_RATE_LIMIT_WINDOW_SEC` — лимит запросов к `/api/v1/sub/*`
+  - `TRAFFIC_STATS_CACHE_TTL`, `ONLINE_CLIENTS_CACHE_TTL` — короткий cache для метрик в реальном времени
+  - `TRAFFIC_MAX_WORKERS` — параллелизм сбора статистики по узлам
+  - `COLLECTOR_BASE_INTERVAL_SEC`, `COLLECTOR_MAX_INTERVAL_SEC`, `COLLECTOR_MAX_PARALLEL` — adaptive background collector
+  - `REDIS_URL` — optional Redis cache backend (для переживания рестартов процесса)
+  - `AUDIT_QUEUE_BATCH_SIZE` — batch size для фонового дренажа persistent audit queue
+  - `ROLE_VIEWERS`, `ROLE_OPERATORS` — RBAC списки пользователей через запятую (`admin` по умолчанию для остальных)
+  - `MFA_TOTP_ENABLED`, `MFA_TOTP_USERS` — optional TOTP 2FA для всех защищённых `/api/v1/*` и WebSocket (`username:BASE32` через запятую)
+
+### Observability
+- `GET /metrics` — Prometheus-метрики HTTP (request count + latency)
+- `GET /api/v1/snapshots/latest` — последний snapshot от background collector
+- `GET /api/v1/health/deps` — readiness зависимостей (collector/redis)
+
+Monitoring assets:
+- `monitoring/prometheus/rules.yml` — alert rules (p95 latency, 5xx rate)
+- `monitoring/grafana/sub-manager-dashboard.json` — базовый dashboard
+- Install/update scripts автоматически:
+  - создают scrape для `http://127.0.0.1:<APP_PORT>/metrics`
+  - включают provisioning datasource/dashboard в Grafana
+  - публикуют Grafana через subpath `/$WEB_PATH/grafana/` в Nginx
+  - отключают `auth.anonymous` в Grafana и биндуют её на `127.0.0.1:3000`
+  - поддерживают IP allowlist и optional mTLS (клиентские сертификаты) для путей панели
 
 ### Frontend
 - Сборка: `backend/build/`

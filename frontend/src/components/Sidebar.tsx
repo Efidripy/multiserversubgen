@@ -1,7 +1,7 @@
 import React from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 
-type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'backup' | 'subscriptions';
+type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 
 interface SidebarProps {
   activeTab: TabType;
@@ -18,6 +18,7 @@ const navItems: Array<{ id: TabType; label: string; icon: string }> = [
   { id: 'inbounds', label: 'Inbounds', icon: '🔌' },
   { id: 'clients', label: 'Clients', icon: '👥' },
   { id: 'traffic', label: 'Traffic', icon: '📈' },
+  { id: 'monitoring', label: 'Monitoring', icon: '📉' },
   { id: 'backup', label: 'Backup', icon: '💾' },
   { id: 'subscriptions', label: 'Subscriptions', icon: '📜' },
 ];

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { useWebSocket } from '../hooks/useWebSocket';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -45,6 +46,7 @@ export const TrafficStats: React.FC = () => {
   const [error, setError] = useState('');
   const [groupBy, setGroupBy] = useState<'client' | 'inbound' | 'node'>('client');
   const [topN, setTopN] = useState(10);
+  const [lastDeltaAt, setLastDeltaAt] = useState(0);
 
   useEffect(() => {
     loadTrafficStats();
@@ -56,105 +58,41 @@ export const TrafficStats: React.FC = () => {
     setError('');
 
     try {
-      if (groupBy === 'inbound' || groupBy === 'node') {
-        const nodesRes = await api.get('/v1/nodes', { auth: getAuth() });
-        const nodes: Array<{ id: number; name: string }> = nodesRes.data || [];
-
-        const allTraffic: TrafficData[] = [];
-        const nodeStats: Record<string, TrafficData> = {};
-
-        await Promise.all(nodes.map(async n => {
-          try {
-            const res = await api.get(`/v1/nodes/${n.id}/traffic`, { auth: getAuth() });
-            const items: Array<{ id: number; remark: string; protocol: string; upload: number; download: number; total: number }> =
-              res.data.traffic || [];
-
-            if (groupBy === 'inbound') {
-              items.forEach(ib => {
-                allTraffic.push({
-                  email: ib.remark || `Inbound #${ib.id}`,
-                  node_name: n.name,
-                  protocol: ib.protocol,
-                  upload: ib.upload,
-                  download: ib.download,
-                  total: ib.total === 0 ? ib.upload + ib.download : ib.total,
-                });
-              });
-            } else {
-              // group by node
-              const nodeTotal = items.reduce((acc, ib) => ({
-                upload: acc.upload + ib.upload,
-                download: acc.download + ib.download,
-                total: acc.total + (ib.total === 0 ? ib.upload + ib.download : ib.total),
-              }), { upload: 0, download: 0, total: 0 });
-              nodeStats[n.name] = {
-                email: n.name,
-                node_name: n.name,
-                upload: nodeTotal.upload,
-                download: nodeTotal.download,
-                total: nodeTotal.total,
-              };
-            }
-          } catch {
-            // skip unreachable nodes
-          }
-        }));
-
-        setTrafficData(groupBy === 'node' ? Object.values(nodeStats) : allTraffic);
-      } else {
-        // group by client – fetch traffic per client per node and aggregate by email
-        const [clientsRes, nodesRes] = await Promise.all([
-          api.get('/v1/clients', { auth: getAuth() }),
-          api.get('/v1/nodes', { auth: getAuth() }),
-        ]);
-        const clients: Array<{ email: string; node_name: string }> =
-          clientsRes.data?.clients || [];
-        const nodes: Array<{ id: number; name: string }> = nodesRes.data || [];
-
-        const nodeIdMap: Record<string, number> = {};
-        nodes.forEach(n => { nodeIdMap[n.name] = n.id; });
-
-        // unique (email, nodeId) pairs
-        const seen = new Set<string>();
-        const pairs: Array<{ email: string; nodeId: number }> = [];
-        clients.forEach(c => {
-          const nodeId = nodeIdMap[c.node_name];
-          if (c.email && nodeId !== undefined) {
-            const key = `${c.email}::${nodeId}`;
-            if (!seen.has(key)) {
-              seen.add(key);
-              pairs.push({ email: c.email, nodeId });
-            }
-          }
-        });
-
-        const emailTraffic: Record<string, { upload: number; download: number; total: number }> = {};
-        pairs.forEach(({ email }) => {
-          if (!emailTraffic[email]) {
-            emailTraffic[email] = { upload: 0, download: 0, total: 0 };
-          }
-        });
-        await Promise.all(pairs.map(async ({ email, nodeId }) => {
-          try {
-            const res = await api.get(`/v1/nodes/${nodeId}/client/${encodeURIComponent(email)}/traffic`, { auth: getAuth() });
-            const t = res.data;
-            if (!t.available) return;
-            emailTraffic[email].upload += t.upload || 0;
-            emailTraffic[email].download += t.download || 0;
-            emailTraffic[email].total += t.total || 0;
-          } catch {
-            // skip unavailable nodes
-          }
-        }));
-
-        const parsed: TrafficData[] = Object.entries(emailTraffic).map(([email, s]) => ({
-          email,
-          upload: s.upload,
-          download: s.download,
-          total: s.total === 0 ? s.upload + s.download : s.total,
-        }));
-        setTrafficData(parsed);
-      }
+      const res = await api.get('/v1/traffic/stats', {
+        auth: getAuth(),
+        params: { group_by: groupBy },
+      });
+      const statsObj: Record<string, { up: number; down: number; total: number }> = res.data?.stats || {};
+      const parsed: TrafficData[] = Object.entries(statsObj).map(([key, s]) => {
+        if (groupBy === 'node') {
+          return {
+            email: key,
+            node_name: key,
+            upload: s.up || 0,
+            download: s.down || 0,
+            total: (s.total || 0) === 0 ? (s.up || 0) + (s.down || 0) : (s.total || 0),
+          };
+        }
+        if (groupBy === 'inbound') {
+          const sep = key.indexOf(':');
+          const nodeName = sep >= 0 ? key.slice(0, sep) : '';
+          const inboundName = sep >= 0 ? key.slice(sep + 1) : key;
+          return {
+            email: inboundName || key,
+            node_name: nodeName || undefined,
+            upload: s.up || 0,
+            download: s.down || 0,
+            total: (s.total || 0) === 0 ? (s.up || 0) + (s.down || 0) : (s.total || 0),
+          };
+        }
+        return {
+          email: key,
+          upload: s.up || 0,
+          download: s.down || 0,
+          total: (s.total || 0) === 0 ? (s.up || 0) + (s.down || 0) : (s.total || 0),
+        };
+      });
+      setTrafficData(parsed);
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load traffic stats');
     } finally {
@@ -164,26 +102,34 @@ export const TrafficStats: React.FC = () => {
 
   const loadOnlineClients = async () => {
     try {
-      const nodesRes = await api.get('/v1/nodes', { auth: getAuth() });
-      const nodes: Array<{ id: number; name: string }> = nodesRes.data || [];
-
-      const allOnline: OnlineClient[] = [];
-      await Promise.all(nodes.map(async n => {
-        try {
-          const res = await api.get(`/v1/nodes/${n.id}/online-clients`, { auth: getAuth() });
-          const clients: string[] = res.data.obj || [];
-          clients.forEach(email => {
-            allOnline.push({ email, node_name: n.name, inbound_id: 0 });
-          });
-        } catch {
-          // skip unreachable nodes
-        }
-      }));
-      setOnlineClients(allOnline);
+      const res = await api.get('/v1/clients/online', { auth: getAuth() });
+      const items: Array<{ email: string; node?: string; node_name?: string; inbound_id?: number }> =
+        res.data?.online_clients || [];
+      setOnlineClients(
+        items.map((c) => ({
+          email: c.email,
+          node_name: c.node_name || c.node || 'unknown',
+          inbound_id: c.inbound_id || 0,
+        }))
+      );
     } catch (err: any) {
       console.error('Failed to load online clients:', err);
     }
   };
+
+  useWebSocket({
+    url: '',
+    channels: ['snapshot_delta'],
+    enabled: true,
+    onMessage: (msg) => {
+      if (msg.type !== 'snapshot_delta') return;
+      const now = Date.now();
+      if (now - lastDeltaAt < 1500) return;
+      setLastDeltaAt(now);
+      loadTrafficStats();
+      loadOnlineClients();
+    },
+  });
 
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 GB';

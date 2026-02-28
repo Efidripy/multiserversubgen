@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
+import { getAuth } from '../auth';
 
 interface WebSocketMessage {
   type: string;
@@ -37,9 +38,19 @@ export const useWebSocket = ({
 
     try {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.hostname;
-      const port = '666'; // Backend port
-      const wsUrl = url || `${protocol}//${host}:${port}/ws`;
+      const host = window.location.host;
+      const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+      const auth = getAuth();
+      const wsPath = `${basePath}/ws`;
+      let wsUrl = url || `${protocol}//${host}${wsPath}`;
+      if (!url && auth.username && auth.password) {
+        const token = btoa(`${auth.username}:${auth.password}`);
+        const params = new URLSearchParams({ token });
+        if (auth.totpCode) {
+          params.set('totp', auth.totpCode);
+        }
+        wsUrl += `?${params.toString()}`;
+      }
 
       wsRef.current = new WebSocket(wsUrl);
 
