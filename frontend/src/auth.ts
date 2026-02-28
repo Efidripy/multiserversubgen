@@ -6,15 +6,44 @@ type RuntimeAuth = {
 
 const USERNAME_KEY = 'sub_auth_user';
 const LEGACY_KEY = 'sub_auth';
+const SESSION_AUTH_KEY = 'sub_auth_runtime_v1';
 
-let runtimeAuth: RuntimeAuth = { username: '', password: '', totpCode: '' };
+function loadRuntimeAuth(): RuntimeAuth {
+  if (typeof window === 'undefined') return { username: '', password: '', totpCode: '' };
+  const raw = sessionStorage.getItem(SESSION_AUTH_KEY);
+  if (!raw) return { username: '', password: '', totpCode: '' };
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      username: typeof parsed?.username === 'string' ? parsed.username : '',
+      password: typeof parsed?.password === 'string' ? parsed.password : '',
+      totpCode: typeof parsed?.totpCode === 'string' ? parsed.totpCode : '',
+    };
+  } catch {
+    sessionStorage.removeItem(SESSION_AUTH_KEY);
+    return { username: '', password: '', totpCode: '' };
+  }
+}
+
+function persistRuntimeAuth(auth: RuntimeAuth): void {
+  if (typeof window === 'undefined') return;
+  if (!auth.username || !auth.password) {
+    sessionStorage.removeItem(SESSION_AUTH_KEY);
+    return;
+  }
+  sessionStorage.setItem(SESSION_AUTH_KEY, JSON.stringify(auth));
+}
+
+let runtimeAuth: RuntimeAuth = loadRuntimeAuth();
 
 export function setAuthCredentials(username: string, password: string, totpCode: string = ''): void {
   runtimeAuth = { username, password, totpCode };
+  persistRuntimeAuth(runtimeAuth);
 }
 
 export function clearAuthCredentials(): void {
   runtimeAuth = { username: '', password: '', totpCode: '' };
+  persistRuntimeAuth(runtimeAuth);
 }
 
 export function getAuth(): { username: string; password: string; user: string; totpCode: string } {

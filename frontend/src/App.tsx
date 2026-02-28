@@ -12,7 +12,7 @@ import { MonitoringDashboard } from './components/MonitoringDashboard';
 import { Sidebar } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
 import { useWebSocket } from './hooks/useWebSocket';
-import { clearAuthCredentials, loadRememberedUsername, rememberUsername, setAuthCredentials } from './auth';
+import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials } from './auth';
 
 type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 type NoticeLevel = 'info' | 'success' | 'warning' | 'danger';
@@ -34,6 +34,7 @@ export const App: React.FC = () => {
   const [totpCode, setTotpCode] = useState('');
   const [mfaEnabled, setMfaEnabled] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authBootstrapDone, setAuthBootstrapDone] = useState(false);
   const [authError, setAuthError] = useState('');
   const [activeTab, setActiveTab] = useState<TabType>('dashboard');
   const [key, setKey] = useState(0);
@@ -48,10 +49,37 @@ export const App: React.FC = () => {
   const lastNotifyRef = useRef<Record<string, number>>({});
 
   useEffect(() => {
-    setUser(loadRememberedUsername());
-    api.get('/v1/auth/mfa-status')
-      .then((res) => setMfaEnabled(Boolean(res.data?.enabled)))
-      .catch(() => setMfaEnabled(false));
+    const bootstrap = async () => {
+      const remembered = loadRememberedUsername();
+      setUser(remembered);
+
+      try {
+        const mfaRes = await api.get('/v1/auth/mfa-status');
+        setMfaEnabled(Boolean(mfaRes.data?.enabled));
+      } catch {
+        setMfaEnabled(false);
+      }
+
+      const auth = getAuth();
+      if (auth.username && auth.password) {
+        try {
+          const headers: Record<string, string> = {};
+          if (auth.totpCode) headers['X-TOTP-Code'] = auth.totpCode;
+          const res = await api.get('/v1/auth/verify', {
+            auth: { username: auth.username, password: auth.password },
+            headers,
+          });
+          if (res.data?.user) {
+            setUser(auth.username);
+            setIsAuthenticated(true);
+          }
+        } catch {
+          clearAuthCredentials();
+        }
+      }
+      setAuthBootstrapDone(true);
+    };
+    bootstrap();
 
     const supported = typeof window !== 'undefined' && 'Notification' in window;
     setBrowserNotifySupported(supported);
@@ -187,6 +215,16 @@ export const App: React.FC = () => {
     const fullApiUrl = API_BASE.startsWith('http') ? API_BASE : `${protocol}//${host}${API_BASE}`;
     return fullApiUrl;
   };
+
+  if (!authBootstrapDone) {
+    return (
+      <div className="login-wrapper min-vh-100 d-flex align-items-center justify-content-center" style={{ backgroundColor: colors.bg.primary }}>
+        <div className="card p-4 text-center" style={{ maxWidth: '400px', width: '100%', backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+          <div style={{ color: colors.text.primary }}>{t('app.loading')}</div>
+        </div>
+      </div>
+    );
+  }
 
   if (!isAuthenticated) {
     return (
