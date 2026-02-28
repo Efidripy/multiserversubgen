@@ -18,7 +18,21 @@ ensure_grafana_repo() {
         echo "Grafana package not found in current APT sources. Adding official Grafana repo..."
         apt_install ca-certificates gnupg apt-transport-https curl || return 1
         install -d -m 0755 /etc/apt/keyrings
-        curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg || return 1
+        local key_fetched="false"
+        local key_urls=(
+            "https://apt.grafana.com/gpg.key"
+            "https://packages.grafana.com/gpg.key"
+        )
+        for key_url in "${key_urls[@]}"; do
+            if curl -fsSL --retry 2 -A "Mozilla/5.0" "$key_url" | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg 2>/dev/null; then
+                key_fetched="true"
+                break
+            fi
+        done
+        if [ "$key_fetched" != "true" ]; then
+            echo "  ❌ Не удалось скачать GPG ключ Grafana (возможен блок/403)."
+            return 1
+        fi
         chmod a+r /etc/apt/keyrings/grafana.gpg
         cat > /etc/apt/sources.list.d/grafana.list <<'EOF'
 deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main

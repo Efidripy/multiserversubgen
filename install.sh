@@ -18,7 +18,21 @@ ensure_grafana_repo() {
         echo "Grafana package not found in current APT sources. Adding official Grafana repo..."
         apt_install ca-certificates gnupg apt-transport-https curl || return 1
         install -d -m 0755 /etc/apt/keyrings
-        curl -fsSL https://apt.grafana.com/gpg.key | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg || return 1
+        local key_fetched="false"
+        local key_urls=(
+            "https://apt.grafana.com/gpg.key"
+            "https://packages.grafana.com/gpg.key"
+        )
+        for key_url in "${key_urls[@]}"; do
+            if curl -fsSL --retry 2 -A "Mozilla/5.0" "$key_url" | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg 2>/dev/null; then
+                key_fetched="true"
+                break
+            fi
+        done
+        if [ "$key_fetched" != "true" ]; then
+            echo "❌ Не удалось скачать GPG ключ Grafana (возможен блок/403)."
+            return 1
+        fi
         chmod a+r /etc/apt/keyrings/grafana.gpg
         cat > /etc/apt/sources.list.d/grafana.list <<'EOF'
 deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main
@@ -534,82 +548,102 @@ else
     VITE_BASE="/${WEB_PATH}/"
 fi
 VITE_GRAFANA_PATH="/grafana/"
-read -p "Разрешенные CORS origins (comma-separated, default: http://localhost:5173,http://127.0.0.1:5173): " ALLOW_ORIGINS
-ALLOW_ORIGINS=${ALLOW_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
-read -p "Включить TLS verify к node panel узлам? (y/n, default: y): " VERIFY_TLS_INPUT
-VERIFY_TLS_INPUT=${VERIFY_TLS_INPUT:-y}
-if [[ "$VERIFY_TLS_INPUT" =~ ^[nNнН]$ ]]; then
-    VERIFY_TLS="false"
-else
-    VERIFY_TLS="true"
+
+# Базовые значения (используются в режиме "Быстрая установка")
+ALLOW_ORIGINS="http://localhost:5173,http://127.0.0.1:5173"
+VERIFY_TLS="true"
+CA_BUNDLE_PATH=""
+READ_ONLY_MODE="false"
+SUB_RATE_LIMIT_COUNT="30"
+SUB_RATE_LIMIT_WINDOW_SEC="60"
+TRAFFIC_STATS_CACHE_TTL="10"
+ONLINE_CLIENTS_CACHE_TTL="10"
+TRAFFIC_MAX_WORKERS="8"
+COLLECTOR_BASE_INTERVAL_SEC="5"
+COLLECTOR_MAX_INTERVAL_SEC="60"
+COLLECTOR_MAX_PARALLEL="8"
+REDIS_URL=""
+AUDIT_QUEUE_BATCH_SIZE="200"
+ROLE_VIEWERS=""
+ROLE_OPERATORS=""
+SECURITY_IP_ALLOWLIST=""
+SECURITY_MTLS_ENABLED="false"
+SECURITY_MTLS_CA_PATH=""
+MFA_TOTP_ENABLED="false"
+MFA_TOTP_USERS=""
+USE_PROXY="y"
+
+read -p "Режим установки: Быстрая или Advanced? (b/a, default: b): " INSTALL_MODE_INPUT
+INSTALL_MODE_INPUT=${INSTALL_MODE_INPUT:-b}
+if [[ "$INSTALL_MODE_INPUT" =~ ^[aAфФ]$ ]]; then
+    read -p "Разрешенные CORS origins (comma-separated, default: $ALLOW_ORIGINS): " ALLOW_ORIGINS_INPUT
+    ALLOW_ORIGINS=${ALLOW_ORIGINS_INPUT:-$ALLOW_ORIGINS}
+    read -p "Включить TLS verify к node panel узлам? (y/n, default: y): " VERIFY_TLS_INPUT
+    VERIFY_TLS_INPUT=${VERIFY_TLS_INPUT:-y}
+    if [[ "$VERIFY_TLS_INPUT" =~ ^[nNнН]$ ]]; then
+        VERIFY_TLS="false"
+    fi
+    read -p "Путь к CA bundle (опционально, Enter = системный trust store): " CA_BUNDLE_PATH
+    CA_BUNDLE_PATH=${CA_BUNDLE_PATH:-}
+    read -p "Включить read-only режим API? (y/n, default: n): " READ_ONLY_INPUT
+    READ_ONLY_INPUT=${READ_ONLY_INPUT:-n}
+    if [[ "$READ_ONLY_INPUT" =~ ^[yYдД]$ ]]; then
+        READ_ONLY_MODE="true"
+    fi
+    read -p "Лимит запросов для /sub/* в окно (default: $SUB_RATE_LIMIT_COUNT): " SUB_RATE_LIMIT_COUNT
+    SUB_RATE_LIMIT_COUNT=${SUB_RATE_LIMIT_COUNT:-30}
+    read -p "Окно лимита /sub/* в секундах (default: $SUB_RATE_LIMIT_WINDOW_SEC): " SUB_RATE_LIMIT_WINDOW_SEC
+    SUB_RATE_LIMIT_WINDOW_SEC=${SUB_RATE_LIMIT_WINDOW_SEC:-60}
+    read -p "TTL кэша /v1/traffic/stats (сек, default: $TRAFFIC_STATS_CACHE_TTL): " TRAFFIC_STATS_CACHE_TTL
+    TRAFFIC_STATS_CACHE_TTL=${TRAFFIC_STATS_CACHE_TTL:-10}
+    read -p "TTL кэша /v1/clients/online (сек, default: $ONLINE_CLIENTS_CACHE_TTL): " ONLINE_CLIENTS_CACHE_TTL
+    ONLINE_CLIENTS_CACHE_TTL=${ONLINE_CLIENTS_CACHE_TTL:-10}
+    read -p "Параллелизм сбора трафика по узлам (default: $TRAFFIC_MAX_WORKERS): " TRAFFIC_MAX_WORKERS
+    TRAFFIC_MAX_WORKERS=${TRAFFIC_MAX_WORKERS:-8}
+    read -p "Базовый интервал collector (сек, default: $COLLECTOR_BASE_INTERVAL_SEC): " COLLECTOR_BASE_INTERVAL_SEC
+    COLLECTOR_BASE_INTERVAL_SEC=${COLLECTOR_BASE_INTERVAL_SEC:-5}
+    read -p "Макс. интервал adaptive collector (сек, default: $COLLECTOR_MAX_INTERVAL_SEC): " COLLECTOR_MAX_INTERVAL_SEC
+    COLLECTOR_MAX_INTERVAL_SEC=${COLLECTOR_MAX_INTERVAL_SEC:-60}
+    read -p "Макс. параллельных poll collector (default: $COLLECTOR_MAX_PARALLEL): " COLLECTOR_MAX_PARALLEL
+    COLLECTOR_MAX_PARALLEL=${COLLECTOR_MAX_PARALLEL:-8}
+    read -p "Redis URL для кэша (опционально, пример redis://127.0.0.1:6379/0): " REDIS_URL
+    REDIS_URL=${REDIS_URL:-}
+    read -p "Размер batch audit worker (default: $AUDIT_QUEUE_BATCH_SIZE): " AUDIT_QUEUE_BATCH_SIZE
+    AUDIT_QUEUE_BATCH_SIZE=${AUDIT_QUEUE_BATCH_SIZE:-200}
+    read -p "Список viewer-пользователей через запятую (опционально): " ROLE_VIEWERS
+    ROLE_VIEWERS=${ROLE_VIEWERS:-}
+    read -p "Список operator-пользователей через запятую (опционально): " ROLE_OPERATORS
+    ROLE_OPERATORS=${ROLE_OPERATORS:-}
+    read -p "Включить IP allowlist для панели (CIDR через запятую, Enter = без ограничений): " SECURITY_IP_ALLOWLIST
+    SECURITY_IP_ALLOWLIST=${SECURITY_IP_ALLOWLIST:-}
+    read -p "Включить mTLS клиентских сертификатов для панели? (y/n, default: n): " SECURITY_MTLS_INPUT
+    SECURITY_MTLS_INPUT=${SECURITY_MTLS_INPUT:-n}
+    if [[ "$SECURITY_MTLS_INPUT" =~ ^[yYдД]$ ]]; then
+        SECURITY_MTLS_ENABLED="true"
+        read -p "Путь к CA сертификату для проверки клиентских сертификатов (обязательно): " SECURITY_MTLS_CA_PATH
+        if [ -z "$SECURITY_MTLS_CA_PATH" ] || [ ! -f "$SECURITY_MTLS_CA_PATH" ]; then
+            echo "❌ Файл CA не найден: $SECURITY_MTLS_CA_PATH"
+            exit 1
+        fi
+    fi
+    read -p "Включить TOTP 2FA для API/UI? (y/n, default: n): " MFA_TOTP_INPUT
+    MFA_TOTP_INPUT=${MFA_TOTP_INPUT:-n}
+    if [[ "$MFA_TOTP_INPUT" =~ ^[yYдД]$ ]]; then
+        MFA_TOTP_ENABLED="true"
+        read -p "MFA mapping username:BASE32[,user2:BASE32] (обязательно): " MFA_TOTP_USERS
+        if [ -z "$MFA_TOTP_USERS" ]; then
+            echo "❌ Для TOTP нужно указать MFA mapping."
+            exit 1
+        fi
+    fi
 fi
-read -p "Путь к CA bundle (опционально, Enter = системный trust store): " CA_BUNDLE_PATH
-CA_BUNDLE_PATH=${CA_BUNDLE_PATH:-}
-read -p "Включить read-only режим API? (y/n, default: n): " READ_ONLY_INPUT
-READ_ONLY_INPUT=${READ_ONLY_INPUT:-n}
-if [[ "$READ_ONLY_INPUT" =~ ^[yYдД]$ ]]; then
-    READ_ONLY_MODE="true"
-else
-    READ_ONLY_MODE="false"
-fi
-read -p "Лимит запросов для /sub/* в окно (default: 30): " SUB_RATE_LIMIT_COUNT
-SUB_RATE_LIMIT_COUNT=${SUB_RATE_LIMIT_COUNT:-30}
-read -p "Окно лимита /sub/* в секундах (default: 60): " SUB_RATE_LIMIT_WINDOW_SEC
-SUB_RATE_LIMIT_WINDOW_SEC=${SUB_RATE_LIMIT_WINDOW_SEC:-60}
-read -p "TTL кэша /v1/traffic/stats (сек, default: 10): " TRAFFIC_STATS_CACHE_TTL
-TRAFFIC_STATS_CACHE_TTL=${TRAFFIC_STATS_CACHE_TTL:-10}
-read -p "TTL кэша /v1/clients/online (сек, default: 10): " ONLINE_CLIENTS_CACHE_TTL
-ONLINE_CLIENTS_CACHE_TTL=${ONLINE_CLIENTS_CACHE_TTL:-10}
-read -p "Параллелизм сбора трафика по узлам (default: 8): " TRAFFIC_MAX_WORKERS
-TRAFFIC_MAX_WORKERS=${TRAFFIC_MAX_WORKERS:-8}
-read -p "Базовый интервал collector (сек, default: 5): " COLLECTOR_BASE_INTERVAL_SEC
-COLLECTOR_BASE_INTERVAL_SEC=${COLLECTOR_BASE_INTERVAL_SEC:-5}
-read -p "Макс. интервал adaptive collector (сек, default: 60): " COLLECTOR_MAX_INTERVAL_SEC
-COLLECTOR_MAX_INTERVAL_SEC=${COLLECTOR_MAX_INTERVAL_SEC:-60}
-read -p "Макс. параллельных poll collector (default: 8): " COLLECTOR_MAX_PARALLEL
-COLLECTOR_MAX_PARALLEL=${COLLECTOR_MAX_PARALLEL:-8}
-read -p "Redis URL для кэша (опционально, пример redis://127.0.0.1:6379/0): " REDIS_URL
-REDIS_URL=${REDIS_URL:-}
-read -p "Размер batch audit worker (default: 200): " AUDIT_QUEUE_BATCH_SIZE
-AUDIT_QUEUE_BATCH_SIZE=${AUDIT_QUEUE_BATCH_SIZE:-200}
-read -p "Список viewer-пользователей через запятую (опционально): " ROLE_VIEWERS
-ROLE_VIEWERS=${ROLE_VIEWERS:-}
-read -p "Список operator-пользователей через запятую (опционально): " ROLE_OPERATORS
-ROLE_OPERATORS=${ROLE_OPERATORS:-}
+
 read -p "Установить и подключить Prometheus + Grafana? (y/n, default: y): " MONITORING_INPUT
 MONITORING_INPUT=${MONITORING_INPUT:-y}
 if [[ "$MONITORING_INPUT" =~ ^[nNнН]$ ]]; then
     MONITORING_ENABLED="false"
 else
     MONITORING_ENABLED="true"
-fi
-read -p "Включить IP allowlist для панели (CIDR через запятую, Enter = без ограничений): " SECURITY_IP_ALLOWLIST
-SECURITY_IP_ALLOWLIST=${SECURITY_IP_ALLOWLIST:-}
-read -p "Включить mTLS клиентских сертификатов для панели? (y/n, default: n): " SECURITY_MTLS_INPUT
-SECURITY_MTLS_INPUT=${SECURITY_MTLS_INPUT:-n}
-if [[ "$SECURITY_MTLS_INPUT" =~ ^[yYдД]$ ]]; then
-    SECURITY_MTLS_ENABLED="true"
-    read -p "Путь к CA сертификату для проверки клиентских сертификатов (обязательно): " SECURITY_MTLS_CA_PATH
-    if [ -z "$SECURITY_MTLS_CA_PATH" ] || [ ! -f "$SECURITY_MTLS_CA_PATH" ]; then
-        echo "❌ Файл CA не найден: $SECURITY_MTLS_CA_PATH"
-        exit 1
-    fi
-else
-    SECURITY_MTLS_ENABLED="false"
-    SECURITY_MTLS_CA_PATH=""
-fi
-read -p "Включить TOTP 2FA для API/UI? (y/n, default: n): " MFA_TOTP_INPUT
-MFA_TOTP_INPUT=${MFA_TOTP_INPUT:-n}
-if [[ "$MFA_TOTP_INPUT" =~ ^[yYдД]$ ]]; then
-    MFA_TOTP_ENABLED="true"
-    read -p "MFA mapping username:BASE32[,user2:BASE32] (обязательно): " MFA_TOTP_USERS
-    if [ -z "$MFA_TOTP_USERS" ]; then
-        echo "❌ Для TOTP нужно указать MFA mapping."
-        exit 1
-    fi
-else
-    MFA_TOTP_ENABLED="false"
-    MFA_TOTP_USERS=""
 fi
 if [ "$MONITORING_ENABLED" = "true" ]; then
     read -p "Сгенерировать случайный путь Grafana (8 символов)? (y/n, default: y): " GRAFANA_PATH_RANDOM_INPUT
@@ -657,11 +691,28 @@ else
     GRAFANA_AUTH_HASH=""
 fi
 
+python3 <<PYTHON
+from pathlib import Path
+path = Path("$LOG_FILE")
+if path.exists():
+    data = {}
+    for line in path.read_text().splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            data[k] = v.strip('"')
+    data["MONITORING_ENABLED"] = "${MONITORING_ENABLED}"
+    data["GRAFANA_AUTH_ENABLED"] = "${GRAFANA_AUTH_ENABLED}"
+    with path.open("w") as f:
+        for k, v in data.items():
+            f.write(f'{k}="{v}"\\n')
+PYTHON
+
 PROJECT_DIR="/opt/$PROJECT_NAME"
 
-# Спросить про proxy_pass для API
-read -p "Использовать proxy_pass для API в Nginx? (y/n, по умолчанию y): " USE_PROXY
-USE_PROXY=${USE_PROXY:-y}
+if [[ "$INSTALL_MODE_INPUT" =~ ^[aAфФ]$ ]]; then
+    read -p "Использовать proxy_pass для API в Nginx? (y/n, по умолчанию y): " USE_PROXY
+    USE_PROXY=${USE_PROXY:-y}
+fi
 
 echo -e "\nВыберите конфиг Nginx из списка:"
 configs=( /etc/nginx/sites-available/* )
@@ -733,8 +784,15 @@ apt_update && apt_install \
     git
 
 if [ "$MONITORING_ENABLED" = "true" ]; then
-    ensure_grafana_repo || { echo "❌ Не удалось подготовить репозиторий Grafana. Прерывание."; exit 1; }
-    apt_install prometheus grafana || { echo "❌ Не удалось установить prometheus/grafana. Прерывание."; exit 1; }
+    if ! ensure_grafana_repo; then
+        echo "⚠️ Grafana repo недоступен. Продолжаем без мониторинга."
+        MONITORING_ENABLED="false"
+        GRAFANA_AUTH_ENABLED="false"
+    elif ! apt_install prometheus grafana; then
+        echo "⚠️ Не удалось установить prometheus/grafana. Продолжаем без мониторинга."
+        MONITORING_ENABLED="false"
+        GRAFANA_AUTH_ENABLED="false"
+    fi
 fi
 
 echo "Установка Node.js 20 LTS..."

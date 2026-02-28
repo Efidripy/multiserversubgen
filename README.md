@@ -83,7 +83,7 @@
 
 ### Установка
 ```bash
-git clone <repo-url>
+git clone https://github.com/Efidripy/multiserversubgen
 cd multiserversubgen
 chmod +x install.sh
 sudo ./install.sh
@@ -334,11 +334,15 @@ sudo ./install.sh   # выберите "Обновить (сохранить д�
 
 ## 📈 Roadmap
 
-- [ ] WebSocket для real-time обновлений
-- [ ] Групповые операции с inbound
-- [ ] Улучшенная subscription генерация (группировка)
-- [ ] Push уведомления
-- [ ] Multi-language support
+### Уже реализовано
+- [x] WebSocket для real-time обновлений (`/ws`, обновления в `ServerStatus` и `TrafficStats`)
+- [x] Улучшенная subscription генерация (режим `Grouped` в `SubscriptionManager`, `sub-grouped` endpoint)
+- [x] Групповые операции с inbound на уровне API (`/api/v1/inbounds/batch-enable|batch-update|batch-delete`)
+
+### Предлагаю реализовать дальше
+- [ ] Групповые операции с inbound в UI (bulk-select + массовые действия в `InboundManager`)
+- [ ] Push уведомления (Telegram/Webhook для ошибок узлов, high latency, 5xx spikes)
+- [ ] Полноценный Multi-language support (подключение i18n в `main.tsx` + перевод всех компонентов)
 - [ ] Mobile приложение
 
 ## 👥 Участие в разработке

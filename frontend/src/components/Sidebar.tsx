@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '../contexts/ThemeContext';
 
 type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
@@ -12,15 +13,15 @@ interface SidebarProps {
   onMobileClose: () => void;
 }
 
-const navItems: Array<{ id: TabType; label: string; icon: string }> = [
-  { id: 'dashboard', label: 'Dashboard', icon: '📊' },
-  { id: 'servers', label: 'Servers', icon: '🖥️' },
-  { id: 'inbounds', label: 'Inbounds', icon: '🔌' },
-  { id: 'clients', label: 'Clients', icon: '👥' },
-  { id: 'traffic', label: 'Traffic', icon: '📈' },
-  { id: 'monitoring', label: 'Monitoring', icon: '📉' },
-  { id: 'backup', label: 'Backup', icon: '💾' },
-  { id: 'subscriptions', label: 'Subscriptions', icon: '📜' },
+const navItems: Array<{ id: TabType; icon: string; labelKey: string }> = [
+  { id: 'dashboard', icon: '📊', labelKey: 'nav.dashboard' },
+  { id: 'servers', icon: '🖥️', labelKey: 'nav.nodes' },
+  { id: 'inbounds', icon: '🔌', labelKey: 'nav.inbounds' },
+  { id: 'clients', icon: '👥', labelKey: 'nav.clients' },
+  { id: 'traffic', icon: '📈', labelKey: 'nav.traffic' },
+  { id: 'monitoring', icon: '📉', labelKey: 'nav.monitoring' },
+  { id: 'backup', icon: '💾', labelKey: 'nav.backup' },
+  { id: 'subscriptions', icon: '📜', labelKey: 'nav.subscriptions' },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -32,6 +33,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onMobileClose,
 }) => {
   const { colors, theme, toggleTheme } = useTheme();
+  const { t, i18n } = useTranslation();
 
   const handleNav = (tab: TabType) => {
     setActiveTab(tab);
@@ -40,7 +42,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <>
-      {/* Mobile overlay */}
       {mobileOpen && (
         <div
           className="sidebar-overlay"
@@ -53,10 +54,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
         className={`sidebar${mobileOpen ? ' sidebar--open' : ''}`}
         style={{ backgroundColor: colors.bg.secondary, borderRight: `1px solid ${colors.border}` }}
       >
-        {/* Logo */}
         <div className="sidebar__logo" style={{ borderBottom: `1px solid ${colors.border}` }}>
           <span style={{ color: colors.text.primary, fontWeight: 700, fontSize: '1rem' }}>
-            📡 Multi-Server Manager
+            📡 {t('app.title')}
           </span>
           <span
             className="badge ms-2"
@@ -66,7 +66,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </span>
         </div>
 
-        {/* Navigation */}
         <nav className="sidebar__nav" role="navigation" aria-label="Main navigation">
           {navItems.map(item => (
             <button
@@ -75,23 +74,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
               onClick={() => handleNav(item.id)}
               style={{
                 color: activeTab === item.id ? colors.accent : colors.text.secondary,
-                backgroundColor:
-                  activeTab === item.id ? colors.accent + '18' : 'transparent',
+                backgroundColor: activeTab === item.id ? colors.accent + '18' : 'transparent',
                 borderLeft: activeTab === item.id
                   ? `3px solid ${colors.accent}`
                   : '3px solid transparent',
               }}
             >
               <span className="sidebar__nav-icon">{item.icon}</span>
-              <span>{item.label}</span>
+              <span>{t(item.labelKey)}</span>
             </button>
           ))}
         </nav>
 
-        {/* Spacer */}
         <div className="sidebar__spacer" />
 
-        {/* User + controls */}
         <div className="sidebar__footer" style={{ borderTop: `1px solid ${colors.border}` }}>
           <div className="sidebar__user" style={{ color: colors.text.secondary }}>
             <span style={{ fontSize: '1.1rem' }}>👤</span>
@@ -102,11 +98,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {user}
             </span>
           </div>
-          <div className="sidebar__footer-actions">
+
+          <div className="mt-2">
+            <label className="form-label small mb-1" style={{ color: colors.text.secondary }}>
+              {t('language.title')}
+            </label>
+            <select
+              className="form-select form-select-sm"
+              value={i18n.language.startsWith('ru') ? 'ru' : 'en'}
+              onChange={(e) => i18n.changeLanguage(e.target.value)}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+            >
+              <option value="en">{t('language.en')}</option>
+              <option value="ru">{t('language.ru')}</option>
+            </select>
+          </div>
+
+          <div className="sidebar__footer-actions mt-2">
             <button
               className="sidebar__footer-btn"
               onClick={toggleTheme}
-              title="Toggle theme"
+              title={t('theme.toggle')}
               style={{
                 backgroundColor: colors.bg.tertiary,
                 border: `1px solid ${colors.border}`,
@@ -124,7 +136,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 color: colors.danger,
               }}
             >
-              Logout
+              {t('auth.logout')}
             </button>
           </div>
         </div>
