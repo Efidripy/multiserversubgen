@@ -27,6 +27,12 @@ update_project() {
     echo -e "\n--- Обновление проекта ---"
     if [ ! -f "$LOG_FILE" ]; then echo "Установка не найдена. Запустите установку сначала."; exit 1; fi
     source "$LOG_FILE"
+    ALLOW_ORIGINS=${ALLOW_ORIGINS:-"http://localhost:5173,http://127.0.0.1:5173"}
+    VERIFY_TLS=${VERIFY_TLS:-"true"}
+    CA_BUNDLE_PATH=${CA_BUNDLE_PATH:-""}
+    READ_ONLY_MODE=${READ_ONLY_MODE:-"false"}
+    SUB_RATE_LIMIT_COUNT=${SUB_RATE_LIMIT_COUNT:-"30"}
+    SUB_RATE_LIMIT_WINDOW_SEC=${SUB_RATE_LIMIT_WINDOW_SEC:-"60"}
     if [ -z "$WEB_PATH" ]; then
         VITE_BASE="/"
     else
@@ -64,6 +70,17 @@ update_project() {
     cd - > /dev/null
     
     echo "Запуск сервиса..."
+    cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
+        sed "s|/opt/sub-manager|$PROJECT_DIR|g" | \
+        sed "s|666|$APP_PORT|g" | \
+        sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH|g" | \
+        sed "s|ALLOW_ORIGINS=.*|ALLOW_ORIGINS=$ALLOW_ORIGINS|g" | \
+        sed "s|VERIFY_TLS=.*|VERIFY_TLS=$VERIFY_TLS|g" | \
+        sed "s|CA_BUNDLE_PATH=.*|CA_BUNDLE_PATH=$CA_BUNDLE_PATH|g" | \
+        sed "s|READ_ONLY_MODE=.*|READ_ONLY_MODE=$READ_ONLY_MODE|g" | \
+        sed "s|SUB_RATE_LIMIT_COUNT=.*|SUB_RATE_LIMIT_COUNT=$SUB_RATE_LIMIT_COUNT|g" | \
+        sed "s|SUB_RATE_LIMIT_WINDOW_SEC=.*|SUB_RATE_LIMIT_WINDOW_SEC=$SUB_RATE_LIMIT_WINDOW_SEC|g" > \
+        "/etc/systemd/system/$PROJECT_NAME.service"
     systemctl daemon-reload
     systemctl start "$PROJECT_NAME"
     
@@ -115,6 +132,28 @@ if [ -z "$WEB_PATH" ]; then
 else
     VITE_BASE="/${WEB_PATH}/"
 fi
+read -p "Разрешенные CORS origins (comma-separated, default: http://localhost:5173,http://127.0.0.1:5173): " ALLOW_ORIGINS
+ALLOW_ORIGINS=${ALLOW_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+read -p "Включить TLS verify к node panel узлам? (y/n, default: y): " VERIFY_TLS_INPUT
+VERIFY_TLS_INPUT=${VERIFY_TLS_INPUT:-y}
+if [[ "$VERIFY_TLS_INPUT" =~ ^[nNнН]$ ]]; then
+    VERIFY_TLS="false"
+else
+    VERIFY_TLS="true"
+fi
+read -p "Путь к CA bundle (опционально, Enter = системный trust store): " CA_BUNDLE_PATH
+CA_BUNDLE_PATH=${CA_BUNDLE_PATH:-}
+read -p "Включить read-only режим API? (y/n, default: n): " READ_ONLY_INPUT
+READ_ONLY_INPUT=${READ_ONLY_INPUT:-n}
+if [[ "$READ_ONLY_INPUT" =~ ^[yYдД]$ ]]; then
+    READ_ONLY_MODE="true"
+else
+    READ_ONLY_MODE="false"
+fi
+read -p "Лимит запросов для /sub/* в окно (default: 30): " SUB_RATE_LIMIT_COUNT
+SUB_RATE_LIMIT_COUNT=${SUB_RATE_LIMIT_COUNT:-30}
+read -p "Окно лимита /sub/* в секундах (default: 60): " SUB_RATE_LIMIT_WINDOW_SEC
+SUB_RATE_LIMIT_WINDOW_SEC=${SUB_RATE_LIMIT_WINDOW_SEC:-60}
 
 PROJECT_DIR="/opt/$PROJECT_NAME"
 
@@ -144,6 +183,12 @@ SELECTED_CFG="$SELECTED_CFG"
 APP_PORT="$APP_PORT"
 WEB_PATH="$WEB_PATH"
 USE_PROXY="$USE_PROXY"
+ALLOW_ORIGINS="$ALLOW_ORIGINS"
+VERIFY_TLS="$VERIFY_TLS"
+CA_BUNDLE_PATH="$CA_BUNDLE_PATH"
+READ_ONLY_MODE="$READ_ONLY_MODE"
+SUB_RATE_LIMIT_COUNT="$SUB_RATE_LIMIT_COUNT"
+SUB_RATE_LIMIT_WINDOW_SEC="$SUB_RATE_LIMIT_WINDOW_SEC"
 EOF
 
 cp "$SELECTED_CFG" "${SELECTED_CFG}.bak"
@@ -207,7 +252,13 @@ echo "Настройка systemd..."
 cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
     sed "s|/opt/sub-manager|$PROJECT_DIR|g" | \
     sed "s|666|$APP_PORT|g" | \
-    sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH|g" > \
+    sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH|g" | \
+    sed "s|ALLOW_ORIGINS=.*|ALLOW_ORIGINS=$ALLOW_ORIGINS|g" | \
+    sed "s|VERIFY_TLS=.*|VERIFY_TLS=$VERIFY_TLS|g" | \
+    sed "s|CA_BUNDLE_PATH=.*|CA_BUNDLE_PATH=$CA_BUNDLE_PATH|g" | \
+    sed "s|READ_ONLY_MODE=.*|READ_ONLY_MODE=$READ_ONLY_MODE|g" | \
+    sed "s|SUB_RATE_LIMIT_COUNT=.*|SUB_RATE_LIMIT_COUNT=$SUB_RATE_LIMIT_COUNT|g" | \
+    sed "s|SUB_RATE_LIMIT_WINDOW_SEC=.*|SUB_RATE_LIMIT_WINDOW_SEC=$SUB_RATE_LIMIT_WINDOW_SEC|g" > \
     "/etc/systemd/system/$PROJECT_NAME.service"
 
 # Настройка Nginx
@@ -234,6 +285,23 @@ location ^~ /$WEB_PATH/api/ {
     proxy_intercept_errors off;
     proxy_buffering off;
     proxy_request_buffering off;
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
+}
+
+# --- WebSocket ---
+location ^~ /$WEB_PATH/ws {
+    proxy_pass http://127.0.0.1:$APP_PORT/ws;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    add_header Cache-Control "no-store" always;
 }
 
 # --- Swagger UI / ReDoc docs ---
@@ -281,6 +349,9 @@ location = /$WEB_PATH/health {
 location ^~ /$WEB_PATH/ {
     alias $PROJECT_DIR/build/;
     try_files \$uri \$uri/ /$WEB_PATH/index.html;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
 }
 SNIPPET
 

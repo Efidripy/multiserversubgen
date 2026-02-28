@@ -7,6 +7,7 @@ import json
 import logging
 import time
 import sys
+import os
 from pathlib import Path
 from typing import List, Dict, Optional
 from datetime import datetime
@@ -15,6 +16,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 from xui_session import login_node panel
 
 logger = logging.getLogger("sub_manager")
+VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
+CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
+
+
+def _requests_verify_value():
+    if not VERIFY_TLS:
+        return False
+    if CA_BUNDLE_PATH:
+        return CA_BUNDLE_PATH
+    return True
 
 
 class ThreeXUIMonitor:
@@ -33,7 +44,7 @@ class ThreeXUIMonitor:
             Кортеж (session, base_url) или (None, None) при ошибке.
         """
         s = requests.Session()
-        s.verify = False
+        s.verify = _requests_verify_value()
         b_path = node.get("base_path", "").strip("/")
         prefix = f"/{b_path}" if b_path else ""
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
@@ -227,7 +238,7 @@ class ServerMonitor:
             Кортеж (session, base_url)
         """
         s = requests.Session()
-        s.verify = False
+        s.verify = _requests_verify_value()
         b_path = node.get("base_path", "").strip("/")
         prefix = f"/{b_path}" if b_path else ""
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
@@ -365,7 +376,7 @@ class ServerMonitor:
             base_url = f"https://{node['ip']}:{node['port']}{prefix}"
             
             # Простой запрос для проверки доступности
-            res = requests.get(f"{base_url}/", verify=False, timeout=5)
+            res = requests.get(f"{base_url}/", verify=_requests_verify_value(), timeout=5)
             
             latency = (time.time() - start_time) * 1000  # в миллисекундах
             

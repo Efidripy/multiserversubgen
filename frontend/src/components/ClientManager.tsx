@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { AddClientMultiServer } from './AddClientMultiServer';
+import { getAuth } from '../auth';
 
 interface Client {
   id: number;
@@ -673,14 +674,3 @@ export const ClientManager: React.FC = () => {
     </div>
   );
 };
-
-function getAuth() {
-  if (typeof window !== 'undefined') {
-    const auth = localStorage.getItem('sub_auth');
-    if (auth) {
-      const parsed = JSON.parse(auth);
-      return { username: parsed.user, password: parsed.password };
-    }
-  }
-  return { username: '', password: '' };
-}

@@ -9,6 +9,7 @@ import { TrafficStats } from './components/TrafficStats';
 import { BackupManager } from './components/BackupManager';
 import { Sidebar } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
+import { clearAuthCredentials, loadRememberedUsername, rememberUsername, setAuthCredentials } from './auth';
 
 type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'backup' | 'subscriptions';
 
@@ -23,13 +24,7 @@ export const App: React.FC = () => {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
 
   useEffect(() => {
-    const saved = localStorage.getItem('sub_auth');
-    if (saved) {
-      const { user: u, password: p } = JSON.parse(saved);
-      setUser(u);
-      setPassword(p);
-      setIsAuthenticated(true);
-    }
+    setUser(loadRememberedUsername());
   }, []);
 
   const handleLogin = async () => {
@@ -39,9 +34,10 @@ export const App: React.FC = () => {
         auth: { username: user, password }
       });
       if (res.data.user) {
+        setAuthCredentials(user, password);
         setIsAuthenticated(true);
-        localStorage.setItem('sub_auth', JSON.stringify({ user, password }));
-        setPassword(''); // не хранить пароль в памяти
+        rememberUsername(user);
+        setPassword('');
       }
     } catch (err: any) {
       setAuthError(err.response?.data?.detail || 'Authentication failed');
@@ -49,7 +45,7 @@ export const App: React.FC = () => {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('sub_auth');
+    clearAuthCredentials();
     setUser('');
     setPassword('');
     setIsAuthenticated(false);

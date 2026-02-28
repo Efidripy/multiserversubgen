@@ -146,6 +146,12 @@ multiserversubgen/
 - Порт: `666` (настраивается при установке)
 - Путь: `/opt/sub-manager/` (или custom)
 - Лог: `journalctl -u sub-manager -f`
+- Runtime hardening env:
+  - `ALLOW_ORIGINS` — CORS whitelist (через запятую)
+  - `VERIFY_TLS` (`true/false`) — проверка TLS к node panel узлам
+  - `CA_BUNDLE_PATH` — путь к кастомному CA bundle (опционально)
+  - `READ_ONLY_MODE` (`true/false`) — блокирует `POST/PUT/DELETE/PATCH` для `/api/v1/*`
+  - `SUB_RATE_LIMIT_COUNT` + `SUB_RATE_LIMIT_WINDOW_SEC` — лимит запросов к `/api/v1/sub/*`
 
 ### Frontend
 - Сборка: `backend/build/`

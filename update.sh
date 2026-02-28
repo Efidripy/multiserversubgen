@@ -15,6 +15,28 @@ if [ ! -f "$LOG_FILE" ]; then
 fi
 
 source "$LOG_FILE"
+ALLOW_ORIGINS=${ALLOW_ORIGINS:-"http://localhost:5173,http://127.0.0.1:5173"}
+VERIFY_TLS=${VERIFY_TLS:-"true"}
+CA_BUNDLE_PATH=${CA_BUNDLE_PATH:-""}
+READ_ONLY_MODE=${READ_ONLY_MODE:-"false"}
+SUB_RATE_LIMIT_COUNT=${SUB_RATE_LIMIT_COUNT:-"30"}
+SUB_RATE_LIMIT_WINDOW_SEC=${SUB_RATE_LIMIT_WINDOW_SEC:-"60"}
+
+# Обновить сохранённые параметры (добавляет новые поля на старых установках)
+cat <<EOF > "$LOG_FILE"
+PROJECT_NAME="$PROJECT_NAME"
+PROJECT_DIR="$PROJECT_DIR"
+SELECTED_CFG="$SELECTED_CFG"
+APP_PORT="$APP_PORT"
+WEB_PATH="$WEB_PATH"
+USE_PROXY="$USE_PROXY"
+ALLOW_ORIGINS="$ALLOW_ORIGINS"
+VERIFY_TLS="$VERIFY_TLS"
+CA_BUNDLE_PATH="$CA_BUNDLE_PATH"
+READ_ONLY_MODE="$READ_ONLY_MODE"
+SUB_RATE_LIMIT_COUNT="$SUB_RATE_LIMIT_COUNT"
+SUB_RATE_LIMIT_WINDOW_SEC="$SUB_RATE_LIMIT_WINDOW_SEC"
+EOF
 
 # Compute VITE_BASE from stored WEB_PATH
 if [ -z "$WEB_PATH" ]; then
@@ -31,6 +53,8 @@ echo "Проект: $PROJECT_NAME"
 echo "Путь: $PROJECT_DIR"
 echo "Порт: $APP_PORT"
 echo "Web путь: /$WEB_PATH/"
+echo "VERIFY_TLS: $VERIFY_TLS"
+echo "READ_ONLY_MODE: $READ_ONLY_MODE"
 echo "======================================================"
 echo ""
 echo "Выберите режим обновления:"
@@ -97,6 +121,17 @@ case $update_choice in
         echo "  ✓ Frontend пересобран"
         
         echo "[5/5] Перезапуск сервиса..."
+        cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
+            sed "s|/opt/sub-manager|$PROJECT_DIR|g" | \
+            sed "s|666|$APP_PORT|g" | \
+            sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH|g" | \
+            sed "s|ALLOW_ORIGINS=.*|ALLOW_ORIGINS=$ALLOW_ORIGINS|g" | \
+            sed "s|VERIFY_TLS=.*|VERIFY_TLS=$VERIFY_TLS|g" | \
+            sed "s|CA_BUNDLE_PATH=.*|CA_BUNDLE_PATH=$CA_BUNDLE_PATH|g" | \
+            sed "s|READ_ONLY_MODE=.*|READ_ONLY_MODE=$READ_ONLY_MODE|g" | \
+            sed "s|SUB_RATE_LIMIT_COUNT=.*|SUB_RATE_LIMIT_COUNT=$SUB_RATE_LIMIT_COUNT|g" | \
+            sed "s|SUB_RATE_LIMIT_WINDOW_SEC=.*|SUB_RATE_LIMIT_WINDOW_SEC=$SUB_RATE_LIMIT_WINDOW_SEC|g" > \
+            "/etc/systemd/system/$PROJECT_NAME.service"
         systemctl daemon-reload
         systemctl start "$PROJECT_NAME"
         ;;
@@ -113,6 +148,18 @@ case $update_choice in
         "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
         
         echo "[3/3] Перезапуск сервиса..."
+        cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
+            sed "s|/opt/sub-manager|$PROJECT_DIR|g" | \
+            sed "s|666|$APP_PORT|g" | \
+            sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH|g" | \
+            sed "s|ALLOW_ORIGINS=.*|ALLOW_ORIGINS=$ALLOW_ORIGINS|g" | \
+            sed "s|VERIFY_TLS=.*|VERIFY_TLS=$VERIFY_TLS|g" | \
+            sed "s|CA_BUNDLE_PATH=.*|CA_BUNDLE_PATH=$CA_BUNDLE_PATH|g" | \
+            sed "s|READ_ONLY_MODE=.*|READ_ONLY_MODE=$READ_ONLY_MODE|g" | \
+            sed "s|SUB_RATE_LIMIT_COUNT=.*|SUB_RATE_LIMIT_COUNT=$SUB_RATE_LIMIT_COUNT|g" | \
+            sed "s|SUB_RATE_LIMIT_WINDOW_SEC=.*|SUB_RATE_LIMIT_WINDOW_SEC=$SUB_RATE_LIMIT_WINDOW_SEC|g" > \
+            "/etc/systemd/system/$PROJECT_NAME.service"
+        systemctl daemon-reload
         systemctl start "$PROJECT_NAME"
         ;;
         
@@ -165,6 +212,23 @@ location ^~ /$WEB_PATH/api/ {
     proxy_intercept_errors off;
     proxy_buffering off;
     proxy_request_buffering off;
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
+}
+
+# --- WebSocket ---
+location ^~ /$WEB_PATH/ws {
+    proxy_pass http://127.0.0.1:$APP_PORT/ws;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    add_header Cache-Control "no-store" always;
 }
 
 # --- Swagger UI / ReDoc docs ---
@@ -212,6 +276,9 @@ location = /$WEB_PATH/health {
 location ^~ /$WEB_PATH/ {
     alias $PROJECT_DIR/build/;
     try_files \$uri \$uri/ /$WEB_PATH/index.html;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
 }
 SNIPPET
         echo "  ✓ Обновлен snippet: $SNIPPET_FILE"

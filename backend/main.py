@@ -8,8 +8,11 @@ import os
 import logging
 import time
 import asyncio
+import uuid
+from collections import defaultdict, deque
+from threading import Lock
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from fastapi import FastAPI, Request, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import PlainTextResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,12 +31,33 @@ from utils import parse_field_as_dict
 from server_monitor import ServerMonitor, ThreeXUIMonitor
 from websocket_manager import manager as ws_manager, handle_websocket_message
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 # Конфигурация
 PROJECT_DIR = os.getenv("PROJECT_DIR", "/opt/sub-manager")
 WEB_PATH = os.getenv("WEB_PATH", "").strip("/")
 root_path = f"/{WEB_PATH}" if WEB_PATH else ""
+CACHE_TTL = int(os.getenv("CACHE_TTL", "30"))
+ALLOW_ORIGINS_RAW = os.getenv(
+    "ALLOW_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+)
+ALLOW_ORIGINS = [origin.strip() for origin in ALLOW_ORIGINS_RAW.split(",") if origin.strip()]
+VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
+CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
+READ_ONLY_MODE = os.getenv("READ_ONLY_MODE", "false").strip().lower() in ("1", "true", "yes", "on")
+SUB_RATE_LIMIT_COUNT = int(os.getenv("SUB_RATE_LIMIT_COUNT", "30"))
+SUB_RATE_LIMIT_WINDOW_SEC = int(os.getenv("SUB_RATE_LIMIT_WINDOW_SEC", "60"))
+
+
+def _get_requests_verify_value():
+    if not VERIFY_TLS:
+        return False
+    if CA_BUNDLE_PATH:
+        return CA_BUNDLE_PATH
+    return True
+
+
+REQUESTS_VERIFY = _get_requests_verify_value()
+if REQUESTS_VERIFY is False:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 app = FastAPI(title="Multi-Server Sub Manager", version="3.0", root_path=root_path)
 
@@ -43,17 +67,18 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 # CORS для локального development
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOW_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 DB_PATH = os.path.join(PROJECT_DIR, "admin.db")
-CACHE_TTL = int(os.getenv("CACHE_TTL", "30"))
 
 p = pam.pam()
 emails_cache = {"ts": 0.0, "emails": []}
 links_cache = {}
+subscription_rate_state = defaultdict(deque)
+subscription_rate_lock = Lock()
 
 # Инициализация менеджеров
 inbound_mgr = InboundManager(decrypt_func=decrypt, encrypt_func=encrypt)
@@ -95,13 +120,14 @@ def init_db():
 init_db()
 
 
-def check_auth(request: Request) -> str:
-    """Проверка Basic Auth через PAM"""
-    auth_header = request.headers.get("Authorization")
+def check_basic_auth_header(auth_header: Optional[str]) -> Optional[str]:
+    """Проверка Basic Auth header через PAM."""
     if not auth_header:
         return None
     try:
         scheme, credentials = auth_header.split()
+        if scheme.lower() != "basic":
+            return None
         decoded = base64.b64decode(credentials).decode("utf-8")
         username, password = decoded.split(":", 1)
         if p.authenticate(username, password):
@@ -111,10 +137,82 @@ def check_auth(request: Request) -> str:
     return None
 
 
+def extract_basic_auth_username(auth_header: Optional[str]) -> Optional[str]:
+    """Извлечь username из Basic Auth header без валидации PAM."""
+    if not auth_header:
+        return None
+    try:
+        scheme, credentials = auth_header.split()
+        if scheme.lower() != "basic":
+            return None
+        decoded = base64.b64decode(credentials).decode("utf-8")
+        username, _ = decoded.split(":", 1)
+        return username
+    except Exception:
+        return None
+
+
+def _get_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
+
+
+def _check_subscription_rate_limit(request: Request, resource_key: str) -> Tuple[bool, int]:
+    now = time.time()
+    key = f"{_get_client_ip(request)}:{resource_key}"
+    with subscription_rate_lock:
+        q = subscription_rate_state[key]
+        while q and now - q[0] > SUB_RATE_LIMIT_WINDOW_SEC:
+            q.popleft()
+        if len(q) >= SUB_RATE_LIMIT_COUNT:
+            retry_after = max(1, int(SUB_RATE_LIMIT_WINDOW_SEC - (now - q[0])))
+            return False, retry_after
+        q.append(now)
+    return True, 0
+
+
+def check_auth(request: Request) -> Optional[str]:
+    """Проверка Basic Auth через PAM."""
+    return check_basic_auth_header(request.headers.get("Authorization"))
+
+
+@app.middleware("http")
+async def request_controls_and_audit_middleware(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+    start = time.perf_counter()
+    path = request.url.path
+
+    if READ_ONLY_MODE and request.method in {"POST", "PUT", "DELETE", "PATCH"} and path.startswith("/api/v1/"):
+        response = JSONResponse(
+            status_code=403,
+            content={"detail": "Read-only mode is enabled"},
+        )
+    else:
+        response = await call_next(request)
+
+    response.headers["X-Request-ID"] = request_id
+    duration_ms = round((time.perf_counter() - start) * 1000, 2)
+    logger.info(json.dumps({
+        "event": "http_access",
+        "request_id": request_id,
+        "method": request.method,
+        "path": path,
+        "status_code": response.status_code,
+        "duration_ms": duration_ms,
+        "client_ip": _get_client_ip(request),
+        "user_hint": extract_basic_auth_username(request.headers.get("Authorization")) or "anonymous",
+    }, ensure_ascii=False))
+    return response
+
+
 def fetch_inbounds(node: Dict) -> List[Dict]:
     """Получить список inbound'ов с node panel панели"""
     s = requests.Session()
-    s.verify = False
+    s.verify = REQUESTS_VERIFY
     b_path = node['base_path'].strip('/')
     prefix = f"/{b_path}" if b_path else ""
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
@@ -215,7 +313,7 @@ def get_all_inbounds(nodes: List[Dict]) -> List[Dict]:
 def add_inbound_to_node(node: Dict, inbound_config: Dict) -> bool:
     """Добавить инбаунд на узел node panel"""
     s = requests.Session()
-    s.verify = False
+    s.verify = REQUESTS_VERIFY
     b_path = node["base_path"].strip("/")
     prefix = f"/{b_path}" if b_path else ""
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
@@ -234,7 +332,7 @@ def add_inbound_to_node(node: Dict, inbound_config: Dict) -> bool:
 def add_client_to_inbound(node: Dict, inbound_id: int, client_config: Dict) -> bool:
     """Добавить клиента в инбаунд"""
     s = requests.Session()
-    s.verify = False
+    s.verify = REQUESTS_VERIFY
     b_path = node["base_path"].strip("/")
     prefix = f"/{b_path}" if b_path else ""
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
@@ -254,7 +352,7 @@ def add_client_to_inbound(node: Dict, inbound_id: int, client_config: Dict) -> b
 def delete_client_from_inbound(node: Dict, inbound_id: int, client_id: str) -> bool:
     """Удалить клиента из инбаунда"""
     s = requests.Session()
-    s.verify = False
+    s.verify = REQUESTS_VERIFY
     b_path = node["base_path"].strip("/")
     prefix = f"/{b_path}" if b_path else ""
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
@@ -273,7 +371,7 @@ def delete_client_from_inbound(node: Dict, inbound_id: int, client_id: str) -> b
 def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
     """Получить статистику клиента"""
     s = requests.Session()
-    s.verify = False
+    s.verify = REQUESTS_VERIFY
     b_path = node["base_path"].strip("/")
     prefix = f"/{b_path}" if b_path else ""
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
@@ -516,12 +614,10 @@ async def list_nodes(request: Request):
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         nodes = conn.execute('SELECT * FROM nodes').fetchall()
-        # Расшифровываем пароли
         result = []
         for n in nodes:
             node_dict = dict(n)
-            if node_dict.get('password'):
-                node_dict['password'] = decrypt(node_dict['password'])
+            node_dict.pop("password", None)
             result.append(node_dict)
         return JSONResponse(content=result, headers={"Cache-Control": "private, max-age=300"})
 
@@ -651,13 +747,21 @@ async def list_emails(request: Request):
 
 
 @app.get("/api/v1/sub/{email}")
-async def get_sub(email: str, protocol: Optional[str] = None, nodes: Optional[str] = None):
+async def get_sub(request: Request, email: str, protocol: Optional[str] = None, nodes: Optional[str] = None):
     """Получить подписку для email'а (без авторизации)
     
     Query params:
     - protocol: фильтр по протоколу (vless, vmess, trojan)
     - nodes: список node names через запятую (node1,node2)
     """
+    allowed, retry_after = _check_subscription_rate_limit(request, f"sub:{email.lower()}")
+    if not allowed:
+        return PlainTextResponse(
+            content=f"Rate limit exceeded. Retry after {retry_after}s",
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
+
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         all_nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
@@ -682,13 +786,21 @@ async def get_sub(email: str, protocol: Optional[str] = None, nodes: Optional[st
 
 
 @app.get("/api/v1/sub-grouped/{identifier}")
-async def get_sub_grouped(identifier: str, protocol: Optional[str] = None, nodes: Optional[str] = None):
+async def get_sub_grouped(request: Request, identifier: str, protocol: Optional[str] = None, nodes: Optional[str] = None):
     """Получить групповую подписку (по части email или имени)
     
     Примеры:
     - /api/v1/sub-grouped/company - все email содержащие 'company'
     - /api/v1/sub-grouped/user1 - все email содержащие 'user1'
     """
+    allowed, retry_after = _check_subscription_rate_limit(request, f"sub-grouped:{identifier.lower()}")
+    if not allowed:
+        return PlainTextResponse(
+            content=f"Rate limit exceeded. Retry after {retry_after}s",
+            status_code=429,
+            headers={"Retry-After": str(retry_after)},
+        )
+
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         all_nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
@@ -1648,6 +1760,10 @@ async def get_node_client_traffic(request: Request, node_id: int, email: str):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint для real-time обновлений"""
+    user = check_basic_auth_header(websocket.headers.get("Authorization"))
+    if not user:
+        await websocket.close(code=1008)
+        return
     await ws_manager.connect(websocket)
     try:
         while True:
