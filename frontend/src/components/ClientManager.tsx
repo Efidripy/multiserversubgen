@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { AddClientMultiServer } from './AddClientMultiServer';
@@ -42,6 +42,12 @@ export const ClientManager: React.FC = () => {
   const [error, setError] = useState('');
   // Map of "node_id:email" -> TrafficData
   const [trafficCache, setTrafficCache] = useState<Record<string, TrafficData | null>>({});
+  // Endpoint mode compatibility:
+  // - unknown: probe new endpoint first
+  // - query: use /client-traffic?email=
+  // - legacy: use /client/{email}/traffic
+  // - disabled: skip traffic calls (both endpoints unavailable)
+  const trafficEndpointModeRef = useRef<'unknown' | 'query' | 'legacy' | 'disabled'>('unknown');
   
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -108,17 +114,65 @@ export const ClientManager: React.FC = () => {
     if (pairs.size === 0) return;
 
     setTrafficLoading(true);
+    const fetchTraffic = async (node_id: number, email: string): Promise<TrafficData | null> => {
+      if (trafficEndpointModeRef.current === 'disabled') {
+        return null;
+      }
+
+      const tryQuery = async (): Promise<TrafficData> => {
+        const res = await api.get('/v1/nodes/' + node_id + '/client-traffic', {
+          auth: getAuth(),
+          params: { email },
+        });
+        return res.data as TrafficData;
+      };
+
+      const tryLegacy = async (): Promise<TrafficData> => {
+        const res = await api.get(
+          `/v1/nodes/${node_id}/client/${encodeURIComponent(email)}/traffic`,
+          { auth: getAuth() }
+        );
+        return res.data as TrafficData;
+      };
+
+      try {
+        if (trafficEndpointModeRef.current === 'query') {
+          return await tryQuery();
+        }
+        if (trafficEndpointModeRef.current === 'legacy') {
+          return await tryLegacy();
+        }
+
+        // unknown => probe query endpoint first
+        const data = await tryQuery();
+        trafficEndpointModeRef.current = 'query';
+        return data;
+      } catch (err: any) {
+        const status = err?.response?.status;
+
+        // New endpoint not present on older backend => fallback to legacy
+        if (trafficEndpointModeRef.current !== 'legacy' && status === 404) {
+          try {
+            const data = await tryLegacy();
+            trafficEndpointModeRef.current = 'legacy';
+            return data;
+          } catch (legacyErr: any) {
+            if (legacyErr?.response?.status === 404) {
+              trafficEndpointModeRef.current = 'disabled';
+            }
+            return null;
+          }
+        }
+
+        return null;
+      }
+    };
+
     const results = await Promise.all(
       Array.from(pairs.entries()).map(async ([key, { node_id, email }]) => {
         try {
-          const res = await api.get(
-            `/v1/nodes/${node_id}/client-traffic`,
-            {
-              auth: getAuth(),
-              params: { email },
-            }
-          );
-          return [key, res.data as TrafficData] as const;
+          const data = await fetchTraffic(node_id, email);
+          return [key, data] as const;
         } catch {
           return [key, null] as const;
         }

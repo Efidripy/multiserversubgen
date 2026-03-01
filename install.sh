@@ -138,6 +138,20 @@ ensure_monitoring_auth_file() {
     if [ -z "${GRAFANA_AUTH_USER:-}" ]; then
         GRAFANA_AUTH_USER="monitor"
     fi
+    local auth_file="/etc/nginx/.${PROJECT_NAME}_grafana.htpasswd"
+
+    if [ -z "${GRAFANA_AUTH_HASH:-}" ]; then
+        # Keep existing hash if installer is re-run on an already configured host.
+        if [ -f "$auth_file" ]; then
+            local existing_hash
+            existing_hash=$(awk -F: -v u="$GRAFANA_AUTH_USER" '$1==u {print $2; exit}' "$auth_file")
+            if [ -n "$existing_hash" ]; then
+                GRAFANA_AUTH_HASH="$existing_hash"
+                echo "ℹ️ Используется существующий Grafana BasicAuth hash для пользователя '$GRAFANA_AUTH_USER'."
+            fi
+        fi
+    fi
+
     if [ -z "${GRAFANA_AUTH_HASH:-}" ]; then
         if ! command -v openssl >/dev/null 2>&1; then
             apt_update >/dev/null 2>&1 && apt_install openssl >/dev/null 2>&1
@@ -149,7 +163,6 @@ ensure_monitoring_auth_file() {
         echo "⚠️ Сохраните его в безопасном месте."
     fi
 
-    local auth_file="/etc/nginx/.${PROJECT_NAME}_grafana.htpasswd"
     printf '%s:%s\n' "$GRAFANA_AUTH_USER" "$GRAFANA_AUTH_HASH" > "$auth_file"
     chmod 640 "$auth_file"
     chown root:www-data "$auth_file" 2>/dev/null || chown root:root "$auth_file"

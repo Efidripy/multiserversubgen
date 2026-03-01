@@ -93,6 +93,23 @@ generate_random_path() {
     tr -dc 'a-z0-9' </dev/urandom | head -c 8
 }
 
+ask_yes_no() {
+    local prompt="$1"
+    local default_value="${2:-n}"
+    local answer=""
+    while true; do
+        read -p "$prompt" answer
+        answer="${answer:-$default_value}"
+        case "$answer" in
+            [yYдД]) echo "y"; return 0 ;;
+            [nNнН]) echo "n"; return 0 ;;
+            *)
+                echo "Введите y или n."
+                ;;
+        esac
+    done
+}
+
 normalize_public_access_vars() {
     PUBLIC_DOMAIN="${PUBLIC_DOMAIN#http://}"
     PUBLIC_DOMAIN="${PUBLIC_DOMAIN#https://}"
@@ -200,6 +217,20 @@ ensure_monitoring_auth_file() {
     if [ -z "${GRAFANA_AUTH_USER:-}" ]; then
         GRAFANA_AUTH_USER="monitor"
     fi
+    local auth_file="/etc/nginx/.${PROJECT_NAME}_grafana.htpasswd"
+
+    if [ -z "${GRAFANA_AUTH_HASH:-}" ]; then
+        # Keep existing password hash on updates when possible.
+        if [ -f "$auth_file" ]; then
+            local existing_hash
+            existing_hash=$(awk -F: -v u="$GRAFANA_AUTH_USER" '$1==u {print $2; exit}' "$auth_file")
+            if [ -n "$existing_hash" ]; then
+                GRAFANA_AUTH_HASH="$existing_hash"
+                echo "ℹ️ Используется существующий Grafana BasicAuth hash для пользователя '$GRAFANA_AUTH_USER'."
+            fi
+        fi
+    fi
+
     if [ -z "${GRAFANA_AUTH_HASH:-}" ]; then
         if ! command -v openssl >/dev/null 2>&1; then
             apt_update >/dev/null 2>&1 && apt_install openssl >/dev/null 2>&1
@@ -211,7 +242,6 @@ ensure_monitoring_auth_file() {
         echo "⚠️ Сохраните его в безопасном месте."
     fi
 
-    local auth_file="/etc/nginx/.${PROJECT_NAME}_grafana.htpasswd"
     printf '%s:%s\n' "$GRAFANA_AUTH_USER" "$GRAFANA_AUTH_HASH" > "$auth_file"
     chmod 640 "$auth_file"
     chown root:www-data "$auth_file" 2>/dev/null || chown root:root "$auth_file"
@@ -691,15 +721,13 @@ echo "MFA_TOTP_ENABLED: $MFA_TOTP_ENABLED"
 echo "MFA_TOTP_WS_STRICT: $MFA_TOTP_WS_STRICT"
 echo "======================================================"
 echo ""
-read -p "Изменить настройки 2-го уровня защиты (mTLS/IP allowlist/TOTP)? (y/n, default: n): " harden_choice
-harden_choice=${harden_choice:-n}
-if [[ "$harden_choice" =~ ^[yYдД]$ ]]; then
+harden_choice=$(ask_yes_no "Изменить настройки 2-го уровня защиты (mTLS/IP allowlist/TOTP)? (y/n, default: n): " "n")
+if [[ "$harden_choice" == "y" ]]; then
     read -p "IP allowlist для панели (CIDR через запятую, Enter = без ограничений): " SECURITY_IP_ALLOWLIST
     SECURITY_IP_ALLOWLIST=${SECURITY_IP_ALLOWLIST:-}
 
-    read -p "Включить mTLS клиентских сертификатов для панели? (y/n, default: n): " SECURITY_MTLS_INPUT
-    SECURITY_MTLS_INPUT=${SECURITY_MTLS_INPUT:-n}
-    if [[ "$SECURITY_MTLS_INPUT" =~ ^[yYдД]$ ]]; then
+    SECURITY_MTLS_INPUT=$(ask_yes_no "Включить mTLS клиентских сертификатов для панели? (y/n, default: n): " "n")
+    if [[ "$SECURITY_MTLS_INPUT" == "y" ]]; then
         SECURITY_MTLS_ENABLED="true"
         read -p "Путь к CA сертификату для mTLS (обязательно): " SECURITY_MTLS_CA_PATH
         if [ -z "$SECURITY_MTLS_CA_PATH" ] || [ ! -f "$SECURITY_MTLS_CA_PATH" ]; then
@@ -711,9 +739,8 @@ if [[ "$harden_choice" =~ ^[yYдД]$ ]]; then
         SECURITY_MTLS_CA_PATH=""
     fi
 
-    read -p "Включить TOTP 2FA для API/UI? (y/n, default: n): " MFA_TOTP_INPUT
-    MFA_TOTP_INPUT=${MFA_TOTP_INPUT:-n}
-    if [[ "$MFA_TOTP_INPUT" =~ ^[yYдД]$ ]]; then
+    MFA_TOTP_INPUT=$(ask_yes_no "Включить TOTP 2FA для API/UI? (y/n, default: n): " "n")
+    if [[ "$MFA_TOTP_INPUT" == "y" ]]; then
         MFA_TOTP_ENABLED="true"
         read -p "MFA mapping username:BASE32[,user2:BASE32] (обязательно): " MFA_TOTP_USERS
         if [ -z "$MFA_TOTP_USERS" ]; then
@@ -726,12 +753,10 @@ if [[ "$harden_choice" =~ ^[yYдД]$ ]]; then
     fi
 fi
 
-read -p "Изменить web-пути панели/Grafana? (y/n, default: n): " path_choice
-path_choice=${path_choice:-n}
-if [[ "$path_choice" =~ ^[yYдД]$ ]]; then
-    read -p "Сгенерировать случайный путь панели (8 символов)? (y/n, default: y): " PANEL_PATH_RANDOM_INPUT
-    PANEL_PATH_RANDOM_INPUT=${PANEL_PATH_RANDOM_INPUT:-y}
-    if [[ "$PANEL_PATH_RANDOM_INPUT" =~ ^[nNнН]$ ]]; then
+path_choice=$(ask_yes_no "Изменить web-пути панели/Grafana? (y/n, default: n): " "n")
+if [[ "$path_choice" == "y" ]]; then
+    PANEL_PATH_RANDOM_INPUT=$(ask_yes_no "Сгенерировать случайный путь панели (8 символов)? (y/n, default: y): " "y")
+    if [[ "$PANEL_PATH_RANDOM_INPUT" == "n" ]]; then
         read -p "Новый путь панели: " WEB_PATH
         WEB_PATH=${WEB_PATH:-$(generate_random_path)}
     else
@@ -749,9 +774,8 @@ if [[ "$path_choice" =~ ^[yYдД]$ ]]; then
     fi
 
     if [ "$MONITORING_ENABLED" = "true" ]; then
-        read -p "Сгенерировать случайный путь Grafana (8 символов)? (y/n, default: y): " GRAFANA_PATH_RANDOM_INPUT
-        GRAFANA_PATH_RANDOM_INPUT=${GRAFANA_PATH_RANDOM_INPUT:-y}
-        if [[ "$GRAFANA_PATH_RANDOM_INPUT" =~ ^[nNнН]$ ]]; then
+        GRAFANA_PATH_RANDOM_INPUT=$(ask_yes_no "Сгенерировать случайный путь Grafana (8 символов)? (y/n, default: y): " "y")
+        if [[ "$GRAFANA_PATH_RANDOM_INPUT" == "n" ]]; then
             read -p "Новый путь Grafana: " GRAFANA_WEB_PATH
             GRAFANA_WEB_PATH=${GRAFANA_WEB_PATH:-$(generate_random_path)}
         else
@@ -767,9 +791,8 @@ if [[ "$path_choice" =~ ^[yYдД]$ ]]; then
     VITE_GRAFANA_PATH="/${GRAFANA_WEB_PATH}/"
 fi
 
-read -p "Изменить публичный домен/схему URL? (y/n, default: n): " public_choice
-public_choice=${public_choice:-n}
-if [[ "$public_choice" =~ ^[yYдД]$ ]]; then
+public_choice=$(ask_yes_no "Изменить публичный домен/схему URL? (y/n, default: n): " "n")
+if [[ "$public_choice" == "y" ]]; then
     read -p "Публичный домен (без http/https, Enter = auto): " PUBLIC_DOMAIN
     read -p "Схема URL (http/https, default: ${PUBLIC_SCHEME}): " PUBLIC_SCHEME_INPUT
     PUBLIC_SCHEME=${PUBLIC_SCHEME_INPUT:-$PUBLIC_SCHEME}
@@ -828,6 +851,12 @@ echo "  4) Обновить Nginx конфигурацию"
 echo "  5) Выход"
 echo ""
 read -p "Ваш выбор [1-5]: " update_choice
+update_choice="$(echo "$update_choice" | tr -d '[:space:]')"
+
+if ! [[ "$update_choice" =~ ^[1-5]$ ]]; then
+    echo "❌ Неверный выбор: '$update_choice'. Допустимо только одно значение от 1 до 5."
+    exit 1
+fi
 
 if [[ "$update_choice" == "5" ]]; then
     echo "Выход."
