@@ -11,3 +11,9 @@ venv/
 .env
 .env.local
 .env.*.local
+*.db
+*.sqlite
+*.sqlite3
+*.bak
+*.backup
+*.dump
