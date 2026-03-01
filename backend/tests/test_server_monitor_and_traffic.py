@@ -63,14 +63,13 @@ class TestServerMonitorEndpoint:
 
         with patch.object(monitor, '_get_session') as mock_gs:
             sess = MagicMock()
-            sess.post.return_value = mock_resp
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
-
-            result = monitor.get_server_status(self._node())
+            with patch("server_monitor.xui_request", return_value=mock_resp) as mock_xui:
+                result = monitor.get_server_status(self._node())
 
         # Primary endpoint must be used
-        sess.post.assert_called_once_with(
-            "https://1.2.3.4:443/panel/api/server/status", timeout=5
+        mock_xui.assert_called_once_with(
+            sess, "POST", "https://1.2.3.4:443/panel/api/server/status"
         )
         assert result["available"] is True
         assert result["xray"]["running"] is True
@@ -95,14 +94,13 @@ class TestServerMonitorEndpoint:
 
         with patch.object(monitor, '_get_session') as mock_gs:
             sess = MagicMock()
-            sess.post.side_effect = [resp_404, resp_200]
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
+            with patch("server_monitor.xui_request", side_effect=[resp_404, resp_200]) as mock_xui:
+                result = monitor.get_server_status(self._node())
 
-            result = monitor.get_server_status(self._node())
-
-        calls = sess.post.call_args_list
-        assert calls[0] == call("https://1.2.3.4:443/panel/api/server/status", timeout=5)
-        assert calls[1] == call("https://1.2.3.4:443/server/status", timeout=5)
+        calls = mock_xui.call_args_list
+        assert calls[0] == call(sess, "POST", "https://1.2.3.4:443/panel/api/server/status")
+        assert calls[1] == call(sess, "POST", "https://1.2.3.4:443/server/status")
         assert result["available"] is True
 
     def test_non_200_non_404_returns_unavailable_and_logs(self, caplog):
@@ -113,11 +111,10 @@ class TestServerMonitorEndpoint:
 
         with patch.object(monitor, '_get_session') as mock_gs:
             sess = MagicMock()
-            sess.post.return_value = resp_500
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
-
-            with caplog.at_level(logging.WARNING, logger="sub_manager"):
-                result = monitor.get_server_status(self._node())
+            with patch("server_monitor.xui_request", return_value=resp_500):
+                with caplog.at_level(logging.WARNING, logger="sub_manager"):
+                    result = monitor.get_server_status(self._node())
 
         assert result["available"] is False
         assert "500" in result["error"]
@@ -154,10 +151,9 @@ class TestGetClientTrafficHardening:
 
         with patch.object(mgr, '_get_session') as mock_gs:
             sess = MagicMock()
-            sess.get.return_value = resp
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
-
-            traffic = mgr.get_client_traffic(self._node(), "uuid1", "vless")
+            with patch("client_manager.xui_request", return_value=resp):
+                traffic = mgr.get_client_traffic(self._node(), "uuid1", "vless")
 
         assert traffic == {"up": 100, "down": 200}
 
@@ -169,10 +165,9 @@ class TestGetClientTrafficHardening:
 
         with patch.object(mgr, '_get_session') as mock_gs:
             sess = MagicMock()
-            sess.get.return_value = resp
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
-
-            traffic = mgr.get_client_traffic(self._node(), "uuid1", "trojan")
+            with patch("client_manager.xui_request", return_value=resp):
+                traffic = mgr.get_client_traffic(self._node(), "uuid1", "trojan")
 
         assert traffic == {}
 
@@ -192,10 +187,9 @@ class TestGetClientTrafficHardening:
         with patch.object(mgr, '_fetch_inbounds_from_node', return_value=[inbound]):
             with patch.object(mgr, '_get_session') as mock_gs:
                 sess = MagicMock()
-                sess.get.return_value = resp
                 mock_gs.return_value = (sess, "https://1.2.3.4:443")
-
-                result = mgr.get_traffic_stats([self._node()])
+                with patch("client_manager.xui_request", return_value=resp):
+                    result = mgr.get_traffic_stats([self._node()])
 
         assert "stats" in result
         # Client entry should have zeroed traffic (list obj treated as empty)
@@ -209,10 +203,9 @@ class TestGetClientTrafficHardening:
 
         with patch.object(mgr, '_get_session') as mock_gs:
             sess = MagicMock()
-            sess.get.return_value = resp
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
-
-            traffic = mgr.get_client_traffic(self._node(), "uid", "vmess")
+            with patch("client_manager.xui_request", return_value=resp):
+                traffic = mgr.get_client_traffic(self._node(), "uid", "vmess")
 
         assert traffic == {}
 
@@ -281,12 +274,11 @@ class TestThreeXUIMonitor:
         }
         with patch.object(monitor, '_get_session') as mock_gs:
             sess = MagicMock()
-            sess.get.return_value = _make_response(200, body)
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)) as mock_xui:
+                result = monitor.get_server_status(self._node())
 
-            result = monitor.get_server_status(self._node())
-
-        sess.get.assert_called_once_with("https://1.2.3.4:443/panel/api/server/status", timeout=5)
+        mock_xui.assert_called_once_with(sess, "GET", "https://1.2.3.4:443/panel/api/server/status")
         assert result["available"] is True
         assert result["xray"]["running"] is True
         assert result["xray"]["version"] == "1.8.10"
@@ -305,12 +297,11 @@ class TestThreeXUIMonitor:
         body = {"success": True, "obj": inbounds}
         with patch.object(monitor, '_get_session') as mock_gs:
             sess = MagicMock()
-            sess.get.return_value = _make_response(200, body)
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)) as mock_xui:
+                result = monitor.get_inbounds(self._node())
 
-            result = monitor.get_inbounds(self._node())
-
-        sess.get.assert_called_once_with("https://1.2.3.4:443/panel/api/inbounds/list", timeout=5)
+        mock_xui.assert_called_once_with(sess, "GET", "https://1.2.3.4:443/panel/api/inbounds/list")
         assert result["available"] is True
         assert len(result["inbounds"]) == 1
 
@@ -323,10 +314,9 @@ class TestThreeXUIMonitor:
         body = {"success": True, "obj": inbounds}
         with patch.object(monitor, '_get_session') as mock_gs:
             sess = MagicMock()
-            sess.get.return_value = _make_response(200, body)
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
-
-            result = monitor.get_traffic(self._node())
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)):
+                result = monitor.get_traffic(self._node())
 
         assert result["available"] is True
         assert len(result["traffic"]) == 2
@@ -338,12 +328,11 @@ class TestThreeXUIMonitor:
         body = {"success": True, "obj": ["user@a.com", "user@b.com"]}
         with patch.object(monitor, '_get_session') as mock_gs:
             sess = MagicMock()
-            sess.post.return_value = _make_response(200, body)
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)) as mock_xui:
+                result = monitor.get_online_clients(self._node())
 
-            result = monitor.get_online_clients(self._node())
-
-        sess.post.assert_called_once_with("https://1.2.3.4:443/panel/api/inbounds/onlines", timeout=5)
+        mock_xui.assert_called_once_with(sess, "POST", "https://1.2.3.4:443/panel/api/inbounds/onlines")
         assert result["available"] is True
         assert result["online_clients"] == ["user@a.com", "user@b.com"]
 
@@ -352,13 +341,12 @@ class TestThreeXUIMonitor:
         body = {"success": True, "obj": {"up": 123, "down": 456, "enable": True, "expiryTime": 0}}
         with patch.object(monitor, '_get_session') as mock_gs:
             sess = MagicMock()
-            sess.get.return_value = _make_response(200, body)
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)) as mock_xui:
+                result = monitor.get_client_traffic(self._node(), "user@test.com")
 
-            result = monitor.get_client_traffic(self._node(), "user@test.com")
-
-        sess.get.assert_called_once_with(
-            "https://1.2.3.4:443/panel/api/inbounds/getClientTraffics/user%40test.com", timeout=5
+        mock_xui.assert_called_once_with(
+            sess, "GET", "https://1.2.3.4:443/panel/api/inbounds/getClientTraffics/user%40test.com"
         )
         assert result["available"] is True
         assert result["upload"] == 123
@@ -370,10 +358,9 @@ class TestThreeXUIMonitor:
         body = {"success": True, "obj": None}
         with patch.object(monitor, '_get_session') as mock_gs:
             sess = MagicMock()
-            sess.get.return_value = _make_response(200, body)
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
-
-            result = monitor.get_client_traffic(self._node(), "user@test.com")
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)):
+                result = monitor.get_client_traffic(self._node(), "user@test.com")
 
         assert result["available"] is True
         assert result["upload"] == 0

@@ -30,7 +30,7 @@ except Exception:
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from crypto import encrypt, decrypt
-from xui_session import login_node panel
+from xui_session import login_node panel, xui_request
 from inbound_manager import InboundManager
 from client_manager import ClientManager
 from utils import parse_field_as_dict
@@ -1222,7 +1222,7 @@ def fetch_inbounds(node: Dict) -> List[Dict]:
         return []
 
     try:
-        res = s.get(f"{base_url}/panel/api/inbounds/list", timeout=5)
+        res = xui_request(s, "GET", f"{base_url}/panel/api/inbounds/list")
         if res.status_code != 200:
             logger.warning(
                 f"node panel {node['name']} inbounds list returned status {res.status_code}; "
@@ -1314,7 +1314,12 @@ def add_inbound_to_node(node: Dict, inbound_config: Dict) -> bool:
         if not login_node panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
             logger.warning(f"Failed to login for add_inbound on {node['name']}")
             return False
-        res = s.post(f"{base_url}/panel/api/inbounds/add", json=inbound_config, timeout=5)
+        res = xui_request(
+            s,
+            "POST",
+            f"{base_url}/panel/api/inbounds/add",
+            json=inbound_config,
+        )
         return res.status_code == 200
     except Exception as exc:
         logger.warning(f"Failed to add inbound to {node['name']}: {exc}")
@@ -1334,7 +1339,12 @@ def add_client_to_inbound(node: Dict, inbound_id: int, client_config: Dict) -> b
             logger.warning(f"Failed to login for add_client on {node['name']}")
             return False
         payload = {"id": inbound_id, "settings": {"clients": [client_config]}}
-        res = s.post(f"{base_url}/panel/api/inbounds/addClient", json=payload, timeout=5)
+        res = xui_request(
+            s,
+            "POST",
+            f"{base_url}/panel/api/inbounds/addClient",
+            json=payload,
+        )
         return res.status_code == 200
     except Exception as exc:
         logger.warning(f"Failed to add client to {node['name']}: {exc}")
@@ -1353,7 +1363,11 @@ def delete_client_from_inbound(node: Dict, inbound_id: int, client_id: str) -> b
         if not login_node panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
             logger.warning(f"Failed to login for delete_client on {node['name']}")
             return False
-        res = s.post(f"{base_url}/panel/api/inbounds/{inbound_id}/delClient/{client_id}", timeout=5)
+        res = xui_request(
+            s,
+            "POST",
+            f"{base_url}/panel/api/inbounds/{inbound_id}/delClient/{client_id}",
+        )
         return res.status_code == 200
     except Exception as exc:
         logger.warning(f"Failed to delete client from {node['name']}: {exc}")
@@ -1373,9 +1387,17 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
             logger.warning(f"Failed to login for get_traffic on {node['name']}")
             return {}
         if protocol in ("vless", "vmess"):
-            res = s.get(f"{base_url}/panel/api/inbounds/getClientTrafficsById/{client_id}", timeout=5)
+            res = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/inbounds/getClientTrafficsById/{client_id}",
+            )
         else:
-            res = s.get(f"{base_url}/panel/api/inbounds/getClientTraffics/{client_id}", timeout=5)
+            res = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/inbounds/getClientTraffics/{client_id}",
+            )
         if res.status_code == 200:
             obj = res.json().get("obj", {})
             if not isinstance(obj, dict):
