@@ -382,7 +382,6 @@ location = /$GRAFANA_WEB_PATH {
 location ^~ /$GRAFANA_WEB_PATH/ {
 ${mtls_directives}${allowlist_directives}    auth_basic "Restricted Monitoring";
     auth_basic_user_file /etc/nginx/.${PROJECT_NAME}_grafana.htpasswd;
-    rewrite ^/$GRAFANA_WEB_PATH/(.*)\$ /\$1 break;
     proxy_pass http://127.0.0.1:$GRAFANA_HTTP_PORT;
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
@@ -397,6 +396,14 @@ SNIPPET
 
     cat >> "$snippet_file" <<SNIPPET
 
+# --- Root favicon fallback (browser requests /favicon.ico) ---
+location = /favicon.ico {
+    alias $PROJECT_DIR/build/favicon.ico;
+    access_log off;
+    log_not_found off;
+    expires 1d;
+}
+
 # --- React SPA (static files + SPA fallback) ---
 location ^~ /$WEB_PATH/ {
     alias $PROJECT_DIR/build/;
@@ -406,6 +413,51 @@ location ^~ /$WEB_PATH/ {
     add_header Referrer-Policy "same-origin" always;
 }
 SNIPPET
+}
+
+run_post_update_checks() {
+    echo ""
+    echo "Пост-проверка после обновления:"
+
+    local health_status=""
+    health_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/health" 2>/dev/null)
+    if [ "$health_status" = "200" ]; then
+        echo "  ✅ /health -> HTTP 200"
+    else
+        echo "  ❌ /health -> HTTP ${health_status:-000}"
+    fi
+
+    local ws_status=""
+    ws_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/ws" 2>/dev/null)
+    if [[ "$ws_status" =~ ^(400|401|403|404|405|426)$ ]]; then
+        echo "  ✅ /ws reachable (HTTP $ws_status)"
+    else
+        echo "  ⚠️ /ws unexpected HTTP: ${ws_status:-000}"
+    fi
+
+    local snippet_file="/etc/nginx/snippets/${PROJECT_NAME}.conf"
+    if [ -f "$snippet_file" ]; then
+        if grep -q "rewrite \^/${GRAFANA_WEB_PATH}/" "$snippet_file"; then
+            echo "  ❌ Найден потенциальный redirect-loop rewrite в $snippet_file"
+        else
+            echo "  ✅ snippet без Grafana rewrite-loop"
+        fi
+        if grep -q "location = /favicon.ico" "$snippet_file"; then
+            echo "  ✅ root favicon fallback присутствует"
+        else
+            echo "  ⚠️ root favicon fallback не найден в snippet"
+        fi
+    fi
+
+    if [ "${MONITORING_ENABLED:-false}" = "true" ]; then
+        local g_status=""
+        g_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${GRAFANA_HTTP_PORT}/login" 2>/dev/null)
+        if [[ "$g_status" =~ ^(200|301|302)$ ]]; then
+            echo "  ✅ Grafana upstream -> HTTP $g_status"
+        else
+            echo "  ⚠️ Grafana upstream -> HTTP ${g_status:-000}"
+        fi
+    fi
 }
 
 if [ "$EUID" -ne 0 ]; then 
@@ -427,6 +479,10 @@ SUB_RATE_LIMIT_COUNT=${SUB_RATE_LIMIT_COUNT:-"30"}
 SUB_RATE_LIMIT_WINDOW_SEC=${SUB_RATE_LIMIT_WINDOW_SEC:-"60"}
 TRAFFIC_STATS_CACHE_TTL=${TRAFFIC_STATS_CACHE_TTL:-"10"}
 ONLINE_CLIENTS_CACHE_TTL=${ONLINE_CLIENTS_CACHE_TTL:-"10"}
+TRAFFIC_STATS_STALE_TTL=${TRAFFIC_STATS_STALE_TTL:-"120"}
+ONLINE_CLIENTS_STALE_TTL=${ONLINE_CLIENTS_STALE_TTL:-"60"}
+CLIENTS_CACHE_TTL=${CLIENTS_CACHE_TTL:-"20"}
+CLIENTS_CACHE_STALE_TTL=${CLIENTS_CACHE_STALE_TTL:-"180"}
 TRAFFIC_MAX_WORKERS=${TRAFFIC_MAX_WORKERS:-"8"}
 COLLECTOR_BASE_INTERVAL_SEC=${COLLECTOR_BASE_INTERVAL_SEC:-"5"}
 COLLECTOR_MAX_INTERVAL_SEC=${COLLECTOR_MAX_INTERVAL_SEC:-"60"}
@@ -446,6 +502,7 @@ SECURITY_MTLS_CA_PATH=${SECURITY_MTLS_CA_PATH:-""}
 SECURITY_IP_ALLOWLIST=${SECURITY_IP_ALLOWLIST:-""}
 MFA_TOTP_ENABLED=${MFA_TOTP_ENABLED:-"false"}
 MFA_TOTP_USERS=${MFA_TOTP_USERS:-""}
+MFA_TOTP_WS_STRICT=${MFA_TOTP_WS_STRICT:-"false"}
 
 # Обновить сохранённые параметры (добавляет новые поля на старых установках)
 cat <<EOF > "$LOG_FILE"
@@ -463,6 +520,10 @@ SUB_RATE_LIMIT_COUNT="$SUB_RATE_LIMIT_COUNT"
 SUB_RATE_LIMIT_WINDOW_SEC="$SUB_RATE_LIMIT_WINDOW_SEC"
 TRAFFIC_STATS_CACHE_TTL="$TRAFFIC_STATS_CACHE_TTL"
 ONLINE_CLIENTS_CACHE_TTL="$ONLINE_CLIENTS_CACHE_TTL"
+TRAFFIC_STATS_STALE_TTL="$TRAFFIC_STATS_STALE_TTL"
+ONLINE_CLIENTS_STALE_TTL="$ONLINE_CLIENTS_STALE_TTL"
+CLIENTS_CACHE_TTL="$CLIENTS_CACHE_TTL"
+CLIENTS_CACHE_STALE_TTL="$CLIENTS_CACHE_STALE_TTL"
 TRAFFIC_MAX_WORKERS="$TRAFFIC_MAX_WORKERS"
 COLLECTOR_BASE_INTERVAL_SEC="$COLLECTOR_BASE_INTERVAL_SEC"
 COLLECTOR_MAX_INTERVAL_SEC="$COLLECTOR_MAX_INTERVAL_SEC"
@@ -482,6 +543,7 @@ SECURITY_MTLS_CA_PATH="$SECURITY_MTLS_CA_PATH"
 SECURITY_IP_ALLOWLIST="$SECURITY_IP_ALLOWLIST"
 MFA_TOTP_ENABLED="$MFA_TOTP_ENABLED"
 MFA_TOTP_USERS="$MFA_TOTP_USERS"
+MFA_TOTP_WS_STRICT="$MFA_TOTP_WS_STRICT"
 EOF
 
 # Compute VITE_BASE from stored WEB_PATH
@@ -506,6 +568,10 @@ echo "VERIFY_TLS: $VERIFY_TLS"
 echo "READ_ONLY_MODE: $READ_ONLY_MODE"
 echo "TRAFFIC_STATS_CACHE_TTL: $TRAFFIC_STATS_CACHE_TTL"
 echo "ONLINE_CLIENTS_CACHE_TTL: $ONLINE_CLIENTS_CACHE_TTL"
+echo "TRAFFIC_STATS_STALE_TTL: $TRAFFIC_STATS_STALE_TTL"
+echo "ONLINE_CLIENTS_STALE_TTL: $ONLINE_CLIENTS_STALE_TTL"
+echo "CLIENTS_CACHE_TTL: $CLIENTS_CACHE_TTL"
+echo "CLIENTS_CACHE_STALE_TTL: $CLIENTS_CACHE_STALE_TTL"
 echo "TRAFFIC_MAX_WORKERS: $TRAFFIC_MAX_WORKERS"
 echo "COLLECTOR_BASE_INTERVAL_SEC: $COLLECTOR_BASE_INTERVAL_SEC"
 echo "COLLECTOR_MAX_INTERVAL_SEC: $COLLECTOR_MAX_INTERVAL_SEC"
@@ -521,6 +587,7 @@ echo "SECURITY_MTLS_ENABLED: $SECURITY_MTLS_ENABLED"
 echo "SECURITY_MTLS_CA_PATH: ${SECURITY_MTLS_CA_PATH:-<none>}"
 echo "SECURITY_IP_ALLOWLIST: ${SECURITY_IP_ALLOWLIST:-<none>}"
 echo "MFA_TOTP_ENABLED: $MFA_TOTP_ENABLED"
+echo "MFA_TOTP_WS_STRICT: $MFA_TOTP_WS_STRICT"
 echo "======================================================"
 echo ""
 read -p "Изменить настройки 2-го уровня защиты (mTLS/IP allowlist/TOTP)? (y/n, default: n): " harden_choice
@@ -615,6 +682,10 @@ SUB_RATE_LIMIT_COUNT="$SUB_RATE_LIMIT_COUNT"
 SUB_RATE_LIMIT_WINDOW_SEC="$SUB_RATE_LIMIT_WINDOW_SEC"
 TRAFFIC_STATS_CACHE_TTL="$TRAFFIC_STATS_CACHE_TTL"
 ONLINE_CLIENTS_CACHE_TTL="$ONLINE_CLIENTS_CACHE_TTL"
+TRAFFIC_STATS_STALE_TTL="$TRAFFIC_STATS_STALE_TTL"
+ONLINE_CLIENTS_STALE_TTL="$ONLINE_CLIENTS_STALE_TTL"
+CLIENTS_CACHE_TTL="$CLIENTS_CACHE_TTL"
+CLIENTS_CACHE_STALE_TTL="$CLIENTS_CACHE_STALE_TTL"
 TRAFFIC_MAX_WORKERS="$TRAFFIC_MAX_WORKERS"
 COLLECTOR_BASE_INTERVAL_SEC="$COLLECTOR_BASE_INTERVAL_SEC"
 COLLECTOR_MAX_INTERVAL_SEC="$COLLECTOR_MAX_INTERVAL_SEC"
@@ -634,6 +705,7 @@ SECURITY_MTLS_CA_PATH="$SECURITY_MTLS_CA_PATH"
 SECURITY_IP_ALLOWLIST="$SECURITY_IP_ALLOWLIST"
 MFA_TOTP_ENABLED="$MFA_TOTP_ENABLED"
 MFA_TOTP_USERS="$MFA_TOTP_USERS"
+MFA_TOTP_WS_STRICT="$MFA_TOTP_WS_STRICT"
 EOF
 
 echo "Выберите режим обновления:"
@@ -717,6 +789,10 @@ case $update_choice in
             sed "s|SUB_RATE_LIMIT_WINDOW_SEC=.*|SUB_RATE_LIMIT_WINDOW_SEC=$SUB_RATE_LIMIT_WINDOW_SEC|g" | \
             sed "s|TRAFFIC_STATS_CACHE_TTL=.*|TRAFFIC_STATS_CACHE_TTL=$TRAFFIC_STATS_CACHE_TTL|g" | \
             sed "s|ONLINE_CLIENTS_CACHE_TTL=.*|ONLINE_CLIENTS_CACHE_TTL=$ONLINE_CLIENTS_CACHE_TTL|g" | \
+            sed "s|TRAFFIC_STATS_STALE_TTL=.*|TRAFFIC_STATS_STALE_TTL=$TRAFFIC_STATS_STALE_TTL|g" | \
+            sed "s|ONLINE_CLIENTS_STALE_TTL=.*|ONLINE_CLIENTS_STALE_TTL=$ONLINE_CLIENTS_STALE_TTL|g" | \
+            sed "s|CLIENTS_CACHE_TTL=.*|CLIENTS_CACHE_TTL=$CLIENTS_CACHE_TTL|g" | \
+            sed "s|CLIENTS_CACHE_STALE_TTL=.*|CLIENTS_CACHE_STALE_TTL=$CLIENTS_CACHE_STALE_TTL|g" | \
             sed "s|TRAFFIC_MAX_WORKERS=.*|TRAFFIC_MAX_WORKERS=$TRAFFIC_MAX_WORKERS|g" | \
             sed "s|COLLECTOR_BASE_INTERVAL_SEC=.*|COLLECTOR_BASE_INTERVAL_SEC=$COLLECTOR_BASE_INTERVAL_SEC|g" | \
             sed "s|COLLECTOR_MAX_INTERVAL_SEC=.*|COLLECTOR_MAX_INTERVAL_SEC=$COLLECTOR_MAX_INTERVAL_SEC|g" | \
@@ -726,7 +802,8 @@ case $update_choice in
             sed "s|ROLE_VIEWERS=.*|ROLE_VIEWERS=$ROLE_VIEWERS|g" | \
             sed "s|ROLE_OPERATORS=.*|ROLE_OPERATORS=$ROLE_OPERATORS|g" | \
             sed "s|MFA_TOTP_ENABLED=.*|MFA_TOTP_ENABLED=$MFA_TOTP_ENABLED|g" | \
-            sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS|g" > \
+            sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS|g" | \
+            sed "s|MFA_TOTP_WS_STRICT=.*|MFA_TOTP_WS_STRICT=$MFA_TOTP_WS_STRICT|g" > \
             "/etc/systemd/system/$PROJECT_NAME.service"
         systemctl daemon-reload
         systemctl start "$PROJECT_NAME"
@@ -762,6 +839,10 @@ case $update_choice in
             sed "s|SUB_RATE_LIMIT_WINDOW_SEC=.*|SUB_RATE_LIMIT_WINDOW_SEC=$SUB_RATE_LIMIT_WINDOW_SEC|g" | \
             sed "s|TRAFFIC_STATS_CACHE_TTL=.*|TRAFFIC_STATS_CACHE_TTL=$TRAFFIC_STATS_CACHE_TTL|g" | \
             sed "s|ONLINE_CLIENTS_CACHE_TTL=.*|ONLINE_CLIENTS_CACHE_TTL=$ONLINE_CLIENTS_CACHE_TTL|g" | \
+            sed "s|TRAFFIC_STATS_STALE_TTL=.*|TRAFFIC_STATS_STALE_TTL=$TRAFFIC_STATS_STALE_TTL|g" | \
+            sed "s|ONLINE_CLIENTS_STALE_TTL=.*|ONLINE_CLIENTS_STALE_TTL=$ONLINE_CLIENTS_STALE_TTL|g" | \
+            sed "s|CLIENTS_CACHE_TTL=.*|CLIENTS_CACHE_TTL=$CLIENTS_CACHE_TTL|g" | \
+            sed "s|CLIENTS_CACHE_STALE_TTL=.*|CLIENTS_CACHE_STALE_TTL=$CLIENTS_CACHE_STALE_TTL|g" | \
             sed "s|TRAFFIC_MAX_WORKERS=.*|TRAFFIC_MAX_WORKERS=$TRAFFIC_MAX_WORKERS|g" | \
             sed "s|COLLECTOR_BASE_INTERVAL_SEC=.*|COLLECTOR_BASE_INTERVAL_SEC=$COLLECTOR_BASE_INTERVAL_SEC|g" | \
             sed "s|COLLECTOR_MAX_INTERVAL_SEC=.*|COLLECTOR_MAX_INTERVAL_SEC=$COLLECTOR_MAX_INTERVAL_SEC|g" | \
@@ -771,7 +852,8 @@ case $update_choice in
             sed "s|ROLE_VIEWERS=.*|ROLE_VIEWERS=$ROLE_VIEWERS|g" | \
             sed "s|ROLE_OPERATORS=.*|ROLE_OPERATORS=$ROLE_OPERATORS|g" | \
             sed "s|MFA_TOTP_ENABLED=.*|MFA_TOTP_ENABLED=$MFA_TOTP_ENABLED|g" | \
-            sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS|g" > \
+            sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS|g" | \
+            sed "s|MFA_TOTP_WS_STRICT=.*|MFA_TOTP_WS_STRICT=$MFA_TOTP_WS_STRICT|g" > \
             "/etc/systemd/system/$PROJECT_NAME.service"
         systemctl daemon-reload
         systemctl start "$PROJECT_NAME"
@@ -903,6 +985,8 @@ else
     fi
     echo -e "\033[1;35m*************************\033[0m"
 fi
+
+run_post_update_checks
 
 echo ""
 echo "📦 Резервная копия сохранена: $BACKUP_DIR"

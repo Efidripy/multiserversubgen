@@ -318,6 +318,55 @@ ${mtls_directives}${allowlist_directives}    proxy_pass http://127.0.0.1:$APP_PO
     add_header Referrer-Policy "same-origin" always;
 }
 
+run_post_install_checks() {
+    echo -e "\nПроверка запуска сервиса..."
+
+    local health_status=""
+    for i in 1 2 3 4 5; do
+        sleep 2
+        health_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/health" 2>/dev/null)
+        [ "$health_status" = "200" ] && break
+    done
+    if [ "$health_status" = "200" ]; then
+        echo "✅ Health check: /health -> HTTP 200"
+    else
+        echo "❌ Health check: /health -> HTTP ${health_status:-000}"
+    fi
+
+    local ws_status=""
+    ws_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/ws" 2>/dev/null)
+    if [[ "$ws_status" =~ ^(400|401|403|404|405|426)$ ]]; then
+        echo "✅ WebSocket upstream доступен (HTTP $ws_status на /ws)"
+    else
+        echo "⚠️ WebSocket upstream подозрительный ответ: HTTP ${ws_status:-000}"
+    fi
+
+    local snippet_file="/etc/nginx/snippets/${PROJECT_NAME}.conf"
+    if [ -f "$snippet_file" ]; then
+        if grep -q "rewrite \^/${GRAFANA_WEB_PATH}/" "$snippet_file"; then
+            echo "❌ Обнаружен опасный rewrite для Grafana в snippet: $snippet_file"
+        else
+            echo "✅ Nginx snippet без rewrite-петли Grafana"
+        fi
+    fi
+
+    if [ -f "$PROJECT_DIR/build/favicon.ico" ]; then
+        echo "✅ favicon.ico присутствует в build"
+    else
+        echo "⚠️ favicon.ico отсутствует в build: $PROJECT_DIR/build/favicon.ico"
+    fi
+
+    if [ "${MONITORING_ENABLED:-false}" = "true" ]; then
+        local g_status=""
+        g_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${GRAFANA_HTTP_PORT}/login" 2>/dev/null)
+        if [[ "$g_status" =~ ^(200|301|302)$ ]]; then
+            echo "✅ Grafana upstream доступен (HTTP $g_status)"
+        else
+            echo "⚠️ Grafana upstream недоступен или нестандартный код: HTTP ${g_status:-000}"
+        fi
+    fi
+}
+
 # --- WebSocket ---
 location ^~ /$WEB_PATH/ws {
 ${mtls_directives}${allowlist_directives}    proxy_pass http://127.0.0.1:$APP_PORT/ws;
@@ -384,7 +433,6 @@ location = /$GRAFANA_WEB_PATH {
 location ^~ /$GRAFANA_WEB_PATH/ {
 ${mtls_directives}${allowlist_directives}    auth_basic "Restricted Monitoring";
     auth_basic_user_file /etc/nginx/.${PROJECT_NAME}_grafana.htpasswd;
-    rewrite ^/$GRAFANA_WEB_PATH/(.*)\$ /\$1 break;
     proxy_pass http://127.0.0.1:$GRAFANA_HTTP_PORT;
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
@@ -398,6 +446,14 @@ SNIPPET
     fi
 
     cat >> "$snippet_file" <<SNIPPET
+
+# --- Root favicon fallback (browser requests /favicon.ico) ---
+location = /favicon.ico {
+    alias $PROJECT_DIR/build/favicon.ico;
+    access_log off;
+    log_not_found off;
+    expires 1d;
+}
 
 # --- React SPA (static files + SPA fallback) ---
 location ^~ /$WEB_PATH/ {
@@ -441,6 +497,10 @@ update_project() {
     SUB_RATE_LIMIT_WINDOW_SEC=${SUB_RATE_LIMIT_WINDOW_SEC:-"60"}
     TRAFFIC_STATS_CACHE_TTL=${TRAFFIC_STATS_CACHE_TTL:-"10"}
     ONLINE_CLIENTS_CACHE_TTL=${ONLINE_CLIENTS_CACHE_TTL:-"10"}
+    TRAFFIC_STATS_STALE_TTL=${TRAFFIC_STATS_STALE_TTL:-"120"}
+    ONLINE_CLIENTS_STALE_TTL=${ONLINE_CLIENTS_STALE_TTL:-"60"}
+    CLIENTS_CACHE_TTL=${CLIENTS_CACHE_TTL:-"20"}
+    CLIENTS_CACHE_STALE_TTL=${CLIENTS_CACHE_STALE_TTL:-"180"}
     TRAFFIC_MAX_WORKERS=${TRAFFIC_MAX_WORKERS:-"8"}
     COLLECTOR_BASE_INTERVAL_SEC=${COLLECTOR_BASE_INTERVAL_SEC:-"5"}
     COLLECTOR_MAX_INTERVAL_SEC=${COLLECTOR_MAX_INTERVAL_SEC:-"60"}
@@ -460,6 +520,7 @@ update_project() {
     SECURITY_IP_ALLOWLIST=${SECURITY_IP_ALLOWLIST:-""}
     MFA_TOTP_ENABLED=${MFA_TOTP_ENABLED:-"false"}
     MFA_TOTP_USERS=${MFA_TOTP_USERS:-""}
+    MFA_TOTP_WS_STRICT=${MFA_TOTP_WS_STRICT:-"false"}
     if [ -z "$WEB_PATH" ]; then
         VITE_BASE="/"
     else
@@ -509,6 +570,10 @@ update_project() {
         sed "s|SUB_RATE_LIMIT_WINDOW_SEC=.*|SUB_RATE_LIMIT_WINDOW_SEC=$SUB_RATE_LIMIT_WINDOW_SEC|g" | \
         sed "s|TRAFFIC_STATS_CACHE_TTL=.*|TRAFFIC_STATS_CACHE_TTL=$TRAFFIC_STATS_CACHE_TTL|g" | \
         sed "s|ONLINE_CLIENTS_CACHE_TTL=.*|ONLINE_CLIENTS_CACHE_TTL=$ONLINE_CLIENTS_CACHE_TTL|g" | \
+        sed "s|TRAFFIC_STATS_STALE_TTL=.*|TRAFFIC_STATS_STALE_TTL=$TRAFFIC_STATS_STALE_TTL|g" | \
+        sed "s|ONLINE_CLIENTS_STALE_TTL=.*|ONLINE_CLIENTS_STALE_TTL=$ONLINE_CLIENTS_STALE_TTL|g" | \
+        sed "s|CLIENTS_CACHE_TTL=.*|CLIENTS_CACHE_TTL=$CLIENTS_CACHE_TTL|g" | \
+        sed "s|CLIENTS_CACHE_STALE_TTL=.*|CLIENTS_CACHE_STALE_TTL=$CLIENTS_CACHE_STALE_TTL|g" | \
         sed "s|TRAFFIC_MAX_WORKERS=.*|TRAFFIC_MAX_WORKERS=$TRAFFIC_MAX_WORKERS|g" | \
         sed "s|COLLECTOR_BASE_INTERVAL_SEC=.*|COLLECTOR_BASE_INTERVAL_SEC=$COLLECTOR_BASE_INTERVAL_SEC|g" | \
         sed "s|COLLECTOR_MAX_INTERVAL_SEC=.*|COLLECTOR_MAX_INTERVAL_SEC=$COLLECTOR_MAX_INTERVAL_SEC|g" | \
@@ -518,7 +583,8 @@ update_project() {
         sed "s|ROLE_VIEWERS=.*|ROLE_VIEWERS=$ROLE_VIEWERS|g" | \
         sed "s|ROLE_OPERATORS=.*|ROLE_OPERATORS=$ROLE_OPERATORS|g" | \
         sed "s|MFA_TOTP_ENABLED=.*|MFA_TOTP_ENABLED=$MFA_TOTP_ENABLED|g" | \
-        sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS|g" > \
+        sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS|g" | \
+        sed "s|MFA_TOTP_WS_STRICT=.*|MFA_TOTP_WS_STRICT=$MFA_TOTP_WS_STRICT|g" > \
         "/etc/systemd/system/$PROJECT_NAME.service"
     systemctl daemon-reload
     systemctl start "$PROJECT_NAME"
@@ -611,6 +677,10 @@ SUB_RATE_LIMIT_COUNT="30"
 SUB_RATE_LIMIT_WINDOW_SEC="60"
 TRAFFIC_STATS_CACHE_TTL="10"
 ONLINE_CLIENTS_CACHE_TTL="10"
+TRAFFIC_STATS_STALE_TTL="120"
+ONLINE_CLIENTS_STALE_TTL="60"
+CLIENTS_CACHE_TTL="20"
+CLIENTS_CACHE_STALE_TTL="180"
 TRAFFIC_MAX_WORKERS="8"
 COLLECTOR_BASE_INTERVAL_SEC="5"
 COLLECTOR_MAX_INTERVAL_SEC="60"
@@ -624,6 +694,7 @@ SECURITY_MTLS_ENABLED="false"
 SECURITY_MTLS_CA_PATH=""
 MFA_TOTP_ENABLED="false"
 MFA_TOTP_USERS=""
+MFA_TOTP_WS_STRICT="false"
 USE_PROXY="y"
 
 read -p "Режим установки: Быстрая или Advanced? (b/a, default: b): " INSTALL_MODE_INPUT
@@ -797,6 +868,10 @@ SUB_RATE_LIMIT_COUNT="$SUB_RATE_LIMIT_COUNT"
 SUB_RATE_LIMIT_WINDOW_SEC="$SUB_RATE_LIMIT_WINDOW_SEC"
 TRAFFIC_STATS_CACHE_TTL="$TRAFFIC_STATS_CACHE_TTL"
 ONLINE_CLIENTS_CACHE_TTL="$ONLINE_CLIENTS_CACHE_TTL"
+TRAFFIC_STATS_STALE_TTL="$TRAFFIC_STATS_STALE_TTL"
+ONLINE_CLIENTS_STALE_TTL="$ONLINE_CLIENTS_STALE_TTL"
+CLIENTS_CACHE_TTL="$CLIENTS_CACHE_TTL"
+CLIENTS_CACHE_STALE_TTL="$CLIENTS_CACHE_STALE_TTL"
 TRAFFIC_MAX_WORKERS="$TRAFFIC_MAX_WORKERS"
 COLLECTOR_BASE_INTERVAL_SEC="$COLLECTOR_BASE_INTERVAL_SEC"
 COLLECTOR_MAX_INTERVAL_SEC="$COLLECTOR_MAX_INTERVAL_SEC"
@@ -816,6 +891,7 @@ SECURITY_MTLS_CA_PATH="$SECURITY_MTLS_CA_PATH"
 SECURITY_IP_ALLOWLIST="$SECURITY_IP_ALLOWLIST"
 MFA_TOTP_ENABLED="$MFA_TOTP_ENABLED"
 MFA_TOTP_USERS="$MFA_TOTP_USERS"
+MFA_TOTP_WS_STRICT="$MFA_TOTP_WS_STRICT"
 EOF
 
 cp "$SELECTED_CFG" "${SELECTED_CFG}.bak"
@@ -899,6 +975,10 @@ cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
     sed "s|SUB_RATE_LIMIT_WINDOW_SEC=.*|SUB_RATE_LIMIT_WINDOW_SEC=$SUB_RATE_LIMIT_WINDOW_SEC|g" | \
     sed "s|TRAFFIC_STATS_CACHE_TTL=.*|TRAFFIC_STATS_CACHE_TTL=$TRAFFIC_STATS_CACHE_TTL|g" | \
     sed "s|ONLINE_CLIENTS_CACHE_TTL=.*|ONLINE_CLIENTS_CACHE_TTL=$ONLINE_CLIENTS_CACHE_TTL|g" | \
+    sed "s|TRAFFIC_STATS_STALE_TTL=.*|TRAFFIC_STATS_STALE_TTL=$TRAFFIC_STATS_STALE_TTL|g" | \
+    sed "s|ONLINE_CLIENTS_STALE_TTL=.*|ONLINE_CLIENTS_STALE_TTL=$ONLINE_CLIENTS_STALE_TTL|g" | \
+    sed "s|CLIENTS_CACHE_TTL=.*|CLIENTS_CACHE_TTL=$CLIENTS_CACHE_TTL|g" | \
+    sed "s|CLIENTS_CACHE_STALE_TTL=.*|CLIENTS_CACHE_STALE_TTL=$CLIENTS_CACHE_STALE_TTL|g" | \
     sed "s|TRAFFIC_MAX_WORKERS=.*|TRAFFIC_MAX_WORKERS=$TRAFFIC_MAX_WORKERS|g" | \
     sed "s|COLLECTOR_BASE_INTERVAL_SEC=.*|COLLECTOR_BASE_INTERVAL_SEC=$COLLECTOR_BASE_INTERVAL_SEC|g" | \
     sed "s|COLLECTOR_MAX_INTERVAL_SEC=.*|COLLECTOR_MAX_INTERVAL_SEC=$COLLECTOR_MAX_INTERVAL_SEC|g" | \
@@ -908,7 +988,8 @@ cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
     sed "s|ROLE_VIEWERS=.*|ROLE_VIEWERS=$ROLE_VIEWERS|g" | \
     sed "s|ROLE_OPERATORS=.*|ROLE_OPERATORS=$ROLE_OPERATORS|g" | \
     sed "s|MFA_TOTP_ENABLED=.*|MFA_TOTP_ENABLED=$MFA_TOTP_ENABLED|g" | \
-    sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS|g" > \
+    sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS|g" | \
+    sed "s|MFA_TOTP_WS_STRICT=.*|MFA_TOTP_WS_STRICT=$MFA_TOTP_WS_STRICT|g" > \
     "/etc/systemd/system/$PROJECT_NAME.service"
 
 # Настройка Nginx
@@ -1009,17 +1090,4 @@ if [ "$MONITORING_ENABLED" = "true" ]; then
 fi
 echo -e "\033[1;35m*************************\033[0m"
 
-# Self-test: проверка health endpoint
-echo -e "\nПроверка запуска сервиса..."
-HEALTH_STATUS=""
-for i in 1 2 3 4 5; do
-    sleep 2
-    HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/health" 2>/dev/null)
-    [ "$HEALTH_STATUS" = "200" ] && break
-done
-if [ "$HEALTH_STATUS" = "200" ]; then
-    echo "✅ Health check пройден: /health → HTTP $HEALTH_STATUS"
-else
-    echo "❌ Health check не пройден (HTTP $HEALTH_STATUS). Проверьте логи:"
-    echo "   journalctl -u $PROJECT_NAME -n 50 --no-pager"
-fi
+run_post_install_checks

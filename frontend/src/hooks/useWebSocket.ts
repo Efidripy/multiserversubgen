@@ -30,6 +30,7 @@ export const useWebSocket = ({
   const onMessageRef = useRef<typeof onMessage>(onMessage);
   const reconnectAttemptsRef = useRef(0);
   const lastErrorLogTsRef = useRef(0);
+  const reconnectBlockedRef = useRef(false);
 
   const safeSend = useCallback((payload: any): boolean => {
     const ws = wsRef.current;
@@ -56,6 +57,7 @@ export const useWebSocket = ({
 
   const connect = useCallback(() => {
     if (!enabled) return;
+    if (reconnectBlockedRef.current) return;
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -82,6 +84,7 @@ export const useWebSocket = ({
         console.log('WebSocket connected');
         setIsConnected(true);
         reconnectAttemptsRef.current = 0;
+        reconnectBlockedRef.current = false;
 
         // Subscribe to channels
         channelsRef.current.forEach((channel) => {
@@ -110,10 +113,21 @@ export const useWebSocket = ({
         }
       };
 
-      wsRef.current.onclose = () => {
-        console.log('WebSocket disconnected');
+      wsRef.current.onclose = (event) => {
+        console.log('WebSocket disconnected', event.code);
         setIsConnected(false);
         wsRef.current = null;
+
+        // 1008 => policy/auth rejection. Do not hammer reconnect loop.
+        if (event.code === 1008) {
+          reconnectBlockedRef.current = true;
+          const now = Date.now();
+          if (now - lastErrorLogTsRef.current > 10000) {
+            console.error('WebSocket rejected by server (auth/policy). Reconnect paused until next login.');
+            lastErrorLogTsRef.current = now;
+          }
+          return;
+        }
 
         // Attempt to reconnect
         if (enabled) {
@@ -143,6 +157,7 @@ export const useWebSocket = ({
     }
 
     setIsConnected(false);
+    reconnectBlockedRef.current = false;
   }, []);
 
   const subscribe = useCallback((channel: string) => {
