@@ -43,6 +43,9 @@ interface ClientsPageCache {
   endpointMode?: 'unknown' | 'query' | 'legacy' | 'disabled';
 }
 
+const clientKey = (client: Client): string =>
+  `${client.node_id ?? client.node_name}:${client.id}:${client.email}`;
+
 const CLIENTS_PAGE_CACHE_KEY = 'sub_manager_clients_page_cache_v1';
 const CLIENTS_PAGE_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 const CLIENTS_PAGE_REFRESH_MS = 5 * 60 * 1000; // background refresh interval
@@ -131,7 +134,7 @@ export const ClientManager: React.FC = () => {
   const [batchExpiryDays, setBatchExpiryDays] = useState('30');
   
   // Selection
-  const [selectedClients, setSelectedClients] = useState<Set<number>>(new Set());
+  const [selectedClientKeys, setSelectedClientKeys] = useState<Set<string>>(new Set());
   const refreshInFlightRef = useRef(false);
   
   useEffect(() => {
@@ -186,10 +189,16 @@ export const ClientManager: React.FC = () => {
       const nodeNameToId: Record<string, number> = {};
       nodeList.forEach(n => { nodeNameToId[n.name] = n.id; });
 
-      const rawClients: Client[] = (clientsRes.data.clients || []).map((c: Client) => ({
+      const mappedClients: Client[] = (clientsRes.data.clients || []).map((c: Client) => ({
         ...c,
         node_id: nodeNameToId[c.node_name],
       }));
+      // Defensive dedupe in case API/cache returns accidental repeated rows.
+      const deduped = new Map<string, Client>();
+      mappedClients.forEach((client) => {
+        deduped.set(clientKey(client), client);
+      });
+      const rawClients: Client[] = Array.from(deduped.values());
 
       setClients(rawClients);
       if (!silent && trafficEndpointModeRef.current === 'disabled') {
@@ -497,7 +506,13 @@ export const ClientManager: React.FC = () => {
     let confirmMessage = '';
     
     if (type === 'selected') {
-      clientsToDelete = Array.from(selectedClients);
+      clientsToDelete = Array.from(
+        new Set(
+          clients
+            .filter((c) => selectedClientKeys.has(clientKey(c)))
+            .map((c) => c.id)
+        )
+      );
       confirmMessage = `Delete ${clientsToDelete.length} selected clients?`;
     } else if (type === 'expired') {
       clientsToDelete = clients
@@ -527,7 +542,7 @@ export const ClientManager: React.FC = () => {
         auth: getAuth()
       });
       
-      setSelectedClients(new Set());
+      setSelectedClientKeys(new Set());
       loadClients();
       alert('Clients deleted successfully');
     } catch (err: any) {
@@ -586,21 +601,26 @@ export const ClientManager: React.FC = () => {
     a.click();
   };
   
-  const toggleSelection = (clientId: number) => {
-    const newSelection = new Set(selectedClients);
-    if (newSelection.has(clientId)) {
-      newSelection.delete(clientId);
+  const toggleSelection = (client: Client) => {
+    const key = clientKey(client);
+    const newSelection = new Set(selectedClientKeys);
+    if (newSelection.has(key)) {
+      newSelection.delete(key);
     } else {
-      newSelection.add(clientId);
+      newSelection.add(key);
     }
-    setSelectedClients(newSelection);
+    setSelectedClientKeys(newSelection);
   };
   
   const toggleSelectAll = () => {
-    if (selectedClients.size === filteredClients.length) {
-      setSelectedClients(new Set());
+    const visibleKeys = filteredClients.map((c) => clientKey(c));
+    const allSelected =
+      visibleKeys.length > 0 && visibleKeys.every((key) => selectedClientKeys.has(key));
+
+    if (allSelected) {
+      setSelectedClientKeys(new Set());
     } else {
-      setSelectedClients(new Set(filteredClients.map(c => c.id)));
+      setSelectedClientKeys(new Set(visibleKeys));
     }
   };
 
@@ -771,9 +791,9 @@ export const ClientManager: React.FC = () => {
         </div>
         
         {/* Batch Actions */}
-        {selectedClients.size > 0 && (
+        {selectedClientKeys.size > 0 && (
           <div className="alert mb-3" style={{ backgroundColor: colors.accent + '22', borderColor: colors.accent, color: colors.text.primary }}>
-            <strong>{selectedClients.size} clients selected</strong>
+            <strong>{selectedClientKeys.size} clients selected</strong>
             <button
               className="btn btn-sm ms-2"
               style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }}
@@ -831,7 +851,10 @@ export const ClientManager: React.FC = () => {
                   <th style={{ color: colors.text.secondary }}>
                     <input
                       type="checkbox"
-                      checked={selectedClients.size === filteredClients.length}
+                      checked={
+                        filteredClients.length > 0 &&
+                        filteredClients.every((c) => selectedClientKeys.has(clientKey(c)))
+                      }
                       onChange={toggleSelectAll}
                     />
                   </th>
@@ -873,12 +896,12 @@ export const ClientManager: React.FC = () => {
                   const isDepleted = client.total > 0 && (client.up + client.down) >= client.total;
                   
                   return (
-                    <tr key={client.id} style={{ borderColor: colors.border }}>
+                    <tr key={clientKey(client)} style={{ borderColor: colors.border }}>
                       <td>
                         <input
                           type="checkbox"
-                          checked={selectedClients.has(client.id)}
-                          onChange={() => toggleSelection(client.id)}
+                          checked={selectedClientKeys.has(clientKey(client))}
+                          onChange={() => toggleSelection(client)}
                         />
                       </td>
                       <td>
