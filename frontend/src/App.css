@@ -746,6 +746,17 @@ body.theme-light .card::after {
   background: radial-gradient(circle, rgba(31, 142, 216, 0.03) 0%, transparent 68%);
 }
 
+body.theme-light .server-card {
+  border: 1px solid rgba(156, 186, 218, 0.46) !important;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(242, 248, 255, 0.96)) !important;
+  box-shadow: 0 8px 20px rgba(112, 145, 184, 0.2);
+}
+
+body.theme-light .server-card:hover {
+  box-shadow: 0 12px 24px rgba(110, 146, 184, 0.24);
+  border-color: rgba(131, 171, 211, 0.54) !important;
+}
+
 body.theme-light .btn {
   box-shadow: 0 3px 10px rgba(120, 151, 186, 0.12);
 }
