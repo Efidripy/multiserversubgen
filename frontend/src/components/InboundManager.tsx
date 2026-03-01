@@ -178,6 +178,17 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
     setSelectedKeys(new Set());
   };
 
+  const applySortFromHeader = (field: 'name' | 'node' | 'protocol' | 'port' | 'status') => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortField(field);
+    setSortDirection('asc');
+  };
+  const sortIndicator = (field: 'name' | 'node' | 'protocol' | 'port' | 'status') =>
+    sortField === field ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
+
   const handleDelete = async (inbound: Inbound) => {
     if (!window.confirm(`${t('inbounds.confirmDeleteSingle')} \"${inbound.remark || inbound.id}\"?`)) return;
 
@@ -564,12 +575,32 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                     aria-label="Select all"
                   />
                 </th>
-                <th style={{ color: colors.text.secondary }}>{t('common.name')}</th>
-                <th style={{ color: colors.text.secondary }}>{t('inbounds.remark')}</th>
-                <th style={{ color: colors.text.secondary }}>{t('inbounds.protocol')}</th>
-                <th style={{ color: colors.text.secondary }}>{t('inbounds.port')}</th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('node')}>
+                    {t('common.name')}{sortIndicator('node')}
+                  </button>
+                </th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('name')}>
+                    {t('inbounds.remark')}{sortIndicator('name')}
+                  </button>
+                </th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('protocol')}>
+                    {t('inbounds.protocol')}{sortIndicator('protocol')}
+                  </button>
+                </th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('port')}>
+                    {t('inbounds.port')}{sortIndicator('port')}
+                  </button>
+                </th>
                 <th style={{ color: colors.text.secondary }}>{t('inbounds.security')}</th>
-                <th style={{ color: colors.text.secondary }}>{t('common.status')}</th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('status')}>
+                    {t('common.status')}{sortIndicator('status')}
+                  </button>
+                </th>
                 <th style={{ color: colors.text.secondary }}>{t('common.actions')}</th>
               </tr>
             </thead>

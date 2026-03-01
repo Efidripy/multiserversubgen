@@ -45,7 +45,7 @@ const CLIENTS_PAGE_CACHE_KEY = 'sub_manager_clients_page_cache_v1';
 const CLIENTS_PAGE_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 const CLIENTS_PAGE_REFRESH_MS = 5 * 60 * 1000; // background refresh interval
 const ENABLE_LIVE_CLIENT_TRAFFIC = true;
-const TRAFFIC_FETCH_MAX_CLIENTS = 30;
+const TRAFFIC_FETCH_MAX_CLIENTS = 120;
 const TRAFFIC_FETCH_CONCURRENCY = 4;
 const TRAFFIC_FETCH_TIMEOUT_MS = 8000;
 
@@ -554,6 +554,17 @@ export const ClientManager: React.FC = () => {
       setSelectedClients(new Set(filteredClients.map(c => c.id)));
     }
   };
+
+  const applySortFromHeader = (field: 'email' | 'node' | 'download' | 'total' | 'expiry') => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortField(field);
+    setSortDirection('asc');
+  };
+  const sortIndicator = (field: 'email' | 'node' | 'download' | 'total' | 'expiry') =>
+    sortField === field ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
   
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 GB';
@@ -562,12 +573,13 @@ export const ClientManager: React.FC = () => {
   };
 
   /** Returns bytes from cache if loaded, fallback value if not yet loaded, or null if unavailable. */
-  const getTrafficBytes = (key: string | null, field: 'upload' | 'download', fallback: number): number | null => {
-    if (key == null) return fallback;
-    if (!(key in trafficCache)) return fallback; // not yet loaded
+  const getTrafficBytes = (key: string | null, field: 'upload' | 'download', fallback: number): number => {
+    const safeFallback = Number.isFinite(fallback) ? fallback : 0;
+    if (key == null) return safeFallback;
+    if (!(key in trafficCache)) return safeFallback; // not yet loaded
     const entry = trafficCache[key];
-    if (entry == null) return fallback; // unavailable live traffic -> keep DB value
-    return entry[field];
+    if (entry == null) return safeFallback; // unavailable live traffic -> keep DB value
+    return Number.isFinite(entry[field]) ? entry[field] : safeFallback;
   };
   
   const nodes = Array.from(new Set(clients.map(c => c.node_name)));
@@ -774,13 +786,33 @@ export const ClientManager: React.FC = () => {
                       onChange={toggleSelectAll}
                     />
                   </th>
-                  <th style={{ color: colors.text.secondary }}>Email</th>
-                  <th style={{ color: colors.text.secondary }}>Node</th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('email')}>
+                      Email{sortIndicator('email')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('node')}>
+                      Node{sortIndicator('node')}
+                    </button>
+                  </th>
                   <th style={{ color: colors.text.secondary }}>Protocol</th>
                   <th style={{ color: colors.text.secondary }}>Status</th>
-                  <th style={{ color: colors.text.secondary }}>Download</th>
-                  <th style={{ color: colors.text.secondary }}>Total Limit</th>
-                  <th style={{ color: colors.text.secondary }}>Expiry</th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('download')}>
+                      Download{sortIndicator('download')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('total')}>
+                      Total Limit{sortIndicator('total')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('expiry')}>
+                      Expiry{sortIndicator('expiry')}
+                    </button>
+                  </th>
                   <th style={{ color: colors.text.secondary }}>Actions</th>
                 </tr>
               </thead>
@@ -833,7 +865,7 @@ export const ClientManager: React.FC = () => {
                           </span>
                         )}
                       </td>
-                      <td>{downloadBytes != null ? formatBytes(downloadBytes) : <span style={{ color: colors.text.secondary }}>—</span>}</td>
+                      <td>{formatBytes(downloadBytes)}</td>
                       <td>
                         {client.total > 0 ? formatBytes(client.total) : (
                           <span style={{ color: colors.text.secondary }}>∞</span>
