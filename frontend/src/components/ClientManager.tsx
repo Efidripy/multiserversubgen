@@ -33,6 +33,17 @@ interface BatchAddClient {
   enable: boolean;
 }
 
+interface ClientsPageCache {
+  ts: number;
+  clients: Client[];
+  trafficCache: Record<string, TrafficData | null>;
+  endpointMode?: 'unknown' | 'query' | 'legacy' | 'disabled';
+}
+
+const CLIENTS_PAGE_CACHE_KEY = 'sub_manager_clients_page_cache_v1';
+const CLIENTS_PAGE_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
+const CLIENTS_PAGE_REFRESH_MS = 90 * 1000; // background refresh interval
+
 export const ClientManager: React.FC = () => {
   const { colors } = useTheme();
   const [clients, setClients] = useState<Client[]>([]);
@@ -48,6 +59,7 @@ export const ClientManager: React.FC = () => {
   // - legacy: use /client/{email}/traffic
   // - disabled: skip traffic calls (both endpoints unavailable)
   const trafficEndpointModeRef = useRef<'unknown' | 'query' | 'legacy' | 'disabled'>('unknown');
+  const trafficEndpointProbeRef = useRef<Promise<void> | null>(null);
   
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
@@ -64,17 +76,48 @@ export const ClientManager: React.FC = () => {
   
   // Selection
   const [selectedClients, setSelectedClients] = useState<Set<number>>(new Set());
+  const refreshInFlightRef = useRef(false);
   
   useEffect(() => {
+    // Show cached snapshot instantly if available, then refresh in background.
+    try {
+      const raw = localStorage.getItem(CLIENTS_PAGE_CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as ClientsPageCache;
+        if (
+          parsed &&
+          typeof parsed.ts === 'number' &&
+          Date.now() - parsed.ts < CLIENTS_PAGE_CACHE_MAX_AGE_MS
+        ) {
+          if (Array.isArray(parsed.clients)) setClients(parsed.clients);
+          if (parsed.trafficCache && typeof parsed.trafficCache === 'object') {
+            setTrafficCache(parsed.trafficCache);
+          }
+          if (parsed.endpointMode) {
+            trafficEndpointModeRef.current = parsed.endpointMode;
+          }
+        }
+      }
+    } catch {
+      // Ignore malformed cache.
+    }
+
     loadClients();
+
+    const timer = setInterval(() => {
+      loadClients(true);
+    }, CLIENTS_PAGE_REFRESH_MS);
+    return () => clearInterval(timer);
   }, []);
   
   useEffect(() => {
     applyFilters();
   }, [clients, searchTerm, filterNode, filterStatus, filterProtocol]);
   
-  const loadClients = async () => {
-    setLoading(true);
+  const loadClients = async (silent = false) => {
+    if (refreshInFlightRef.current) return;
+    refreshInFlightRef.current = true;
+    if (!silent) setLoading(true);
     setError('');
     
     try {
@@ -93,11 +136,25 @@ export const ClientManager: React.FC = () => {
       }));
 
       setClients(rawClients);
-      loadTraffic(rawClients);
+      loadTraffic(rawClients).catch(() => undefined);
+
+      // Cache clients immediately, even before traffic refresh completes.
+      try {
+        const cacheData: ClientsPageCache = {
+          ts: Date.now(),
+          clients: rawClients,
+          trafficCache,
+          endpointMode: trafficEndpointModeRef.current,
+        };
+        localStorage.setItem(CLIENTS_PAGE_CACHE_KEY, JSON.stringify(cacheData));
+      } catch {
+        // Ignore localStorage write errors.
+      }
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load clients');
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
+      refreshInFlightRef.current = false;
     }
   };
 
@@ -114,6 +171,52 @@ export const ClientManager: React.FC = () => {
     if (pairs.size === 0) return;
 
     setTrafficLoading(true);
+    const ensureTrafficEndpointMode = async (node_id: number, email: string) => {
+      if (trafficEndpointModeRef.current !== 'unknown') return;
+      if (trafficEndpointProbeRef.current) {
+        await trafficEndpointProbeRef.current;
+        return;
+      }
+
+      trafficEndpointProbeRef.current = (async () => {
+        try {
+          await api.get(`/v1/nodes/${node_id}/client-traffic`, {
+            auth: getAuth(),
+            params: { email },
+          });
+          trafficEndpointModeRef.current = 'query';
+          return;
+        } catch (err: any) {
+          if (err?.response?.status !== 404) {
+            // Endpoint likely exists; avoid fallback churn on transient errors.
+            trafficEndpointModeRef.current = 'query';
+            return;
+          }
+        }
+
+        try {
+          await api.get(
+            `/v1/nodes/${node_id}/client/${encodeURIComponent(email)}/traffic`,
+            { auth: getAuth() }
+          );
+          trafficEndpointModeRef.current = 'legacy';
+        } catch (legacyErr: any) {
+          trafficEndpointModeRef.current = legacyErr?.response?.status === 404 ? 'disabled' : 'legacy';
+        }
+      })();
+
+      try {
+        await trafficEndpointProbeRef.current;
+      } finally {
+        trafficEndpointProbeRef.current = null;
+      }
+    };
+
+    const firstPair = pairs.values().next().value as { node_id: number; email: string } | undefined;
+    if (firstPair) {
+      await ensureTrafficEndpointMode(firstPair.node_id, firstPair.email);
+    }
+
     const fetchTraffic = async (node_id: number, email: string): Promise<TrafficData | null> => {
       if (trafficEndpointModeRef.current === 'disabled') {
         return null;
@@ -143,10 +246,8 @@ export const ClientManager: React.FC = () => {
           return await tryLegacy();
         }
 
-        // unknown => probe query endpoint first
-        const data = await tryQuery();
-        trafficEndpointModeRef.current = 'query';
-        return data;
+        // Unknown mode should be resolved by one-time probe above.
+        return await tryQuery();
       } catch (err: any) {
         const status = err?.response?.status;
 
@@ -183,6 +284,19 @@ export const ClientManager: React.FC = () => {
     results.forEach(([key, data]) => { cache[key] = data; });
     setTrafficCache(cache);
     setTrafficLoading(false);
+
+    // Persist latest snapshot for instant next open.
+    try {
+      const cacheData: ClientsPageCache = {
+        ts: Date.now(),
+        clients: clientList,
+        trafficCache: cache,
+        endpointMode: trafficEndpointModeRef.current,
+      };
+      localStorage.setItem(CLIENTS_PAGE_CACHE_KEY, JSON.stringify(cacheData));
+    } catch {
+      // Ignore localStorage write errors.
+    }
   };
   
   const applyFilters = () => {
@@ -405,7 +519,7 @@ export const ClientManager: React.FC = () => {
             <button 
               className="btn btn-sm"
               style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
-              onClick={loadClients}
+              onClick={() => loadClients()}
               disabled={loading}
             >
               {loading ? '⏳' : '🔄'} Reload

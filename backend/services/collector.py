@@ -17,6 +17,7 @@ class SnapshotCollector:
         fetch_nodes: Callable[[], List[Dict]],
         xui_monitor,
         ws_manager,
+        on_snapshot: Optional[Callable[[Dict], None]] = None,
         base_interval_sec: int = 5,
         max_interval_sec: int = 60,
         min_interval_sec: int = 3,
@@ -29,6 +30,7 @@ class SnapshotCollector:
         self.max_interval_sec = max(self.base_interval_sec, max_interval_sec)
         self.min_interval_sec = max(1, min_interval_sec)
         self.max_parallel_polls = max(1, max_parallel_polls)
+        self.on_snapshot = on_snapshot
 
         self._task: Optional[asyncio.Task] = None
         self._running = False
@@ -128,6 +130,12 @@ class SnapshotCollector:
 
             state["next_poll"] = time.time() + state["interval"]
             snapshot["poll_ms"] = round(elapsed * 1000, 2)
+
+            if self.on_snapshot is not None:
+                try:
+                    await asyncio.to_thread(self.on_snapshot, snapshot)
+                except Exception as exc:
+                    logger.warning(f"Collector on_snapshot callback failed for {key}: {exc}")
 
             async with self._lock:
                 self._latest["timestamp"] = time.time()

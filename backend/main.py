@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from urllib.parse import urlparse
 import urllib3
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 import pyotp
 try:
     import redis
@@ -65,6 +65,9 @@ REDIS_URL = os.getenv("REDIS_URL", "").strip()
 COLLECTOR_BASE_INTERVAL_SEC = int(os.getenv("COLLECTOR_BASE_INTERVAL_SEC", "5"))
 COLLECTOR_MAX_INTERVAL_SEC = int(os.getenv("COLLECTOR_MAX_INTERVAL_SEC", "60"))
 COLLECTOR_MAX_PARALLEL = int(os.getenv("COLLECTOR_MAX_PARALLEL", "8"))
+NODE_HISTORY_ENABLED = os.getenv("NODE_HISTORY_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+NODE_HISTORY_MIN_INTERVAL_SEC = int(os.getenv("NODE_HISTORY_MIN_INTERVAL_SEC", "30"))
+NODE_HISTORY_RETENTION_DAYS = int(os.getenv("NODE_HISTORY_RETENTION_DAYS", "30"))
 AUDIT_QUEUE_BATCH_SIZE = int(os.getenv("AUDIT_QUEUE_BATCH_SIZE", "200"))
 ROLE_VIEWERS_RAW = os.getenv("ROLE_VIEWERS", "").strip()
 ROLE_OPERATORS_RAW = os.getenv("ROLE_OPERATORS", "").strip()
@@ -137,6 +140,8 @@ cache_refresh_state = {
 }
 _redis_client = None
 audit_worker_task = None
+history_write_state = {"last_by_node": {}, "last_cleanup_ts": 0.0}
+history_write_lock = Lock()
 
 # Инициализация менеджеров
 inbound_mgr = InboundManager(decrypt_func=decrypt, encrypt_func=encrypt)
@@ -144,14 +149,6 @@ client_mgr = ClientManager(decrypt_func=decrypt, encrypt_func=encrypt)
 server_monitor = ServerMonitor(decrypt_func=decrypt)
 xui_monitor = ThreeXUIMonitor(decrypt_func=decrypt)
 node_service = NodeService(DB_PATH)
-snapshot_collector = SnapshotCollector(
-    fetch_nodes=node_service.list_nodes,
-    xui_monitor=xui_monitor,
-    ws_manager=ws_manager,
-    base_interval_sec=COLLECTOR_BASE_INTERVAL_SEC,
-    max_interval_sec=COLLECTOR_MAX_INTERVAL_SEC,
-    max_parallel_polls=COLLECTOR_MAX_PARALLEL,
-)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("sub_manager")
@@ -164,6 +161,99 @@ HTTP_REQUEST_LATENCY = Histogram(
     "sub_manager_http_request_duration_seconds",
     "HTTP request latency",
     ["method", "path"],
+)
+NODE_AVAILABILITY = Gauge(
+    "sub_manager_node_available",
+    "Node availability (1 available, 0 unavailable)",
+    ["node_name", "node_id"],
+)
+NODE_XRAY_RUNNING = Gauge(
+    "sub_manager_node_xray_running",
+    "Xray running state on node (1 running, 0 stopped)",
+    ["node_name", "node_id"],
+)
+NODE_CPU_PERCENT = Gauge(
+    "sub_manager_node_cpu_percent",
+    "Node CPU usage percent",
+    ["node_name", "node_id"],
+)
+NODE_ONLINE_CLIENTS = Gauge(
+    "sub_manager_node_online_clients",
+    "Online clients count per node",
+    ["node_name", "node_id"],
+)
+NODE_TRAFFIC_TOTAL_BYTES = Gauge(
+    "sub_manager_node_traffic_total_bytes",
+    "Total traffic bytes per node snapshot",
+    ["node_name", "node_id"],
+)
+NODE_POLL_DURATION_MS = Gauge(
+    "sub_manager_node_poll_duration_ms",
+    "Collector poll duration per node in milliseconds",
+    ["node_name", "node_id"],
+)
+
+
+def _record_node_snapshot(snapshot: Dict):
+    node_name = str(snapshot.get("name", "unknown"))
+    node_id = str(snapshot.get("node_id", "0"))
+
+    NODE_AVAILABILITY.labels(node_name=node_name, node_id=node_id).set(1 if snapshot.get("available") else 0)
+    NODE_XRAY_RUNNING.labels(node_name=node_name, node_id=node_id).set(1 if snapshot.get("xray_running") else 0)
+    NODE_CPU_PERCENT.labels(node_name=node_name, node_id=node_id).set(float(snapshot.get("cpu", 0) or 0))
+    NODE_ONLINE_CLIENTS.labels(node_name=node_name, node_id=node_id).set(float(snapshot.get("online_clients", 0) or 0))
+    NODE_TRAFFIC_TOTAL_BYTES.labels(node_name=node_name, node_id=node_id).set(float(snapshot.get("traffic_total", 0) or 0))
+    NODE_POLL_DURATION_MS.labels(node_name=node_name, node_id=node_id).set(float(snapshot.get("poll_ms", 0) or 0))
+
+    if not NODE_HISTORY_ENABLED:
+        return
+
+    now_ts = time.time()
+    with history_write_lock:
+        node_last = history_write_state["last_by_node"].get(node_id, 0.0)
+        if now_ts - node_last < max(1, NODE_HISTORY_MIN_INTERVAL_SEC):
+            return
+        history_write_state["last_by_node"][node_id] = now_ts
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO node_history (
+                ts, node_id, node_name, available, xray_running, cpu, online_clients, traffic_total, poll_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                int(now_ts),
+                int(snapshot.get("node_id") or 0),
+                node_name,
+                1 if snapshot.get("available") else 0,
+                1 if snapshot.get("xray_running") else 0,
+                float(snapshot.get("cpu", 0) or 0),
+                int(snapshot.get("online_clients", 0) or 0),
+                float(snapshot.get("traffic_total", 0) or 0),
+                float(snapshot.get("poll_ms", 0) or 0),
+            ),
+        )
+
+        # Lazy retention cleanup (at most once per hour).
+        with history_write_lock:
+            do_cleanup = now_ts - history_write_state["last_cleanup_ts"] >= 3600
+            if do_cleanup:
+                history_write_state["last_cleanup_ts"] = now_ts
+        if do_cleanup:
+            cutoff = int(now_ts - max(1, NODE_HISTORY_RETENTION_DAYS) * 86400)
+            conn.execute("DELETE FROM node_history WHERE ts < ?", (cutoff,))
+        conn.commit()
+
+
+snapshot_collector = SnapshotCollector(
+    fetch_nodes=node_service.list_nodes,
+    xui_monitor=xui_monitor,
+    ws_manager=ws_manager,
+    on_snapshot=_record_node_snapshot,
+    base_interval_sec=COLLECTOR_BASE_INTERVAL_SEC,
+    max_interval_sec=COLLECTOR_MAX_INTERVAL_SEC,
+    max_parallel_polls=COLLECTOR_MAX_PARALLEL,
 )
 
 
@@ -226,6 +316,21 @@ def init_db():
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                       payload TEXT NOT NULL)''')
+        conn.execute(
+            '''CREATE TABLE IF NOT EXISTS node_history
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      ts INTEGER NOT NULL,
+                      node_id INTEGER NOT NULL,
+                      node_name TEXT NOT NULL,
+                      available INTEGER NOT NULL,
+                      xray_running INTEGER NOT NULL,
+                      cpu REAL NOT NULL,
+                      online_clients INTEGER NOT NULL,
+                      traffic_total REAL NOT NULL,
+                      poll_ms REAL NOT NULL)'''
+        )
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_node_history_ts ON node_history(ts)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_node_history_node_ts ON node_history(node_id, ts)')
         
         conn.commit()
 
@@ -2083,6 +2188,39 @@ def _get_node_or_404(node_id: int) -> Dict:
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     return node
+
+
+@app.get("/api/v1/history/nodes/{node_id}")
+async def node_history(request: Request, node_id: int, since_sec: int = 86400, limit: int = 2000):
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401)
+    if since_sec < 60:
+        since_sec = 60
+    if since_sec > 30 * 86400:
+        since_sec = 30 * 86400
+    if limit < 100:
+        limit = 100
+    if limit > 5000:
+        limit = 5000
+
+    _get_node_or_404(node_id)
+    ts_from = int(time.time()) - since_sec
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT ts, node_id, node_name, available, xray_running, cpu, online_clients, traffic_total, poll_ms
+            FROM node_history
+            WHERE node_id = ? AND ts >= ?
+            ORDER BY ts DESC
+            LIMIT ?
+            """,
+            (node_id, ts_from, limit),
+        ).fetchall()
+
+    points = [dict(r) for r in reversed(rows)]
+    return {"node_id": node_id, "since_sec": since_sec, "count": len(points), "points": points}
 
 
 app.include_router(
