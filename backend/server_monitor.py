@@ -14,7 +14,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
-from xui_session import login_node panel
+from xui_session import XUI_HTTP_TIMEOUT_SEC, login_node panel, xui_request
 
 logger = logging.getLogger("sub_manager")
 VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
@@ -65,7 +65,7 @@ class ThreeXUIMonitor:
         if not s:
             return {"node": node["name"], "available": False, "error": "Failed to connect"}
         try:
-            res = s.get(f"{base_url}/panel/api/server/status", timeout=5)
+            res = xui_request(s, "GET", f"{base_url}/panel/api/server/status")
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
@@ -125,7 +125,7 @@ class ThreeXUIMonitor:
         if not s:
             return {"node": node["name"], "available": False, "error": "Failed to connect", "inbounds": []}
         try:
-            res = s.get(f"{base_url}/panel/api/inbounds/list", timeout=5)
+            res = xui_request(s, "GET", f"{base_url}/panel/api/inbounds/list")
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
@@ -170,7 +170,7 @@ class ThreeXUIMonitor:
         if not s:
             return {"node": node["name"], "available": False, "error": "Failed to connect", "online_clients": []}
         try:
-            res = s.post(f"{base_url}/panel/api/inbounds/onlines", timeout=5)
+            res = xui_request(s, "POST", f"{base_url}/panel/api/inbounds/onlines")
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
@@ -194,8 +194,10 @@ class ThreeXUIMonitor:
             return {"node": node["name"], "available": False, "error": "Failed to connect"}
         try:
             safe_email = quote(email, safe="")
-            res = s.get(
-                f"{base_url}/panel/api/inbounds/getClientTraffics/{safe_email}", timeout=5
+            res = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/inbounds/getClientTraffics/{safe_email}",
             )
             if res.status_code == 200:
                 data = res.json()
@@ -276,13 +278,13 @@ class ServerMonitor:
         try:
             # Primary API endpoint for node panel panel (panel/api path)
             primary_url = f"{base_url}/panel/api/server/status"
-            res = s.post(primary_url, timeout=5)
+            res = xui_request(s, "POST", primary_url)
             
             if res.status_code == 404:
                 # Fallback for older node panel versions
                 fallback_url = f"{base_url}/server/status"
                 logger.debug(f"Primary endpoint 404, falling back to {fallback_url}")
-                res = s.post(fallback_url, timeout=5)
+                res = xui_request(s, "POST", fallback_url)
             
             if res.status_code != 200:
                 logger.warning(
@@ -378,7 +380,11 @@ class ServerMonitor:
             base_url = f"https://{node['ip']}:{node['port']}{prefix}"
             
             # Простой запрос для проверки доступности
-            res = requests.get(f"{base_url}/", verify=_requests_verify_value(), timeout=5)
+            res = requests.get(
+                f"{base_url}/",
+                verify=_requests_verify_value(),
+                timeout=XUI_HTTP_TIMEOUT_SEC,
+            )
             
             latency = (time.time() - start_time) * 1000  # в миллисекундах
             
@@ -418,7 +424,7 @@ class ServerMonitor:
             return {"error": "Failed to connect"}
         
         try:
-            res = s.post(f"{base_url}/xui/API/inbounds/get", timeout=5)
+            res = xui_request(s, "POST", f"{base_url}/xui/API/inbounds/get")
             
             if res.status_code == 200:
                 data = res.json()
@@ -443,7 +449,7 @@ class ServerMonitor:
             return False
         
         try:
-            res = s.post(f"{base_url}/server/restartXrayService", timeout=10)
+            res = xui_request(s, "POST", f"{base_url}/server/restartXrayService", timeout=15)
             return res.status_code == 200
         except Exception as exc:
             logger.warning(f"Failed to restart Xray on {node['name']}: {exc}")
@@ -471,7 +477,7 @@ class ServerMonitor:
                 "syslog": False
             }
             
-            res = s.post(f"{base_url}/server/logs", json=payload, timeout=5)
+            res = xui_request(s, "POST", f"{base_url}/server/logs", json=payload)
             
             if res.status_code == 200:
                 data = res.json()
@@ -502,7 +508,7 @@ class ServerMonitor:
         
         try:
             # API endpoint для получения бэкапа БД
-            res = s.get(f"{base_url}/server/getDb", timeout=10)
+            res = xui_request(s, "GET", f"{base_url}/server/getDb", timeout=15)
             
             if res.status_code == 200:
                 # Ответ может быть в виде файла или JSON с base64
@@ -543,9 +549,13 @@ class ServerMonitor:
         
         try:
             # API endpoint для импорта БД
-            res = s.post(f"{base_url}/server/importDb", 
-                        data={"db": backup_data}, 
-                        timeout=10)
+            res = xui_request(
+                s,
+                "POST",
+                f"{base_url}/server/importDb",
+                data={"db": backup_data},
+                timeout=15,
+            )
             
             if res.status_code == 200:
                 data = res.json()
