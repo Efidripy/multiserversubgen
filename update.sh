@@ -93,6 +93,20 @@ generate_random_path() {
     tr -dc 'a-z0-9' </dev/urandom | head -c 8
 }
 
+normalize_public_access_vars() {
+    PUBLIC_DOMAIN="${PUBLIC_DOMAIN#http://}"
+    PUBLIC_DOMAIN="${PUBLIC_DOMAIN#https://}"
+    PUBLIC_DOMAIN="${PUBLIC_DOMAIN%%/*}"
+    PUBLIC_DOMAIN="${PUBLIC_DOMAIN%/}"
+    PUBLIC_SCHEME="$(echo "${PUBLIC_SCHEME:-https}" | tr '[:upper:]' '[:lower:]')"
+    if [ "$PUBLIC_SCHEME" != "http" ] && [ "$PUBLIC_SCHEME" != "https" ]; then
+        PUBLIC_SCHEME="https"
+    fi
+    if [ -z "${PUBLIC_DOMAIN:-}" ]; then
+        PUBLIC_DOMAIN="$(hostname -f)"
+    fi
+}
+
 pick_free_local_port() {
     local port="${1:-43000}"
     while ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}$"; do
@@ -110,6 +124,69 @@ sync_backend_files() {
             cp -r "$SCRIPT_DIR/backend/$pkg" "$PROJECT_DIR/"
         fi
     done
+}
+
+ensure_nginx_snippet_include_in_cfg() {
+    local cfg_path="$1"
+    local include_line="    include /etc/nginx/snippets/${PROJECT_NAME}.conf;"
+
+    if [ ! -f "$cfg_path" ]; then
+        echo "⚠️ Nginx cfg не найден: $cfg_path"
+        return 1
+    fi
+
+    CFG_PATH="$cfg_path" INCLUDE_LINE="$include_line" python3 <<'PYTHON'
+from pathlib import Path
+import os
+import re
+
+cfg_path = Path(os.environ["CFG_PATH"])
+include_line = os.environ["INCLUDE_LINE"]
+text = cfg_path.read_text()
+
+out = []
+i = 0
+n = len(text)
+changed = False
+
+while i < n:
+    m = re.search(r'\bserver\s*\{', text[i:])
+    if not m:
+        out.append(text[i:])
+        break
+    start = i + m.start()
+    open_brace = i + m.end() - 1
+    out.append(text[i:start])
+    depth = 1
+    j = open_brace + 1
+    while j < n and depth > 0:
+        ch = text[j]
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+        j += 1
+    if depth != 0:
+        out.append(text[start:])
+        break
+
+    block = text[start:j]
+    if include_line not in block:
+        insert_at = block.rfind('}')
+        if insert_at != -1:
+            if not block[:insert_at].endswith('\n'):
+                block = block[:insert_at] + '\n' + block[insert_at:]
+                insert_at = block.rfind('}')
+            block = block[:insert_at] + include_line + "\n" + block[insert_at:]
+            changed = True
+    out.append(block)
+    i = j
+
+new_text = ''.join(out)
+if changed and new_text != text:
+    cfg_path.write_text(new_text)
+print("changed" if changed else "unchanged")
+PYTHON
 }
 
 ensure_monitoring_auth_file() {
@@ -429,7 +506,7 @@ run_post_update_checks() {
 
     local ws_status=""
     ws_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/ws" 2>/dev/null)
-    if [[ "$ws_status" =~ ^(400|401|403|404|405|426)$ ]]; then
+    if [[ "$ws_status" =~ ^(400|401|403|426)$ ]]; then
         echo "  ✅ /ws reachable (HTTP $ws_status)"
     else
         echo "  ⚠️ /ws unexpected HTTP: ${ws_status:-000}"
@@ -497,12 +574,15 @@ GRAFANA_HTTP_PORT=${GRAFANA_HTTP_PORT:-"43000"}
 GRAFANA_AUTH_ENABLED=${GRAFANA_AUTH_ENABLED:-"true"}
 GRAFANA_AUTH_USER=${GRAFANA_AUTH_USER:-"monitor"}
 GRAFANA_AUTH_HASH=${GRAFANA_AUTH_HASH:-""}
+PUBLIC_DOMAIN=${PUBLIC_DOMAIN:-"$(hostname -f)"}
+PUBLIC_SCHEME=${PUBLIC_SCHEME:-"https"}
 SECURITY_MTLS_ENABLED=${SECURITY_MTLS_ENABLED:-"false"}
 SECURITY_MTLS_CA_PATH=${SECURITY_MTLS_CA_PATH:-""}
 SECURITY_IP_ALLOWLIST=${SECURITY_IP_ALLOWLIST:-""}
 MFA_TOTP_ENABLED=${MFA_TOTP_ENABLED:-"false"}
 MFA_TOTP_USERS=${MFA_TOTP_USERS:-""}
 MFA_TOTP_WS_STRICT=${MFA_TOTP_WS_STRICT:-"false"}
+normalize_public_access_vars
 
 # Обновить сохранённые параметры (добавляет новые поля на старых установках)
 cat <<EOF > "$LOG_FILE"
@@ -510,6 +590,8 @@ PROJECT_NAME="$PROJECT_NAME"
 PROJECT_DIR="$PROJECT_DIR"
 SELECTED_CFG="$SELECTED_CFG"
 APP_PORT="$APP_PORT"
+PUBLIC_DOMAIN="$PUBLIC_DOMAIN"
+PUBLIC_SCHEME="$PUBLIC_SCHEME"
 WEB_PATH="$WEB_PATH"
 USE_PROXY="$USE_PROXY"
 ALLOW_ORIGINS="$ALLOW_ORIGINS"
@@ -561,6 +643,8 @@ echo "======================================================"
 echo "Проект: $PROJECT_NAME"
 echo "Путь: $PROJECT_DIR"
 echo "Порт: $APP_PORT"
+echo "Публичный домен: $PUBLIC_DOMAIN"
+echo "Схема URL: $PUBLIC_SCHEME"
 echo "Путь панели: /$WEB_PATH/"
 echo "Путь Grafana: /$GRAFANA_WEB_PATH/"
 echo "Локальный порт Grafana: $GRAFANA_HTTP_PORT"
@@ -666,12 +750,23 @@ if [[ "$path_choice" =~ ^[yYдД]$ ]]; then
     VITE_GRAFANA_PATH="/${GRAFANA_WEB_PATH}/"
 fi
 
+read -p "Изменить публичный домен/схему URL? (y/n, default: n): " public_choice
+public_choice=${public_choice:-n}
+if [[ "$public_choice" =~ ^[yYдД]$ ]]; then
+    read -p "Публичный домен (без http/https, Enter = auto): " PUBLIC_DOMAIN
+    read -p "Схема URL (http/https, default: ${PUBLIC_SCHEME}): " PUBLIC_SCHEME_INPUT
+    PUBLIC_SCHEME=${PUBLIC_SCHEME_INPUT:-$PUBLIC_SCHEME}
+fi
+normalize_public_access_vars
+
 # Сохранить параметры после возможного изменения hardening-настроек
 cat <<EOF > "$LOG_FILE"
 PROJECT_NAME="$PROJECT_NAME"
 PROJECT_DIR="$PROJECT_DIR"
 SELECTED_CFG="$SELECTED_CFG"
 APP_PORT="$APP_PORT"
+PUBLIC_DOMAIN="$PUBLIC_DOMAIN"
+PUBLIC_SCHEME="$PUBLIC_SCHEME"
 WEB_PATH="$WEB_PATH"
 USE_PROXY="$USE_PROXY"
 ALLOW_ORIGINS="$ALLOW_ORIGINS"
@@ -812,6 +907,7 @@ case $update_choice in
         SNIPPET_FILE="/etc/nginx/snippets/${PROJECT_NAME}.conf"
         mkdir -p /etc/nginx/snippets
         generate_nginx_snippet "$SNIPPET_FILE"
+        ensure_nginx_snippet_include_in_cfg "$SELECTED_CFG" >/dev/null || true
         nginx -t && systemctl restart nginx
         ;;
         
@@ -862,6 +958,7 @@ case $update_choice in
         SNIPPET_FILE="/etc/nginx/snippets/${PROJECT_NAME}.conf"
         mkdir -p /etc/nginx/snippets
         generate_nginx_snippet "$SNIPPET_FILE"
+        ensure_nginx_snippet_include_in_cfg "$SELECTED_CFG" >/dev/null || true
         nginx -t && systemctl restart nginx
         ;;
         
@@ -903,6 +1000,7 @@ case $update_choice in
         echo "  ✓ Обновлен snippet: $SNIPPET_FILE"
         configure_monitoring_stack
         ensure_monitoring_auth_file
+        ensure_nginx_snippet_include_in_cfg "$SELECTED_CFG" >/dev/null || true
 
         echo "[2/2] Тестирование и перезагрузка Nginx..."
         if nginx -t 2>/dev/null; then
@@ -932,12 +1030,12 @@ if [[ "$update_choice" =~ ^[12]$ ]]; then
         echo -e "\033[1;36mПанель\033[0m"
         echo "  Путь: /$WEB_PATH/"
         echo "  Способ подключения: Nginx reverse proxy -> FastAPI (логин/пароль системы)"
-        echo "  URL: http://$(hostname -f)/$WEB_PATH/"
+        echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/$WEB_PATH/"
         if [ "$MONITORING_ENABLED" = "true" ]; then
             echo -e "\033[1;33mGrafana\033[0m"
             echo "  Путь: /$GRAFANA_WEB_PATH/"
             echo "  Способ подключения: Nginx reverse proxy -> Grafana (BasicAuth + Grafana login)"
-            echo "  URL: http://$(hostname -f)/$GRAFANA_WEB_PATH/"
+            echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/$GRAFANA_WEB_PATH/"
         fi
         echo -e "\033[1;35m*************************\033[0m"
     else
@@ -976,12 +1074,12 @@ else
     echo -e "\033[1;36mПанель\033[0m"
     echo "  Путь: /$WEB_PATH/"
     echo "  Способ подключения: Nginx reverse proxy -> FastAPI (логин/пароль системы)"
-    echo "  URL: http://$(hostname -f)/$WEB_PATH/"
+    echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/$WEB_PATH/"
     if [ "$MONITORING_ENABLED" = "true" ]; then
         echo -e "\033[1;33mGrafana\033[0m"
         echo "  Путь: /$GRAFANA_WEB_PATH/"
         echo "  Способ подключения: Nginx reverse proxy -> Grafana (BasicAuth + Grafana login)"
-        echo "  URL: http://$(hostname -f)/$GRAFANA_WEB_PATH/"
+        echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/$GRAFANA_WEB_PATH/"
     fi
     echo -e "\033[1;35m*************************\033[0m"
 fi

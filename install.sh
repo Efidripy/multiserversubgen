@@ -93,6 +93,20 @@ generate_random_path() {
     tr -dc 'a-z0-9' </dev/urandom | head -c 8
 }
 
+normalize_public_access_vars() {
+    PUBLIC_DOMAIN="${PUBLIC_DOMAIN#http://}"
+    PUBLIC_DOMAIN="${PUBLIC_DOMAIN#https://}"
+    PUBLIC_DOMAIN="${PUBLIC_DOMAIN%%/*}"
+    PUBLIC_DOMAIN="${PUBLIC_DOMAIN%/}"
+    PUBLIC_SCHEME="$(echo "${PUBLIC_SCHEME:-https}" | tr '[:upper:]' '[:lower:]')"
+    if [ "$PUBLIC_SCHEME" != "http" ] && [ "$PUBLIC_SCHEME" != "https" ]; then
+        PUBLIC_SCHEME="https"
+    fi
+    if [ -z "${PUBLIC_DOMAIN:-}" ]; then
+        PUBLIC_DOMAIN="$(hostname -f)"
+    fi
+}
+
 pick_free_local_port() {
     local port="${1:-43000}"
     while ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}$"; do
@@ -157,6 +171,69 @@ with path.open("w") as f:
         f.write(f'{k}="{v}"\\n')
 PYTHON
     fi
+}
+
+ensure_nginx_snippet_include_in_cfg() {
+    local cfg_path="$1"
+    local include_line="    include /etc/nginx/snippets/${PROJECT_NAME}.conf;"
+
+    if [ ! -f "$cfg_path" ]; then
+        echo "⚠️ Nginx cfg не найден: $cfg_path"
+        return 1
+    fi
+
+    CFG_PATH="$cfg_path" INCLUDE_LINE="$include_line" python3 <<'PYTHON'
+from pathlib import Path
+import os
+import re
+
+cfg_path = Path(os.environ["CFG_PATH"])
+include_line = os.environ["INCLUDE_LINE"]
+text = cfg_path.read_text()
+
+out = []
+i = 0
+n = len(text)
+changed = False
+
+while i < n:
+    m = re.search(r'\bserver\s*\{', text[i:])
+    if not m:
+        out.append(text[i:])
+        break
+    start = i + m.start()
+    open_brace = i + m.end() - 1
+    out.append(text[i:start])
+    depth = 1
+    j = open_brace + 1
+    while j < n and depth > 0:
+        ch = text[j]
+        if ch == '{':
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+        j += 1
+    if depth != 0:
+        out.append(text[start:])
+        break
+
+    block = text[start:j]
+    if include_line not in block:
+        insert_at = block.rfind('}')
+        if insert_at != -1:
+            if not block[:insert_at].endswith('\n'):
+                block = block[:insert_at] + '\n' + block[insert_at:]
+                insert_at = block.rfind('}')
+            block = block[:insert_at] + include_line + "\n" + block[insert_at:]
+            changed = True
+    out.append(block)
+    i = j
+
+new_text = ''.join(out)
+if changed and new_text != text:
+    cfg_path.write_text(new_text)
+print("changed" if changed else "unchanged")
+PYTHON
 }
 
 configure_monitoring_stack() {
@@ -434,7 +511,7 @@ run_post_install_checks() {
 
     local ws_status=""
     ws_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/ws" 2>/dev/null)
-    if [[ "$ws_status" =~ ^(400|401|403|404|405|426)$ ]]; then
+    if [[ "$ws_status" =~ ^(400|401|403|426)$ ]]; then
         echo "✅ WebSocket upstream доступен (HTTP $ws_status на /ws)"
     else
         echo "⚠️ WebSocket upstream подозрительный ответ: HTTP ${ws_status:-000}"
@@ -515,12 +592,15 @@ update_project() {
     GRAFANA_AUTH_ENABLED=${GRAFANA_AUTH_ENABLED:-"true"}
     GRAFANA_AUTH_USER=${GRAFANA_AUTH_USER:-"monitor"}
     GRAFANA_AUTH_HASH=${GRAFANA_AUTH_HASH:-""}
+    PUBLIC_DOMAIN=${PUBLIC_DOMAIN:-"$(hostname -f)"}
+    PUBLIC_SCHEME=${PUBLIC_SCHEME:-"https"}
     SECURITY_MTLS_ENABLED=${SECURITY_MTLS_ENABLED:-"false"}
     SECURITY_MTLS_CA_PATH=${SECURITY_MTLS_CA_PATH:-""}
     SECURITY_IP_ALLOWLIST=${SECURITY_IP_ALLOWLIST:-""}
     MFA_TOTP_ENABLED=${MFA_TOTP_ENABLED:-"false"}
     MFA_TOTP_USERS=${MFA_TOTP_USERS:-""}
     MFA_TOTP_WS_STRICT=${MFA_TOTP_WS_STRICT:-"false"}
+    normalize_public_access_vars
     if [ -z "$WEB_PATH" ]; then
         VITE_BASE="/"
     else
@@ -601,12 +681,12 @@ update_project() {
     echo -e "\033[1;36mПанель\033[0m"
     echo "  Путь: /$WEB_PATH/"
     echo "  Способ подключения: Nginx reverse proxy -> FastAPI (логин/пароль системы)"
-    echo "  URL: http://$(hostname -f)/$WEB_PATH/"
+    echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/$WEB_PATH/"
     if [ "$MONITORING_ENABLED" = "true" ]; then
         echo -e "\033[1;33mGrafana\033[0m"
         echo "  Путь: /$GRAFANA_WEB_PATH/"
         echo "  Способ подключения: Nginx reverse proxy -> Grafana (BasicAuth + Grafana login)"
-        echo "  URL: http://$(hostname -f)/$GRAFANA_WEB_PATH/"
+        echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/$GRAFANA_WEB_PATH/"
     fi
     echo -e "\033[1;35m*************************\033[0m"
     systemctl status "$PROJECT_NAME" --no-pager
@@ -648,6 +728,10 @@ read -p "Имя проекта/сервиса (sub-manager): " PROJECT_NAME
 PROJECT_NAME=${PROJECT_NAME:-sub-manager}
 read -p "Локальный порт Python (666): " APP_PORT
 APP_PORT=${APP_PORT:-666}
+read -p "Публичный домен для ссылок (без http/https, Enter = auto): " PUBLIC_DOMAIN
+read -p "Схема публичного URL (http/https, default: https): " PUBLIC_SCHEME
+PUBLIC_SCHEME=${PUBLIC_SCHEME:-https}
+normalize_public_access_vars
 read -p "Сгенерировать случайный путь панели (8 символов)? (y/n, default: y): " PANEL_PATH_RANDOM_INPUT
 PANEL_PATH_RANDOM_INPUT=${PANEL_PATH_RANDOM_INPUT:-y}
 if [[ "$PANEL_PATH_RANDOM_INPUT" =~ ^[nNнН]$ ]]; then
@@ -858,6 +942,8 @@ PROJECT_NAME="$PROJECT_NAME"
 PROJECT_DIR="$PROJECT_DIR"
 SELECTED_CFG="$SELECTED_CFG"
 APP_PORT="$APP_PORT"
+PUBLIC_DOMAIN="$PUBLIC_DOMAIN"
+PUBLIC_SCHEME="$PUBLIC_SCHEME"
 WEB_PATH="$WEB_PATH"
 USE_PROXY="$USE_PROXY"
 ALLOW_ORIGINS="$ALLOW_ORIGINS"
@@ -1006,46 +1092,9 @@ ensure_monitoring_auth_file
 
 echo "✓ Создан snippet: $SNIPPET_FILE"
 
-# Идемпотентно добавить include в выбранный конфиг nginx (внутри server {})
-INCLUDE_LINE="    include /etc/nginx/snippets/${PROJECT_NAME}.conf;"
-if grep -qF "$INCLUDE_LINE" "$SELECTED_CFG"; then
-    echo "✓ Include уже присутствует в $SELECTED_CFG. Пропускаем."
-else
-    python3 << PYTHON
-import re, sys
-
-with open('$SELECTED_CFG', 'r') as f:
-    content = f.read()
-
-include_line = '\n    include /etc/nginx/snippets/${PROJECT_NAME}.conf;\n'
-
-# Try to insert after the first server_name directive
-pattern = r'(server_name\s+[^\n;]+;[ \t]*\n)'
-new_content = re.sub(pattern, r'\1' + include_line, content, count=1)
-
-if new_content == content:
-    # Fallback: insert before the closing brace of the first server {} block
-    server_match = re.search(r'\bserver\s*\{', content)
-    if not server_match:
-        print('ERROR: Could not find server {} block in $SELECTED_CFG', file=sys.stderr)
-        sys.exit(1)
-    start = server_match.end()
-    depth = 1
-    pos = start
-    while pos < len(content) and depth > 0:
-        if content[pos] == '{':
-            depth += 1
-        elif content[pos] == '}':
-            depth -= 1
-        pos += 1
-    insert_pos = pos - 1  # index of closing brace
-    new_content = content[:insert_pos] + include_line + content[insert_pos:]
-
-with open('$SELECTED_CFG', 'w') as f:
-    f.write(new_content)
-print('✓ Include добавлен в $SELECTED_CFG')
-PYTHON
-fi
+echo "Проверка include snippet в выбранном nginx cfg..."
+ensure_nginx_snippet_include_in_cfg "$SELECTED_CFG" >/dev/null || true
+echo "✓ Include обработан в $SELECTED_CFG"
 
 nginx -t && systemctl restart nginx
 
@@ -1081,12 +1130,12 @@ echo -e "\n\033[1;35m******** ДОСТУПЫ ********\033[0m"
 echo -e "\033[1;36mПанель\033[0m"
 echo "  Путь: /$WEB_PATH/"
 echo "  Способ подключения: Nginx reverse proxy -> FastAPI (логин/пароль системы)"
-echo "  URL: http://$(hostname -f)/$WEB_PATH/"
+echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/$WEB_PATH/"
 if [ "$MONITORING_ENABLED" = "true" ]; then
     echo -e "\033[1;33mGrafana\033[0m"
     echo "  Путь: /$GRAFANA_WEB_PATH/"
     echo "  Способ подключения: Nginx reverse proxy -> Grafana (BasicAuth + Grafana login)"
-    echo "  URL: http://$(hostname -f)/$GRAFANA_WEB_PATH/"
+    echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/$GRAFANA_WEB_PATH/"
 fi
 echo -e "\033[1;35m*************************\033[0m"
 
