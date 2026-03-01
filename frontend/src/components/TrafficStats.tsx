@@ -51,6 +51,8 @@ interface OnlineClient {
   node_name: string;
 }
 
+const normalizeEmailKey = (email: string): string => email.trim().toLowerCase();
+
 export const TrafficStats: React.FC = () => {
   const { colors } = useTheme();
   const [trafficData, setTrafficData] = useState<TrafficData[]>([]);
@@ -152,7 +154,10 @@ export const TrafficStats: React.FC = () => {
       const statsObj: Record<string, { up: number; down: number; total: number }> = res.data?.stats || {};
       const totals: Record<string, number> = {};
       Object.entries(statsObj).forEach(([email, s]) => {
-        totals[email] = (s.total || 0) === 0 ? (s.up || 0) + (s.down || 0) : (s.total || 0);
+        const key = normalizeEmailKey(email);
+        if (!key) return;
+        const value = (s.total || 0) === 0 ? (s.up || 0) + (s.down || 0) : (s.total || 0);
+        totals[key] = (totals[key] || 0) + value;
       });
       setOnlineTrafficTotals(totals);
     } catch (err: any) {
@@ -199,8 +204,8 @@ export const TrafficStats: React.FC = () => {
     .slice(0, topN);
 
   const sortedOnlineClients = [...onlineClients].sort((a, b) => {
-    const aTraffic = onlineTrafficTotals[a.email] || 0;
-    const bTraffic = onlineTrafficTotals[b.email] || 0;
+    const aTraffic = onlineTrafficTotals[normalizeEmailKey(a.email)] || 0;
+    const bTraffic = onlineTrafficTotals[normalizeEmailKey(b.email)] || 0;
     const byEmail = compareText(a.email, b.email);
     const byNode = compareText(a.node_name, b.node_name);
     const byTraffic = aTraffic - bTraffic;
@@ -478,7 +483,7 @@ export const TrafficStats: React.FC = () => {
                       </span>
                     </td>
                     <td style={{ color: colors.text.secondary }}>
-                      {formatBytes(onlineTrafficTotals[client.email] || 0)}
+                      {formatBytes(onlineTrafficTotals[normalizeEmailKey(client.email)] || 0)}
                     </td>
                   </tr>
                 ))}
