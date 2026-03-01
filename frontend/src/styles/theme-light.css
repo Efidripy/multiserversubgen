@@ -1,0 +1,63 @@
+body.theme-light .btn {
+  border-color: rgba(150, 181, 214, 0.46) !important;
+  box-shadow: 0 3px 9px rgba(120, 151, 186, 0.1);
+}
+
+body.theme-light .btn:not([style*="background-color"]) {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(242, 248, 255, 0.96)) !important;
+  color: #1b314b !important;
+}
+
+body.theme-light .btn:not([style*="background-color"]):hover:not(:disabled) {
+  border-color: rgba(131, 171, 211, 0.56) !important;
+  box-shadow: 0 6px 14px rgba(120, 151, 186, 0.16) !important;
+  filter: brightness(1.01) !important;
+}
+
+body.theme-light .btn-outline-secondary,
+body.theme-light .btn-outline-danger,
+body.theme-light .btn-outline-primary,
+body.theme-light .btn-outline-success,
+body.theme-light .btn-outline-warning,
+body.theme-light .btn-outline-info {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(242, 248, 255, 0.96)) !important;
+  color: #1b314b !important;
+  border-color: rgba(150, 181, 214, 0.46) !important;
+}
+
+body.theme-light .form-control,
+body.theme-light .form-select {
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(246, 250, 255, 0.96)) !important;
+  border-color: rgba(158, 187, 218, 0.58) !important;
+  color: #203852 !important;
+}
+
+body.theme-light .form-select {
+  color-scheme: light;
+}
+
+body.theme-light .form-control::placeholder {
+  color: #7b8da4 !important;
+}
+
+body.theme-light .form-select option,
+body.theme-light select option {
+  background: #f7fbff !important;
+  color: #203852 !important;
+}
+
+body.theme-light .dropdown-menu {
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.99), rgba(244, 249, 255, 0.98)) !important;
+  border: 1px solid rgba(156, 186, 218, 0.5) !important;
+  box-shadow: 0 10px 24px rgba(109, 143, 179, 0.22) !important;
+}
+
+body.theme-light .dropdown-item {
+  color: #29435f !important;
+}
+
+body.theme-light .dropdown-item:hover,
+body.theme-light .dropdown-item:focus {
+  background: rgba(14, 165, 183, 0.1) !important;
+  color: #15334e !important;
+}

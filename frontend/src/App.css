@@ -401,13 +401,17 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 700 !important;
   letter-spacing: 0.01em;
   border-width: 1px !important;
-  border-color: rgba(123, 156, 194, 0.36) !important;
-  background: linear-gradient(145deg, rgba(20, 33, 55, 0.95), rgba(11, 23, 42, 0.92)) !important;
-  color: var(--text-primary) !important;
+  border-color: rgba(123, 156, 194, 0.36);
+  color: var(--text-primary);
   padding: 0.46rem 0.86rem !important;
   font-size: 0.84rem !important;
   line-height: 1.05 !important;
   transition: transform 0.15s ease, box-shadow 0.16s ease, filter 0.16s ease !important;
+}
+
+.btn:not([style*="background-color"]) {
+  background: linear-gradient(145deg, rgba(20, 33, 55, 0.95), rgba(11, 23, 42, 0.92)) !important;
+  color: var(--text-primary) !important;
 }
 
 .btn:hover:not(:disabled) {
@@ -458,7 +462,7 @@ h1, h2, h3, h4, h5, h6 {
 .form-select {
   border-radius: 12px !important;
   border: 1px solid rgba(124, 156, 193, 0.28) !important;
-  background: linear-gradient(145deg, rgba(11, 23, 42, 0.9), rgba(8, 18, 34, 0.86)) !important;
+  background: linear-gradient(145deg, rgba(11, 23, 42, 0.9), rgba(8, 18, 34, 0.86));
   color: var(--text-primary) !important;
   font-size: 0.84rem !important;
   padding-top: 0.44rem !important;
