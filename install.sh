@@ -318,55 +318,6 @@ ${mtls_directives}${allowlist_directives}    proxy_pass http://127.0.0.1:$APP_PO
     add_header Referrer-Policy "same-origin" always;
 }
 
-run_post_install_checks() {
-    echo -e "\nПроверка запуска сервиса..."
-
-    local health_status=""
-    for i in 1 2 3 4 5; do
-        sleep 2
-        health_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/health" 2>/dev/null)
-        [ "$health_status" = "200" ] && break
-    done
-    if [ "$health_status" = "200" ]; then
-        echo "✅ Health check: /health -> HTTP 200"
-    else
-        echo "❌ Health check: /health -> HTTP ${health_status:-000}"
-    fi
-
-    local ws_status=""
-    ws_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/ws" 2>/dev/null)
-    if [[ "$ws_status" =~ ^(400|401|403|404|405|426)$ ]]; then
-        echo "✅ WebSocket upstream доступен (HTTP $ws_status на /ws)"
-    else
-        echo "⚠️ WebSocket upstream подозрительный ответ: HTTP ${ws_status:-000}"
-    fi
-
-    local snippet_file="/etc/nginx/snippets/${PROJECT_NAME}.conf"
-    if [ -f "$snippet_file" ]; then
-        if grep -q "rewrite \^/${GRAFANA_WEB_PATH}/" "$snippet_file"; then
-            echo "❌ Обнаружен опасный rewrite для Grafana в snippet: $snippet_file"
-        else
-            echo "✅ Nginx snippet без rewrite-петли Grafana"
-        fi
-    fi
-
-    if [ -f "$PROJECT_DIR/build/favicon.ico" ]; then
-        echo "✅ favicon.ico присутствует в build"
-    else
-        echo "⚠️ favicon.ico отсутствует в build: $PROJECT_DIR/build/favicon.ico"
-    fi
-
-    if [ "${MONITORING_ENABLED:-false}" = "true" ]; then
-        local g_status=""
-        g_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${GRAFANA_HTTP_PORT}/login" 2>/dev/null)
-        if [[ "$g_status" =~ ^(200|301|302)$ ]]; then
-            echo "✅ Grafana upstream доступен (HTTP $g_status)"
-        else
-            echo "⚠️ Grafana upstream недоступен или нестандартный код: HTTP ${g_status:-000}"
-        fi
-    fi
-}
-
 # --- WebSocket ---
 location ^~ /$WEB_PATH/ws {
 ${mtls_directives}${allowlist_directives}    proxy_pass http://127.0.0.1:$APP_PORT/ws;
@@ -464,6 +415,55 @@ location ^~ /$WEB_PATH/ {
     add_header Referrer-Policy "same-origin" always;
 }
 SNIPPET
+}
+
+run_post_install_checks() {
+    echo -e "\nПроверка запуска сервиса..."
+
+    local health_status=""
+    for i in 1 2 3 4 5; do
+        sleep 2
+        health_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/health" 2>/dev/null)
+        [ "$health_status" = "200" ] && break
+    done
+    if [ "$health_status" = "200" ]; then
+        echo "✅ Health check: /health -> HTTP 200"
+    else
+        echo "❌ Health check: /health -> HTTP ${health_status:-000}"
+    fi
+
+    local ws_status=""
+    ws_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/ws" 2>/dev/null)
+    if [[ "$ws_status" =~ ^(400|401|403|404|405|426)$ ]]; then
+        echo "✅ WebSocket upstream доступен (HTTP $ws_status на /ws)"
+    else
+        echo "⚠️ WebSocket upstream подозрительный ответ: HTTP ${ws_status:-000}"
+    fi
+
+    local snippet_file="/etc/nginx/snippets/${PROJECT_NAME}.conf"
+    if [ -f "$snippet_file" ]; then
+        if grep -q "rewrite \^/${GRAFANA_WEB_PATH}/" "$snippet_file"; then
+            echo "❌ Обнаружен опасный rewrite для Grafana в snippet: $snippet_file"
+        else
+            echo "✅ Nginx snippet без rewrite-петли Grafana"
+        fi
+    fi
+
+    if [ -f "$PROJECT_DIR/build/favicon.ico" ]; then
+        echo "✅ favicon.ico присутствует в build"
+    else
+        echo "⚠️ favicon.ico отсутствует в build: $PROJECT_DIR/build/favicon.ico"
+    fi
+
+    if [ "${MONITORING_ENABLED:-false}" = "true" ]; then
+        local g_status=""
+        g_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${GRAFANA_HTTP_PORT}/login" 2>/dev/null)
+        if [[ "$g_status" =~ ^(200|301|302)$ ]]; then
+            echo "✅ Grafana upstream доступен (HTTP $g_status)"
+        else
+            echo "⚠️ Grafana upstream недоступен или нестандартный код: HTTP ${g_status:-000}"
+        fi
+    fi
 }
 
 uninstall() {
