@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
-from xui_session import login_node panel
+from xui_session import login_node panel, xui_request
 from utils import parse_field_as_dict
 
 logger = logging.getLogger("sub_manager")
@@ -93,7 +93,7 @@ class InboundManager:
             if not login_node panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return []
-            res = s.get(f"{base_url}/panel/api/inbounds/list", timeout=5)
+            res = xui_request(s, "GET", f"{base_url}/panel/api/inbounds/list")
             if res.status_code == 200:
                 data = res.json()
                 return data.get("obj", []) if data.get("success", False) else []
@@ -126,8 +126,12 @@ class InboundManager:
             if not login_node panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return False
-            res = s.post(f"{base_url}/panel/api/inbounds/add", 
-                        json=config, timeout=5)
+            res = xui_request(
+                s,
+                "POST",
+                f"{base_url}/panel/api/inbounds/add",
+                json=config,
+            )
             return res.status_code == 200
         except Exception as exc:
             logger.warning(f"Failed to add inbound to {node['name']}: {exc}")
@@ -191,8 +195,11 @@ class InboundManager:
             if not login_node panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return False
-            res = s.post(f"{base_url}/panel/api/inbounds/del/{inbound_id}", 
-                        timeout=5)
+            res = xui_request(
+                s,
+                "POST",
+                f"{base_url}/panel/api/inbounds/del/{inbound_id}",
+            )
             return res.status_code == 200
         except Exception as exc:
             logger.warning(f"Failed to delete inbound from {node['name']}: {exc}")
@@ -210,8 +217,11 @@ class InboundManager:
             if not login_node panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return False
-            res = s.post(f"{base_url}/panel/api/inbounds/resetClientTraffic/{inbound_id}", 
-                        timeout=5)
+            res = xui_request(
+                s,
+                "POST",
+                f"{base_url}/panel/api/inbounds/resetClientTraffic/{inbound_id}",
+            )
             return res.status_code == 200
         except Exception as exc:
             logger.warning(f"Failed to reset inbound traffic: {exc}")
@@ -250,8 +260,12 @@ class InboundManager:
             # Обновить конфигурацию
             current.update(updates)
             
-            res = s.post(f"{base_url}/panel/api/inbounds/update/{inbound_id}", 
-                        json=current, timeout=5)
+            res = xui_request(
+                s,
+                "POST",
+                f"{base_url}/panel/api/inbounds/update/{inbound_id}",
+                json=current,
+            )
             return res.status_code == 200
         except Exception as exc:
             logger.warning(f"Failed to update inbound on {node['name']}: {exc}")

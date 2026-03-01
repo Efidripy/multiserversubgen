@@ -14,7 +14,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
-from xui_session import login_node panel
+from xui_session import login_node panel, xui_request
 from utils import parse_field_as_dict
 
 logger = logging.getLogger("sub_manager")
@@ -72,7 +72,7 @@ class ClientManager:
             return []
         
         try:
-            res = s.get(f"{base_url}/panel/api/inbounds/list", timeout=5)
+            res = xui_request(s, "GET", f"{base_url}/panel/api/inbounds/list")
             if res.status_code == 200:
                 data = res.json()
                 return data.get("obj", []) if data.get("success", False) else []
@@ -165,8 +165,12 @@ class ClientManager:
                 "id": inbound_id,
                 "settings": json.dumps({"clients": [client_config]})
             }
-            res = s.post(f"{base_url}/panel/api/inbounds/addClient", 
-                        json=payload, timeout=5)
+            res = xui_request(
+                s,
+                "POST",
+                f"{base_url}/panel/api/inbounds/addClient",
+                json=payload,
+            )
             return res.status_code == 200
         except Exception as exc:
             logger.warning(f"Failed to add client to {node['name']}: {exc}")
@@ -279,8 +283,12 @@ class ClientManager:
                     }]
                 })
             }
-            res = s.post(f"{base_url}/panel/api/inbounds/updateClient/{client_uuid}",
-                        json=payload, timeout=5)
+            res = xui_request(
+                s,
+                "POST",
+                f"{base_url}/panel/api/inbounds/updateClient/{client_uuid}",
+                json=payload,
+            )
             return res.status_code == 200
         except Exception as exc:
             logger.warning(f"Failed to update client on {node['name']}: {exc}")
@@ -302,8 +310,11 @@ class ClientManager:
             return False
         
         try:
-            res = s.post(f"{base_url}/panel/api/inbounds/{inbound_id}/delClient/{client_uuid}",
-                        timeout=5)
+            res = xui_request(
+                s,
+                "POST",
+                f"{base_url}/panel/api/inbounds/{inbound_id}/delClient/{client_uuid}",
+            )
             return res.status_code == 200
         except Exception as exc:
             logger.warning(f"Failed to delete client from {node['name']}: {exc}")
@@ -407,7 +418,7 @@ class ClientManager:
             else:
                 endpoint = f"{base_url}/panel/api/inbounds/getClientTraffics/{client_uuid}"
             
-            res = s.get(endpoint, timeout=5)
+            res = xui_request(s, "GET", endpoint)
             if res.status_code == 200:
                 data = res.json()
                 obj = data.get("obj", {})
@@ -539,8 +550,12 @@ class ClientManager:
                 "id": inbound_id,
                 "email": client_email
             }
-            res = s.post(f"{base_url}/panel/api/inbounds/resetClientTraffic/{client_email}",
-                        json=payload, timeout=5)
+            res = xui_request(
+                s,
+                "POST",
+                f"{base_url}/panel/api/inbounds/resetClientTraffic/{client_email}",
+                json=payload,
+            )
             return res.status_code == 200
         except Exception as exc:
             logger.warning(f"Failed to reset client traffic on {node['name']}: {exc}")
@@ -574,8 +589,11 @@ class ClientManager:
                         continue
                     
                     try:
-                        res = s.post(f"{base_url}/panel/api/inbounds/resetAllTraffics/{inbound['id']}",
-                                    timeout=5)
+                        res = xui_request(
+                            s,
+                            "POST",
+                            f"{base_url}/panel/api/inbounds/resetAllTraffics/{inbound['id']}",
+                        )
                         if res.status_code == 200:
                             reset_count += 1
                     except Exception as exc:
@@ -679,7 +697,7 @@ class ClientManager:
             if not s:
                 return []
             try:
-                res = s.post(f"{base_url}/panel/api/inbounds/onlines", timeout=5)
+                res = xui_request(s, "POST", f"{base_url}/panel/api/inbounds/onlines")
                 if res.status_code == 200:
                     data = res.json()
                     if data.get("success"):
