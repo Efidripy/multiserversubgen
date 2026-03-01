@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../contexts/ThemeContext';
 import { IconName, UIIcon } from './UIIcon';
+import { MSM_ASCII_VARIANTS } from './msmAsciiVariants';
 
 type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 
@@ -36,7 +37,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { colors, theme, toggleTheme } = useTheme();
   const { t, i18n } = useTranslation();
   const currentLang = (i18n.resolvedLanguage || i18n.language || 'en').toLowerCase();
-  const asciiVariants = useMemo(() => buildAsciiMsmVariants(), []);
+  const asciiVariants = useMemo(() => MSM_ASCII_VARIANTS, []);
   const [asciiIndex, setAsciiIndex] = useState(() => Math.floor(Math.random() * asciiVariants.length));
 
   const handleNav = (tab: TabType) => {
@@ -150,33 +151,3 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </>
   );
 };
-
-function buildAsciiMsmVariants(): string[] {
-  const charSets = [
-    { b: '#', f: '*' },
-    { b: '@', f: '+' },
-    { b: 'X', f: '=' },
-    { b: '%', f: '-' },
-    { b: '&', f: '~' },
-    { b: 'H', f: ':' },
-    { b: '8', f: '.' },
-    { b: 'M', f: '|' },
-    { b: 'W', f: '!' },
-    { b: '$', f: ';' },
-  ];
-  const templates: Array<(b: string, f: string) => string[]> = [
-    (b, f) => [`${b}${f}${b}   ${b}${b}${b}   ${b}${f}${b}`, `${b}${b}${b}   ${b}${f}${f}   ${b}${b}${b}`, `${b}${f}${b}   ${b}${b}${b}   ${b}${f}${b}`],
-    (b, f) => [`${b}${b}${f}${b}  ${b}${b}${b}  ${b}${b}${f}${b}`, `${b}${f}${f}${b}  ${f}${b}${f}  ${b}${f}${f}${b}`, `${b}${f}${f}${b}  ${b}${b}${b}  ${b}${f}${f}${b}`],
-    (b, f) => [`${b}${f}${f}${b}  ${b}${b}${f}  ${b}${f}${f}${b}`, `${b}${b}${f}${b}  ${f}${b}${f}  ${b}${b}${f}${b}`, `${b}${f}${b}${b}  ${f}${b}${b}  ${b}${f}${b}${b}`],
-    (b, f) => [`${b}${f}${b}${f}${b} ${b}${b}${b}${f} ${b}${f}${b}${f}${b}`, `${b}${b}${f}${b}${b} ${f}${b}${f}${f} ${b}${b}${f}${b}${b}`, `${b}${f}${f}${f}${b} ${f}${b}${b}${b} ${b}${f}${f}${f}${b}`],
-    (b, f) => [`${b}${b}${b}${b}  ${b}${b}${b}${b}  ${b}${b}${b}${b}`, `${b}${f}${f}${b}  ${f}${b}${f}${f}  ${b}${f}${f}${b}`, `${b}${f}${f}${b}  ${b}${b}${b}${b}  ${b}${f}${f}${b}`],
-  ];
-
-  const variants: string[] = [];
-  for (const cs of charSets) {
-    for (const tpl of templates) {
-      variants.push(tpl(cs.b, cs.f).join('\n'));
-    }
-  }
-  return variants.slice(0, 50);
-}
