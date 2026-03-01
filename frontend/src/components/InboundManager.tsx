@@ -42,6 +42,8 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
   const [filterProtocol, setFilterProtocol] = useState('');
   const [filterSecurity, setFilterSecurity] = useState('');
   const [filterNode, setFilterNode] = useState('');
+  const [sortField, setSortField] = useState<'name' | 'node' | 'protocol' | 'port' | 'status'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   const [showCloneModal, setShowCloneModal] = useState(false);
   const [cloneSource, setCloneSource] = useState<Inbound | null>(null);
@@ -71,8 +73,50 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
       filtered = filtered.filter((ib) => ib.node_name === filterNode);
     }
 
-    setFilteredInbounds(filtered);
-  }, [inbounds, filterProtocol, filterSecurity, filterNode]);
+    const factor = sortDirection === 'asc' ? 1 : -1;
+    const compareText = (a: string, b: string) =>
+      a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+
+    const sorted = [...filtered].sort((a, b) => {
+      const aName = a.remark || '';
+      const bName = b.remark || '';
+      const byName = compareText(aName, bName);
+      const byNode = compareText(a.node_name, b.node_name);
+      const byProtocol = compareText(a.protocol, b.protocol);
+      const byPort = a.port - b.port;
+      const byStatus = Number(a.enable) - Number(b.enable);
+
+      if (sortField === 'name') {
+        if (byName !== 0) return byName * factor;
+        if (byNode !== 0) return byNode * factor;
+        return (a.id - b.id) * factor;
+      }
+      if (sortField === 'node') {
+        if (byNode !== 0) return byNode * factor;
+        if (byName !== 0) return byName * factor;
+        return (a.id - b.id) * factor;
+      }
+      if (sortField === 'protocol') {
+        if (byProtocol !== 0) return byProtocol * factor;
+        if (byName !== 0) return byName;
+        if (byNode !== 0) return byNode;
+        return a.id - b.id;
+      }
+      if (sortField === 'port') {
+        if (byPort !== 0) return byPort * factor;
+        if (byName !== 0) return byName;
+        if (byNode !== 0) return byNode;
+        return a.id - b.id;
+      }
+
+      if (byStatus !== 0) return byStatus * factor;
+      if (byName !== 0) return byName;
+      if (byNode !== 0) return byNode;
+      return a.id - b.id;
+    });
+
+    setFilteredInbounds(sorted);
+  }, [inbounds, filterProtocol, filterSecurity, filterNode, sortField, sortDirection]);
 
   const loadInbounds = async () => {
     setLoading(true);
@@ -384,6 +428,34 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
             >
               {t('inbounds.clearFilters')}
             </button>
+          </div>
+        </div>
+
+        <div className="row g-2 mb-3">
+          <div className="col-md-3">
+            <select
+              className="form-select form-select-sm"
+              value={sortField}
+              onChange={(e) => setSortField(e.target.value as 'name' | 'node' | 'protocol' | 'port' | 'status')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+            >
+              <option value="name">Sort: Name</option>
+              <option value="node">Sort: Node</option>
+              <option value="protocol">Sort: Protocol</option>
+              <option value="port">Sort: Port</option>
+              <option value="status">Sort: Status</option>
+            </select>
+          </div>
+          <div className="col-md-2">
+            <select
+              className="form-select form-select-sm"
+              value={sortDirection}
+              onChange={(e) => setSortDirection(e.target.value as 'asc' | 'desc')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+            >
+              <option value="asc">Asc</option>
+              <option value="desc">Desc</option>
+            </select>
           </div>
         </div>
 

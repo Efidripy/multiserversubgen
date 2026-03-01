@@ -60,6 +60,10 @@ export const TrafficStats: React.FC = () => {
   const [error, setError] = useState('');
   const [groupBy, setGroupBy] = useState<'client' | 'inbound' | 'node'>('client');
   const [topN, setTopN] = useState(10);
+  const [trafficSortField, setTrafficSortField] = useState<'name' | 'download' | 'total'>('download');
+  const [trafficSortDir, setTrafficSortDir] = useState<'asc' | 'desc'>('desc');
+  const [onlineSortField, setOnlineSortField] = useState<'email' | 'node' | 'inbound'>('email');
+  const [onlineSortDir, setOnlineSortDir] = useState<'asc' | 'desc'>('asc');
 
   useEffect(() => {
     loadTrafficStats();
@@ -144,7 +148,57 @@ export const TrafficStats: React.FC = () => {
     return gb.toFixed(2) + ' GB';
   };
 
-  const sortedTraffic = [...trafficData].sort((a, b) => b.total - a.total).slice(0, topN);
+  const compareText = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+  const trafficSortFactor = trafficSortDir === 'asc' ? 1 : -1;
+  const onlineSortFactor = onlineSortDir === 'asc' ? 1 : -1;
+
+  const sortedTraffic = [...trafficData]
+    .sort((a, b) => {
+      const aName = a.email || a.node_name || '';
+      const bName = b.email || b.node_name || '';
+      const byName = compareText(aName, bName);
+      const byNode = compareText(a.node_name || '', b.node_name || '');
+
+      if (trafficSortField === 'name') {
+        if (byName !== 0) return byName * trafficSortFactor;
+        if (byNode !== 0) return byNode * trafficSortFactor;
+        return (a.total - b.total) * trafficSortFactor;
+      }
+      if (trafficSortField === 'download') {
+        const byDownload = a.download - b.download;
+        if (byDownload !== 0) return byDownload * trafficSortFactor;
+        if (byName !== 0) return byName;
+        if (byNode !== 0) return byNode;
+        return a.total - b.total;
+      }
+      const byTotal = a.total - b.total;
+      if (byTotal !== 0) return byTotal * trafficSortFactor;
+      if (byName !== 0) return byName;
+      if (byNode !== 0) return byNode;
+      return a.download - b.download;
+    })
+    .slice(0, topN);
+
+  const sortedOnlineClients = [...onlineClients].sort((a, b) => {
+    const byEmail = compareText(a.email, b.email);
+    const byNode = compareText(a.node_name, b.node_name);
+    const byInbound = a.inbound_id - b.inbound_id;
+
+    if (onlineSortField === 'email') {
+      if (byEmail !== 0) return byEmail * onlineSortFactor;
+      if (byNode !== 0) return byNode * onlineSortFactor;
+      return byInbound * onlineSortFactor;
+    }
+    if (onlineSortField === 'node') {
+      if (byNode !== 0) return byNode * onlineSortFactor;
+      if (byEmail !== 0) return byEmail * onlineSortFactor;
+      return byInbound * onlineSortFactor;
+    }
+    if (byInbound !== 0) return byInbound * onlineSortFactor;
+    if (byEmail !== 0) return byEmail;
+    return byNode;
+  });
 
   // Top Clients Bar Chart
   const topClientsData = {
@@ -283,6 +337,31 @@ export const TrafficStats: React.FC = () => {
               <option value="50">50</option>
             </select>
           </div>
+          <div className="col-md-2">
+            <label className="form-label small" style={{ color: colors.text.secondary }}>Sort Top by</label>
+            <select
+              className="form-select form-select-sm"
+              value={trafficSortField}
+              onChange={(e) => setTrafficSortField(e.target.value as 'name' | 'download' | 'total')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+            >
+              <option value="download">Download</option>
+              <option value="total">Total</option>
+              <option value="name">Name</option>
+            </select>
+          </div>
+          <div className="col-md-2">
+            <label className="form-label small" style={{ color: colors.text.secondary }}>Direction</label>
+            <select
+              className="form-select form-select-sm"
+              value={trafficSortDir}
+              onChange={(e) => setTrafficSortDir(e.target.value as 'asc' | 'desc')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+            >
+              <option value="asc">Asc</option>
+              <option value="desc">Desc</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -330,7 +409,30 @@ export const TrafficStats: React.FC = () => {
 
       {/* Online Clients */}
       <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3" style={{ color: colors.text.primary }}>Online Clients ({onlineClients.length})</h6>
+        <div className="d-flex justify-content-between align-items-center mb-3 gap-2">
+          <h6 className="mb-0" style={{ color: colors.text.primary }}>Online Clients ({onlineClients.length})</h6>
+          <div className="d-flex gap-2">
+            <select
+              className="form-select form-select-sm"
+              value={onlineSortField}
+              onChange={(e) => setOnlineSortField(e.target.value as 'email' | 'node' | 'inbound')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 130 }}
+            >
+              <option value="email">Sort: Email</option>
+              <option value="node">Sort: Node</option>
+              <option value="inbound">Sort: Inbound ID</option>
+            </select>
+            <select
+              className="form-select form-select-sm"
+              value={onlineSortDir}
+              onChange={(e) => setOnlineSortDir(e.target.value as 'asc' | 'desc')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 90 }}
+            >
+              <option value="asc">Asc</option>
+              <option value="desc">Desc</option>
+            </select>
+          </div>
+        </div>
         {onlineClients.length === 0 ? (
           <p className="text-center py-3" style={{ color: colors.text.secondary }}>No clients online</p>
         ) : (
@@ -344,7 +446,7 @@ export const TrafficStats: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {onlineClients.map((client, idx) => (
+                {sortedOnlineClients.map((client, idx) => (
                   <tr key={idx} style={{ borderColor: colors.border }}>
                     <td>
                       <span style={{ color: colors.success }}>● </span>

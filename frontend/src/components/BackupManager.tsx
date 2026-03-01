@@ -20,6 +20,8 @@ export const BackupManager: React.FC = () => {
   const [backupProgress, setBackupProgress] = useState<Record<number, string>>({});
   const [selectedNode, setSelectedNode] = useState<number | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [sortField, setSortField] = useState<'name' | 'address' | 'status'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   useEffect(() => {
     loadNodes();
@@ -156,6 +158,33 @@ export const BackupManager: React.FC = () => {
     return null;
   };
 
+  const statusWeight = (nodeId: number) => {
+    const status = backupProgress[nodeId];
+    if (status === 'downloading') return 3;
+    if (status === 'error') return 2;
+    if (status === 'success') return 1;
+    return 0;
+  };
+  const compareText = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+  const factor = sortDirection === 'asc' ? 1 : -1;
+  const sortedNodes = [...nodes].sort((a, b) => {
+    const byName = compareText(a.name, b.name);
+    const byAddress = compareText(`${a.ip}:${a.port}`, `${b.ip}:${b.port}`);
+    const byStatus = statusWeight(a.id) - statusWeight(b.id);
+    if (sortField === 'name') {
+      if (byName !== 0) return byName * factor;
+      return byAddress * factor;
+    }
+    if (sortField === 'address') {
+      if (byAddress !== 0) return byAddress * factor;
+      return byName * factor;
+    }
+    if (byStatus !== 0) return byStatus * factor;
+    if (byName !== 0) return byName;
+    return byAddress;
+  });
+
   return (
     <div className="backup-manager">
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
@@ -191,10 +220,33 @@ export const BackupManager: React.FC = () => {
 
       {/* Backup List */}
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
-          <UIIcon name="download" size={14} />
-          Download Backups
-        </h6>
+        <div className="d-flex justify-content-between align-items-center mb-3 gap-2">
+          <h6 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
+            <UIIcon name="download" size={14} />
+            Download Backups
+          </h6>
+          <div className="d-flex gap-2">
+            <select
+              className="form-select form-select-sm"
+              value={sortField}
+              onChange={(e) => setSortField(e.target.value as 'name' | 'address' | 'status')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 130 }}
+            >
+              <option value="name">Sort: Node</option>
+              <option value="address">Sort: Address</option>
+              <option value="status">Sort: Status</option>
+            </select>
+            <select
+              className="form-select form-select-sm"
+              value={sortDirection}
+              onChange={(e) => setSortDirection(e.target.value as 'asc' | 'desc')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 90 }}
+            >
+              <option value="asc">Asc</option>
+              <option value="desc">Desc</option>
+            </select>
+          </div>
+        </div>
         
         {nodes.length === 0 ? (
           <p className="text-center py-3" style={{ color: colors.text.secondary }}>
@@ -212,7 +264,7 @@ export const BackupManager: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {nodes.map((node) => (
+                {sortedNodes.map((node) => (
                   <tr key={node.id} style={{ borderColor: colors.border }}>
                     <td>
                       <strong style={{ color: colors.text.primary }}>{node.name}</strong>

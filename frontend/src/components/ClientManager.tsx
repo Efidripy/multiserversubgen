@@ -44,7 +44,7 @@ interface ClientsPageCache {
 const CLIENTS_PAGE_CACHE_KEY = 'sub_manager_clients_page_cache_v1';
 const CLIENTS_PAGE_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 const CLIENTS_PAGE_REFRESH_MS = 5 * 60 * 1000; // background refresh interval
-const ENABLE_LIVE_CLIENT_TRAFFIC = false;
+const ENABLE_LIVE_CLIENT_TRAFFIC = true;
 const TRAFFIC_FETCH_MAX_CLIENTS = 30;
 const TRAFFIC_FETCH_CONCURRENCY = 4;
 const TRAFFIC_FETCH_TIMEOUT_MS = 8000;
@@ -71,6 +71,8 @@ export const ClientManager: React.FC = () => {
   const [filterNode, setFilterNode] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterProtocol, setFilterProtocol] = useState('');
+  const [sortField, setSortField] = useState<'email' | 'node' | 'download' | 'total' | 'expiry'>('email');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   
   // Batch add modal
   const [showBatchModal, setShowBatchModal] = useState(false);
@@ -117,7 +119,7 @@ export const ClientManager: React.FC = () => {
   
   useEffect(() => {
     applyFilters();
-  }, [clients, searchTerm, filterNode, filterStatus, filterProtocol]);
+  }, [clients, searchTerm, filterNode, filterStatus, filterProtocol, sortField, sortDirection, trafficCache]);
   
   const loadClients = async (silent = false) => {
     if (refreshInFlightRef.current) return;
@@ -141,6 +143,10 @@ export const ClientManager: React.FC = () => {
       }));
 
       setClients(rawClients);
+      if (!silent && trafficEndpointModeRef.current === 'disabled') {
+        // Re-probe endpoints on manual reload to recover after temporary backend mismatch.
+        trafficEndpointModeRef.current = 'unknown';
+      }
       if (!silent && ENABLE_LIVE_CLIENT_TRAFFIC) {
         loadTraffic(rawClients).catch(() => undefined);
       }
@@ -343,8 +349,62 @@ export const ClientManager: React.FC = () => {
     if (filterProtocol) {
       filtered = filtered.filter(c => c.protocol === filterProtocol);
     }
-    
-    setFilteredClients(filtered);
+
+    const getSortMultiplier = () => (sortDirection === 'asc' ? 1 : -1);
+    const compareText = (a: string, b: string) =>
+      a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+    const resolveDownloadBytes = (client: Client): number => {
+      const key = client.node_id != null ? `${client.node_id}:${client.email}` : null;
+      if (!key) return client.down;
+      const entry = trafficCache[key];
+      if (!entry) return client.down;
+      return entry.download;
+    };
+
+    const sorted = [...filtered].sort((a, b) => {
+      const dir = getSortMultiplier();
+      const byEmail = compareText(a.email, b.email);
+      const byNode = compareText(a.node_name, b.node_name);
+      const byId = a.id - b.id;
+
+      if (sortField === 'email') {
+        if (byEmail !== 0) return byEmail * dir;
+        if (byNode !== 0) return byNode * dir;
+        return byId * dir;
+      }
+
+      if (sortField === 'node') {
+        if (byNode !== 0) return byNode * dir;
+        if (byEmail !== 0) return byEmail * dir;
+        return byId * dir;
+      }
+
+      if (sortField === 'download') {
+        const byDownload = resolveDownloadBytes(a) - resolveDownloadBytes(b);
+        if (byDownload !== 0) return byDownload * dir;
+        if (byEmail !== 0) return byEmail;
+        if (byNode !== 0) return byNode;
+        return byId;
+      }
+
+      if (sortField === 'total') {
+        const byTotal = a.total - b.total;
+        if (byTotal !== 0) return byTotal * dir;
+        if (byEmail !== 0) return byEmail;
+        if (byNode !== 0) return byNode;
+        return byId;
+      }
+
+      const aExpiry = a.expiryTime > 0 ? a.expiryTime : Number.MAX_SAFE_INTEGER;
+      const bExpiry = b.expiryTime > 0 ? b.expiryTime : Number.MAX_SAFE_INTEGER;
+      const byExpiry = aExpiry - bExpiry;
+      if (byExpiry !== 0) return byExpiry * dir;
+      if (byEmail !== 0) return byEmail;
+      if (byNode !== 0) return byNode;
+      return byId;
+    });
+
+    setFilteredClients(sorted);
   };
   
   const handleBatchAdd = async () => {
@@ -506,7 +566,7 @@ export const ClientManager: React.FC = () => {
     if (key == null) return fallback;
     if (!(key in trafficCache)) return fallback; // not yet loaded
     const entry = trafficCache[key];
-    if (entry == null) return null; // node unreachable
+    if (entry == null) return fallback; // unavailable live traffic -> keep DB value
     return entry[field];
   };
   
@@ -618,6 +678,34 @@ export const ClientManager: React.FC = () => {
             >
               Clear Filters
             </button>
+          </div>
+        </div>
+
+        <div className="row g-2 mb-3">
+          <div className="col-md-3">
+            <select
+              className="form-select form-select-sm"
+              value={sortField}
+              onChange={(e) => setSortField(e.target.value as 'email' | 'node' | 'download' | 'total' | 'expiry')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+            >
+              <option value="email">Sort: Name</option>
+              <option value="node">Sort: Node</option>
+              <option value="download">Sort: Download Traffic</option>
+              <option value="total">Sort: Total Limit</option>
+              <option value="expiry">Sort: Expiry Date</option>
+            </select>
+          </div>
+          <div className="col-md-2">
+            <select
+              className="form-select form-select-sm"
+              value={sortDirection}
+              onChange={(e) => setSortDirection(e.target.value as 'asc' | 'desc')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+            >
+              <option value="asc">Asc (min→max)</option>
+              <option value="desc">Desc (max→min)</option>
+            </select>
           </div>
         </div>
         
