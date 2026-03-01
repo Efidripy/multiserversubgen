@@ -73,6 +73,7 @@ function buildGrafanaUrl(): string {
 }
 
 const bytesToGb = (bytes: number) => bytes / (1024 * 1024 * 1024);
+const CHART_PALETTE = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#e11d48', '#84cc16', '#f97316', '#14b8a6'];
 
 function getBucketSec(rangeSec: number): number {
   if (rangeSec <= 3600) return 60;
@@ -81,44 +82,43 @@ function getBucketSec(rangeSec: number): number {
   return 900;
 }
 
-function aggregateAllNodesHistory(points: HistoryPoint[], rangeSec: number): HistoryPoint[] {
+function bucketizeAllNodesHistory(points: HistoryPoint[], rangeSec: number): {
+  buckets: number[];
+  perNode: Array<{ nodeId: number; nodeName: string; points: Array<HistoryPoint | null> }>;
+} {
   const bucketSec = getBucketSec(rangeSec);
 
   // Keep only latest point per node in each bucket.
-  const perNodeBucket = new Map<string, HistoryPoint>();
+  const perNodeBucket = new Map<number, Map<number, HistoryPoint>>();
   for (const p of points) {
     const bucketTs = Math.floor(p.ts / bucketSec) * bucketSec;
-    const key = `${bucketTs}:${p.node_id}`;
-    const prev = perNodeBucket.get(key);
+    const nodeMap = perNodeBucket.get(p.node_id) || new Map<number, HistoryPoint>();
+    const prev = nodeMap.get(bucketTs);
     if (!prev || p.ts > prev.ts) {
-      perNodeBucket.set(key, { ...p, ts: bucketTs });
+      nodeMap.set(bucketTs, { ...p, ts: bucketTs });
     }
+    perNodeBucket.set(p.node_id, nodeMap);
   }
 
-  // Aggregate all nodes inside each bucket.
-  const bucketMap = new Map<number, { cpuSum: number; nodeCount: number; onlineSum: number; trafficSum: number }>();
-  for (const p of perNodeBucket.values()) {
-    const curr = bucketMap.get(p.ts) || { cpuSum: 0, nodeCount: 0, onlineSum: 0, trafficSum: 0 };
-    curr.cpuSum += Number(p.cpu || 0);
-    curr.nodeCount += 1;
-    curr.onlineSum += Number(p.online_clients || 0);
-    curr.trafficSum += Number(p.traffic_total || 0);
-    bucketMap.set(p.ts, curr);
+  const allBuckets = new Set<number>();
+  for (const nodeMap of perNodeBucket.values()) {
+    for (const ts of nodeMap.keys()) allBuckets.add(ts);
   }
+  const buckets = Array.from(allBuckets).sort((a, b) => a - b);
 
-  return Array.from(bucketMap.entries())
-    .sort((a, b) => a[0] - b[0])
-    .map(([ts, v]) => ({
-      ts,
-      node_id: 0,
-      node_name: 'ALL',
-      available: 1,
-      xray_running: 1,
-      cpu: v.nodeCount > 0 ? v.cpuSum / v.nodeCount : 0,
-      online_clients: v.onlineSum,
-      traffic_total: v.trafficSum,
-      poll_ms: 0,
-    }));
+  const perNode = Array.from(perNodeBucket.entries())
+    .map(([nodeId, nodeMap]) => {
+      const first = nodeMap.values().next().value as HistoryPoint | undefined;
+      const nodeName = first?.node_name || `Node ${nodeId}`;
+      return {
+        nodeId,
+        nodeName,
+        points: buckets.map((ts) => nodeMap.get(ts) || null),
+      };
+    })
+    .sort((a, b) => a.nodeName.localeCompare(b.nodeName));
+
+  return { buckets, perNode };
 }
 
 function formatTickLabel(tsSec: number, rangeSec: number): string {
@@ -137,6 +137,7 @@ export const MonitoringDashboard: React.FC = () => {
   const [selectedScope, setSelectedScope] = useState<string>('all'); // "all" | node id as string
   const [rangeSec, setRangeSec] = useState<number>(24 * 3600);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
+  const [allScopeHistory, setAllScopeHistory] = useState<HistoryPoint[]>([]);
   const [latestSnapshotNodes, setLatestSnapshotNodes] = useState<SnapshotNode[]>([]);
   const [depsHealth, setDepsHealth] = useState<DepsHealth | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -177,12 +178,13 @@ export const MonitoringDashboard: React.FC = () => {
         }
         const perNodeLimit = sinceSec >= 7 * 24 * 3600 ? 900 : 1200;
         const all = await Promise.all(nodes.map((n) => fetchNodeHistory(n.id, sinceSec, perNodeLimit)));
-        const merged = all.flat();
-        setHistory(aggregateAllNodesHistory(merged, sinceSec));
+        setAllScopeHistory(all.flat());
+        setHistory([]);
       } else {
         const nodeId = Number(scope);
         const data = await fetchNodeHistory(nodeId, sinceSec, 2000);
         setHistory(data);
+        setAllScopeHistory([]);
       }
       setError('');
     } catch (err: any) {
@@ -246,47 +248,88 @@ export const MonitoringDashboard: React.FC = () => {
   }, [latestSnapshotNodes]);
 
   const labels = history.map((p) => formatTickLabel(p.ts, rangeSec));
+  const allScopeSeries = useMemo(() => bucketizeAllNodesHistory(allScopeHistory, rangeSec), [allScopeHistory, rangeSec]);
+  const allScopeLabels = allScopeSeries.buckets.map((ts) => formatTickLabel(ts, rangeSec));
 
   const cpuData = {
-    labels,
-    datasets: [
-      {
-        label: isAllScope ? 'Avg CPU % (all nodes)' : 'CPU %',
-        data: history.map((p) => Number((p.cpu || 0).toFixed(2))),
-        borderColor: colors.warning,
-        backgroundColor: colors.warning + '33',
-        tension: 0.25,
-        pointRadius: 0,
-      },
-    ],
+    labels: isAllScope ? allScopeLabels : labels,
+    datasets: isAllScope
+      ? allScopeSeries.perNode.map((node, idx) => {
+          const c = CHART_PALETTE[idx % CHART_PALETTE.length];
+          return {
+            label: node.nodeName,
+            data: node.points.map((p) => (p ? Number((p.cpu || 0).toFixed(2)) : null)),
+            borderColor: c,
+            backgroundColor: c + '33',
+            tension: 0.25,
+            pointRadius: 0,
+            spanGaps: true,
+          };
+        })
+      : [
+          {
+            label: 'CPU %',
+            data: history.map((p) => Number((p.cpu || 0).toFixed(2))),
+            borderColor: colors.warning,
+            backgroundColor: colors.warning + '33',
+            tension: 0.25,
+            pointRadius: 0,
+          },
+        ],
   };
 
   const onlineData = {
-    labels,
-    datasets: [
-      {
-        label: isAllScope ? 'Online clients (sum)' : 'Online clients',
-        data: history.map((p) => Number(p.online_clients || 0)),
-        borderColor: colors.accent,
-        backgroundColor: colors.accent + '33',
-        tension: 0.25,
-        pointRadius: 0,
-      },
-    ],
+    labels: isAllScope ? allScopeLabels : labels,
+    datasets: isAllScope
+      ? allScopeSeries.perNode.map((node, idx) => {
+          const c = CHART_PALETTE[idx % CHART_PALETTE.length];
+          return {
+            label: node.nodeName,
+            data: node.points.map((p) => (p ? Number(p.online_clients || 0) : null)),
+            borderColor: c,
+            backgroundColor: c + '33',
+            tension: 0.25,
+            pointRadius: 0,
+            spanGaps: true,
+          };
+        })
+      : [
+          {
+            label: 'Online clients',
+            data: history.map((p) => Number(p.online_clients || 0)),
+            borderColor: colors.accent,
+            backgroundColor: colors.accent + '33',
+            tension: 0.25,
+            pointRadius: 0,
+          },
+        ],
   };
 
   const trafficData = {
-    labels,
-    datasets: [
-      {
-        label: isAllScope ? 'Traffic total GB (sum)' : 'Traffic total (GB)',
-        data: history.map((p) => Number(bytesToGb(p.traffic_total || 0).toFixed(2))),
-        borderColor: colors.info,
-        backgroundColor: colors.info + '33',
-        tension: 0.25,
-        pointRadius: 0,
-      },
-    ],
+    labels: isAllScope ? allScopeLabels : labels,
+    datasets: isAllScope
+      ? allScopeSeries.perNode.map((node, idx) => {
+          const c = CHART_PALETTE[idx % CHART_PALETTE.length];
+          return {
+            label: node.nodeName,
+            data: node.points.map((p) => (p ? Number(bytesToGb(p.traffic_total || 0).toFixed(2)) : null)),
+            borderColor: c,
+            backgroundColor: c + '33',
+            tension: 0.25,
+            pointRadius: 0,
+            spanGaps: true,
+          };
+        })
+      : [
+          {
+            label: 'Traffic total (GB)',
+            data: history.map((p) => Number(bytesToGb(p.traffic_total || 0).toFixed(2))),
+            borderColor: colors.info,
+            backgroundColor: colors.info + '33',
+            tension: 0.25,
+            pointRadius: 0,
+          },
+        ],
   };
 
   const chartOptions = {
@@ -458,4 +501,3 @@ export const MonitoringDashboard: React.FC = () => {
     </div>
   );
 };
-
