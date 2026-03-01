@@ -546,6 +546,28 @@ select option:checked {
   transition: background-color 0.12s ease !important;
 }
 
+.node-list-item {
+  position: relative;
+  border-radius: 10px;
+  transition: background-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.node-list-item:hover {
+  background-color: rgba(9, 26, 48, 0.22);
+  box-shadow: inset 0 0 0 1px rgba(110, 152, 196, 0.12);
+}
+
+.node-list-item:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -5px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(120, 158, 198, 0.1), transparent);
+  pointer-events: none;
+}
+
 .modal-content {
   border-radius: 18px !important;
   border: 1px solid rgba(134, 172, 208, 0.35) !important;

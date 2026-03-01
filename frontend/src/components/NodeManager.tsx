@@ -360,7 +360,7 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
           const status = nodeStatuses[n.id];
           const dotColor = status === true ? '#22c55e' : status === false ? '#ef4444' : colors.text.secondary;
           return (
-            <div key={n.id} className="d-flex align-items-center gap-2 mb-2 p-2 border-bottom" style={{ borderColor: colors.border }}>
+            <div key={n.id} className="node-list-item d-flex align-items-center gap-2 mb-2 p-2">
               <span style={{ width: '10px', height: '10px', borderRadius: '50%', flexShrink: 0, backgroundColor: dotColor, display: 'inline-block' }} />
               <strong style={{ color: colors.text.primary, flexShrink: 0 }}>{n.name}</strong>
               <span style={{ color: colors.text.secondary }}>|</span>

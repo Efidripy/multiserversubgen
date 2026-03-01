@@ -367,6 +367,30 @@ def init_db():
 init_db()
 
 
+def sync_node_history_names_with_nodes():
+    """Backfill node_history.node_name from current nodes.name by node_id."""
+    with sqlite3.connect(DB_PATH) as conn:
+        result = conn.execute(
+            """
+            UPDATE node_history
+            SET node_name = (
+                SELECT n.name
+                FROM nodes n
+                WHERE n.id = node_history.node_id
+            )
+            WHERE EXISTS (
+                SELECT 1
+                FROM nodes n
+                WHERE n.id = node_history.node_id
+                  AND IFNULL(n.name, '') <> IFNULL(node_history.node_name, '')
+            )
+            """
+        )
+        conn.commit()
+    if result.rowcount:
+        logger.info(f"node_history names synchronized: {result.rowcount} rows updated")
+
+
 def check_basic_auth_header(auth_header: Optional[str]) -> Optional[str]:
     """Проверка Basic Auth header через PAM."""
     if not auth_header:
@@ -2341,6 +2365,7 @@ async def websocket_endpoint(websocket: WebSocket):
 async def startup_event():
     """Запустить background tasks при старте приложения"""
     global audit_worker_task
+    await asyncio.to_thread(sync_node_history_names_with_nodes)
     audit_worker_task = asyncio.create_task(audit_worker_loop())
     await snapshot_collector.start()
 
