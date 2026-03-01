@@ -132,7 +132,7 @@ export const BackupManager: React.FC = () => {
         }
       });
 
-      alert('Database imported successfully. Please restart Xray service.');
+      alert('Database imported successfully. Please restart core service.');
       setImportFile(null);
       setSelectedNode(null);
     } catch (err: any) {
@@ -214,7 +214,7 @@ export const BackupManager: React.FC = () => {
 
         <div className="alert" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.text.primary }}>
           <strong>Important:</strong> Backups contain the complete database including all client configurations.
-          Make sure to store backups securely. When restoring, the Xray service may need to be restarted.
+          Make sure to store backups securely. When restoring, the core service may need to be restarted.
         </div>
       </div>
 

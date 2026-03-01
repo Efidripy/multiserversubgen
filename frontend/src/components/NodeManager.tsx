@@ -202,7 +202,7 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
     <div className="node-manager">
       <div className="card p-3 mb-4" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h6 className="mb-0" style={{ color: colors.accent }}>Узлы node panel</h6>
+          <h6 className="mb-0" style={{ color: colors.accent }}>Узлы панели</h6>
           <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} onClick={() => { setShowForm(!showForm); setSuccess(''); setError(''); }}>
             <span className="d-inline-flex align-items-center gap-1">
               <UIIcon name={showForm ? 'x' : 'plus'} size={14} />

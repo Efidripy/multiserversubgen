@@ -14,7 +14,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
-from xui_session import login_node panel, xui_request
+from xui_session import login_panel, xui_request
 from utils import parse_field_as_dict
 
 logger = logging.getLogger("sub_manager")
@@ -56,7 +56,7 @@ class ClientManager:
         
         try:
             password = self.decrypt(node.get('password', ''))
-            if not login_node panel(s, base_url, node['user'], password):
+            if not login_panel(s, base_url, node['user'], password):
                 logger.warning(f"Failed to login to {node['name']}")
                 return None, None
         except Exception as exc:

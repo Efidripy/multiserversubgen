@@ -374,7 +374,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
           )}
         </div>
         {emails.length === 0 ? (
-          <p className="text-center py-3" style={{ color: colors.text.secondary }}>Нет пользователей. Добавьте узлы node panel.</p>
+          <p className="text-center py-3" style={{ color: colors.text.secondary }}>Нет пользователей. Добавьте узлы панели.</p>
         ) : viewMode === 'individual' ? (
           <table className="table table-hover small" style={{ color: colors.text.primary }}>
             <thead>

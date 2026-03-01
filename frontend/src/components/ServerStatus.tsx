@@ -85,8 +85,8 @@ export const ServerStatus: React.FC = () => {
     }
   };
 
-  const handleRestartXray = async (nodeName: string) => {
-    if (!window.confirm('Are you sure you want to restart Xray on this server?')) return;
+  const handleRestartCore = async (nodeName: string) => {
+    if (!window.confirm('Are you sure you want to restart core service on this server?')) return;
 
     const nodeId = nodeIds[nodeName];
     if (!nodeId) {
@@ -98,10 +98,10 @@ export const ServerStatus: React.FC = () => {
       await api.post(`/v1/servers/${nodeId}/restart-xray`, {}, {
         auth: getAuth()
       });
-      alert('Xray restart command sent successfully');
+      alert('Core service restart command sent successfully');
       setTimeout(loadServersStatus, 3000);
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to restart Xray');
+      alert(err.response?.data?.detail || 'Failed to restart core service');
     }
   };
 
@@ -251,11 +251,11 @@ export const ServerStatus: React.FC = () => {
                   )}
                 </div>
 
-                {/* Xray + restart */}
+                {/* Core service + restart */}
                 {server.xray && (
                   <div className="server-card__xray" style={{ borderTop: `1px solid ${colors.border}` }}>
                     <span className="small" style={{ color: colors.text.secondary }}>
-                      Xray {server.xray.version}
+                      Core {server.xray.version}
                       {server.xray.running ? (
                         <span className="badge ms-1 d-inline-flex align-items-center justify-content-center" style={{ backgroundColor: colors.success }}>
                           <UIIcon name="statusOn" size={12} />
@@ -269,7 +269,7 @@ export const ServerStatus: React.FC = () => {
                     <button
                       className="btn btn-sm"
                       style={{ backgroundColor: colors.warning + '33', borderColor: colors.warning + '66', color: colors.warning, padding: '1px 8px', fontSize: '0.75rem' }}
-                    onClick={() => handleRestartXray(server.node)}
+                    onClick={() => handleRestartCore(server.node)}
                     disabled={!server.xray.running}
                   >
                     <UIIcon name="refresh" size={13} />

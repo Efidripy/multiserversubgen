@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
-from xui_session import login_node panel, xui_request
+from xui_session import login_panel, xui_request
 from utils import parse_field_as_dict
 
 logger = logging.getLogger("sub_manager")
@@ -90,7 +90,7 @@ class InboundManager:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            if not login_node panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+            if not login_panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return []
             res = xui_request(s, "GET", f"{base_url}/panel/api/inbounds/list")
@@ -123,7 +123,7 @@ class InboundManager:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            if not login_node panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+            if not login_panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return False
             res = xui_request(
@@ -192,7 +192,7 @@ class InboundManager:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            if not login_node panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+            if not login_panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return False
             res = xui_request(
@@ -214,7 +214,7 @@ class InboundManager:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            if not login_node panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+            if not login_panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return False
             res = xui_request(
@@ -245,7 +245,7 @@ class InboundManager:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            if not login_node panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+            if not login_panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return False
             

@@ -30,7 +30,7 @@ except Exception:
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from crypto import encrypt, decrypt
-from xui_session import login_node panel, xui_request
+from xui_session import login_panel, xui_request
 from inbound_manager import InboundManager
 from client_manager import ClientManager
 from utils import parse_field_as_dict
@@ -187,7 +187,7 @@ NODE_AVAILABILITY = Gauge(
 )
 NODE_XRAY_RUNNING = Gauge(
     "sub_manager_node_xray_running",
-    "Xray running state on node (1 running, 0 stopped)",
+    "core service running state on node (1 running, 0 stopped)",
     ["node_name", "node_id"],
 )
 NODE_CPU_PERCENT = Gauge(
@@ -1217,7 +1217,7 @@ def fetch_inbounds(node: Dict) -> List[Dict]:
         except Exception as e:
             logger.warning(f"Failed to decrypt password for node {node['name']}: {e}")
     
-    if not login_node panel(s, base_url, node['user'], node_password):
+    if not login_panel(s, base_url, node['user'], node_password):
         logger.warning(f"node panel {node['name']} login failed")
         return []
 
@@ -1311,7 +1311,7 @@ def add_inbound_to_node(node: Dict, inbound_config: Dict) -> bool:
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
     
     try:
-        if not login_node panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
+        if not login_panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
             logger.warning(f"Failed to login for add_inbound on {node['name']}")
             return False
         res = xui_request(
@@ -1335,7 +1335,7 @@ def add_client_to_inbound(node: Dict, inbound_id: int, client_config: Dict) -> b
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
     
     try:
-        if not login_node panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
+        if not login_panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
             logger.warning(f"Failed to login for add_client on {node['name']}")
             return False
         payload = {"id": inbound_id, "settings": {"clients": [client_config]}}
@@ -1360,7 +1360,7 @@ def delete_client_from_inbound(node: Dict, inbound_id: int, client_id: str) -> b
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
     
     try:
-        if not login_node panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
+        if not login_panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
             logger.warning(f"Failed to login for delete_client on {node['name']}")
             return False
         res = xui_request(
@@ -1383,7 +1383,7 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
     
     try:
-        if not login_node panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
+        if not login_panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
             logger.warning(f"Failed to login for get_traffic on {node['name']}")
             return {}
         if protocol in ("vless", "vmess"):
@@ -2739,7 +2739,7 @@ async def reset_all_traffic(request: Request, data: Dict):
 
 @app.get("/api/v1/servers/status")
 async def get_servers_status(request: Request):
-    """Получить статус всех серверов (CPU, RAM, диск, Xray)"""
+    """Получить статус всех серверов (CPU, RAM, диск, core service)"""
     user = check_auth(request)
     if not user:
         raise HTTPException(status_code=401)
@@ -2791,7 +2791,7 @@ async def check_servers_availability(request: Request):
 
 @app.post("/api/v1/servers/{node_id}/restart-xray")
 async def restart_xray_on_server(request: Request, node_id: int):
-    """Перезапустить Xray на сервере"""
+    """Перезапустить core service на сервере"""
     user = check_auth(request)
     if not user:
         raise HTTPException(status_code=401)

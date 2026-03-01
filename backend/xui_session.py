@@ -77,7 +77,7 @@ def xui_request(
     raise requests.RequestException("xui_request failed without response")
 
 
-def login_node panel(session: requests.Session, base_url: str, username: str, password: str) -> bool:
+def login_panel(session: requests.Session, base_url: str, username: str, password: str) -> bool:
     """Авторизоваться на node panel панели.
 
     Сначала пробует ``POST {base_url}/panel/login`` (корректный путь для

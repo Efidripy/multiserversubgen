@@ -158,7 +158,7 @@
     "ram": "RAM Usage",
     "disk": "Disk Usage",
     "network": "Network",
-    "xrayStatus": "Xray Status",
+    "xrayStatus": "Core Status",
     "running": "Running",
     "stopped": "Stopped",
     "restart": "Restart",
@@ -194,8 +194,8 @@
     "inboundBatchDelete": "Batch delete completed",
     "nodeOnline": "Node {{node}} is online",
     "nodeOffline": "Node {{node}} is offline",
-    "xrayRunning": "Xray started on {{node}}",
-    "xrayStopped": "Xray stopped on {{node}}"
+    "xrayRunning": "Core started on {{node}}",
+    "xrayStopped": "Core stopped on {{node}}"
   },
   "messages": {
     "confirmDelete": "Are you sure you want to delete?",

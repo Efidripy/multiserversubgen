@@ -1,6 +1,6 @@
 """
 Модуль мониторинга серверов node panel
-Статус системы, Xray-процесса, проверка доступности
+Статус системы, core service-процесса, проверка доступности
 """
 import requests
 import json
@@ -14,7 +14,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
-from xui_session import XUI_HTTP_TIMEOUT_SEC, login_node panel, xui_request
+from xui_session import XUI_HTTP_TIMEOUT_SEC, login_panel, xui_request
 
 logger = logging.getLogger("sub_manager")
 VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
@@ -51,7 +51,7 @@ class ThreeXUIMonitor:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         try:
             password = self.decrypt(node.get("password", ""))
-            if not login_node panel(s, base_url, node["user"], password):
+            if not login_panel(s, base_url, node["user"], password):
                 logger.warning(f"ThreeXUIMonitor: failed to login to {node['name']}")
                 return None, None
         except Exception as exc:
@@ -60,7 +60,7 @@ class ThreeXUIMonitor:
         return s, base_url
 
     def get_server_status(self, node: Dict) -> Dict:
-        """GET /panel/api/server/status — статус CPU, RAM, диска, Xray, сети."""
+        """GET /panel/api/server/status — статус CPU, RAM, диска, core service, сети."""
         s, base_url = self._get_session(node)
         if not s:
             return {"node": node["name"], "available": False, "error": "Failed to connect"}
@@ -249,7 +249,7 @@ class ServerMonitor:
         
         try:
             password = self.decrypt(node.get('password', ''))
-            if not login_node panel(s, base_url, node['user'], password):
+            if not login_panel(s, base_url, node['user'], password):
                 logger.warning(f"Failed to login to {node['name']}")
                 return None, None
         except Exception as exc:
@@ -265,7 +265,7 @@ class ServerMonitor:
             node: Конфигурация узла
             
         Returns:
-            Словарь со статусом системы (CPU, RAM, диск, uptime, Xray)
+            Словарь со статусом системы (CPU, RAM, диск, uptime, core service)
         """
         s, base_url = self._get_session(node)
         if not s:
@@ -411,13 +411,13 @@ class ServerMonitor:
             }
     
     def get_xray_config(self, node: Dict) -> Dict:
-        """Получить полную конфигурацию Xray с сервера
+        """Получить полную конфигурацию core service с сервера
         
         Args:
             node: Конфигурация узла
             
         Returns:
-            Конфигурация Xray
+            Конфигурация core service
         """
         s, base_url = self._get_session(node)
         if not s:
@@ -432,11 +432,11 @@ class ServerMonitor:
             
             return {"error": f"API returned status {res.status_code}"}
         except Exception as exc:
-            logger.warning(f"Failed to get Xray config from {node['name']}: {exc}")
+            logger.warning(f"Failed to get core service config from {node['name']}: {exc}")
             return {"error": str(exc)}
     
     def restart_xray(self, node: Dict) -> bool:
-        """Перезапустить Xray на сервере
+        """Перезапустить core service на сервере
         
         Args:
             node: Конфигурация узла
@@ -452,7 +452,7 @@ class ServerMonitor:
             res = xui_request(s, "POST", f"{base_url}/server/restartXrayService", timeout=15)
             return res.status_code == 200
         except Exception as exc:
-            logger.warning(f"Failed to restart Xray on {node['name']}: {exc}")
+            logger.warning(f"Failed to restart core service on {node['name']}: {exc}")
             return False
     
     def get_server_logs(self, node: Dict, count: int = 100, level: str = "info") -> Dict:
