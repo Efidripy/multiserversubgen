@@ -338,7 +338,7 @@ export const App: React.FC = () => {
       style={{
         backgroundColor: colors.bg.primary,
         color: colors.text.primary,
-        fontFamily: '-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif',
+        fontFamily: 'var(--font-sans)',
       }}
     >
       <Sidebar
