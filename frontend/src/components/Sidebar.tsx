@@ -34,6 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const { colors, theme, toggleTheme } = useTheme();
   const { t, i18n } = useTranslation();
+  const currentLang = (i18n.resolvedLanguage || i18n.language || 'en').toLowerCase();
 
   const handleNav = (tab: TabType) => {
     setActiveTab(tab);
@@ -105,7 +106,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </label>
             <select
               className="form-select form-select-sm"
-              value={i18n.language.startsWith('ru') ? 'ru' : 'en'}
+              value={currentLang.startsWith('ru') ? 'ru' : 'en'}
               onChange={(e) => i18n.changeLanguage(e.target.value)}
               style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
             >

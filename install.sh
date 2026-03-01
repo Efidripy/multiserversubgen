@@ -13,22 +13,64 @@ apt_install() {
     DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_DPKG_OPTS[@]}" "$@"
 }
 
+apt_fix_broken() {
+    DEBIAN_FRONTEND=noninteractive apt-get install -f -y "${APT_DPKG_OPTS[@]}"
+}
+
+install_grafana_with_fallback_deb() {
+    local arch
+    arch="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
+    local version="${GRAFANA_FALLBACK_VERSION:-11.6.0}"
+    local urls=()
+
+    if [ -n "${GRAFANA_DEB_URL:-}" ]; then
+        urls+=("${GRAFANA_DEB_URL}")
+    fi
+    urls+=(
+        "https://dl.grafana.com/oss/release/grafana_${version}_${arch}.deb"
+        "https://dl.grafana.com/enterprise/release/grafana-enterprise_${version}_${arch}.deb"
+    )
+
+    local tmp_deb
+    tmp_deb="$(mktemp --suffix=.deb)"
+    local installed="false"
+
+    for deb_url in "${urls[@]}"; do
+        if curl -fL --retry 3 --retry-all-errors -A "Mozilla/5.0" "$deb_url" -o "$tmp_deb"; then
+            if dpkg -i "$tmp_deb" >/dev/null 2>&1 || (apt_fix_broken >/dev/null 2>&1 && dpkg -i "$tmp_deb" >/dev/null 2>&1); then
+                installed="true"
+                break
+            fi
+        fi
+    done
+
+    rm -f "$tmp_deb"
+    [ "$installed" = "true" ]
+}
+
 ensure_grafana_repo() {
     if ! apt-cache show grafana >/dev/null 2>&1; then
         echo "Grafana package not found in current APT sources. Adding official Grafana repo..."
         apt_install ca-certificates gnupg apt-transport-https curl || return 1
         install -d -m 0755 /etc/apt/keyrings
         local key_fetched="false"
+        local tmp_key_file
+        local tmp_gpg_file
+        tmp_key_file="$(mktemp)"
+        tmp_gpg_file="$(mktemp)"
         local key_urls=(
             "https://apt.grafana.com/gpg.key"
             "https://packages.grafana.com/gpg.key"
         )
         for key_url in "${key_urls[@]}"; do
-            if curl -fsSL --retry 2 -A "Mozilla/5.0" "$key_url" | gpg --dearmor -o /etc/apt/keyrings/grafana.gpg 2>/dev/null; then
+            if curl -fsSL --retry 3 --retry-all-errors -A "Mozilla/5.0" "$key_url" -o "$tmp_key_file" \
+                && gpg --batch --yes --dearmor -o "$tmp_gpg_file" "$tmp_key_file" 2>/dev/null \
+                && install -m 0644 "$tmp_gpg_file" /etc/apt/keyrings/grafana.gpg; then
                 key_fetched="true"
                 break
             fi
         done
+        rm -f "$tmp_key_file" "$tmp_gpg_file"
         if [ "$key_fetched" != "true" ]; then
             echo "❌ Не удалось скачать GPG ключ Grafana (возможен блок/403)."
             return 1
@@ -124,11 +166,22 @@ configure_monitoring_stack() {
     fi
 
     echo "Настройка Prometheus + Grafana..."
-    ensure_grafana_repo || return 1
-    apt_install prometheus grafana >/dev/null 2>&1 || {
-        echo "❌ Не удалось установить prometheus/grafana."
+    if ! ensure_grafana_repo; then
+        echo "⚠️ Репозиторий Grafana недоступен. Пробуем fallback установку из .deb..."
+    fi
+
+    apt_install prometheus >/dev/null 2>&1 || {
+        echo "❌ Не удалось установить prometheus."
         return 1
     }
+
+    if ! apt_install grafana >/dev/null 2>&1; then
+        echo "⚠️ Установка grafana через APT не удалась. Пробуем fallback .deb..."
+        if ! install_grafana_with_fallback_deb; then
+            echo "❌ Не удалось установить Grafana ни через APT, ни через .deb fallback."
+            return 1
+        fi
+    fi
 
     mkdir -p /etc/prometheus/rules
     cp "$SCRIPT_DIR/monitoring/prometheus/rules.yml" /etc/prometheus/rules/sub-manager-rules.yml
