@@ -48,10 +48,10 @@ const lightTheme = {
   },
   border: '#d5e1ee',
   accent: '#0ea5b7',
-  success: '#22c55e',
-  warning: '#c3944a',
-  danger: '#dc4b57',
-  info: '#1f8ed8',
+  success: '#28b463',
+  warning: '#d39a1f',
+  danger: '#e24a3b',
+  info: '#2f7fd6',
 };
 
 const darkTheme = {
@@ -67,10 +67,10 @@ const darkTheme = {
   },
   border: '#334155',
   accent: '#14b8a6',
-  success: '#22c55e',
-  warning: '#d6a352',
-  danger: '#ef4444',
-  info: '#0ea5e9',
+  success: '#38c172',
+  warning: '#f0b429',
+  danger: '#ff4d3a',
+  info: '#3b9cff',
 };
 
 interface ThemeProviderProps {
