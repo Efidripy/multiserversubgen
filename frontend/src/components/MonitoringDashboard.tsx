@@ -110,6 +110,55 @@ interface AdGuardOverview {
   };
 }
 
+interface AdGuardHistoryPoint {
+  ts: number;
+  available: boolean;
+  queries_total: number;
+  blocked_total: number;
+  blocked_rate: number;
+  cache_hit_ratio: number;
+  avg_latency_ms: number;
+  upstream_errors: number;
+}
+
+interface AdGuardHistorySeries {
+  source_id: number;
+  source_name: string;
+  points: Array<AdGuardHistoryPoint | null>;
+}
+
+interface AdGuardHistoryResponse {
+  ts: number;
+  range_sec: number;
+  bucket_sec: number;
+  buckets: number[];
+  series: AdGuardHistorySeries[];
+  summary: {
+    queries_delta: number;
+    blocked_delta: number;
+    queries_per_sec: number;
+    blocked_per_sec: number;
+  };
+}
+
+interface StackServiceProbe {
+  enabled: boolean;
+  url: string;
+  ok: boolean;
+  status_code: number | null;
+  error: string;
+}
+
+interface StackStatusResponse {
+  ts: number;
+  services: {
+    prometheus: StackServiceProbe;
+    loki: StackServiceProbe;
+    grafana: StackServiceProbe;
+  };
+  prometheus_metrics: Record<string, number | null>;
+}
+
 const RANGE_OPTIONS = [
   { value: 3600, label: '1h' },
   { value: 6 * 3600, label: '6h' },
@@ -201,6 +250,8 @@ export const MonitoringDashboard: React.FC = () => {
   const [error, setError] = useState('');
   const [adguardSources, setAdguardSources] = useState<AdGuardSource[]>([]);
   const [adguardOverview, setAdguardOverview] = useState<AdGuardOverview | null>(null);
+  const [adguardHistory, setAdguardHistory] = useState<AdGuardHistoryResponse | null>(null);
+  const [stackStatus, setStackStatus] = useState<StackStatusResponse | null>(null);
   const [adguardLoading, setAdguardLoading] = useState(false);
   const [adguardError, setAdguardError] = useState('');
   const [adguardForm, setAdguardForm] = useState({
@@ -301,11 +352,33 @@ export const MonitoringDashboard: React.FC = () => {
     }
   };
 
+  const loadAdguardHistory = async () => {
+    try {
+      const bucketSec = rangeSec <= 3600 ? 60 : rangeSec <= 6 * 3600 ? 120 : rangeSec <= 24 * 3600 ? 300 : 900;
+      const res = await api.get('/v1/adguard/history', {
+        auth: getAuth(),
+        params: { range_sec: rangeSec, bucket_sec: bucketSec },
+      });
+      setAdguardHistory(res.data as AdGuardHistoryResponse);
+    } catch {
+      setAdguardHistory(null);
+    }
+  };
+
+  const loadStackStatus = async () => {
+    try {
+      const res = await api.get('/v1/monitoring/stack', { auth: getAuth() });
+      setStackStatus(res.data as StackStatusResponse);
+    } catch {
+      setStackStatus(null);
+    }
+  };
+
   const collectAdguardNow = async () => {
     try {
       setAdguardLoading(true);
       await api.post('/v1/adguard/collect-now', {}, { auth: getAuth() });
-      await Promise.all([loadAdguardOverview(), loadAdguardSources()]);
+      await Promise.all([loadAdguardOverview(), loadAdguardSources(), loadAdguardHistory(), loadStackStatus()]);
       setAdguardError('');
     } catch (err: any) {
       setAdguardError(err?.response?.data?.detail || 'Failed to collect AdGuard data');
@@ -322,6 +395,8 @@ export const MonitoringDashboard: React.FC = () => {
     loadDepsHealth();
     loadAdguardSources().catch(() => undefined);
     loadAdguardOverview().catch(() => undefined);
+    loadAdguardHistory().catch(() => undefined);
+    loadStackStatus().catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -334,6 +409,8 @@ export const MonitoringDashboard: React.FC = () => {
       loadLatestSnapshot();
       loadDepsHealth();
       loadAdguardOverview();
+      loadAdguardHistory();
+      loadStackStatus();
     }, 60_000);
     return () => clearInterval(timer);
   }, [selectedScope, rangeSec, nodes.length]);
@@ -539,6 +616,87 @@ export const MonitoringDashboard: React.FC = () => {
       .map(([name, count]) => ({ name, count }));
   }, [adguardOverview]);
 
+  const adguardTrendLabels = useMemo(
+    () => (adguardHistory?.buckets || []).map((ts) => formatTickLabel(ts, adguardHistory?.range_sec || rangeSec)),
+    [adguardHistory, rangeSec]
+  );
+
+  const toRateSeries = (points: Array<AdGuardHistoryPoint | null>, key: 'queries_total' | 'blocked_total') => {
+    let prev: number | null = null;
+    return points.map((p) => {
+      if (!p) return null;
+      const cur = Number(p[key] || 0);
+      if (prev === null) {
+        prev = cur;
+        return 0;
+      }
+      const delta = Math.max(0, cur - prev);
+      prev = cur;
+      const bucket = adguardHistory?.bucket_sec || 60;
+      return Number((delta / bucket).toFixed(3));
+    });
+  };
+
+  const adguardQpsData = useMemo(() => {
+    return {
+      labels: adguardTrendLabels,
+      datasets: (adguardHistory?.series || []).map((s, idx) => {
+        const c = CHART_PALETTE[idx % CHART_PALETTE.length];
+        return {
+          label: `${s.source_name} QPS`,
+          data: toRateSeries(s.points || [], 'queries_total'),
+          borderColor: c,
+          backgroundColor: c + '33',
+          borderWidth: 2.1,
+          tension: 0.25,
+          pointRadius: 0,
+          pointHoverRadius: 3,
+          spanGaps: true,
+        };
+      }),
+    };
+  }, [adguardHistory, adguardTrendLabels]);
+
+  const adguardBlockRateData = useMemo(() => {
+    return {
+      labels: adguardTrendLabels,
+      datasets: (adguardHistory?.series || []).map((s, idx) => {
+        const c = CHART_PALETTE[idx % CHART_PALETTE.length];
+        return {
+          label: `${s.source_name} Block %`,
+          data: (s.points || []).map((p) => (p ? Number((p.blocked_rate || 0).toFixed(2)) : null)),
+          borderColor: c,
+          backgroundColor: c + '33',
+          borderWidth: 2.1,
+          tension: 0.25,
+          pointRadius: 0,
+          pointHoverRadius: 3,
+          spanGaps: true,
+        };
+      }),
+    };
+  }, [adguardHistory, adguardTrendLabels]);
+
+  const adguardLatencyData = useMemo(() => {
+    return {
+      labels: adguardTrendLabels,
+      datasets: (adguardHistory?.series || []).map((s, idx) => {
+        const c = CHART_PALETTE[idx % CHART_PALETTE.length];
+        return {
+          label: `${s.source_name} Latency ms`,
+          data: (s.points || []).map((p) => (p ? Number((p.avg_latency_ms || 0).toFixed(2)) : null)),
+          borderColor: c,
+          backgroundColor: c + '33',
+          borderWidth: 2.1,
+          tension: 0.25,
+          pointRadius: 0,
+          pointHoverRadius: 3,
+          spanGaps: true,
+        };
+      }),
+    };
+  }, [adguardHistory, adguardTrendLabels]);
+
   return (
     <div className="monitoring-panel card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
@@ -606,6 +764,9 @@ export const MonitoringDashboard: React.FC = () => {
               loadHistory(selectedScope, rangeSec);
               loadLatestSnapshot();
               loadDepsHealth();
+              loadAdguardOverview();
+              loadAdguardHistory();
+              loadStackStatus();
             }}
             disabled={loadingHistory}
           >
@@ -716,6 +877,75 @@ export const MonitoringDashboard: React.FC = () => {
                 </div>
               </div>
             </div>
+
+            <div className="row g-2 mb-3">
+              <div className="col-md-3">
+                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                  <div className="small" style={{ color: colors.text.secondary }}>Prometheus</div>
+                  <strong style={{ color: stackStatus?.services?.prometheus?.ok ? colors.success : colors.warning }}>
+                    {stackStatus?.services?.prometheus?.ok ? 'online' : 'offline'}
+                  </strong>
+                </div>
+              </div>
+              <div className="col-md-3">
+                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                  <div className="small" style={{ color: colors.text.secondary }}>Loki</div>
+                  <strong style={{ color: stackStatus?.services?.loki?.ok ? colors.success : colors.warning }}>
+                    {stackStatus?.services?.loki?.ok ? 'online' : 'offline'}
+                  </strong>
+                </div>
+              </div>
+              <div className="col-md-3">
+                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                  <div className="small" style={{ color: colors.text.secondary }}>Grafana</div>
+                  <strong style={{ color: stackStatus?.services?.grafana?.ok ? colors.success : colors.warning }}>
+                    {stackStatus?.services?.grafana?.ok ? 'online' : 'offline'}
+                  </strong>
+                </div>
+              </div>
+              <div className="col-md-3">
+                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                  <div className="small" style={{ color: colors.text.secondary }}>Prom up</div>
+                  <strong style={{ color: colors.text.primary }}>
+                    {Math.round(Number(stackStatus?.prometheus_metrics?.up_sum || 0))}
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            {!!(adguardHistory?.series || []).length && (
+              <div className="row g-3 mb-3">
+                <div className="col-12">
+                  <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                    <div className="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
+                      <h6 className="mb-0" style={{ color: colors.text.primary }}>AdGuard Queries/sec (per source)</h6>
+                      <small style={{ color: colors.text.secondary }}>
+                        Δqueries: {Math.round(adguardHistory?.summary?.queries_delta || 0).toLocaleString()} | QPS: {(adguardHistory?.summary?.queries_per_sec || 0).toFixed(3)}
+                      </small>
+                    </div>
+                    <div style={{ height: 220 }}>
+                      <Line data={adguardQpsData} options={chartOptions} />
+                    </div>
+                  </div>
+                </div>
+                <div className="col-md-6">
+                  <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                    <h6 className="mb-2" style={{ color: colors.text.primary }}>AdGuard Block rate %</h6>
+                    <div style={{ height: 220 }}>
+                      <Line data={adguardBlockRateData} options={chartOptions} />
+                    </div>
+                  </div>
+                </div>
+                <div className="col-md-6">
+                  <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                    <h6 className="mb-2" style={{ color: colors.text.primary }}>AdGuard Latency ms</h6>
+                    <div style={{ height: 220 }}>
+                      <Line data={adguardLatencyData} options={chartOptions} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="table-responsive mb-3">
               <table className="table table-sm align-middle mb-0" style={{ color: colors.text.primary }}>

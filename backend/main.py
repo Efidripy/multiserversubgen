@@ -79,6 +79,12 @@ MFA_TOTP_ENABLED = os.getenv("MFA_TOTP_ENABLED", "false").strip().lower() in ("1
 MFA_TOTP_USERS_RAW = os.getenv("MFA_TOTP_USERS", "").strip()
 MFA_TOTP_WS_STRICT = os.getenv("MFA_TOTP_WS_STRICT", "false").strip().lower() in ("1", "true", "yes", "on")
 ADGUARD_COLLECT_INTERVAL_SEC = int(os.getenv("ADGUARD_COLLECT_INTERVAL_SEC", "60"))
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://127.0.0.1:9090").strip()
+LOKI_URL = os.getenv("LOKI_URL", "http://127.0.0.1:3100").strip()
+GRAFANA_URL = os.getenv("GRAFANA_URL", "http://127.0.0.1:3000").strip()
+PROMETHEUS_BASIC_AUTH = os.getenv("PROMETHEUS_BASIC_AUTH", "").strip()
+LOKI_BASIC_AUTH = os.getenv("LOKI_BASIC_AUTH", "").strip()
+GRAFANA_BASIC_AUTH = os.getenv("GRAFANA_BASIC_AUTH", "").strip()
 
 
 def _get_requests_verify_value():
@@ -608,6 +614,141 @@ def _build_adguard_summary(snapshots: List[Dict]) -> Dict:
         "avg_latency_ms": round(avg_latency, 2),
         "cache_hit_ratio": round(cache_hit, 2),
         "upstream_errors": round(upstream_errors, 2),
+    }
+
+
+def _parse_basic_auth_pair(value: str) -> Optional[Tuple[str, str]]:
+    if not value or ":" not in value:
+        return None
+    user, pwd = value.split(":", 1)
+    user = user.strip()
+    if not user:
+        return None
+    return user, pwd
+
+
+def _http_probe(url: str, path: str, timeout: int = 4, basic_auth: Optional[Tuple[str, str]] = None) -> Dict:
+    if not url:
+        return {"enabled": False, "url": "", "ok": False, "status_code": None, "error": "disabled"}
+    full = f"{url.rstrip('/')}{path}"
+    try:
+        resp = requests.get(full, timeout=timeout, verify=REQUESTS_VERIFY, auth=basic_auth)
+        return {
+            "enabled": True,
+            "url": url,
+            "ok": 200 <= resp.status_code < 300,
+            "status_code": int(resp.status_code),
+            "error": "" if 200 <= resp.status_code < 300 else (resp.text[:120] if resp.text else f"HTTP {resp.status_code}"),
+        }
+    except Exception as exc:
+        return {"enabled": True, "url": url, "ok": False, "status_code": None, "error": str(exc)}
+
+
+def _prom_query(prom_url: str, query: str, basic_auth: Optional[Tuple[str, str]] = None) -> Optional[float]:
+    if not prom_url:
+        return None
+    try:
+        resp = requests.get(
+            f"{prom_url.rstrip('/')}/api/v1/query",
+            params={"query": query},
+            timeout=5,
+            verify=REQUESTS_VERIFY,
+            auth=basic_auth,
+        )
+        if resp.status_code != 200:
+            return None
+        payload = resp.json()
+        if payload.get("status") != "success":
+            return None
+        result = payload.get("data", {}).get("result", [])
+        if not result:
+            return 0.0
+        first = result[0]
+        value = first.get("value", [None, None])[1]
+        return float(value) if value is not None else 0.0
+    except Exception:
+        return None
+
+
+def _build_adguard_history(range_sec: int, bucket_sec: int, source_id: Optional[int] = None) -> Dict:
+    safe_range = max(300, min(range_sec, 30 * 24 * 3600))
+    safe_bucket = max(30, min(bucket_sec, 6 * 3600))
+    since_ts = int(time.time()) - safe_range
+
+    sql = """
+        SELECT ts, source_id, source_name, available, queries_total, blocked_total,
+               blocked_rate, cache_hit_ratio, avg_latency_ms, upstream_errors
+        FROM adguard_history
+        WHERE ts >= ?
+    """
+    params: List = [since_ts]
+    if source_id is not None:
+        sql += " AND source_id = ?"
+        params.append(int(source_id))
+    sql += " ORDER BY source_id ASC, ts ASC"
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(sql, params).fetchall()
+
+    latest_by_source_bucket: Dict[Tuple[int, int], Dict] = {}
+    source_names: Dict[int, str] = {}
+    for row in rows:
+        sid = int(row["source_id"] or 0)
+        bucket_ts = int(row["ts"] // safe_bucket * safe_bucket)
+        key = (sid, bucket_ts)
+        source_names[sid] = row["source_name"] or f"source-{sid}"
+        prev = latest_by_source_bucket.get(key)
+        if prev is None or int(row["ts"]) > int(prev["ts"]):
+            latest_by_source_bucket[key] = dict(row)
+            latest_by_source_bucket[key]["bucket_ts"] = bucket_ts
+
+    buckets = sorted({v["bucket_ts"] for v in latest_by_source_bucket.values()})
+    series: List[Dict] = []
+    for sid, name in sorted(source_names.items(), key=lambda x: str(x[1]).lower()):
+        points = []
+        for bucket_ts in buckets:
+            row = latest_by_source_bucket.get((sid, bucket_ts))
+            if not row:
+                points.append(None)
+                continue
+            points.append(
+                {
+                    "ts": int(bucket_ts),
+                    "available": bool(row["available"]),
+                    "queries_total": float(row["queries_total"] or 0),
+                    "blocked_total": float(row["blocked_total"] or 0),
+                    "blocked_rate": float(row["blocked_rate"] or 0),
+                    "cache_hit_ratio": float(row["cache_hit_ratio"] or 0),
+                    "avg_latency_ms": float(row["avg_latency_ms"] or 0),
+                    "upstream_errors": float(row["upstream_errors"] or 0),
+                }
+            )
+        series.append({"source_id": sid, "source_name": name, "points": points})
+
+    total_queries_delta = 0.0
+    total_blocked_delta = 0.0
+    for src in series:
+        src_points = [p for p in src["points"] if p]
+        if len(src_points) >= 2:
+            total_queries_delta += max(0.0, float(src_points[-1]["queries_total"]) - float(src_points[0]["queries_total"]))
+            total_blocked_delta += max(0.0, float(src_points[-1]["blocked_total"]) - float(src_points[0]["blocked_total"]))
+
+    queries_rate = total_queries_delta / float(safe_range) if safe_range > 0 else 0.0
+    blocked_rate_per_sec = total_blocked_delta / float(safe_range) if safe_range > 0 else 0.0
+
+    return {
+        "ts": int(time.time()),
+        "range_sec": safe_range,
+        "bucket_sec": safe_bucket,
+        "buckets": buckets,
+        "series": series,
+        "summary": {
+            "queries_delta": round(total_queries_delta, 2),
+            "blocked_delta": round(total_blocked_delta, 2),
+            "queries_per_sec": round(queries_rate, 4),
+            "blocked_per_sec": round(blocked_rate_per_sec, 4),
+        },
     }
 
 
@@ -1659,6 +1800,55 @@ async def adguard_overview(request: Request):
             }
         )
     return {"ts": int(time.time()), "sources": sources, "summary": _build_adguard_summary(sources)}
+
+
+@app.get("/api/v1/adguard/history")
+async def adguard_history(
+    request: Request,
+    range_sec: int = 24 * 3600,
+    bucket_sec: int = 300,
+    source_id: Optional[int] = None,
+):
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return _build_adguard_history(range_sec=range_sec, bucket_sec=bucket_sec, source_id=source_id)
+
+
+@app.get("/api/v1/monitoring/stack")
+async def monitoring_stack(request: Request):
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    prom_auth = _parse_basic_auth_pair(PROMETHEUS_BASIC_AUTH)
+    loki_auth = _parse_basic_auth_pair(LOKI_BASIC_AUTH)
+    graf_auth = _parse_basic_auth_pair(GRAFANA_BASIC_AUTH)
+
+    prometheus = _http_probe(PROMETHEUS_URL, "/-/ready", basic_auth=prom_auth)
+    loki = _http_probe(LOKI_URL, "/ready", basic_auth=loki_auth)
+    grafana = _http_probe(GRAFANA_URL, "/api/health", basic_auth=graf_auth)
+
+    prom_metrics = {}
+    if prometheus.get("ok"):
+        prom_metrics = {
+            "up_sum": _prom_query(PROMETHEUS_URL, "sum(up)", basic_auth=prom_auth),
+            "adguard_queries_sum": _prom_query(PROMETHEUS_URL, "sum(sub_manager_adguard_dns_queries_total)", basic_auth=prom_auth),
+            "adguard_blocked_sum": _prom_query(PROMETHEUS_URL, "sum(sub_manager_adguard_dns_blocked_total)", basic_auth=prom_auth),
+            "adguard_block_rate_avg": _prom_query(PROMETHEUS_URL, "avg(sub_manager_adguard_dns_block_rate_percent)", basic_auth=prom_auth),
+            "node_online_sum": _prom_query(PROMETHEUS_URL, "sum(sub_manager_node_available)", basic_auth=prom_auth),
+            "node_clients_sum": _prom_query(PROMETHEUS_URL, "sum(sub_manager_node_online_clients)", basic_auth=prom_auth),
+        }
+
+    return {
+        "ts": int(time.time()),
+        "services": {
+            "prometheus": prometheus,
+            "loki": loki,
+            "grafana": grafana,
+        },
+        "prometheus_metrics": prom_metrics,
+    }
 
 
 @app.post("/api/v1/nodes")
