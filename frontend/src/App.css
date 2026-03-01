@@ -74,34 +74,36 @@ h1, h2, h3, h4, h5, h6 {
 .sidebar__ascii-logo {
   margin: 0;
   font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 0.5rem;
-  line-height: 1.02;
-  letter-spacing: 0.03em;
+  font-size: 0.56rem;
+  line-height: 1.08;
+  letter-spacing: 0.05em;
   white-space: pre;
-  background: linear-gradient(90deg, #22d3ee, #38bdf8, #2dd4bf, #60a5fa, #22d3ee);
-  background-size: 260% 100%;
+  background: linear-gradient(90deg, #22d3ee, #38bdf8, #a78bfa, #34d399, #fbbf24, #22d3ee);
+  background-size: 320% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: msmGradientShift 4s linear infinite;
+  filter: saturate(1.15) brightness(1.2) drop-shadow(0 0 6px rgba(56, 189, 248, 0.45));
+  animation: msmGradientShift 3.1s linear infinite;
 }
 
 .sidebar__version-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 7px;
+  padding: 2px 8px;
   border-radius: 999px;
-  border: 1px solid rgba(92, 168, 207, 0.35);
+  border: 1px solid rgba(92, 168, 207, 0.45);
   font-size: 0.68rem;
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: 0.05em;
-  background: rgba(8, 24, 41, 0.28);
-  background-image: linear-gradient(90deg, #22d3ee, #38bdf8, #2dd4bf, #60a5fa, #22d3ee);
-  background-size: 260% 100%;
+  background: rgba(8, 24, 41, 0.34);
+  background-image: linear-gradient(90deg, #22d3ee, #38bdf8, #a78bfa, #34d399, #fbbf24, #22d3ee);
+  background-size: 320% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: msmGradientShift 4s linear infinite;
+  filter: saturate(1.12) brightness(1.18) drop-shadow(0 0 4px rgba(56, 189, 248, 0.35));
+  animation: msmGradientShift 3.1s linear infinite;
 }
 
 .sidebar__nav {
