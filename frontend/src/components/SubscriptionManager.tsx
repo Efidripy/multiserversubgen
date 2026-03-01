@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
+import { getAuth } from '../auth';
 
 interface Stats {
   count: number;
@@ -377,13 +378,3 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     </div>
   );
 };
-
-function getAuth() {
-  if (typeof window !== 'undefined') {
-    const auth = localStorage.getItem('sub_auth');
-    if (auth) {
-      return JSON.parse(auth);
-    }
-  }
-  return { user: '', password: '' };
-}

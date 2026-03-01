@@ -417,6 +417,43 @@ body {
   animation: appFadeIn 0.18s ease both;
 }
 
+/* Monitoring iframe view */
+.monitoring-panel {
+  border: 1px solid;
+  overflow: hidden;
+}
+
+.monitoring-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.monitoring-panel__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.monitoring-panel__hint {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+}
+
+.monitoring-panel__body {
+  padding: 10px;
+}
+
+.monitoring-panel__iframe {
+  width: 100%;
+  height: calc(100vh - 260px);
+  min-height: 540px;
+  border: 0;
+  border-radius: 10px;
+}
+
 @keyframes appFadeIn {
   from {
     opacity: 0;
@@ -502,6 +539,16 @@ body {
   .modal-dialog {
     margin: 8px !important;
   }
+
+  .monitoring-panel__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .monitoring-panel__iframe {
+    height: calc(100vh - 300px);
+    min-height: 460px;
+  }
 }
 
 @media (min-width: 769px) {
@@ -510,4 +557,3 @@ body {
     display: none;
   }
 }
-
