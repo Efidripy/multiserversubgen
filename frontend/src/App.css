@@ -249,7 +249,7 @@ h1, h2, h3, h4, h5, h6 {
   inset: -40% auto auto -20%;
   width: 60%;
   height: 180%;
-  background: radial-gradient(circle, rgba(125, 211, 252, 0.14) 0%, transparent 66%);
+  background: radial-gradient(circle, rgba(125, 211, 252, 0.021) 0%, transparent 66%);
   pointer-events: none;
   transform: translateX(-22%) rotate(14deg);
   opacity: 0;
@@ -265,7 +265,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .card:hover::after {
-  opacity: 1;
+  opacity: 0.15;
   transform: translateX(18%) rotate(14deg);
 }
 
@@ -276,7 +276,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .kpi-card strong,
 .kpi-card h4 {
-  text-shadow: 0 0 18px rgba(56, 189, 248, 0.15);
+  text-shadow: 0 0 10px rgba(56, 189, 248, 0.022);
 }
 
 .server-grid {
@@ -381,7 +381,7 @@ h1, h2, h3, h4, h5, h6 {
   border-color: rgba(128, 205, 247, 0.5) !important;
   box-shadow:
     0 10px 20px rgba(1, 8, 20, 0.45),
-    0 0 18px rgba(56, 189, 248, 0.16) !important;
+    0 0 8px rgba(56, 189, 248, 0.024) !important;
   filter: brightness(1.03) !important;
 }
 
@@ -430,6 +430,23 @@ h1, h2, h3, h4, h5, h6 {
   padding-top: 0.44rem !important;
   padding-bottom: 0.44rem !important;
   transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease !important;
+}
+
+/* Native select popup styling (supported in Chromium/partially in Firefox) */
+.form-select {
+  color-scheme: dark;
+}
+
+.form-select option,
+select option {
+  background-color: #0f1d33 !important;
+  color: #dbeafe !important;
+}
+
+.form-select option:checked,
+select option:checked {
+  background: linear-gradient(90deg, rgba(6, 182, 212, 0.35), rgba(20, 184, 166, 0.2)) !important;
+  color: #ffffff !important;
 }
 
 .form-control:focus,
@@ -634,7 +651,7 @@ h1, h2, h3, h4, h5, h6 {
   50% {
     box-shadow:
       0 14px 26px rgba(2, 9, 22, 0.48),
-      0 0 18px rgba(56, 189, 248, 0.14),
+      0 0 10px rgba(56, 189, 248, 0.021),
       inset 0 1px 0 rgba(182, 227, 255, 0.1);
   }
 }
