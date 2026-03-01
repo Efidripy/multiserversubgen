@@ -1,5 +1,6 @@
 import axios, { InternalAxiosRequestConfig } from 'axios';
 import { cacheService } from './services/cacheService';
+import { getAuth } from './auth';
 
 /**
  * API base URL used by all frontend requests.
@@ -63,6 +64,12 @@ const api = axios.create({ baseURL: API_BASE });
  * immediately without making a network round-trip.
  */
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  const auth = getAuth();
+  if (auth.totpCode) {
+    config.headers = config.headers ?? {};
+    config.headers['X-TOTP-Code'] = auth.totpCode;
+  }
+
   if (config.method?.toLowerCase() === 'get') {
     const url = config.url ?? '';
     const ttl = getTTLForUrl(url);

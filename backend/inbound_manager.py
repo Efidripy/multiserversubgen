@@ -6,6 +6,7 @@ import requests
 import json
 import logging
 import sys
+import os
 from pathlib import Path
 from typing import List, Dict, Optional
 
@@ -14,6 +15,16 @@ from xui_session import login_node panel
 from utils import parse_field_as_dict
 
 logger = logging.getLogger("sub_manager")
+VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
+CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
+
+
+def _requests_verify_value():
+    if not VERIFY_TLS:
+        return False
+    if CA_BUNDLE_PATH:
+        return CA_BUNDLE_PATH
+    return True
 
 
 class InboundManager:
@@ -73,7 +84,7 @@ class InboundManager:
     def _fetch_inbounds_from_node(self, node: Dict) -> List[Dict]:
         """Получить инбаунды с конкретного узла"""
         s = requests.Session()
-        s.verify = False
+        s.verify = _requests_verify_value()
         b_path = node.get("base_path", "").strip("/")
         prefix = f"/{b_path}" if b_path else ""
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
@@ -106,7 +117,7 @@ class InboundManager:
             True при успехе
         """
         s = requests.Session()
-        s.verify = False
+        s.verify = _requests_verify_value()
         b_path = node.get("base_path", "").strip("/")
         prefix = f"/{b_path}" if b_path else ""
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
@@ -171,7 +182,7 @@ class InboundManager:
     def delete_inbound(self, node: Dict, inbound_id: int) -> bool:
         """Удалить инбаунд с узла"""
         s = requests.Session()
-        s.verify = False
+        s.verify = _requests_verify_value()
         b_path = node.get("base_path", "").strip("/")
         prefix = f"/{b_path}" if b_path else ""
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
@@ -190,7 +201,7 @@ class InboundManager:
     def reset_inbound_traffic(self, node: Dict, inbound_id: int) -> bool:
         """Сбросить статистику инбаунда"""
         s = requests.Session()
-        s.verify = False
+        s.verify = _requests_verify_value()
         b_path = node.get("base_path", "").strip("/")
         prefix = f"/{b_path}" if b_path else ""
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
@@ -218,7 +229,7 @@ class InboundManager:
             True при успехе
         """
         s = requests.Session()
-        s.verify = False
+        s.verify = _requests_verify_value()
         b_path = node.get("base_path", "").strip("/")
         prefix = f"/{b_path}" if b_path else ""
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
