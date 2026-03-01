@@ -124,7 +124,7 @@ export const TrafficStats: React.FC = () => {
     onMessage: (msg) => {
       if (msg.type !== 'snapshot_delta') return;
       const now = Date.now();
-      if (now - lastDeltaAt < 1500) return;
+      if (now - lastDeltaAt < 15000) return;
       setLastDeltaAt(now);
       loadTrafficStats();
       loadOnlineClients();

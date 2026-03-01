@@ -42,7 +42,10 @@ interface ClientsPageCache {
 
 const CLIENTS_PAGE_CACHE_KEY = 'sub_manager_clients_page_cache_v1';
 const CLIENTS_PAGE_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
-const CLIENTS_PAGE_REFRESH_MS = 90 * 1000; // background refresh interval
+const CLIENTS_PAGE_REFRESH_MS = 5 * 60 * 1000; // background refresh interval
+const TRAFFIC_FETCH_MAX_CLIENTS = 30;
+const TRAFFIC_FETCH_CONCURRENCY = 4;
+const TRAFFIC_FETCH_TIMEOUT_MS = 8000;
 
 export const ClientManager: React.FC = () => {
   const { colors } = useTheme();
@@ -136,7 +139,9 @@ export const ClientManager: React.FC = () => {
       }));
 
       setClients(rawClients);
-      loadTraffic(rawClients).catch(() => undefined);
+      if (!silent) {
+        loadTraffic(rawClients).catch(() => undefined);
+      }
 
       // Cache clients immediately, even before traffic refresh completes.
       try {
@@ -226,6 +231,7 @@ export const ClientManager: React.FC = () => {
         const res = await api.get('/v1/nodes/' + node_id + '/client-traffic', {
           auth: getAuth(),
           params: { email },
+          timeout: TRAFFIC_FETCH_TIMEOUT_MS,
         });
         return res.data as TrafficData;
       };
@@ -233,7 +239,7 @@ export const ClientManager: React.FC = () => {
       const tryLegacy = async (): Promise<TrafficData> => {
         const res = await api.get(
           `/v1/nodes/${node_id}/client/${encodeURIComponent(email)}/traffic`,
-          { auth: getAuth() }
+          { auth: getAuth(), timeout: TRAFFIC_FETCH_TIMEOUT_MS }
         );
         return res.data as TrafficData;
       };
@@ -269,15 +275,25 @@ export const ClientManager: React.FC = () => {
       }
     };
 
-    const results = await Promise.all(
-      Array.from(pairs.entries()).map(async ([key, { node_id, email }]) => {
+    const entries = Array.from(pairs.entries()).slice(0, TRAFFIC_FETCH_MAX_CLIENTS);
+    const results: Array<readonly [string, TrafficData | null]> = [];
+    let cursor = 0;
+
+    const worker = async () => {
+      while (cursor < entries.length) {
+        const idx = cursor++;
+        const [key, { node_id, email }] = entries[idx];
         try {
           const data = await fetchTraffic(node_id, email);
-          return [key, data] as const;
+          results[idx] = [key, data] as const;
         } catch {
-          return [key, null] as const;
+          results[idx] = [key, null] as const;
         }
-      })
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(TRAFFIC_FETCH_CONCURRENCY, entries.length) }, () => worker())
     );
 
     const cache: Record<string, TrafficData | null> = {};

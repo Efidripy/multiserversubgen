@@ -107,6 +107,28 @@ normalize_public_access_vars() {
     fi
 }
 
+write_install_log() {
+    local keys=(
+        PROJECT_NAME PROJECT_DIR SELECTED_CFG APP_PORT PUBLIC_DOMAIN PUBLIC_SCHEME WEB_PATH
+        USE_PROXY ALLOW_ORIGINS VERIFY_TLS CA_BUNDLE_PATH READ_ONLY_MODE
+        SUB_RATE_LIMIT_COUNT SUB_RATE_LIMIT_WINDOW_SEC TRAFFIC_STATS_CACHE_TTL
+        ONLINE_CLIENTS_CACHE_TTL TRAFFIC_STATS_STALE_TTL ONLINE_CLIENTS_STALE_TTL
+        CLIENTS_CACHE_TTL CLIENTS_CACHE_STALE_TTL TRAFFIC_MAX_WORKERS
+        COLLECTOR_BASE_INTERVAL_SEC COLLECTOR_MAX_INTERVAL_SEC COLLECTOR_MAX_PARALLEL
+        REDIS_URL AUDIT_QUEUE_BATCH_SIZE ROLE_VIEWERS ROLE_OPERATORS
+        MONITORING_ENABLED GRAFANA_WEB_PATH GRAFANA_HTTP_PORT
+        GRAFANA_AUTH_ENABLED GRAFANA_AUTH_USER GRAFANA_AUTH_HASH
+        SECURITY_MTLS_ENABLED SECURITY_MTLS_CA_PATH SECURITY_IP_ALLOWLIST
+        MFA_TOTP_ENABLED MFA_TOTP_USERS MFA_TOTP_WS_STRICT
+    )
+    : > "$LOG_FILE"
+    local key value
+    for key in "${keys[@]}"; do
+        value="${!key-}"
+        printf '%s=%q\n' "$key" "$value" >> "$LOG_FILE"
+    done
+}
+
 pick_free_local_port() {
     local port="${1:-43000}"
     while ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${port}$"; do
@@ -168,21 +190,7 @@ ensure_monitoring_auth_file() {
     chown root:www-data "$auth_file" 2>/dev/null || chown root:root "$auth_file"
 
     if [ -f "$LOG_FILE" ]; then
-        python3 <<PYTHON
-from pathlib import Path
-path = Path("$LOG_FILE")
-data = {}
-for line in path.read_text().splitlines():
-    if "=" in line:
-        k, v = line.split("=", 1)
-        data[k] = v.strip('"')
-data["GRAFANA_AUTH_ENABLED"] = "${GRAFANA_AUTH_ENABLED}"
-data["GRAFANA_AUTH_USER"] = "${GRAFANA_AUTH_USER}"
-data["GRAFANA_AUTH_HASH"] = "${GRAFANA_AUTH_HASH}"
-with path.open("w") as f:
-    for k, v in data.items():
-        f.write(f'{k}="{v}"\\n')
-PYTHON
+        write_install_log
     fi
 }
 
@@ -929,21 +937,9 @@ else
     GRAFANA_AUTH_HASH=""
 fi
 
-python3 <<PYTHON
-from pathlib import Path
-path = Path("$LOG_FILE")
-if path.exists():
-    data = {}
-    for line in path.read_text().splitlines():
-        if "=" in line:
-            k, v = line.split("=", 1)
-            data[k] = v.strip('"')
-    data["MONITORING_ENABLED"] = "${MONITORING_ENABLED}"
-    data["GRAFANA_AUTH_ENABLED"] = "${GRAFANA_AUTH_ENABLED}"
-    with path.open("w") as f:
-        for k, v in data.items():
-            f.write(f'{k}="{v}"\\n')
-PYTHON
+if [ -f "$LOG_FILE" ]; then
+    write_install_log
+fi
 
 PROJECT_DIR="/opt/$PROJECT_NAME"
 
@@ -967,48 +963,7 @@ fi
 SELECTED_CFG="${configs[$cfg_idx]}"
 
 # Сохранение параметров
-cat <<EOF > "$LOG_FILE"
-PROJECT_NAME="$PROJECT_NAME"
-PROJECT_DIR="$PROJECT_DIR"
-SELECTED_CFG="$SELECTED_CFG"
-APP_PORT="$APP_PORT"
-PUBLIC_DOMAIN="$PUBLIC_DOMAIN"
-PUBLIC_SCHEME="$PUBLIC_SCHEME"
-WEB_PATH="$WEB_PATH"
-USE_PROXY="$USE_PROXY"
-ALLOW_ORIGINS="$ALLOW_ORIGINS"
-VERIFY_TLS="$VERIFY_TLS"
-CA_BUNDLE_PATH="$CA_BUNDLE_PATH"
-READ_ONLY_MODE="$READ_ONLY_MODE"
-SUB_RATE_LIMIT_COUNT="$SUB_RATE_LIMIT_COUNT"
-SUB_RATE_LIMIT_WINDOW_SEC="$SUB_RATE_LIMIT_WINDOW_SEC"
-TRAFFIC_STATS_CACHE_TTL="$TRAFFIC_STATS_CACHE_TTL"
-ONLINE_CLIENTS_CACHE_TTL="$ONLINE_CLIENTS_CACHE_TTL"
-TRAFFIC_STATS_STALE_TTL="$TRAFFIC_STATS_STALE_TTL"
-ONLINE_CLIENTS_STALE_TTL="$ONLINE_CLIENTS_STALE_TTL"
-CLIENTS_CACHE_TTL="$CLIENTS_CACHE_TTL"
-CLIENTS_CACHE_STALE_TTL="$CLIENTS_CACHE_STALE_TTL"
-TRAFFIC_MAX_WORKERS="$TRAFFIC_MAX_WORKERS"
-COLLECTOR_BASE_INTERVAL_SEC="$COLLECTOR_BASE_INTERVAL_SEC"
-COLLECTOR_MAX_INTERVAL_SEC="$COLLECTOR_MAX_INTERVAL_SEC"
-COLLECTOR_MAX_PARALLEL="$COLLECTOR_MAX_PARALLEL"
-REDIS_URL="$REDIS_URL"
-AUDIT_QUEUE_BATCH_SIZE="$AUDIT_QUEUE_BATCH_SIZE"
-ROLE_VIEWERS="$ROLE_VIEWERS"
-ROLE_OPERATORS="$ROLE_OPERATORS"
-MONITORING_ENABLED="$MONITORING_ENABLED"
-GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH"
-GRAFANA_HTTP_PORT="$GRAFANA_HTTP_PORT"
-GRAFANA_AUTH_ENABLED="$GRAFANA_AUTH_ENABLED"
-GRAFANA_AUTH_USER="$GRAFANA_AUTH_USER"
-GRAFANA_AUTH_HASH="$GRAFANA_AUTH_HASH"
-SECURITY_MTLS_ENABLED="$SECURITY_MTLS_ENABLED"
-SECURITY_MTLS_CA_PATH="$SECURITY_MTLS_CA_PATH"
-SECURITY_IP_ALLOWLIST="$SECURITY_IP_ALLOWLIST"
-MFA_TOTP_ENABLED="$MFA_TOTP_ENABLED"
-MFA_TOTP_USERS="$MFA_TOTP_USERS"
-MFA_TOTP_WS_STRICT="$MFA_TOTP_WS_STRICT"
-EOF
+write_install_log
 
 cp "$SELECTED_CFG" "${SELECTED_CFG}.bak"
 
