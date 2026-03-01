@@ -20,8 +20,10 @@ interface Client {
 }
 
 interface TrafficData {
-  upload: number;
-  download: number;
+  upload?: number | string;
+  download?: number | string;
+  up?: number | string;
+  down?: number | string;
   total: number;
   enable: boolean;
   expiryTime: number;
@@ -48,6 +50,53 @@ const ENABLE_LIVE_CLIENT_TRAFFIC = true;
 const TRAFFIC_FETCH_MAX_CLIENTS = 120;
 const TRAFFIC_FETCH_CONCURRENCY = 4;
 const TRAFFIC_FETCH_TIMEOUT_MS = 8000;
+
+const asFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.replace(',', '.');
+  const numeric = Number(normalized);
+  if (Number.isFinite(numeric)) return numeric;
+  const match = normalized.match(/^(-?\d+(?:\.\d+)?)\s*([kmgt]?i?b)$/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return null;
+  const unit = match[2].toLowerCase();
+  const multipliers: Record<string, number> = {
+    b: 1,
+    kb: 1024,
+    kib: 1024,
+    mb: 1024 ** 2,
+    mib: 1024 ** 2,
+    gb: 1024 ** 3,
+    gib: 1024 ** 3,
+    tb: 1024 ** 4,
+    tib: 1024 ** 4,
+  };
+  const factor = multipliers[unit];
+  return factor ? amount * factor : null;
+};
+
+const pickTrafficField = (
+  entry: TrafficData | null | undefined,
+  field: 'upload' | 'download'
+): number | null => {
+  if (!entry) return null;
+  if (field === 'download') {
+    return (
+      asFiniteNumber(entry.download) ??
+      asFiniteNumber(entry.down) ??
+      null
+    );
+  }
+  return (
+    asFiniteNumber(entry.upload) ??
+    asFiniteNumber(entry.up) ??
+    null
+  );
+};
 
 export const ClientManager: React.FC = () => {
   const { colors } = useTheme();
@@ -357,8 +406,8 @@ export const ClientManager: React.FC = () => {
       const key = client.node_id != null ? `${client.node_id}:${client.email}` : null;
       if (!key) return client.down;
       const entry = trafficCache[key];
-      if (!entry) return client.down;
-      return entry.download;
+      const normalized = pickTrafficField(entry, 'download');
+      return normalized ?? client.down;
     };
 
     const sorted = [...filtered].sort((a, b) => {
@@ -574,12 +623,12 @@ export const ClientManager: React.FC = () => {
 
   /** Returns bytes from cache if loaded, fallback value if not yet loaded, or null if unavailable. */
   const getTrafficBytes = (key: string | null, field: 'upload' | 'download', fallback: number): number => {
-    const safeFallback = Number.isFinite(fallback) ? fallback : 0;
+    const safeFallback = asFiniteNumber(fallback) ?? 0;
     if (key == null) return safeFallback;
     if (!(key in trafficCache)) return safeFallback; // not yet loaded
     const entry = trafficCache[key];
     if (entry == null) return safeFallback; // unavailable live traffic -> keep DB value
-    return Number.isFinite(entry[field]) ? entry[field] : safeFallback;
+    return pickTrafficField(entry, field) ?? safeFallback;
   };
   
   const nodes = Array.from(new Set(clients.map(c => c.node_name)));
