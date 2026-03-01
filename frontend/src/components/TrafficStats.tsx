@@ -49,20 +49,22 @@ interface TrafficData {
 interface OnlineClient {
   email: string;
   node_name: string;
-  inbound_id: number;
 }
+
+const onlineClientKey = (email: string, nodeName: string) => `${nodeName}:${email}`;
 
 export const TrafficStats: React.FC = () => {
   const { colors } = useTheme();
   const [trafficData, setTrafficData] = useState<TrafficData[]>([]);
   const [onlineClients, setOnlineClients] = useState<OnlineClient[]>([]);
+  const [onlineTrafficTotals, setOnlineTrafficTotals] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [groupBy, setGroupBy] = useState<'client' | 'inbound' | 'node'>('client');
   const [topN, setTopN] = useState(10);
   const [trafficSortField, setTrafficSortField] = useState<'name' | 'download' | 'total'>('download');
   const [trafficSortDir, setTrafficSortDir] = useState<'asc' | 'desc'>('desc');
-  const [onlineSortField, setOnlineSortField] = useState<'email' | 'node' | 'inbound'>('email');
+  const [onlineSortField, setOnlineSortField] = useState<'email' | 'node' | 'traffic'>('email');
   const [onlineSortDir, setOnlineSortDir] = useState<'asc' | 'desc'>('asc');
 
   useEffect(() => {
@@ -127,16 +129,31 @@ export const TrafficStats: React.FC = () => {
 
   const loadOnlineClients = async () => {
     try {
-      const res = await api.get('/v1/clients/online', { auth: getAuth() });
+      const [onlineRes, clientsRes] = await Promise.all([
+        api.get('/v1/clients/online', { auth: getAuth() }),
+        api.get('/v1/clients', { auth: getAuth() }),
+      ]);
       const items: Array<{ email: string; node?: string; node_name?: string; inbound_id?: number }> =
-        res.data?.online_clients || [];
+        onlineRes.data?.online_clients || [];
       setOnlineClients(
         items.map((c) => ({
           email: c.email,
           node_name: c.node_name || c.node || 'unknown',
-          inbound_id: c.inbound_id || 0,
         }))
       );
+
+      const clientRows: Array<{ email?: string; node_name?: string; up?: number; down?: number }> =
+        clientsRes.data?.clients || [];
+      const totals: Record<string, number> = {};
+      clientRows.forEach((row) => {
+        const email = row.email || '';
+        const nodeName = row.node_name || 'unknown';
+        if (!email) return;
+        const key = onlineClientKey(email, nodeName);
+        const used = (Number(row.up) || 0) + (Number(row.down) || 0);
+        totals[key] = (totals[key] || 0) + used;
+      });
+      setOnlineTrafficTotals(totals);
     } catch (err: any) {
       console.error('Failed to load online clients:', err);
     }
@@ -181,21 +198,23 @@ export const TrafficStats: React.FC = () => {
     .slice(0, topN);
 
   const sortedOnlineClients = [...onlineClients].sort((a, b) => {
+    const aTraffic = onlineTrafficTotals[onlineClientKey(a.email, a.node_name)] || 0;
+    const bTraffic = onlineTrafficTotals[onlineClientKey(b.email, b.node_name)] || 0;
     const byEmail = compareText(a.email, b.email);
     const byNode = compareText(a.node_name, b.node_name);
-    const byInbound = a.inbound_id - b.inbound_id;
+    const byTraffic = aTraffic - bTraffic;
 
     if (onlineSortField === 'email') {
       if (byEmail !== 0) return byEmail * onlineSortFactor;
       if (byNode !== 0) return byNode * onlineSortFactor;
-      return byInbound * onlineSortFactor;
+      return byTraffic * onlineSortFactor;
     }
     if (onlineSortField === 'node') {
       if (byNode !== 0) return byNode * onlineSortFactor;
       if (byEmail !== 0) return byEmail * onlineSortFactor;
-      return byInbound * onlineSortFactor;
+      return byTraffic * onlineSortFactor;
     }
-    if (byInbound !== 0) return byInbound * onlineSortFactor;
+    if (byTraffic !== 0) return byTraffic * onlineSortFactor;
     if (byEmail !== 0) return byEmail;
     return byNode;
   });
@@ -415,12 +434,12 @@ export const TrafficStats: React.FC = () => {
             <select
               className="form-select form-select-sm"
               value={onlineSortField}
-              onChange={(e) => setOnlineSortField(e.target.value as 'email' | 'node' | 'inbound')}
+              onChange={(e) => setOnlineSortField(e.target.value as 'email' | 'node' | 'traffic')}
               style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 130 }}
             >
               <option value="email">Sort: Email</option>
               <option value="node">Sort: Node</option>
-              <option value="inbound">Sort: Inbound ID</option>
+              <option value="traffic">Sort: Total Traffic</option>
             </select>
             <select
               className="form-select form-select-sm"
@@ -442,12 +461,12 @@ export const TrafficStats: React.FC = () => {
                 <tr style={{ borderColor: colors.border }}>
                   <th style={{ color: colors.text.secondary }}>Email</th>
                   <th style={{ color: colors.text.secondary }}>Node</th>
-                  <th style={{ color: colors.text.secondary }}>Inbound ID</th>
+                  <th style={{ color: colors.text.secondary }}>Total Traffic</th>
                 </tr>
               </thead>
               <tbody>
-                {sortedOnlineClients.map((client, idx) => (
-                  <tr key={idx} style={{ borderColor: colors.border }}>
+                {sortedOnlineClients.map((client) => (
+                  <tr key={onlineClientKey(client.email, client.node_name)} style={{ borderColor: colors.border }}>
                     <td>
                       <span style={{ color: colors.success }}>● </span>
                       <strong style={{ color: colors.text.primary }}>{client.email}</strong>
@@ -457,7 +476,9 @@ export const TrafficStats: React.FC = () => {
                         {client.node_name}
                       </span>
                     </td>
-                    <td style={{ color: colors.text.secondary }}>{client.inbound_id}</td>
+                    <td style={{ color: colors.text.secondary }}>
+                      {formatBytes(onlineTrafficTotals[onlineClientKey(client.email, client.node_name)] || 0)}
+                    </td>
                   </tr>
                 ))}
               </tbody>
