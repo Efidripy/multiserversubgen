@@ -51,8 +51,6 @@ interface OnlineClient {
   node_name: string;
 }
 
-const onlineClientKey = (email: string, nodeName: string) => `${nodeName}:${email}`;
-
 export const TrafficStats: React.FC = () => {
   const { colors } = useTheme();
   const [trafficData, setTrafficData] = useState<TrafficData[]>([]);
@@ -70,12 +68,14 @@ export const TrafficStats: React.FC = () => {
   useEffect(() => {
     loadTrafficStats();
     loadOnlineClients();
+    loadOnlineTrafficTotals();
   }, [groupBy]);
 
   useEffect(() => {
     const timer = setInterval(() => {
       loadTrafficStats();
       loadOnlineClients();
+      loadOnlineTrafficTotals();
     }, 60000);
     return () => clearInterval(timer);
   }, [groupBy]);
@@ -129,10 +129,7 @@ export const TrafficStats: React.FC = () => {
 
   const loadOnlineClients = async () => {
     try {
-      const [onlineRes, clientsRes] = await Promise.all([
-        api.get('/v1/clients/online', { auth: getAuth() }),
-        api.get('/v1/clients', { auth: getAuth() }),
-      ]);
+      const onlineRes = await api.get('/v1/clients/online', { auth: getAuth() });
       const items: Array<{ email: string; node?: string; node_name?: string; inbound_id?: number }> =
         onlineRes.data?.online_clients || [];
       setOnlineClients(
@@ -141,21 +138,25 @@ export const TrafficStats: React.FC = () => {
           node_name: c.node_name || c.node || 'unknown',
         }))
       );
+    } catch (err: any) {
+      console.error('Failed to load online clients:', err);
+    }
+  };
 
-      const clientRows: Array<{ email?: string; node_name?: string; up?: number; down?: number }> =
-        clientsRes.data?.clients || [];
+  const loadOnlineTrafficTotals = async () => {
+    try {
+      const res = await api.get('/v1/traffic/stats', {
+        auth: getAuth(),
+        params: { group_by: 'client' },
+      });
+      const statsObj: Record<string, { up: number; down: number; total: number }> = res.data?.stats || {};
       const totals: Record<string, number> = {};
-      clientRows.forEach((row) => {
-        const email = row.email || '';
-        const nodeName = row.node_name || 'unknown';
-        if (!email) return;
-        const key = onlineClientKey(email, nodeName);
-        const used = (Number(row.up) || 0) + (Number(row.down) || 0);
-        totals[key] = (totals[key] || 0) + used;
+      Object.entries(statsObj).forEach(([email, s]) => {
+        totals[email] = (s.total || 0) === 0 ? (s.up || 0) + (s.down || 0) : (s.total || 0);
       });
       setOnlineTrafficTotals(totals);
     } catch (err: any) {
-      console.error('Failed to load online clients:', err);
+      console.error('Failed to load online traffic totals:', err);
     }
   };
 
@@ -198,8 +199,8 @@ export const TrafficStats: React.FC = () => {
     .slice(0, topN);
 
   const sortedOnlineClients = [...onlineClients].sort((a, b) => {
-    const aTraffic = onlineTrafficTotals[onlineClientKey(a.email, a.node_name)] || 0;
-    const bTraffic = onlineTrafficTotals[onlineClientKey(b.email, b.node_name)] || 0;
+    const aTraffic = onlineTrafficTotals[a.email] || 0;
+    const bTraffic = onlineTrafficTotals[b.email] || 0;
     const byEmail = compareText(a.email, b.email);
     const byNode = compareText(a.node_name, b.node_name);
     const byTraffic = aTraffic - bTraffic;
@@ -466,7 +467,7 @@ export const TrafficStats: React.FC = () => {
               </thead>
               <tbody>
                 {sortedOnlineClients.map((client) => (
-                  <tr key={onlineClientKey(client.email, client.node_name)} style={{ borderColor: colors.border }}>
+                  <tr key={`${client.node_name}:${client.email}`} style={{ borderColor: colors.border }}>
                     <td>
                       <span style={{ color: colors.success }}>● </span>
                       <strong style={{ color: colors.text.primary }}>{client.email}</strong>
@@ -477,7 +478,7 @@ export const TrafficStats: React.FC = () => {
                       </span>
                     </td>
                     <td style={{ color: colors.text.secondary }}>
-                      {formatBytes(onlineTrafficTotals[onlineClientKey(client.email, client.node_name)] || 0)}
+                      {formatBytes(onlineTrafficTotals[client.email] || 0)}
                     </td>
                   </tr>
                 ))}
