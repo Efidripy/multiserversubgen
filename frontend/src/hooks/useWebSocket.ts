@@ -28,6 +28,20 @@ export const useWebSocket = ({
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelsRef = useRef<string[]>(channels);
 
+  const safeSend = useCallback((payload: any): boolean => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    try {
+      ws.send(JSON.stringify(payload));
+      return true;
+    } catch (error) {
+      console.error('WebSocket send error:', error);
+      return false;
+    }
+  }, []);
+
   // Update channels ref when channels change
   useEffect(() => {
     channelsRef.current = channels;
@@ -60,10 +74,10 @@ export const useWebSocket = ({
 
         // Subscribe to channels
         channelsRef.current.forEach((channel) => {
-          wsRef.current?.send(JSON.stringify({
+          safeSend({
             type: 'subscribe',
             channel,
-          }));
+          });
         });
       };
 
@@ -95,7 +109,7 @@ export const useWebSocket = ({
     } catch (error) {
       console.error('Failed to create WebSocket:', error);
     }
-  }, [url, enabled, onMessage, reconnectInterval]);
+  }, [url, enabled, onMessage, reconnectInterval, safeSend]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -111,28 +125,25 @@ export const useWebSocket = ({
   }, []);
 
   const subscribe = useCallback((channel: string) => {
-    if (wsRef.current && isConnected) {
-      wsRef.current.send(JSON.stringify({
-        type: 'subscribe',
-        channel,
-      }));
-    }
-  }, [isConnected]);
+    if (!isConnected) return;
+    safeSend({
+      type: 'subscribe',
+      channel,
+    });
+  }, [isConnected, safeSend]);
 
   const unsubscribe = useCallback((channel: string) => {
-    if (wsRef.current && isConnected) {
-      wsRef.current.send(JSON.stringify({
-        type: 'unsubscribe',
-        channel,
-      }));
-    }
-  }, [isConnected]);
+    if (!isConnected) return;
+    safeSend({
+      type: 'unsubscribe',
+      channel,
+    });
+  }, [isConnected, safeSend]);
 
   const sendMessage = useCallback((message: any) => {
-    if (wsRef.current && isConnected) {
-      wsRef.current.send(JSON.stringify(message));
-    }
-  }, [isConnected]);
+    if (!isConnected) return;
+    safeSend(message);
+  }, [isConnected, safeSend]);
 
   useEffect(() => {
     if (enabled) {
@@ -147,15 +158,16 @@ export const useWebSocket = ({
   // Update subscriptions when channels change
   useEffect(() => {
     if (!isConnected || !wsRef.current) return;
+    if (wsRef.current.readyState !== WebSocket.OPEN) return;
 
     // Subscribe to new channels
     channels.forEach((channel) => {
-      wsRef.current?.send(JSON.stringify({
+      safeSend({
         type: 'subscribe',
         channel,
-      }));
+      });
     });
-  }, [channels, isConnected]);
+  }, [channels, isConnected, safeSend]);
 
   return {
     isConnected,
