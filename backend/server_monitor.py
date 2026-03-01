@@ -5,6 +5,7 @@
 import requests
 import json
 import logging
+from urllib.parse import quote
 import time
 import sys
 import os
@@ -192,8 +193,9 @@ class ThreeXUIMonitor:
         if not s:
             return {"node": node["name"], "available": False, "error": "Failed to connect"}
         try:
+            safe_email = quote(email, safe="")
             res = s.get(
-                f"{base_url}/panel/api/inbounds/getClientTraffics/{email}", timeout=5
+                f"{base_url}/panel/api/inbounds/getClientTraffics/{safe_email}", timeout=5
             )
             if res.status_code == 200:
                 data = res.json()

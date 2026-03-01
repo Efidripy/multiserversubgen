@@ -112,8 +112,11 @@ export const ClientManager: React.FC = () => {
       Array.from(pairs.entries()).map(async ([key, { node_id, email }]) => {
         try {
           const res = await api.get(
-            `/v1/nodes/${node_id}/client/${encodeURIComponent(email)}/traffic`,
-            { auth: getAuth() }
+            `/v1/nodes/${node_id}/client-traffic`,
+            {
+              auth: getAuth(),
+              params: { email },
+            }
           );
           return [key, res.data as TrafficData] as const;
         } catch {

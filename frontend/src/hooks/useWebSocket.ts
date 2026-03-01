@@ -31,6 +31,7 @@ export const useWebSocket = ({
   const reconnectAttemptsRef = useRef(0);
   const lastErrorLogTsRef = useRef(0);
   const reconnectBlockedRef = useRef(false);
+  const everConnectedRef = useRef(false);
 
   const safeSend = useCallback((payload: any): boolean => {
     const ws = wsRef.current;
@@ -81,10 +82,10 @@ export const useWebSocket = ({
       wsRef.current = new WebSocket(wsUrl);
 
       wsRef.current.onopen = () => {
-        console.log('WebSocket connected');
         setIsConnected(true);
         reconnectAttemptsRef.current = 0;
         reconnectBlockedRef.current = false;
+        everConnectedRef.current = true;
 
         // Subscribe to channels
         channelsRef.current.forEach((channel) => {
@@ -106,15 +107,19 @@ export const useWebSocket = ({
       };
 
       wsRef.current.onerror = (error) => {
+        // Browsers can emit an error while socket is still in CONNECTING state.
+        // Do not spam logs for transient reconnect races.
+        if (wsRef.current?.readyState === WebSocket.CONNECTING) {
+          return;
+        }
         const now = Date.now();
         if (now - lastErrorLogTsRef.current > 10000) {
-          console.error('WebSocket error:', error);
+          console.warn('WebSocket error:', error);
           lastErrorLogTsRef.current = now;
         }
       };
 
       wsRef.current.onclose = (event) => {
-        console.log('WebSocket disconnected', event.code);
         setIsConnected(false);
         wsRef.current = null;
 
@@ -127,6 +132,15 @@ export const useWebSocket = ({
             lastErrorLogTsRef.current = now;
           }
           return;
+        }
+
+        // Skip noisy logs for transient first-connect close.
+        if (everConnectedRef.current && event.code !== 1000 && event.code !== 1001) {
+          const now = Date.now();
+          if (now - lastErrorLogTsRef.current > 10000) {
+            console.warn('WebSocket disconnected', event.code);
+            lastErrorLogTsRef.current = now;
+          }
         }
 
         // Attempt to reconnect

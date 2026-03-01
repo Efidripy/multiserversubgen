@@ -94,12 +94,21 @@ def build_live_data_router(
         node = get_node_or_404(node_id)
         return xui_monitor.get_online_clients(node)
 
-    @router.get("/api/v1/nodes/{node_id}/client/{email}/traffic")
-    async def get_node_client_traffic(request: Request, node_id: int, email: str):
+    async def _get_node_client_traffic_impl(request: Request, node_id: int, email: str):
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
         node = get_node_or_404(node_id)
         return xui_monitor.get_client_traffic(node, email)
+
+    @router.get("/api/v1/nodes/{node_id}/client-traffic")
+    async def get_node_client_traffic_query(request: Request, node_id: int, email: str):
+        # Query-param variant is robust for arbitrary client identifiers.
+        return await _get_node_client_traffic_impl(request, node_id, email)
+
+    @router.get("/api/v1/nodes/{node_id}/client/{email:path}/traffic")
+    async def get_node_client_traffic_legacy(request: Request, node_id: int, email: str):
+        # Backward-compatible path-based endpoint.
+        return await _get_node_client_traffic_impl(request, node_id, email)
 
     return router

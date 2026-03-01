@@ -251,6 +251,7 @@ export const App: React.FC = () => {
                 onChange={(e) => setUser(e.target.value)}
                 required
                 autoFocus
+                autoComplete="username"
               />
             </div>
             <div className="mb-3">
@@ -262,6 +263,7 @@ export const App: React.FC = () => {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
+                autoComplete="current-password"
               />
             </div>
             {mfaEnabled && (
