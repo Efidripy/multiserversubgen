@@ -146,6 +146,8 @@ _redis_client = None
 audit_worker_task = None
 history_write_state = {"last_by_node": {}, "last_cleanup_ts": 0.0}
 history_write_lock = Lock()
+node_metric_labels_state: Dict[str, str] = {}
+node_metric_labels_lock = Lock()
 
 # Инициализация менеджеров
 inbound_mgr = InboundManager(decrypt_func=decrypt, encrypt_func=encrypt)
@@ -198,9 +200,32 @@ NODE_POLL_DURATION_MS = Gauge(
 )
 
 
+def _remove_node_metric_labels(node_name: str, node_id: str):
+    for metric in (
+        NODE_AVAILABILITY,
+        NODE_XRAY_RUNNING,
+        NODE_CPU_PERCENT,
+        NODE_ONLINE_CLIENTS,
+        NODE_TRAFFIC_TOTAL_BYTES,
+        NODE_POLL_DURATION_MS,
+    ):
+        try:
+            metric.remove(node_name, node_id)
+        except KeyError:
+            pass
+        except ValueError:
+            pass
+
+
 def _record_node_snapshot(snapshot: Dict):
     node_name = str(snapshot.get("name", "unknown"))
     node_id = str(snapshot.get("node_id", "0"))
+
+    with node_metric_labels_lock:
+        prev_name = node_metric_labels_state.get(node_id)
+        if prev_name and prev_name != node_name:
+            _remove_node_metric_labels(prev_name, node_id)
+        node_metric_labels_state[node_id] = node_name
 
     NODE_AVAILABILITY.labels(node_name=node_name, node_id=node_id).set(1 if snapshot.get("available") else 0)
     NODE_XRAY_RUNNING.labels(node_name=node_name, node_id=node_id).set(1 if snapshot.get("xray_running") else 0)
@@ -1238,7 +1263,13 @@ async def update_node(node_id: int, request: Request, data: Dict):
 
     try:
         with sqlite3.connect(DB_PATH) as conn:
+            existing = conn.execute('SELECT name FROM nodes WHERE id = ?', (node_id,)).fetchone()
+            if not existing:
+                raise HTTPException(status_code=404, detail="Node not found")
+
+            old_name = str(existing[0] or "")
             result = conn.execute('UPDATE nodes SET name = ? WHERE id = ?', (name, node_id))
+            conn.execute('UPDATE node_history SET node_name = ? WHERE node_id = ?', (name, node_id))
             conn.commit()
             if result.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Node not found")
@@ -1247,6 +1278,12 @@ async def update_node(node_id: int, request: Request, data: Dict):
     except Exception as e:
         logger.error(f"Error updating node: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+    node_id_str = str(node_id)
+    with node_metric_labels_lock:
+        if old_name and old_name != name:
+            _remove_node_metric_labels(old_name, node_id_str)
+        node_metric_labels_state[node_id_str] = name
 
     emails_cache["ts"] = 0
     links_cache.clear()
