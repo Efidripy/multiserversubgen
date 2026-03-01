@@ -4,6 +4,30 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>VPN Sub Manager</title>
+    <script>
+      (function () {
+        var icons = [
+          "/favicons/net-fun-01.svg",
+          "/favicons/net-fun-02.svg",
+          "/favicons/net-fun-03.svg",
+          "/favicons/net-fun-04.svg",
+          "/favicons/net-fun-05.svg",
+          "/favicons/net-fun-06.svg",
+          "/favicons/net-fun-07.svg",
+          "/favicons/net-fun-08.svg",
+          "/favicons/net-fun-09.svg",
+          "/favicons/net-fun-10.svg"
+        ];
+        var pick = icons[Math.floor(Math.random() * icons.length)];
+        var link = document.querySelector("link[rel='icon']") || document.createElement("link");
+        link.setAttribute("rel", "icon");
+        link.setAttribute("type", "image/svg+xml");
+        link.setAttribute("href", pick + "?r=" + Date.now());
+        if (!link.parentNode) {
+          document.head.appendChild(link);
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -27,6 +27,9 @@ export const useWebSocket = ({
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelsRef = useRef<string[]>(channels);
+  const onMessageRef = useRef<typeof onMessage>(onMessage);
+  const reconnectAttemptsRef = useRef(0);
+  const lastErrorLogTsRef = useRef(0);
 
   const safeSend = useCallback((payload: any): boolean => {
     const ws = wsRef.current;
@@ -47,8 +50,15 @@ export const useWebSocket = ({
     channelsRef.current = channels;
   }, [channels]);
 
+  useEffect(() => {
+    onMessageRef.current = onMessage;
+  }, [onMessage]);
+
   const connect = useCallback(() => {
     if (!enabled) return;
+    if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
 
     try {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -71,6 +81,7 @@ export const useWebSocket = ({
       wsRef.current.onopen = () => {
         console.log('WebSocket connected');
         setIsConnected(true);
+        reconnectAttemptsRef.current = 0;
 
         // Subscribe to channels
         channelsRef.current.forEach((channel) => {
@@ -85,31 +96,39 @@ export const useWebSocket = ({
         try {
           const message: WebSocketMessage = JSON.parse(event.data);
           setLastMessage(message);
-          onMessage?.(message);
+          onMessageRef.current?.(message);
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);
         }
       };
 
       wsRef.current.onerror = (error) => {
-        console.error('WebSocket error:', error);
+        const now = Date.now();
+        if (now - lastErrorLogTsRef.current > 10000) {
+          console.error('WebSocket error:', error);
+          lastErrorLogTsRef.current = now;
+        }
       };
 
       wsRef.current.onclose = () => {
         console.log('WebSocket disconnected');
         setIsConnected(false);
+        wsRef.current = null;
 
         // Attempt to reconnect
         if (enabled) {
+          reconnectAttemptsRef.current += 1;
+          const backoff = Math.min(30000, reconnectInterval * (2 ** Math.min(reconnectAttemptsRef.current, 5)));
+          const jitter = Math.floor(Math.random() * 500);
           reconnectTimeoutRef.current = setTimeout(() => {
             connect();
-          }, reconnectInterval);
+          }, backoff + jitter);
         }
       };
     } catch (error) {
       console.error('Failed to create WebSocket:', error);
     }
-  }, [url, enabled, onMessage, reconnectInterval, safeSend]);
+  }, [url, enabled, reconnectInterval, safeSend]);
 
   const disconnect = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -117,7 +136,9 @@ export const useWebSocket = ({
     }
 
     if (wsRef.current) {
-      wsRef.current.close();
+      if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
+        wsRef.current.close();
+      }
       wsRef.current = null;
     }
 

@@ -91,9 +91,13 @@ class ClientManager:
         Returns:
             Список клиентов с метаданными
         """
-        all_clients = []
-        
-        for node in nodes:
+        if not nodes:
+            return []
+
+        needle = email_filter.lower() if email_filter else ""
+
+        def _collect_node_clients(node: Dict) -> List[Dict]:
+            node_clients: List[Dict] = []
             try:
                 inbounds = self._fetch_inbounds_from_node(node)
                 for inbound in inbounds:
@@ -102,14 +106,12 @@ class ClientManager:
                             inbound.get("settings"), node_id=node["name"], field_name="settings"
                         )
                         clients = settings.get("clients", [])
-                        
+
                         for client in clients:
                             client_email = client.get("email", "")
-                            
-                            # Применить фильтр если указан
-                            if email_filter and email_filter.lower() not in client_email.lower():
+                            if needle and needle not in client_email.lower():
                                 continue
-                            
+
                             client_data = {
                                 "id": client.get("id"),
                                 "email": client_email,
@@ -122,15 +124,25 @@ class ClientManager:
                                 "inbound_id": inbound.get("id"),
                                 "inbound_remark": inbound.get("remark", ""),
                                 "protocol": inbound.get("protocol"),
-                                # Для trojan используется password вместо id
-                                "password": client.get("password", "") if inbound.get("protocol") == "trojan" else ""
+                                "password": client.get("password", "") if inbound.get("protocol") == "trojan" else "",
                             }
-                            all_clients.append(client_data)
+                            node_clients.append(client_data)
                     except (TypeError, ValueError) as exc:
                         logger.warning(f"Invalid settings for inbound in {node['name']}: {exc}")
             except Exception as exc:
                 logger.warning(f"Failed to fetch clients from {node['name']}: {exc}")
-        
+            return node_clients
+
+        all_clients: List[Dict] = []
+        workers = min(len(nodes), TRAFFIC_MAX_WORKERS)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(_collect_node_clients, node) for node in nodes]
+            for future in as_completed(futures):
+                try:
+                    all_clients.extend(future.result())
+                except Exception as exc:
+                    logger.warning(f"Failed to aggregate clients: {exc}")
+
         return all_clients
     
     def add_client(self, node: Dict, inbound_id: int, client_config: Dict) -> bool:

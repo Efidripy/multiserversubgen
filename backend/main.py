@@ -10,7 +10,7 @@ import time
 import asyncio
 import uuid
 from collections import defaultdict, deque
-from threading import Lock
+from threading import Lock, Thread
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from fastapi import FastAPI, Request, HTTPException, Depends, WebSocket, WebSocketDisconnect
@@ -57,6 +57,10 @@ SUB_RATE_LIMIT_COUNT = int(os.getenv("SUB_RATE_LIMIT_COUNT", "30"))
 SUB_RATE_LIMIT_WINDOW_SEC = int(os.getenv("SUB_RATE_LIMIT_WINDOW_SEC", "60"))
 TRAFFIC_STATS_CACHE_TTL = int(os.getenv("TRAFFIC_STATS_CACHE_TTL", "10"))
 ONLINE_CLIENTS_CACHE_TTL = int(os.getenv("ONLINE_CLIENTS_CACHE_TTL", "10"))
+TRAFFIC_STATS_STALE_TTL = int(os.getenv("TRAFFIC_STATS_STALE_TTL", "120"))
+ONLINE_CLIENTS_STALE_TTL = int(os.getenv("ONLINE_CLIENTS_STALE_TTL", "60"))
+CLIENTS_CACHE_TTL = int(os.getenv("CLIENTS_CACHE_TTL", "20"))
+CLIENTS_CACHE_STALE_TTL = int(os.getenv("CLIENTS_CACHE_STALE_TTL", "180"))
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
 COLLECTOR_BASE_INTERVAL_SEC = int(os.getenv("COLLECTOR_BASE_INTERVAL_SEC", "5"))
 COLLECTOR_MAX_INTERVAL_SEC = int(os.getenv("COLLECTOR_MAX_INTERVAL_SEC", "60"))
@@ -124,6 +128,12 @@ subscription_rate_state = defaultdict(deque)
 subscription_rate_lock = Lock()
 traffic_stats_cache: Dict[str, tuple] = {}
 online_clients_cache = {"ts": 0.0, "data": []}
+clients_cache = {"ts": 0.0, "data": []}
+cache_refresh_state = {
+    "traffic": set(),
+    "online_clients": False,
+    "clients": False,
+}
 _redis_client = None
 audit_worker_task = None
 
@@ -388,7 +398,38 @@ def invalidate_live_stats_cache():
     traffic_stats_cache.clear()
     online_clients_cache["ts"] = 0.0
     online_clients_cache["data"] = []
+    clients_cache["ts"] = 0.0
+    clients_cache["data"] = []
     _redis_delete("traffic_stats:client", "traffic_stats:inbound", "traffic_stats:node", "online_clients")
+
+
+def _start_cache_refresh(flag_key: str, worker, worker_key: Optional[str] = None):
+    with subscription_rate_lock:
+        if flag_key == "traffic":
+            if not worker_key:
+                return
+            if worker_key in cache_refresh_state["traffic"]:
+                return
+            cache_refresh_state["traffic"].add(worker_key)
+        else:
+            if cache_refresh_state.get(flag_key):
+                return
+            cache_refresh_state[flag_key] = True
+
+    def _runner():
+        try:
+            worker()
+        except Exception as exc:
+            logger.warning(f"Cache refresh failed ({flag_key}): {exc}")
+        finally:
+            with subscription_rate_lock:
+                if flag_key == "traffic":
+                    if worker_key:
+                        cache_refresh_state["traffic"].discard(worker_key)
+                else:
+                    cache_refresh_state[flag_key] = False
+
+    Thread(target=_runner, daemon=True).start()
 
 
 def get_cached_traffic_stats(nodes: List[Dict], group_by: str) -> Dict:
@@ -401,6 +442,16 @@ def get_cached_traffic_stats(nodes: List[Dict], group_by: str) -> Dict:
     cached = traffic_stats_cache.get(group_by)
     if cached and now - cached[0] < TRAFFIC_STATS_CACHE_TTL:
         return cached[1]
+
+    # Serve stale data quickly and refresh in background.
+    if cached and now - cached[0] < TRAFFIC_STATS_STALE_TTL:
+        def _refresh():
+            fresh = client_mgr.get_traffic_stats(nodes, group_by)
+            traffic_stats_cache[group_by] = (time.time(), fresh)
+            _redis_set_json(redis_key, fresh, TRAFFIC_STATS_CACHE_TTL)
+        _start_cache_refresh("traffic", _refresh, worker_key=group_by)
+        return cached[1]
+
     data = client_mgr.get_traffic_stats(nodes, group_by)
     traffic_stats_cache[group_by] = (now, data)
     _redis_set_json(redis_key, data, TRAFFIC_STATS_CACHE_TTL)
@@ -415,11 +466,48 @@ def get_cached_online_clients(nodes: List[Dict]) -> List[Dict]:
     now = time.time()
     if now - online_clients_cache["ts"] < ONLINE_CLIENTS_CACHE_TTL:
         return online_clients_cache["data"]
+
+    if online_clients_cache["data"] and now - online_clients_cache["ts"] < ONLINE_CLIENTS_STALE_TTL:
+        def _refresh():
+            fresh = client_mgr.get_online_clients(nodes)
+            online_clients_cache["ts"] = time.time()
+            online_clients_cache["data"] = fresh
+            _redis_set_json("online_clients", fresh, ONLINE_CLIENTS_CACHE_TTL)
+        _start_cache_refresh("online_clients", _refresh)
+        return online_clients_cache["data"]
+
     data = client_mgr.get_online_clients(nodes)
     online_clients_cache["ts"] = now
     online_clients_cache["data"] = data
     _redis_set_json("online_clients", data, ONLINE_CLIENTS_CACHE_TTL)
     return data
+
+
+def get_cached_clients(nodes: List[Dict], email_filter: Optional[str] = None) -> List[Dict]:
+    now = time.time()
+    full_list = clients_cache["data"] if isinstance(clients_cache["data"], list) else []
+
+    def _apply_filter(items: List[Dict]) -> List[Dict]:
+        if not email_filter:
+            return items
+        needle = email_filter.lower()
+        return [c for c in items if needle in str(c.get("email", "")).lower()]
+
+    if full_list and now - clients_cache["ts"] < CLIENTS_CACHE_TTL:
+        return _apply_filter(full_list)
+
+    if full_list and now - clients_cache["ts"] < CLIENTS_CACHE_STALE_TTL:
+        def _refresh():
+            fresh = client_mgr.get_all_clients(nodes, email_filter=None)
+            clients_cache["ts"] = time.time()
+            clients_cache["data"] = fresh
+        _start_cache_refresh("clients", _refresh)
+        return _apply_filter(full_list)
+
+    fresh = client_mgr.get_all_clients(nodes, email_filter=None)
+    clients_cache["ts"] = now
+    clients_cache["data"] = fresh
+    return _apply_filter(fresh)
 
 
 def get_user_role(username: str) -> str:
@@ -1564,8 +1652,8 @@ async def list_clients(request: Request, email: Optional[str] = None):
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
-        
-    clients = client_mgr.get_all_clients(nodes, email_filter=email)
+
+    clients = get_cached_clients(nodes, email_filter=email)
     return JSONResponse(
         content={"clients": clients, "count": len(clients)},
         headers={"Cache-Control": "private, max-age=180"},
