@@ -73,6 +73,7 @@ ROLE_OPERATORS = {u.strip() for u in ROLE_OPERATORS_RAW.split(",") if u.strip()}
 ROLE_RANK = {"viewer": 1, "operator": 2, "admin": 3}
 MFA_TOTP_ENABLED = os.getenv("MFA_TOTP_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
 MFA_TOTP_USERS_RAW = os.getenv("MFA_TOTP_USERS", "").strip()
+MFA_TOTP_WS_STRICT = os.getenv("MFA_TOTP_WS_STRICT", "false").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _get_requests_verify_value():
@@ -2116,9 +2117,17 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close(code=1008)
         return
     ws_totp_code = websocket.query_params.get("totp") or websocket.headers.get("X-TOTP-Code")
-    if not verify_totp_code(user, ws_totp_code):
-        await websocket.close(code=1008)
-        return
+    # Practical default: keep MFA strict for HTTP API, but do not hard-fail WS reconnects
+    # unless explicitly enabled via MFA_TOTP_WS_STRICT=true.
+    if MFA_TOTP_WS_STRICT:
+        if not verify_totp_code(user, ws_totp_code):
+            await websocket.close(code=1008)
+            return
+    elif ws_totp_code:
+        # If client provided a TOTP, validate it; if absent, allow WS auth by Basic token.
+        if not verify_totp_code(user, ws_totp_code):
+            await websocket.close(code=1008)
+            return
     await ws_manager.connect(websocket)
     try:
         while True:
