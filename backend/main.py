@@ -138,6 +138,10 @@ cache_refresh_state = {
     "online_clients": False,
     "clients": False,
 }
+auth_cache_lock = Lock()
+auth_cache: Dict[str, Tuple[float, str]] = {}
+AUTH_CACHE_TTL_SEC = 30
+AUTH_CACHE_NEGATIVE_TTL_SEC = 5
 _redis_client = None
 audit_worker_task = None
 history_write_state = {"last_by_node": {}, "last_cleanup_ts": 0.0}
@@ -342,16 +346,34 @@ def check_basic_auth_header(auth_header: Optional[str]) -> Optional[str]:
     """Проверка Basic Auth header через PAM."""
     if not auth_header:
         return None
+
+    now = time.time()
+    with auth_cache_lock:
+        cached = auth_cache.get(auth_header)
+        if cached:
+            ts, cached_user = cached
+            ttl = AUTH_CACHE_TTL_SEC if cached_user else AUTH_CACHE_NEGATIVE_TTL_SEC
+            if now - ts < ttl:
+                return cached_user or None
+            auth_cache.pop(auth_header, None)
+
     try:
         scheme, credentials = auth_header.split()
         if scheme.lower() != "basic":
+            with auth_cache_lock:
+                auth_cache[auth_header] = (now, "")
             return None
         decoded = base64.b64decode(credentials).decode("utf-8")
         username, password = decoded.split(":", 1)
         if p.authenticate(username, password):
+            with auth_cache_lock:
+                auth_cache[auth_header] = (now, username)
             return username
     except Exception as e:
         logger.warning(f"Auth error: {e}")
+
+    with auth_cache_lock:
+        auth_cache[auth_header] = (now, "")
     return None
 
 

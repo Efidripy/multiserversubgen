@@ -43,6 +43,7 @@ interface ClientsPageCache {
 const CLIENTS_PAGE_CACHE_KEY = 'sub_manager_clients_page_cache_v1';
 const CLIENTS_PAGE_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 const CLIENTS_PAGE_REFRESH_MS = 5 * 60 * 1000; // background refresh interval
+const ENABLE_LIVE_CLIENT_TRAFFIC = false;
 const TRAFFIC_FETCH_MAX_CLIENTS = 30;
 const TRAFFIC_FETCH_CONCURRENCY = 4;
 const TRAFFIC_FETCH_TIMEOUT_MS = 8000;
@@ -139,7 +140,7 @@ export const ClientManager: React.FC = () => {
       }));
 
       setClients(rawClients);
-      if (!silent) {
+      if (!silent && ENABLE_LIVE_CLIENT_TRAFFIC) {
         loadTraffic(rawClients).catch(() => undefined);
       }
 

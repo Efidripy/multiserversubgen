@@ -74,12 +74,67 @@ function buildGrafanaUrl(): string {
 
 const bytesToGb = (bytes: number) => bytes / (1024 * 1024 * 1024);
 
+function getBucketSec(rangeSec: number): number {
+  if (rangeSec <= 3600) return 60;
+  if (rangeSec <= 6 * 3600) return 120;
+  if (rangeSec <= 24 * 3600) return 300;
+  return 900;
+}
+
+function aggregateAllNodesHistory(points: HistoryPoint[], rangeSec: number): HistoryPoint[] {
+  const bucketSec = getBucketSec(rangeSec);
+
+  // Keep only latest point per node in each bucket.
+  const perNodeBucket = new Map<string, HistoryPoint>();
+  for (const p of points) {
+    const bucketTs = Math.floor(p.ts / bucketSec) * bucketSec;
+    const key = `${bucketTs}:${p.node_id}`;
+    const prev = perNodeBucket.get(key);
+    if (!prev || p.ts > prev.ts) {
+      perNodeBucket.set(key, { ...p, ts: bucketTs });
+    }
+  }
+
+  // Aggregate all nodes inside each bucket.
+  const bucketMap = new Map<number, { cpuSum: number; nodeCount: number; onlineSum: number; trafficSum: number }>();
+  for (const p of perNodeBucket.values()) {
+    const curr = bucketMap.get(p.ts) || { cpuSum: 0, nodeCount: 0, onlineSum: 0, trafficSum: 0 };
+    curr.cpuSum += Number(p.cpu || 0);
+    curr.nodeCount += 1;
+    curr.onlineSum += Number(p.online_clients || 0);
+    curr.trafficSum += Number(p.traffic_total || 0);
+    bucketMap.set(p.ts, curr);
+  }
+
+  return Array.from(bucketMap.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([ts, v]) => ({
+      ts,
+      node_id: 0,
+      node_name: 'ALL',
+      available: 1,
+      xray_running: 1,
+      cpu: v.nodeCount > 0 ? v.cpuSum / v.nodeCount : 0,
+      online_clients: v.onlineSum,
+      traffic_total: v.trafficSum,
+      poll_ms: 0,
+    }));
+}
+
+function formatTickLabel(tsSec: number, rangeSec: number): string {
+  const d = new Date(tsSec * 1000);
+  if (rangeSec > 24 * 3600) {
+    return d.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 export const MonitoringDashboard: React.FC = () => {
   const { colors } = useTheme();
   const grafanaUrl = buildGrafanaUrl();
 
   const [nodes, setNodes] = useState<NodeItem[]>([]);
-  const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null);
+  const [selectedScope, setSelectedScope] = useState<string>('all'); // "all" | node id as string
   const [rangeSec, setRangeSec] = useState<number>(24 * 3600);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [latestSnapshotNodes, setLatestSnapshotNodes] = useState<SnapshotNode[]>([]);
@@ -87,23 +142,48 @@ export const MonitoringDashboard: React.FC = () => {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState('');
 
+  const isAllScope = selectedScope === 'all';
+  const selectedNodeId = isAllScope ? null : Number(selectedScope);
+  const selectedNodeName = useMemo(
+    () => (isAllScope ? 'All servers' : nodes.find((n) => n.id === selectedNodeId)?.name || 'Unknown'),
+    [isAllScope, nodes, selectedNodeId]
+  );
+
   const loadNodes = async () => {
     const res = await api.get('/v1/nodes', { auth: getAuth() });
     const list: NodeItem[] = (res.data || []).map((n: any) => ({ id: n.id, name: n.name }));
     setNodes(list);
-    if (list.length > 0 && !selectedNodeId) {
-      setSelectedNodeId(list[0].id);
+    if (!selectedScope && list.length > 0) {
+      setSelectedScope('all');
     }
   };
 
-  const loadHistory = async (nodeId: number, sinceSec: number) => {
+  const fetchNodeHistory = async (nodeId: number, sinceSec: number, limit: number): Promise<HistoryPoint[]> => {
+    const res = await api.get(`/v1/history/nodes/${nodeId}`, {
+      auth: getAuth(),
+      params: { since_sec: sinceSec, limit },
+    });
+    return (res.data?.points || []) as HistoryPoint[];
+  };
+
+  const loadHistory = async (scope: string, sinceSec: number) => {
     setLoadingHistory(true);
     try {
-      const res = await api.get(`/v1/history/nodes/${nodeId}`, {
-        auth: getAuth(),
-        params: { since_sec: sinceSec, limit: 2000 },
-      });
-      setHistory((res.data?.points || []) as HistoryPoint[]);
+      if (scope === 'all') {
+        if (nodes.length === 0) {
+          setHistory([]);
+          setLoadingHistory(false);
+          return;
+        }
+        const perNodeLimit = sinceSec >= 7 * 24 * 3600 ? 900 : 1200;
+        const all = await Promise.all(nodes.map((n) => fetchNodeHistory(n.id, sinceSec, perNodeLimit)));
+        const merged = all.flat();
+        setHistory(aggregateAllNodesHistory(merged, sinceSec));
+      } else {
+        const nodeId = Number(scope);
+        const data = await fetchNodeHistory(nodeId, sinceSec, 2000);
+        setHistory(data);
+      }
       setError('');
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load node history');
@@ -139,44 +219,40 @@ export const MonitoringDashboard: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!selectedNodeId) return;
-    loadHistory(selectedNodeId, rangeSec);
-  }, [selectedNodeId, rangeSec]);
+    loadHistory(selectedScope, rangeSec);
+  }, [selectedScope, rangeSec, nodes.length]);
 
   useEffect(() => {
     const timer = setInterval(() => {
-      if (selectedNodeId) {
-        loadHistory(selectedNodeId, rangeSec);
-      }
+      loadHistory(selectedScope, rangeSec);
       loadLatestSnapshot();
       loadDepsHealth();
     }, 60_000);
     return () => clearInterval(timer);
-  }, [selectedNodeId, rangeSec]);
+  }, [selectedScope, rangeSec, nodes.length]);
 
-  const selectedNodeName = useMemo(
-    () => nodes.find((n) => n.id === selectedNodeId)?.name || 'Unknown',
-    [nodes, selectedNodeId]
-  );
+  const latestForSelected = useMemo(() => {
+    if (isAllScope) return null;
+    return (
+      latestSnapshotNodes.find((n) => n.node_id === selectedNodeId || n.name === selectedNodeName) || null
+    );
+  }, [isAllScope, latestSnapshotNodes, selectedNodeId, selectedNodeName]);
 
-  const latestForSelected = useMemo(
-    () =>
-      latestSnapshotNodes.find(
-        (n) => n.node_id === selectedNodeId || n.name === selectedNodeName
-      ) || null,
-    [latestSnapshotNodes, selectedNodeId, selectedNodeName]
-  );
+  const allNodesStatus = useMemo(() => {
+    const total = latestSnapshotNodes.length;
+    const online = latestSnapshotNodes.filter((n) => n.available).length;
+    const onlineClients = latestSnapshotNodes.reduce((sum, n) => sum + Number(n.online_clients || 0), 0);
+    return { total, online, onlineClients };
+  }, [latestSnapshotNodes]);
 
-  const labels = history.map((p) =>
-    new Date(p.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-  );
+  const labels = history.map((p) => formatTickLabel(p.ts, rangeSec));
 
   const cpuData = {
     labels,
     datasets: [
       {
-        label: 'CPU %',
-        data: history.map((p) => Number(p.cpu || 0)),
+        label: isAllScope ? 'Avg CPU % (all nodes)' : 'CPU %',
+        data: history.map((p) => Number((p.cpu || 0).toFixed(2))),
         borderColor: colors.warning,
         backgroundColor: colors.warning + '33',
         tension: 0.25,
@@ -189,7 +265,7 @@ export const MonitoringDashboard: React.FC = () => {
     labels,
     datasets: [
       {
-        label: 'Online clients',
+        label: isAllScope ? 'Online clients (sum)' : 'Online clients',
         data: history.map((p) => Number(p.online_clients || 0)),
         borderColor: colors.accent,
         backgroundColor: colors.accent + '33',
@@ -203,7 +279,7 @@ export const MonitoringDashboard: React.FC = () => {
     labels,
     datasets: [
       {
-        label: 'Traffic total (GB)',
+        label: isAllScope ? 'Traffic total GB (sum)' : 'Traffic total (GB)',
         data: history.map((p) => Number(bytesToGb(p.traffic_total || 0).toFixed(2))),
         borderColor: colors.info,
         backgroundColor: colors.info + '33',
@@ -265,12 +341,13 @@ export const MonitoringDashboard: React.FC = () => {
           </label>
           <select
             className="form-select form-select-sm"
-            value={selectedNodeId ?? ''}
-            onChange={(e) => setSelectedNodeId(Number(e.target.value))}
+            value={selectedScope}
+            onChange={(e) => setSelectedScope(e.target.value)}
             style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
           >
+            <option value="all">Все серверы</option>
             {nodes.map((n) => (
-              <option key={n.id} value={n.id}>
+              <option key={n.id} value={String(n.id)}>
                 {n.name}
               </option>
             ))}
@@ -298,11 +375,11 @@ export const MonitoringDashboard: React.FC = () => {
             className="btn btn-sm w-100"
             style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
             onClick={() => {
-              if (selectedNodeId) loadHistory(selectedNodeId, rangeSec);
+              loadHistory(selectedScope, rangeSec);
               loadLatestSnapshot();
               loadDepsHealth();
             }}
-            disabled={!selectedNodeId || loadingHistory}
+            disabled={loadingHistory}
           >
             {loadingHistory ? '⏳ Обновление...' : '🔄 Обновить'}
           </button>
@@ -328,16 +405,26 @@ export const MonitoringDashboard: React.FC = () => {
         </div>
         <div className="col-md-3">
           <div className="card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>Node status</div>
-            <strong style={{ color: latestForSelected?.available ? colors.success : colors.danger }}>
-              {latestForSelected?.available ? 'online' : 'offline'}
+            <div className="small" style={{ color: colors.text.secondary }}>
+              {isAllScope ? 'Nodes online' : 'Node status'}
+            </div>
+            <strong style={{ color: isAllScope ? colors.success : latestForSelected?.available ? colors.success : colors.danger }}>
+              {isAllScope
+                ? `${allNodesStatus.online}/${allNodesStatus.total}`
+                : latestForSelected?.available
+                ? 'online'
+                : 'offline'}
             </strong>
           </div>
         </div>
         <div className="col-md-3">
           <div className="card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>Current online clients</div>
-            <strong style={{ color: colors.accent }}>{latestForSelected?.online_clients ?? 0}</strong>
+            <div className="small" style={{ color: colors.text.secondary }}>
+              {isAllScope ? 'Online clients (all)' : 'Current online clients'}
+            </div>
+            <strong style={{ color: colors.accent }}>
+              {isAllScope ? allNodesStatus.onlineClients : latestForSelected?.online_clients ?? 0}
+            </strong>
           </div>
         </div>
       </div>

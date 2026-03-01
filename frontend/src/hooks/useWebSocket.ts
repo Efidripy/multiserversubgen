@@ -19,7 +19,7 @@ export const useWebSocket = ({
   url,
   channels = [],
   onMessage,
-  reconnectInterval = 3000,
+  reconnectInterval = 10000,
   enabled = true,
 }: UseWebSocketOptions) => {
   const [isConnected, setIsConnected] = useState(false);

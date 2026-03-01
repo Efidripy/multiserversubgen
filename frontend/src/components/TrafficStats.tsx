@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
-import { useWebSocket } from '../hooks/useWebSocket';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -46,11 +45,18 @@ export const TrafficStats: React.FC = () => {
   const [error, setError] = useState('');
   const [groupBy, setGroupBy] = useState<'client' | 'inbound' | 'node'>('client');
   const [topN, setTopN] = useState(10);
-  const [lastDeltaAt, setLastDeltaAt] = useState(0);
 
   useEffect(() => {
     loadTrafficStats();
     loadOnlineClients();
+  }, [groupBy]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      loadTrafficStats();
+      loadOnlineClients();
+    }, 60000);
+    return () => clearInterval(timer);
   }, [groupBy]);
 
   const loadTrafficStats = async () => {
@@ -116,20 +122,6 @@ export const TrafficStats: React.FC = () => {
       console.error('Failed to load online clients:', err);
     }
   };
-
-  useWebSocket({
-    url: '',
-    channels: ['snapshot_delta'],
-    enabled: true,
-    onMessage: (msg) => {
-      if (msg.type !== 'snapshot_delta') return;
-      const now = Date.now();
-      if (now - lastDeltaAt < 15000) return;
-      setLastDeltaAt(now);
-      loadTrafficStats();
-      loadOnlineClients();
-    },
-  });
 
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 GB';
