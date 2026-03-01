@@ -8,6 +8,7 @@
   "nav": {
     "dashboard": "Панель управления",
     "nodes": "Узлы",
+    "monitoring": "Мониторинг",
     "clients": "Клиенты",
     "traffic": "Статистика",
     "inbounds": "Inbound'ы",
@@ -101,7 +102,29 @@
     "reality": "Reality",
     "tls": "TLS",
     "filterByProtocol": "Фильтр по протоколу",
-    "filterBySecurity": "Фильтр по безопасности"
+    "filterBySecurity": "Фильтр по безопасности",
+    "allProtocols": "Все протоколы",
+    "allSecurity": "Вся безопасность",
+    "allNodes": "Все узлы",
+    "clearFilters": "Сбросить фильтры",
+    "selectedCount": "Выбрано: {{count}}",
+    "batchRemark": "Общий remark",
+    "batchRemarkPlaceholder": "Опционально: новый remark",
+    "batchEnableMode": "Режим enable",
+    "batchUpdateEmpty": "Укажите remark или режим enable",
+    "confirmDeleteSingle": "Удалить inbound",
+    "confirmBatchDelete": "Удалить выбранные inbound ({{count}})?",
+    "nodeResolveFailed": "Не удалось определить node id",
+    "deleteFailed": "Не удалось удалить inbound",
+    "cloneFailed": "Не удалось клонировать inbound",
+    "batchEnableFailed": "Batch enable/disable завершился с ошибкой",
+    "batchUpdateFailed": "Batch update завершился с ошибкой",
+    "batchDeleteFailed": "Batch delete завершился с ошибкой",
+    "showingCount": "Показано {{filtered}} из {{total}} inbound",
+    "newRemark": "Новый remark",
+    "newPortOptional": "Новый порт (опционально)",
+    "cloneHint": "Это клонирует конфигурацию inbound на все остальные узлы.",
+    "cloning": "Клонирование..."
   },
   "subscriptions": {
     "title": "Управление подписками",
@@ -143,12 +166,36 @@
   },
   "theme": {
     "light": "Светлая",
-    "dark": "Темная"
+    "dark": "Темная",
+    "toggle": "Сменить тему"
   },
   "language": {
     "title": "Язык",
     "en": "English",
     "ru": "Русский"
+  },
+  "auth": {
+    "username": "Логин",
+    "password": "Пароль",
+    "totpCode": "TOTP код",
+    "signIn": "Войти",
+    "logout": "Выход",
+    "failed": "Ошибка авторизации"
+  },
+  "push": {
+    "title": "Уведомления",
+    "clear": "Очистить",
+    "empty": "Пока нет уведомлений",
+    "enabled": "Браузерные уведомления включены",
+    "enableBrowser": "Включить push в браузере",
+    "inboundUpdated": "Обновление inbound",
+    "inboundBatchEnable": "Массовое включение/отключение завершено",
+    "inboundBatchUpdate": "Массовое обновление завершено",
+    "inboundBatchDelete": "Массовое удаление завершено",
+    "nodeOnline": "Узел {{node}} снова в сети",
+    "nodeOffline": "Узел {{node}} недоступен",
+    "xrayRunning": "Xray запущен на {{node}}",
+    "xrayStopped": "Xray остановлен на {{node}}"
   },
   "messages": {
     "confirmDelete": "Вы уверены, что хотите удалить?",

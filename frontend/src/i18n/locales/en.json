@@ -8,6 +8,7 @@
   "nav": {
     "dashboard": "Dashboard",
     "nodes": "Node Manager",
+    "monitoring": "Monitoring",
     "clients": "Client Manager",
     "traffic": "Traffic Stats",
     "inbounds": "Inbound Manager",
@@ -101,7 +102,29 @@
     "reality": "Reality",
     "tls": "TLS",
     "filterByProtocol": "Filter by Protocol",
-    "filterBySecurity": "Filter by Security"
+    "filterBySecurity": "Filter by Security",
+    "allProtocols": "All Protocols",
+    "allSecurity": "All Security",
+    "allNodes": "All Nodes",
+    "clearFilters": "Clear Filters",
+    "selectedCount": "Selected: {{count}}",
+    "batchRemark": "Batch remark",
+    "batchRemarkPlaceholder": "Optional new remark",
+    "batchEnableMode": "Enable override",
+    "batchUpdateEmpty": "Set remark or enable mode first",
+    "confirmDeleteSingle": "Delete inbound",
+    "confirmBatchDelete": "Delete selected inbounds ({{count}})?",
+    "nodeResolveFailed": "Failed to resolve node id",
+    "deleteFailed": "Failed to delete inbound",
+    "cloneFailed": "Failed to clone inbound",
+    "batchEnableFailed": "Batch enable/disable failed",
+    "batchUpdateFailed": "Batch update failed",
+    "batchDeleteFailed": "Batch delete failed",
+    "showingCount": "Showing {{filtered}} of {{total}} inbounds",
+    "newRemark": "New remark",
+    "newPortOptional": "New port (optional)",
+    "cloneHint": "This clones the inbound configuration to all other nodes.",
+    "cloning": "Cloning..."
   },
   "subscriptions": {
     "title": "Subscription Manager",
@@ -143,12 +166,36 @@
   },
   "theme": {
     "light": "Light",
-    "dark": "Dark"
+    "dark": "Dark",
+    "toggle": "Toggle theme"
   },
   "language": {
     "title": "Language",
     "en": "English",
     "ru": "Русский"
+  },
+  "auth": {
+    "username": "Username",
+    "password": "Password",
+    "totpCode": "TOTP Code",
+    "signIn": "Sign In",
+    "logout": "Logout",
+    "failed": "Authentication failed"
+  },
+  "push": {
+    "title": "Notifications",
+    "clear": "Clear",
+    "empty": "No notifications yet",
+    "enabled": "Browser notifications are enabled",
+    "enableBrowser": "Enable Browser Push",
+    "inboundUpdated": "Inbound update",
+    "inboundBatchEnable": "Batch enable/disable completed",
+    "inboundBatchUpdate": "Batch update completed",
+    "inboundBatchDelete": "Batch delete completed",
+    "nodeOnline": "Node {{node}} is online",
+    "nodeOffline": "Node {{node}} is offline",
+    "xrayRunning": "Xray started on {{node}}",
+    "xrayStopped": "Xray stopped on {{node}}"
   },
   "messages": {
     "confirmDelete": "Are you sure you want to delete?",

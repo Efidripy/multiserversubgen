@@ -1,0 +1,30 @@
+groups:
+  - name: sub-manager-alerts
+    rules:
+      - alert: SubManagerHighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (
+              rate(sub_manager_http_request_duration_seconds_bucket{path=~"/api/v1/.*"}[5m])
+            )
+          ) > 1.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sub Manager API latency p95 is high"
+          description: "p95 latency > 1.5s for 10m on /api/v1/*."
+
+      - alert: SubManagerErrorRateHigh
+        expr: |
+          (
+            sum(rate(sub_manager_http_requests_total{status=~"5.."}[5m])) /
+            clamp_min(sum(rate(sub_manager_http_requests_total[5m])), 1)
+          ) > 0.03
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Sub Manager 5xx error rate is high"
+          description: "5xx ratio > 3% for 10m."
