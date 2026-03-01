@@ -32,6 +32,8 @@ export const useWebSocket = ({
   const lastErrorLogTsRef = useRef(0);
   const reconnectBlockedRef = useRef(false);
   const everConnectedRef = useRef(false);
+  const initialConnectFailCountRef = useRef(0);
+  const reconnectCooldownUntilRef = useRef(0);
 
   const safeSend = useCallback((payload: any): boolean => {
     const ws = wsRef.current;
@@ -59,6 +61,7 @@ export const useWebSocket = ({
   const connect = useCallback(() => {
     if (!enabled) return;
     if (reconnectBlockedRef.current) return;
+    if (Date.now() < reconnectCooldownUntilRef.current) return;
     if (wsRef.current && (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -86,6 +89,8 @@ export const useWebSocket = ({
         reconnectAttemptsRef.current = 0;
         reconnectBlockedRef.current = false;
         everConnectedRef.current = true;
+        initialConnectFailCountRef.current = 0;
+        reconnectCooldownUntilRef.current = 0;
 
         // Subscribe to channels
         channelsRef.current.forEach((channel) => {
@@ -143,6 +148,20 @@ export const useWebSocket = ({
           }
         }
 
+        // If socket never reaches OPEN repeatedly, pause reconnects.
+        if (!everConnectedRef.current) {
+          initialConnectFailCountRef.current += 1;
+          if (initialConnectFailCountRef.current >= 4) {
+            reconnectCooldownUntilRef.current = Date.now() + 5 * 60 * 1000; // 5 minutes
+            const now = Date.now();
+            if (now - lastErrorLogTsRef.current > 10000) {
+              console.warn('WebSocket temporarily paused after repeated connect failures (cooldown 5m).');
+              lastErrorLogTsRef.current = now;
+            }
+            return;
+          }
+        }
+
         // Attempt to reconnect
         if (enabled) {
           reconnectAttemptsRef.current += 1;
@@ -172,6 +191,8 @@ export const useWebSocket = ({
 
     setIsConnected(false);
     reconnectBlockedRef.current = false;
+    reconnectCooldownUntilRef.current = 0;
+    initialConnectFailCountRef.current = 0;
   }, []);
 
   const subscribe = useCallback((channel: string) => {
