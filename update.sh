@@ -456,9 +456,15 @@ location = /$GRAFANA_WEB_PATH {
     return 301 /$GRAFANA_WEB_PATH/;
 }
 
+location = /__${PROJECT_NAME}_grafana_401__ {
+    return 401;
+}
+
 location ^~ /$GRAFANA_WEB_PATH/ {
 ${mtls_directives}${allowlist_directives}    auth_basic "Restricted Monitoring";
     auth_basic_user_file /etc/nginx/.${PROJECT_NAME}_grafana.htpasswd;
+    # Preserve 401 challenge for browser BasicAuth prompt (avoid global 401->404 masking)
+    error_page 401 =401 /__${PROJECT_NAME}_grafana_401__;
     proxy_pass http://127.0.0.1:$GRAFANA_HTTP_PORT;
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
