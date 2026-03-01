@@ -100,7 +100,6 @@ sudo ./install.sh
 
 ### Обновление (рекомендуемый порядок)
 ```bash
-cd /opt/sub-manager
 git pull
 sudo ./update.sh
 ```
