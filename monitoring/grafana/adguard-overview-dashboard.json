@@ -1,5 +1,20 @@
 {
-  "annotations": {"list": []},
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -8,70 +23,535 @@
   "liveNow": false,
   "panels": [
     {
+      "type": "row",
+      "title": "AdGuard KPI",
+      "id": 100,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
       "datasource": "Prometheus",
-      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 100000 },
+              { "color": "red", "value": 500000 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 1 },
       "id": 1,
-      "targets": [{"expr": "sum(rate(sub_manager_adguard_dns_queries_total[5m]))", "refId": "A"}],
-      "title": "DNS Requests/sec",
-      "type": "timeseries"
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        { "expr": "sum(sub_manager_adguard_dns_queries_total)", "refId": "A" }
+      ],
+      "title": "Total DNS Queries",
+      "type": "stat"
     },
     {
       "datasource": "Prometheus",
-      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 30000 },
+              { "color": "red", "value": 100000 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 1 },
       "id": 2,
-      "targets": [{"expr": "100 * sum(rate(sub_manager_adguard_dns_blocked_total[5m])) / clamp_min(sum(rate(sub_manager_adguard_dns_queries_total[5m])), 1)", "refId": "A"}],
-      "title": "Block Rate (%)",
-      "type": "timeseries"
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        { "expr": "sum(sub_manager_adguard_dns_blocked_total)", "refId": "A" }
+      ],
+      "title": "Total Blocked",
+      "type": "stat"
     },
     {
       "datasource": "Prometheus",
-      "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 25 },
+              { "color": "red", "value": 50 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 1 },
       "id": 3,
-      "targets": [{"expr": "avg(sub_manager_adguard_dns_latency_ms)", "refId": "A"}],
-      "title": "DNS Upstream Latency (ms)",
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        { "expr": "avg(sub_manager_adguard_dns_block_rate_percent)", "refId": "A" }
+      ],
+      "title": "Block Rate",
+      "type": "gauge"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 40 },
+              { "color": "red", "value": 100 }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 1 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "line",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        { "expr": "avg(sub_manager_adguard_dns_latency_ms)", "refId": "A" }
+      ],
+      "title": "Avg DNS Latency",
+      "type": "stat"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "decimals": 2,
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "orange", "value": 20 },
+              { "color": "green", "value": 50 }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 1 },
+      "id": 5,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        { "expr": "avg(sub_manager_adguard_dns_cache_hit_ratio_percent)", "refId": "A" }
+      ],
+      "title": "Cache Hit Ratio",
+      "type": "gauge"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 1 },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        { "expr": "sum(sub_manager_adguard_dns_upstream_errors_total) or vector(0)", "refId": "A" }
+      ],
+      "title": "Upstream Errors",
+      "type": "stat"
+    },
+
+    {
+      "type": "row",
+      "title": "Traffic & Quality Trends",
+      "id": 101,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "id": 7,
+      "targets": [
+        { "expr": "sum(rate(sub_manager_adguard_dns_queries_total[5m]))", "legendFormat": "Total", "refId": "A" },
+        { "expr": "sum(rate(sub_manager_adguard_dns_blocked_total[5m]))", "legendFormat": "Blocked", "refId": "B" }
+      ],
+      "title": "DNS Requests / sec",
       "type": "timeseries"
     },
     {
       "datasource": "Prometheus",
-      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
-      "id": 4,
-      "targets": [{"expr": "avg(sub_manager_adguard_dns_cache_hit_ratio_percent)", "refId": "A"}],
-      "title": "Cache Hit Ratio (%)",
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "id": 8,
+      "targets": [
+        {
+          "expr": "100 * sum(rate(sub_manager_adguard_dns_blocked_total[5m])) / clamp_min(sum(rate(sub_manager_adguard_dns_queries_total[5m])), 1)",
+          "legendFormat": "Block Rate",
+          "refId": "A"
+        }
+      ],
+      "title": "Block Rate Trend",
       "type": "timeseries"
     },
     {
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "ms" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "id": 9,
+      "targets": [
+        { "expr": "avg(sub_manager_adguard_dns_latency_ms)", "legendFormat": "Avg latency", "refId": "A" },
+        { "expr": "max(sub_manager_adguard_dns_latency_ms)", "legendFormat": "Max latency", "refId": "B" }
+      ],
+      "title": "DNS Latency Trend",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "id": 10,
+      "targets": [
+        { "expr": "avg(sub_manager_adguard_dns_cache_hit_ratio_percent)", "legendFormat": "Cache hit %", "refId": "A" }
+      ],
+      "title": "Cache Efficiency Trend",
+      "type": "timeseries"
+    },
+
+    {
+      "type": "row",
+      "title": "Per Source",
+      "id": 102,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "collapsed": true,
+      "panels": []
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 23 },
+      "id": 11,
+      "targets": [
+        {
+          "expr": "sum by (source_name) (rate(sub_manager_adguard_dns_queries_total[5m]))",
+          "legendFormat": "{{source_name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Requests/sec by Source",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 23 },
+      "id": 12,
+      "targets": [
+        {
+          "expr": "100 * sum by (source_name) (rate(sub_manager_adguard_dns_blocked_total[5m])) / clamp_min(sum by (source_name) (rate(sub_manager_adguard_dns_queries_total[5m])), 1)",
+          "legendFormat": "{{source_name}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Block Rate by Source",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 31 },
+      "id": 13,
+      "options": { "orientation": "horizontal", "showValue": "always", "stacking": "none" },
+      "targets": [
+        {
+          "expr": "sum by (source_name) (sub_manager_adguard_dns_queries_total)",
+          "legendFormat": "{{source_name}}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "Total Queries by Source",
+      "type": "barchart"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 31 },
+      "id": 14,
+      "options": { "orientation": "horizontal", "showValue": "always", "stacking": "none" },
+      "targets": [
+        {
+          "expr": "sum by (source_name) (sub_manager_adguard_dns_blocked_total)",
+          "legendFormat": "{{source_name}}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "Total Blocked by Source",
+      "type": "barchart"
+    },
+
+    {
+      "type": "row",
+      "title": "Loki Top Lists",
+      "id": 103,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
       "datasource": "Loki",
-      "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
-      "id": 5,
-      "targets": [{"expr": "topk(10, sum by (QH) (count_over_time({job=\"adguard-querylog\"} | json | QH!=\"\" [1h])))", "refId": "A"}],
-      "title": "Top Queried Domains (1h)",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "id": 15,
+      "options": { "orientation": "horizontal", "showValue": "always" },
+      "targets": [
+        {
+          "expr": "topk(${top_n:raw}, sum by (QH) (count_over_time({job=\"adguard-querylog\",host=~\"${host:regex}\"} | json | __error__=\"\" | QH!=\"\" [$top_window])))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "Top Queried Domains",
       "type": "barchart"
     },
     {
       "datasource": "Loki",
-      "fieldConfig": {"defaults": {}, "overrides": []},
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
-      "id": 6,
-      "targets": [{"expr": "topk(10, sum by (IP) (count_over_time({job=\"adguard-querylog\"} | json | IP!=\"\" [1h])))", "refId": "A"}],
-      "title": "Top Clients (1h)",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "id": 16,
+      "options": { "orientation": "horizontal", "showValue": "always" },
+      "targets": [
+        {
+          "expr": "topk(${top_n:raw}, sum by (IP) (count_over_time({job=\"adguard-querylog\",host=~\"${host:regex}\"} | json | __error__=\"\" | IP!=\"\" [$top_window])))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "Top Clients",
       "type": "barchart"
+    },
+    {
+      "datasource": "Loki",
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+      "id": 17,
+      "options": { "orientation": "horizontal", "showValue": "always" },
+      "targets": [
+        {
+          "expr": "topk(${top_n:raw}, sum by (Upstream) (count_over_time({job=\"adguard-querylog\",host=~\"${host:regex}\"} | json | __error__=\"\" | Upstream!=\"\" [$top_window])))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "title": "Top Upstreams",
+      "type": "barchart"
+    },
+    {
+      "datasource": "Loki",
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
+      "id": 18,
+      "targets": [
+        {
+          "expr": "sum by (CP) (count_over_time({job=\"adguard-querylog\",host=~\"${host:regex}\"} | json | __error__=\"\" | CP!=\"\" [5m]))",
+          "refId": "A"
+        }
+      ],
+      "title": "Client Protocol Mix (last 5m)",
+      "type": "timeseries"
+    },
+
+    {
+      "type": "row",
+      "title": "Logs (Optional)",
+      "id": 104,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 56 },
+      "collapsed": true,
+      "panels": []
+    },
+    {
+      "datasource": "Loki",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 57 },
+      "id": 19,
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showCommonLabels": false,
+        "showLabels": false,
+        "showTime": true,
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "expr": "{job=\"adguard-querylog\",host=~\"${host:regex}\"} | json | __error__=\"\"",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent AdGuard Query Logs",
+      "type": "logs"
     }
   ],
   "refresh": "30s",
   "schemaVersion": 39,
   "style": "dark",
-  "tags": ["adguard", "dns", "loki", "prometheus"],
-  "templating": {"list": []},
-  "time": {"from": "now-24h", "to": "now"},
+  "tags": ["adguard", "dns", "loki", "prometheus", "sub-manager"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "Loki", "value": "Loki" },
+        "hide": 2,
+        "label": "",
+        "name": "DS_LOKI",
+        "options": [],
+        "query": "loki",
+        "refresh": 1,
+        "regex": "",
+        "type": "datasource"
+      },
+      {
+        "current": { "selected": true, "text": "Prometheus", "value": "Prometheus" },
+        "hide": 2,
+        "label": "",
+        "name": "DS_PROM",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "type": "datasource"
+      },
+      {
+        "allValue": ".*",
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "datasource": "Loki",
+        "definition": "label_values({job=\"adguard-querylog\"}, host)",
+        "hide": 0,
+        "includeAll": true,
+        "label": "Host",
+        "multi": false,
+        "name": "host",
+        "options": [],
+        "query": { "label": "host", "refId": "LokiVariableQueryEditor-Host", "stream": "{job=\"adguard-querylog\"}", "type": 1 },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query"
+      },
+      {
+        "current": { "selected": true, "text": "10", "value": "10" },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Top N",
+        "multi": false,
+        "name": "top_n",
+        "options": [
+          { "selected": false, "text": "5", "value": "5" },
+          { "selected": true, "text": "10", "value": "10" },
+          { "selected": false, "text": "15", "value": "15" },
+          { "selected": false, "text": "20", "value": "20" }
+        ],
+        "query": "5,10,15,20",
+        "type": "custom"
+      },
+      {
+        "current": { "selected": true, "text": "15m", "value": "15m" },
+        "hide": 0,
+        "includeAll": false,
+        "label": "Top Window",
+        "multi": false,
+        "name": "top_window",
+        "options": [
+          { "selected": false, "text": "5m", "value": "5m" },
+          { "selected": true, "text": "15m", "value": "15m" },
+          { "selected": false, "text": "30m", "value": "30m" },
+          { "selected": false, "text": "1h", "value": "1h" }
+        ],
+        "query": "5m,15m,30m,1h",
+        "type": "custom"
+      }
+    ]
+  },
+  "time": { "from": "now-24h", "to": "now" },
   "timepicker": {},
   "timezone": "",
   "title": "AdGuard Overview",
   "uid": "adguard-overview",
-  "version": 2,
+  "version": 3,
   "weekStart": ""
 }
