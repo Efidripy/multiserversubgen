@@ -128,18 +128,20 @@ curl -u admin:password https://your-domain/my-panel/api/v1/backup/all \
 ```
 multiserversubgen/
 ├── backend/
-│   ├── main.py              # FastAPI приложение
-│   ├── client_manager.py    # Управление клиентами
-│   ├── inbound_manager.py   # Управление inbound
-│   ├── server_monitor.py    # Мониторинг серверов
-│   └── db.py               # База данных
+│   ├── main.py                # FastAPI приложение
+│   ├── client_manager.py      # Управление клиентами
+│   ├── inbound_manager.py     # Управление inbound
+│   ├── server_monitor.py      # Мониторинг серверов
+│   ├── websocket_manager.py   # WebSocket слой
+│   ├── services/              # Collector + AdGuard сервисы
+│   ├── routers/               # Отдельные роутеры API
+│   └── tests/                 # Unit/регрессионные тесты
 │
 ├── frontend/
 │   ├── src/
 │   │   ├── contexts/
 │   │   │   └── ThemeContext.tsx     # Система тем
 │   │   ├── components/
-│   │   │   ├── App.tsx              # Главное приложение
 │   │   │   ├── ClientManager.tsx    # Управление клиентами
 │   │   │   ├── TrafficStats.tsx     # Статистика трафика
 │   │   │   ├── BackupManager.tsx    # Бэкапы
@@ -147,6 +149,7 @@ multiserversubgen/
 │   │   │   ├── InboundManager.tsx   # Inbound
 │   │   │   ├── NodeManager.tsx      # Серверы
 │   │   │   └── SubscriptionManager.tsx  # Подписки
+│   │   ├── App.tsx                  # Главное приложение
 │   │   └── main.tsx
 │   └── package.json
 │
@@ -322,6 +325,20 @@ cd /opt/sub-manager/frontend
 VITE_BASE="/my-panel/" npm run build
 # Файлы собираются в /opt/sub-manager/backend/build
 # Для размещения в корне: npm run build (VITE_BASE по умолчанию "/")
+```
+
+### Тесты и линт
+```bash
+# Frontend lint + build
+cd /opt/sub-manager/frontend
+npm run lint
+npm run build
+
+# Backend unit-тесты
+cd /opt/sub-manager
+source venv/bin/activate
+pip install -r backend/requirements-dev.txt
+pytest -q backend/tests
 ```
 
 ## 🛠️ Диагностика

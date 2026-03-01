@@ -358,7 +358,7 @@ class TestThreeXUIMonitor:
             result = monitor.get_client_traffic(self._node(), "user@test.com")
 
         sess.get.assert_called_once_with(
-            "https://1.2.3.4:443/panel/api/inbounds/getClientTraffics/user@test.com", timeout=5
+            "https://1.2.3.4:443/panel/api/inbounds/getClientTraffics/user%40test.com", timeout=5
         )
         assert result["available"] is True
         assert result["upload"] == 123

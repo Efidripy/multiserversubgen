@@ -17,3 +17,5 @@ venv/
 *.bak
 *.backup
 *.dump
+.pytest_cache/
+.ruff_cache/
