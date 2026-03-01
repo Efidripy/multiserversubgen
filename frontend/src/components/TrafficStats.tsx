@@ -13,13 +13,28 @@ import {
 } from 'chart.js';
 import { Bar } from 'react-chartjs-2';
 
+const barGlowPlugin = {
+  id: 'barGlowPlugin',
+  beforeDatasetsDraw(chart: any) {
+    const { ctx } = chart;
+    ctx.save();
+    ctx.shadowColor = 'rgba(6, 182, 212, 0.45)';
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 0;
+  },
+  afterDatasetsDraw(chart: any) {
+    chart.ctx.restore();
+  },
+};
+
 ChartJS.register(
   CategoryScale,
   LinearScale,
   BarElement,
   Title,
   Tooltip,
-  Legend
+  Legend,
+  barGlowPlugin
 );
 
 interface TrafficData {
@@ -140,7 +155,10 @@ export const TrafficStats: React.FC = () => {
         data: sortedTraffic.map(d => (d.download / 1073741824).toFixed(2)),
         backgroundColor: colors.accent + 'CC',
         borderColor: colors.accent,
-        borderWidth: 1,
+        borderWidth: 1.2,
+        borderRadius: 10,
+        hoverBackgroundColor: colors.accent,
+        hoverBorderColor: '#7dd3fc',
       },
     ],
   };
@@ -154,32 +172,53 @@ export const TrafficStats: React.FC = () => {
         labels: {
           color: colors.text.primary,
           font: {
-            size: 12
-          }
+            size: 12,
+            weight: 600 as const,
+          },
+          boxWidth: 12,
+          boxHeight: 12,
         }
       },
       title: {
         display: false,
       },
+      tooltip: {
+        backgroundColor: 'rgba(8, 17, 32, 0.96)',
+        borderColor: 'rgba(125, 211, 252, 0.45)',
+        borderWidth: 1,
+        titleColor: '#e2e8f0',
+        bodyColor: '#bae6fd',
+        displayColors: false,
+        padding: 10,
+        cornerRadius: 10,
+      },
+    },
+    interaction: {
+      intersect: false,
+      mode: 'index' as const,
     },
     scales: {
       x: {
         ticks: {
           color: colors.text.secondary,
           font: {
-            size: 10
+            size: 10,
+            weight: 600 as const,
           }
         },
         grid: {
-          color: colors.border
+          color: colors.border + '55'
         }
       },
       y: {
         ticks: {
-          color: colors.text.secondary
+          color: colors.text.secondary,
+          font: {
+            weight: 600 as const,
+          }
         },
         grid: {
-          color: colors.border
+          color: colors.border + '55'
         }
       }
     }
@@ -193,7 +232,7 @@ export const TrafficStats: React.FC = () => {
     <div className="traffic-stats">
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0" style={{ color: colors.accent }}>📈 Traffic Statistics</h5>
+          <h5 className="mb-0" style={{ color: colors.accent }}>Traffic Statistics</h5>
           <div>
             <button
               className="btn btn-sm"
@@ -204,7 +243,7 @@ export const TrafficStats: React.FC = () => {
               }}
               disabled={loading}
             >
-              {loading ? '⏳' : '🔄'} Refresh
+              {loading ? 'Loading...' : 'Refresh'}
             </button>
           </div>
         </div>
@@ -249,24 +288,24 @@ export const TrafficStats: React.FC = () => {
 
       {/* Stats Summary */}
       <div className="row mb-3">
-        <div className="col-md-4">
-          <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>Total Download</div>
-            <h4 style={{ color: colors.accent }}>{formatBytes(totalDownload)}</h4>
+          <div className="col-md-4">
+            <div className="card kpi-card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+              <div className="small" style={{ color: colors.text.secondary }}>Total Download</div>
+              <h4 style={{ color: colors.accent }}>{formatBytes(totalDownload)}</h4>
+            </div>
           </div>
-        </div>
-        <div className="col-md-4">
-          <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>Total Traffic</div>
-            <h4 style={{ color: colors.info }}>{formatBytes(totalTraffic)}</h4>
+          <div className="col-md-4">
+            <div className="card kpi-card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+              <div className="small" style={{ color: colors.text.secondary }}>Total Traffic</div>
+              <h4 style={{ color: colors.info }}>{formatBytes(totalTraffic)}</h4>
+            </div>
           </div>
-        </div>
-        <div className="col-md-4">
-          <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>Online Clients</div>
-            <h4 style={{ color: colors.warning }}>{onlineClients.length}</h4>
+          <div className="col-md-4">
+            <div className="card kpi-card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+              <div className="small" style={{ color: colors.text.secondary }}>Online Clients</div>
+              <h4 style={{ color: colors.warning }}>{onlineClients.length}</h4>
+            </div>
           </div>
-        </div>
       </div>
 
       {/* Charts */}
@@ -291,7 +330,7 @@ export const TrafficStats: React.FC = () => {
 
       {/* Online Clients */}
       <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3" style={{ color: colors.text.primary }}>🟢 Online Clients ({onlineClients.length})</h6>
+        <h6 className="mb-3" style={{ color: colors.text.primary }}>Online Clients ({onlineClients.length})</h6>
         {onlineClients.length === 0 ? (
           <p className="text-center py-3" style={{ color: colors.text.secondary }}>No clients online</p>
         ) : (

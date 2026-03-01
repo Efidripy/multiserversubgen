@@ -13,6 +13,7 @@ import { Sidebar } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
 import { useWebSocket } from './hooks/useWebSocket';
 import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials } from './auth';
+import { IconName, UIIcon } from './components/UIIcon';
 
 type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 type NoticeLevel = 'info' | 'success' | 'warning' | 'danger';
@@ -231,13 +232,16 @@ export const App: React.FC = () => {
       <div className="login-wrapper min-vh-100 d-flex align-items-center justify-content-center" style={{ backgroundColor: colors.bg.primary }}>
         <div className="card p-4" style={{ maxWidth: '400px', width: '100%', backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
           <div className="d-flex justify-content-between align-items-center mb-4">
-            <h5 className="mb-0" style={{ color: colors.text.primary }}>📡 {t('app.title')}</h5>
+            <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
+              <UIIcon name="logo" size={18} />
+              {t('app.title')}
+            </h5>
             <button
               className="btn btn-sm btn-outline-secondary"
               onClick={toggleTheme}
               title={t('theme.toggle')}
             >
-              {theme === 'dark' ? '☀️' : '🌙'}
+              {theme === 'dark' ? <UIIcon name="sun" size={16} /> : <UIIcon name="moon" size={16} />}
             </button>
           </div>
           <form onSubmit={(e) => { e.preventDefault(); handleLogin(); }}>
@@ -291,15 +295,15 @@ export const App: React.FC = () => {
     );
   }
 
-  const tabTitles: Record<TabType, string> = {
-    dashboard: `📊 ${t('nav.dashboard')}`,
-    servers: `🖥️ ${t('nav.nodes')}`,
-    inbounds: `🔌 ${t('nav.inbounds')}`,
-    clients: `👥 ${t('nav.clients')}`,
-    traffic: `📈 ${t('nav.traffic')}`,
-    monitoring: `📉 ${t('nav.monitoring')}`,
-    backup: `💾 ${t('nav.backup')}`,
-    subscriptions: `📜 ${t('nav.subscriptions')}`,
+  const tabMeta: Record<TabType, { icon: IconName; label: string }> = {
+    dashboard: { icon: 'dashboard', label: t('nav.dashboard') },
+    servers: { icon: 'servers', label: t('nav.nodes') },
+    inbounds: { icon: 'inbounds', label: t('nav.inbounds') },
+    clients: { icon: 'clients', label: t('nav.clients') },
+    traffic: { icon: 'traffic', label: t('nav.traffic') },
+    monitoring: { icon: 'monitoring', label: t('nav.monitoring') },
+    backup: { icon: 'backup', label: t('nav.backup') },
+    subscriptions: { icon: 'subscriptions', label: t('nav.subscriptions') },
   };
 
   const renderTabContent = () => {
@@ -361,10 +365,13 @@ export const App: React.FC = () => {
             aria-label="Open menu"
             style={{ color: colors.text.primary, backgroundColor: colors.bg.tertiary, border: `1px solid ${colors.border}` }}
           >
-            ☰
+            <UIIcon name="menu" size={16} />
           </button>
           <h1 className="app-topbar__title" style={{ color: colors.text.primary }}>
-            {tabTitles[activeTab]}
+            <span className="d-inline-flex align-items-center gap-2">
+              <UIIcon name={tabMeta[activeTab].icon} size={16} />
+              {tabMeta[activeTab].label}
+            </span>
           </h1>
 
           <div className="d-flex align-items-center gap-2">
@@ -384,7 +391,7 @@ export const App: React.FC = () => {
               onClick={() => setNotificationPanelOpen((v) => !v)}
               title={t('push.title')}
             >
-              🔔
+              <UIIcon name="bell" size={15} />
               {unreadCount > 0 && (
                 <span
                   className="position-absolute top-0 start-100 translate-middle badge rounded-pill"

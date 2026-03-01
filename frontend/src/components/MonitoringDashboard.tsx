@@ -14,7 +14,21 @@ import {
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+const lineGlowPlugin = {
+  id: 'lineGlowPlugin',
+  beforeDatasetsDraw(chart: any) {
+    const { ctx } = chart;
+    ctx.save();
+    ctx.shadowColor = 'rgba(56, 189, 248, 0.38)';
+    ctx.shadowBlur = 10;
+    ctx.shadowOffsetY = 0;
+  },
+  afterDatasetsDraw(chart: any) {
+    chart.ctx.restore();
+  },
+};
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, lineGlowPlugin);
 
 interface NodeItem {
   id: number;
@@ -261,8 +275,10 @@ export const MonitoringDashboard: React.FC = () => {
             data: node.points.map((p) => (p ? Number((p.cpu || 0).toFixed(2)) : null)),
             borderColor: c,
             backgroundColor: c + '33',
+            borderWidth: 2.2,
             tension: 0.25,
             pointRadius: 0,
+            pointHoverRadius: 3,
             spanGaps: true,
           };
         })
@@ -272,8 +288,10 @@ export const MonitoringDashboard: React.FC = () => {
             data: history.map((p) => Number((p.cpu || 0).toFixed(2))),
             borderColor: colors.warning,
             backgroundColor: colors.warning + '33',
+            borderWidth: 2.2,
             tension: 0.25,
             pointRadius: 0,
+            pointHoverRadius: 3,
           },
         ],
   };
@@ -288,8 +306,10 @@ export const MonitoringDashboard: React.FC = () => {
             data: node.points.map((p) => (p ? Number(p.online_clients || 0) : null)),
             borderColor: c,
             backgroundColor: c + '33',
+            borderWidth: 2.2,
             tension: 0.25,
             pointRadius: 0,
+            pointHoverRadius: 3,
             spanGaps: true,
           };
         })
@@ -299,8 +319,10 @@ export const MonitoringDashboard: React.FC = () => {
             data: history.map((p) => Number(p.online_clients || 0)),
             borderColor: colors.accent,
             backgroundColor: colors.accent + '33',
+            borderWidth: 2.2,
             tension: 0.25,
             pointRadius: 0,
+            pointHoverRadius: 3,
           },
         ],
   };
@@ -315,8 +337,10 @@ export const MonitoringDashboard: React.FC = () => {
             data: node.points.map((p) => (p ? Number(bytesToGb(p.traffic_total || 0).toFixed(2)) : null)),
             borderColor: c,
             backgroundColor: c + '33',
+            borderWidth: 2.2,
             tension: 0.25,
             pointRadius: 0,
+            pointHoverRadius: 3,
             spanGaps: true,
           };
         })
@@ -326,8 +350,10 @@ export const MonitoringDashboard: React.FC = () => {
             data: history.map((p) => Number(bytesToGb(p.traffic_total || 0).toFixed(2))),
             borderColor: colors.info,
             backgroundColor: colors.info + '33',
+            borderWidth: 2.2,
             tension: 0.25,
             pointRadius: 0,
+            pointHoverRadius: 3,
           },
         ],
   };
@@ -339,17 +365,59 @@ export const MonitoringDashboard: React.FC = () => {
       legend: {
         labels: {
           color: colors.text.primary,
+          usePointStyle: true,
+          pointStyle: 'circle' as const,
+          font: {
+            size: 12,
+            weight: 600 as const,
+          },
         },
+      },
+      tooltip: {
+        backgroundColor: 'rgba(8, 17, 32, 0.96)',
+        borderColor: 'rgba(125, 211, 252, 0.45)',
+        borderWidth: 1,
+        titleColor: '#e2e8f0',
+        bodyColor: '#bae6fd',
+        padding: 10,
+        cornerRadius: 10,
+        displayColors: true,
+        boxPadding: 3,
+      },
+    },
+    interaction: {
+      intersect: false,
+      mode: 'index' as const,
+    },
+    elements: {
+      line: {
+        capBezierPoints: true,
+      },
+      point: {
+        hoverRadius: 4,
+        hoverBorderWidth: 1.5,
+        hoverBorderColor: '#e0f2fe',
       },
     },
     scales: {
       x: {
-        ticks: { color: colors.text.secondary, maxTicksLimit: 10 },
-        grid: { color: colors.border },
+        ticks: {
+          color: colors.text.secondary,
+          maxTicksLimit: 10,
+          font: {
+            weight: 600 as const,
+          },
+        },
+        grid: { color: colors.border + '55' },
       },
       y: {
-        ticks: { color: colors.text.secondary },
-        grid: { color: colors.border },
+        ticks: {
+          color: colors.text.secondary,
+          font: {
+            weight: 600 as const,
+          },
+        },
+        grid: { color: colors.border + '55' },
       },
     },
   };
@@ -358,7 +426,7 @@ export const MonitoringDashboard: React.FC = () => {
     <div className="monitoring-panel card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <h4 className="mb-0" style={{ color: colors.text.primary }}>
-          📉 Monitoring
+          Monitoring
         </h4>
         <a
           className="btn btn-sm"
@@ -424,14 +492,14 @@ export const MonitoringDashboard: React.FC = () => {
             }}
             disabled={loadingHistory}
           >
-            {loadingHistory ? '⏳ Обновление...' : '🔄 Обновить'}
+            {loadingHistory ? 'Обновление...' : 'Обновить'}
           </button>
         </div>
       </div>
 
       <div className="row g-2 mb-3">
         <div className="col-md-3">
-          <div className="card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
+          <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
             <div className="small" style={{ color: colors.text.secondary }}>Collector</div>
             <strong style={{ color: depsHealth?.collector_running ? colors.success : colors.danger }}>
               {depsHealth?.collector_running ? 'running' : 'stopped'}
@@ -439,7 +507,7 @@ export const MonitoringDashboard: React.FC = () => {
           </div>
         </div>
         <div className="col-md-3">
-          <div className="card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
+          <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
             <div className="small" style={{ color: colors.text.secondary }}>Redis</div>
             <strong style={{ color: depsHealth?.redis?.ok ? colors.success : colors.warning }}>
               {depsHealth?.redis?.enabled ? (depsHealth?.redis?.ok ? 'ok' : 'degraded') : 'disabled'}
@@ -447,7 +515,7 @@ export const MonitoringDashboard: React.FC = () => {
           </div>
         </div>
         <div className="col-md-3">
-          <div className="card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
+          <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
             <div className="small" style={{ color: colors.text.secondary }}>
               {isAllScope ? 'Nodes online' : 'Node status'}
             </div>
@@ -461,7 +529,7 @@ export const MonitoringDashboard: React.FC = () => {
           </div>
         </div>
         <div className="col-md-3">
-          <div className="card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
+          <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
             <div className="small" style={{ color: colors.text.secondary }}>
               {isAllScope ? 'Online clients (all)' : 'Current online clients'}
             </div>
