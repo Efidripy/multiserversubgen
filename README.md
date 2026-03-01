@@ -41,6 +41,13 @@
 - 🌐 Сетевой трафик в реальном времени
 - ♻️ Auto-refresh с настраиваемым интервалом
 
+#### 6. **AdGuard Integration** - DNS аналитика без агентов
+- 🔌 Подключение удалённых AdGuard Home по `admin URL + login/password`
+- 📈 Сбор DNS KPI: queries, blocked rate, latency, cache hit ratio, upstream errors
+- 🧠 Top blocked domains и top clients
+- 🗃️ История snapshots сохраняется локально в `admin.db` (`adguard_history`)
+- 🛡️ Пароли источников шифруются тем же ключом, что и для узлов node panel
+
 #### 5. **InboundManager** - Управление Inbound
 - 📡 Просмотр всех inbound со всех серверов
 - 🎯 Фильтрация по протоколу, security, узлу
@@ -177,12 +184,28 @@ multiserversubgen/
 Monitoring assets:
 - `monitoring/prometheus/rules.yml` — alert rules (p95 latency, 5xx rate)
 - `monitoring/grafana/sub-manager-dashboard.json` — базовый dashboard
+- `monitoring/grafana/adguard-overview-dashboard.json` — dashboard для AdGuard (Prometheus + Loki)
+- `monitoring/loki/loki-config.yml` — локальный single-node Loki
+- `monitoring/promtail/promtail-config.yml` — сбор querylog/journal AdGuard в Loki
 - Install/update scripts автоматически:
   - создают scrape для `http://127.0.0.1:<APP_PORT>/metrics`
+  - при включении `ADGUARD_METRICS_ENABLED=true` добавляют scrape AdGuard:
+    - targets из `ADGUARD_METRICS_TARGETS` (через запятую, например `127.0.0.1:3000,10.0.0.12:3000`)
+    - path из `ADGUARD_METRICS_PATH` (по умолчанию `/control/prometheus/metrics`)
+  - при включении `ADGUARD_LOKI_ENABLED=true` устанавливают `loki` + `promtail` и подключают datasource `Loki` в Grafana
+    - `ADGUARD_QUERYLOG_PATH` (по умолчанию `/opt/AdGuardHome/data/querylog.json`)
+    - `ADGUARD_SYSTEMD_UNIT` (по умолчанию `AdGuardHome.service`)
   - включают provisioning datasource/dashboard в Grafana
   - публикуют Grafana через subpath `/$WEB_PATH/grafana/` в Nginx
   - отключают `auth.anonymous` в Grafana и биндуют её на `127.0.0.1:3000`
   - поддерживают IP allowlist и optional mTLS (клиентские сертификаты) для путей панели
+
+Быстрая проверка после включения AdGuard-интеграции:
+```bash
+sudo systemctl status prometheus grafana-server loki promtail --no-pager
+curl -s http://127.0.0.1:9090/api/v1/targets | jq '.data.activeTargets[] | {job:.labels.job, health:.health}'
+curl -s http://127.0.0.1:3100/ready
+```
 
 ### Frontend
 - Сборка: `backend/build/`

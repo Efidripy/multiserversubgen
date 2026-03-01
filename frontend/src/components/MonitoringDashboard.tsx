@@ -67,6 +67,49 @@ interface SnapshotNode {
   traffic_total: number;
 }
 
+interface AdGuardSource {
+  id: number;
+  name: string;
+  admin_url: string;
+  dns_url: string;
+  username: string;
+  verify_tls: boolean;
+  enabled: boolean;
+  last_error: string;
+  last_success_ts: number;
+  last_collected_ts: number;
+}
+
+interface AdGuardSnapshot {
+  source_id: number;
+  source_name: string;
+  available: boolean;
+  queries_total: number;
+  blocked_total: number;
+  blocked_rate: number;
+  cache_hit_ratio: number;
+  avg_latency_ms: number;
+  upstream_errors: number;
+  top_domains?: Array<{ name: string; count: number }>;
+  top_blocked_domains?: Array<{ name: string; count: number }>;
+  top_clients?: Array<{ name: string; count: number }>;
+}
+
+interface AdGuardOverview {
+  ts: number;
+  sources: AdGuardSnapshot[];
+  summary: {
+    sources_total: number;
+    sources_online: number;
+    queries_total: number;
+    blocked_total: number;
+    blocked_rate: number;
+    avg_latency_ms: number;
+    cache_hit_ratio: number;
+    upstream_errors: number;
+  };
+}
+
 const RANGE_OPTIONS = [
   { value: 3600, label: '1h' },
   { value: 6 * 3600, label: '6h' },
@@ -156,6 +199,19 @@ export const MonitoringDashboard: React.FC = () => {
   const [depsHealth, setDepsHealth] = useState<DepsHealth | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [error, setError] = useState('');
+  const [adguardSources, setAdguardSources] = useState<AdGuardSource[]>([]);
+  const [adguardOverview, setAdguardOverview] = useState<AdGuardOverview | null>(null);
+  const [adguardLoading, setAdguardLoading] = useState(false);
+  const [adguardError, setAdguardError] = useState('');
+  const [adguardForm, setAdguardForm] = useState({
+    name: '',
+    admin_url: '',
+    dns_url: '',
+    username: '',
+    password: '',
+    verify_tls: true,
+    enabled: true,
+  });
 
   const isAllScope = selectedScope === 'all';
   const selectedNodeId = isAllScope ? null : Number(selectedScope);
@@ -226,12 +282,46 @@ export const MonitoringDashboard: React.FC = () => {
     }
   };
 
+  const loadAdguardSources = async () => {
+    const res = await api.get('/v1/adguard/sources', { auth: getAuth() });
+    setAdguardSources((res.data || []) as AdGuardSource[]);
+  };
+
+  const loadAdguardOverview = async () => {
+    try {
+      setAdguardLoading(true);
+      const res = await api.get('/v1/adguard/overview', { auth: getAuth() });
+      setAdguardOverview(res.data as AdGuardOverview);
+      setAdguardError('');
+    } catch (err: any) {
+      setAdguardError(err?.response?.data?.detail || 'Failed to load AdGuard overview');
+      setAdguardOverview(null);
+    } finally {
+      setAdguardLoading(false);
+    }
+  };
+
+  const collectAdguardNow = async () => {
+    try {
+      setAdguardLoading(true);
+      await api.post('/v1/adguard/collect-now', {}, { auth: getAuth() });
+      await Promise.all([loadAdguardOverview(), loadAdguardSources()]);
+      setAdguardError('');
+    } catch (err: any) {
+      setAdguardError(err?.response?.data?.detail || 'Failed to collect AdGuard data');
+    } finally {
+      setAdguardLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadNodes().catch((err: any) => {
       setError(err?.response?.data?.detail || 'Failed to load nodes');
     });
     loadLatestSnapshot();
     loadDepsHealth();
+    loadAdguardSources().catch(() => undefined);
+    loadAdguardOverview().catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -243,6 +333,7 @@ export const MonitoringDashboard: React.FC = () => {
       loadHistory(selectedScope, rangeSec);
       loadLatestSnapshot();
       loadDepsHealth();
+      loadAdguardOverview();
     }, 60_000);
     return () => clearInterval(timer);
   }, [selectedScope, rangeSec, nodes.length]);
@@ -422,6 +513,32 @@ export const MonitoringDashboard: React.FC = () => {
     },
   };
 
+  const topBlockedDomains = useMemo(() => {
+    const agg = new Map<string, number>();
+    (adguardOverview?.sources || []).forEach((s) => {
+      (s.top_blocked_domains || []).forEach((it) => {
+        agg.set(it.name, (agg.get(it.name) || 0) + Number(it.count || 0));
+      });
+    });
+    return Array.from(agg.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([name, count]) => ({ name, count }));
+  }, [adguardOverview]);
+
+  const topClients = useMemo(() => {
+    const agg = new Map<string, number>();
+    (adguardOverview?.sources || []).forEach((s) => {
+      (s.top_clients || []).forEach((it) => {
+        agg.set(it.name, (agg.get(it.name) || 0) + Number(it.count || 0));
+      });
+    });
+    return Array.from(agg.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([name, count]) => ({ name, count }));
+  }, [adguardOverview]);
+
   return (
     <div className="monitoring-panel card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
@@ -541,6 +658,219 @@ export const MonitoringDashboard: React.FC = () => {
       </div>
 
       <div className="row g-3">
+        <div className="col-12">
+          <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
+            <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+              <h6 className="mb-0" style={{ color: colors.text.primary }}>AdGuard DNS Monitoring</h6>
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.info, borderColor: colors.info, color: '#fff' }}
+                onClick={collectAdguardNow}
+                disabled={adguardLoading}
+              >
+                {adguardLoading ? 'Сбор...' : 'Собрать сейчас'}
+              </button>
+            </div>
+
+            {adguardError && (
+              <div className="alert mb-3" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+                {adguardError}
+              </div>
+            )}
+
+            <div className="row g-2 mb-3">
+              <div className="col-md-2">
+                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                  <div className="small" style={{ color: colors.text.secondary }}>Sources</div>
+                  <strong style={{ color: colors.text.primary }}>{adguardOverview?.summary?.sources_online || 0}/{adguardOverview?.summary?.sources_total || 0}</strong>
+                </div>
+              </div>
+              <div className="col-md-2">
+                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                  <div className="small" style={{ color: colors.text.secondary }}>Queries</div>
+                  <strong style={{ color: colors.accent }}>{Math.round(adguardOverview?.summary?.queries_total || 0).toLocaleString()}</strong>
+                </div>
+              </div>
+              <div className="col-md-2">
+                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                  <div className="small" style={{ color: colors.text.secondary }}>Block rate</div>
+                  <strong style={{ color: colors.warning }}>{(adguardOverview?.summary?.blocked_rate || 0).toFixed(2)}%</strong>
+                </div>
+              </div>
+              <div className="col-md-2">
+                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                  <div className="small" style={{ color: colors.text.secondary }}>Latency</div>
+                  <strong style={{ color: colors.success }}>{(adguardOverview?.summary?.avg_latency_ms || 0).toFixed(1)} ms</strong>
+                </div>
+              </div>
+              <div className="col-md-2">
+                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                  <div className="small" style={{ color: colors.text.secondary }}>Cache hit</div>
+                  <strong style={{ color: colors.info }}>{(adguardOverview?.summary?.cache_hit_ratio || 0).toFixed(2)}%</strong>
+                </div>
+              </div>
+              <div className="col-md-2">
+                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                  <div className="small" style={{ color: colors.text.secondary }}>Upstream errors</div>
+                  <strong style={{ color: colors.danger }}>{Math.round(adguardOverview?.summary?.upstream_errors || 0).toLocaleString()}</strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="table-responsive mb-3">
+              <table className="table table-sm align-middle mb-0" style={{ color: colors.text.primary }}>
+                <thead>
+                  <tr>
+                    <th>Source</th>
+                    <th>Status</th>
+                    <th>Queries</th>
+                    <th>Blocked</th>
+                    <th>Block %</th>
+                    <th>Latency</th>
+                    <th>Cache %</th>
+                    <th>Errors</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(adguardOverview?.sources || []).map((s) => (
+                    <tr key={s.source_id}>
+                      <td>{s.source_name}</td>
+                      <td style={{ color: s.available ? colors.success : colors.danger }}>{s.available ? 'online' : 'offline'}</td>
+                      <td>{Math.round(s.queries_total || 0).toLocaleString()}</td>
+                      <td>{Math.round(s.blocked_total || 0).toLocaleString()}</td>
+                      <td>{(s.blocked_rate || 0).toFixed(2)}%</td>
+                      <td>{(s.avg_latency_ms || 0).toFixed(1)} ms</td>
+                      <td>{(s.cache_hit_ratio || 0).toFixed(2)}%</td>
+                      <td>{Math.round(s.upstream_errors || 0).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                  {!(adguardOverview?.sources || []).length && (
+                    <tr>
+                      <td colSpan={8} style={{ color: colors.text.secondary }}>Нет данных AdGuard. Добавьте источник ниже и нажмите «Собрать сейчас».</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="row g-3 mb-2">
+              <div className="col-md-6">
+                <h6 style={{ color: colors.text.primary }}>Top blocked domains</h6>
+                <ul className="list-group">
+                  {topBlockedDomains.map((it) => (
+                    <li key={it.name} className="list-group-item d-flex justify-content-between" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}>
+                      <span>{it.name}</span>
+                      <strong>{it.count}</strong>
+                    </li>
+                  ))}
+                  {!topBlockedDomains.length && (
+                    <li className="list-group-item" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.secondary }}>
+                      Пока нет данных
+                    </li>
+                  )}
+                </ul>
+              </div>
+              <div className="col-md-6">
+                <h6 style={{ color: colors.text.primary }}>Top clients</h6>
+                <ul className="list-group">
+                  {topClients.map((it) => (
+                    <li key={it.name} className="list-group-item d-flex justify-content-between" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}>
+                      <span>{it.name}</span>
+                      <strong>{it.count}</strong>
+                    </li>
+                  ))}
+                  {!topClients.length && (
+                    <li className="list-group-item" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.secondary }}>
+                      Пока нет данных
+                    </li>
+                  )}
+                </ul>
+              </div>
+            </div>
+
+            <hr style={{ borderColor: colors.border }} />
+            <h6 className="mb-2" style={{ color: colors.text.primary }}>Добавить источник AdGuard</h6>
+            <div className="row g-2">
+              <div className="col-md-2">
+                <input
+                  className="form-control form-control-sm"
+                  placeholder="Name"
+                  value={adguardForm.name}
+                  onChange={(e) => setAdguardForm((s) => ({ ...s, name: e.target.value }))}
+                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
+                />
+              </div>
+              <div className="col-md-3">
+                <input
+                  className="form-control form-control-sm"
+                  placeholder="Admin URL"
+                  value={adguardForm.admin_url}
+                  onChange={(e) => setAdguardForm((s) => ({ ...s, admin_url: e.target.value }))}
+                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
+                />
+              </div>
+              <div className="col-md-2">
+                <input
+                  className="form-control form-control-sm"
+                  placeholder="DNS URL (optional)"
+                  value={adguardForm.dns_url}
+                  onChange={(e) => setAdguardForm((s) => ({ ...s, dns_url: e.target.value }))}
+                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
+                />
+              </div>
+              <div className="col-md-2">
+                <input
+                  className="form-control form-control-sm"
+                  placeholder="Username"
+                  value={adguardForm.username}
+                  onChange={(e) => setAdguardForm((s) => ({ ...s, username: e.target.value }))}
+                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
+                />
+              </div>
+              <div className="col-md-2">
+                <input
+                  className="form-control form-control-sm"
+                  type="password"
+                  placeholder="Password"
+                  value={adguardForm.password}
+                  onChange={(e) => setAdguardForm((s) => ({ ...s, password: e.target.value }))}
+                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
+                />
+              </div>
+              <div className="col-md-1 d-grid">
+                <button
+                  className="btn btn-sm"
+                  style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#fff' }}
+                  onClick={async () => {
+                    try {
+                      await api.post('/v1/adguard/sources', adguardForm, { auth: getAuth() });
+                      setAdguardForm({
+                        name: '',
+                        admin_url: '',
+                        dns_url: '',
+                        username: '',
+                        password: '',
+                        verify_tls: true,
+                        enabled: true,
+                      });
+                      await Promise.all([loadAdguardSources(), collectAdguardNow()]);
+                    } catch (err: any) {
+                      setAdguardError(err?.response?.data?.detail || 'Failed to add AdGuard source');
+                    }
+                  }}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+            {!!adguardSources.length && (
+              <div className="small mt-2" style={{ color: colors.text.secondary }}>
+                Sources configured: {adguardSources.map((s) => s.name).join(', ')}
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="col-12">
           <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
             <h6 style={{ color: colors.text.primary }}>CPU ({selectedNodeName})</h6>

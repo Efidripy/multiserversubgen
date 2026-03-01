@@ -1,0 +1,77 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "targets": [{"expr": "sum(rate(adguard_dns_queries_total[5m]))", "refId": "A"}],
+      "title": "DNS Requests/sec",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "targets": [{"expr": "100 * sum(rate(adguard_dns_queries_blocked_total[5m])) / clamp_min(sum(rate(adguard_dns_queries_total[5m])), 1)", "refId": "A"}],
+      "title": "Block Rate (%)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 3,
+      "targets": [{"expr": "1000 * avg(adguard_dns_upstream_avg_time_seconds)", "refId": "A"}],
+      "title": "DNS Upstream Latency (ms)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 4,
+      "targets": [{"expr": "100 * sum(rate(adguard_dns_queries_cached_total[5m])) / clamp_min(sum(rate(adguard_dns_queries_total[5m])), 1)", "refId": "A"}],
+      "title": "Cache Hit Ratio (%)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Loki",
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "id": 5,
+      "targets": [{"expr": "topk(10, sum by (question_host) (count_over_time({job=\"adguard-querylog\"} | json | question_host!\"\" [1h])))", "refId": "A"}],
+      "title": "Top Queried Domains (1h)",
+      "type": "barchart"
+    },
+    {
+      "datasource": "Loki",
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 6,
+      "targets": [{"expr": "topk(10, sum by (client_name) (count_over_time({job=\"adguard-querylog\"} | json | client_name!\"\" [1h])))", "refId": "A"}],
+      "title": "Top Clients (1h)",
+      "type": "barchart"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["adguard", "dns", "loki", "prometheus"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "AdGuard Overview",
+  "uid": "adguard-overview",
+  "version": 1,
+  "weekStart": ""
+}

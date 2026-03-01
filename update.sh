@@ -134,6 +134,8 @@ write_install_log() {
         COLLECTOR_BASE_INTERVAL_SEC COLLECTOR_MAX_INTERVAL_SEC COLLECTOR_MAX_PARALLEL
         REDIS_URL AUDIT_QUEUE_BATCH_SIZE ROLE_VIEWERS ROLE_OPERATORS
         MONITORING_ENABLED GRAFANA_WEB_PATH GRAFANA_HTTP_PORT
+        ADGUARD_METRICS_ENABLED ADGUARD_METRICS_TARGETS ADGUARD_METRICS_PATH
+        ADGUARD_LOKI_ENABLED ADGUARD_QUERYLOG_PATH ADGUARD_SYSTEMD_UNIT
         GRAFANA_AUTH_ENABLED GRAFANA_AUTH_USER GRAFANA_AUTH_HASH
         SECURITY_MTLS_ENABLED SECURITY_MTLS_CA_PATH SECURITY_IP_ALLOWLIST
         MFA_TOTP_ENABLED MFA_TOTP_USERS MFA_TOTP_WS_STRICT
@@ -297,6 +299,41 @@ configure_monitoring_stack() {
         fi
     fi
 
+    local adguard_scrape_block=""
+    local adguard_metrics_enabled="${ADGUARD_METRICS_ENABLED:-false}"
+    local adguard_metrics_targets="${ADGUARD_METRICS_TARGETS:-}"
+    local adguard_metrics_path="${ADGUARD_METRICS_PATH:-/control/prometheus/metrics}"
+    local adguard_loki_enabled="${ADGUARD_LOKI_ENABLED:-false}"
+    local adguard_querylog_path="${ADGUARD_QUERYLOG_PATH:-/opt/AdGuardHome/data/querylog.json}"
+    local adguard_systemd_unit="${ADGUARD_SYSTEMD_UNIT:-AdGuardHome.service}"
+    local has_adguard_targets="false"
+    local loki_ready="false"
+
+    if [ "$adguard_metrics_enabled" = "true" ] && [ -n "$adguard_metrics_targets" ]; then
+        local adguard_targets_count=0
+        adguard_scrape_block="
+  - job_name: adguard-home
+    metrics_path: ${adguard_metrics_path}
+    scrape_interval: 30s
+    static_configs:
+      - targets:"
+        IFS=',' read -ra _adguard_targets <<< "$adguard_metrics_targets"
+        local target
+        for target in "${_adguard_targets[@]}"; do
+            target="$(echo "$target" | xargs)"
+            if [ -n "$target" ]; then
+                adguard_scrape_block="${adguard_scrape_block}
+          - '${target}'"
+                adguard_targets_count=$((adguard_targets_count + 1))
+            fi
+        done
+        if [ "$adguard_targets_count" -gt 0 ]; then
+            has_adguard_targets="true"
+        else
+            adguard_scrape_block=""
+        fi
+    fi
+
     mkdir -p /etc/prometheus/rules
     cp "$SCRIPT_DIR/monitoring/prometheus/rules.yml" /etc/prometheus/rules/sub-manager-rules.yml
     cat > /etc/prometheus/prometheus.yml <<EOF
@@ -316,6 +353,7 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ['127.0.0.1:${APP_PORT}']
+${adguard_scrape_block}
 EOF
 
     mkdir -p /etc/grafana/provisioning/datasources
@@ -333,6 +371,42 @@ datasources:
     editable: false
 EOF
 
+    if [ "$adguard_loki_enabled" = "true" ]; then
+        if apt_install loki promtail >/dev/null 2>&1; then
+            mkdir -p /etc/loki /etc/promtail /var/lib/loki /var/lib/promtail
+            cp "$SCRIPT_DIR/monitoring/loki/loki-config.yml" /etc/loki/local-config.yaml
+            cp "$SCRIPT_DIR/monitoring/promtail/promtail-config.yml" /etc/promtail/config.yml
+            sed -i "s|__ADGUARD_QUERYLOG_PATH__|${adguard_querylog_path}|g" /etc/promtail/config.yml
+            sed -i "s|__ADGUARD_SYSTEMD_UNIT__|${adguard_systemd_unit}|g" /etc/promtail/config.yml
+            systemctl enable --now loki >/dev/null 2>&1 || true
+            systemctl enable --now promtail >/dev/null 2>&1 || true
+            systemctl restart loki >/dev/null 2>&1 || true
+            systemctl restart promtail >/dev/null 2>&1 || true
+            loki_ready="true"
+            echo "  ✓ Loki и promtail настроены."
+        else
+            echo "  ⚠️ Не удалось установить loki/promtail. Продолжаем без логов AdGuard."
+        fi
+    fi
+
+    if [ "$loki_ready" = "true" ]; then
+        cat > /etc/grafana/provisioning/datasources/sub-manager-prometheus.yml <<'EOF'
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:9090
+    isDefault: true
+    editable: false
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://127.0.0.1:3100
+    editable: false
+EOF
+    fi
+
     cat > /etc/grafana/provisioning/dashboards/sub-manager-dashboard.yml <<'EOF'
 apiVersion: 1
 providers:
@@ -348,6 +422,11 @@ providers:
 EOF
 
     cp "$SCRIPT_DIR/monitoring/grafana/sub-manager-dashboard.json" /var/lib/grafana/dashboards/sub-manager-dashboard.json
+    if [ "$has_adguard_targets" = "true" ] || [ "$loki_ready" = "true" ]; then
+        cp "$SCRIPT_DIR/monitoring/grafana/adguard-overview-dashboard.json" /var/lib/grafana/dashboards/adguard-overview-dashboard.json
+    else
+        rm -f /var/lib/grafana/dashboards/adguard-overview-dashboard.json
+    fi
     chown -R grafana:grafana /var/lib/grafana/dashboards
 
     python3 <<PYTHON
@@ -626,6 +705,12 @@ ROLE_OPERATORS=${ROLE_OPERATORS:-""}
 MONITORING_ENABLED=${MONITORING_ENABLED:-"true"}
 GRAFANA_WEB_PATH=${GRAFANA_WEB_PATH:-"grafana"}
 GRAFANA_HTTP_PORT=${GRAFANA_HTTP_PORT:-"43000"}
+ADGUARD_METRICS_ENABLED=${ADGUARD_METRICS_ENABLED:-"false"}
+ADGUARD_METRICS_TARGETS=${ADGUARD_METRICS_TARGETS:-""}
+ADGUARD_METRICS_PATH=${ADGUARD_METRICS_PATH:-"/control/prometheus/metrics"}
+ADGUARD_LOKI_ENABLED=${ADGUARD_LOKI_ENABLED:-"false"}
+ADGUARD_QUERYLOG_PATH=${ADGUARD_QUERYLOG_PATH:-"/opt/AdGuardHome/data/querylog.json"}
+ADGUARD_SYSTEMD_UNIT=${ADGUARD_SYSTEMD_UNIT:-"AdGuardHome.service"}
 GRAFANA_AUTH_ENABLED=${GRAFANA_AUTH_ENABLED:-"true"}
 GRAFANA_AUTH_USER=${GRAFANA_AUTH_USER:-"monitor"}
 GRAFANA_AUTH_HASH=${GRAFANA_AUTH_HASH:-""}
@@ -679,6 +764,12 @@ echo "AUDIT_QUEUE_BATCH_SIZE: $AUDIT_QUEUE_BATCH_SIZE"
 echo "ROLE_VIEWERS: ${ROLE_VIEWERS:-<none>}"
 echo "ROLE_OPERATORS: ${ROLE_OPERATORS:-<none>}"
 echo "MONITORING_ENABLED: $MONITORING_ENABLED"
+echo "ADGUARD_METRICS_ENABLED: $ADGUARD_METRICS_ENABLED"
+echo "ADGUARD_METRICS_TARGETS: ${ADGUARD_METRICS_TARGETS:-<none>}"
+echo "ADGUARD_METRICS_PATH: $ADGUARD_METRICS_PATH"
+echo "ADGUARD_LOKI_ENABLED: $ADGUARD_LOKI_ENABLED"
+echo "ADGUARD_QUERYLOG_PATH: ${ADGUARD_QUERYLOG_PATH:-<none>}"
+echo "ADGUARD_SYSTEMD_UNIT: ${ADGUARD_SYSTEMD_UNIT:-<none>}"
 echo "GRAFANA_AUTH_ENABLED: $GRAFANA_AUTH_ENABLED"
 echo "GRAFANA_AUTH_USER: ${GRAFANA_AUTH_USER:-<none>}"
 echo "SECURITY_MTLS_ENABLED: $SECURITY_MTLS_ENABLED"
@@ -756,6 +847,42 @@ if [[ "$path_choice" == "y" ]]; then
         GRAFANA_HTTP_PORT=$(pick_free_local_port 43000)
     fi
     VITE_GRAFANA_PATH="/${GRAFANA_WEB_PATH}/"
+fi
+
+if [ "$MONITORING_ENABLED" = "true" ]; then
+    adguard_choice=$(ask_yes_no "Изменить интеграцию AdGuard (Prometheus/Loki)? (y/n, default: n): " "n")
+    if [[ "$adguard_choice" == "y" ]]; then
+        adguard_metrics_default="n"
+        adguard_loki_default="n"
+        if [ "${ADGUARD_METRICS_ENABLED}" = "true" ]; then
+            adguard_metrics_default="y"
+        fi
+        if [ "${ADGUARD_LOKI_ENABLED}" = "true" ]; then
+            adguard_loki_default="y"
+        fi
+        adguard_metrics_choice=$(ask_yes_no "Включить AdGuard метрики в Prometheus? (y/n, default: ${adguard_metrics_default}): " "${adguard_metrics_default}")
+        if [[ "$adguard_metrics_choice" == "y" ]]; then
+            ADGUARD_METRICS_ENABLED="true"
+            read -p "Targets AdGuard через запятую (current: ${ADGUARD_METRICS_TARGETS:-127.0.0.1:3000}): " ADGUARD_METRICS_TARGETS_INPUT
+            ADGUARD_METRICS_TARGETS=${ADGUARD_METRICS_TARGETS_INPUT:-${ADGUARD_METRICS_TARGETS:-127.0.0.1:3000}}
+            read -p "Metrics path AdGuard (current: ${ADGUARD_METRICS_PATH}): " ADGUARD_METRICS_PATH_INPUT
+            ADGUARD_METRICS_PATH=${ADGUARD_METRICS_PATH_INPUT:-$ADGUARD_METRICS_PATH}
+        else
+            ADGUARD_METRICS_ENABLED="false"
+            ADGUARD_METRICS_TARGETS=""
+        fi
+
+        adguard_loki_choice=$(ask_yes_no "Включить Loki/promtail для querylog AdGuard? (y/n, default: ${adguard_loki_default}): " "${adguard_loki_default}")
+        if [[ "$adguard_loki_choice" == "y" ]]; then
+            ADGUARD_LOKI_ENABLED="true"
+            read -p "Путь querylog.json (current: ${ADGUARD_QUERYLOG_PATH}): " ADGUARD_QUERYLOG_PATH_INPUT
+            ADGUARD_QUERYLOG_PATH=${ADGUARD_QUERYLOG_PATH_INPUT:-$ADGUARD_QUERYLOG_PATH}
+            read -p "Systemd unit AdGuard (current: ${ADGUARD_SYSTEMD_UNIT}): " ADGUARD_SYSTEMD_UNIT_INPUT
+            ADGUARD_SYSTEMD_UNIT=${ADGUARD_SYSTEMD_UNIT_INPUT:-$ADGUARD_SYSTEMD_UNIT}
+        else
+            ADGUARD_LOKI_ENABLED="false"
+        fi
+    fi
 fi
 
 public_choice=$(ask_yes_no "Изменить публичный домен/схему URL? (y/n, default: n): " "n")
