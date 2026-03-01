@@ -12,7 +12,7 @@
       "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
       "id": 1,
-      "targets": [{"expr": "sum(rate(adguard_dns_queries_total[5m]))", "refId": "A"}],
+      "targets": [{"expr": "sum(rate(sub_manager_adguard_dns_queries_total[5m]))", "refId": "A"}],
       "title": "DNS Requests/sec",
       "type": "timeseries"
     },
@@ -21,7 +21,7 @@
       "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
       "id": 2,
-      "targets": [{"expr": "100 * sum(rate(adguard_dns_queries_blocked_total[5m])) / clamp_min(sum(rate(adguard_dns_queries_total[5m])), 1)", "refId": "A"}],
+      "targets": [{"expr": "100 * sum(rate(sub_manager_adguard_dns_blocked_total[5m])) / clamp_min(sum(rate(sub_manager_adguard_dns_queries_total[5m])), 1)", "refId": "A"}],
       "title": "Block Rate (%)",
       "type": "timeseries"
     },
@@ -30,7 +30,7 @@
       "fieldConfig": {"defaults": {"unit": "ms"}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
       "id": 3,
-      "targets": [{"expr": "1000 * avg(adguard_dns_upstream_avg_time_seconds)", "refId": "A"}],
+      "targets": [{"expr": "avg(sub_manager_adguard_dns_latency_ms)", "refId": "A"}],
       "title": "DNS Upstream Latency (ms)",
       "type": "timeseries"
     },
@@ -39,7 +39,7 @@
       "fieldConfig": {"defaults": {"unit": "percent"}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
       "id": 4,
-      "targets": [{"expr": "100 * sum(rate(adguard_dns_queries_cached_total[5m])) / clamp_min(sum(rate(adguard_dns_queries_total[5m])), 1)", "refId": "A"}],
+      "targets": [{"expr": "avg(sub_manager_adguard_dns_cache_hit_ratio_percent)", "refId": "A"}],
       "title": "Cache Hit Ratio (%)",
       "type": "timeseries"
     },
@@ -48,7 +48,7 @@
       "fieldConfig": {"defaults": {}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
       "id": 5,
-      "targets": [{"expr": "topk(10, sum by (question_host) (count_over_time({job=\"adguard-querylog\"} | json | question_host!\"\" [1h])))", "refId": "A"}],
+      "targets": [{"expr": "topk(10, sum by (QH) (count_over_time({job=\"adguard-querylog\"} | json | QH!=\"\" [1h])))", "refId": "A"}],
       "title": "Top Queried Domains (1h)",
       "type": "barchart"
     },
@@ -57,7 +57,7 @@
       "fieldConfig": {"defaults": {}, "overrides": []},
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
       "id": 6,
-      "targets": [{"expr": "topk(10, sum by (client_name) (count_over_time({job=\"adguard-querylog\"} | json | client_name!\"\" [1h])))", "refId": "A"}],
+      "targets": [{"expr": "topk(10, sum by (IP) (count_over_time({job=\"adguard-querylog\"} | json | IP!=\"\" [1h])))", "refId": "A"}],
       "title": "Top Clients (1h)",
       "type": "barchart"
     }
@@ -72,6 +72,6 @@
   "timezone": "",
   "title": "AdGuard Overview",
   "uid": "adguard-overview",
-  "version": 1,
+  "version": 2,
   "weekStart": ""
 }
