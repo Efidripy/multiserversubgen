@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { UIIcon } from './UIIcon';
 
 interface Node {
   id: number;
@@ -149,24 +150,30 @@ export const BackupManager: React.FC = () => {
 
   const getProgressIcon = (nodeId: number) => {
     const status = backupProgress[nodeId];
-    if (status === 'downloading') return '⏳';
-    if (status === 'success') return '✅';
-    if (status === 'error') return '❌';
-    return '';
+    if (status === 'downloading') return <UIIcon name="spinner" size={14} />;
+    if (status === 'success') return <UIIcon name="check" size={14} />;
+    if (status === 'error') return <UIIcon name="x" size={14} />;
+    return null;
   };
 
   return (
     <div className="backup-manager">
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0" style={{ color: colors.accent }}>💾 Backup & Restore</h5>
+          <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.accent }}>
+            <UIIcon name="backup" size={16} />
+            Backup & Restore
+          </h5>
           <button
             className="btn btn-sm"
             style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
             onClick={downloadAllBackups}
             disabled={loading || nodes.length === 0}
           >
-            📦 Download All Backups
+            <span className="d-inline-flex align-items-center gap-1">
+              <UIIcon name="download" size={14} />
+              Download All Backups
+            </span>
           </button>
         </div>
 
@@ -177,14 +184,17 @@ export const BackupManager: React.FC = () => {
         )}
 
         <div className="alert" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.text.primary }}>
-          <strong>ℹ️ Important:</strong> Backups contain the complete database including all client configurations.
+          <strong>Important:</strong> Backups contain the complete database including all client configurations.
           Make sure to store backups securely. When restoring, the Xray service may need to be restarted.
         </div>
       </div>
 
       {/* Backup List */}
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3" style={{ color: colors.text.primary }}>📥 Download Backups</h6>
+        <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
+          <UIIcon name="download" size={14} />
+          Download Backups
+        </h6>
         
         {nodes.length === 0 ? (
           <p className="text-center py-3" style={{ color: colors.text.secondary }}>
@@ -211,7 +221,7 @@ export const BackupManager: React.FC = () => {
                       {node.ip}:{node.port}
                     </td>
                     <td>
-                      <span style={{ fontSize: '1.2rem' }}>
+                      <span className="d-inline-flex align-items-center justify-content-center" style={{ minHeight: '18px' }}>
                         {getProgressIcon(node.id)}
                       </span>
                     </td>
@@ -222,7 +232,10 @@ export const BackupManager: React.FC = () => {
                         onClick={() => downloadBackup(node.id, node.name)}
                         disabled={loading || backupProgress[node.id] === 'downloading'}
                       >
-                        📥 Download
+                        <span className="d-inline-flex align-items-center gap-1">
+                          <UIIcon name="download" size={14} />
+                          Download
+                        </span>
                       </button>
                     </td>
                   </tr>
@@ -235,10 +248,13 @@ export const BackupManager: React.FC = () => {
 
       {/* Restore Section */}
       <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3" style={{ color: colors.text.primary }}>📤 Restore from Backup</h6>
+        <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
+          <UIIcon name="upload" size={14} />
+          Restore from Backup
+        </h6>
         
-        <div className="alert alert-warning" style={{ backgroundColor: colors.warning + '22', borderColor: colors.warning, color: '#000' }}>
-          <strong>⚠️ Warning:</strong> Restoring a backup will REPLACE the current database. Make sure you have a recent backup before proceeding.
+        <div className="alert alert-warning" style={{ backgroundColor: colors.warning + '22', borderColor: colors.warning, color: colors.text.primary }}>
+          <strong>Warning:</strong> Restoring a backup will REPLACE the current database. Make sure you have a recent backup before proceeding.
         </div>
 
         <div className="row g-3">
@@ -275,11 +291,14 @@ export const BackupManager: React.FC = () => {
           <div className="col-md-3 d-flex align-items-end">
             <button
               className="btn w-100"
-              style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: '#000' }}
+              style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
               onClick={importBackup}
               disabled={loading || !selectedNode || !importFile}
             >
-              📤 Restore Backup
+              <span className="d-inline-flex align-items-center gap-1">
+                <UIIcon name="upload" size={14} />
+                Restore Backup
+              </span>
             </button>
           </div>
         </div>
@@ -295,7 +314,10 @@ export const BackupManager: React.FC = () => {
 
       {/* Automation Info */}
       <div className="card p-3 mt-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3" style={{ color: colors.text.primary }}>🤖 Automated Backups</h6>
+        <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
+          <UIIcon name="backup" size={14} />
+          Automated Backups
+        </h6>
         <p style={{ color: colors.text.secondary }}>
           For automated backup scheduling, you can set up a cron job on your server:
         </p>

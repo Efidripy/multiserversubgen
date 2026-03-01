@@ -37,21 +37,21 @@ export const useTheme = () => {
 
 const lightTheme = {
   bg: {
-    primary: '#ffffff',
-    secondary: '#f8fafc',
-    tertiary: '#e2e8f0',
+    primary: '#f2f6fb',
+    secondary: '#ffffff',
+    tertiary: '#eef3f9',
   },
   text: {
-    primary: '#0f172a',
-    secondary: '#475569',
-    tertiary: '#64748b',
+    primary: '#12243a',
+    secondary: '#4d637d',
+    tertiary: '#74879f',
   },
-  border: '#cbd5e1',
-  accent: '#06b6d4',
+  border: '#d5e1ee',
+  accent: '#0ea5b7',
   success: '#22c55e',
-  warning: '#f59e0b',
-  danger: '#ef4444',
-  info: '#06b6d4',
+  warning: '#c3944a',
+  danger: '#dc4b57',
+  info: '#1f8ed8',
 };
 
 const darkTheme = {
@@ -68,7 +68,7 @@ const darkTheme = {
   border: '#334155',
   accent: '#14b8a6',
   success: '#22c55e',
-  warning: '#f59e0b',
+  warning: '#d6a352',
   danger: '#ef4444',
   info: '#0ea5e9',
 };
@@ -89,6 +89,8 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
     localStorage.setItem('app_theme', theme);
     document.body.style.backgroundColor = colors.bg.primary;
     document.body.style.color = colors.text.primary;
+    document.body.classList.toggle('theme-light', theme === 'light');
+    document.body.classList.toggle('theme-dark', theme === 'dark');
     // Set CSS custom properties for use in App.css
     const root = document.documentElement;
     root.style.setProperty('--bg-primary', colors.bg.primary);
@@ -105,7 +107,7 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
     root.style.setProperty('--info', colors.info);
     // Pre-computed semi-transparent accent variants used in App.css
     root.style.setProperty('--accent-focus-ring', hexToRgba(colors.accent, 0.22));
-    root.style.setProperty('--accent-row-hover', hexToRgba(colors.accent, 0.07));
+    root.style.setProperty('--accent-row-hover', hexToRgba(colors.accent, 0.06));
   }, [theme, colors]);
 
   const toggleTheme = () => {

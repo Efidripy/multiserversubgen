@@ -3,6 +3,7 @@ import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { AddClientMultiServer } from './AddClientMultiServer';
 import { getAuth } from '../auth';
+import { UIIcon } from './UIIcon';
 
 interface Client {
   id: number;
@@ -517,21 +518,24 @@ export const ClientManager: React.FC = () => {
       <AddClientMultiServer />
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0" style={{ color: colors.accent }}>👥 Client Management</h5>
+          <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.accent }}>
+            <UIIcon name="clients" size={16} />
+            Client Management
+          </h5>
           <div>
             <button 
               className="btn btn-sm me-2"
               style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
               onClick={() => setShowBatchModal(true)}
             >
-              ➕ Batch Add
+              <span className="d-inline-flex align-items-center gap-1"><UIIcon name="plus" size={14} />Batch Add</span>
             </button>
             <button 
               className="btn btn-sm me-2"
               style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
               onClick={exportToCSV}
             >
-              📥 Export CSV
+              <span className="d-inline-flex align-items-center gap-1"><UIIcon name="download" size={14} />Export CSV</span>
             </button>
             <button 
               className="btn btn-sm"
@@ -539,7 +543,10 @@ export const ClientManager: React.FC = () => {
               onClick={() => loadClients()}
               disabled={loading}
             >
-              {loading ? '⏳' : '🔄'} Reload
+              <span className="d-inline-flex align-items-center gap-1">
+                <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
+                Reload
+              </span>
             </button>
           </div>
         </div>
@@ -556,7 +563,7 @@ export const ClientManager: React.FC = () => {
             <input
               type="text"
               className="form-control form-control-sm"
-              placeholder="🔍 Search email..."
+              placeholder="Search email..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
@@ -623,7 +630,7 @@ export const ClientManager: React.FC = () => {
               style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }}
               onClick={() => handleBatchDelete('selected')}
             >
-              🗑 Delete Selected
+              <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Selected</span>
             </button>
           </div>
         )}
@@ -631,24 +638,24 @@ export const ClientManager: React.FC = () => {
         <div className="mb-3 d-flex gap-2">
           <button
             className="btn btn-sm"
-            style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: '#000' }}
+            style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
             onClick={() => handleBatchDelete('expired')}
           >
-            🗑 Delete Expired
+            <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Expired</span>
           </button>
           <button
             className="btn btn-sm"
-            style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: '#000' }}
+            style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
             onClick={() => handleBatchDelete('depleted')}
           >
-            🗑 Delete Depleted
+            <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Depleted</span>
           </button>
           <button
             className="btn btn-sm"
             style={{ backgroundColor: colors.info, borderColor: colors.info, color: '#ffffff' }}
             onClick={() => handleResetTraffic(null)}
           >
-            🔄 Reset All Traffic
+            <span className="d-inline-flex align-items-center gap-1"><UIIcon name="refresh" size={14} />Reset All Traffic</span>
           </button>
         </div>
       </div>
@@ -726,10 +733,16 @@ export const ClientManager: React.FC = () => {
                           <span style={{ color: colors.text.secondary }}>○ Disabled</span>
                         )}
                         {isExpired && (
-                          <span style={{ color: colors.danger }}>⏰ Expired</span>
+                          <span className="d-inline-flex align-items-center gap-1" style={{ color: colors.danger }}>
+                            <UIIcon name="clock" size={13} />
+                            Expired
+                          </span>
                         )}
                         {isDepleted && (
-                          <span style={{ color: colors.warning }}>📊 Depleted</span>
+                          <span className="d-inline-flex align-items-center gap-1" style={{ color: colors.warning }}>
+                            <UIIcon name="traffic" size={13} />
+                            Depleted
+                          </span>
                         )}
                       </td>
                       <td>{downloadBytes != null ? formatBytes(downloadBytes) : <span style={{ color: colors.text.secondary }}>—</span>}</td>
@@ -754,7 +767,7 @@ export const ClientManager: React.FC = () => {
                           onClick={() => handleResetTraffic(client.id)}
                           title="Reset traffic"
                         >
-                          🔄
+                          <UIIcon name="refresh" size={14} />
                         </button>
                       </td>
                     </tr>

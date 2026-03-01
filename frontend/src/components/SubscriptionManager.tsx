@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { UIIcon } from './UIIcon';
 
 interface Stats {
   count: number;
@@ -160,7 +161,10 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       {/* Фильтры и настройки */}
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0" style={{ color: colors.accent }}>🔗 Subscriptions</h5>
+          <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.accent }}>
+            <UIIcon name="link" size={16} />
+            Subscriptions
+          </h5>
           <div className="d-flex align-items-center gap-2">
             <button
               className="btn btn-sm"
@@ -168,7 +172,10 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               onClick={loadEmails}
               disabled={loading}
             >
-              {loading ? '⏳' : '🔄'} Refresh Emails
+              <span className="d-inline-flex align-items-center gap-1">
+                <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
+                Refresh Emails
+              </span>
             </button>
             <div className="btn-group" role="group">
             <button
@@ -180,7 +187,10 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               }}
               onClick={() => setViewMode('individual')}
             >
-              👤 Individual
+              <span className="d-inline-flex align-items-center gap-1">
+                <UIIcon name="user" size={14} />
+                Individual
+              </span>
             </button>
             <button
               className="btn btn-sm"
@@ -191,7 +201,10 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               }}
               onClick={() => setViewMode('grouped')}
             >
-              📁 Grouped
+              <span className="d-inline-flex align-items-center gap-1">
+                <UIIcon name="folder" size={14} />
+                Grouped
+              </span>
             </button>
           </div>
           </div>
@@ -237,16 +250,22 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                   }}
                   onClick={() => toggleNodeSelection(node.name)}
                 >
-                  {selectedNodes.includes(node.name) ? '✓ ' : ''}{node.name}
+                  <span className="d-inline-flex align-items-center gap-1">
+                    {selectedNodes.includes(node.name) && <UIIcon name="check" size={12} />}
+                    {node.name}
+                  </span>
                 </button>
               ))}
               {selectedNodes.length > 0 && (
                 <button
                   className="btn btn-sm"
-                  style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: '#000' }}
+                  style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
                   onClick={() => setSelectedNodes([])}
                 >
-                  ✕ Clear
+                  <span className="d-inline-flex align-items-center gap-1">
+                    <UIIcon name="x" size={12} />
+                    Clear
+                  </span>
                 </button>
               )}
             </div>
@@ -256,7 +275,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         {(filterProtocol || selectedNodes.length > 0) && (
           <div className="alert mt-2 mb-0" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.text.primary }}>
             <small>
-              <strong>ℹ️ Active filters:</strong>
+              <strong>Active filters:</strong>
               {filterProtocol && ` Protocol: ${filterProtocol.toUpperCase()}`}
               {selectedNodes.length > 0 && ` | Nodes: ${selectedNodes.join(', ')}`}
             </small>
@@ -267,7 +286,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       {/* Подписки */}
       <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <h6 className="mb-3" style={{ color: colors.text.primary }}>
-          {viewMode === 'individual' ? `👥 Individual Subscriptions (${emails.length})` : `📁 Grouped Subscriptions (${groups.length} groups)`}
+          {viewMode === 'individual' ? `Individual Subscriptions (${emails.length})` : `Grouped Subscriptions (${groups.length} groups)`}
         </h6>
         {emails.length === 0 ? (
           <p className="text-center py-3" style={{ color: colors.text.secondary }}>Нет пользователей. Добавьте узлы node panel.</p>
@@ -327,7 +346,10 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                   <div className="d-flex justify-content-between align-items-center mb-2">
                     <div>
                       <h6 className="mb-0" style={{ color: colors.accent }}>
-                        📁 {group.identifier}
+                        <span className="d-inline-flex align-items-center gap-1">
+                          <UIIcon name="folder" size={13} />
+                          {group.identifier}
+                        </span>
                       </h6>
                       <small style={{ color: colors.text.secondary }}>
                         {group.count} clients

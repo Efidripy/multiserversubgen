@@ -13,6 +13,7 @@ interface UseWebSocketOptions {
   onMessage?: (message: WebSocketMessage) => void;
   reconnectInterval?: number;
   enabled?: boolean;
+  trackLastMessage?: boolean;
 }
 
 export const useWebSocket = ({
@@ -21,6 +22,7 @@ export const useWebSocket = ({
   onMessage,
   reconnectInterval = 10000,
   enabled = true,
+  trackLastMessage = false,
 }: UseWebSocketOptions) => {
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
@@ -104,7 +106,9 @@ export const useWebSocket = ({
       wsRef.current.onmessage = (event) => {
         try {
           const message: WebSocketMessage = JSON.parse(event.data);
-          setLastMessage(message);
+          if (trackLastMessage) {
+            setLastMessage(message);
+          }
           onMessageRef.current?.(message);
         } catch (error) {
           console.error('Failed to parse WebSocket message:', error);

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { UIIcon } from './UIIcon';
 
 interface ServerStatus {
   node: string;
@@ -151,7 +152,7 @@ export const ServerStatus: React.FC = () => {
             onClick={loadServersStatus}
             disabled={loading}
           >
-            {loading ? '⏳' : '🔄'}
+            <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
           </button>
         </div>
       </div>
@@ -184,7 +185,10 @@ export const ServerStatus: React.FC = () => {
 
             {!server.available && (
               <p className="server-card__error small" style={{ color: colors.warning }}>
-                ⚠️ {server.error || 'Connection failed'}
+                <span className="d-inline-flex align-items-center gap-1">
+                  <UIIcon name="warning" size={13} />
+                  {server.error || 'Connection failed'}
+                </span>
               </p>
             )}
 
@@ -235,7 +239,10 @@ export const ServerStatus: React.FC = () => {
                     </span>
                   )}
                   <span className="small" style={{ color: colors.text.secondary }}>
-                    ⏱ {formatUptime(server.system.uptime)}
+                    <span className="d-inline-flex align-items-center gap-1">
+                      <UIIcon name="clock" size={13} />
+                      {formatUptime(server.system.uptime)}
+                    </span>
                   </span>
                   {server.timestamp && (
                     <span className="small" style={{ color: colors.text.secondary }}>
@@ -250,21 +257,25 @@ export const ServerStatus: React.FC = () => {
                     <span className="small" style={{ color: colors.text.secondary }}>
                       Xray {server.xray.version}
                       {server.xray.running ? (
-                        <span className="badge ms-1" style={{ backgroundColor: colors.success }}>▶</span>
+                        <span className="badge ms-1 d-inline-flex align-items-center justify-content-center" style={{ backgroundColor: colors.success }}>
+                          <UIIcon name="statusOn" size={12} />
+                        </span>
                       ) : (
-                        <span className="badge ms-1" style={{ backgroundColor: colors.danger }}>■</span>
+                        <span className="badge ms-1 d-inline-flex align-items-center justify-content-center" style={{ backgroundColor: colors.danger }}>
+                          <UIIcon name="statusOff" size={12} />
+                        </span>
                       )}
                     </span>
                     <button
                       className="btn btn-sm"
                       style={{ backgroundColor: colors.warning + '33', borderColor: colors.warning + '66', color: colors.warning, padding: '1px 8px', fontSize: '0.75rem' }}
-                      onClick={() => handleRestartXray(server.node)}
-                      disabled={!server.xray.running}
-                    >
-                      🔄
-                    </button>
-                  </div>
-                )}
+                    onClick={() => handleRestartXray(server.node)}
+                    disabled={!server.xray.running}
+                  >
+                    <UIIcon name="refresh" size={13} />
+                  </button>
+                </div>
+              )}
               </div>
             )}
           </div>

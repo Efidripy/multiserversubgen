@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { UIIcon } from './UIIcon';
 
 interface Inbound {
   id: number;
@@ -308,14 +309,20 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
     <div className="inbound-manager">
       <div className="card p-3 mb-4" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0" style={{ color: colors.accent }}>🔌 {t('inbounds.title')}</h5>
+          <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.accent }}>
+            <UIIcon name="inbounds" size={16} />
+            {t('inbounds.title')}
+          </h5>
           <button
             className="btn btn-sm"
             style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
             onClick={loadInbounds}
             disabled={loading}
           >
-            🔄 {t('common.refresh')}
+            <span className="d-inline-flex align-items-center gap-1">
+              <UIIcon name="refresh" size={14} />
+              {t('common.refresh')}
+            </span>
           </button>
         </div>
 
@@ -441,7 +448,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
               </button>
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: '#000' }}
+                style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
                 onClick={() => handleBatchEnable(false)}
                 disabled={loading || selectedKeys.size === 0}
               >
@@ -534,7 +541,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                       onClick={() => handleCloneClick(ib)}
                       title={t('inbounds.cloneInbound')}
                     >
-                      📋
+                      <UIIcon name="copy" size={14} />
                     </button>
                     <button
                       className="btn btn-sm"
@@ -542,7 +549,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                       onClick={() => handleDelete(ib)}
                       title={t('inbounds.deleteInbound')}
                     >
-                      🗑
+                      <UIIcon name="trash" size={14} />
                     </button>
                   </td>
                 </tr>

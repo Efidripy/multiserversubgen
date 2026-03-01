@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../contexts/ThemeContext';
 import { IconName, UIIcon } from './UIIcon';
@@ -36,11 +36,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { colors, theme, toggleTheme } = useTheme();
   const { t, i18n } = useTranslation();
   const currentLang = (i18n.resolvedLanguage || i18n.language || 'en').toLowerCase();
+  const asciiVariants = useMemo(() => buildAsciiMsmVariants(), []);
+  const [asciiIndex, setAsciiIndex] = useState(() => Math.floor(Math.random() * asciiVariants.length));
 
   const handleNav = (tab: TabType) => {
     setActiveTab(tab);
     onMobileClose();
   };
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setAsciiIndex(prev => (prev + 1) % asciiVariants.length);
+    }, 2600);
+    return () => clearInterval(timer);
+  }, [asciiVariants.length]);
 
   return (
     <>
@@ -57,15 +66,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         style={{ backgroundColor: colors.bg.secondary, borderRight: `1px solid ${colors.border}` }}
       >
         <div className="sidebar__logo" style={{ borderBottom: `1px solid ${colors.border}` }}>
-          <span style={{ color: colors.text.primary, fontWeight: 700, fontSize: '1rem' }}>
-            <UIIcon name="logo" size={18} className="me-2" /> {t('app.title')}
-          </span>
-          <span
-            className="badge ms-2"
-            style={{ backgroundColor: colors.accent, color: '#fff', fontSize: '0.65rem' }}
-          >
-            v3.1
-          </span>
+          <pre className="sidebar__ascii-logo mb-0" aria-label="MSM logo">
+            {asciiVariants[asciiIndex]}
+          </pre>
+          <span className="sidebar__version-badge">v3.1</span>
         </div>
 
         <nav className="sidebar__nav" role="navigation" aria-label="Main navigation">
@@ -146,3 +150,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
     </>
   );
 };
+
+function buildAsciiMsmVariants(): string[] {
+  const charSets = [
+    { b: '#', f: '*' },
+    { b: '@', f: '+' },
+    { b: 'X', f: '=' },
+    { b: '%', f: '-' },
+    { b: '&', f: '~' },
+    { b: 'H', f: ':' },
+    { b: '8', f: '.' },
+    { b: 'M', f: '|' },
+    { b: 'W', f: '!' },
+    { b: '$', f: ';' },
+  ];
+  const templates: Array<(b: string, f: string) => string[]> = [
+    (b, f) => [`${b}${f}${b}   ${b}${b}${b}   ${b}${f}${b}`, `${b}${b}${b}   ${b}${f}${f}   ${b}${b}${b}`, `${b}${f}${b}   ${b}${b}${b}   ${b}${f}${b}`],
+    (b, f) => [`${b}${b}${f}${b}  ${b}${b}${b}  ${b}${b}${f}${b}`, `${b}${f}${f}${b}  ${f}${b}${f}  ${b}${f}${f}${b}`, `${b}${f}${f}${b}  ${b}${b}${b}  ${b}${f}${f}${b}`],
+    (b, f) => [`${b}${f}${f}${b}  ${b}${b}${f}  ${b}${f}${f}${b}`, `${b}${b}${f}${b}  ${f}${b}${f}  ${b}${b}${f}${b}`, `${b}${f}${b}${b}  ${f}${b}${b}  ${b}${f}${b}${b}`],
+    (b, f) => [`${b}${f}${b}${f}${b} ${b}${b}${b}${f} ${b}${f}${b}${f}${b}`, `${b}${b}${f}${b}${b} ${f}${b}${f}${f} ${b}${b}${f}${b}${b}`, `${b}${f}${f}${f}${b} ${f}${b}${b}${b} ${b}${f}${f}${f}${b}`],
+    (b, f) => [`${b}${b}${b}${b}  ${b}${b}${b}${b}  ${b}${b}${b}${b}`, `${b}${f}${f}${b}  ${f}${b}${f}${f}  ${b}${f}${f}${b}`, `${b}${f}${f}${b}  ${b}${b}${b}${b}  ${b}${f}${f}${b}`],
+  ];
+
+  const variants: string[] = [];
+  for (const cs of charSets) {
+    for (const tpl of templates) {
+      variants.push(tpl(cs.b, cs.f).join('\n'));
+    }
+  }
+  return variants.slice(0, 50);
+}
