@@ -291,7 +291,7 @@ Authorization: Basic base64(username:password)
 ## 🖥️ Server Monitoring
 
 ### `GET /api/v1/servers/status`
-Получить статус всех серверов (CPU, RAM, диск, Xray)
+Получить статус всех серверов (CPU, RAM, диск, core service)
 
 **Response:**
 ```json
@@ -354,7 +354,7 @@ Authorization: Basic base64(username:password)
 ```
 
 ### `POST /api/v1/servers/{node_id}/restart-xray`
-Перезапустить Xray на сервере
+Перезапустить core service на сервере
 
 ### `GET /api/v1/servers/{node_id}/logs?count=100&level=info`
 Получить логи с сервера

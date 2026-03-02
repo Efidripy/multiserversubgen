@@ -1,6 +1,7 @@
 from typing import Callable, Dict
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 
 
 def build_live_data_router(
@@ -20,16 +21,16 @@ def build_live_data_router(
             raise HTTPException(status_code=401)
         if group_by not in ["client", "inbound", "node"]:
             raise HTTPException(status_code=400, detail="group_by must be client, inbound, or node")
-        nodes = list_nodes()
-        return get_cached_traffic_stats(nodes, group_by)
+        nodes = await run_in_threadpool(list_nodes)
+        return await run_in_threadpool(get_cached_traffic_stats, nodes, group_by)
 
     @router.get("/api/v1/clients/online")
     async def get_online_clients(request: Request):
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401)
-        nodes = list_nodes()
-        online = get_cached_online_clients(nodes)
+        nodes = await run_in_threadpool(list_nodes)
+        online = await run_in_threadpool(get_cached_online_clients, nodes)
         return {"online_clients": online, "count": len(online)}
 
     @router.get("/api/v1/dashboard/summary")
@@ -37,9 +38,10 @@ def build_live_data_router(
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401)
-        nodes = list_nodes()
-        traffic = get_cached_traffic_stats(nodes, "client").get("stats", {})
-        online = get_cached_online_clients(nodes)
+        nodes = await run_in_threadpool(list_nodes)
+        traffic_data = await run_in_threadpool(get_cached_traffic_stats, nodes, "client")
+        traffic = traffic_data.get("stats", {})
+        online = await run_in_threadpool(get_cached_online_clients, nodes)
         total_upload = sum(v.get("up", 0) for v in traffic.values())
         total_download = sum(v.get("down", 0) for v in traffic.values())
         top_clients = sorted(
@@ -67,39 +69,39 @@ def build_live_data_router(
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
-        node = get_node_or_404(node_id)
-        return xui_monitor.get_server_status(node)
+        node = await run_in_threadpool(get_node_or_404, node_id)
+        return await run_in_threadpool(xui_monitor.get_server_status, node)
 
     @router.get("/api/v1/nodes/{node_id}/traffic")
     async def get_node_traffic(request: Request, node_id: int):
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
-        node = get_node_or_404(node_id)
-        return xui_monitor.get_traffic(node)
+        node = await run_in_threadpool(get_node_or_404, node_id)
+        return await run_in_threadpool(xui_monitor.get_traffic, node)
 
     @router.get("/api/v1/nodes/{node_id}/inbounds")
     async def get_node_inbounds(request: Request, node_id: int):
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
-        node = get_node_or_404(node_id)
-        return xui_monitor.get_inbounds(node)
+        node = await run_in_threadpool(get_node_or_404, node_id)
+        return await run_in_threadpool(xui_monitor.get_inbounds, node)
 
     @router.get("/api/v1/nodes/{node_id}/online-clients")
     async def get_node_online_clients(request: Request, node_id: int):
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
-        node = get_node_or_404(node_id)
-        return xui_monitor.get_online_clients(node)
+        node = await run_in_threadpool(get_node_or_404, node_id)
+        return await run_in_threadpool(xui_monitor.get_online_clients, node)
 
     async def _get_node_client_traffic_impl(request: Request, node_id: int, email: str):
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
-        node = get_node_or_404(node_id)
-        return xui_monitor.get_client_traffic(node, email)
+        node = await run_in_threadpool(get_node_or_404, node_id)
+        return await run_in_threadpool(xui_monitor.get_client_traffic, node, email)
 
     @router.get("/api/v1/nodes/{node_id}/client-traffic")
     async def get_node_client_traffic_query(request: Request, node_id: int, email: str):

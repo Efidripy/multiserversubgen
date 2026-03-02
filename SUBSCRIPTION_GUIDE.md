@@ -231,7 +231,7 @@ Protocol Filter: vmess
 base64_encode(link1\nlink2\nlink3...)
 ```
 
-Декодированный формат - стандартный subscription format для V2Ray/Xray клиентов.
+Декодированный формат - стандартный subscription format для generic clients клиентов.
 
 ---
 

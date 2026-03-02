@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { UIIcon } from './UIIcon';
 
 interface Node {
   id: number;
@@ -201,9 +202,12 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
     <div className="node-manager">
       <div className="card p-3 mb-4" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h6 className="mb-0" style={{ color: colors.accent }}>Узлы node panel</h6>
+          <h6 className="mb-0" style={{ color: colors.accent }}>Узлы панели</h6>
           <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} onClick={() => { setShowForm(!showForm); setSuccess(''); setError(''); }}>
-            {showForm ? '× Отмена' : '+ Добавить'}
+            <span className="d-inline-flex align-items-center gap-1">
+              <UIIcon name={showForm ? 'x' : 'plus'} size={14} />
+              {showForm ? 'Отмена' : 'Добавить'}
+            </span>
           </button>
         </div>
 
@@ -360,17 +364,17 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
           const status = nodeStatuses[n.id];
           const dotColor = status === true ? '#22c55e' : status === false ? '#ef4444' : colors.text.secondary;
           return (
-            <div key={n.id} className="d-flex align-items-center gap-2 mb-2 p-2 border-bottom" style={{ borderColor: colors.border }}>
+            <div key={n.id} className="node-list-item d-flex align-items-center gap-2 mb-2 p-2">
               <span style={{ width: '10px', height: '10px', borderRadius: '50%', flexShrink: 0, backgroundColor: dotColor, display: 'inline-block' }} />
               <strong style={{ color: colors.text.primary, flexShrink: 0 }}>{n.name}</strong>
               <span style={{ color: colors.text.secondary }}>|</span>
               <span style={{ color: colors.text.secondary, flexShrink: 0 }}>{n.ip}:{n.port}</span>
               <div className="ms-auto d-flex gap-1 flex-shrink-0">
                 <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} onClick={() => handleEditClick(n)} aria-label="Edit node">
-                  ✏️
+                  <UIIcon name="edit" size={14} />
                 </button>
                 <button className="btn btn-sm" style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }} onClick={() => handleDelete(n.id)} aria-label="Delete node">
-                  ×
+                  <UIIcon name="x" size={14} />
                 </button>
               </div>
             </div>
