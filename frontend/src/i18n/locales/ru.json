@@ -158,7 +158,7 @@
     "ram": "Использование ОЗУ",
     "disk": "Использование диска",
     "network": "Сеть",
-    "xrayStatus": "Статус Xray",
+    "xrayStatus": "Статус ядра",
     "running": "Запущен",
     "stopped": "Остановлен",
     "restart": "Перезапустить",
@@ -194,8 +194,8 @@
     "inboundBatchDelete": "Массовое удаление завершено",
     "nodeOnline": "Узел {{node}} снова в сети",
     "nodeOffline": "Узел {{node}} недоступен",
-    "xrayRunning": "Xray запущен на {{node}}",
-    "xrayStopped": "Xray остановлен на {{node}}"
+    "xrayRunning": "Ядро запущено на {{node}}",
+    "xrayStopped": "Ядро остановлено на {{node}}"
   },
   "messages": {
     "confirmDelete": "Вы уверены, что хотите удалить?",

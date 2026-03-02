@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { UIIcon } from './UIIcon';
 
 interface Node {
   id: number;
@@ -19,6 +20,8 @@ export const BackupManager: React.FC = () => {
   const [backupProgress, setBackupProgress] = useState<Record<number, string>>({});
   const [selectedNode, setSelectedNode] = useState<number | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const [sortField, setSortField] = useState<'name' | 'address' | 'status'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   useEffect(() => {
     loadNodes();
@@ -129,7 +132,7 @@ export const BackupManager: React.FC = () => {
         }
       });
 
-      alert('Database imported successfully. Please restart Xray service.');
+      alert('Database imported successfully. Please restart core service.');
       setImportFile(null);
       setSelectedNode(null);
     } catch (err: any) {
@@ -149,24 +152,57 @@ export const BackupManager: React.FC = () => {
 
   const getProgressIcon = (nodeId: number) => {
     const status = backupProgress[nodeId];
-    if (status === 'downloading') return '⏳';
-    if (status === 'success') return '✅';
-    if (status === 'error') return '❌';
-    return '';
+    if (status === 'downloading') return <UIIcon name="spinner" size={14} />;
+    if (status === 'success') return <UIIcon name="check" size={14} />;
+    if (status === 'error') return <UIIcon name="x" size={14} />;
+    return null;
   };
+
+  const statusWeight = (nodeId: number) => {
+    const status = backupProgress[nodeId];
+    if (status === 'downloading') return 3;
+    if (status === 'error') return 2;
+    if (status === 'success') return 1;
+    return 0;
+  };
+  const compareText = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+  const factor = sortDirection === 'asc' ? 1 : -1;
+  const sortedNodes = [...nodes].sort((a, b) => {
+    const byName = compareText(a.name, b.name);
+    const byAddress = compareText(`${a.ip}:${a.port}`, `${b.ip}:${b.port}`);
+    const byStatus = statusWeight(a.id) - statusWeight(b.id);
+    if (sortField === 'name') {
+      if (byName !== 0) return byName * factor;
+      return byAddress * factor;
+    }
+    if (sortField === 'address') {
+      if (byAddress !== 0) return byAddress * factor;
+      return byName * factor;
+    }
+    if (byStatus !== 0) return byStatus * factor;
+    if (byName !== 0) return byName;
+    return byAddress;
+  });
 
   return (
     <div className="backup-manager">
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0" style={{ color: colors.accent }}>💾 Backup & Restore</h5>
+          <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.accent }}>
+            <UIIcon name="backup" size={16} />
+            Backup & Restore
+          </h5>
           <button
             className="btn btn-sm"
             style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
             onClick={downloadAllBackups}
             disabled={loading || nodes.length === 0}
           >
-            📦 Download All Backups
+            <span className="d-inline-flex align-items-center gap-1">
+              <UIIcon name="download" size={14} />
+              Download All Backups
+            </span>
           </button>
         </div>
 
@@ -177,14 +213,40 @@ export const BackupManager: React.FC = () => {
         )}
 
         <div className="alert" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.text.primary }}>
-          <strong>ℹ️ Important:</strong> Backups contain the complete database including all client configurations.
-          Make sure to store backups securely. When restoring, the Xray service may need to be restarted.
+          <strong>Important:</strong> Backups contain the complete database including all client configurations.
+          Make sure to store backups securely. When restoring, the core service may need to be restarted.
         </div>
       </div>
 
       {/* Backup List */}
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3" style={{ color: colors.text.primary }}>📥 Download Backups</h6>
+        <div className="d-flex justify-content-between align-items-center mb-3 gap-2">
+          <h6 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
+            <UIIcon name="download" size={14} />
+            Download Backups
+          </h6>
+          <div className="d-flex gap-2">
+            <select
+              className="form-select form-select-sm"
+              value={sortField}
+              onChange={(e) => setSortField(e.target.value as 'name' | 'address' | 'status')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 130 }}
+            >
+              <option value="name">Sort: Node</option>
+              <option value="address">Sort: Address</option>
+              <option value="status">Sort: Status</option>
+            </select>
+            <select
+              className="form-select form-select-sm"
+              value={sortDirection}
+              onChange={(e) => setSortDirection(e.target.value as 'asc' | 'desc')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 90 }}
+            >
+              <option value="asc">Asc</option>
+              <option value="desc">Desc</option>
+            </select>
+          </div>
+        </div>
         
         {nodes.length === 0 ? (
           <p className="text-center py-3" style={{ color: colors.text.secondary }}>
@@ -202,7 +264,7 @@ export const BackupManager: React.FC = () => {
                 </tr>
               </thead>
               <tbody>
-                {nodes.map((node) => (
+                {sortedNodes.map((node) => (
                   <tr key={node.id} style={{ borderColor: colors.border }}>
                     <td>
                       <strong style={{ color: colors.text.primary }}>{node.name}</strong>
@@ -211,7 +273,7 @@ export const BackupManager: React.FC = () => {
                       {node.ip}:{node.port}
                     </td>
                     <td>
-                      <span style={{ fontSize: '1.2rem' }}>
+                      <span className="d-inline-flex align-items-center justify-content-center" style={{ minHeight: '18px' }}>
                         {getProgressIcon(node.id)}
                       </span>
                     </td>
@@ -222,7 +284,10 @@ export const BackupManager: React.FC = () => {
                         onClick={() => downloadBackup(node.id, node.name)}
                         disabled={loading || backupProgress[node.id] === 'downloading'}
                       >
-                        📥 Download
+                        <span className="d-inline-flex align-items-center gap-1">
+                          <UIIcon name="download" size={14} />
+                          Download
+                        </span>
                       </button>
                     </td>
                   </tr>
@@ -235,10 +300,13 @@ export const BackupManager: React.FC = () => {
 
       {/* Restore Section */}
       <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3" style={{ color: colors.text.primary }}>📤 Restore from Backup</h6>
+        <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
+          <UIIcon name="upload" size={14} />
+          Restore from Backup
+        </h6>
         
-        <div className="alert alert-warning" style={{ backgroundColor: colors.warning + '22', borderColor: colors.warning, color: '#000' }}>
-          <strong>⚠️ Warning:</strong> Restoring a backup will REPLACE the current database. Make sure you have a recent backup before proceeding.
+        <div className="alert alert-warning" style={{ backgroundColor: colors.warning + '22', borderColor: colors.warning, color: colors.text.primary }}>
+          <strong>Warning:</strong> Restoring a backup will REPLACE the current database. Make sure you have a recent backup before proceeding.
         </div>
 
         <div className="row g-3">
@@ -275,11 +343,14 @@ export const BackupManager: React.FC = () => {
           <div className="col-md-3 d-flex align-items-end">
             <button
               className="btn w-100"
-              style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: '#000' }}
+              style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
               onClick={importBackup}
               disabled={loading || !selectedNode || !importFile}
             >
-              📤 Restore Backup
+              <span className="d-inline-flex align-items-center gap-1">
+                <UIIcon name="upload" size={14} />
+                Restore Backup
+              </span>
             </button>
           </div>
         </div>
@@ -295,7 +366,10 @@ export const BackupManager: React.FC = () => {
 
       {/* Automation Info */}
       <div className="card p-3 mt-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3" style={{ color: colors.text.primary }}>🤖 Automated Backups</h6>
+        <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
+          <UIIcon name="backup" size={14} />
+          Automated Backups
+        </h6>
         <p style={{ color: colors.text.secondary }}>
           For automated backup scheduling, you can set up a cron job on your server:
         </p>

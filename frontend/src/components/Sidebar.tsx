@@ -1,6 +1,8 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../contexts/ThemeContext';
+import { IconName, UIIcon } from './UIIcon';
+import { MSM_ASCII_VARIANTS } from './msmAsciiVariants';
 
 type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 
@@ -13,15 +15,15 @@ interface SidebarProps {
   onMobileClose: () => void;
 }
 
-const navItems: Array<{ id: TabType; icon: string; labelKey: string }> = [
-  { id: 'dashboard', icon: '📊', labelKey: 'nav.dashboard' },
-  { id: 'servers', icon: '🖥️', labelKey: 'nav.nodes' },
-  { id: 'inbounds', icon: '🔌', labelKey: 'nav.inbounds' },
-  { id: 'clients', icon: '👥', labelKey: 'nav.clients' },
-  { id: 'traffic', icon: '📈', labelKey: 'nav.traffic' },
-  { id: 'monitoring', icon: '📉', labelKey: 'nav.monitoring' },
-  { id: 'backup', icon: '💾', labelKey: 'nav.backup' },
-  { id: 'subscriptions', icon: '📜', labelKey: 'nav.subscriptions' },
+const navItems: Array<{ id: TabType; icon: IconName; labelKey: string }> = [
+  { id: 'dashboard', icon: 'dashboard', labelKey: 'nav.dashboard' },
+  { id: 'servers', icon: 'servers', labelKey: 'nav.nodes' },
+  { id: 'inbounds', icon: 'inbounds', labelKey: 'nav.inbounds' },
+  { id: 'clients', icon: 'clients', labelKey: 'nav.clients' },
+  { id: 'traffic', icon: 'traffic', labelKey: 'nav.traffic' },
+  { id: 'monitoring', icon: 'monitoring', labelKey: 'nav.monitoring' },
+  { id: 'backup', icon: 'backup', labelKey: 'nav.backup' },
+  { id: 'subscriptions', icon: 'subscriptions', labelKey: 'nav.subscriptions' },
 ];
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -35,11 +37,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const { colors, theme, toggleTheme } = useTheme();
   const { t, i18n } = useTranslation();
   const currentLang = (i18n.resolvedLanguage || i18n.language || 'en').toLowerCase();
+  const asciiVariants = useMemo(() => MSM_ASCII_VARIANTS, []);
+  const [asciiIndex, setAsciiIndex] = useState(() => Math.floor(Math.random() * asciiVariants.length));
 
   const handleNav = (tab: TabType) => {
     setActiveTab(tab);
     onMobileClose();
   };
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setAsciiIndex(prev => (prev + 1) % asciiVariants.length);
+    }, 2600);
+    return () => clearInterval(timer);
+  }, [asciiVariants.length]);
 
   return (
     <>
@@ -56,15 +67,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
         style={{ backgroundColor: colors.bg.secondary, borderRight: `1px solid ${colors.border}` }}
       >
         <div className="sidebar__logo" style={{ borderBottom: `1px solid ${colors.border}` }}>
-          <span style={{ color: colors.text.primary, fontWeight: 700, fontSize: '1rem' }}>
-            📡 {t('app.title')}
-          </span>
-          <span
-            className="badge ms-2"
-            style={{ backgroundColor: colors.accent, color: '#fff', fontSize: '0.65rem' }}
-          >
-            v3.1
-          </span>
+          <pre className="sidebar__ascii-logo mb-0" aria-label="MSM logo">
+            {asciiVariants[asciiIndex]}
+          </pre>
+          <span className="sidebar__version-badge">v3.1</span>
         </div>
 
         <nav className="sidebar__nav" role="navigation" aria-label="Main navigation">
@@ -81,7 +87,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   : '3px solid transparent',
               }}
             >
-              <span className="sidebar__nav-icon">{item.icon}</span>
+              <span className="sidebar__nav-icon"><UIIcon name={item.icon} size={17} /></span>
               <span>{t(item.labelKey)}</span>
             </button>
           ))}
@@ -91,7 +97,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="sidebar__footer" style={{ borderTop: `1px solid ${colors.border}` }}>
           <div className="sidebar__user" style={{ color: colors.text.secondary }}>
-            <span style={{ fontSize: '1.1rem' }}>👤</span>
+            <span style={{ fontSize: '1.1rem' }}><UIIcon name="user" size={16} /></span>
             <span
               className="sidebar__username"
               style={{ color: colors.text.primary, fontWeight: 600 }}
@@ -126,7 +132,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 color: colors.text.primary,
               }}
             >
-              {theme === 'dark' ? '☀️' : '🌙'}
+              {theme === 'dark' ? <UIIcon name="sun" size={14} /> : <UIIcon name="moon" size={14} />}
             </button>
             <button
               className="sidebar__footer-btn sidebar__logout"

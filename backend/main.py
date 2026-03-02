@@ -30,7 +30,7 @@ except Exception:
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from crypto import encrypt, decrypt
-from xui_session import login_node panel
+from xui_session import login_panel, xui_request
 from inbound_manager import InboundManager
 from client_manager import ClientManager
 from utils import parse_field_as_dict
@@ -38,6 +38,7 @@ from server_monitor import ServerMonitor, ThreeXUIMonitor
 from websocket_manager import manager as ws_manager, handle_websocket_message
 from services.node_service import NodeService
 from services.collector import SnapshotCollector
+from services.adguard_monitor import AdGuardMonitor
 from routers.observability import build_observability_router
 from routers.live_data import build_live_data_router
 
@@ -55,16 +56,16 @@ CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
 READ_ONLY_MODE = os.getenv("READ_ONLY_MODE", "false").strip().lower() in ("1", "true", "yes", "on")
 SUB_RATE_LIMIT_COUNT = int(os.getenv("SUB_RATE_LIMIT_COUNT", "30"))
 SUB_RATE_LIMIT_WINDOW_SEC = int(os.getenv("SUB_RATE_LIMIT_WINDOW_SEC", "60"))
-TRAFFIC_STATS_CACHE_TTL = int(os.getenv("TRAFFIC_STATS_CACHE_TTL", "10"))
-ONLINE_CLIENTS_CACHE_TTL = int(os.getenv("ONLINE_CLIENTS_CACHE_TTL", "10"))
+TRAFFIC_STATS_CACHE_TTL = int(os.getenv("TRAFFIC_STATS_CACHE_TTL", "20"))
+ONLINE_CLIENTS_CACHE_TTL = int(os.getenv("ONLINE_CLIENTS_CACHE_TTL", "20"))
 TRAFFIC_STATS_STALE_TTL = int(os.getenv("TRAFFIC_STATS_STALE_TTL", "120"))
 ONLINE_CLIENTS_STALE_TTL = int(os.getenv("ONLINE_CLIENTS_STALE_TTL", "60"))
 CLIENTS_CACHE_TTL = int(os.getenv("CLIENTS_CACHE_TTL", "20"))
 CLIENTS_CACHE_STALE_TTL = int(os.getenv("CLIENTS_CACHE_STALE_TTL", "180"))
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
-COLLECTOR_BASE_INTERVAL_SEC = int(os.getenv("COLLECTOR_BASE_INTERVAL_SEC", "5"))
+COLLECTOR_BASE_INTERVAL_SEC = int(os.getenv("COLLECTOR_BASE_INTERVAL_SEC", "10"))
 COLLECTOR_MAX_INTERVAL_SEC = int(os.getenv("COLLECTOR_MAX_INTERVAL_SEC", "60"))
-COLLECTOR_MAX_PARALLEL = int(os.getenv("COLLECTOR_MAX_PARALLEL", "8"))
+COLLECTOR_MAX_PARALLEL = int(os.getenv("COLLECTOR_MAX_PARALLEL", "4"))
 NODE_HISTORY_ENABLED = os.getenv("NODE_HISTORY_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 NODE_HISTORY_MIN_INTERVAL_SEC = int(os.getenv("NODE_HISTORY_MIN_INTERVAL_SEC", "30"))
 NODE_HISTORY_RETENTION_DAYS = int(os.getenv("NODE_HISTORY_RETENTION_DAYS", "30"))
@@ -77,6 +78,13 @@ ROLE_RANK = {"viewer": 1, "operator": 2, "admin": 3}
 MFA_TOTP_ENABLED = os.getenv("MFA_TOTP_ENABLED", "false").strip().lower() in ("1", "true", "yes", "on")
 MFA_TOTP_USERS_RAW = os.getenv("MFA_TOTP_USERS", "").strip()
 MFA_TOTP_WS_STRICT = os.getenv("MFA_TOTP_WS_STRICT", "false").strip().lower() in ("1", "true", "yes", "on")
+ADGUARD_COLLECT_INTERVAL_SEC = int(os.getenv("ADGUARD_COLLECT_INTERVAL_SEC", "60"))
+PROMETHEUS_URL = os.getenv("PROMETHEUS_URL", "http://127.0.0.1:9090").strip()
+LOKI_URL = os.getenv("LOKI_URL", "http://127.0.0.1:3100").strip()
+GRAFANA_URL = os.getenv("GRAFANA_URL", "http://127.0.0.1:3000").strip()
+PROMETHEUS_BASIC_AUTH = os.getenv("PROMETHEUS_BASIC_AUTH", "").strip()
+LOKI_BASIC_AUTH = os.getenv("LOKI_BASIC_AUTH", "").strip()
+GRAFANA_BASIC_AUTH = os.getenv("GRAFANA_BASIC_AUTH", "").strip()
 
 
 def _get_requests_verify_value():
@@ -138,16 +146,26 @@ cache_refresh_state = {
     "online_clients": False,
     "clients": False,
 }
+auth_cache_lock = Lock()
+auth_cache: Dict[str, Tuple[float, str]] = {}
+AUTH_CACHE_TTL_SEC = 30
+AUTH_CACHE_NEGATIVE_TTL_SEC = 5
 _redis_client = None
 audit_worker_task = None
+adguard_collector_task = None
+adguard_latest = {"ts": 0.0, "sources": [], "summary": {}}
+adguard_latest_lock = Lock()
 history_write_state = {"last_by_node": {}, "last_cleanup_ts": 0.0}
 history_write_lock = Lock()
+node_metric_labels_state: Dict[str, str] = {}
+node_metric_labels_lock = Lock()
 
 # Инициализация менеджеров
 inbound_mgr = InboundManager(decrypt_func=decrypt, encrypt_func=encrypt)
 client_mgr = ClientManager(decrypt_func=decrypt, encrypt_func=encrypt)
 server_monitor = ServerMonitor(decrypt_func=decrypt)
 xui_monitor = ThreeXUIMonitor(decrypt_func=decrypt)
+adguard_monitor = AdGuardMonitor(decrypt_func=decrypt, default_verify=VERIFY_TLS)
 node_service = NodeService(DB_PATH)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -169,7 +187,7 @@ NODE_AVAILABILITY = Gauge(
 )
 NODE_XRAY_RUNNING = Gauge(
     "sub_manager_node_xray_running",
-    "Xray running state on node (1 running, 0 stopped)",
+    "core service running state on node (1 running, 0 stopped)",
     ["node_name", "node_id"],
 )
 NODE_CPU_PERCENT = Gauge(
@@ -192,11 +210,69 @@ NODE_POLL_DURATION_MS = Gauge(
     "Collector poll duration per node in milliseconds",
     ["node_name", "node_id"],
 )
+ADGUARD_SOURCE_AVAILABLE = Gauge(
+    "sub_manager_adguard_source_available",
+    "AdGuard source availability (1 available, 0 unavailable)",
+    ["source_name", "source_id"],
+)
+ADGUARD_DNS_QUERIES_TOTAL = Gauge(
+    "sub_manager_adguard_dns_queries_total",
+    "AdGuard total DNS queries",
+    ["source_name", "source_id"],
+)
+ADGUARD_DNS_BLOCKED_TOTAL = Gauge(
+    "sub_manager_adguard_dns_blocked_total",
+    "AdGuard blocked DNS queries",
+    ["source_name", "source_id"],
+)
+ADGUARD_DNS_BLOCK_RATE = Gauge(
+    "sub_manager_adguard_dns_block_rate_percent",
+    "AdGuard blocked rate in percent",
+    ["source_name", "source_id"],
+)
+ADGUARD_DNS_LATENCY_MS = Gauge(
+    "sub_manager_adguard_dns_latency_ms",
+    "AdGuard average DNS latency in milliseconds",
+    ["source_name", "source_id"],
+)
+ADGUARD_DNS_CACHE_HIT_RATIO = Gauge(
+    "sub_manager_adguard_dns_cache_hit_ratio_percent",
+    "AdGuard cache hit ratio in percent",
+    ["source_name", "source_id"],
+)
+ADGUARD_DNS_UPSTREAM_ERRORS = Gauge(
+    "sub_manager_adguard_dns_upstream_errors_total",
+    "AdGuard upstream DNS errors",
+    ["source_name", "source_id"],
+)
+
+
+def _remove_node_metric_labels(node_name: str, node_id: str):
+    for metric in (
+        NODE_AVAILABILITY,
+        NODE_XRAY_RUNNING,
+        NODE_CPU_PERCENT,
+        NODE_ONLINE_CLIENTS,
+        NODE_TRAFFIC_TOTAL_BYTES,
+        NODE_POLL_DURATION_MS,
+    ):
+        try:
+            metric.remove(node_name, node_id)
+        except KeyError:
+            pass
+        except ValueError:
+            pass
 
 
 def _record_node_snapshot(snapshot: Dict):
     node_name = str(snapshot.get("name", "unknown"))
     node_id = str(snapshot.get("node_id", "0"))
+
+    with node_metric_labels_lock:
+        prev_name = node_metric_labels_state.get(node_id)
+        if prev_name and prev_name != node_name:
+            _remove_node_metric_labels(prev_name, node_id)
+        node_metric_labels_state[node_id] = node_name
 
     NODE_AVAILABILITY.labels(node_name=node_name, node_id=node_id).set(1 if snapshot.get("available") else 0)
     NODE_XRAY_RUNNING.labels(node_name=node_name, node_id=node_id).set(1 if snapshot.get("xray_running") else 0)
@@ -331,6 +407,41 @@ def init_db():
         )
         conn.execute('CREATE INDEX IF NOT EXISTS idx_node_history_ts ON node_history(ts)')
         conn.execute('CREATE INDEX IF NOT EXISTS idx_node_history_node_ts ON node_history(node_id, ts)')
+        conn.execute(
+            '''CREATE TABLE IF NOT EXISTS adguard_sources
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      name TEXT NOT NULL,
+                      admin_url TEXT NOT NULL,
+                      dns_url TEXT DEFAULT '',
+                      username TEXT NOT NULL,
+                      password TEXT NOT NULL,
+                      verify_tls INTEGER NOT NULL DEFAULT 1,
+                      enabled INTEGER NOT NULL DEFAULT 1,
+                      last_error TEXT DEFAULT '',
+                      last_success_ts INTEGER DEFAULT 0,
+                      last_collected_ts INTEGER DEFAULT 0,
+                      api_base TEXT DEFAULT '',
+                      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT DEFAULT CURRENT_TIMESTAMP)'''
+        )
+        conn.execute(
+            '''CREATE TABLE IF NOT EXISTS adguard_history
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      ts INTEGER NOT NULL,
+                      source_id INTEGER NOT NULL,
+                      source_name TEXT NOT NULL,
+                      available INTEGER NOT NULL,
+                      queries_total REAL NOT NULL,
+                      blocked_total REAL NOT NULL,
+                      blocked_rate REAL NOT NULL,
+                      cache_hit_ratio REAL NOT NULL,
+                      avg_latency_ms REAL NOT NULL,
+                      upstream_errors REAL NOT NULL,
+                      extra_json TEXT DEFAULT '',
+                      FOREIGN KEY(source_id) REFERENCES adguard_sources(id) ON DELETE CASCADE)'''
+        )
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_adguard_history_ts ON adguard_history(ts)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_adguard_history_source_ts ON adguard_history(source_id, ts)')
         
         conn.commit()
 
@@ -338,20 +449,375 @@ def init_db():
 init_db()
 
 
+def sync_node_history_names_with_nodes():
+    """Backfill node_history.node_name from current nodes.name by node_id."""
+    with sqlite3.connect(DB_PATH) as conn:
+        result = conn.execute(
+            """
+            UPDATE node_history
+            SET node_name = (
+                SELECT n.name
+                FROM nodes n
+                WHERE n.id = node_history.node_id
+            )
+            WHERE EXISTS (
+                SELECT 1
+                FROM nodes n
+                WHERE n.id = node_history.node_id
+                  AND IFNULL(n.name, '') <> IFNULL(node_history.node_name, '')
+            )
+            """
+        )
+        conn.commit()
+    if result.rowcount:
+        logger.info(f"node_history names synchronized: {result.rowcount} rows updated")
+
+
+def _row_to_adguard_source_public(row: sqlite3.Row) -> Dict:
+    return {
+        "id": int(row["id"]),
+        "name": row["name"],
+        "admin_url": row["admin_url"],
+        "dns_url": row["dns_url"] or "",
+        "username": row["username"],
+        "verify_tls": bool(row["verify_tls"]),
+        "enabled": bool(row["enabled"]),
+        "last_error": row["last_error"] or "",
+        "last_success_ts": int(row["last_success_ts"] or 0),
+        "last_collected_ts": int(row["last_collected_ts"] or 0),
+        "api_base": row["api_base"] or "",
+        "has_password": bool(row["password"]),
+    }
+
+
+def _list_adguard_sources(include_password: bool = False) -> List[Dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, name, admin_url, dns_url, username, password, verify_tls, enabled,
+                   last_error, last_success_ts, last_collected_ts, api_base
+            FROM adguard_sources
+            ORDER BY name COLLATE NOCASE ASC
+            """
+        ).fetchall()
+    result = []
+    for row in rows:
+        item = _row_to_adguard_source_public(row)
+        if include_password:
+            item["password"] = row["password"]
+        result.append(item)
+    return result
+
+
+def _list_enabled_adguard_sources_raw() -> List[Dict]:
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT id, name, admin_url, dns_url, username, password, verify_tls, enabled
+            FROM adguard_sources
+            WHERE enabled = 1
+            ORDER BY id ASC
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def _record_adguard_snapshot(snapshot: Dict):
+    source_id = str(snapshot.get("source_id") or "0")
+    source_name = str(snapshot.get("source_name") or f"adguard-{source_id}")
+    available = bool(snapshot.get("available"))
+
+    ADGUARD_SOURCE_AVAILABLE.labels(source_name=source_name, source_id=source_id).set(1 if available else 0)
+    ADGUARD_DNS_QUERIES_TOTAL.labels(source_name=source_name, source_id=source_id).set(float(snapshot.get("queries_total", 0) or 0))
+    ADGUARD_DNS_BLOCKED_TOTAL.labels(source_name=source_name, source_id=source_id).set(float(snapshot.get("blocked_total", 0) or 0))
+    ADGUARD_DNS_BLOCK_RATE.labels(source_name=source_name, source_id=source_id).set(float(snapshot.get("blocked_rate", 0) or 0))
+    ADGUARD_DNS_LATENCY_MS.labels(source_name=source_name, source_id=source_id).set(float(snapshot.get("avg_latency_ms", 0) or 0))
+    ADGUARD_DNS_CACHE_HIT_RATIO.labels(source_name=source_name, source_id=source_id).set(float(snapshot.get("cache_hit_ratio", 0) or 0))
+    ADGUARD_DNS_UPSTREAM_ERRORS.labels(source_name=source_name, source_id=source_id).set(float(snapshot.get("upstream_errors", 0) or 0))
+
+    now_ts = int(time.time())
+    extra = {
+        "top_domains": snapshot.get("top_domains", []),
+        "top_blocked_domains": snapshot.get("top_blocked_domains", []),
+        "top_clients": snapshot.get("top_clients", []),
+        "status": snapshot.get("status", {}),
+    }
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO adguard_history (
+                ts, source_id, source_name, available, queries_total, blocked_total,
+                blocked_rate, cache_hit_ratio, avg_latency_ms, upstream_errors, extra_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                now_ts,
+                int(snapshot.get("source_id") or 0),
+                source_name,
+                1 if available else 0,
+                float(snapshot.get("queries_total", 0) or 0),
+                float(snapshot.get("blocked_total", 0) or 0),
+                float(snapshot.get("blocked_rate", 0) or 0),
+                float(snapshot.get("cache_hit_ratio", 0) or 0),
+                float(snapshot.get("avg_latency_ms", 0) or 0),
+                float(snapshot.get("upstream_errors", 0) or 0),
+                json.dumps(extra, ensure_ascii=False),
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE adguard_sources
+            SET last_error = ?,
+                last_success_ts = CASE WHEN ? > 0 THEN ? ELSE last_success_ts END,
+                last_collected_ts = ?,
+                api_base = CASE WHEN ? != '' THEN ? ELSE api_base END,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (
+                str(snapshot.get("error") or ""),
+                now_ts if available else 0,
+                now_ts if available else 0,
+                now_ts,
+                str(snapshot.get("api_base") or ""),
+                str(snapshot.get("api_base") or ""),
+                int(snapshot.get("source_id") or 0),
+            ),
+        )
+        conn.execute(
+            "DELETE FROM adguard_history WHERE ts < ?",
+            (int(time.time()) - 30 * 24 * 3600,),
+        )
+        conn.commit()
+
+
+def _build_adguard_summary(snapshots: List[Dict]) -> Dict:
+    live = [s for s in snapshots if s.get("available")]
+    total_queries = sum(float(s.get("queries_total", 0) or 0) for s in live)
+    total_blocked = sum(float(s.get("blocked_total", 0) or 0) for s in live)
+    blocked_rate = (total_blocked / total_queries * 100.0) if total_queries > 0 else 0.0
+    avg_latency = 0.0
+    if live:
+        avg_latency = sum(float(s.get("avg_latency_ms", 0) or 0) for s in live) / len(live)
+    cache_hit = 0.0
+    if live:
+        cache_hit = sum(float(s.get("cache_hit_ratio", 0) or 0) for s in live) / len(live)
+    upstream_errors = sum(float(s.get("upstream_errors", 0) or 0) for s in live)
+    return {
+        "sources_total": len(snapshots),
+        "sources_online": len(live),
+        "queries_total": round(total_queries, 2),
+        "blocked_total": round(total_blocked, 2),
+        "blocked_rate": round(blocked_rate, 2),
+        "avg_latency_ms": round(avg_latency, 2),
+        "cache_hit_ratio": round(cache_hit, 2),
+        "upstream_errors": round(upstream_errors, 2),
+    }
+
+
+def _parse_basic_auth_pair(value: str) -> Optional[Tuple[str, str]]:
+    if not value or ":" not in value:
+        return None
+    user, pwd = value.split(":", 1)
+    user = user.strip()
+    if not user:
+        return None
+    return user, pwd
+
+
+def _http_probe(url: str, path: str, timeout: int = 4, basic_auth: Optional[Tuple[str, str]] = None) -> Dict:
+    if not url:
+        return {"enabled": False, "url": "", "ok": False, "status_code": None, "error": "disabled"}
+    full = f"{url.rstrip('/')}{path}"
+    try:
+        resp = requests.get(full, timeout=timeout, verify=REQUESTS_VERIFY, auth=basic_auth)
+        return {
+            "enabled": True,
+            "url": url,
+            "ok": 200 <= resp.status_code < 300,
+            "status_code": int(resp.status_code),
+            "error": "" if 200 <= resp.status_code < 300 else (resp.text[:120] if resp.text else f"HTTP {resp.status_code}"),
+        }
+    except Exception as exc:
+        return {"enabled": True, "url": url, "ok": False, "status_code": None, "error": str(exc)}
+
+
+def _prom_query(prom_url: str, query: str, basic_auth: Optional[Tuple[str, str]] = None) -> Optional[float]:
+    if not prom_url:
+        return None
+    try:
+        resp = requests.get(
+            f"{prom_url.rstrip('/')}/api/v1/query",
+            params={"query": query},
+            timeout=5,
+            verify=REQUESTS_VERIFY,
+            auth=basic_auth,
+        )
+        if resp.status_code != 200:
+            return None
+        payload = resp.json()
+        if payload.get("status") != "success":
+            return None
+        result = payload.get("data", {}).get("result", [])
+        if not result:
+            return 0.0
+        first = result[0]
+        value = first.get("value", [None, None])[1]
+        return float(value) if value is not None else 0.0
+    except Exception:
+        return None
+
+
+def _build_adguard_history(range_sec: int, bucket_sec: int, source_id: Optional[int] = None) -> Dict:
+    safe_range = max(300, min(range_sec, 30 * 24 * 3600))
+    safe_bucket = max(30, min(bucket_sec, 6 * 3600))
+    since_ts = int(time.time()) - safe_range
+
+    sql = """
+        SELECT ts, source_id, source_name, available, queries_total, blocked_total,
+               blocked_rate, cache_hit_ratio, avg_latency_ms, upstream_errors
+        FROM adguard_history
+        WHERE ts >= ?
+    """
+    params: List = [since_ts]
+    if source_id is not None:
+        sql += " AND source_id = ?"
+        params.append(int(source_id))
+    sql += " ORDER BY source_id ASC, ts ASC"
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(sql, params).fetchall()
+
+    latest_by_source_bucket: Dict[Tuple[int, int], Dict] = {}
+    source_names: Dict[int, str] = {}
+    for row in rows:
+        sid = int(row["source_id"] or 0)
+        bucket_ts = int(row["ts"] // safe_bucket * safe_bucket)
+        key = (sid, bucket_ts)
+        source_names[sid] = row["source_name"] or f"source-{sid}"
+        prev = latest_by_source_bucket.get(key)
+        if prev is None or int(row["ts"]) > int(prev["ts"]):
+            latest_by_source_bucket[key] = dict(row)
+            latest_by_source_bucket[key]["bucket_ts"] = bucket_ts
+
+    buckets = sorted({v["bucket_ts"] for v in latest_by_source_bucket.values()})
+    series: List[Dict] = []
+    for sid, name in sorted(source_names.items(), key=lambda x: str(x[1]).lower()):
+        points = []
+        for bucket_ts in buckets:
+            row = latest_by_source_bucket.get((sid, bucket_ts))
+            if not row:
+                points.append(None)
+                continue
+            points.append(
+                {
+                    "ts": int(bucket_ts),
+                    "available": bool(row["available"]),
+                    "queries_total": float(row["queries_total"] or 0),
+                    "blocked_total": float(row["blocked_total"] or 0),
+                    "blocked_rate": float(row["blocked_rate"] or 0),
+                    "cache_hit_ratio": float(row["cache_hit_ratio"] or 0),
+                    "avg_latency_ms": float(row["avg_latency_ms"] or 0),
+                    "upstream_errors": float(row["upstream_errors"] or 0),
+                }
+            )
+        series.append({"source_id": sid, "source_name": name, "points": points})
+
+    total_queries_delta = 0.0
+    total_blocked_delta = 0.0
+    for src in series:
+        src_points = [p for p in src["points"] if p]
+        if len(src_points) >= 2:
+            total_queries_delta += max(0.0, float(src_points[-1]["queries_total"]) - float(src_points[0]["queries_total"]))
+            total_blocked_delta += max(0.0, float(src_points[-1]["blocked_total"]) - float(src_points[0]["blocked_total"]))
+
+    queries_rate = total_queries_delta / float(safe_range) if safe_range > 0 else 0.0
+    blocked_rate_per_sec = total_blocked_delta / float(safe_range) if safe_range > 0 else 0.0
+
+    return {
+        "ts": int(time.time()),
+        "range_sec": safe_range,
+        "bucket_sec": safe_bucket,
+        "buckets": buckets,
+        "series": series,
+        "summary": {
+            "queries_delta": round(total_queries_delta, 2),
+            "blocked_delta": round(total_blocked_delta, 2),
+            "queries_per_sec": round(queries_rate, 4),
+            "blocked_per_sec": round(blocked_rate_per_sec, 4),
+        },
+    }
+
+
+async def collect_adguard_once():
+    sources = await asyncio.to_thread(_list_enabled_adguard_sources_raw)
+    if not sources:
+        with adguard_latest_lock:
+            adguard_latest["ts"] = time.time()
+            adguard_latest["sources"] = []
+            adguard_latest["summary"] = _build_adguard_summary([])
+        return []
+
+    snapshots: List[Dict] = []
+    for source in sources:
+        snap = await asyncio.to_thread(adguard_monitor.collect_source, source)
+        await asyncio.to_thread(_record_adguard_snapshot, snap)
+        snapshots.append(snap)
+
+    with adguard_latest_lock:
+        adguard_latest["ts"] = time.time()
+        adguard_latest["sources"] = snapshots
+        adguard_latest["summary"] = _build_adguard_summary(snapshots)
+    return snapshots
+
+
+async def adguard_collector_loop():
+    interval = max(20, ADGUARD_COLLECT_INTERVAL_SEC)
+    while True:
+        try:
+            await collect_adguard_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(f"AdGuard collector loop failed: {exc}")
+        await asyncio.sleep(interval)
+
+
 def check_basic_auth_header(auth_header: Optional[str]) -> Optional[str]:
     """Проверка Basic Auth header через PAM."""
     if not auth_header:
         return None
+
+    now = time.time()
+    with auth_cache_lock:
+        cached = auth_cache.get(auth_header)
+        if cached:
+            ts, cached_user = cached
+            ttl = AUTH_CACHE_TTL_SEC if cached_user else AUTH_CACHE_NEGATIVE_TTL_SEC
+            if now - ts < ttl:
+                return cached_user or None
+            auth_cache.pop(auth_header, None)
+
     try:
         scheme, credentials = auth_header.split()
         if scheme.lower() != "basic":
+            with auth_cache_lock:
+                auth_cache[auth_header] = (now, "")
             return None
         decoded = base64.b64decode(credentials).decode("utf-8")
         username, password = decoded.split(":", 1)
         if p.authenticate(username, password):
+            with auth_cache_lock:
+                auth_cache[auth_header] = (now, username)
             return username
     except Exception as e:
         logger.warning(f"Auth error: {e}")
+
+    with auth_cache_lock:
+        auth_cache[auth_header] = (now, "")
     return None
 
 
@@ -751,12 +1217,12 @@ def fetch_inbounds(node: Dict) -> List[Dict]:
         except Exception as e:
             logger.warning(f"Failed to decrypt password for node {node['name']}: {e}")
     
-    if not login_node panel(s, base_url, node['user'], node_password):
+    if not login_panel(s, base_url, node['user'], node_password):
         logger.warning(f"node panel {node['name']} login failed")
         return []
 
     try:
-        res = s.get(f"{base_url}/panel/api/inbounds/list", timeout=5)
+        res = xui_request(s, "GET", f"{base_url}/panel/api/inbounds/list")
         if res.status_code != 200:
             logger.warning(
                 f"node panel {node['name']} inbounds list returned status {res.status_code}; "
@@ -845,10 +1311,15 @@ def add_inbound_to_node(node: Dict, inbound_config: Dict) -> bool:
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
     
     try:
-        if not login_node panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
+        if not login_panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
             logger.warning(f"Failed to login for add_inbound on {node['name']}")
             return False
-        res = s.post(f"{base_url}/panel/api/inbounds/add", json=inbound_config, timeout=5)
+        res = xui_request(
+            s,
+            "POST",
+            f"{base_url}/panel/api/inbounds/add",
+            json=inbound_config,
+        )
         return res.status_code == 200
     except Exception as exc:
         logger.warning(f"Failed to add inbound to {node['name']}: {exc}")
@@ -864,11 +1335,16 @@ def add_client_to_inbound(node: Dict, inbound_id: int, client_config: Dict) -> b
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
     
     try:
-        if not login_node panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
+        if not login_panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
             logger.warning(f"Failed to login for add_client on {node['name']}")
             return False
         payload = {"id": inbound_id, "settings": {"clients": [client_config]}}
-        res = s.post(f"{base_url}/panel/api/inbounds/addClient", json=payload, timeout=5)
+        res = xui_request(
+            s,
+            "POST",
+            f"{base_url}/panel/api/inbounds/addClient",
+            json=payload,
+        )
         return res.status_code == 200
     except Exception as exc:
         logger.warning(f"Failed to add client to {node['name']}: {exc}")
@@ -884,10 +1360,14 @@ def delete_client_from_inbound(node: Dict, inbound_id: int, client_id: str) -> b
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
     
     try:
-        if not login_node panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
+        if not login_panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
             logger.warning(f"Failed to login for delete_client on {node['name']}")
             return False
-        res = s.post(f"{base_url}/panel/api/inbounds/{inbound_id}/delClient/{client_id}", timeout=5)
+        res = xui_request(
+            s,
+            "POST",
+            f"{base_url}/panel/api/inbounds/{inbound_id}/delClient/{client_id}",
+        )
         return res.status_code == 200
     except Exception as exc:
         logger.warning(f"Failed to delete client from {node['name']}: {exc}")
@@ -903,13 +1383,21 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
     base_url = f"https://{node['ip']}:{node['port']}{prefix}"
     
     try:
-        if not login_node panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
+        if not login_panel(s, base_url, node['user'], decrypt(node.get('password', ''))):
             logger.warning(f"Failed to login for get_traffic on {node['name']}")
             return {}
         if protocol in ("vless", "vmess"):
-            res = s.get(f"{base_url}/panel/api/inbounds/getClientTrafficsById/{client_id}", timeout=5)
+            res = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/inbounds/getClientTrafficsById/{client_id}",
+            )
         else:
-            res = s.get(f"{base_url}/panel/api/inbounds/getClientTraffics/{client_id}", timeout=5)
+            res = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/inbounds/getClientTraffics/{client_id}",
+            )
         if res.status_code == 200:
             obj = res.json().get("obj", {})
             if not isinstance(obj, dict):
@@ -1166,6 +1654,225 @@ async def list_nodes_simple(request: Request):
     )
 
 
+@app.get("/api/v1/adguard/sources")
+async def list_adguard_sources(request: Request):
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return JSONResponse(
+        content=_list_adguard_sources(include_password=False),
+        headers={"Cache-Control": "private, max-age=30"},
+    )
+
+
+@app.post("/api/v1/adguard/sources")
+async def add_adguard_source(request: Request, data: Dict):
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    name = str(data.get("name") or "").strip()
+    admin_url = str(data.get("admin_url") or "").strip()
+    dns_url = str(data.get("dns_url") or "").strip()
+    username = str(data.get("username") or "").strip()
+    password = str(data.get("password") or "").strip()
+    verify_tls = bool(data.get("verify_tls", VERIFY_TLS))
+    enabled = bool(data.get("enabled", True))
+
+    if not all([name, admin_url, username, password]):
+        raise HTTPException(status_code=400, detail="Missing required fields")
+
+    if not admin_url.startswith(("http://", "https://")):
+        admin_url = "https://" + admin_url
+    if dns_url and not dns_url.startswith(("http://", "https://")):
+        dns_url = "http://" + dns_url
+
+    encrypted_password = encrypt(password)
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute(
+            """
+            INSERT INTO adguard_sources (name, admin_url, dns_url, username, password, verify_tls, enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (name, admin_url, dns_url, username, encrypted_password, 1 if verify_tls else 0, 1 if enabled else 0),
+        )
+        conn.commit()
+    return {"status": "success"}
+
+
+@app.put("/api/v1/adguard/sources/{source_id}")
+async def update_adguard_source(source_id: int, request: Request, data: Dict):
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM adguard_sources WHERE id = ?", (source_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Source not found")
+
+        name = str(data.get("name") if data.get("name") is not None else row["name"]).strip()
+        admin_url = str(data.get("admin_url") if data.get("admin_url") is not None else row["admin_url"]).strip()
+        dns_url = str(data.get("dns_url") if data.get("dns_url") is not None else row["dns_url"]).strip()
+        username = str(data.get("username") if data.get("username") is not None else row["username"]).strip()
+        verify_tls = bool(data.get("verify_tls")) if data.get("verify_tls") is not None else bool(row["verify_tls"])
+        enabled = bool(data.get("enabled")) if data.get("enabled") is not None else bool(row["enabled"])
+        password_plain = str(data.get("password") or "").strip()
+        encrypted_password = row["password"]
+        if password_plain:
+            encrypted_password = encrypt(password_plain)
+
+        if not all([name, admin_url, username, encrypted_password]):
+            raise HTTPException(status_code=400, detail="Missing required fields")
+        if not admin_url.startswith(("http://", "https://")):
+            admin_url = "https://" + admin_url
+        if dns_url and not dns_url.startswith(("http://", "https://")):
+            dns_url = "http://" + dns_url
+
+        conn.execute(
+            """
+            UPDATE adguard_sources
+            SET name = ?, admin_url = ?, dns_url = ?, username = ?, password = ?,
+                verify_tls = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (name, admin_url, dns_url, username, encrypted_password, 1 if verify_tls else 0, 1 if enabled else 0, source_id),
+        )
+        conn.commit()
+    return {"status": "success"}
+
+
+@app.delete("/api/v1/adguard/sources/{source_id}")
+async def delete_adguard_source(source_id: int, request: Request):
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.execute("DELETE FROM adguard_sources WHERE id = ?", (source_id,))
+        conn.execute("DELETE FROM adguard_history WHERE source_id = ?", (source_id,))
+        conn.commit()
+    return {"status": "success"}
+
+
+@app.post("/api/v1/adguard/collect-now")
+async def adguard_collect_now(request: Request):
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    snapshots = await collect_adguard_once()
+    return {"status": "success", "count": len(snapshots), "sources": snapshots}
+
+
+@app.get("/api/v1/adguard/overview")
+async def adguard_overview(request: Request):
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    with adguard_latest_lock:
+        latest_ts = float(adguard_latest.get("ts") or 0)
+        latest_sources = list(adguard_latest.get("sources") or [])
+        latest_summary = dict(adguard_latest.get("summary") or {})
+
+    if latest_sources and time.time() - latest_ts < max(20, ADGUARD_COLLECT_INTERVAL_SEC * 2):
+        return {
+            "ts": int(latest_ts),
+            "sources": latest_sources,
+            "summary": latest_summary or _build_adguard_summary(latest_sources),
+        }
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT h.*
+            FROM adguard_history h
+            INNER JOIN (
+                SELECT source_id, MAX(ts) AS max_ts
+                FROM adguard_history
+                GROUP BY source_id
+            ) x ON x.source_id = h.source_id AND x.max_ts = h.ts
+            ORDER BY h.source_name COLLATE NOCASE ASC
+            """
+        ).fetchall()
+
+    sources = []
+    for row in rows:
+        extra = {}
+        if row["extra_json"]:
+            try:
+                extra = json.loads(row["extra_json"])
+            except Exception:
+                extra = {}
+        sources.append(
+            {
+                "source_id": int(row["source_id"]),
+                "source_name": row["source_name"],
+                "available": bool(row["available"]),
+                "queries_total": float(row["queries_total"] or 0),
+                "blocked_total": float(row["blocked_total"] or 0),
+                "blocked_rate": float(row["blocked_rate"] or 0),
+                "cache_hit_ratio": float(row["cache_hit_ratio"] or 0),
+                "avg_latency_ms": float(row["avg_latency_ms"] or 0),
+                "upstream_errors": float(row["upstream_errors"] or 0),
+                "top_domains": extra.get("top_domains", []),
+                "top_blocked_domains": extra.get("top_blocked_domains", []),
+                "top_clients": extra.get("top_clients", []),
+            }
+        )
+    return {"ts": int(time.time()), "sources": sources, "summary": _build_adguard_summary(sources)}
+
+
+@app.get("/api/v1/adguard/history")
+async def adguard_history(
+    request: Request,
+    range_sec: int = 24 * 3600,
+    bucket_sec: int = 300,
+    source_id: Optional[int] = None,
+):
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return _build_adguard_history(range_sec=range_sec, bucket_sec=bucket_sec, source_id=source_id)
+
+
+@app.get("/api/v1/monitoring/stack")
+async def monitoring_stack(request: Request):
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    prom_auth = _parse_basic_auth_pair(PROMETHEUS_BASIC_AUTH)
+    loki_auth = _parse_basic_auth_pair(LOKI_BASIC_AUTH)
+    graf_auth = _parse_basic_auth_pair(GRAFANA_BASIC_AUTH)
+
+    prometheus = _http_probe(PROMETHEUS_URL, "/-/ready", basic_auth=prom_auth)
+    loki = _http_probe(LOKI_URL, "/ready", basic_auth=loki_auth)
+    grafana = _http_probe(GRAFANA_URL, "/api/health", basic_auth=graf_auth)
+
+    prom_metrics = {}
+    if prometheus.get("ok"):
+        prom_metrics = {
+            "up_sum": _prom_query(PROMETHEUS_URL, "sum(up)", basic_auth=prom_auth),
+            "adguard_queries_sum": _prom_query(PROMETHEUS_URL, "sum(sub_manager_adguard_dns_queries_total)", basic_auth=prom_auth),
+            "adguard_blocked_sum": _prom_query(PROMETHEUS_URL, "sum(sub_manager_adguard_dns_blocked_total)", basic_auth=prom_auth),
+            "adguard_block_rate_avg": _prom_query(PROMETHEUS_URL, "avg(sub_manager_adguard_dns_block_rate_percent)", basic_auth=prom_auth),
+            "node_online_sum": _prom_query(PROMETHEUS_URL, "sum(sub_manager_node_available)", basic_auth=prom_auth),
+            "node_clients_sum": _prom_query(PROMETHEUS_URL, "sum(sub_manager_node_online_clients)", basic_auth=prom_auth),
+        }
+
+    return {
+        "ts": int(time.time()),
+        "services": {
+            "prometheus": prometheus,
+            "loki": loki,
+            "grafana": grafana,
+        },
+        "prometheus_metrics": prom_metrics,
+    }
+
+
 @app.post("/api/v1/nodes")
 async def add_node(request: Request, data: Dict):
     """Добавить новый узел"""
@@ -1216,7 +1923,13 @@ async def update_node(node_id: int, request: Request, data: Dict):
 
     try:
         with sqlite3.connect(DB_PATH) as conn:
+            existing = conn.execute('SELECT name FROM nodes WHERE id = ?', (node_id,)).fetchone()
+            if not existing:
+                raise HTTPException(status_code=404, detail="Node not found")
+
+            old_name = str(existing[0] or "")
             result = conn.execute('UPDATE nodes SET name = ? WHERE id = ?', (name, node_id))
+            conn.execute('UPDATE node_history SET node_name = ? WHERE node_id = ?', (name, node_id))
             conn.commit()
             if result.rowcount == 0:
                 raise HTTPException(status_code=404, detail="Node not found")
@@ -1225,6 +1938,12 @@ async def update_node(node_id: int, request: Request, data: Dict):
     except Exception as e:
         logger.error(f"Error updating node: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+    node_id_str = str(node_id)
+    with node_metric_labels_lock:
+        if old_name and old_name != name:
+            _remove_node_metric_labels(old_name, node_id_str)
+        node_metric_labels_state[node_id_str] = name
 
     emails_cache["ts"] = 0
     links_cache.clear()
@@ -2020,7 +2739,7 @@ async def reset_all_traffic(request: Request, data: Dict):
 
 @app.get("/api/v1/servers/status")
 async def get_servers_status(request: Request):
-    """Получить статус всех серверов (CPU, RAM, диск, Xray)"""
+    """Получить статус всех серверов (CPU, RAM, диск, core service)"""
     user = check_auth(request)
     if not user:
         raise HTTPException(status_code=401)
@@ -2072,7 +2791,7 @@ async def check_servers_availability(request: Request):
 
 @app.post("/api/v1/servers/{node_id}/restart-xray")
 async def restart_xray_on_server(request: Request, node_id: int):
-    """Перезапустить Xray на сервере"""
+    """Перезапустить core service на сервере"""
     user = check_auth(request)
     if not user:
         raise HTTPException(status_code=401)
@@ -2281,14 +3000,16 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.on_event("startup")
 async def startup_event():
     """Запустить background tasks при старте приложения"""
-    global audit_worker_task
+    global audit_worker_task, adguard_collector_task
+    await asyncio.to_thread(sync_node_history_names_with_nodes)
     audit_worker_task = asyncio.create_task(audit_worker_loop())
     await snapshot_collector.start()
+    adguard_collector_task = asyncio.create_task(adguard_collector_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global audit_worker_task
+    global audit_worker_task, adguard_collector_task
     if audit_worker_task:
         audit_worker_task.cancel()
         try:
@@ -2296,6 +3017,13 @@ async def shutdown_event():
         except asyncio.CancelledError:
             pass
         audit_worker_task = None
+    if adguard_collector_task:
+        adguard_collector_task.cancel()
+        try:
+            await adguard_collector_task
+        except asyncio.CancelledError:
+            pass
+        adguard_collector_task = None
     await snapshot_collector.stop()
 
 

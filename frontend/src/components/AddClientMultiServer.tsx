@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { UIIcon } from './UIIcon';
 
 interface NodeOption {
   id: number;
@@ -121,7 +122,10 @@ export const AddClientMultiServer: React.FC = () => {
 
   return (
     <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-      <h6 className="mb-3" style={{ color: colors.accent }}>🌐 Add Client to Multiple Servers</h6>
+      <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: colors.accent }}>
+        <UIIcon name="servers" size={15} />
+        Add Client to Multiple Servers
+      </h6>
 
       {error && (
         <div
@@ -284,7 +288,10 @@ export const AddClientMultiServer: React.FC = () => {
         onClick={handleSubmit}
         disabled={loading || selectedNodeIds.size === 0}
       >
-        {loading ? '⏳ Adding...' : `➕ Add to ${selectedNodeIds.size} Server${selectedNodeIds.size !== 1 ? 's' : ''}`}
+        <span className="d-inline-flex align-items-center gap-1">
+          <UIIcon name={loading ? 'spinner' : 'plus'} size={14} />
+          {loading ? 'Adding...' : `Add to ${selectedNodeIds.size} Server${selectedNodeIds.size !== 1 ? 's' : ''}`}
+        </span>
       </button>
 
       {/* Results Modal */}
@@ -312,10 +319,10 @@ export const AddClientMultiServer: React.FC = () => {
                     Total: {result.summary.total}
                   </span>
                   <span className="badge fs-6" style={{ backgroundColor: colors.success }}>
-                    ✓ {result.summary.successful}
+                    <span className="d-inline-flex align-items-center gap-1"><UIIcon name="check" size={12} />{result.summary.successful}</span>
                   </span>
                   <span className="badge fs-6" style={{ backgroundColor: colors.danger }}>
-                    ✗ {result.summary.failed}
+                    <span className="d-inline-flex align-items-center gap-1"><UIIcon name="x" size={12} />{result.summary.failed}</span>
                   </span>
                 </div>
 
@@ -335,9 +342,15 @@ export const AddClientMultiServer: React.FC = () => {
                           <td>{r.node}</td>
                           <td>
                             {r.success ? (
-                              <span style={{ color: colors.success }}>✓ Success</span>
+                              <span className="d-inline-flex align-items-center gap-1" style={{ color: colors.success }}>
+                                <UIIcon name="check" size={13} />
+                                Success
+                              </span>
                             ) : (
-                              <span style={{ color: colors.danger }}>✗ Failed</span>
+                              <span className="d-inline-flex align-items-center gap-1" style={{ color: colors.danger }}>
+                                <UIIcon name="x" size={13} />
+                                Failed
+                              </span>
                             )}
                           </td>
                           <td>

@@ -1,6 +1,6 @@
 # 🚀 Multi-Server Subscription Manager v3.1
 
-Комплексная система управления несколькими серверами node panel/Xray с современным React интерфейсом.
+Комплексная система управления несколькими серверами с современным React интерфейсом.
 
 ## ✨ Что нового в v3.1
 
@@ -36,10 +36,17 @@
 
 #### 4. **ServerStatus** - Мониторинг
 - 🖥️ CPU, RAM, Disk usage с прогресс-барами
-- ⚡ Статус Xray (версия, uptime)
-- 🔄 Перезапуск Xray одной кнопкой
+- ⚡ Статус core-сервиса (версия, uptime)
+- 🔄 Перезапуск core-сервиса одной кнопкой
 - 🌐 Сетевой трафик в реальном времени
 - ♻️ Auto-refresh с настраиваемым интервалом
+
+#### 6. **AdGuard Integration** - DNS аналитика без агентов
+- 🔌 Подключение удалённых AdGuard Home по `admin URL + login/password`
+- 📈 Сбор DNS KPI: queries, blocked rate, latency, cache hit ratio, upstream errors
+- 🧠 Top blocked domains и top clients
+- 🗃️ История snapshots сохраняется локально в `admin.db` (`adguard_history`)
+- 🛡️ Пароли источников шифруются тем же ключом, что и для узлов node panel
 
 #### 5. **InboundManager** - Управление Inbound
 - 📡 Просмотр всех inbound со всех серверов
@@ -98,12 +105,19 @@ sudo ./install.sh
 - ✅ Prometheus + Grafana (опционально, по вопросу в установщике)
   - доступ к Grafana закрыт BasicAuth (логин/пароль задаются в install.sh)
 
-### Обновление
+### Обновление (рекомендуемый порядок)
 ```bash
+git pull
 sudo ./update.sh
 ```
 
-Выберите режим:
+Рекомендуется перед обновлением сделать backup:
+```bash
+curl -u admin:password https://your-domain/my-panel/api/v1/backup/all \
+  -o backups_$(date +%Y%m%d).zip
+```
+
+В `update.sh` доступны режимы:
 1. Полное обновление (backend + frontend)
 2. Только backend
 3. Только frontend
@@ -114,18 +128,20 @@ sudo ./update.sh
 ```
 multiserversubgen/
 ├── backend/
-│   ├── main.py              # FastAPI приложение
-│   ├── client_manager.py    # Управление клиентами
-│   ├── inbound_manager.py   # Управление inbound
-│   ├── server_monitor.py    # Мониторинг серверов
-│   └── db.py               # База данных
+│   ├── main.py                # FastAPI приложение
+│   ├── client_manager.py      # Управление клиентами
+│   ├── inbound_manager.py     # Управление inbound
+│   ├── server_monitor.py      # Мониторинг серверов
+│   ├── websocket_manager.py   # WebSocket слой
+│   ├── services/              # Collector + AdGuard сервисы
+│   ├── routers/               # Отдельные роутеры API
+│   └── tests/                 # Unit/регрессионные тесты
 │
 ├── frontend/
 │   ├── src/
 │   │   ├── contexts/
 │   │   │   └── ThemeContext.tsx     # Система тем
 │   │   ├── components/
-│   │   │   ├── App.tsx              # Главное приложение
 │   │   │   ├── ClientManager.tsx    # Управление клиентами
 │   │   │   ├── TrafficStats.tsx     # Статистика трафика
 │   │   │   ├── BackupManager.tsx    # Бэкапы
@@ -133,6 +149,7 @@ multiserversubgen/
 │   │   │   ├── InboundManager.tsx   # Inbound
 │   │   │   ├── NodeManager.tsx      # Серверы
 │   │   │   └── SubscriptionManager.tsx  # Подписки
+│   │   ├── App.tsx                  # Главное приложение
 │   │   └── main.tsx
 │   └── package.json
 │
@@ -162,6 +179,13 @@ multiserversubgen/
   - `ROLE_VIEWERS`, `ROLE_OPERATORS` — RBAC списки пользователей через запятую (`admin` по умолчанию для остальных)
   - `MFA_TOTP_ENABLED`, `MFA_TOTP_USERS` — optional TOTP 2FA для всех защищённых `/api/v1/*` и WebSocket (`username:BASE32` через запятую)
 
+Рекомендуемый профиль для снижения нагрузки (без заметной деградации UI):
+- `TRAFFIC_STATS_CACHE_TTL=20`
+- `ONLINE_CLIENTS_CACHE_TTL=20`
+- `TRAFFIC_MAX_WORKERS=6`
+- `COLLECTOR_BASE_INTERVAL_SEC=10`
+- `COLLECTOR_MAX_PARALLEL=4`
+
 ### Observability
 - `GET /metrics` — Prometheus-метрики HTTP (request count + latency)
 - `GET /api/v1/snapshots/latest` — последний snapshot от background collector
@@ -170,12 +194,28 @@ multiserversubgen/
 Monitoring assets:
 - `monitoring/prometheus/rules.yml` — alert rules (p95 latency, 5xx rate)
 - `monitoring/grafana/sub-manager-dashboard.json` — базовый dashboard
+- `monitoring/grafana/adguard-overview-dashboard.json` — dashboard для AdGuard (Prometheus + Loki)
+- `monitoring/loki/loki-config.yml` — локальный single-node Loki
+- `monitoring/promtail/promtail-config.yml` — сбор querylog/journal AdGuard в Loki
 - Install/update scripts автоматически:
   - создают scrape для `http://127.0.0.1:<APP_PORT>/metrics`
+  - при включении `ADGUARD_METRICS_ENABLED=true` добавляют scrape AdGuard:
+    - targets из `ADGUARD_METRICS_TARGETS` (через запятую, например `127.0.0.1:3000,10.0.0.12:3000`)
+    - path из `ADGUARD_METRICS_PATH` (по умолчанию `/control/prometheus/metrics`)
+  - при включении `ADGUARD_LOKI_ENABLED=true` устанавливают `loki` + `promtail` и подключают datasource `Loki` в Grafana
+    - `ADGUARD_QUERYLOG_PATH` (по умолчанию `/opt/AdGuardHome/data/querylog.json`)
+    - `ADGUARD_SYSTEMD_UNIT` (по умолчанию `AdGuardHome.service`)
   - включают provisioning datasource/dashboard в Grafana
   - публикуют Grafana через subpath `/$WEB_PATH/grafana/` в Nginx
   - отключают `auth.anonymous` в Grafana и биндуют её на `127.0.0.1:3000`
   - поддерживают IP allowlist и optional mTLS (клиентские сертификаты) для путей панели
+
+Быстрая проверка после включения AdGuard-интеграции:
+```bash
+sudo systemctl status prometheus grafana-server loki promtail --no-pager
+curl -s http://127.0.0.1:9090/api/v1/targets | jq '.data.activeTargets[] | {job:.labels.job, health:.health}'
+curl -s http://127.0.0.1:3100/ready
+```
 
 ### Frontend
 - Сборка: `backend/build/`
@@ -270,80 +310,50 @@ curl -u admin:password https://your-domain/my-panel/api/v1/backup/all \
   -o backups_$(date +%Y%m%d).zip
 ```
 
-## 🧪 Тестирование
+## 🧪 Локальная проверка
 
 ### Backend
 ```bash
 cd /opt/sub-manager
 source venv/bin/activate
-python3 main.py
+python3 backend/main.py
 ```
 
 ### Frontend (dev mode)
 ```bash
-cd frontend
+cd /opt/sub-manager/frontend
 npm run dev
 # Откройте http://localhost:5173
 ```
 
 ### Production build
 ```bash
-cd frontend
+cd /opt/sub-manager/frontend
 VITE_BASE="/my-panel/" npm run build
-# Файлы в build/ с корректными путями для подпути /my-panel/
+# Файлы собираются в /opt/sub-manager/backend/build
 # Для размещения в корне: npm run build (VITE_BASE по умолчанию "/")
 ```
 
-## 🐛 Известные проблемы
-
-1. **Chart.js не отображается:**
-   - Проверьте, установлен ли `chart.js` и `react-chartjs-2`
-   - Пересоберите фронтенд: `npm run build`
-
-2. **API возвращает 401:**
-   - Проверьте учетные данные PAM
-   - Убедитесь, что пользователь существует в системе
-
-3. **Backup не скачивается:**
-   - Проверьте доступ к node panel серверам
-   - Убедитесь в правильности credentials
-
-## 🔄 Миграция с прошлых версий
-1. Создайте backup текущей базы
-2. Запустите `sudo ./install.sh` и выберите "Обновить"
-3. Frontend автоматически пересоберется с новыми компонентами
-4. Все данные сохранятся
-
-## 🔄 Миграция: исправление nginx API routing (hotfix)
-
-Если при деплое под подпутём (например `/my-panel/`) UI вызывал API по `/api/v1/...`
-вместо `/my-panel/api/v1/...` — обновитесь до текущей версии:
-
+### Тесты и линт
 ```bash
-sudo ./install.sh   # выберите "Обновить (сохранить данные)"
+# Frontend lint + build
+cd /opt/sub-manager/frontend
+npm run lint
+npm run build
+
+# Backend unit-тесты
+cd /opt/sub-manager
+source venv/bin/activate
+pip install -r backend/requirements-dev.txt
+pytest -q backend/tests
 ```
 
-**Что изменилось:**
-- `frontend/src/api.ts` — централизованный axios с `API_BASE`, выводимым из `BASE_URL`
-- Все компоненты используют этот инстанс вместо прямых вызовов `axios` с `/api/`
-- `VITE_BASE` правильно влияет на `API_BASE` при сборке
-- Nginx-сниппет по умолчанию **не** открывает `/api/` на корне домена
+## 🛠️ Диагностика
 
-**Если вы добавляли `/api/` в vhost как workaround:**
-После обновления фронтенда этот location можно убрать из nginx (опционально).
-
-## 📈 Roadmap
-
-### Уже реализовано
-- [x] WebSocket для real-time обновлений (`/ws`, обновления в `ServerStatus` и `TrafficStats`)
-- [x] Улучшенная subscription генерация (режим `Grouped` в `SubscriptionManager`, `sub-grouped` endpoint)
-- [x] Групповые операции с inbound на уровне API (`/api/v1/inbounds/batch-enable|batch-update|batch-delete`)
-
-### Предлагаю реализовать дальше
-- [ ] Групповые операции с inbound в UI (bulk-select + массовые действия в `InboundManager`)
-- [ ] Push уведомления (Telegram/Webhook для ошибок узлов, high latency, 5xx spikes)
-- [ ] Полноценный Multi-language support (подключение i18n в `main.tsx` + перевод всех компонентов)
-- [ ] Mobile приложение
+- Логи backend: `journalctl -u sub-manager -f`
+- Логи Nginx: `tail -f /var/log/nginx/error.log`
+- Проверка состояния сервиса: `systemctl status sub-manager`
+- Проверка API health: `curl -u admin:password https://your-domain/my-panel/api/v1/health/deps`
 
 ## 👥 Участие в разработке
 
@@ -362,10 +372,9 @@ MIT License - используйте свободно!
 - [FastAPI](https://fastapi.tiangolo.com/)
 - [React](https://react.dev/)
 - [Chart.js](https://www.chartjs.org/)
-- [node panel](https://github.com/MHSanaei/node panel)
 - [Vite](https://vitejs.dev/)
 - [Bootstrap](https://getbootstrap.com/)
 
 ---
 
-**Multi-Server Manager v3.1** - Made with ❤️
+**Multi-Server Manager v3.1**

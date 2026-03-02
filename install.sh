@@ -117,6 +117,8 @@ write_install_log() {
         COLLECTOR_BASE_INTERVAL_SEC COLLECTOR_MAX_INTERVAL_SEC COLLECTOR_MAX_PARALLEL
         REDIS_URL AUDIT_QUEUE_BATCH_SIZE ROLE_VIEWERS ROLE_OPERATORS
         MONITORING_ENABLED GRAFANA_WEB_PATH GRAFANA_HTTP_PORT
+        ADGUARD_METRICS_ENABLED ADGUARD_METRICS_TARGETS ADGUARD_METRICS_PATH
+        ADGUARD_LOKI_ENABLED ADGUARD_QUERYLOG_PATH ADGUARD_SYSTEMD_UNIT
         GRAFANA_AUTH_ENABLED GRAFANA_AUTH_USER GRAFANA_AUTH_HASH
         SECURITY_MTLS_ENABLED SECURITY_MTLS_CA_PATH SECURITY_IP_ALLOWLIST
         MFA_TOTP_ENABLED MFA_TOTP_USERS MFA_TOTP_WS_STRICT
@@ -281,6 +283,41 @@ configure_monitoring_stack() {
         fi
     fi
 
+    local adguard_scrape_block=""
+    local adguard_metrics_enabled="${ADGUARD_METRICS_ENABLED:-false}"
+    local adguard_metrics_targets="${ADGUARD_METRICS_TARGETS:-}"
+    local adguard_metrics_path="${ADGUARD_METRICS_PATH:-/control/prometheus/metrics}"
+    local adguard_loki_enabled="${ADGUARD_LOKI_ENABLED:-false}"
+    local adguard_querylog_path="${ADGUARD_QUERYLOG_PATH:-/opt/AdGuardHome/data/querylog.json}"
+    local adguard_systemd_unit="${ADGUARD_SYSTEMD_UNIT:-AdGuardHome.service}"
+    local has_adguard_targets="false"
+    local loki_ready="false"
+
+    if [ "$adguard_metrics_enabled" = "true" ] && [ -n "$adguard_metrics_targets" ]; then
+        local adguard_targets_count=0
+        adguard_scrape_block="
+  - job_name: adguard-home
+    metrics_path: ${adguard_metrics_path}
+    scrape_interval: 30s
+    static_configs:
+      - targets:"
+        IFS=',' read -ra _adguard_targets <<< "$adguard_metrics_targets"
+        local target
+        for target in "${_adguard_targets[@]}"; do
+            target="$(echo "$target" | xargs)"
+            if [ -n "$target" ]; then
+                adguard_scrape_block="${adguard_scrape_block}
+          - '${target}'"
+                adguard_targets_count=$((adguard_targets_count + 1))
+            fi
+        done
+        if [ "$adguard_targets_count" -gt 0 ]; then
+            has_adguard_targets="true"
+        else
+            adguard_scrape_block=""
+        fi
+    fi
+
     mkdir -p /etc/prometheus/rules
     cp "$SCRIPT_DIR/monitoring/prometheus/rules.yml" /etc/prometheus/rules/sub-manager-rules.yml
     cat > /etc/prometheus/prometheus.yml <<EOF
@@ -300,6 +337,7 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ['127.0.0.1:${APP_PORT}']
+${adguard_scrape_block}
 EOF
 
     mkdir -p /etc/grafana/provisioning/datasources
@@ -317,6 +355,42 @@ datasources:
     editable: false
 EOF
 
+    if [ "$adguard_loki_enabled" = "true" ]; then
+        if apt_install loki promtail >/dev/null 2>&1; then
+            mkdir -p /etc/loki /etc/promtail /var/lib/loki /var/lib/promtail
+            cp "$SCRIPT_DIR/monitoring/loki/loki-config.yml" /etc/loki/local-config.yaml
+            cp "$SCRIPT_DIR/monitoring/promtail/promtail-config.yml" /etc/promtail/config.yml
+            sed -i "s|__ADGUARD_QUERYLOG_PATH__|${adguard_querylog_path}|g" /etc/promtail/config.yml
+            sed -i "s|__ADGUARD_SYSTEMD_UNIT__|${adguard_systemd_unit}|g" /etc/promtail/config.yml
+            systemctl enable --now loki >/dev/null 2>&1 || true
+            systemctl enable --now promtail >/dev/null 2>&1 || true
+            systemctl restart loki >/dev/null 2>&1 || true
+            systemctl restart promtail >/dev/null 2>&1 || true
+            loki_ready="true"
+            echo "✓ Loki и promtail настроены."
+        else
+            echo "⚠️ Не удалось установить loki/promtail. Продолжаем без логов AdGuard."
+        fi
+    fi
+
+    if [ "$loki_ready" = "true" ]; then
+        cat > /etc/grafana/provisioning/datasources/sub-manager-prometheus.yml <<'EOF'
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:9090
+    isDefault: true
+    editable: false
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://127.0.0.1:3100
+    editable: false
+EOF
+    fi
+
     cat > /etc/grafana/provisioning/dashboards/sub-manager-dashboard.yml <<'EOF'
 apiVersion: 1
 providers:
@@ -332,6 +406,11 @@ providers:
 EOF
 
     cp "$SCRIPT_DIR/monitoring/grafana/sub-manager-dashboard.json" /var/lib/grafana/dashboards/sub-manager-dashboard.json
+    if [ "$has_adguard_targets" = "true" ] || [ "$loki_ready" = "true" ]; then
+        cp "$SCRIPT_DIR/monitoring/grafana/adguard-overview-dashboard.json" /var/lib/grafana/dashboards/adguard-overview-dashboard.json
+    else
+        rm -f /var/lib/grafana/dashboards/adguard-overview-dashboard.json
+    fi
     chown -R grafana:grafana /var/lib/grafana/dashboards
 
     python3 <<PYTHON
@@ -610,16 +689,16 @@ update_project() {
     READ_ONLY_MODE=${READ_ONLY_MODE:-"false"}
     SUB_RATE_LIMIT_COUNT=${SUB_RATE_LIMIT_COUNT:-"30"}
     SUB_RATE_LIMIT_WINDOW_SEC=${SUB_RATE_LIMIT_WINDOW_SEC:-"60"}
-    TRAFFIC_STATS_CACHE_TTL=${TRAFFIC_STATS_CACHE_TTL:-"10"}
-    ONLINE_CLIENTS_CACHE_TTL=${ONLINE_CLIENTS_CACHE_TTL:-"10"}
+    TRAFFIC_STATS_CACHE_TTL=${TRAFFIC_STATS_CACHE_TTL:-"20"}
+    ONLINE_CLIENTS_CACHE_TTL=${ONLINE_CLIENTS_CACHE_TTL:-"20"}
     TRAFFIC_STATS_STALE_TTL=${TRAFFIC_STATS_STALE_TTL:-"120"}
     ONLINE_CLIENTS_STALE_TTL=${ONLINE_CLIENTS_STALE_TTL:-"60"}
     CLIENTS_CACHE_TTL=${CLIENTS_CACHE_TTL:-"20"}
     CLIENTS_CACHE_STALE_TTL=${CLIENTS_CACHE_STALE_TTL:-"180"}
-    TRAFFIC_MAX_WORKERS=${TRAFFIC_MAX_WORKERS:-"8"}
-    COLLECTOR_BASE_INTERVAL_SEC=${COLLECTOR_BASE_INTERVAL_SEC:-"5"}
+    TRAFFIC_MAX_WORKERS=${TRAFFIC_MAX_WORKERS:-"6"}
+    COLLECTOR_BASE_INTERVAL_SEC=${COLLECTOR_BASE_INTERVAL_SEC:-"10"}
     COLLECTOR_MAX_INTERVAL_SEC=${COLLECTOR_MAX_INTERVAL_SEC:-"60"}
-    COLLECTOR_MAX_PARALLEL=${COLLECTOR_MAX_PARALLEL:-"8"}
+    COLLECTOR_MAX_PARALLEL=${COLLECTOR_MAX_PARALLEL:-"4"}
     REDIS_URL=${REDIS_URL:-""}
     AUDIT_QUEUE_BATCH_SIZE=${AUDIT_QUEUE_BATCH_SIZE:-"200"}
     ROLE_VIEWERS=${ROLE_VIEWERS:-""}
@@ -627,6 +706,12 @@ update_project() {
     MONITORING_ENABLED=${MONITORING_ENABLED:-"true"}
     GRAFANA_WEB_PATH=${GRAFANA_WEB_PATH:-"grafana"}
     GRAFANA_HTTP_PORT=${GRAFANA_HTTP_PORT:-"43000"}
+    ADGUARD_METRICS_ENABLED=${ADGUARD_METRICS_ENABLED:-"false"}
+    ADGUARD_METRICS_TARGETS=${ADGUARD_METRICS_TARGETS:-""}
+    ADGUARD_METRICS_PATH=${ADGUARD_METRICS_PATH:-"/control/prometheus/metrics"}
+    ADGUARD_LOKI_ENABLED=${ADGUARD_LOKI_ENABLED:-"false"}
+    ADGUARD_QUERYLOG_PATH=${ADGUARD_QUERYLOG_PATH:-"/opt/AdGuardHome/data/querylog.json"}
+    ADGUARD_SYSTEMD_UNIT=${ADGUARD_SYSTEMD_UNIT:-"AdGuardHome.service"}
     GRAFANA_AUTH_ENABLED=${GRAFANA_AUTH_ENABLED:-"true"}
     GRAFANA_AUTH_USER=${GRAFANA_AUTH_USER:-"monitor"}
     GRAFANA_AUTH_HASH=${GRAFANA_AUTH_HASH:-""}
@@ -797,16 +882,16 @@ CA_BUNDLE_PATH=""
 READ_ONLY_MODE="false"
 SUB_RATE_LIMIT_COUNT="30"
 SUB_RATE_LIMIT_WINDOW_SEC="60"
-TRAFFIC_STATS_CACHE_TTL="10"
-ONLINE_CLIENTS_CACHE_TTL="10"
+TRAFFIC_STATS_CACHE_TTL="20"
+ONLINE_CLIENTS_CACHE_TTL="20"
 TRAFFIC_STATS_STALE_TTL="120"
 ONLINE_CLIENTS_STALE_TTL="60"
 CLIENTS_CACHE_TTL="20"
 CLIENTS_CACHE_STALE_TTL="180"
-TRAFFIC_MAX_WORKERS="8"
-COLLECTOR_BASE_INTERVAL_SEC="5"
+TRAFFIC_MAX_WORKERS="6"
+COLLECTOR_BASE_INTERVAL_SEC="10"
 COLLECTOR_MAX_INTERVAL_SEC="60"
-COLLECTOR_MAX_PARALLEL="8"
+COLLECTOR_MAX_PARALLEL="4"
 REDIS_URL=""
 AUDIT_QUEUE_BATCH_SIZE="200"
 ROLE_VIEWERS=""
@@ -818,6 +903,12 @@ MFA_TOTP_ENABLED="false"
 MFA_TOTP_USERS=""
 MFA_TOTP_WS_STRICT="false"
 USE_PROXY="y"
+ADGUARD_METRICS_ENABLED="false"
+ADGUARD_METRICS_TARGETS=""
+ADGUARD_METRICS_PATH="/control/prometheus/metrics"
+ADGUARD_LOKI_ENABLED="false"
+ADGUARD_QUERYLOG_PATH="/opt/AdGuardHome/data/querylog.json"
+ADGUARD_SYSTEMD_UNIT="AdGuardHome.service"
 
 read -p "Режим установки: Быстрая или Advanced? (b/a, default: b): " INSTALL_MODE_INPUT
 INSTALL_MODE_INPUT=${INSTALL_MODE_INPUT:-b}
@@ -841,17 +932,17 @@ if [[ "$INSTALL_MODE_INPUT" =~ ^[aAфФ]$ ]]; then
     read -p "Окно лимита /sub/* в секундах (default: $SUB_RATE_LIMIT_WINDOW_SEC): " SUB_RATE_LIMIT_WINDOW_SEC
     SUB_RATE_LIMIT_WINDOW_SEC=${SUB_RATE_LIMIT_WINDOW_SEC:-60}
     read -p "TTL кэша /v1/traffic/stats (сек, default: $TRAFFIC_STATS_CACHE_TTL): " TRAFFIC_STATS_CACHE_TTL
-    TRAFFIC_STATS_CACHE_TTL=${TRAFFIC_STATS_CACHE_TTL:-10}
+    TRAFFIC_STATS_CACHE_TTL=${TRAFFIC_STATS_CACHE_TTL:-20}
     read -p "TTL кэша /v1/clients/online (сек, default: $ONLINE_CLIENTS_CACHE_TTL): " ONLINE_CLIENTS_CACHE_TTL
-    ONLINE_CLIENTS_CACHE_TTL=${ONLINE_CLIENTS_CACHE_TTL:-10}
+    ONLINE_CLIENTS_CACHE_TTL=${ONLINE_CLIENTS_CACHE_TTL:-20}
     read -p "Параллелизм сбора трафика по узлам (default: $TRAFFIC_MAX_WORKERS): " TRAFFIC_MAX_WORKERS
-    TRAFFIC_MAX_WORKERS=${TRAFFIC_MAX_WORKERS:-8}
+    TRAFFIC_MAX_WORKERS=${TRAFFIC_MAX_WORKERS:-6}
     read -p "Базовый интервал collector (сек, default: $COLLECTOR_BASE_INTERVAL_SEC): " COLLECTOR_BASE_INTERVAL_SEC
-    COLLECTOR_BASE_INTERVAL_SEC=${COLLECTOR_BASE_INTERVAL_SEC:-5}
+    COLLECTOR_BASE_INTERVAL_SEC=${COLLECTOR_BASE_INTERVAL_SEC:-10}
     read -p "Макс. интервал adaptive collector (сек, default: $COLLECTOR_MAX_INTERVAL_SEC): " COLLECTOR_MAX_INTERVAL_SEC
     COLLECTOR_MAX_INTERVAL_SEC=${COLLECTOR_MAX_INTERVAL_SEC:-60}
     read -p "Макс. параллельных poll collector (default: $COLLECTOR_MAX_PARALLEL): " COLLECTOR_MAX_PARALLEL
-    COLLECTOR_MAX_PARALLEL=${COLLECTOR_MAX_PARALLEL:-8}
+    COLLECTOR_MAX_PARALLEL=${COLLECTOR_MAX_PARALLEL:-4}
     read -p "Redis URL для кэша (опционально, пример redis://127.0.0.1:6379/0): " REDIS_URL
     REDIS_URL=${REDIS_URL:-}
     read -p "Размер batch audit worker (default: $AUDIT_QUEUE_BATCH_SIZE): " AUDIT_QUEUE_BATCH_SIZE
@@ -928,10 +1019,36 @@ if [ "$MONITORING_ENABLED" = "true" ]; then
     done
     GRAFANA_AUTH_HASH=$(openssl passwd -apr1 "$GRAFANA_AUTH_PASSWORD")
     unset GRAFANA_AUTH_PASSWORD GRAFANA_AUTH_PASSWORD_CONFIRM
+
+    read -p "Включить AdGuard метрики в Prometheus? (y/n, default: n): " ADGUARD_METRICS_INPUT
+    ADGUARD_METRICS_INPUT=${ADGUARD_METRICS_INPUT:-n}
+    if [[ "$ADGUARD_METRICS_INPUT" =~ ^[yYдД]$ ]]; then
+        ADGUARD_METRICS_ENABLED="true"
+        read -p "Targets AdGuard через запятую (default: 127.0.0.1:3000): " ADGUARD_METRICS_TARGETS
+        ADGUARD_METRICS_TARGETS=${ADGUARD_METRICS_TARGETS:-127.0.0.1:3000}
+        read -p "Metrics path AdGuard (default: /control/prometheus/metrics): " ADGUARD_METRICS_PATH
+        ADGUARD_METRICS_PATH=${ADGUARD_METRICS_PATH:-/control/prometheus/metrics}
+    fi
+
+    read -p "Включить сбор querylog AdGuard в Loki/promtail? (y/n, default: n): " ADGUARD_LOKI_INPUT
+    ADGUARD_LOKI_INPUT=${ADGUARD_LOKI_INPUT:-n}
+    if [[ "$ADGUARD_LOKI_INPUT" =~ ^[yYдД]$ ]]; then
+        ADGUARD_LOKI_ENABLED="true"
+        read -p "Путь к querylog.json (default: /opt/AdGuardHome/data/querylog.json): " ADGUARD_QUERYLOG_PATH
+        ADGUARD_QUERYLOG_PATH=${ADGUARD_QUERYLOG_PATH:-/opt/AdGuardHome/data/querylog.json}
+        read -p "Systemd unit AdGuard для journal (default: AdGuardHome.service): " ADGUARD_SYSTEMD_UNIT
+        ADGUARD_SYSTEMD_UNIT=${ADGUARD_SYSTEMD_UNIT:-AdGuardHome.service}
+    fi
 else
     GRAFANA_WEB_PATH="grafana"
     GRAFANA_HTTP_PORT=$(pick_free_local_port 43000)
     VITE_GRAFANA_PATH="/${GRAFANA_WEB_PATH}/"
+    ADGUARD_METRICS_ENABLED="false"
+    ADGUARD_METRICS_TARGETS=""
+    ADGUARD_METRICS_PATH="/control/prometheus/metrics"
+    ADGUARD_LOKI_ENABLED="false"
+    ADGUARD_QUERYLOG_PATH="/opt/AdGuardHome/data/querylog.json"
+    ADGUARD_SYSTEMD_UNIT="AdGuardHome.service"
     GRAFANA_AUTH_ENABLED="false"
     GRAFANA_AUTH_USER=""
     GRAFANA_AUTH_HASH=""
@@ -1086,7 +1203,9 @@ nginx -t && systemctl restart nginx
 # Fail2Ban
 cat > /etc/fail2ban/filter.d/multi-manager.conf <<'EOF'
 [Definition]
-failregex = ^<HOST> -.*"GET .*/api/v1/.*" (401|403)
+# Match real auth failures across API methods and WebSocket handshake.
+failregex = ^<HOST> -.*"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) .*/api/v1/.*" (401|403)
+            ^<HOST> -.*"GET .*/ws(\?.*)? HTTP/.*" (401|403)
 EOF
 
 cat > /etc/fail2ban/jail.d/multi-manager.local <<EOF
