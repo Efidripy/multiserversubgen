@@ -1203,7 +1203,9 @@ nginx -t && systemctl restart nginx
 # Fail2Ban
 cat > /etc/fail2ban/filter.d/multi-manager.conf <<'EOF'
 [Definition]
-failregex = ^<HOST> -.*"GET .*/api/v1/.*" (401|403)
+# Match real auth failures across API methods and WebSocket handshake.
+failregex = ^<HOST> -.*"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) .*/api/v1/.*" (401|403)
+            ^<HOST> -.*"GET .*/ws(\?.*)? HTTP/.*" (401|403)
 EOF
 
 cat > /etc/fail2ban/jail.d/multi-manager.local <<EOF
