@@ -3,6 +3,7 @@ import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { AddClientMultiServer } from './AddClientMultiServer';
 import { getAuth } from '../auth';
+import { UIIcon } from './UIIcon';
 
 interface Client {
   id: number;
@@ -19,8 +20,10 @@ interface Client {
 }
 
 interface TrafficData {
-  upload: number;
-  download: number;
+  upload?: number | string;
+  download?: number | string;
+  up?: number | string;
+  down?: number | string;
   total: number;
   enable: boolean;
   expiryTime: number;
@@ -40,12 +43,63 @@ interface ClientsPageCache {
   endpointMode?: 'unknown' | 'query' | 'legacy' | 'disabled';
 }
 
+const clientKey = (client: Client): string =>
+  `${client.node_id ?? client.node_name}:${client.id}:${client.email}`;
+
 const CLIENTS_PAGE_CACHE_KEY = 'sub_manager_clients_page_cache_v1';
 const CLIENTS_PAGE_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 const CLIENTS_PAGE_REFRESH_MS = 5 * 60 * 1000; // background refresh interval
-const TRAFFIC_FETCH_MAX_CLIENTS = 30;
+const ENABLE_LIVE_CLIENT_TRAFFIC = true;
+const TRAFFIC_FETCH_MAX_CLIENTS = 120;
 const TRAFFIC_FETCH_CONCURRENCY = 4;
 const TRAFFIC_FETCH_TIMEOUT_MS = 8000;
+
+const asFiniteNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const normalized = trimmed.replace(',', '.');
+  const numeric = Number(normalized);
+  if (Number.isFinite(numeric)) return numeric;
+  const match = normalized.match(/^(-?\d+(?:\.\d+)?)\s*([kmgt]?i?b)$/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount)) return null;
+  const unit = match[2].toLowerCase();
+  const multipliers: Record<string, number> = {
+    b: 1,
+    kb: 1024,
+    kib: 1024,
+    mb: 1024 ** 2,
+    mib: 1024 ** 2,
+    gb: 1024 ** 3,
+    gib: 1024 ** 3,
+    tb: 1024 ** 4,
+    tib: 1024 ** 4,
+  };
+  const factor = multipliers[unit];
+  return factor ? amount * factor : null;
+};
+
+const pickTrafficField = (
+  entry: TrafficData | null | undefined,
+  field: 'upload' | 'download'
+): number | null => {
+  if (!entry) return null;
+  if (field === 'download') {
+    return (
+      asFiniteNumber(entry.download) ??
+      asFiniteNumber(entry.down) ??
+      null
+    );
+  }
+  return (
+    asFiniteNumber(entry.upload) ??
+    asFiniteNumber(entry.up) ??
+    null
+  );
+};
 
 export const ClientManager: React.FC = () => {
   const { colors } = useTheme();
@@ -69,6 +123,8 @@ export const ClientManager: React.FC = () => {
   const [filterNode, setFilterNode] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [filterProtocol, setFilterProtocol] = useState('');
+  const [sortField, setSortField] = useState<'email' | 'node' | 'download' | 'total' | 'expiry'>('email');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
   
   // Batch add modal
   const [showBatchModal, setShowBatchModal] = useState(false);
@@ -78,7 +134,7 @@ export const ClientManager: React.FC = () => {
   const [batchExpiryDays, setBatchExpiryDays] = useState('30');
   
   // Selection
-  const [selectedClients, setSelectedClients] = useState<Set<number>>(new Set());
+  const [selectedClientKeys, setSelectedClientKeys] = useState<Set<string>>(new Set());
   const refreshInFlightRef = useRef(false);
   
   useEffect(() => {
@@ -115,7 +171,7 @@ export const ClientManager: React.FC = () => {
   
   useEffect(() => {
     applyFilters();
-  }, [clients, searchTerm, filterNode, filterStatus, filterProtocol]);
+  }, [clients, searchTerm, filterNode, filterStatus, filterProtocol, sortField, sortDirection, trafficCache]);
   
   const loadClients = async (silent = false) => {
     if (refreshInFlightRef.current) return;
@@ -133,13 +189,23 @@ export const ClientManager: React.FC = () => {
       const nodeNameToId: Record<string, number> = {};
       nodeList.forEach(n => { nodeNameToId[n.name] = n.id; });
 
-      const rawClients: Client[] = (clientsRes.data.clients || []).map((c: Client) => ({
+      const mappedClients: Client[] = (clientsRes.data.clients || []).map((c: Client) => ({
         ...c,
         node_id: nodeNameToId[c.node_name],
       }));
+      // Defensive dedupe in case API/cache returns accidental repeated rows.
+      const deduped = new Map<string, Client>();
+      mappedClients.forEach((client) => {
+        deduped.set(clientKey(client), client);
+      });
+      const rawClients: Client[] = Array.from(deduped.values());
 
       setClients(rawClients);
-      if (!silent) {
+      if (!silent && trafficEndpointModeRef.current === 'disabled') {
+        // Re-probe endpoints on manual reload to recover after temporary backend mismatch.
+        trafficEndpointModeRef.current = 'unknown';
+      }
+      if (!silent && ENABLE_LIVE_CLIENT_TRAFFIC) {
         loadTraffic(rawClients).catch(() => undefined);
       }
 
@@ -341,8 +407,62 @@ export const ClientManager: React.FC = () => {
     if (filterProtocol) {
       filtered = filtered.filter(c => c.protocol === filterProtocol);
     }
-    
-    setFilteredClients(filtered);
+
+    const getSortMultiplier = () => (sortDirection === 'asc' ? 1 : -1);
+    const compareText = (a: string, b: string) =>
+      a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+    const resolveDownloadBytes = (client: Client): number => {
+      const key = client.node_id != null ? `${client.node_id}:${client.email}` : null;
+      if (!key) return client.down;
+      const entry = trafficCache[key];
+      const normalized = pickTrafficField(entry, 'download');
+      return normalized ?? client.down;
+    };
+
+    const sorted = [...filtered].sort((a, b) => {
+      const dir = getSortMultiplier();
+      const byEmail = compareText(a.email, b.email);
+      const byNode = compareText(a.node_name, b.node_name);
+      const byId = a.id - b.id;
+
+      if (sortField === 'email') {
+        if (byEmail !== 0) return byEmail * dir;
+        if (byNode !== 0) return byNode * dir;
+        return byId * dir;
+      }
+
+      if (sortField === 'node') {
+        if (byNode !== 0) return byNode * dir;
+        if (byEmail !== 0) return byEmail * dir;
+        return byId * dir;
+      }
+
+      if (sortField === 'download') {
+        const byDownload = resolveDownloadBytes(a) - resolveDownloadBytes(b);
+        if (byDownload !== 0) return byDownload * dir;
+        if (byEmail !== 0) return byEmail;
+        if (byNode !== 0) return byNode;
+        return byId;
+      }
+
+      if (sortField === 'total') {
+        const byTotal = a.total - b.total;
+        if (byTotal !== 0) return byTotal * dir;
+        if (byEmail !== 0) return byEmail;
+        if (byNode !== 0) return byNode;
+        return byId;
+      }
+
+      const aExpiry = a.expiryTime > 0 ? a.expiryTime : Number.MAX_SAFE_INTEGER;
+      const bExpiry = b.expiryTime > 0 ? b.expiryTime : Number.MAX_SAFE_INTEGER;
+      const byExpiry = aExpiry - bExpiry;
+      if (byExpiry !== 0) return byExpiry * dir;
+      if (byEmail !== 0) return byEmail;
+      if (byNode !== 0) return byNode;
+      return byId;
+    });
+
+    setFilteredClients(sorted);
   };
   
   const handleBatchAdd = async () => {
@@ -386,7 +506,13 @@ export const ClientManager: React.FC = () => {
     let confirmMessage = '';
     
     if (type === 'selected') {
-      clientsToDelete = Array.from(selectedClients);
+      clientsToDelete = Array.from(
+        new Set(
+          clients
+            .filter((c) => selectedClientKeys.has(clientKey(c)))
+            .map((c) => c.id)
+        )
+      );
       confirmMessage = `Delete ${clientsToDelete.length} selected clients?`;
     } else if (type === 'expired') {
       clientsToDelete = clients
@@ -416,7 +542,7 @@ export const ClientManager: React.FC = () => {
         auth: getAuth()
       });
       
-      setSelectedClients(new Set());
+      setSelectedClientKeys(new Set());
       loadClients();
       alert('Clients deleted successfully');
     } catch (err: any) {
@@ -475,23 +601,39 @@ export const ClientManager: React.FC = () => {
     a.click();
   };
   
-  const toggleSelection = (clientId: number) => {
-    const newSelection = new Set(selectedClients);
-    if (newSelection.has(clientId)) {
-      newSelection.delete(clientId);
+  const toggleSelection = (client: Client) => {
+    const key = clientKey(client);
+    const newSelection = new Set(selectedClientKeys);
+    if (newSelection.has(key)) {
+      newSelection.delete(key);
     } else {
-      newSelection.add(clientId);
+      newSelection.add(key);
     }
-    setSelectedClients(newSelection);
+    setSelectedClientKeys(newSelection);
   };
   
   const toggleSelectAll = () => {
-    if (selectedClients.size === filteredClients.length) {
-      setSelectedClients(new Set());
+    const visibleKeys = filteredClients.map((c) => clientKey(c));
+    const allSelected =
+      visibleKeys.length > 0 && visibleKeys.every((key) => selectedClientKeys.has(key));
+
+    if (allSelected) {
+      setSelectedClientKeys(new Set());
     } else {
-      setSelectedClients(new Set(filteredClients.map(c => c.id)));
+      setSelectedClientKeys(new Set(visibleKeys));
     }
   };
+
+  const applySortFromHeader = (field: 'email' | 'node' | 'download' | 'total' | 'expiry') => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortField(field);
+    setSortDirection('asc');
+  };
+  const sortIndicator = (field: 'email' | 'node' | 'download' | 'total' | 'expiry') =>
+    sortField === field ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
   
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 GB';
@@ -500,12 +642,13 @@ export const ClientManager: React.FC = () => {
   };
 
   /** Returns bytes from cache if loaded, fallback value if not yet loaded, or null if unavailable. */
-  const getTrafficBytes = (key: string | null, field: 'upload' | 'download', fallback: number): number | null => {
-    if (key == null) return fallback;
-    if (!(key in trafficCache)) return fallback; // not yet loaded
+  const getTrafficBytes = (key: string | null, field: 'upload' | 'download', fallback: number): number => {
+    const safeFallback = asFiniteNumber(fallback) ?? 0;
+    if (key == null) return safeFallback;
+    if (!(key in trafficCache)) return safeFallback; // not yet loaded
     const entry = trafficCache[key];
-    if (entry == null) return null; // node unreachable
-    return entry[field];
+    if (entry == null) return safeFallback; // unavailable live traffic -> keep DB value
+    return pickTrafficField(entry, field) ?? safeFallback;
   };
   
   const nodes = Array.from(new Set(clients.map(c => c.node_name)));
@@ -516,21 +659,24 @@ export const ClientManager: React.FC = () => {
       <AddClientMultiServer />
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0" style={{ color: colors.accent }}>👥 Client Management</h5>
+          <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.accent }}>
+            <UIIcon name="clients" size={16} />
+            Client Management
+          </h5>
           <div>
             <button 
               className="btn btn-sm me-2"
               style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
               onClick={() => setShowBatchModal(true)}
             >
-              ➕ Batch Add
+              <span className="d-inline-flex align-items-center gap-1"><UIIcon name="plus" size={14} />Batch Add</span>
             </button>
             <button 
               className="btn btn-sm me-2"
               style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
               onClick={exportToCSV}
             >
-              📥 Export CSV
+              <span className="d-inline-flex align-items-center gap-1"><UIIcon name="download" size={14} />Export CSV</span>
             </button>
             <button 
               className="btn btn-sm"
@@ -538,7 +684,10 @@ export const ClientManager: React.FC = () => {
               onClick={() => loadClients()}
               disabled={loading}
             >
-              {loading ? '⏳' : '🔄'} Reload
+              <span className="d-inline-flex align-items-center gap-1">
+                <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
+                Reload
+              </span>
             </button>
           </div>
         </div>
@@ -555,7 +704,7 @@ export const ClientManager: React.FC = () => {
             <input
               type="text"
               className="form-control form-control-sm"
-              placeholder="🔍 Search email..."
+              placeholder="Search email..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
@@ -612,17 +761,45 @@ export const ClientManager: React.FC = () => {
             </button>
           </div>
         </div>
+
+        <div className="row g-2 mb-3">
+          <div className="col-md-3">
+            <select
+              className="form-select form-select-sm"
+              value={sortField}
+              onChange={(e) => setSortField(e.target.value as 'email' | 'node' | 'download' | 'total' | 'expiry')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+            >
+              <option value="email">Sort: Name</option>
+              <option value="node">Sort: Node</option>
+              <option value="download">Sort: Download Traffic</option>
+              <option value="total">Sort: Total Limit</option>
+              <option value="expiry">Sort: Expiry Date</option>
+            </select>
+          </div>
+          <div className="col-md-2">
+            <select
+              className="form-select form-select-sm"
+              value={sortDirection}
+              onChange={(e) => setSortDirection(e.target.value as 'asc' | 'desc')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+            >
+              <option value="asc">Asc (min→max)</option>
+              <option value="desc">Desc (max→min)</option>
+            </select>
+          </div>
+        </div>
         
         {/* Batch Actions */}
-        {selectedClients.size > 0 && (
+        {selectedClientKeys.size > 0 && (
           <div className="alert mb-3" style={{ backgroundColor: colors.accent + '22', borderColor: colors.accent, color: colors.text.primary }}>
-            <strong>{selectedClients.size} clients selected</strong>
+            <strong>{selectedClientKeys.size} clients selected</strong>
             <button
               className="btn btn-sm ms-2"
               style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }}
               onClick={() => handleBatchDelete('selected')}
             >
-              🗑 Delete Selected
+              <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Selected</span>
             </button>
           </div>
         )}
@@ -630,24 +807,24 @@ export const ClientManager: React.FC = () => {
         <div className="mb-3 d-flex gap-2">
           <button
             className="btn btn-sm"
-            style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: '#000' }}
+            style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
             onClick={() => handleBatchDelete('expired')}
           >
-            🗑 Delete Expired
+            <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Expired</span>
           </button>
           <button
             className="btn btn-sm"
-            style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: '#000' }}
+            style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
             onClick={() => handleBatchDelete('depleted')}
           >
-            🗑 Delete Depleted
+            <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Depleted</span>
           </button>
           <button
             className="btn btn-sm"
             style={{ backgroundColor: colors.info, borderColor: colors.info, color: '#ffffff' }}
             onClick={() => handleResetTraffic(null)}
           >
-            🔄 Reset All Traffic
+            <span className="d-inline-flex align-items-center gap-1"><UIIcon name="refresh" size={14} />Reset All Traffic</span>
           </button>
         </div>
       </div>
@@ -674,17 +851,40 @@ export const ClientManager: React.FC = () => {
                   <th style={{ color: colors.text.secondary }}>
                     <input
                       type="checkbox"
-                      checked={selectedClients.size === filteredClients.length}
+                      checked={
+                        filteredClients.length > 0 &&
+                        filteredClients.every((c) => selectedClientKeys.has(clientKey(c)))
+                      }
                       onChange={toggleSelectAll}
                     />
                   </th>
-                  <th style={{ color: colors.text.secondary }}>Email</th>
-                  <th style={{ color: colors.text.secondary }}>Node</th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('email')}>
+                      Email{sortIndicator('email')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('node')}>
+                      Node{sortIndicator('node')}
+                    </button>
+                  </th>
                   <th style={{ color: colors.text.secondary }}>Protocol</th>
                   <th style={{ color: colors.text.secondary }}>Status</th>
-                  <th style={{ color: colors.text.secondary }}>Download</th>
-                  <th style={{ color: colors.text.secondary }}>Total Limit</th>
-                  <th style={{ color: colors.text.secondary }}>Expiry</th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('download')}>
+                      Download{sortIndicator('download')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('total')}>
+                      Total Limit{sortIndicator('total')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('expiry')}>
+                      Expiry{sortIndicator('expiry')}
+                    </button>
+                  </th>
                   <th style={{ color: colors.text.secondary }}>Actions</th>
                 </tr>
               </thead>
@@ -696,12 +896,12 @@ export const ClientManager: React.FC = () => {
                   const isDepleted = client.total > 0 && (client.up + client.down) >= client.total;
                   
                   return (
-                    <tr key={client.id} style={{ borderColor: colors.border }}>
+                    <tr key={clientKey(client)} style={{ borderColor: colors.border }}>
                       <td>
                         <input
                           type="checkbox"
-                          checked={selectedClients.has(client.id)}
-                          onChange={() => toggleSelection(client.id)}
+                          checked={selectedClientKeys.has(clientKey(client))}
+                          onChange={() => toggleSelection(client)}
                         />
                       </td>
                       <td>
@@ -725,13 +925,19 @@ export const ClientManager: React.FC = () => {
                           <span style={{ color: colors.text.secondary }}>○ Disabled</span>
                         )}
                         {isExpired && (
-                          <span style={{ color: colors.danger }}>⏰ Expired</span>
+                          <span className="d-inline-flex align-items-center gap-1" style={{ color: colors.danger }}>
+                            <UIIcon name="clock" size={13} />
+                            Expired
+                          </span>
                         )}
                         {isDepleted && (
-                          <span style={{ color: colors.warning }}>📊 Depleted</span>
+                          <span className="d-inline-flex align-items-center gap-1" style={{ color: colors.warning }}>
+                            <UIIcon name="traffic" size={13} />
+                            Depleted
+                          </span>
                         )}
                       </td>
-                      <td>{downloadBytes != null ? formatBytes(downloadBytes) : <span style={{ color: colors.text.secondary }}>—</span>}</td>
+                      <td>{formatBytes(downloadBytes)}</td>
                       <td>
                         {client.total > 0 ? formatBytes(client.total) : (
                           <span style={{ color: colors.text.secondary }}>∞</span>
@@ -753,7 +959,7 @@ export const ClientManager: React.FC = () => {
                           onClick={() => handleResetTraffic(client.id)}
                           title="Reset traffic"
                         >
-                          🔄
+                          <UIIcon name="refresh" size={14} />
                         </button>
                       </td>
                     </tr>

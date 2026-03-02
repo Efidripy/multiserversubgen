@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { UIIcon } from './UIIcon';
 
 interface ServerStatus {
   node: string;
@@ -44,7 +44,6 @@ export const ServerStatus: React.FC = () => {
   const [error, setError] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval] = useState(30);
-  const [lastDeltaAt, setLastDeltaAt] = useState(0);
 
   useEffect(() => {
     loadServersStatus();
@@ -86,21 +85,8 @@ export const ServerStatus: React.FC = () => {
     }
   };
 
-  useWebSocket({
-    url: '',
-    channels: ['snapshot_delta'],
-    enabled: true,
-    onMessage: (msg) => {
-      if (msg.type !== 'snapshot_delta') return;
-      const now = Date.now();
-      if (now - lastDeltaAt < 15000) return;
-      setLastDeltaAt(now);
-      loadServersStatus();
-    },
-  });
-
-  const handleRestartXray = async (nodeName: string) => {
-    if (!window.confirm('Are you sure you want to restart Xray on this server?')) return;
+  const handleRestartCore = async (nodeName: string) => {
+    if (!window.confirm('Are you sure you want to restart core service on this server?')) return;
 
     const nodeId = nodeIds[nodeName];
     if (!nodeId) {
@@ -112,10 +98,10 @@ export const ServerStatus: React.FC = () => {
       await api.post(`/v1/servers/${nodeId}/restart-xray`, {}, {
         auth: getAuth()
       });
-      alert('Xray restart command sent successfully');
+      alert('Core service restart command sent successfully');
       setTimeout(loadServersStatus, 3000);
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to restart Xray');
+      alert(err.response?.data?.detail || 'Failed to restart core service');
     }
   };
 
@@ -146,7 +132,7 @@ export const ServerStatus: React.FC = () => {
   return (
     <div className="server-status">
       <div className="d-flex justify-content-between align-items-center mb-3">
-        <h4 className="mb-0" style={{ color: colors.accent }}>🖥️ Server Status</h4>
+        <h4 className="mb-0" style={{ color: colors.accent }}>Server Status</h4>
         <div className="d-flex align-items-center gap-2">
           <div className="form-check form-check-inline mb-0">
             <input
@@ -166,7 +152,7 @@ export const ServerStatus: React.FC = () => {
             onClick={loadServersStatus}
             disabled={loading}
           >
-            {loading ? '⏳' : '🔄'}
+            <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
           </button>
         </div>
       </div>
@@ -199,7 +185,10 @@ export const ServerStatus: React.FC = () => {
 
             {!server.available && (
               <p className="server-card__error small" style={{ color: colors.warning }}>
-                ⚠️ {server.error || 'Connection failed'}
+                <span className="d-inline-flex align-items-center gap-1">
+                  <UIIcon name="warning" size={13} />
+                  {server.error || 'Connection failed'}
+                </span>
               </p>
             )}
 
@@ -250,7 +239,10 @@ export const ServerStatus: React.FC = () => {
                     </span>
                   )}
                   <span className="small" style={{ color: colors.text.secondary }}>
-                    ⏱ {formatUptime(server.system.uptime)}
+                    <span className="d-inline-flex align-items-center gap-1">
+                      <UIIcon name="clock" size={13} />
+                      {formatUptime(server.system.uptime)}
+                    </span>
                   </span>
                   {server.timestamp && (
                     <span className="small" style={{ color: colors.text.secondary }}>
@@ -259,27 +251,31 @@ export const ServerStatus: React.FC = () => {
                   )}
                 </div>
 
-                {/* Xray + restart */}
+                {/* Core service + restart */}
                 {server.xray && (
                   <div className="server-card__xray" style={{ borderTop: `1px solid ${colors.border}` }}>
                     <span className="small" style={{ color: colors.text.secondary }}>
-                      Xray {server.xray.version}
+                      Core {server.xray.version}
                       {server.xray.running ? (
-                        <span className="badge ms-1" style={{ backgroundColor: colors.success }}>▶</span>
+                        <span className="badge ms-1 d-inline-flex align-items-center justify-content-center" style={{ backgroundColor: colors.success }}>
+                          <UIIcon name="statusOn" size={12} />
+                        </span>
                       ) : (
-                        <span className="badge ms-1" style={{ backgroundColor: colors.danger }}>■</span>
+                        <span className="badge ms-1 d-inline-flex align-items-center justify-content-center" style={{ backgroundColor: colors.danger }}>
+                          <UIIcon name="statusOff" size={12} />
+                        </span>
                       )}
                     </span>
                     <button
                       className="btn btn-sm"
                       style={{ backgroundColor: colors.warning + '33', borderColor: colors.warning + '66', color: colors.warning, padding: '1px 8px', fontSize: '0.75rem' }}
-                      onClick={() => handleRestartXray(server.node)}
-                      disabled={!server.xray.running}
-                    >
-                      🔄
-                    </button>
-                  </div>
-                )}
+                    onClick={() => handleRestartCore(server.node)}
+                    disabled={!server.xray.running}
+                  >
+                    <UIIcon name="refresh" size={13} />
+                  </button>
+                </div>
+              )}
               </div>
             )}
           </div>

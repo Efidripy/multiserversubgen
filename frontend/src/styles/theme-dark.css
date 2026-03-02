@@ -1,0 +1,16 @@
+body.theme-dark .dropdown-menu {
+  background:
+    linear-gradient(160deg, rgba(13, 27, 46, 0.98), rgba(8, 18, 35, 0.96)) !important;
+  border: 1px solid rgba(128, 164, 202, 0.3) !important;
+  box-shadow: 0 14px 34px rgba(2, 8, 20, 0.48) !important;
+}
+
+body.theme-dark .dropdown-item {
+  color: #d6e2f0 !important;
+}
+
+body.theme-dark .dropdown-item:hover,
+body.theme-dark .dropdown-item:focus {
+  background-color: rgba(6, 182, 212, 0.18) !important;
+  color: #eef8ff !important;
+}

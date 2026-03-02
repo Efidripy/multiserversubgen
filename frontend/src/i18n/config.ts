@@ -4,7 +4,15 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 import en from './locales/en.json';
 import ru from './locales/ru.json';
 
+const silentI18nLogger = {
+  type: 'logger' as const,
+  log: () => {},
+  warn: () => {},
+  error: () => {},
+};
+
 i18n
+  .use(silentI18nLogger)
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { UIIcon } from './UIIcon';
 
 interface Inbound {
   id: number;
@@ -41,6 +42,8 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
   const [filterProtocol, setFilterProtocol] = useState('');
   const [filterSecurity, setFilterSecurity] = useState('');
   const [filterNode, setFilterNode] = useState('');
+  const [sortField, setSortField] = useState<'name' | 'node' | 'protocol' | 'port' | 'status'>('name');
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
 
   const [showCloneModal, setShowCloneModal] = useState(false);
   const [cloneSource, setCloneSource] = useState<Inbound | null>(null);
@@ -70,8 +73,50 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
       filtered = filtered.filter((ib) => ib.node_name === filterNode);
     }
 
-    setFilteredInbounds(filtered);
-  }, [inbounds, filterProtocol, filterSecurity, filterNode]);
+    const factor = sortDirection === 'asc' ? 1 : -1;
+    const compareText = (a: string, b: string) =>
+      a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+
+    const sorted = [...filtered].sort((a, b) => {
+      const aName = a.remark || '';
+      const bName = b.remark || '';
+      const byName = compareText(aName, bName);
+      const byNode = compareText(a.node_name, b.node_name);
+      const byProtocol = compareText(a.protocol, b.protocol);
+      const byPort = a.port - b.port;
+      const byStatus = Number(a.enable) - Number(b.enable);
+
+      if (sortField === 'name') {
+        if (byName !== 0) return byName * factor;
+        if (byNode !== 0) return byNode * factor;
+        return (a.id - b.id) * factor;
+      }
+      if (sortField === 'node') {
+        if (byNode !== 0) return byNode * factor;
+        if (byName !== 0) return byName * factor;
+        return (a.id - b.id) * factor;
+      }
+      if (sortField === 'protocol') {
+        if (byProtocol !== 0) return byProtocol * factor;
+        if (byName !== 0) return byName;
+        if (byNode !== 0) return byNode;
+        return a.id - b.id;
+      }
+      if (sortField === 'port') {
+        if (byPort !== 0) return byPort * factor;
+        if (byName !== 0) return byName;
+        if (byNode !== 0) return byNode;
+        return a.id - b.id;
+      }
+
+      if (byStatus !== 0) return byStatus * factor;
+      if (byName !== 0) return byName;
+      if (byNode !== 0) return byNode;
+      return a.id - b.id;
+    });
+
+    setFilteredInbounds(sorted);
+  }, [inbounds, filterProtocol, filterSecurity, filterNode, sortField, sortDirection]);
 
   const loadInbounds = async () => {
     setLoading(true);
@@ -132,6 +177,17 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
   const clearSelection = () => {
     setSelectedKeys(new Set());
   };
+
+  const applySortFromHeader = (field: 'name' | 'node' | 'protocol' | 'port' | 'status') => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortField(field);
+    setSortDirection('asc');
+  };
+  const sortIndicator = (field: 'name' | 'node' | 'protocol' | 'port' | 'status') =>
+    sortField === field ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
 
   const handleDelete = async (inbound: Inbound) => {
     if (!window.confirm(`${t('inbounds.confirmDeleteSingle')} \"${inbound.remark || inbound.id}\"?`)) return;
@@ -308,14 +364,20 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
     <div className="inbound-manager">
       <div className="card p-3 mb-4" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0" style={{ color: colors.accent }}>🔌 {t('inbounds.title')}</h5>
+          <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.accent }}>
+            <UIIcon name="inbounds" size={16} />
+            {t('inbounds.title')}
+          </h5>
           <button
             className="btn btn-sm"
             style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
             onClick={loadInbounds}
             disabled={loading}
           >
-            🔄 {t('common.refresh')}
+            <span className="d-inline-flex align-items-center gap-1">
+              <UIIcon name="refresh" size={14} />
+              {t('common.refresh')}
+            </span>
           </button>
         </div>
 
@@ -380,6 +442,34 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
           </div>
         </div>
 
+        <div className="row g-2 mb-3">
+          <div className="col-md-3">
+            <select
+              className="form-select form-select-sm"
+              value={sortField}
+              onChange={(e) => setSortField(e.target.value as 'name' | 'node' | 'protocol' | 'port' | 'status')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+            >
+              <option value="name">Sort: Name</option>
+              <option value="node">Sort: Node</option>
+              <option value="protocol">Sort: Protocol</option>
+              <option value="port">Sort: Port</option>
+              <option value="status">Sort: Status</option>
+            </select>
+          </div>
+          <div className="col-md-2">
+            <select
+              className="form-select form-select-sm"
+              value={sortDirection}
+              onChange={(e) => setSortDirection(e.target.value as 'asc' | 'desc')}
+              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+            >
+              <option value="asc">Asc</option>
+              <option value="desc">Desc</option>
+            </select>
+          </div>
+        </div>
+
         <div className="card p-2 mb-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
           <div className="row g-2 align-items-end">
             <div className="col-lg-3 col-md-6">
@@ -441,7 +531,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
               </button>
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: '#000' }}
+                style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
                 onClick={() => handleBatchEnable(false)}
                 disabled={loading || selectedKeys.size === 0}
               >
@@ -485,12 +575,32 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                     aria-label="Select all"
                   />
                 </th>
-                <th style={{ color: colors.text.secondary }}>{t('common.name')}</th>
-                <th style={{ color: colors.text.secondary }}>{t('inbounds.remark')}</th>
-                <th style={{ color: colors.text.secondary }}>{t('inbounds.protocol')}</th>
-                <th style={{ color: colors.text.secondary }}>{t('inbounds.port')}</th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('node')}>
+                    {t('common.name')}{sortIndicator('node')}
+                  </button>
+                </th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('name')}>
+                    {t('inbounds.remark')}{sortIndicator('name')}
+                  </button>
+                </th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('protocol')}>
+                    {t('inbounds.protocol')}{sortIndicator('protocol')}
+                  </button>
+                </th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('port')}>
+                    {t('inbounds.port')}{sortIndicator('port')}
+                  </button>
+                </th>
                 <th style={{ color: colors.text.secondary }}>{t('inbounds.security')}</th>
-                <th style={{ color: colors.text.secondary }}>{t('common.status')}</th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('status')}>
+                    {t('common.status')}{sortIndicator('status')}
+                  </button>
+                </th>
                 <th style={{ color: colors.text.secondary }}>{t('common.actions')}</th>
               </tr>
             </thead>
@@ -534,7 +644,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                       onClick={() => handleCloneClick(ib)}
                       title={t('inbounds.cloneInbound')}
                     >
-                      📋
+                      <UIIcon name="copy" size={14} />
                     </button>
                     <button
                       className="btn btn-sm"
@@ -542,7 +652,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                       onClick={() => handleDelete(ib)}
                       title={t('inbounds.deleteInbound')}
                     >
-                      🗑
+                      <UIIcon name="trash" size={14} />
                     </button>
                   </td>
                 </tr>
