@@ -372,7 +372,6 @@ MIT License - используйте свободно!
 - [FastAPI](https://fastapi.tiangolo.com/)
 - [React](https://react.dev/)
 - [Chart.js](https://www.chartjs.org/)
-- [node panel](https://github.com/MHSanaei/node panel)
 - [Vite](https://vitejs.dev/)
 - [Bootstrap](https://getbootstrap.com/)
 
