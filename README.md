@@ -179,6 +179,13 @@ multiserversubgen/
   - `ROLE_VIEWERS`, `ROLE_OPERATORS` — RBAC списки пользователей через запятую (`admin` по умолчанию для остальных)
   - `MFA_TOTP_ENABLED`, `MFA_TOTP_USERS` — optional TOTP 2FA для всех защищённых `/api/v1/*` и WebSocket (`username:BASE32` через запятую)
 
+Рекомендуемый профиль для снижения нагрузки (без заметной деградации UI):
+- `TRAFFIC_STATS_CACHE_TTL=20`
+- `ONLINE_CLIENTS_CACHE_TTL=20`
+- `TRAFFIC_MAX_WORKERS=6`
+- `COLLECTOR_BASE_INTERVAL_SEC=10`
+- `COLLECTOR_MAX_PARALLEL=4`
+
 ### Observability
 - `GET /metrics` — Prometheus-метрики HTTP (request count + latency)
 - `GET /api/v1/snapshots/latest` — последний snapshot от background collector
