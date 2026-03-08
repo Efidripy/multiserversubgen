@@ -1412,13 +1412,6 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
     return {}
     
     links = []
-
-    def generate_remark(node):
-        """Generate clean server remark: LocationCode-Number"""
-        location_code = node['name'][:2].upper() if node['name'] else 'XX'
-        server_num = node['name'].split('-')[-1] if '-' in node['name'] else str(node.get('id', ''))
-        return f"{location_code}-{server_num}"
-
     for n in nodes:
         for ib in fetch_inbounds(n):
             protocol = ib.get("protocol", "")
@@ -1459,19 +1452,19 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"{flow_param}&type={network}#{generate_remark(n)}"
+                            f"{flow_param}&type={network}#{n['name']}"
                         )
                     else:
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=tls"
-                            f"&sni={sni}&fp={fp}{flow_param}&type={network}#{generate_remark(n)}"
+                            f"&sni={sni}&fp={fp}{flow_param}&type={network}#{n['name']}"
                         )
                 
                 elif protocol == "vmess":
                     if security == "reality":
                         sid = r.get('shortIds', [''])[0] if r.get('shortIds') else ''
                         link_obj = {
-                            "v": "2", "ps": generate_remark(n), "add": n['ip'], "port": "443",
+                            "v": "2", "ps": f"{c['email']} ({n['name']})", "add": n['ip'], "port": "443",
                             "id": c.get('id', ''), "aid": "0", "net": s_set.get('network', 'tcp'),
                             "type": "none", "tls": "",
                             "sni": (r.get('serverNames') or [''])[0], "host": (r.get('serverNames') or [''])[0],
@@ -1480,7 +1473,7 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
                         links.append("vmess://" + base64.b64encode(json.dumps(link_obj).encode()).decode())
                     else:
                         link_obj = {
-                            "v": "2", "ps": generate_remark(n), "add": n['ip'], "port": "443",
+                            "v": "2", "ps": f"{c['email']} ({n['name']})", "add": n['ip'], "port": "443",
                             "id": c.get('id', ''), "aid": "0", "net": s_set.get('network', 'tcp'),
                             "type": "none", "tls": "tls", "sni": ((s_set.get('tlsSettings', {}) or {}).get('serverNames', [''] or [''])[0])
                         }
@@ -1495,13 +1488,13 @@ def get_client_traffic(node: Dict, client_id: str, protocol: str) -> Dict:
                         links.append(
                             f"trojan://{c['password']}@{n['ip']}:443?security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"&type={network}#{generate_remark(n)}"
+                            f"&type={network}#{n['name']}"
                         )
                     else:
                         sni = ((s_set.get('tlsSettings', {}) or {}).get('serverNames', [''] or [''])[0])
                         links.append(
                             f"trojan://{c['password']}@{n['ip']}:443?security=tls"
-                            f"&sni={sni}&type={s_set.get('network','tcp')}#{generate_remark(n)}"
+                            f"&sni={sni}&type={s_set.get('network','tcp')}#{n['name']}"
                         )
     
     links_cache[email] = (now_link, links)
@@ -1517,13 +1510,6 @@ def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[
         return cached[1]
     
     links = []
-
-    def generate_remark(node):
-        """Generate clean server remark: LocationCode-Number"""
-        location_code = node['name'][:2].upper() if node['name'] else 'XX'
-        server_num = node['name'].split('-')[-1] if '-' in node['name'] else str(node.get('id', ''))
-        return f"{location_code}-{server_num}"
-
     for n in nodes:
         for ib in fetch_inbounds(n):
             protocol = ib.get("protocol", "")
@@ -1565,19 +1551,19 @@ def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"{flow_param}&type={network}#{generate_remark(n)}"
+                            f"{flow_param}&type={network}#{n['name']}"
                         )
                     else:
                         links.append(
                             f"vless://{c['id']}@{n['ip']}:443?encryption=none&security=tls"
-                            f"&sni={sni}&fp={fp}{flow_param}&type={network}#{generate_remark(n)}"
+                            f"&sni={sni}&fp={fp}{flow_param}&type={network}#{n['name']}"
                         )
                 
                 elif protocol == "vmess":
                     if security == "reality":
                         sid = r.get('shortIds', [''])[0] if r.get('shortIds') else ''
                         link_obj = {
-                            "v": "2", "ps": generate_remark(n), "add": n['ip'], "port": "443",
+                            "v": "2", "ps": f"{c['email']} ({n['name']})", "add": n['ip'], "port": "443",
                             "id": c.get('id', ''), "aid": "0", "net": s_set.get('network', 'tcp'),
                             "type": "none", "tls": "",
                             "sni": (r.get('serverNames') or [''])[0], "host": (r.get('serverNames') or [''])[0],
@@ -1586,7 +1572,7 @@ def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[
                         links.append("vmess://" + base64.b64encode(json.dumps(link_obj).encode()).decode())
                     else:
                         link_obj = {
-                            "v": "2", "ps": generate_remark(n), "add": n['ip'], "port": "443",
+                            "v": "2", "ps": f"{c['email']} ({n['name']})", "add": n['ip'], "port": "443",
                             "id": c.get('id', ''), "aid": "0", "net": s_set.get('network', 'tcp'),
                             "type": "none", "tls": "tls", "sni": ((s_set.get('tlsSettings', {}) or {}).get('serverNames', [''] or [''])[0])
                         }
@@ -1601,13 +1587,13 @@ def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[
                         links.append(
                             f"trojan://{c['password']}@{n['ip']}:443?security=reality"
                             f"&sni={sni}&fp={fp}&pbk={pbk}&sid={sid}"
-                            f"&type={network}#{generate_remark(n)}"
+                            f"&type={network}#{n['name']}"
                         )
                     else:
                         sni = ((s_set.get('tlsSettings', {}) or {}).get('serverNames', [''] or [''])[0])
                         links.append(
                             f"trojan://{c['password']}@{n['ip']}:443?security=tls"
-                            f"&sni={sni}&type={s_set.get('network','tcp')}#{generate_remark(n)}"
+                            f"&sni={sni}&type={s_set.get('network','tcp')}#{n['name']}"
                         )
     
     links_cache[cache_key] = (now_link, links)
