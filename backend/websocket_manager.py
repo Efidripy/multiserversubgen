@@ -16,13 +16,27 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: Set[WebSocket] = set()
         self.subscriptions: Dict[WebSocket, Set[str]] = {}
-        
+        self._activity_callback = None
+
+    def set_activity_callback(self, callback):
+        """Установить callback для уведомления о WebSocket активности"""
+        self._activity_callback = callback
+
+    def _notify_activity(self):
+        """Уведомить о WebSocket активности"""
+        if self._activity_callback:
+            try:
+                self._activity_callback()
+            except Exception as e:
+                logger.error(f"Activity callback error: {e}")
+
     async def connect(self, websocket: WebSocket):
         """Принять новое соединение"""
         await websocket.accept()
         self.active_connections.add(websocket)
         self.subscriptions[websocket] = set()
         logger.info(f"New WebSocket connection. Total: {len(self.active_connections)}")
+        self._notify_activity()
         
     def disconnect(self, websocket: WebSocket):
         """Отключить соединение"""
@@ -35,6 +49,7 @@ class ConnectionManager:
         if websocket in self.subscriptions:
             self.subscriptions[websocket].add(channel)
             logger.debug(f"Client subscribed to: {channel}")
+            self._notify_activity()
             
     def unsubscribe(self, websocket: WebSocket, channel: str):
         """Отписать клиента от канала"""
