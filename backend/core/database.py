@@ -143,7 +143,7 @@ def init_db(db_path: str) -> None:
             except sqlite3.OperationalError:
                 pass  # Column already exists or other benign error
 
-    logger.debug("Database initialised at %s", db_path)
+    logger.debug("Database initialized at %s", db_path)
 
 
 @contextmanager

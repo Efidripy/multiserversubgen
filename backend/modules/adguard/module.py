@@ -31,7 +31,7 @@ class AdGuardModule(BaseModule):
         super().__init__()
 
     async def initialize(self, container: "Container") -> None:
-        self.logger.info("AdGuardModule initialised")
+        self.logger.info("AdGuardModule initialized")
 
     async def start(self) -> None:
         self.logger.info("AdGuardModule started")

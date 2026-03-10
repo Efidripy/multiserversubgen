@@ -35,7 +35,7 @@ class MonitoringModule(BaseModule):
         registry = container.resolve_optional("module_registry")
         if registry is not None:
             self._health_service = HealthCheckService(registry)
-        self.logger.info("MonitoringModule initialised")
+        self.logger.info("MonitoringModule initialized")
 
     async def start(self) -> None:
         self.logger.info("MonitoringModule started")
