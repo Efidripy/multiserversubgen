@@ -63,8 +63,8 @@ ONLINE_CLIENTS_STALE_TTL = int(os.getenv("ONLINE_CLIENTS_STALE_TTL", "60"))
 CLIENTS_CACHE_TTL = int(os.getenv("CLIENTS_CACHE_TTL", "20"))
 CLIENTS_CACHE_STALE_TTL = int(os.getenv("CLIENTS_CACHE_STALE_TTL", "180"))
 REDIS_URL = os.getenv("REDIS_URL", "").strip()
-COLLECTOR_BASE_INTERVAL_SEC = int(os.getenv("COLLECTOR_BASE_INTERVAL_SEC", "10"))
-COLLECTOR_MAX_INTERVAL_SEC = int(os.getenv("COLLECTOR_MAX_INTERVAL_SEC", "60"))
+COLLECTOR_BASE_INTERVAL_SEC = int(os.getenv("COLLECTOR_BASE_INTERVAL_SEC", "5"))
+COLLECTOR_MAX_INTERVAL_SEC = int(os.getenv("COLLECTOR_MAX_INTERVAL_SEC", "86400"))
 COLLECTOR_MAX_PARALLEL = int(os.getenv("COLLECTOR_MAX_PARALLEL", "4"))
 NODE_HISTORY_ENABLED = os.getenv("NODE_HISTORY_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
 NODE_HISTORY_MIN_INTERVAL_SEC = int(os.getenv("NODE_HISTORY_MIN_INTERVAL_SEC", "30"))
@@ -332,9 +332,34 @@ snapshot_collector = SnapshotCollector(
     max_parallel_polls=COLLECTOR_MAX_PARALLEL,
 )
 
+# Wire WebSocket manager to collector for activity notifications
+ws_manager.set_activity_callback(snapshot_collector.on_websocket_activity)
+
+# Cache for /metrics endpoint
+_metrics_cache: Dict = {"data": None, "ts": 0.0}
+_metrics_cache_lock = Lock()
+
 
 def render_metrics_response():
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+    """Cached Prometheus metrics endpoint with adaptive TTL based on collector mode."""
+    mode = snapshot_collector.get_mode()
+    if mode == "ultra_idle":
+        ttl = 60.0
+    elif mode == "idle":
+        ttl = 30.0
+    elif mode == "warming":
+        ttl = 10.0
+    else:
+        ttl = 15.0
+
+    with _metrics_cache_lock:
+        now = time.time()
+        if _metrics_cache["data"] is not None and (now - _metrics_cache["ts"]) < ttl:
+            return _metrics_cache["data"]
+        data = Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+        _metrics_cache["data"] = data
+        _metrics_cache["ts"] = now
+        return data
 
 
 def deps_health_status() -> Dict:
@@ -1968,6 +1993,30 @@ async def delete_node(node_id: int, request: Request):
     emails_cache["ts"] = 0
     links_cache.clear()
     return {"status": "success"}
+
+
+@app.post("/api/v1/nodes/refresh-now")
+async def force_refresh_nodes(request: Request):
+    """Force an immediate poll of all nodes."""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    await snapshot_collector.force_poll_all()
+    return {"status": "success", "message": "Force poll initiated"}
+
+
+@app.get("/api/v1/collector/status")
+async def get_collector_status(request: Request):
+    """Get current collector mode and status."""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return {
+        "mode": snapshot_collector.get_mode(),
+        "running": snapshot_collector.is_running(),
+        "ws_connections": len(ws_manager.active_connections),
+        "timestamp": time.time(),
+    }
 
 
 @app.get("/api/v1/emails")

@@ -85,6 +85,15 @@ export const ServerStatus: React.FC = () => {
     }
   };
 
+  const forceRefresh = async () => {
+    try {
+      await api.post('/v1/nodes/refresh-now', {}, { auth: getAuth() });
+      await loadServersStatus();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Force refresh failed');
+    }
+  };
+
   const handleRestartCore = async (nodeName: string) => {
     if (!window.confirm('Are you sure you want to restart core service on this server?')) return;
 
@@ -153,6 +162,15 @@ export const ServerStatus: React.FC = () => {
             disabled={loading}
           >
             <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
+          </button>
+          <button
+            className="btn btn-sm"
+            style={{ backgroundColor: colors.success + '33', borderColor: colors.success + '66', color: colors.success }}
+            onClick={forceRefresh}
+            disabled={loading}
+            title="Force collector refresh"
+          >
+            🔄
           </button>
         </div>
       </div>
