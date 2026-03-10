@@ -1,0 +1,44 @@
+# Module configuration for multiserversubgen
+# Each module can be enabled/disabled and configured independently.
+# Environment-variable overrides take precedence over values here.
+
+modules:
+  auth:
+    enabled: true
+    config:
+      # jwt_secret: ${JWT_SECRET}  # future: JWT-based auth
+      token_expiry: 3600
+
+  nodes:
+    enabled: true
+
+  polling:
+    enabled: true
+    config:
+      interval: 300       # seconds between full poll cycles
+      timeout: 30         # per-node poll timeout in seconds
+      strategy: "adaptive"  # sequential | parallel | adaptive
+      retry_attempts: 3
+      max_parallel: 4
+
+  statistics:
+    enabled: true
+    config:
+      collectors:
+        - traffic
+        - performance
+        - availability
+      aggregation_intervals:
+        - hourly
+        - daily
+        - monthly
+      retention_days: 30
+
+  subscriptions:
+    enabled: true
+
+  monitoring:
+    enabled: true
+
+  adguard:
+    enabled: true   # set to false to disable AdGuard integration

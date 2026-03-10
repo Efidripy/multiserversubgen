@@ -1,0 +1,42 @@
+# General application settings
+# Most values can be overridden via environment variables (see core/config.py).
+
+app:
+  title: "Multi-Server Sub Manager"
+  version: "3.0"
+  port: 666  # override with APP_PORT env var
+
+database:
+  path: "/opt/sub-manager/admin.db"  # override with PROJECT_DIR env var
+  node_history:
+    enabled: true
+    min_interval_sec: 30
+    retention_days: 30
+
+cache:
+  default_ttl: 30
+  traffic_stats_ttl: 20
+  traffic_stats_stale_ttl: 120
+  online_clients_ttl: 20
+  online_clients_stale_ttl: 60
+  clients_ttl: 20
+  clients_stale_ttl: 180
+
+rate_limiting:
+  subscriptions:
+    count: 30
+    window_sec: 60
+
+collector:
+  base_interval_sec: 5
+  max_interval_sec: 86400
+  max_parallel: 4
+
+observability:
+  prometheus_url: "http://127.0.0.1:9090"
+  loki_url: "http://127.0.0.1:3100"
+  grafana_url: "http://127.0.0.1:3000"
+
+tls:
+  verify: true
+  ca_bundle_path: ""
