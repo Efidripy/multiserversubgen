@@ -1,0 +1,24 @@
+# Feature flags configuration
+# Flags can be toggled at runtime via the admin API or by editing this file
+# and reloading the application.
+
+flags:
+  new_polling_algorithm:
+    enabled: false
+    rollout_percentage: 0
+
+  beta_statistics_ui:
+    enabled: false
+    rollout_percentage: 0
+    enabled_users: []
+
+  graphql_api:
+    enabled: false
+
+  adaptive_collector_intervals:
+    enabled: true
+    rollout_percentage: 100
+
+  structured_json_logs:
+    enabled: false
+    rollout_percentage: 0
