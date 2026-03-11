@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../contexts/ThemeContext';
+import { ChoiceChips } from './ChoiceChips';
 import { IconName, UIIcon } from './UIIcon';
 import { MSM_ASCII_VARIANTS } from './msmAsciiVariants';
 
@@ -109,15 +110,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <label className="form-label small mb-1" style={{ color: colors.text.secondary }}>
               {t('language.title')}
             </label>
-            <select
-              className="form-select form-select-sm"
+            <ChoiceChips
+              options={[
+                { value: 'en', label: t('language.en') },
+                { value: 'ru', label: t('language.ru') },
+              ]}
               value={currentLang.startsWith('ru') ? 'ru' : 'en'}
-              onChange={(e) => i18n.changeLanguage(e.target.value)}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="en">{t('language.en')}</option>
-              <option value="ru">{t('language.ru')}</option>
-            </select>
+              onChange={(value) => i18n.changeLanguage(value)}
+              colors={colors}
+            />
           </div>
 
           <div className="sidebar__footer-actions mt-2">

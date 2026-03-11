@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { ChoiceChips } from './ChoiceChips';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -225,6 +226,30 @@ export const TrafficStats: React.FC = () => {
     return byNode;
   });
 
+  const applyTrafficSortFromHeader = (field: 'name' | 'download' | 'total') => {
+    if (trafficSortField === field) {
+      setTrafficSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setTrafficSortField(field);
+    setTrafficSortDir(field === 'name' ? 'asc' : 'desc');
+  };
+
+  const applyOnlineSortFromHeader = (field: 'email' | 'node' | 'traffic') => {
+    if (onlineSortField === field) {
+      setOnlineSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setOnlineSortField(field);
+    setOnlineSortDir(field === 'traffic' ? 'desc' : 'asc');
+  };
+
+  const trafficSortIndicator = (field: 'name' | 'download' | 'total') =>
+    trafficSortField === field ? (trafficSortDir === 'asc' ? ' ▲' : ' ▼') : '';
+
+  const onlineSortIndicator = (field: 'email' | 'node' | 'traffic') =>
+    onlineSortField === field ? (onlineSortDir === 'asc' ? ' ▲' : ' ▼') : '';
+
   // Top Clients Bar Chart
   const topClientsData = {
     labels: sortedTraffic.map(d => d.email || d.node_name || 'Unknown'),
@@ -333,59 +358,77 @@ export const TrafficStats: React.FC = () => {
           </div>
         )}
 
-        {/* Filters */}
-        <div className="row g-2 mb-3">
-          <div className="col-md-4">
-            <label className="form-label small" style={{ color: colors.text.secondary }}>Group By</label>
-            <select
-              className="form-select form-select-sm"
-              value={groupBy}
-              onChange={(e) => setGroupBy(e.target.value as any)}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="client">Client (Email)</option>
-              <option value="inbound">Inbound</option>
-              <option value="node">Node (Server)</option>
-            </select>
+        <div className="panel-grid">
+          <div className="panel-block">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Actions</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Refresh traffic snapshots and online clients.
+                </p>
+              </div>
+            </div>
+            <div className="panel-inline-actions">
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                onClick={() => {
+                  loadTrafficStats();
+                  loadOnlineClients();
+                }}
+                disabled={loading}
+              >
+                {loading ? 'Loading...' : 'Refresh'}
+              </button>
+            </div>
           </div>
-          <div className="col-md-4">
-            <label className="form-label small" style={{ color: colors.text.secondary }}>Show Top</label>
-            <select
-              className="form-select form-select-sm"
-              value={topN}
-              onChange={(e) => setTopN(parseInt(e.target.value))}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="5">5</option>
-              <option value="10">10</option>
-              <option value="20">20</option>
-              <option value="50">50</option>
-            </select>
+          <div className="panel-block">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Grouping</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Choose how traffic is aggregated.
+                </p>
+              </div>
+            </div>
+            <div className="panel-block__stack">
+              <ChoiceChips
+                options={[
+                  { value: 'client', label: 'Client' },
+                  { value: 'inbound', label: 'Inbound' },
+                  { value: 'node', label: 'Node' },
+                ]}
+                value={groupBy}
+                onChange={(value) => setGroupBy(value as any)}
+                colors={colors}
+              />
+            </div>
           </div>
-          <div className="col-md-2">
-            <label className="form-label small" style={{ color: colors.text.secondary }}>Sort Top by</label>
-            <select
-              className="form-select form-select-sm"
-              value={trafficSortField}
-              onChange={(e) => setTrafficSortField(e.target.value as 'name' | 'download' | 'total')}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="download">Download</option>
-              <option value="total">Total</option>
-              <option value="name">Name</option>
-            </select>
-          </div>
-          <div className="col-md-2">
-            <label className="form-label small" style={{ color: colors.text.secondary }}>Direction</label>
-            <select
-              className="form-select form-select-sm"
-              value={trafficSortDir}
-              onChange={(e) => setTrafficSortDir(e.target.value as 'asc' | 'desc')}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="asc">Asc</option>
-              <option value="desc">Desc</option>
-            </select>
+          <div className="panel-block">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Range</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Select how many top rows to chart.
+                </p>
+              </div>
+            </div>
+            <div className="panel-block__stack">
+              <ChoiceChips
+                options={[
+                  { value: 5, label: '5' },
+                  { value: 10, label: '10' },
+                  { value: 20, label: '20' },
+                  { value: 50, label: '50' },
+                ]}
+                value={topN}
+                onChange={(value) => setTopN(value)}
+                colors={colors}
+              />
+              <small style={{ color: colors.text.secondary }}>
+                Click table headers to sort
+              </small>
+            </div>
           </div>
         </div>
       </div>
@@ -436,26 +479,8 @@ export const TrafficStats: React.FC = () => {
       <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3 gap-2">
           <h6 className="mb-0" style={{ color: colors.text.primary }}>Online Clients ({onlineClients.length})</h6>
-          <div className="d-flex gap-2">
-            <select
-              className="form-select form-select-sm"
-              value={onlineSortField}
-              onChange={(e) => setOnlineSortField(e.target.value as 'email' | 'node' | 'traffic')}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 130 }}
-            >
-              <option value="email">Sort: Email</option>
-              <option value="node">Sort: Node</option>
-              <option value="traffic">Sort: Total Traffic</option>
-            </select>
-            <select
-              className="form-select form-select-sm"
-              value={onlineSortDir}
-              onChange={(e) => setOnlineSortDir(e.target.value as 'asc' | 'desc')}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 90 }}
-            >
-              <option value="asc">Asc</option>
-              <option value="desc">Desc</option>
-            </select>
+          <div className="small" style={{ color: colors.text.secondary }}>
+            Click table headers to sort
           </div>
         </div>
         {onlineClients.length === 0 ? (
@@ -465,9 +490,21 @@ export const TrafficStats: React.FC = () => {
             <table className="table table-sm table-hover" style={{ color: colors.text.primary }}>
               <thead>
                 <tr style={{ borderColor: colors.border }}>
-                  <th style={{ color: colors.text.secondary }}>Email</th>
-                  <th style={{ color: colors.text.secondary }}>Node</th>
-                  <th style={{ color: colors.text.secondary }}>Total Traffic</th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyOnlineSortFromHeader('email')}>
+                      Email{onlineSortIndicator('email')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyOnlineSortFromHeader('node')}>
+                      Node{onlineSortIndicator('node')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyOnlineSortFromHeader('traffic')}>
+                      Total Traffic{onlineSortIndicator('traffic')}
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -509,10 +546,20 @@ export const TrafficStats: React.FC = () => {
                 <tr style={{ borderColor: colors.border }}>
                   <th style={{ color: colors.text.secondary }}>#</th>
                   <th style={{ color: colors.text.secondary }}>
-                    {groupBy === 'client' ? 'Email' : groupBy === 'inbound' ? 'Inbound' : 'Node'}
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyTrafficSortFromHeader('name')}>
+                      {groupBy === 'client' ? 'Email' : groupBy === 'inbound' ? 'Inbound' : 'Node'}{trafficSortIndicator('name')}
+                    </button>
                   </th>
-                  <th style={{ color: colors.text.secondary }}>Download</th>
-                  <th style={{ color: colors.text.secondary }}>Total</th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyTrafficSortFromHeader('download')}>
+                      Download{trafficSortIndicator('download')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyTrafficSortFromHeader('total')}>
+                      Total{trafficSortIndicator('total')}
+                    </button>
+                  </th>
                 </tr>
               </thead>
               <tbody>

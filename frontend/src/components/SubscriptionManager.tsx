@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
 
 interface Stats {
@@ -189,6 +190,25 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     return byName;
   });
 
+  const groupSortDirectionLabels = (() => {
+    if (groupSortField === 'name') {
+      return { asc: 'A -> Z', desc: 'Z -> A' };
+    }
+    return { asc: 'Small -> Large', desc: 'Large -> Small' };
+  })();
+
+  const applyIndividualSortFromHeader = (field: 'email' | 'downloads' | 'last') => {
+    if (individualSortField === field) {
+      setIndividualSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setIndividualSortField(field);
+    setIndividualSortDir(field === 'downloads' || field === 'last' ? 'desc' : 'asc');
+  };
+
+  const individualSortIndicator = (field: 'email' | 'downloads' | 'last') =>
+    individualSortField === field ? (individualSortDir === 'asc' ? ' ▲' : ' ▼') : '';
+
   const toggleNodeSelection = (nodeName: string) => {
     setSelectedNodes(prev => 
       prev.includes(nodeName) 
@@ -265,17 +285,17 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         <div className="row g-2 mb-2">
           <div className="col-md-3">
             <label className="form-label small" style={{ color: colors.text.secondary }}>Protocol Filter</label>
-            <select
-              className="form-select form-select-sm"
+            <ChoiceChips
+              options={[
+                { value: '', label: 'All' },
+                { value: 'vless', label: 'VLESS' },
+                { value: 'vmess', label: 'VMess' },
+                { value: 'trojan', label: 'Trojan' },
+              ]}
               value={filterProtocol}
-              onChange={(e) => setFilterProtocol(e.target.value)}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="">All Protocols</option>
-              <option value="vless">VLESS</option>
-              <option value="vmess">VMess</option>
-              <option value="trojan">Trojan</option>
-            </select>
+              onChange={(value) => setFilterProtocol(value)}
+              colors={colors}
+            />
           </div>
           <div className="col-md-9">
             <label className="form-label small" style={{ color: colors.text.secondary }}>Node Filter (select nodes)</label>
@@ -330,48 +350,30 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
           <h6 className="mb-0" style={{ color: colors.text.primary }}>
             {viewMode === 'individual' ? `Individual Subscriptions (${emails.length})` : `Grouped Subscriptions (${groups.length} groups)`}
           </h6>
-          {viewMode === 'individual' ? (
+          {viewMode === 'grouped' ? (
             <div className="d-flex gap-2">
-              <select
-                className="form-select form-select-sm"
-                value={individualSortField}
-                onChange={(e) => setIndividualSortField(e.target.value as 'email' | 'downloads' | 'last')}
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 150 }}
-              >
-                <option value="email">Sort: Email</option>
-                <option value="downloads">Sort: Downloads</option>
-                <option value="last">Sort: Last Time</option>
-              </select>
-              <select
-                className="form-select form-select-sm"
-                value={individualSortDir}
-                onChange={(e) => setIndividualSortDir(e.target.value as 'asc' | 'desc')}
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 90 }}
-              >
-                <option value="asc">Asc</option>
-                <option value="desc">Desc</option>
-              </select>
+              <ChoiceChips
+                options={[
+                  { value: 'count', label: 'Count' },
+                  { value: 'name', label: 'Group' },
+                ]}
+                value={groupSortField}
+                onChange={(value) => setGroupSortField(value)}
+                colors={colors}
+              />
+              <ChoiceChips
+                options={[
+                  { value: 'asc', label: groupSortDirectionLabels.asc },
+                  { value: 'desc', label: groupSortDirectionLabels.desc },
+                ]}
+                value={groupSortDir}
+                onChange={(value) => setGroupSortDir(value)}
+                colors={colors}
+              />
             </div>
           ) : (
-            <div className="d-flex gap-2">
-              <select
-                className="form-select form-select-sm"
-                value={groupSortField}
-                onChange={(e) => setGroupSortField(e.target.value as 'name' | 'count')}
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 150 }}
-              >
-                <option value="count">Sort: Count</option>
-                <option value="name">Sort: Group</option>
-              </select>
-              <select
-                className="form-select form-select-sm"
-                value={groupSortDir}
-                onChange={(e) => setGroupSortDir(e.target.value as 'asc' | 'desc')}
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 90 }}
-              >
-                <option value="asc">Asc</option>
-                <option value="desc">Desc</option>
-              </select>
+            <div className="small" style={{ color: colors.text.secondary }}>
+              Click table headers to sort
             </div>
           )}
         </div>
@@ -381,9 +383,21 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
           <table className="table table-hover small" style={{ color: colors.text.primary }}>
             <thead>
               <tr style={{ borderColor: colors.border }}>
-                <th style={{ color: colors.text.secondary }}>Email</th>
-                <th style={{ color: colors.text.secondary }}>Скачиваний</th>
-                <th style={{ color: colors.text.secondary }}>Последний раз</th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('email')}>
+                    Email{individualSortIndicator('email')}
+                  </button>
+                </th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('downloads')}>
+                    Скачиваний{individualSortIndicator('downloads')}
+                  </button>
+                </th>
+                <th style={{ color: colors.text.secondary }}>
+                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('last')}>
+                    Последний раз{individualSortIndicator('last')}
+                  </button>
+                </th>
                 <th style={{ color: colors.text.secondary }}>Ссылка</th>
               </tr>
             </thead>

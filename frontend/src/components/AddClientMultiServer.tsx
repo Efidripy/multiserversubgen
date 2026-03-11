@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
 
 interface NodeOption {
@@ -21,27 +22,21 @@ interface AddResult {
 }
 
 const FLOW_OPTIONS = [
-  { value: '', label: 'None (empty)' },
-  { value: 'xtls-rprx-vision', label: 'xtls-rprx-vision' },
-  { value: 'xtls-rprx-vision-udp443', label: 'xtls-rprx-vision-udp443' },
+  { value: '', label: 'None' },
+  { value: 'xtls-rprx-vision', label: 'vision' },
+  { value: 'xtls-rprx-vision-udp443', label: 'vision-udp443' },
 ];
 
 export const AddClientMultiServer: React.FC = () => {
   const { colors } = useTheme();
-
-  // Form state
   const [email, setEmail] = useState('');
   const [flow, setFlow] = useState('');
   const [inboundId, setInboundId] = useState('1');
   const [totalGB, setTotalGB] = useState('0');
   const [expiryTime, setExpiryTime] = useState('');
   const [enable, setEnable] = useState(true);
-
-  // Node selection
   const [nodes, setNodes] = useState<NodeOption[]>([]);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set());
-
-  // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState<AddResult | null>(null);
@@ -56,14 +51,13 @@ export const AddClientMultiServer: React.FC = () => {
       const res = await api.get('/v1/nodes/list', { auth: getAuth() });
       const nodeList: NodeOption[] = res.data || [];
       setNodes(nodeList);
-      // Select all by default
-      setSelectedNodeIds(new Set(nodeList.map((n) => n.id)));
+      setSelectedNodeIds(new Set(nodeList.map((node) => node.id)));
     } catch {
       setError('Failed to load node list');
     }
   };
 
-  const handleSelectAll = () => setSelectedNodeIds(new Set(nodes.map((n) => n.id)));
+  const handleSelectAll = () => setSelectedNodeIds(new Set(nodes.map((node) => node.id)));
   const handleSelectNone = () => setSelectedNodeIds(new Set());
 
   const toggleNode = (id: number) => {
@@ -78,8 +72,9 @@ export const AddClientMultiServer: React.FC = () => {
       setError('Email is required');
       return;
     }
+
     const inboundIdNum = parseInt(inboundId, 10);
-    if (isNaN(inboundIdNum) || inboundIdNum < 1) {
+    if (Number.isNaN(inboundIdNum) || inboundIdNum < 1) {
       setError('A valid inbound ID is required');
       return;
     }
@@ -88,9 +83,7 @@ export const AddClientMultiServer: React.FC = () => {
     setError('');
     setResult(null);
 
-    const expiryMs = expiryTime
-      ? new Date(expiryTime).getTime()
-      : 0;
+    const expiryMs = expiryTime ? new Date(expiryTime).getTime() : 0;
 
     try {
       const payload: Record<string, unknown> = {
@@ -105,7 +98,6 @@ export const AddClientMultiServer: React.FC = () => {
       if (selectedNodeIds.size < nodes.length) {
         payload.node_ids = Array.from(selectedNodeIds);
       }
-      // If all nodes selected, omit node_ids so the backend adds to all servers
 
       const res = await api.post('/v1/clients/add-to-nodes', payload, {
         auth: getAuth(),
@@ -136,165 +128,173 @@ export const AddClientMultiServer: React.FC = () => {
         </div>
       )}
 
-      <div className="row g-2 mb-3">
-        {/* Email */}
-        <div className="col-md-4">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Email
-          </label>
-          <input
-            type="email"
-            className="form-control form-control-sm"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="user@example.com"
-            style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-          />
+      <div className="panel-grid mb-3">
+        <div className="panel-block panel-block--wide">
+          <div className="panel-block__header">
+            <div>
+              <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Client Profile</h6>
+              <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                Basic client settings in one place.
+              </p>
+            </div>
+          </div>
+
+          <div className="panel-field-grid">
+            <div>
+              <label className="form-label small" style={{ color: colors.text.secondary }}>
+                Email
+              </label>
+              <input
+                type="email"
+                className="form-control form-control-sm"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="user@example.com"
+                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+              />
+            </div>
+            <div>
+              <label className="form-label small" style={{ color: colors.text.secondary }}>
+                Inbound ID
+              </label>
+              <input
+                type="number"
+                className="form-control form-control-sm"
+                value={inboundId}
+                onChange={(e) => setInboundId(e.target.value)}
+                min={1}
+                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+              />
+            </div>
+            <div>
+              <label className="form-label small" style={{ color: colors.text.secondary }}>
+                Total GB (0 = inf)
+              </label>
+              <input
+                type="number"
+                className="form-control form-control-sm"
+                value={totalGB}
+                onChange={(e) => setTotalGB(e.target.value)}
+                min={0}
+                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+              />
+            </div>
+            <div>
+              <label className="form-label small" style={{ color: colors.text.secondary }}>
+                Expiry Date
+              </label>
+              <input
+                type="date"
+                className="form-control form-control-sm"
+                value={expiryTime}
+                onChange={(e) => setExpiryTime(e.target.value)}
+                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+              />
+            </div>
+          </div>
+
+          <div className="panel-grid panel-grid--compact mt-3">
+            <div>
+              <label className="form-label small" style={{ color: colors.text.secondary }}>
+                Flow
+              </label>
+              <ChoiceChips
+                options={FLOW_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
+                value={flow}
+                onChange={(value) => setFlow(value)}
+                colors={colors}
+              />
+            </div>
+            <div>
+              <label className="form-label small" style={{ color: colors.text.secondary }}>
+                Status
+              </label>
+              <ChoiceChips
+                options={[
+                  { value: true, label: 'Enabled' },
+                  { value: false, label: 'Disabled' },
+                ]}
+                value={enable}
+                onChange={(value) => setEnable(value)}
+                colors={colors}
+              />
+            </div>
+          </div>
         </div>
 
-        {/* Flow */}
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Flow
-          </label>
-          <select
-            className="form-select form-select-sm"
-            value={flow}
-            onChange={(e) => setFlow(e.target.value)}
-            style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-          >
-            {FLOW_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
+        <div className="panel-block panel-block--wide">
+          <div className="panel-block__header">
+            <div>
+              <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Target Servers</h6>
+              <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                Select one, many or all servers for this client.
+              </p>
+            </div>
+            <div className="panel-inline-actions">
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                onClick={handleSelectAll}
+              >
+                All
+              </button>
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                onClick={handleSelectNone}
+              >
+                None
+              </button>
+            </div>
+          </div>
 
-        {/* Inbound ID */}
-        <div className="col-md-2">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Inbound ID
-          </label>
-          <input
-            type="number"
-            className="form-control form-control-sm"
-            value={inboundId}
-            onChange={(e) => setInboundId(e.target.value)}
-            min={1}
-            style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-          />
-        </div>
-
-        {/* Total GB */}
-        <div className="col-md-2">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Total GB (0 = ∞)
-          </label>
-          <input
-            type="number"
-            className="form-control form-control-sm"
-            value={totalGB}
-            onChange={(e) => setTotalGB(e.target.value)}
-            min={0}
-            style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-          />
-        </div>
-
-        {/* Expiry */}
-        <div className="col-md-4">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Expiry Date (optional)
-          </label>
-          <input
-            type="date"
-            className="form-control form-control-sm"
-            value={expiryTime}
-            onChange={(e) => setExpiryTime(e.target.value)}
-            style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-          />
-        </div>
-
-        {/* Enable toggle */}
-        <div className="col-md-2 d-flex align-items-end">
-          <div className="form-check form-switch mb-1">
-            <input
-              className="form-check-input"
-              type="checkbox"
-              id="enableToggle"
-              checked={enable}
-              onChange={(e) => setEnable(e.target.checked)}
-            />
-            <label className="form-check-label small" htmlFor="enableToggle" style={{ color: colors.text.secondary }}>
-              Enabled
-            </label>
+          <div className="small mb-2" style={{ color: colors.text.secondary }}>
+            {selectedNodeIds.size}/{nodes.length} selected
+          </div>
+          <div className="panel-selection-grid">
+            {nodes.map((node) => {
+              const active = selectedNodeIds.has(node.id);
+              return (
+                <button
+                  key={node.id}
+                  type="button"
+                  className="btn btn-sm text-start"
+                  onClick={() => toggleNode(node.id)}
+                  style={{
+                    backgroundColor: active ? colors.accent : colors.bg.tertiary,
+                    borderColor: active ? colors.accent : colors.border,
+                    color: active ? '#ffffff' : colors.text.primary,
+                    justifyContent: 'flex-start',
+                  }}
+                >
+                  <span className="d-inline-flex align-items-center gap-1">
+                    {active && <UIIcon name="check" size={12} />}
+                    {node.name}
+                  </span>
+                </button>
+              );
+            })}
+            {nodes.length === 0 && (
+              <span className="small" style={{ color: colors.text.secondary }}>No servers configured</span>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Server selection */}
-      <div className="mb-3">
-        <div className="d-flex align-items-center gap-2 mb-2">
-          <span className="small fw-semibold" style={{ color: colors.text.secondary }}>
-            Servers ({selectedNodeIds.size}/{nodes.length} selected)
+      <div className="panel-inline-actions">
+        <button
+          className="btn btn-sm"
+          style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+          onClick={handleSubmit}
+          disabled={loading || selectedNodeIds.size === 0}
+        >
+          <span className="d-inline-flex align-items-center gap-1">
+            <UIIcon name={loading ? 'spinner' : 'plus'} size={14} />
+            {loading ? 'Adding...' : `Add to ${selectedNodeIds.size} Server${selectedNodeIds.size !== 1 ? 's' : ''}`}
           </span>
-          <button
-            className="btn btn-sm"
-            style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary, padding: '0 8px', fontSize: '0.75rem' }}
-            onClick={handleSelectAll}
-          >
-            All
-          </button>
-          <button
-            className="btn btn-sm"
-            style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary, padding: '0 8px', fontSize: '0.75rem' }}
-            onClick={handleSelectNone}
-          >
-            None
-          </button>
-        </div>
-        <div className="d-flex flex-wrap gap-2">
-          {nodes.map((node) => (
-            <div
-              key={node.id}
-              className="form-check"
-              style={{ minWidth: '150px' }}
-            >
-              <input
-                className="form-check-input"
-                type="checkbox"
-                id={`node-${node.id}`}
-                checked={selectedNodeIds.has(node.id)}
-                onChange={() => toggleNode(node.id)}
-              />
-              <label
-                className="form-check-label small"
-                htmlFor={`node-${node.id}`}
-                style={{ color: colors.text.primary }}
-              >
-                {node.name}
-              </label>
-            </div>
-          ))}
-          {nodes.length === 0 && (
-            <span className="small" style={{ color: colors.text.secondary }}>No servers configured</span>
-          )}
-        </div>
+        </button>
       </div>
 
-      <button
-        className="btn btn-sm"
-        style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
-        onClick={handleSubmit}
-        disabled={loading || selectedNodeIds.size === 0}
-      >
-        <span className="d-inline-flex align-items-center gap-1">
-          <UIIcon name={loading ? 'spinner' : 'plus'} size={14} />
-          {loading ? 'Adding...' : `Add to ${selectedNodeIds.size} Server${selectedNodeIds.size !== 1 ? 's' : ''}`}
-        </span>
-      </button>
-
-      {/* Results Modal */}
       {showResultModal && result && (
         <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }}>
           <div className="modal-dialog modal-lg">
@@ -313,7 +313,6 @@ export const AddClientMultiServer: React.FC = () => {
                 />
               </div>
               <div className="modal-body">
-                {/* Summary */}
                 <div className="d-flex gap-3 mb-3">
                   <span className="badge fs-6" style={{ backgroundColor: colors.bg.tertiary, color: colors.text.primary }}>
                     Total: {result.summary.total}
@@ -326,7 +325,6 @@ export const AddClientMultiServer: React.FC = () => {
                   </span>
                 </div>
 
-                {/* Per-server results */}
                 <div className="table-responsive">
                   <table className="table table-sm" style={{ color: colors.text.primary }}>
                     <thead>
@@ -337,11 +335,11 @@ export const AddClientMultiServer: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {result.results.map((r, i) => (
-                        <tr key={i} style={{ borderColor: colors.border }}>
-                          <td>{r.node}</td>
+                      {result.results.map((item, index) => (
+                        <tr key={index} style={{ borderColor: colors.border }}>
+                          <td>{item.node}</td>
                           <td>
-                            {r.success ? (
+                            {item.success ? (
                               <span className="d-inline-flex align-items-center gap-1" style={{ color: colors.success }}>
                                 <UIIcon name="check" size={13} />
                                 Success
@@ -353,11 +351,7 @@ export const AddClientMultiServer: React.FC = () => {
                               </span>
                             )}
                           </td>
-                          <td>
-                            {r.error && (
-                              <small style={{ color: colors.danger }}>{r.error}</small>
-                            )}
-                          </td>
+                          <td>{item.error && <small style={{ color: colors.danger }}>{item.error}</small>}</td>
                         </tr>
                       ))}
                     </tbody>

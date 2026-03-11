@@ -3,6 +3,7 @@ import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { AddClientMultiServer } from './AddClientMultiServer';
 import { getAuth } from '../auth';
+import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
 
 interface Client {
@@ -719,6 +720,16 @@ export const ClientManager: React.FC = () => {
     return gb.toFixed(2) + ' GB';
   };
 
+  const sortDirectionLabels = (() => {
+    if (sortField === 'email' || sortField === 'node') {
+      return { asc: 'A -> Z', desc: 'Z -> A' };
+    }
+    if (sortField === 'expiry') {
+      return { asc: 'Sooner -> Later', desc: 'Later -> Sooner' };
+    }
+    return { asc: 'Small -> Large', desc: 'Large -> Small' };
+  })();
+
   /** Returns bytes from cache if loaded, fallback value if not yet loaded, or null if unavailable. */
   const getTrafficBytes = (key: string | null, field: 'upload' | 'download', fallback: number): number => {
     const safeFallback = asFiniteNumber(fallback) ?? 0;
@@ -741,169 +752,191 @@ export const ClientManager: React.FC = () => {
             <UIIcon name="clients" size={16} />
             Client Management
           </h5>
-          <div>
-            <button 
-              className="btn btn-sm me-2"
-              style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
-              onClick={() => setShowBatchModal(true)}
-            >
-              <span className="d-inline-flex align-items-center gap-1"><UIIcon name="plus" size={14} />Batch Add</span>
-            </button>
-            <button 
-              className="btn btn-sm me-2"
-              style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
-              onClick={exportToCSV}
-            >
-              <span className="d-inline-flex align-items-center gap-1"><UIIcon name="download" size={14} />Export CSV</span>
-            </button>
-            <button 
-              className="btn btn-sm"
-              style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
-              onClick={() => loadClients()}
-              disabled={loading}
-            >
-              <span className="d-inline-flex align-items-center gap-1">
-                <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
-                Reload
-              </span>
-            </button>
-          </div>
         </div>
-        
+
         {error && (
           <div className="alert alert-danger" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
             {error}
           </div>
         )}
-        
-        {/* Filters */}
-        <div className="row g-2 mb-3">
-          <div className="col-md-3">
-            <input
-              type="text"
-              className="form-control form-control-sm"
-              placeholder="Search email..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            />
-          </div>
-          <div className="col-md-2">
-            <select
-              className="form-select form-select-sm"
-              value={filterNode}
-              onChange={(e) => setFilterNode(e.target.value)}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="">All Nodes</option>
-              {nodes.map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </div>
-          <div className="col-md-2">
-            <select
-              className="form-select form-select-sm"
-              value={filterProtocol}
-              onChange={(e) => setFilterProtocol(e.target.value)}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="">All Protocols</option>
-              {protocols.map(p => <option key={p} value={p}>{p.toUpperCase()}</option>)}
-            </select>
-          </div>
-          <div className="col-md-2">
-            <select
-              className="form-select form-select-sm"
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="">All Status</option>
-              <option value="active">Active</option>
-              <option value="disabled">Disabled</option>
-              <option value="expired">Expired</option>
-              <option value="depleted">Depleted</option>
-            </select>
-          </div>
-          <div className="col-md-3">
-            <button
-              className="btn btn-sm w-100"
-              style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
-              onClick={() => {
-                setSearchTerm('');
-                setFilterNode('');
-                setFilterProtocol('');
-                setFilterStatus('');
-              }}
-            >
-              Clear Filters
-            </button>
-          </div>
-        </div>
 
-        <div className="row g-2 mb-3">
-          <div className="col-md-3">
-            <select
-              className="form-select form-select-sm"
-              value={sortField}
-              onChange={(e) => setSortField(e.target.value as 'email' | 'node' | 'download' | 'total' | 'expiry')}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="email">Sort: Name</option>
-              <option value="node">Sort: Node</option>
-              <option value="download">Sort: Download Traffic</option>
-              <option value="total">Sort: Total Limit</option>
-              <option value="expiry">Sort: Expiry Date</option>
-            </select>
+        <div className="panel-grid">
+          <div className="panel-block">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Actions</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Add, export and refresh clients.
+                </p>
+              </div>
+            </div>
+            <div className="panel-inline-actions">
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                onClick={() => setShowBatchModal(true)}
+              >
+                <span className="d-inline-flex align-items-center gap-1"><UIIcon name="plus" size={14} />Batch Add</span>
+              </button>
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
+                onClick={exportToCSV}
+              >
+                <span className="d-inline-flex align-items-center gap-1"><UIIcon name="download" size={14} />Export CSV</span>
+              </button>
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                onClick={() => loadClients()}
+                disabled={loading}
+              >
+                <span className="d-inline-flex align-items-center gap-1">
+                  <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
+                  Reload
+                </span>
+              </button>
+            </div>
           </div>
-          <div className="col-md-2">
-            <select
-              className="form-select form-select-sm"
-              value={sortDirection}
-              onChange={(e) => setSortDirection(e.target.value as 'asc' | 'desc')}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="asc">Asc (min→max)</option>
-              <option value="desc">Desc (max→min)</option>
-            </select>
+
+          <div className="panel-block panel-block--wide">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Filters</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Search and narrow client list.
+                </p>
+              </div>
+            </div>
+            <div className="panel-block__stack">
+              <input
+                type="text"
+                className="form-control form-control-sm"
+                placeholder="Search email..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+              />
+              <ChoiceChips
+                options={[{ value: '', label: 'All Nodes' }, ...nodes.map((n) => ({ value: n, label: n }))]}
+                value={filterNode}
+                onChange={(value) => setFilterNode(value)}
+                colors={colors}
+              />
+              <ChoiceChips
+                options={[{ value: '', label: 'All Protocols' }, ...protocols.map((p) => ({ value: p, label: p.toUpperCase() }))]}
+                value={filterProtocol}
+                onChange={(value) => setFilterProtocol(value)}
+                colors={colors}
+              />
+              <ChoiceChips
+                options={[
+                  { value: '', label: 'All Status' },
+                  { value: 'active', label: 'Active' },
+                  { value: 'disabled', label: 'Disabled' },
+                  { value: 'expired', label: 'Expired' },
+                  { value: 'depleted', label: 'Depleted' },
+                ]}
+                value={filterStatus}
+                onChange={(value) => setFilterStatus(value)}
+                colors={colors}
+              />
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                onClick={() => {
+                  setSearchTerm('');
+                  setFilterNode('');
+                  setFilterProtocol('');
+                  setFilterStatus('');
+                }}
+              >
+                Clear Filters
+              </button>
+            </div>
           </div>
-        </div>
-        
-        {/* Batch Actions */}
-        {selectedClientKeys.size > 0 && (
-          <div className="alert mb-3" style={{ backgroundColor: colors.accent + '22', borderColor: colors.accent, color: colors.text.primary }}>
-            <strong>{selectedClientKeys.size} clients selected</strong>
-            <button
-              className="btn btn-sm ms-2"
-              style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }}
-              onClick={() => handleBatchDelete('selected')}
-            >
-              <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Selected</span>
-            </button>
+
+          <div className="panel-block">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Sorting</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Header clicks still work too.
+                </p>
+              </div>
+            </div>
+            <div className="panel-block__stack">
+              <ChoiceChips
+                options={[
+                  { value: 'email', label: 'Email' },
+                  { value: 'node', label: 'Node' },
+                  { value: 'download', label: 'Download' },
+                  { value: 'total', label: 'Total Limit' },
+                  { value: 'expiry', label: 'Expiry' },
+                ]}
+                value={sortField}
+                onChange={(value) => setSortField(value)}
+                colors={colors}
+              />
+              <ChoiceChips
+                options={[
+                  { value: 'asc', label: sortDirectionLabels.asc },
+                  { value: 'desc', label: sortDirectionLabels.desc },
+                ]}
+                value={sortDirection}
+                onChange={(value) => setSortDirection(value)}
+                colors={colors}
+              />
+            </div>
           </div>
-        )}
-        
-        <div className="mb-3 d-flex gap-2">
-          <button
-            className="btn btn-sm"
-            style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
-            onClick={() => handleBatchDelete('expired')}
-          >
-            <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Expired</span>
-          </button>
-          <button
-            className="btn btn-sm"
-            style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
-            onClick={() => handleBatchDelete('depleted')}
-          >
-            <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Depleted</span>
-          </button>
-          <button
-            className="btn btn-sm"
-            style={{ backgroundColor: colors.info, borderColor: colors.info, color: '#ffffff' }}
-            onClick={() => handleResetTraffic(null)}
-          >
-            <span className="d-inline-flex align-items-center gap-1"><UIIcon name="refresh" size={14} />Reset All Traffic</span>
-          </button>
+
+          <div className="panel-block">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Bulk Cleanup</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Selected and maintenance actions.
+                </p>
+              </div>
+            </div>
+            <div className="panel-block__stack">
+              {selectedClientKeys.size > 0 && (
+                <div className="alert mb-0" style={{ backgroundColor: colors.accent + '22', borderColor: colors.accent, color: colors.text.primary }}>
+                  <strong>{selectedClientKeys.size} clients selected</strong>
+                  <button
+                    className="btn btn-sm ms-2"
+                    style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }}
+                    onClick={() => handleBatchDelete('selected')}
+                  >
+                    <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Selected</span>
+                  </button>
+                </div>
+              )}
+              <div className="panel-inline-actions">
+                <button
+                  className="btn btn-sm"
+                  style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
+                  onClick={() => handleBatchDelete('expired')}
+                >
+                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Expired</span>
+                </button>
+                <button
+                  className="btn btn-sm"
+                  style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
+                  onClick={() => handleBatchDelete('depleted')}
+                >
+                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Depleted</span>
+                </button>
+                <button
+                  className="btn btn-sm"
+                  style={{ backgroundColor: colors.info, borderColor: colors.info, color: '#ffffff' }}
+                  onClick={() => handleResetTraffic(null)}
+                >
+                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="refresh" size={14} />Reset All Traffic</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       
@@ -1085,15 +1118,16 @@ export const ClientManager: React.FC = () => {
                     <label className="form-label small" style={{ color: colors.text.secondary }}>
                       Inbound selector
                     </label>
-                    <select
-                      className="form-select"
+                    <ChoiceChips
+                      options={[
+                        { value: 'id', label: 'By ID' },
+                        { value: 'remark', label: 'By Remark' },
+                      ]}
                       value={batchInboundMode}
-                      onChange={(e) => setBatchInboundMode(e.target.value as 'id' | 'remark')}
-                      style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                    >
-                      <option value="id">By inbound ID</option>
-                      <option value="remark">By inbound remark</option>
-                    </select>
+                      onChange={(value) => setBatchInboundMode(value)}
+                      colors={colors}
+                      size="md"
+                    />
                   </div>
                   <div className="col-md-4">
                     <label className="form-label small" style={{ color: colors.text.secondary }}>
@@ -1122,16 +1156,17 @@ export const ClientManager: React.FC = () => {
                     <label className="form-label small" style={{ color: colors.text.secondary }}>
                       Flow
                     </label>
-                    <select
-                      className="form-select"
+                    <ChoiceChips
+                      options={[
+                        { value: '', label: 'None' },
+                        { value: 'xtls-rprx-vision', label: 'vision' },
+                        { value: 'xtls-rprx-vision-udp443', label: 'vision-udp443' },
+                      ]}
                       value={batchFlow}
-                      onChange={(e) => setBatchFlow(e.target.value)}
-                      style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                    >
-                      <option value="">None</option>
-                      <option value="xtls-rprx-vision">xtls-rprx-vision</option>
-                      <option value="xtls-rprx-vision-udp443">xtls-rprx-vision-udp443</option>
-                    </select>
+                      onChange={(value) => setBatchFlow(value)}
+                      colors={colors}
+                      size="md"
+                    />
                   </div>
                   <div className="col-md-4">
                     <label className="form-label small" style={{ color: colors.text.secondary }}>
