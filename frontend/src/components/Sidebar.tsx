@@ -4,7 +4,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { IconName, UIIcon } from './UIIcon';
 import { MSM_ASCII_VARIANTS } from './msmAsciiVariants';
 
-type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
+type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 
 interface SidebarProps {
   activeTab: TabType;
@@ -17,7 +17,6 @@ interface SidebarProps {
 
 const navItems: Array<{ id: TabType; icon: IconName; labelKey: string }> = [
   { id: 'dashboard', icon: 'dashboard', labelKey: 'nav.dashboard' },
-  { id: 'servers', icon: 'servers', labelKey: 'nav.nodes' },
   { id: 'inbounds', icon: 'inbounds', labelKey: 'nav.inbounds' },
   { id: 'clients', icon: 'clients', labelKey: 'nav.clients' },
   { id: 'traffic', icon: 'traffic', labelKey: 'nav.traffic' },

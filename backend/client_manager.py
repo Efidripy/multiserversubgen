@@ -41,6 +41,10 @@ class ClientManager:
         """
         self.decrypt = decrypt_func
         self.encrypt = encrypt_func
+
+    @staticmethod
+    def _is_read_only(node: Dict) -> bool:
+        return bool(node.get("read_only"))
     
     def _get_session(self, node: Dict) -> tuple:
         """Создать авторизованную сессию для узла
@@ -146,6 +150,9 @@ class ClientManager:
         return all_clients
     
     def add_client(self, node: Dict, inbound_id: int, client_config: Dict) -> bool:
+        if self._is_read_only(node):
+            logger.info(f"Skip add client on read-only node {node['name']}")
+            return False
         """Добавить клиента в инбаунд
         
         Args:
@@ -258,6 +265,9 @@ class ClientManager:
         return {"results": results}
     
     def update_client(self, node: Dict, inbound_id: int, client_uuid: str, updates: Dict) -> bool:
+        if self._is_read_only(node):
+            logger.info(f"Skip update client on read-only node {node['name']}")
+            return False
         """Обновить параметры клиента
         
         Args:
@@ -295,6 +305,9 @@ class ClientManager:
             return False
     
     def delete_client(self, node: Dict, inbound_id: int, client_uuid: str) -> bool:
+        if self._is_read_only(node):
+            logger.info(f"Skip delete client on read-only node {node['name']}")
+            return False
         """Удалить клиента из инбаунда
         
         Args:
@@ -377,7 +390,9 @@ class ClientManager:
                                     should_delete = False
                             
                             if should_delete:
-                                success = self.delete_client(node, inbound["id"], client.get("id", ""))
+                                # Trojan clients may not have "id"; x-ui expects password as identifier in that case.
+                                client_identifier = client.get("id") or client.get("password") or ""
+                                success = self.delete_client(node, inbound["id"], client_identifier)
                                 if success:
                                     deleted_count += 1
                                 else:
@@ -531,6 +546,9 @@ class ClientManager:
         return {"stats": stats, "group_by": group_by}
     
     def reset_client_traffic(self, node: Dict, inbound_id: int, client_email: str) -> bool:
+        if self._is_read_only(node):
+            logger.info(f"Skip reset client traffic on read-only node {node['name']}")
+            return False
         """Сбросить статистику трафика клиента
         
         Args:
@@ -574,6 +592,13 @@ class ClientManager:
         results = []
         
         for node in nodes:
+            if self._is_read_only(node):
+                results.append({
+                    "node": node["name"],
+                    "reset_count": 0,
+                    "error": "Node is read-only",
+                })
+                continue
             reset_count = 0
             
             try:

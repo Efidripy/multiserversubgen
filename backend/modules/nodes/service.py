@@ -103,6 +103,11 @@ class NodesService:
                     data.get("base_path", ""),
                 ),
             )
+            if data.get("read_only") is not None:
+                conn.execute(
+                    "UPDATE nodes SET read_only = ? WHERE id = ?",
+                    (1 if bool(data.get("read_only")) else 0, cur.lastrowid),
+                )
             conn.commit()
             node_id = cur.lastrowid
         return self.get_node(node_id) or {"id": node_id, **data}
@@ -135,6 +140,9 @@ class NodesService:
         if "base_path" in updates:
             fields.append("base_path = ?")
             params.append(updates["base_path"])
+        if "read_only" in updates:
+            fields.append("read_only = ?")
+            params.append(1 if bool(updates["read_only"]) else 0)
 
         if not fields:
             return self.get_node(node_id)

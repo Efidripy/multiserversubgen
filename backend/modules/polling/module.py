@@ -40,7 +40,7 @@ class PollingModule(BaseModule):
         if collector is not None:
             self.service = PollingService(collector)
             container.register_instance("polling_service", self.service)
-        self.logger.info("PollingModule initialised")
+        self.logger.info("PollingModule initialized")
 
     async def start(self) -> None:
         if self.service is not None:
@@ -56,7 +56,7 @@ class PollingModule(BaseModule):
         if self.service is None:
             return HealthStatus(
                 state=HealthState.UNKNOWN,
-                message="Polling service not initialised",
+                message="Polling service not initialized",
             )
         running = self.service.is_running()
         return HealthStatus(

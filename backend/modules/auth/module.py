@@ -41,7 +41,7 @@ class AuthModule(BaseModule):
             mfa_totp_enabled=settings.mfa_totp_enabled,
         )
         container.register_instance("auth_service", self.service)
-        self.logger.info("AuthModule initialised")
+        self.logger.info("AuthModule initialized")
 
     async def start(self) -> None:
         self.logger.info("AuthModule started")

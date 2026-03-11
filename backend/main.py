@@ -2,6 +2,8 @@ import sqlite3
 import requests
 import json
 import base64
+import io
+import zipfile
 import pam
 import datetime
 import os
@@ -9,6 +11,7 @@ import logging
 import time
 import asyncio
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict, deque
 from threading import Lock, Thread
 from pathlib import Path
@@ -45,6 +48,7 @@ from routers.live_data import build_live_data_router
 # Конфигурация
 PROJECT_DIR = os.getenv("PROJECT_DIR", "/opt/sub-manager")
 WEB_PATH = os.getenv("WEB_PATH", "").strip("/")
+GRAFANA_WEB_PATH = os.getenv("GRAFANA_WEB_PATH", "grafana").strip("/")
 root_path = f"/{WEB_PATH}" if WEB_PATH else ""
 CACHE_TTL = int(os.getenv("CACHE_TTL", "30"))
 ALLOW_ORIGINS_RAW = os.getenv(
@@ -336,7 +340,8 @@ snapshot_collector = SnapshotCollector(
 ws_manager.set_activity_callback(snapshot_collector.on_websocket_activity)
 
 # Cache for /metrics endpoint
-_metrics_cache: Dict = {"data": None, "ts": 0.0}
+# Store raw bytes, not Response object, to avoid reusing exhausted response instances.
+_metrics_cache: Dict = {"payload": None, "ts": 0.0}
 _metrics_cache_lock = Lock()
 
 
@@ -354,12 +359,12 @@ def render_metrics_response():
 
     with _metrics_cache_lock:
         now = time.time()
-        if _metrics_cache["data"] is not None and (now - _metrics_cache["ts"]) < ttl:
-            return _metrics_cache["data"]
-        data = Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
-        _metrics_cache["data"] = data
+        if _metrics_cache["payload"] is not None and (now - _metrics_cache["ts"]) < ttl:
+            return Response(_metrics_cache["payload"], media_type=CONTENT_TYPE_LATEST)
+        payload = generate_latest()
+        _metrics_cache["payload"] = payload
         _metrics_cache["ts"] = now
-        return data
+        return Response(payload, media_type=CONTENT_TYPE_LATEST)
 
 
 def deps_health_status() -> Dict:
@@ -395,9 +400,13 @@ def init_db():
     with sqlite3.connect(DB_PATH) as conn:
         conn.execute('''CREATE TABLE IF NOT EXISTS nodes 
                      (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, ip TEXT, port TEXT, 
-                      user TEXT, password TEXT, base_path TEXT DEFAULT '')''')
+                      user TEXT, password TEXT, base_path TEXT DEFAULT '', read_only INTEGER DEFAULT 0)''')
         try:
             conn.execute('ALTER TABLE nodes ADD COLUMN base_path TEXT DEFAULT ""')
+        except:
+            pass
+        try:
+            conn.execute('ALTER TABLE nodes ADD COLUMN read_only INTEGER DEFAULT 0')
         except:
             pass
         conn.execute('CREATE TABLE IF NOT EXISTS stats (email TEXT PRIMARY KEY, count INTEGER DEFAULT 0, last_download TEXT)')
@@ -1000,6 +1009,11 @@ def invalidate_live_stats_cache():
     _redis_delete("traffic_stats:client", "traffic_stats:inbound", "traffic_stats:node", "online_clients")
 
 
+def invalidate_subscription_cache():
+    emails_cache["ts"] = 0.0
+    links_cache.clear()
+
+
 def _start_cache_refresh(flag_key: str, worker, worker_key: Optional[str] = None):
     with subscription_rate_lock:
         if flag_key == "traffic":
@@ -1273,15 +1287,28 @@ def get_emails(nodes: List[Dict]) -> List[str]:
     if now - emails_cache["ts"] < CACHE_TTL:
         return emails_cache["emails"]
     
-    emails = set()
-    for n in nodes:
-        for ib in fetch_inbounds(n):
+    def _collect_node_emails(node: Dict) -> set:
+        node_emails = set()
+        for ib in fetch_inbounds(node):
             clients = parse_field_as_dict(
-                ib.get("settings"), node_id=n["name"], field_name="settings"
+                ib.get("settings"), node_id=node["name"], field_name="settings"
             ).get("clients", [])
             for c in clients:
-                if c.get("email"):
-                    emails.add(c.get("email"))
+                email = c.get("email")
+                if email:
+                    node_emails.add(email)
+        return node_emails
+
+    emails = set()
+    if nodes:
+        workers = min(8, len(nodes))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(_collect_node_emails, n) for n in nodes]
+            for future in as_completed(futures):
+                try:
+                    emails.update(future.result())
+                except Exception as exc:
+                    logger.warning(f"Failed to collect node emails: {exc}")
     
     emails_list = sorted(list(emails))
     emails_cache.update({"ts": now, "emails": emails_list})
@@ -1889,6 +1916,10 @@ async def monitoring_stack(request: Request):
 
     return {
         "ts": int(time.time()),
+        "public_paths": {
+            "panel": WEB_PATH,
+            "grafana": GRAFANA_WEB_PATH,
+        },
         "services": {
             "prometheus": prometheus,
             "loki": loki,
@@ -1909,6 +1940,7 @@ async def add_node(request: Request, data: Dict):
     url = data.get("url")
     node_user = data.get("user")
     password = data.get("password")
+    read_only = bool(data.get("read_only", False))
     
     if not all([name, url, node_user, password]):
         raise HTTPException(status_code=400, detail="Missing required fields")
@@ -1923,8 +1955,8 @@ async def add_node(request: Request, data: Dict):
         encrypted_password = encrypt(password)
         
         with sqlite3.connect(DB_PATH) as conn:
-            conn.execute('INSERT INTO nodes (name, ip, port, user, password, base_path) VALUES (?,?,?,?,?,?)',
-                        (name, parsed.hostname, str(parsed.port) if parsed.port else "443", node_user, encrypted_password, parsed.path.strip('/')))
+            conn.execute('INSERT INTO nodes (name, ip, port, user, password, base_path, read_only) VALUES (?,?,?,?,?,?,?)',
+                        (name, parsed.hostname, str(parsed.port) if parsed.port else "443", node_user, encrypted_password, parsed.path.strip('/'), 1 if read_only else 0))
             conn.commit()
     except Exception as e:
         logger.error(f"Error adding node: {e}")
@@ -1933,6 +1965,76 @@ async def add_node(request: Request, data: Dict):
     emails_cache["ts"] = 0
     links_cache.clear()
     return {"status": "success"}
+
+
+@app.post("/api/v1/nodes/check-connection")
+async def check_node_connection(request: Request, data: Dict):
+    """Validate node credentials/url without saving to DB."""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    url = str(data.get("url") or "").strip()
+    node_user = str(data.get("user") or "").strip()
+    password = str(data.get("password") or "").strip()
+
+    if not all([url, node_user, password]):
+        raise HTTPException(status_code=400, detail="Missing required fields")
+
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        raise HTTPException(status_code=400, detail="Invalid URL")
+
+    scheme = parsed.scheme or "https"
+    port = parsed.port or (443 if scheme == "https" else 80)
+    base_path = parsed.path.strip("/")
+    prefix = f"/{base_path}" if base_path else ""
+    base_url = f"{scheme}://{parsed.hostname}:{port}{prefix}"
+
+    s = requests.Session()
+    s.verify = REQUESTS_VERIFY
+
+    try:
+        if not login_panel(s, base_url, node_user, password):
+            return {
+                "success": False,
+                "message": "Login failed",
+                "base_url": base_url,
+            }
+
+        inbounds_count = None
+        details = ""
+        try:
+            probe = xui_request(s, "GET", f"{base_url}/panel/api/inbounds/list", timeout=15)
+            if probe.status_code == 200:
+                payload = probe.json()
+                if isinstance(payload, dict) and payload.get("success"):
+                    inbounds = payload.get("obj") or []
+                    inbounds_count = len(inbounds) if isinstance(inbounds, list) else 0
+                elif isinstance(payload, dict):
+                    details = str(payload.get("msg") or "panel success=false")
+            else:
+                details = f"inbounds/list status={probe.status_code}"
+        except Exception as exc:
+            details = f"inbounds probe failed: {exc}"
+
+        return {
+            "success": True,
+            "message": "Connection OK",
+            "base_url": base_url,
+            "inbounds_count": inbounds_count,
+            "details": details,
+        }
+    except Exception as exc:
+        logger.warning(f"Node connection check failed for {base_url}: {exc}")
+        return {
+            "success": False,
+            "message": str(exc),
+            "base_url": base_url,
+        }
 
 
 @app.put("/api/v1/nodes/{node_id}")
@@ -2038,7 +2140,11 @@ async def list_emails(request: Request):
         
         return JSONResponse(
             content={"emails": emails, "stats": stats},
-            headers={"Cache-Control": "private, max-age=600"},
+            headers={
+                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+            },
         )
 
 
@@ -2058,6 +2164,12 @@ async def get_sub(request: Request, email: str, protocol: Optional[str] = None, 
             headers={"Retry-After": str(retry_after)},
         )
 
+    no_cache_headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
+
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
         all_nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
@@ -2076,9 +2188,12 @@ async def get_sub(request: Request, email: str, protocol: Optional[str] = None, 
                           'ON CONFLICT(email) DO UPDATE SET count=count+1, last_download=?',
                           (email, now, now))
                 db.commit()
-            return PlainTextResponse(content=base64.b64encode("\n".join(links).encode()).decode())
+            return PlainTextResponse(
+                content=base64.b64encode("\n".join(links).encode()).decode(),
+                headers=no_cache_headers,
+            )
         
-        return PlainTextResponse(content="Not found", status_code=404)
+        return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
 
 
 @app.get("/api/v1/sub-grouped/{identifier}")
@@ -2096,6 +2211,12 @@ async def get_sub_grouped(request: Request, identifier: str, protocol: Optional[
             status_code=429,
             headers={"Retry-After": str(retry_after)},
         )
+
+    no_cache_headers = {
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+        "Expires": "0",
+    }
 
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -2132,7 +2253,7 @@ async def get_sub_grouped(request: Request, identifier: str, protocol: Optional[
             matching_emails = [e for e in all_emails if identifier.lower() in e.lower()]
         
         if not matching_emails:
-            return PlainTextResponse(content="No matching clients found", status_code=404)
+            return PlainTextResponse(content="No matching clients found", status_code=404, headers=no_cache_headers)
         
         # Собрать ссылки для всех найденных email
         all_links = []
@@ -2148,9 +2269,12 @@ async def get_sub_grouped(request: Request, identifier: str, protocol: Optional[
                               'ON CONFLICT(email) DO UPDATE SET count=count+1, last_download=?',
                               (email, now, now))
                 db.commit()
-            return PlainTextResponse(content=base64.b64encode("\n".join(all_links).encode()).decode())
+            return PlainTextResponse(
+                content=base64.b64encode("\n".join(all_links).encode()).decode(),
+                headers=no_cache_headers,
+            )
         
-        return PlainTextResponse(content="Not found", status_code=404)
+        return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
 
 
 # === Subscription Groups Management API ===
@@ -2311,16 +2435,27 @@ async def add_inbound(request: Request, config: Dict):
     user = check_auth(request)
     if not user:
         raise HTTPException(status_code=401)
-    
+
+    node_ids = config.pop("node_ids", None)
+
     # Get nodes to add to
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
+        if node_ids:
+            placeholders = ",".join("?" * len(node_ids))
+            nodes = [dict(n) for n in conn.execute(
+                f"SELECT * FROM nodes WHERE id IN ({placeholders})", node_ids
+            ).fetchall()]
+        else:
+            nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
     
     results = []
     for n in nodes:
         success = inbound_mgr.add_inbound(n, config)
         results.append({"node": n['name'], "success": success})
+    if any(r.get("success") for r in results):
+        invalidate_subscription_cache()
+        invalidate_live_stats_cache()
     
     return {"results": results}
 
@@ -2368,6 +2503,9 @@ async def clone_inbound(request: Request, data: Dict):
             target_nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes WHERE id != ?', (source_node_id,)).fetchall()]
     
     result = inbound_mgr.clone_inbound(source_node, source_inbound_id, target_nodes, modifications)
+    if any(r.get("success") for r in result.get("results", [])):
+        invalidate_subscription_cache()
+        invalidate_live_stats_cache()
     return result
 
 
@@ -2386,6 +2524,9 @@ async def delete_inbound(request: Request, inbound_id: int, node_id: int):
         node = dict(node)
     
     success = inbound_mgr.delete_inbound(node, inbound_id)
+    if success:
+        invalidate_subscription_cache()
+        invalidate_live_stats_cache()
     return {"success": success}
 
 
@@ -2420,6 +2561,9 @@ async def batch_enable_inbounds(request: Request, data: Dict):
             nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
     
     result = inbound_mgr.batch_enable_inbounds(nodes, inbound_ids, enable)
+    if result.get("successful", 0) > 0:
+        invalidate_subscription_cache()
+        invalidate_live_stats_cache()
     
     # Broadcast WebSocket update
     await ws_manager.broadcast_inbound_update({
@@ -2464,6 +2608,9 @@ async def batch_update_inbounds(request: Request, data: Dict):
             nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
     
     result = inbound_mgr.batch_update_inbounds(nodes, inbound_ids, updates)
+    if result.get("successful", 0) > 0:
+        invalidate_subscription_cache()
+        invalidate_live_stats_cache()
     
     # Broadcast WebSocket update
     await ws_manager.broadcast_inbound_update({
@@ -2503,6 +2650,9 @@ async def batch_delete_inbounds(request: Request, data: Dict):
             nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
     
     result = inbound_mgr.batch_delete_inbounds(nodes, inbound_ids)
+    if result.get("successful", 0) > 0:
+        invalidate_subscription_cache()
+        invalidate_live_stats_cache()
     
     # Broadcast WebSocket update
     await ws_manager.broadcast_inbound_update({
@@ -2568,6 +2718,8 @@ async def batch_add_clients(request: Request, data: Dict):
             nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
     
     results = client_mgr.batch_add_clients(nodes, clients_configs)
+    invalidate_live_stats_cache()
+    invalidate_subscription_cache()
     return results
 
 
@@ -2627,6 +2779,8 @@ async def add_client_to_nodes(request: Request, data: Dict):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    invalidate_live_stats_cache()
+    invalidate_subscription_cache()
     return results
 
 
@@ -2664,6 +2818,9 @@ async def update_client(request: Request, client_uuid: str, data: Dict):
         node = dict(node)
     
     success = client_mgr.update_client(node, inbound_id, client_uuid, updates)
+    if success:
+        invalidate_live_stats_cache()
+        invalidate_subscription_cache()
     return {"success": success}
 
 
@@ -2682,6 +2839,9 @@ async def delete_client(request: Request, client_uuid: str, node_id: int, inboun
         node = dict(node)
     
     success = client_mgr.delete_client(node, inbound_id, client_uuid)
+    if success:
+        invalidate_live_stats_cache()
+        invalidate_subscription_cache()
     return {"success": success}
 
 
@@ -2715,6 +2875,8 @@ async def batch_delete_clients(request: Request, data: Dict):
             nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
     
     results = client_mgr.batch_delete_clients(nodes, email_pattern, expired_only, depleted_only)
+    invalidate_live_stats_cache()
+    invalidate_subscription_cache()
     return results
 
 
@@ -2900,6 +3062,43 @@ async def get_database_backup(request: Request, node_id: int):
     return backup
 
 
+@app.get("/api/v1/backup/node/{node_id}")
+async def get_database_backup_legacy(request: Request, node_id: int):
+    """Legacy endpoint used by older frontend: returns raw DB bytes."""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401)
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        node = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if not node:
+            raise HTTPException(status_code=404, detail="Node not found")
+        node = dict(node)
+
+    backup = server_monitor.get_database_backup(node)
+    if backup.get("error"):
+        raise HTTPException(status_code=502, detail=backup["error"])
+
+    backup_b64 = backup.get("backup_b64") or ""
+    if not backup_b64:
+        raise HTTPException(status_code=502, detail="Empty backup payload")
+
+    try:
+        payload = base64.b64decode(backup_b64)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Invalid backup payload: {exc}")
+
+    filename = f"backup_{node.get('name','node')}_{datetime.datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.db"
+    headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        # Binary payloads are already compact; force identity to avoid proxy/browser stalls.
+        "Content-Encoding": "identity",
+        "Cache-Control": "no-store",
+    }
+    return Response(content=payload, media_type="application/x-sqlite3", headers=headers)
+
+
 @app.post("/api/v1/backup/database/{node_id}")
 async def import_database_backup(request: Request, node_id: int, data: Dict):
     """Импортировать резервную копию базы данных на сервер
@@ -2928,9 +3127,41 @@ async def import_database_backup(request: Request, node_id: int, data: Dict):
     return {"success": success}
 
 
+@app.post("/api/v1/backup/node/{node_id}/import")
+async def import_database_backup_legacy(request: Request, node_id: int):
+    """Legacy endpoint used by older frontend (multipart file upload)."""
+    user = check_auth(request)
+    if not user:
+        raise HTTPException(status_code=401)
+
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row
+        node = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
+        if not node:
+            raise HTTPException(status_code=404, detail="Node not found")
+        node = dict(node)
+
+    form = await request.form()
+    upload = form.get("file")
+    if upload is None:
+        raise HTTPException(status_code=400, detail="file required")
+
+    content = await upload.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="empty file")
+
+    backup_data = base64.b64encode(content).decode("ascii")
+    success = server_monitor.import_database_backup(node, backup_data)
+    return {"success": success}
+
+
 @app.get("/api/v1/backup/all")
 async def get_all_databases_backup(request: Request):
-    """Получить резервные копии баз данных со всех серверов"""
+    """Получить резервные копии баз данных со всех серверов.
+
+    Default response: zip archive (legacy frontend behavior).
+    Use ?format=json for structured JSON payload.
+    """
     user = check_auth(request)
     if not user:
         raise HTTPException(status_code=401)
@@ -2943,8 +3174,34 @@ async def get_all_databases_backup(request: Request):
     for node in nodes:
         backup = server_monitor.get_database_backup(node)
         backups.append(backup)
-    
-    return {"backups": backups, "count": len(backups)}
+
+    if request.query_params.get("format", "").lower() == "json":
+        return {"backups": backups, "count": len(backups)}
+
+    ts = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+    mem = io.BytesIO()
+    with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for idx, backup in enumerate(backups, start=1):
+            node_name = (backup.get("node") or f"node_{idx}").replace("/", "_")
+            if backup.get("error"):
+                zf.writestr(f"{node_name}.error.txt", backup.get("error", "unknown error"))
+                continue
+            try:
+                raw = base64.b64decode(backup.get("backup_b64", ""))
+                if raw:
+                    zf.writestr(f"{node_name}.db", raw)
+                else:
+                    zf.writestr(f"{node_name}.error.txt", "empty backup payload")
+            except Exception as exc:
+                zf.writestr(f"{node_name}.error.txt", f"decode error: {exc}")
+    mem.seek(0)
+    headers = {
+        "Content-Disposition": f'attachment; filename="all_backups_{ts}.zip"',
+        # ZIP is pre-compressed; disable extra gzip stage for stable downloads.
+        "Content-Encoding": "identity",
+        "Cache-Control": "no-store",
+    }
+    return Response(content=mem.getvalue(), media_type="application/zip", headers=headers)
 
 
 # === Per-node 3x-UI API endpoints ===
