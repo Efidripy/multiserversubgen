@@ -40,7 +40,7 @@ class NodesModule(BaseModule):
             decrypt_func=decrypt,
         )
         container.register_instance("nodes_service", self.service)
-        self.logger.info("NodesModule initialised")
+        self.logger.info("NodesModule initialized")
 
     async def start(self) -> None:
         self.logger.info("NodesModule started")

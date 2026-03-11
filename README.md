@@ -103,7 +103,7 @@ sudo ./install.sh
 - ✅ Systemd сервис
 - ✅ Fail2ban защиту
 - ✅ Prometheus + Grafana (опционально, по вопросу в установщике)
-  - доступ к Grafana закрыт BasicAuth (логин/пароль задаются в install.sh)
+  - доступ к Grafana идет через скрытый subpath и стандартную авторизацию Grafana
 
 ### Обновление (рекомендуемый порядок)
 ```bash
@@ -209,6 +209,12 @@ Monitoring assets:
   - публикуют Grafana через subpath `/$WEB_PATH/grafana/` в Nginx
   - отключают `auth.anonymous` в Grafana и биндуют её на `127.0.0.1:3000`
   - поддерживают IP allowlist и optional mTLS (клиентские сертификаты) для путей панели
+
+### Ops Scripts
+- `scripts/ops/smoke-test.sh` — быстрый smoke после установки/обновления (`systemd`, `nginx`, `/health`, публичный URL).
+- `scripts/ops/backup-restore-check.sh` — проверка целостности backup/restore для `nodes.db`.
+- `scripts/ops/hardening-profile.sh audit|apply` — аудит и отключение обычно ненужных сервисов на VPS.
+- `scripts/deploy/server-deploy.sh` — деплой с backup и rollback при неуспехе health-check.
 
 Быстрая проверка после включения AdGuard-интеграции:
 ```bash

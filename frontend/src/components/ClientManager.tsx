@@ -6,7 +6,8 @@ import { getAuth } from '../auth';
 import { UIIcon } from './UIIcon';
 
 interface Client {
-  id: number;
+  id?: string | null;
+  password?: string;
   email: string;
   enable: boolean;
   total: number;
@@ -17,6 +18,7 @@ interface Client {
   node_name: string;
   node_id?: number;
   protocol: string;
+  totalGB?: number;
 }
 
 interface TrafficData {
@@ -31,9 +33,19 @@ interface TrafficData {
 
 interface BatchAddClient {
   email: string;
-  total_gb?: number;
-  expiry_days?: number;
+  inbound_id?: number;
+  inbound_remark?: string;
+  totalGB?: number;
+  expiryTime?: number;
   enable: boolean;
+  flow?: string;
+}
+
+interface InboundOption {
+  id: number;
+  node_name: string;
+  protocol: string;
+  remark: string;
 }
 
 interface ClientsPageCache {
@@ -43,8 +55,13 @@ interface ClientsPageCache {
   endpointMode?: 'unknown' | 'query' | 'legacy' | 'disabled';
 }
 
+const clientIdentifier = (client: Client): string | null =>
+  (client.id && String(client.id).trim()) ||
+  (client.password && String(client.password).trim()) ||
+  null;
+
 const clientKey = (client: Client): string =>
-  `${client.node_id ?? client.node_name}:${client.id}:${client.email}`;
+  `${client.node_id ?? client.node_name}:${clientIdentifier(client) ?? "no-id"}:${client.email}`;
 
 const CLIENTS_PAGE_CACHE_KEY = 'sub_manager_clients_page_cache_v1';
 const CLIENTS_PAGE_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
@@ -129,9 +146,14 @@ export const ClientManager: React.FC = () => {
   // Batch add modal
   const [showBatchModal, setShowBatchModal] = useState(false);
   const [batchText, setBatchText] = useState('');
+  const [batchInboundMode, setBatchInboundMode] = useState<'id' | 'remark'>('id');
   const [batchInboundId, setBatchInboundId] = useState('1');
+  const [batchInboundRemark, setBatchInboundRemark] = useState('');
+  const [batchFlow, setBatchFlow] = useState('');
+  const [batchEnable, setBatchEnable] = useState(true);
   const [batchTotalGB, setBatchTotalGB] = useState('50');
   const [batchExpiryDays, setBatchExpiryDays] = useState('30');
+  const [inboundOptions, setInboundOptions] = useState<InboundOption[]>([]);
   
   // Selection
   const [selectedClientKeys, setSelectedClientKeys] = useState<Set<string>>(new Set());
@@ -180,17 +202,22 @@ export const ClientManager: React.FC = () => {
     setError('');
     
     try {
-      const [clientsRes, nodesRes] = await Promise.all([
+      const [clientsRes, nodesRes, inboundsRes] = await Promise.all([
         api.get('/v1/clients', { auth: getAuth() }),
-        api.get('/v1/nodes', { auth: getAuth() })
+        api.get('/v1/nodes', { auth: getAuth() }),
+        api.get('/v1/inbounds', { auth: getAuth() }),
       ]);
       
       const nodeList: { id: number; name: string }[] = nodesRes.data || [];
       const nodeNameToId: Record<string, number> = {};
       nodeList.forEach(n => { nodeNameToId[n.name] = n.id; });
 
-      const mappedClients: Client[] = (clientsRes.data.clients || []).map((c: Client) => ({
+      const mappedClients: Client[] = (clientsRes.data.clients || []).map((c: any) => ({
         ...c,
+        id: c.id != null ? String(c.id) : null,
+        total: Number(c.total ?? c.totalGB ?? 0) || 0,
+        up: Number(c.up ?? 0) || 0,
+        down: Number(c.down ?? 0) || 0,
         node_id: nodeNameToId[c.node_name],
       }));
       // Defensive dedupe in case API/cache returns accidental repeated rows.
@@ -199,8 +226,15 @@ export const ClientManager: React.FC = () => {
         deduped.set(clientKey(client), client);
       });
       const rawClients: Client[] = Array.from(deduped.values());
+      const inboundList: InboundOption[] = (inboundsRes.data?.inbounds || []).map((ib: any) => ({
+        id: ib.id,
+        node_name: ib.node_name,
+        protocol: ib.protocol,
+        remark: ib.remark || '',
+      }));
 
       setClients(rawClients);
+      setInboundOptions(inboundList);
       if (!silent && trafficEndpointModeRef.current === 'disabled') {
         // Re-probe endpoints on manual reload to recover after temporary backend mismatch.
         trafficEndpointModeRef.current = 'unknown';
@@ -423,7 +457,7 @@ export const ClientManager: React.FC = () => {
       const dir = getSortMultiplier();
       const byEmail = compareText(a.email, b.email);
       const byNode = compareText(a.node_name, b.node_name);
-      const byId = a.id - b.id;
+      const byId = String(a.id ?? '').localeCompare(String(b.id ?? ''));
 
       if (sortField === 'email') {
         if (byEmail !== 0) return byEmail * dir;
@@ -475,16 +509,39 @@ export const ClientManager: React.FC = () => {
     setError('');
     
     const emails = batchText.split('\n').map(e => e.trim()).filter(e => e);
+    const inboundId = parseInt(batchInboundId, 10);
+    const inboundRemark = batchInboundRemark.trim();
+    const totalGb = parseFloat(batchTotalGB);
+    const expiryDays = parseInt(batchExpiryDays, 10);
+    const expiryTime = Number.isFinite(expiryDays) && expiryDays > 0
+      ? Date.now() + expiryDays * 24 * 60 * 60 * 1000
+      : 0;
+
+    if (batchInboundMode === 'id' && (!Number.isFinite(inboundId) || inboundId < 1)) {
+      alert('Provide a valid inbound ID');
+      setLoading(false);
+      return;
+    }
+    if (batchInboundMode === 'remark' && !inboundRemark) {
+      alert('Provide inbound remark');
+      setLoading(false);
+      return;
+    }
+
     const clientsToAdd: BatchAddClient[] = emails.map(email => ({
       email,
-      total_gb: parseFloat(batchTotalGB) || undefined,
-      expiry_days: parseInt(batchExpiryDays) || undefined,
-      enable: true
+      ...(batchInboundMode === 'id'
+        ? { inbound_id: inboundId }
+        : { inbound_remark: inboundRemark }),
+      totalGB: Number.isFinite(totalGb) && totalGb > 0 ? Math.floor(totalGb * 1024 * 1024 * 1024) : 0,
+      expiryTime,
+      enable: batchEnable,
+      flow: batchFlow,
     }));
     
     try {
       await api.post('/v1/clients/batch-add', {
-        inbound_id: parseInt(batchInboundId),
+        node_ids: null,
         clients: clientsToAdd
       }, {
         auth: getAuth()
@@ -492,6 +549,8 @@ export const ClientManager: React.FC = () => {
       
       setShowBatchModal(false);
       setBatchText('');
+      setBatchFlow('');
+      setBatchEnable(true);
       loadClients();
       alert(`Successfully added ${emails.length} clients`);
     } catch (err: any) {
@@ -502,48 +561,57 @@ export const ClientManager: React.FC = () => {
   };
   
   const handleBatchDelete = async (type: 'selected' | 'expired' | 'depleted') => {
-    let clientsToDelete: number[] = [];
-    let confirmMessage = '';
-    
-    if (type === 'selected') {
-      clientsToDelete = Array.from(
-        new Set(
-          clients
-            .filter((c) => selectedClientKeys.has(clientKey(c)))
-            .map((c) => c.id)
-        )
-      );
-      confirmMessage = `Delete ${clientsToDelete.length} selected clients?`;
-    } else if (type === 'expired') {
-      clientsToDelete = clients
-        .filter(c => c.expiryTime > 0 && c.expiryTime < Date.now())
-        .map(c => c.id);
-      confirmMessage = `Delete ${clientsToDelete.length} expired clients?`;
-    } else if (type === 'depleted') {
-      clientsToDelete = clients
-        .filter(c => c.total > 0 && (c.up + c.down) >= c.total)
-        .map(c => c.id);
-      confirmMessage = `Delete ${clientsToDelete.length} depleted clients?`;
-    }
-    
-    if (clientsToDelete.length === 0) {
-      alert('No clients to delete');
-      return;
-    }
-    
-    if (!window.confirm(confirmMessage)) return;
-    
     setLoading(true);
     try {
+      if (type === 'selected') {
+        const selected = clients.filter((c) => selectedClientKeys.has(clientKey(c)));
+        if (selected.length === 0) {
+          alert('No clients to delete');
+          return;
+        }
+        if (!window.confirm(`Delete ${selected.length} selected clients?`)) return;
+
+        let failed = 0;
+        for (const client of selected) {
+          const identifier = clientIdentifier(client);
+          if (!identifier || !client.inbound_id) {
+            failed += 1;
+            continue;
+          }
+          try {
+            await api.delete(`/v1/clients/${encodeURIComponent(identifier)}`, {
+              auth: getAuth(),
+              params: {
+                node_id: client.node_id,
+                inbound_id: client.inbound_id,
+              },
+            });
+          } catch {
+            failed += 1;
+          }
+        }
+
+        setSelectedClientKeys(new Set());
+        await loadClients();
+        if (failed > 0) {
+          alert(`Deleted with partial errors. Failed: ${failed}`);
+        } else {
+          alert('Clients deleted successfully');
+        }
+        return;
+      }
+
+      if (!window.confirm(`Delete ${type} clients across all nodes?`)) return;
       await api.post('/v1/clients/batch-delete', {
-        client_ids: clientsToDelete,
-        filter: type === 'selected' ? null : type
+        node_ids: null,
+        email_pattern: null,
+        expired_only: type === 'expired',
+        depleted_only: type === 'depleted',
       }, {
         auth: getAuth()
       });
-      
-      setSelectedClientKeys(new Set());
-      loadClients();
+
+      await loadClients();
       alert('Clients deleted successfully');
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to delete clients');
@@ -552,8 +620,8 @@ export const ClientManager: React.FC = () => {
     }
   };
   
-  const handleResetTraffic = async (clientId: number | null) => {
-    if (clientId) {
+  const handleResetTraffic = async (client: Client | null) => {
+    if (client) {
       if (!window.confirm('Reset traffic for this client?')) return;
     } else {
       if (!window.confirm('Reset traffic for ALL clients?')) return;
@@ -561,12 +629,22 @@ export const ClientManager: React.FC = () => {
     
     setLoading(true);
     try {
-      if (clientId) {
-        await api.post(`/v1/clients/${clientId}/reset-traffic`, {}, {
+      if (client) {
+        const identifier = clientIdentifier(client);
+        if (!identifier) {
+          throw new Error('Client identifier is missing');
+        }
+        await api.post(`/v1/clients/${encodeURIComponent(identifier)}/reset-traffic`, {
+          node_id: client.node_id,
+          inbound_id: client.inbound_id,
+          email: client.email,
+        }, {
           auth: getAuth()
         });
       } else {
-        await api.post('/v1/automation/reset-all-traffic', {}, {
+        await api.post('/v1/automation/reset-all-traffic', {
+          node_ids: null,
+        }, {
           auth: getAuth()
         });
       }
@@ -956,7 +1034,7 @@ export const ClientManager: React.FC = () => {
                         <button
                           className="btn btn-sm"
                           style={{ backgroundColor: colors.info, borderColor: colors.info, color: '#ffffff' }}
-                          onClick={() => handleResetTraffic(client.id)}
+                          onClick={() => handleResetTraffic(client)}
                           title="Reset traffic"
                         >
                           <UIIcon name="refresh" size={14} />
@@ -1005,15 +1083,55 @@ export const ClientManager: React.FC = () => {
                 <div className="row g-2">
                   <div className="col-md-4">
                     <label className="form-label small" style={{ color: colors.text.secondary }}>
-                      Inbound ID
+                      Inbound selector
                     </label>
-                    <input
-                      type="number"
-                      className="form-control"
-                      value={batchInboundId}
-                      onChange={(e) => setBatchInboundId(e.target.value)}
+                    <select
+                      className="form-select"
+                      value={batchInboundMode}
+                      onChange={(e) => setBatchInboundMode(e.target.value as 'id' | 'remark')}
                       style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                    />
+                    >
+                      <option value="id">By inbound ID</option>
+                      <option value="remark">By inbound remark</option>
+                    </select>
+                  </div>
+                  <div className="col-md-4">
+                    <label className="form-label small" style={{ color: colors.text.secondary }}>
+                      {batchInboundMode === 'id' ? 'Inbound ID' : 'Inbound remark'}
+                    </label>
+                    {batchInboundMode === 'id' ? (
+                      <input
+                        type="number"
+                        className="form-control"
+                        value={batchInboundId}
+                        onChange={(e) => setBatchInboundId(e.target.value)}
+                        style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        className="form-control"
+                        value={batchInboundRemark}
+                        onChange={(e) => setBatchInboundRemark(e.target.value)}
+                        placeholder="exact remark text"
+                        style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                      />
+                    )}
+                  </div>
+                  <div className="col-md-4">
+                    <label className="form-label small" style={{ color: colors.text.secondary }}>
+                      Flow
+                    </label>
+                    <select
+                      className="form-select"
+                      value={batchFlow}
+                      onChange={(e) => setBatchFlow(e.target.value)}
+                      style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                    >
+                      <option value="">None</option>
+                      <option value="xtls-rprx-vision">xtls-rprx-vision</option>
+                      <option value="xtls-rprx-vision-udp443">xtls-rprx-vision-udp443</option>
+                    </select>
                   </div>
                   <div className="col-md-4">
                     <label className="form-label small" style={{ color: colors.text.secondary }}>
@@ -1041,7 +1159,31 @@ export const ClientManager: React.FC = () => {
                       style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
                     />
                   </div>
+                  <div className="col-md-4 d-flex align-items-end">
+                    <div className="form-check form-switch">
+                      <input
+                        className="form-check-input"
+                        type="checkbox"
+                        id="batchEnableToggle"
+                        checked={batchEnable}
+                        onChange={(e) => setBatchEnable(e.target.checked)}
+                      />
+                      <label className="form-check-label small" htmlFor="batchEnableToggle" style={{ color: colors.text.secondary }}>
+                        Enable clients after add
+                      </label>
+                    </div>
+                  </div>
                 </div>
+                {inboundOptions.length > 0 && (
+                  <div className="mt-3 small" style={{ color: colors.text.secondary, maxHeight: '120px', overflowY: 'auto' }}>
+                    Known inbounds:
+                    {inboundOptions.slice(0, 40).map((ib) => (
+                      <div key={`${ib.node_name}:${ib.id}`}>
+                        {ib.node_name} | id={ib.id} | {ib.protocol} | {ib.remark || '-'}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="modal-footer" style={{ borderColor: colors.border }}>
                 <button

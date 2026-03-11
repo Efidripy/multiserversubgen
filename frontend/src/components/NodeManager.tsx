@@ -34,6 +34,7 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
   const [editingNode, setEditingNode] = useState<Node | null>(null);
   const [editingName, setEditingName] = useState('');
   const [showEditModal, setShowEditModal] = useState(false);
+  const [checkingConnection, setCheckingConnection] = useState(false);
 
   const loadNodes = async () => {
     try {
@@ -198,6 +199,39 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
     }
   };
 
+  const handleCheckConnection = async () => {
+    setError('');
+    setSuccess('');
+
+    if (!formData.url.trim() || !formData.user.trim() || !formData.password.trim()) {
+      setError('Fill URL, login and password first');
+      return;
+    }
+
+    setCheckingConnection(true);
+    try {
+      const res = await api.post('/v1/nodes/check-connection', {
+        url: formData.url,
+        user: formData.user,
+        password: formData.password,
+      }, {
+        auth: { username: getAuth().user, password: getAuth().password }
+      });
+
+      const payload = res.data || {};
+      if (payload.success) {
+        const count = Number.isFinite(payload.inbounds_count) ? payload.inbounds_count : null;
+        setSuccess(count !== null ? `Connection OK, inbounds: ${count}` : 'Connection OK');
+      } else {
+        setError(payload.message || 'Connection failed');
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Connection check failed');
+    } finally {
+      setCheckingConnection(false);
+    }
+  };
+
   return (
     <div className="node-manager">
       <div className="card p-3 mb-4" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
@@ -238,7 +272,7 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
 
             {addMode === 'form' && (
               <form onSubmit={handleSubmit} className="row g-2 small">
-                <div className="col-md-3">
+                <div className="col-md-2">
                   <input
                     type="text"
                     name="name"
@@ -286,10 +320,21 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
                     required
                   />
                 </div>
-                <div className="col-md-1">
-                  <button type="submit" className="btn w-100" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} disabled={loading}>
-                    {loading ? '...' : 'OK'}
-                  </button>
+                <div className="col-md-2">
+                  <div className="d-flex gap-2">
+                    <button
+                      type="button"
+                      className="btn w-100"
+                      style={{ backgroundColor: colors.warning + '33', borderColor: colors.warning + '66', color: colors.warning }}
+                      onClick={handleCheckConnection}
+                      disabled={loading || checkingConnection}
+                    >
+                      {checkingConnection ? '...' : 'Check'}
+                    </button>
+                    <button type="submit" className="btn w-100" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} disabled={loading || checkingConnection}>
+                      {loading ? '...' : 'Save'}
+                    </button>
+                  </div>
                 </div>
               </form>
             )}

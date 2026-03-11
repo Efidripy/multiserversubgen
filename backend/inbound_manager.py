@@ -37,6 +37,10 @@ class InboundManager:
         """
         self.decrypt = decrypt_func
         self.encrypt = encrypt_func
+
+    @staticmethod
+    def _is_read_only(node: Dict) -> bool:
+        return bool(node.get("read_only"))
     
     def get_all_inbounds(self, nodes: List[Dict]) -> List[Dict]:
         """Получить все инбаунды со всех узлов
@@ -107,6 +111,9 @@ class InboundManager:
         return []
     
     def add_inbound(self, node: Dict, config: Dict) -> bool:
+        if self._is_read_only(node):
+            logger.info(f"Skip add inbound on read-only node {node['name']}")
+            return False
         """Добавить инбаунд на узел
         
         Args:
@@ -132,7 +139,7 @@ class InboundManager:
                 f"{base_url}/panel/api/inbounds/add",
                 json=config,
             )
-            return res.status_code == 200
+            return self._xui_success(res)
         except Exception as exc:
             logger.warning(f"Failed to add inbound to {node['name']}: {exc}")
             return False
@@ -157,12 +164,16 @@ class InboundManager:
         if not source_inbound:
             return {"error": "Source inbound not found"}
         
+        include_clients = bool((modifications or {}).get("include_clients", False))
+
         # Создать копию конфигурации с модификациями
         new_config = {
             "port": modifications.get("port", source_inbound.get("port")),
             "protocol": source_inbound.get("protocol"),
             "settings": source_inbound.get("settings", {}),
             "streamSettings": source_inbound.get("streamSettings", {}),
+            "sniffing": source_inbound.get("sniffing", {}),
+            "allocate": source_inbound.get("allocate", {}),
             "remark": modifications.get("remark", source_inbound.get("remark", "")),
             "enable": True,
             "up": 0,
@@ -170,9 +181,27 @@ class InboundManager:
             "total": 0,
             "expiryTime": 0
         }
+
+        # When cloning inside the same node, reusing clients usually fails due to duplicate id/email.
+        # Default behavior: clone inbound config without clients unless explicitly requested.
+        if not include_clients:
+            settings_obj = parse_field_as_dict(
+                new_config.get("settings"), node_id=source_node["name"], field_name="settings"
+            )
+            settings_obj["clients"] = []
+            new_config["settings"] = json.dumps(settings_obj, ensure_ascii=False)
         
         results = []
         for target_node in target_nodes:
+            if self._is_read_only(target_node):
+                results.append({
+                    "node": target_node["name"],
+                    "success": False,
+                    "port": new_config["port"],
+                    "remark": new_config["remark"],
+                    "error": "Node is read-only",
+                })
+                continue
             success = self.add_inbound(target_node, new_config)
             results.append({
                 "node": target_node["name"],
@@ -184,6 +213,9 @@ class InboundManager:
         return {"results": results}
     
     def delete_inbound(self, node: Dict, inbound_id: int) -> bool:
+        if self._is_read_only(node):
+            logger.info(f"Skip delete inbound on read-only node {node['name']}")
+            return False
         """Удалить инбаунд с узла"""
         s = requests.Session()
         s.verify = _requests_verify_value()
@@ -200,12 +232,15 @@ class InboundManager:
                 "POST",
                 f"{base_url}/panel/api/inbounds/del/{inbound_id}",
             )
-            return res.status_code == 200
+            return self._xui_success(res)
         except Exception as exc:
             logger.warning(f"Failed to delete inbound from {node['name']}: {exc}")
             return False
     
     def reset_inbound_traffic(self, node: Dict, inbound_id: int) -> bool:
+        if self._is_read_only(node):
+            logger.info(f"Skip reset inbound traffic on read-only node {node['name']}")
+            return False
         """Сбросить статистику инбаунда"""
         s = requests.Session()
         s.verify = _requests_verify_value()
@@ -222,12 +257,15 @@ class InboundManager:
                 "POST",
                 f"{base_url}/panel/api/inbounds/resetClientTraffic/{inbound_id}",
             )
-            return res.status_code == 200
+            return self._xui_success(res)
         except Exception as exc:
             logger.warning(f"Failed to reset inbound traffic: {exc}")
             return False
     
     def update_inbound(self, node: Dict, inbound_id: int, updates: Dict) -> bool:
+        if self._is_read_only(node):
+            logger.info(f"Skip update inbound on read-only node {node['name']}")
+            return False
         """Обновить параметры инбаунда
         
         Args:
@@ -266,7 +304,7 @@ class InboundManager:
                 f"{base_url}/panel/api/inbounds/update/{inbound_id}",
                 json=current,
             )
-            return res.status_code == 200
+            return self._xui_success(res)
         except Exception as exc:
             logger.warning(f"Failed to update inbound on {node['name']}: {exc}")
             return False
@@ -360,3 +398,16 @@ class InboundManager:
             "total": len(results),
             "successful": sum(1 for r in results if r['success'])
         }
+    @staticmethod
+    def _xui_success(res) -> bool:
+        """x-ui may return HTTP 200 with {"success": false}; treat it as failure."""
+        if res.status_code != 200:
+            return False
+        try:
+            data = res.json()
+            if isinstance(data, dict) and "success" in data:
+                return bool(data.get("success"))
+        except Exception:
+            # Some endpoints may return non-JSON on older forks; keep backward compatibility.
+            pass
+        return True

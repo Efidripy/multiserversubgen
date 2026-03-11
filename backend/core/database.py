@@ -37,7 +37,8 @@ _SCHEMA_STATEMENTS = [
         port         TEXT,
         user         TEXT,
         password     TEXT,
-        base_path    TEXT DEFAULT ''
+        base_path    TEXT DEFAULT '',
+        read_only    INTEGER DEFAULT 0
     )
     """,
     # Subscription groups
@@ -114,6 +115,7 @@ _SCHEMA_STATEMENTS = [
 # Optional ALTER TABLE migrations (non-fatal if column already exists)
 _MIGRATIONS = [
     "ALTER TABLE nodes ADD COLUMN base_path TEXT DEFAULT ''",
+    "ALTER TABLE nodes ADD COLUMN read_only INTEGER DEFAULT 0",
 ]
 
 
@@ -143,7 +145,7 @@ def init_db(db_path: str) -> None:
             except sqlite3.OperationalError:
                 pass  # Column already exists or other benign error
 
-    logger.debug("Database initialised at %s", db_path)
+    logger.debug("Database initialized at %s", db_path)
 
 
 @contextmanager

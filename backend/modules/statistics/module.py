@@ -54,7 +54,7 @@ class StatisticsModule(BaseModule):
         self.service.register_collector(AvailabilityCollector(snapshot_provider))
 
         container.register_instance("statistics_service", self.service)
-        self.logger.info("StatisticsModule initialised with %d collectors",
+        self.logger.info("StatisticsModule initialized with %d collectors",
                          len(self.service.list_collectors()))
 
     async def start(self) -> None:
@@ -65,7 +65,7 @@ class StatisticsModule(BaseModule):
 
     async def health_check(self) -> HealthStatus:
         if self.service is None:
-            return HealthStatus(state=HealthState.UNKNOWN, message="Not initialised")
+            return HealthStatus(state=HealthState.UNKNOWN, message="Not initialized")
         return HealthStatus(
             state=HealthState.HEALTHY,
             message="Statistics module operational",

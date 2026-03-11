@@ -24,12 +24,12 @@ export const API_BASE: string =
  * Used by the request interceptor to determine how long to cache each GET response.
  */
 export const CACHE_TTL = {
-  NODES: 5 * 60 * 1000,    // 5 min — node list changes infrequently
-  CLIENTS: 3 * 60 * 1000,  // 3 min — client list
-  TRAFFIC: 1 * 60 * 1000,  // 1 min — traffic data changes frequently
-  INBOUNDS: 5 * 60 * 1000, // 5 min — inbound configuration
-  EMAILS: 10 * 60 * 1000,  // 10 min — subscription emails
-  DEFAULT: 2 * 60 * 1000,  // 2 min — fallback
+  NODES: 0,
+  CLIENTS: 0,
+  TRAFFIC: 0,
+  INBOUNDS: 0,
+  EMAILS: 0,
+  DEFAULT: 0,
 } as const;
 
 /** Map URL path fragments to their cache TTL. */
@@ -107,7 +107,15 @@ api.interceptors.response.use((response) => {
     // entries for that resource so the next GET fetches fresh data.
     const match = url.match(/^(\/v\d+\/[^/?]+)/);
     if (match) {
-      cacheService.invalidate(match[1]);
+      const resource = match[1];
+      cacheService.invalidate(resource);
+      if (
+        resource.startsWith('/v1/clients') ||
+        resource.startsWith('/v1/inbounds') ||
+        resource.startsWith('/v1/nodes')
+      ) {
+        cacheService.invalidate('/v1/emails');
+      }
     }
   }
 
@@ -115,3 +123,4 @@ api.interceptors.response.use((response) => {
 });
 
 export default api;
+

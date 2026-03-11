@@ -151,6 +151,10 @@ interface StackServiceProbe {
 
 interface StackStatusResponse {
   ts: number;
+  public_paths?: {
+    panel?: string;
+    grafana?: string;
+  };
   services: {
     prometheus: StackServiceProbe;
     loki: StackServiceProbe;
@@ -166,11 +170,19 @@ const RANGE_OPTIONS = [
   { value: 7 * 24 * 3600, label: '7d' },
 ] as const;
 
-function buildGrafanaUrl(): string {
+function buildGrafanaUrl(runtimePath?: string): string {
+  const normalizePath = (value: string): string => {
+    const cleaned = value.trim().replace(/^\/+|\/+$/g, '');
+    return cleaned ? `/${cleaned}/` : '/grafana/';
+  };
+
+  if (runtimePath && runtimePath.trim()) {
+    return `${window.location.origin}${normalizePath(runtimePath)}`;
+  }
+
   const explicitPath = (import.meta.env.VITE_GRAFANA_PATH as string | undefined)?.trim();
   if (explicitPath) {
-    const normalized = explicitPath.startsWith('/') ? explicitPath : `/${explicitPath}`;
-    return `${window.location.origin}${normalized.replace(/\/$/, '')}/`;
+    return `${window.location.origin}${normalizePath(explicitPath)}`;
   }
 
   const base = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
@@ -237,7 +249,6 @@ function formatTickLabel(tsSec: number, rangeSec: number): string {
 
 export const MonitoringDashboard: React.FC = () => {
   const { colors } = useTheme();
-  const grafanaUrl = buildGrafanaUrl();
 
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [selectedScope, setSelectedScope] = useState<string>('all'); // "all" | node id as string
@@ -263,6 +274,10 @@ export const MonitoringDashboard: React.FC = () => {
     verify_tls: true,
     enabled: true,
   });
+  const grafanaUrl = useMemo(() => {
+    const runtimeGrafanaPath = stackStatus?.public_paths?.grafana;
+    return buildGrafanaUrl(runtimeGrafanaPath);
+  }, [stackStatus?.public_paths?.grafana]);
 
   const isAllScope = selectedScope === 'all';
   const selectedNodeId = isAllScope ? null : Number(selectedScope);
