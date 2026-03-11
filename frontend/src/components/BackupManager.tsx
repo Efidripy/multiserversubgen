@@ -45,7 +45,7 @@ export const BackupManager: React.FC = () => {
     setBackupProgress({ ...backupProgress, [nodeId]: 'downloading' });
 
     try {
-      const res = await api.get(`/v1/backup/${nodeId}`, {
+      const res = await api.get(`/v1/backup/node/${nodeId}`, {
         auth: getAuth(),
         responseType: 'blob'
       });
@@ -125,7 +125,7 @@ export const BackupManager: React.FC = () => {
     formData.append('file', importFile);
 
     try {
-      await api.post(`/v1/backup/${selectedNode}/import`, formData, {
+      await api.post(`/v1/backup/node/${selectedNode}/import`, formData, {
         auth: getAuth(),
         headers: {
           'Content-Type': 'multipart/form-data'

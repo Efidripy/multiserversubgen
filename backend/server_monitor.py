@@ -5,6 +5,7 @@
 import requests
 import json
 import logging
+import base64
 from urllib.parse import quote
 import time
 import sys
@@ -234,6 +235,10 @@ class ServerMonitor:
             decrypt_func: Функция для расшифровки паролей узлов
         """
         self.decrypt = decrypt_func
+
+    @staticmethod
+    def _is_read_only(node: Dict) -> bool:
+        return bool(node.get("read_only"))
     
     def _get_session(self, node: Dict) -> tuple:
         """Создать авторизованную сессию для узла
@@ -278,13 +283,13 @@ class ServerMonitor:
         try:
             # Primary API endpoint for node panel panel (panel/api path)
             primary_url = f"{base_url}/panel/api/server/status"
-            res = xui_request(s, "POST", primary_url)
+            res = xui_request(s, "GET", primary_url)
             
             if res.status_code == 404:
                 # Fallback for older node panel versions
                 fallback_url = f"{base_url}/server/status"
                 logger.debug(f"Primary endpoint 404, falling back to {fallback_url}")
-                res = xui_request(s, "POST", fallback_url)
+                res = xui_request(s, "GET", fallback_url)
             
             if res.status_code != 200:
                 logger.warning(
@@ -436,6 +441,9 @@ class ServerMonitor:
             return {"error": str(exc)}
     
     def restart_xray(self, node: Dict) -> bool:
+        if self._is_read_only(node):
+            logger.info(f"Skip restart xray on read-only node {node['name']}")
+            return False
         """Перезапустить core service на сервере
         
         Args:
@@ -449,8 +457,29 @@ class ServerMonitor:
             return False
         
         try:
-            res = xui_request(s, "POST", f"{base_url}/server/restartXrayService", timeout=15)
-            return res.status_code == 200
+            endpoints = [
+                f"{base_url}/panel/api/server/restartXrayService",
+                f"{base_url}/server/restartXrayService",
+            ]
+            for endpoint in endpoints:
+                try:
+                    res = xui_request(s, "POST", endpoint, timeout=15)
+                except Exception:
+                    continue
+                if res.status_code != 200:
+                    continue
+                try:
+                    data = res.json()
+                    # x-ui can return 200 with {"success": false}
+                    if isinstance(data, dict) and "success" in data:
+                        if bool(data.get("success")):
+                            return True
+                        continue
+                except Exception:
+                    # Older variants may return non-JSON on success.
+                    return True
+                return True
+            return False
         except Exception as exc:
             logger.warning(f"Failed to restart core service on {node['name']}: {exc}")
             return False
@@ -477,13 +506,34 @@ class ServerMonitor:
                 "syslog": False
             }
             
-            res = xui_request(s, "POST", f"{base_url}/server/logs", json=payload)
-            
+            endpoints = [
+                f"{base_url}/panel/api/server/logs",
+                f"{base_url}/server/logs",
+            ]
+            res = None
+            for endpoint in endpoints:
+                try:
+                    candidate = xui_request(s, "POST", endpoint, json=payload)
+                except Exception:
+                    continue
+                if candidate.status_code == 404:
+                    continue
+                res = candidate
+                break
+
+            if res is None:
+                return {"error": "Logs endpoint not found"}
+
             if res.status_code == 200:
                 data = res.json()
+                raw_logs = data.get("obj", "")
+                if isinstance(raw_logs, list):
+                    logs = [str(item) for item in raw_logs]
+                else:
+                    logs = str(raw_logs).split("\n") if data.get("success") else []
                 return {
                     "node": node["name"],
-                    "logs": data.get("obj", "").split("\n") if data.get("success") else [],
+                    "logs": logs,
                     "count": count,
                     "level": level
                 }
@@ -507,24 +557,34 @@ class ServerMonitor:
             return {"error": "Failed to connect"}
         
         try:
-            # API endpoint для получения бэкапа БД
-            res = xui_request(s, "GET", f"{base_url}/server/getDb", timeout=15)
+            # 3x-ui modern endpoint: /panel/api/server/getDb
+            res = xui_request(s, "GET", f"{base_url}/panel/api/server/getDb", timeout=15)
+            if res.status_code == 404:
+                # fallback for old panels
+                res = xui_request(s, "GET", f"{base_url}/server/getDb", timeout=15)
             
             if res.status_code == 200:
-                # Ответ может быть в виде файла или JSON с base64
+                # Response can be binary file or JSON wrapper with base64 payload.
                 try:
                     data = res.json()
                     if data.get("success"):
+                        obj = data.get("obj", "")
+                        if isinstance(obj, str):
+                            backup_b64 = obj
+                        else:
+                            backup_b64 = ""
                         return {
                             "node": node["name"],
-                            "backup": data.get("obj", ""),
+                            "backup_b64": backup_b64,
+                            "encoding": "base64",
                             "timestamp": datetime.now().isoformat()
                         }
-                except:
-                    # Если ответ - файл, возвращаем его содержимое
+                except Exception:
+                    # Binary response: keep as base64 to preserve bytes safely.
                     return {
                         "node": node["name"],
-                        "backup": res.content.decode('utf-8', errors='ignore'),
+                        "backup_b64": base64.b64encode(res.content).decode("ascii"),
+                        "encoding": "base64",
                         "timestamp": datetime.now().isoformat()
                     }
             
@@ -534,6 +594,9 @@ class ServerMonitor:
             return {"error": str(exc)}
     
     def import_database_backup(self, node: Dict, backup_data: str) -> bool:
+        if self._is_read_only(node):
+            logger.info(f"Skip import database backup on read-only node {node['name']}")
+            return False
         """Импортировать резервную копию базы данных
         
         Args:
@@ -548,14 +611,32 @@ class ServerMonitor:
             return False
         
         try:
-            # API endpoint для импорта БД
+            raw_bytes = b""
+            try:
+                raw_bytes = base64.b64decode(backup_data, validate=True)
+            except Exception:
+                # Backward compatibility: allow plain SQL/text payload.
+                raw_bytes = str(backup_data).encode("utf-8", errors="ignore")
+            if not raw_bytes:
+                return False
+
+            # 3x-ui modern endpoint: /panel/api/server/importDB
             res = xui_request(
                 s,
                 "POST",
-                f"{base_url}/server/importDb",
-                data={"db": backup_data},
-                timeout=15,
+                f"{base_url}/panel/api/server/importDB",
+                files={"db": ("backup.db", raw_bytes, "application/octet-stream")},
+                timeout=30,
             )
+            if res.status_code == 404:
+                # fallback for older nodes
+                res = xui_request(
+                    s,
+                    "POST",
+                    f"{base_url}/server/importDb",
+                    files={"db": ("backup.db", raw_bytes, "application/octet-stream")},
+                    timeout=30,
+                )
             
             if res.status_code == 200:
                 data = res.json()

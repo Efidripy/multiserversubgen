@@ -44,6 +44,13 @@ export const ServerStatus: React.FC = () => {
   const [error, setError] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval] = useState(30);
+  const [showLogsModal, setShowLogsModal] = useState(false);
+  const [logsNodeId, setLogsNodeId] = useState<number | null>(null);
+  const [logsNodeName, setLogsNodeName] = useState('');
+  const [logsLevel, setLogsLevel] = useState<'debug' | 'info' | 'warning' | 'error'>('info');
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState('');
+  const [logsLines, setLogsLines] = useState<string[]>([]);
 
   useEffect(() => {
     loadServersStatus();
@@ -112,6 +119,41 @@ export const ServerStatus: React.FC = () => {
     } catch (err: any) {
       alert(err.response?.data?.detail || 'Failed to restart core service');
     }
+  };
+
+  const loadServerLogs = async (nodeId: number, level: 'debug' | 'info' | 'warning' | 'error') => {
+    setLogsLoading(true);
+    setLogsError('');
+    try {
+      const res = await api.get(`/v1/servers/${nodeId}/logs`, {
+        params: { count: 200, level },
+        auth: getAuth()
+      });
+      const payload = res.data || {};
+      if (payload.error) {
+        setLogsError(String(payload.error));
+        setLogsLines([]);
+      } else {
+        setLogsLines(Array.isArray(payload.logs) ? payload.logs : []);
+      }
+    } catch (err: any) {
+      setLogsError(err.response?.data?.detail || 'Failed to load logs');
+      setLogsLines([]);
+    } finally {
+      setLogsLoading(false);
+    }
+  };
+
+  const handleViewLogs = async (nodeName: string) => {
+    const nodeId = nodeIds[nodeName];
+    if (!nodeId) {
+      alert('Node ID not found');
+      return;
+    }
+    setLogsNodeId(nodeId);
+    setLogsNodeName(nodeName);
+    setShowLogsModal(true);
+    await loadServerLogs(nodeId, logsLevel);
   };
 
   const formatUptime = (seconds: number) => {
@@ -287,11 +329,20 @@ export const ServerStatus: React.FC = () => {
                     <button
                       className="btn btn-sm"
                       style={{ backgroundColor: colors.warning + '33', borderColor: colors.warning + '66', color: colors.warning, padding: '1px 8px', fontSize: '0.75rem' }}
-                    onClick={() => handleRestartCore(server.node)}
-                    disabled={!server.xray.running}
-                  >
-                    <UIIcon name="refresh" size={13} />
-                  </button>
+                      onClick={() => handleRestartCore(server.node)}
+                      disabled={!server.xray.running}
+                      title="Restart core"
+                    >
+                      <UIIcon name="refresh" size={13} />
+                    </button>
+                    <button
+                      className="btn btn-sm"
+                      style={{ backgroundColor: colors.accent + '33', borderColor: colors.accent + '66', color: colors.accent, padding: '1px 8px', fontSize: '0.75rem' }}
+                      onClick={() => handleViewLogs(server.node)}
+                      title="View logs"
+                    >
+                      Logs
+                    </button>
                 </div>
               )}
               </div>
@@ -303,6 +354,69 @@ export const ServerStatus: React.FC = () => {
       {servers.length === 0 && !loading && (
         <div className="text-center py-5" style={{ color: colors.text.secondary }}>
           <p>No servers configured. Add servers in the Servers tab.</p>
+        </div>
+      )}
+
+      {showLogsModal && (
+        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
+          <div className="modal-dialog modal-lg modal-dialog-centered">
+            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+              <div className="modal-header" style={{ borderColor: colors.border }}>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>Logs: {logsNodeName}</h6>
+                <button
+                  type="button"
+                  className="btn-close"
+                  aria-label="Close"
+                  onClick={() => setShowLogsModal(false)}
+                />
+              </div>
+              <div className="modal-body">
+                <div className="d-flex gap-2 align-items-center mb-2">
+                  <select
+                    className="form-select form-select-sm"
+                    value={logsLevel}
+                    onChange={(e) => setLogsLevel(e.target.value as 'debug' | 'info' | 'warning' | 'error')}
+                    style={{ width: '140px', backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                  >
+                    <option value="debug">debug</option>
+                    <option value="info">info</option>
+                    <option value="warning">warning</option>
+                    <option value="error">error</option>
+                  </select>
+                  <button
+                    className="btn btn-sm"
+                    style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                    disabled={logsLoading || !logsNodeId}
+                    onClick={() => { if (logsNodeId) { loadServerLogs(logsNodeId, logsLevel); } }}
+                  >
+                    {logsLoading ? '...' : 'Refresh'}
+                  </button>
+                </div>
+                {logsError && (
+                  <div className="alert alert-danger py-2" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+                    {logsError}
+                  </div>
+                )}
+                <pre
+                  style={{
+                    backgroundColor: colors.bg.primary,
+                    color: colors.text.primary,
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: '8px',
+                    padding: '10px',
+                    minHeight: '320px',
+                    maxHeight: '55vh',
+                    overflow: 'auto',
+                    marginBottom: 0,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                  }}
+                >
+                  {logsLines.length > 0 ? logsLines.join('\n') : (logsLoading ? 'Loading logs...' : 'No logs')}
+                </pre>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </div>

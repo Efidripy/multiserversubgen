@@ -25,7 +25,7 @@ class SubscriptionsModule(BaseModule):
         super().__init__()
 
     async def initialize(self, container: "Container") -> None:
-        self.logger.info("SubscriptionsModule initialised")
+        self.logger.info("SubscriptionsModule initialized")
 
     async def start(self) -> None:
         self.logger.info("SubscriptionsModule started")

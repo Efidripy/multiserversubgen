@@ -15,7 +15,7 @@ import { useWebSocket } from './hooks/useWebSocket';
 import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials } from './auth';
 import { IconName, UIIcon } from './components/UIIcon';
 
-type TabType = 'dashboard' | 'servers' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
+type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 type NoticeLevel = 'info' | 'success' | 'warning' | 'danger';
 
 interface UiNotification {
@@ -297,7 +297,6 @@ export const App: React.FC = () => {
 
   const tabMeta: Record<TabType, { icon: IconName; label: string }> = {
     dashboard: { icon: 'dashboard', label: t('nav.dashboard') },
-    servers: { icon: 'servers', label: t('nav.nodes') },
     inbounds: { icon: 'inbounds', label: t('nav.inbounds') },
     clients: { icon: 'clients', label: t('nav.clients') },
     traffic: { icon: 'traffic', label: t('nav.traffic') },
@@ -309,9 +308,12 @@ export const App: React.FC = () => {
   const renderTabContent = () => {
     switch (activeTab) {
       case 'dashboard':
-        return <ServerStatus />;
-      case 'servers':
-        return <NodeManager onReload={() => setKey((prev) => prev + 1)} />;
+        return (
+          <div className="d-grid gap-3">
+            <NodeManager onReload={() => setKey((prev) => prev + 1)} />
+            <ServerStatus />
+          </div>
+        );
       case 'inbounds':
         return <InboundManager onReload={() => setKey((prev) => prev + 1)} />;
       case 'clients':

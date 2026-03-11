@@ -46,6 +46,8 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     setSuccessMessage('');
     try {
       const res = await api.get('/v1/emails', {
+        params: { _ts: Date.now() },
+        headers: { 'Cache-Control': 'no-cache' },
         auth: { username: getAuth().user, password: getAuth().password }
       });
       setEmails(res.data.emails || []);

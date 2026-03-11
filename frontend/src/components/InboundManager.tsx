@@ -22,6 +22,95 @@ interface NodeInfo {
   name: string;
 }
 
+interface InboundTemplateMap {
+  [key: string]: Record<string, any>;
+}
+
+const INBOUND_TEMPLATES: InboundTemplateMap = {
+  vless: {
+    port: 8443,
+    protocol: 'vless',
+    remark: 'vless-inbound',
+    enable: true,
+    expiryTime: 0,
+    listen: '',
+    total: 0,
+    settings: JSON.stringify({
+      clients: [],
+      decryption: 'none',
+      fallbacks: [],
+    }),
+    streamSettings: JSON.stringify({
+      network: 'tcp',
+      security: 'reality',
+      realitySettings: {
+        show: false,
+        dest: 'www.cloudflare.com:443',
+        xver: 0,
+        serverNames: ['www.cloudflare.com'],
+        privateKey: '',
+        shortIds: [''],
+        settings: {
+          publicKey: '',
+          fingerprint: 'chrome',
+        },
+      },
+    }),
+    sniffing: JSON.stringify({
+      enabled: true,
+      destOverride: ['http', 'tls'],
+      metadataOnly: false,
+    }),
+  },
+  vmess: {
+    port: 20000,
+    protocol: 'vmess',
+    remark: 'vmess-inbound',
+    enable: true,
+    expiryTime: 0,
+    listen: '',
+    total: 0,
+    settings: JSON.stringify({
+      clients: [],
+      disableInsecureEncryption: false,
+    }),
+    streamSettings: JSON.stringify({
+      network: 'ws',
+      security: 'tls',
+      wsSettings: { path: '/vmess', headers: {} },
+      tlsSettings: { serverName: '' },
+    }),
+    sniffing: JSON.stringify({
+      enabled: true,
+      destOverride: ['http', 'tls'],
+      metadataOnly: false,
+    }),
+  },
+  trojan: {
+    port: 443,
+    protocol: 'trojan',
+    remark: 'trojan-inbound',
+    enable: true,
+    expiryTime: 0,
+    listen: '',
+    total: 0,
+    settings: JSON.stringify({
+      clients: [],
+      fallbacks: [],
+    }),
+    streamSettings: JSON.stringify({
+      network: 'tcp',
+      security: 'tls',
+      tlsSettings: { serverName: '' },
+    }),
+    sniffing: JSON.stringify({
+      enabled: true,
+      destOverride: ['http', 'tls'],
+      metadataOnly: false,
+    }),
+  },
+};
+
 interface InboundManagerProps {
   onReload?: () => void;
 }
@@ -35,6 +124,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
   const [inbounds, setInbounds] = useState<Inbound[]>([]);
   const [filteredInbounds, setFilteredInbounds] = useState<Inbound[]>([]);
   const [nodeNameToId, setNodeNameToId] = useState<Record<string, number>>({});
+  const [allNodes, setAllNodes] = useState<NodeInfo[]>([]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -49,6 +139,12 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
   const [cloneSource, setCloneSource] = useState<Inbound | null>(null);
   const [cloneRemark, setCloneRemark] = useState('');
   const [clonePort, setClonePort] = useState('');
+  const [cloneTargetNodeIds, setCloneTargetNodeIds] = useState<Set<number>>(new Set());
+
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [addTemplateProtocol, setAddTemplateProtocol] = useState<'vless' | 'vmess' | 'trojan'>('vless');
+  const [addJsonConfig, setAddJsonConfig] = useState(JSON.stringify(INBOUND_TEMPLATES.vless, null, 2));
+  const [addTargetNodeIds, setAddTargetNodeIds] = useState<Set<number>>(new Set());
 
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [batchRemark, setBatchRemark] = useState('');
@@ -134,7 +230,11 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
         nameMap[n.name] = n.id;
       });
 
+      setAllNodes(nodes);
       setNodeNameToId(nameMap);
+      if (addTargetNodeIds.size === 0) {
+        setAddTargetNodeIds(new Set(nodes.map((n) => n.id)));
+      }
       setInbounds(inboundsRes.data.inbounds || []);
     } catch (err: any) {
       setError(err.response?.data?.detail || t('messages.operationFailed'));
@@ -218,7 +318,13 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
   const handleCloneClick = (inbound: Inbound) => {
     setCloneSource(inbound);
     setCloneRemark(`${inbound.remark} (Clone)`);
-    setClonePort(String(inbound.port));
+    setClonePort('');
+    const sourceNodeId = nodeNameToId[inbound.node_name];
+    if (sourceNodeId) {
+      setCloneTargetNodeIds(new Set([sourceNodeId]));
+    } else {
+      setCloneTargetNodeIds(new Set());
+    }
     setShowCloneModal(true);
   };
 
@@ -238,10 +344,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
       const payload = {
         source_node_id: sourceNodeId,
         source_inbound_id: cloneSource.id,
-        target_node_ids: null,
+        target_node_ids: cloneTargetNodeIds.size > 0 ? Array.from(cloneTargetNodeIds) : [sourceNodeId],
         modifications: {
           remark: cloneRemark,
-          port: parseInt(clonePort, 10) || cloneSource.port,
+          ...(clonePort.trim() ? { port: parseInt(clonePort, 10) || cloneSource.port } : {}),
         },
       };
 
@@ -250,10 +356,53 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
       });
 
       setShowCloneModal(false);
+      setCloneTargetNodeIds(new Set());
       await loadInbounds();
       onReload?.();
     } catch (err: any) {
       setError(err.response?.data?.detail || t('inbounds.cloneFailed'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTemplateChange = (protocol: 'vless' | 'vmess' | 'trojan') => {
+    setAddTemplateProtocol(protocol);
+    setAddJsonConfig(JSON.stringify(INBOUND_TEMPLATES[protocol], null, 2));
+  };
+
+  const toggleAddTarget = (nodeId: number) => {
+    const next = new Set(addTargetNodeIds);
+    if (next.has(nodeId)) {
+      next.delete(nodeId);
+    } else {
+      next.add(nodeId);
+    }
+    setAddTargetNodeIds(next);
+  };
+
+  const handleAddInboundSubmit = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const parsed = JSON.parse(addJsonConfig);
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('Inbound config must be a JSON object');
+      }
+      const payload: Record<string, any> = {
+        ...parsed,
+        node_ids: addTargetNodeIds.size > 0 ? Array.from(addTargetNodeIds) : null,
+      };
+      await api.post('/v1/inbounds', payload, { auth: getAuth() });
+      setShowAddModal(false);
+      await loadInbounds();
+      onReload?.();
+    } catch (err: any) {
+      if (err instanceof SyntaxError) {
+        setError('Invalid JSON in inbound config');
+      } else {
+        setError(err.response?.data?.detail || err.message || t('messages.operationFailed'));
+      }
     } finally {
       setLoading(false);
     }
@@ -368,17 +517,29 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
             <UIIcon name="inbounds" size={16} />
             {t('inbounds.title')}
           </h5>
-          <button
-            className="btn btn-sm"
-            style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
-            onClick={loadInbounds}
-            disabled={loading}
-          >
-            <span className="d-inline-flex align-items-center gap-1">
-              <UIIcon name="refresh" size={14} />
-              {t('common.refresh')}
-            </span>
-          </button>
+          <div className="d-flex gap-2">
+            <button
+              className="btn btn-sm"
+              style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
+              onClick={() => setShowAddModal(true)}
+            >
+              <span className="d-inline-flex align-items-center gap-1">
+                <UIIcon name="plus" size={14} />
+                Add Inbound
+              </span>
+            </button>
+            <button
+              className="btn btn-sm"
+              style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+              onClick={loadInbounds}
+              disabled={loading}
+            >
+              <span className="d-inline-flex align-items-center gap-1">
+                <UIIcon name="refresh" size={14} />
+                {t('common.refresh')}
+              </span>
+            </button>
+          </div>
         </div>
 
         {error && (
@@ -698,8 +859,32 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                     className="form-control"
                     value={clonePort}
                     onChange={(e) => setClonePort(e.target.value)}
+                    placeholder="empty = keep source/default"
                     style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
                   />
+                </div>
+                <div className="mb-3">
+                  <label className="form-label small" style={{ color: colors.text.secondary }}>Target nodes</label>
+                  <div className="d-flex flex-wrap gap-2">
+                    {allNodes.map((node) => (
+                      <label key={node.id} className="d-inline-flex align-items-center gap-2 small" style={{ color: colors.text.primary }}>
+                        <input
+                          type="checkbox"
+                          checked={cloneTargetNodeIds.has(node.id)}
+                          onChange={() => {
+                            const next = new Set(cloneTargetNodeIds);
+                            if (next.has(node.id)) next.delete(node.id);
+                            else next.add(node.id);
+                            setCloneTargetNodeIds(next);
+                          }}
+                        />
+                        {node.name}
+                      </label>
+                    ))}
+                  </div>
+                  <div className="small mt-1" style={{ color: colors.text.secondary }}>
+                    You can clone into the same node too.
+                  </div>
                 </div>
                 <p className="small" style={{ color: colors.text.secondary }}>
                   {t('inbounds.cloneHint')}
@@ -721,6 +906,88 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                   disabled={loading}
                 >
                   {loading ? t('inbounds.cloning') : t('inbounds.cloneInbound')}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAddModal && (
+        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }}>
+          <div className="modal-dialog modal-xl">
+            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+              <div className="modal-header" style={{ borderColor: colors.border }}>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>Add Inbound (Template + JSON)</h6>
+                <button
+                  type="button"
+                  className="btn-close btn-close-white"
+                  onClick={() => setShowAddModal(false)}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <div className="row g-3">
+                  <div className="col-md-4">
+                    <label className="form-label small" style={{ color: colors.text.secondary }}>Template</label>
+                    <select
+                      className="form-select form-select-sm"
+                      value={addTemplateProtocol}
+                      onChange={(e) => handleTemplateChange(e.target.value as 'vless' | 'vmess' | 'trojan')}
+                      style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                    >
+                      <option value="vless">VLESS</option>
+                      <option value="vmess">VMESS</option>
+                      <option value="trojan">TROJAN</option>
+                    </select>
+                  </div>
+                  <div className="col-md-8">
+                    <label className="form-label small" style={{ color: colors.text.secondary }}>Target nodes</label>
+                    <div className="d-flex flex-wrap gap-2">
+                      {allNodes.map((node) => (
+                        <label key={node.id} className="d-inline-flex align-items-center gap-2 small" style={{ color: colors.text.primary }}>
+                          <input
+                            type="checkbox"
+                            checked={addTargetNodeIds.has(node.id)}
+                            onChange={() => toggleAddTarget(node.id)}
+                          />
+                          {node.name}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <label className="form-label small" style={{ color: colors.text.secondary }}>
+                    Inbound JSON config (full control)
+                  </label>
+                  <textarea
+                    className="form-control"
+                    rows={18}
+                    value={addJsonConfig}
+                    onChange={(e) => setAddJsonConfig(e.target.value)}
+                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, fontFamily: 'monospace' }}
+                  />
+                  <div className="small mt-2" style={{ color: colors.text.secondary }}>
+                    Field structure is sent as-is to 3x-ui `/panel/api/inbounds/add`. Use this to configure any protocol-specific options.
+                  </div>
+                </div>
+              </div>
+              <div className="modal-footer" style={{ borderColor: colors.border }}>
+                <button
+                  className="btn"
+                  style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                  onClick={() => setShowAddModal(false)}
+                  disabled={loading}
+                >
+                  {t('common.cancel')}
+                </button>
+                <button
+                  className="btn"
+                  style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
+                  onClick={handleAddInboundSubmit}
+                  disabled={loading}
+                >
+                  {loading ? 'Adding...' : 'Add inbound'}
                 </button>
               </div>
             </div>
