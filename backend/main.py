@@ -2130,7 +2130,9 @@ async def list_emails(request: Request):
     
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        nodes = conn.execute('SELECT * FROM nodes').fetchall()
+        nodes = conn.execute(
+            'SELECT * FROM nodes ORDER BY name COLLATE NOCASE ASC, id ASC'
+        ).fetchall()
         emails = get_emails([dict(n) for n in nodes])
         
         # Получить статистику
@@ -2414,7 +2416,9 @@ async def list_inbounds(request: Request, protocol: Optional[str] = None, securi
     
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        nodes = conn.execute('SELECT * FROM nodes').fetchall()
+        nodes = conn.execute(
+            'SELECT * FROM nodes ORDER BY name COLLATE NOCASE ASC, id ASC'
+        ).fetchall()
         inbounds = get_all_inbounds([dict(n) for n in nodes])
         
         # Apply filters
@@ -2675,7 +2679,9 @@ async def list_clients(request: Request, email: Optional[str] = None):
     
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
-        nodes = [dict(n) for n in conn.execute('SELECT * FROM nodes').fetchall()]
+        nodes = [dict(n) for n in conn.execute(
+            'SELECT * FROM nodes ORDER BY name COLLATE NOCASE ASC, id ASC'
+        ).fetchall()]
 
     clients = get_cached_clients(nodes, email_filter=email)
     return JSONResponse(

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
 
 interface Inbound {
@@ -289,6 +290,16 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
   const sortIndicator = (field: 'name' | 'node' | 'protocol' | 'port' | 'status') =>
     sortField === field ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
 
+  const sortDirectionLabels = (() => {
+    if (sortField === 'name' || sortField === 'node' || sortField === 'protocol') {
+      return { asc: 'A -> Z', desc: 'Z -> A' };
+    }
+    if (sortField === 'status') {
+      return { asc: 'Disabled -> Enabled', desc: 'Enabled -> Disabled' };
+    }
+    return { asc: 'Small -> Large', desc: 'Large -> Small' };
+  })();
+
   const handleDelete = async (inbound: Inbound) => {
     if (!window.confirm(`${t('inbounds.confirmDeleteSingle')} \"${inbound.remark || inbound.id}\"?`)) return;
 
@@ -517,29 +528,6 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
             <UIIcon name="inbounds" size={16} />
             {t('inbounds.title')}
           </h5>
-          <div className="d-flex gap-2">
-            <button
-              className="btn btn-sm"
-              style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
-              onClick={() => setShowAddModal(true)}
-            >
-              <span className="d-inline-flex align-items-center gap-1">
-                <UIIcon name="plus" size={14} />
-                Add Inbound
-              </span>
-            </button>
-            <button
-              className="btn btn-sm"
-              style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
-              onClick={loadInbounds}
-              disabled={loading}
-            >
-              <span className="d-inline-flex align-items-center gap-1">
-                <UIIcon name="refresh" size={14} />
-                {t('common.refresh')}
-              </span>
-            </button>
-          </div>
         </div>
 
         {error && (
@@ -548,86 +536,115 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
           </div>
         )}
 
-        <div className="row g-2 mb-3">
-          <div className="col-md-3">
-            <select
-              className="form-select form-select-sm"
-              value={filterProtocol}
-              onChange={(e) => setFilterProtocol(e.target.value)}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="">{t('inbounds.allProtocols')}</option>
-              {protocols.map((p) => (
-                <option key={p} value={p}>{p.toUpperCase()}</option>
-              ))}
-            </select>
+        <div className="panel-grid mb-3">
+          <div className="panel-block">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Actions</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Create new inbound or refresh data.
+                </p>
+              </div>
+            </div>
+            <div className="panel-inline-actions">
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
+                onClick={() => setShowAddModal(true)}
+              >
+                <span className="d-inline-flex align-items-center gap-1">
+                  <UIIcon name="plus" size={14} />
+                  Add Inbound
+                </span>
+              </button>
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                onClick={loadInbounds}
+                disabled={loading}
+              >
+                <span className="d-inline-flex align-items-center gap-1">
+                  <UIIcon name="refresh" size={14} />
+                  {t('common.refresh')}
+                </span>
+              </button>
+            </div>
           </div>
-          <div className="col-md-3">
-            <select
-              className="form-select form-select-sm"
-              value={filterSecurity}
-              onChange={(e) => setFilterSecurity(e.target.value)}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="">{t('inbounds.allSecurity')}</option>
-              {securities.map((s) => (
-                <option key={s} value={s}>{s || 'none'}</option>
-              ))}
-            </select>
-          </div>
-          <div className="col-md-3">
-            <select
-              className="form-select form-select-sm"
-              value={filterNode}
-              onChange={(e) => setFilterNode(e.target.value)}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="">{t('inbounds.allNodes')}</option>
-              {nodes.map((n) => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-          </div>
-          <div className="col-md-3">
-            <button
-              className="btn btn-sm w-100"
-              style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
-              onClick={() => {
-                setFilterProtocol('');
-                setFilterSecurity('');
-                setFilterNode('');
-              }}
-            >
-              {t('inbounds.clearFilters')}
-            </button>
-          </div>
-        </div>
 
-        <div className="row g-2 mb-3">
-          <div className="col-md-3">
-            <select
-              className="form-select form-select-sm"
-              value={sortField}
-              onChange={(e) => setSortField(e.target.value as 'name' | 'node' | 'protocol' | 'port' | 'status')}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="name">Sort: Name</option>
-              <option value="node">Sort: Node</option>
-              <option value="protocol">Sort: Protocol</option>
-              <option value="port">Sort: Port</option>
-              <option value="status">Sort: Status</option>
-            </select>
+          <div className="panel-block panel-block--wide">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Filters</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Protocol, security and node filters grouped together.
+                </p>
+              </div>
+            </div>
+            <div className="panel-block__stack">
+              <ChoiceChips
+                options={[{ value: '', label: t('inbounds.allProtocols') }, ...protocols.map((p) => ({ value: p, label: p.toUpperCase() }))]}
+                value={filterProtocol}
+                onChange={(value) => setFilterProtocol(value)}
+                colors={colors}
+              />
+              <ChoiceChips
+                options={[{ value: '', label: t('inbounds.allSecurity') }, ...securities.map((s) => ({ value: s, label: s || 'none' }))]}
+                value={filterSecurity}
+                onChange={(value) => setFilterSecurity(value)}
+                colors={colors}
+              />
+              <ChoiceChips
+                options={[{ value: '', label: t('inbounds.allNodes') }, ...nodes.map((n) => ({ value: n, label: n }))]}
+                value={filterNode}
+                onChange={(value) => setFilterNode(value)}
+                colors={colors}
+              />
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                onClick={() => {
+                  setFilterProtocol('');
+                  setFilterSecurity('');
+                  setFilterNode('');
+                }}
+              >
+                {t('inbounds.clearFilters')}
+              </button>
+            </div>
           </div>
-          <div className="col-md-2">
-            <select
-              className="form-select form-select-sm"
-              value={sortDirection}
-              onChange={(e) => setSortDirection(e.target.value as 'asc' | 'desc')}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="asc">Asc</option>
-              <option value="desc">Desc</option>
-            </select>
+
+          <div className="panel-block">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Sorting</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Quick sort controls plus table header sorting.
+                </p>
+              </div>
+            </div>
+            <div className="panel-block__stack">
+              <ChoiceChips
+                options={[
+                  { value: 'name', label: 'Remark' },
+                  { value: 'node', label: 'Node' },
+                  { value: 'protocol', label: 'Protocol' },
+                  { value: 'port', label: 'Port' },
+                  { value: 'status', label: 'Status' },
+                ]}
+                value={sortField}
+                onChange={(value) => setSortField(value)}
+                colors={colors}
+              />
+              <ChoiceChips
+                options={[
+                  { value: 'asc', label: sortDirectionLabels.asc },
+                  { value: 'desc', label: sortDirectionLabels.desc },
+                ]}
+                value={sortDirection}
+                onChange={(value) => setSortDirection(value)}
+                colors={colors}
+              />
+            </div>
           </div>
         </div>
 
@@ -669,16 +686,16 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
 
             <div className="col-lg-2 col-md-6">
               <label className="form-label small mb-1" style={{ color: colors.text.secondary }}>{t('inbounds.batchEnableMode')}</label>
-              <select
-                className="form-select form-select-sm"
+              <ChoiceChips
+                options={[
+                  { value: 'none', label: t('common.no') },
+                  { value: 'enable', label: t('inbounds.batchEnable') },
+                  { value: 'disable', label: t('inbounds.batchDisable') },
+                ]}
                 value={batchEnableMode}
-                onChange={(e) => setBatchEnableMode(e.target.value as 'none' | 'enable' | 'disable')}
-                style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
-              >
-                <option value="none">{t('common.no')}</option>
-                <option value="enable">{t('inbounds.batchEnable')}</option>
-                <option value="disable">{t('inbounds.batchDisable')}</option>
-              </select>
+                onChange={(value) => setBatchEnableMode(value)}
+                colors={colors}
+              />
             </div>
 
             <div className="col-lg-4 col-md-12 d-flex gap-2 flex-wrap">
@@ -929,16 +946,16 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                 <div className="row g-3">
                   <div className="col-md-4">
                     <label className="form-label small" style={{ color: colors.text.secondary }}>Template</label>
-                    <select
-                      className="form-select form-select-sm"
+                    <ChoiceChips
+                      options={[
+                        { value: 'vless', label: 'VLESS' },
+                        { value: 'vmess', label: 'VMESS' },
+                        { value: 'trojan', label: 'TROJAN' },
+                      ]}
                       value={addTemplateProtocol}
-                      onChange={(e) => handleTemplateChange(e.target.value as 'vless' | 'vmess' | 'trojan')}
-                      style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                    >
-                      <option value="vless">VLESS</option>
-                      <option value="vmess">VMESS</option>
-                      <option value="trojan">TROJAN</option>
-                    </select>
+                      onChange={(value) => handleTemplateChange(value)}
+                      colors={colors}
+                    />
                   </div>
                   <div className="col-md-8">
                     <label className="form-label small" style={{ color: colors.text.secondary }}>Target nodes</label>

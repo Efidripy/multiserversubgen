@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
 
 interface ServerStatus {
@@ -372,17 +373,17 @@ export const ServerStatus: React.FC = () => {
               </div>
               <div className="modal-body">
                 <div className="d-flex gap-2 align-items-center mb-2">
-                  <select
-                    className="form-select form-select-sm"
+                  <ChoiceChips
+                    options={[
+                      { value: 'debug', label: 'debug' },
+                      { value: 'info', label: 'info' },
+                      { value: 'warning', label: 'warning' },
+                      { value: 'error', label: 'error' },
+                    ]}
                     value={logsLevel}
-                    onChange={(e) => setLogsLevel(e.target.value as 'debug' | 'info' | 'warning' | 'error')}
-                    style={{ width: '140px', backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                  >
-                    <option value="debug">debug</option>
-                    <option value="info">info</option>
-                    <option value="warning">warning</option>
-                    <option value="error">error</option>
-                  </select>
+                    onChange={(value) => setLogsLevel(value)}
+                    colors={colors}
+                  />
                   <button
                     className="btn btn-sm"
                     style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
