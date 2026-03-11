@@ -9,12 +9,22 @@ class NodeService:
     def list_nodes(self) -> List[Dict]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            return [dict(n) for n in conn.execute("SELECT * FROM nodes").fetchall()]
+            return [
+                dict(n)
+                for n in conn.execute(
+                    "SELECT * FROM nodes ORDER BY name COLLATE NOCASE ASC, id ASC"
+                ).fetchall()
+            ]
 
     def list_nodes_simple(self) -> List[Dict]:
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            return [{"id": n["id"], "name": n["name"]} for n in conn.execute("SELECT id, name FROM nodes").fetchall()]
+            return [
+                {"id": n["id"], "name": n["name"]}
+                for n in conn.execute(
+                    "SELECT id, name FROM nodes ORDER BY name COLLATE NOCASE ASC, id ASC"
+                ).fetchall()
+            ]
 
     def get_node(self, node_id: int) -> Optional[Dict]:
         with sqlite3.connect(self.db_path) as conn:

@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import { getAuth } from '../auth';
 import { useTheme } from '../contexts/ThemeContext';
+import { ChoiceChips } from './ChoiceChips';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -740,36 +741,26 @@ export const MonitoringDashboard: React.FC = () => {
           <label className="form-label small" style={{ color: colors.text.secondary }}>
             Сервер
           </label>
-          <select
-            className="form-select form-select-sm"
+          <ChoiceChips
+            options={[
+              { value: 'all', label: 'Все' },
+              ...nodes.map((n) => ({ value: String(n.id), label: n.name })),
+            ]}
             value={selectedScope}
-            onChange={(e) => setSelectedScope(e.target.value)}
-            style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-          >
-            <option value="all">Все серверы</option>
-            {nodes.map((n) => (
-              <option key={n.id} value={String(n.id)}>
-                {n.name}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => setSelectedScope(value)}
+            colors={colors}
+          />
         </div>
         <div className="col-md-4">
           <label className="form-label small" style={{ color: colors.text.secondary }}>
             Диапазон
           </label>
-          <select
-            className="form-select form-select-sm"
+          <ChoiceChips
+            options={RANGE_OPTIONS.map((range) => ({ value: range.value, label: range.label }))}
             value={rangeSec}
-            onChange={(e) => setRangeSec(Number(e.target.value))}
-            style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-          >
-            {RANGE_OPTIONS.map((r) => (
-              <option key={r.value} value={r.value}>
-                {r.label}
-              </option>
-            ))}
-          </select>
+            onChange={(value) => setRangeSec(value)}
+            colors={colors}
+          />
         </div>
         <div className="col-md-4 d-flex align-items-end">
           <button

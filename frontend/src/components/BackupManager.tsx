@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
+import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
 
 interface Node {
@@ -185,6 +186,18 @@ export const BackupManager: React.FC = () => {
     return byAddress;
   });
 
+  const applySortFromHeader = (field: 'name' | 'address' | 'status') => {
+    if (sortField === field) {
+      setSortDirection((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setSortField(field);
+    setSortDirection(field === 'status' ? 'desc' : 'asc');
+  };
+
+  const sortIndicator = (field: 'name' | 'address' | 'status') =>
+    sortField === field ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
+
   return (
     <div className="backup-manager">
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
@@ -193,17 +206,6 @@ export const BackupManager: React.FC = () => {
             <UIIcon name="backup" size={16} />
             Backup & Restore
           </h5>
-          <button
-            className="btn btn-sm"
-            style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
-            onClick={downloadAllBackups}
-            disabled={loading || nodes.length === 0}
-          >
-            <span className="d-inline-flex align-items-center gap-1">
-              <UIIcon name="download" size={14} />
-              Download All Backups
-            </span>
-          </button>
         </div>
 
         {error && (
@@ -212,9 +214,44 @@ export const BackupManager: React.FC = () => {
           </div>
         )}
 
-        <div className="alert" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.text.primary }}>
-          <strong>Important:</strong> Backups contain the complete database including all client configurations.
-          Make sure to store backups securely. When restoring, the core service may need to be restarted.
+        <div className="panel-grid">
+          <div className="panel-block">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Actions</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Export one backup archive for all nodes.
+                </p>
+              </div>
+            </div>
+            <div className="panel-inline-actions">
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                onClick={downloadAllBackups}
+                disabled={loading || nodes.length === 0}
+              >
+                <span className="d-inline-flex align-items-center gap-1">
+                  <UIIcon name="download" size={14} />
+                  Download All Backups
+                </span>
+              </button>
+            </div>
+          </div>
+          <div className="panel-block panel-block--wide">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Notes</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Backups include the complete database and should be stored securely.
+                </p>
+              </div>
+            </div>
+            <div className="alert mb-0" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.text.primary }}>
+              <strong>Important:</strong> Backups contain the complete database including all client configurations.
+              Make sure to store backups securely. When restoring, the core service may need to be restarted.
+            </div>
+          </div>
         </div>
       </div>
 
@@ -225,26 +262,8 @@ export const BackupManager: React.FC = () => {
             <UIIcon name="download" size={14} />
             Download Backups
           </h6>
-          <div className="d-flex gap-2">
-            <select
-              className="form-select form-select-sm"
-              value={sortField}
-              onChange={(e) => setSortField(e.target.value as 'name' | 'address' | 'status')}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 130 }}
-            >
-              <option value="name">Sort: Node</option>
-              <option value="address">Sort: Address</option>
-              <option value="status">Sort: Status</option>
-            </select>
-            <select
-              className="form-select form-select-sm"
-              value={sortDirection}
-              onChange={(e) => setSortDirection(e.target.value as 'asc' | 'desc')}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, minWidth: 90 }}
-            >
-              <option value="asc">Asc</option>
-              <option value="desc">Desc</option>
-            </select>
+          <div className="small" style={{ color: colors.text.secondary }}>
+            Click table headers to sort
           </div>
         </div>
         
@@ -257,9 +276,21 @@ export const BackupManager: React.FC = () => {
             <table className="table table-sm table-hover" style={{ color: colors.text.primary }}>
               <thead>
                 <tr style={{ borderColor: colors.border }}>
-                  <th style={{ color: colors.text.secondary }}>Node</th>
-                  <th style={{ color: colors.text.secondary }}>Address</th>
-                  <th style={{ color: colors.text.secondary }}>Status</th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('name')}>
+                      Node{sortIndicator('name')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('address')}>
+                      Address{sortIndicator('address')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('status')}>
+                      Status{sortIndicator('status')}
+                    </button>
+                  </th>
                   <th style={{ color: colors.text.secondary }}>Action</th>
                 </tr>
               </thead>
@@ -309,29 +340,36 @@ export const BackupManager: React.FC = () => {
           <strong>Warning:</strong> Restoring a backup will REPLACE the current database. Make sure you have a recent backup before proceeding.
         </div>
 
-        <div className="row g-3">
-          <div className="col-md-4">
-            <label className="form-label small" style={{ color: colors.text.secondary }}>
-              Select Node
-            </label>
-            <select
-              className="form-select"
-              value={selectedNode || ''}
-              onChange={(e) => setSelectedNode(parseInt(e.target.value))}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-            >
-              <option value="">Choose node...</option>
-              {nodes.map((node) => (
-                <option key={node.id} value={node.id}>
-                  {node.name} ({node.ip})
-                </option>
-              ))}
-            </select>
+        <div className="panel-grid">
+          <div className="panel-block">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Target Node</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Choose where the database will be restored.
+                </p>
+              </div>
+            </div>
+            <ChoiceChips
+              options={[
+                { value: 0, label: 'Choose node' },
+                ...nodes.map((node) => ({ value: node.id, label: `${node.name} (${node.ip})` })),
+              ]}
+              value={selectedNode || 0}
+              onChange={(value) => setSelectedNode(value || null)}
+              colors={colors}
+              size="md"
+            />
           </div>
-          <div className="col-md-5">
-            <label className="form-label small" style={{ color: colors.text.secondary }}>
-              Select Backup File (.db)
-            </label>
+          <div className="panel-block">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Backup File</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Upload `.db`, `.sqlite` or `.sqlite3`.
+                </p>
+              </div>
+            </div>
             <input
               type="file"
               className="form-control"
@@ -340,7 +378,15 @@ export const BackupManager: React.FC = () => {
               style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
             />
           </div>
-          <div className="col-md-3 d-flex align-items-end">
+          <div className="panel-block">
+            <div className="panel-block__header">
+              <div>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Restore</h6>
+                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                  Run restore only after checking node and file.
+                </p>
+              </div>
+            </div>
             <button
               className="btn w-100"
               style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
