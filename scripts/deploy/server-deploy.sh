@@ -49,6 +49,12 @@ if [[ ! -x "$PROJECT_DIR/venv/bin/pip" ]]; then
 fi
 "$PROJECT_DIR/venv/bin/pip" install -U pip >/dev/null
 "$PROJECT_DIR/venv/bin/pip" install -r backend/requirements.txt >/dev/null
+"$PROJECT_DIR/venv/bin/pip" install -r backend/requirements-dev.txt >/dev/null
+"$PROJECT_DIR/venv/bin/python" -m pytest \
+  backend/tests/test_runtime_controls.py \
+  backend/tests/test_security_hardening.py \
+  backend/tests/test_api_smoke.py \
+  -q >/dev/null
 
 mkdir -p "$PROJECT_DIR"
 cp backend/*.py "$PROJECT_DIR/"
@@ -59,14 +65,7 @@ for pkg in core modules integrations routers services shared; do
   fi
 done
 
-pushd frontend >/dev/null
-if [[ -f package-lock.json ]]; then npm ci >/dev/null; else npm install >/dev/null; fi
-VITE_BASE="/${WEB_PATH}/" VITE_GRAFANA_PATH="/${GRAFANA_WEB_PATH}/" npm run build >/dev/null
-popd >/dev/null
-
-rm -rf "$PROJECT_DIR/build"
-mkdir -p "$PROJECT_DIR/build"
-cp -r frontend/dist/* "$PROJECT_DIR/build/"
+bash "$REPO_DIR/scripts/deploy/build-and-publish-frontend.sh"
 
 systemctl daemon-reload
 systemctl restart "$PROJECT_NAME"

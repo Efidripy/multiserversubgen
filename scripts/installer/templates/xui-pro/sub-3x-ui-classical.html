@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Classic Subscription Page</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Georgia, "Times New Roman", serif;
+      background: #f4f1ea;
+      color: #1d232c;
+    }
+    .wrap {
+      max-width: 780px;
+      margin: 32px auto;
+      padding: 32px;
+      background: #fffdf9;
+      border: 1px solid #d9d0c0;
+      border-radius: 18px;
+    }
+    a, code {
+      color: #005f73;
+      word-break: break-all;
+    }
+    .row {
+      margin-top: 18px;
+      padding-top: 18px;
+      border-top: 1px solid #e6dccb;
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>Subscription Access</h1>
+    <p>Classic local placeholder template for x-ui-pro integration.</p>
+    <div class="row"><strong>Domain:</strong> <code>${DOMAIN}</code></div>
+    <div class="row"><strong>Main:</strong> <a href="https://${DOMAIN}${SUB_PATH}">https://${DOMAIN}${SUB_PATH}</a></div>
+    <div class="row"><strong>JSON:</strong> <a href="https://${DOMAIN}${SUB_JSON_PATH}">https://${DOMAIN}${SUB_JSON_PATH}</a></div>
+  </main>
+</body>
+</html>
