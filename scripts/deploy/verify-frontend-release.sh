@@ -61,8 +61,8 @@ case "$CSS_PATH" in
     ;;
 esac
 
-JS_FILE="${BUILD_DIR%/}/${JS_PATH#${PANEL_URL_PATH}}"
-CSS_FILE="${BUILD_DIR%/}/${CSS_PATH#${PANEL_URL_PATH}}"
+JS_FILE="${BUILD_DIR%/}/${JS_PATH#"${PANEL_URL_PATH}"}"
+CSS_FILE="${BUILD_DIR%/}/${CSS_PATH#"${PANEL_URL_PATH}"}"
 
 if [[ ! -f "$JS_FILE" ]]; then
   echo "Referenced JS asset is missing: $JS_FILE"
