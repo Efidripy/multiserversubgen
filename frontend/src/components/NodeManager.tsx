@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
@@ -18,10 +18,18 @@ interface BatchPreviewRow {
   password: string;
 }
 
-export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) => {
+const NODE_STATUS_CACHE_KEY = 'sub_manager_node_status_cache_v1';
+const NODE_LIST_CACHE_KEY = 'sub_manager_node_list_cache_v1';
+
+export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean; showFleet?: boolean }> = ({
+  onReload,
+  showIntake = true,
+  showFleet = true,
+}) => {
   const { colors } = useTheme();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [nodeStatuses, setNodeStatuses] = useState<Record<number, boolean | null>>({});
+  const [statusLoading, setStatusLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [addMode, setAddMode] = useState<'form' | 'batch'>('form');
@@ -35,37 +43,98 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
   const [editingName, setEditingName] = useState('');
   const [showEditModal, setShowEditModal] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(false);
+  const statusRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    try {
+      const rawNodes = localStorage.getItem(NODE_LIST_CACHE_KEY);
+      if (rawNodes) {
+        const parsed = JSON.parse(rawNodes) as Node[];
+        if (Array.isArray(parsed)) {
+          setNodes(parsed);
+        }
+      }
+      const rawStatuses = localStorage.getItem(NODE_STATUS_CACHE_KEY);
+      if (rawStatuses) {
+        const parsed = JSON.parse(rawStatuses) as Record<number, boolean | null>;
+        if (parsed && typeof parsed === 'object') {
+          setNodeStatuses(parsed);
+        }
+      }
+    } catch {
+      // Ignore malformed cache.
+    }
+  }, []);
 
   const loadNodes = async () => {
     try {
-      const res = await api.get('/v1/nodes', {
-        auth: { username: getAuth().user, password: getAuth().password }
-      });
-      setNodes(res.data);
-      loadNodeStatuses(res.data);
+      const auth = { username: getAuth().user, password: getAuth().password };
+      const nodesRes = await api.get('/v1/nodes', { auth });
+      const nodeList = Array.isArray(nodesRes.data) ? nodesRes.data : [];
+      setNodes(nodeList);
+      try {
+        localStorage.setItem(NODE_LIST_CACHE_KEY, JSON.stringify(nodeList));
+      } catch {}
+      let cachedStatuses: Record<number, boolean | null> = {};
+      try {
+        const raw = localStorage.getItem(NODE_STATUS_CACHE_KEY);
+        cachedStatuses = raw ? JSON.parse(raw) : {};
+      } catch {
+        cachedStatuses = {};
+      }
+      const initial: Record<number, boolean | null> = {};
+      nodeList.forEach((node) => { initial[node.id] = node.id in cachedStatuses ? cachedStatuses[node.id] : null; });
+      setNodeStatuses(initial);
+      setStatusLoading(true);
+      const requestId = Date.now();
+      statusRequestIdRef.current = requestId;
+      loadNodeStatuses(nodeList, requestId);
     } catch (err) {
       console.error('Failed to load nodes:', err);
       setError('Failed to load nodes');
     }
   };
 
-  const loadNodeStatuses = async (nodeList: Node[]) => {
-    const initial: Record<number, boolean | null> = {};
-    nodeList.forEach(n => { initial[n.id] = null; });
-    setNodeStatuses(initial);
-    const results = await Promise.all(nodeList.map(async n => {
-      try {
-        await api.get(`/v1/nodes/${n.id}/server-status`, {
-          auth: { username: getAuth().user, password: getAuth().password }
+  const loadNodeStatuses = async (nodeList: Node[], requestId: number) => {
+    if (nodeList.length === 0) {
+      setStatusLoading(false);
+      return;
+    }
+
+    let pending = nodeList.length;
+    nodeList.forEach((node) => {
+      api.get(`/v1/nodes/${node.id}/server-status`, {
+        auth: { username: getAuth().user, password: getAuth().password }
+      })
+        .then((response) => {
+          if (statusRequestIdRef.current !== requestId) return;
+          const available = Boolean(response.data?.available);
+          setNodeStatuses((prev) => {
+            const next = { ...prev, [node.id]: available };
+            try {
+              localStorage.setItem(NODE_STATUS_CACHE_KEY, JSON.stringify(next));
+            } catch {}
+            return next;
+          });
+        })
+        .catch(() => {
+          if (statusRequestIdRef.current !== requestId) return;
+          setNodeStatuses((prev) => {
+            const next = { ...prev, [node.id]: false };
+            try {
+              localStorage.setItem(NODE_STATUS_CACHE_KEY, JSON.stringify(next));
+            } catch {}
+            return next;
+          });
+        })
+        .finally(() => {
+          if (statusRequestIdRef.current !== requestId) return;
+          pending -= 1;
+          if (pending <= 0) {
+            setStatusLoading(false);
+          }
         });
-        return [n.id, true] as const;
-      } catch {
-        return [n.id, false] as const;
-      }
-    }));
-    const final: Record<number, boolean> = {};
-    results.forEach(([id, status]) => { final[id] = status; });
-    setNodeStatuses(final);
+    });
   };
 
   useEffect(() => {
@@ -77,13 +146,13 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
     setLoading(true);
     setError('');
     setSuccess('');
-    
+
     try {
       await api.post('/v1/nodes', formData, {
         auth: { username: getAuth().user, password: getAuth().password }
       });
       setFormData({ name: '', url: '', user: '', password: '' });
-      setSuccess('Сервер добавлен успешно');
+      setSuccess('Server added successfully');
       loadNodes();
       onReload();
     } catch (err: any) {
@@ -95,7 +164,7 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
 
   const parseBatchText = () => {
     setError('');
-    const lines = batchText.split('\n').map(l => l.trim()).filter(l => l);
+    const lines = batchText.split('\n').map((line) => line.trim()).filter(Boolean);
     const rows: BatchPreviewRow[] = lines.map((line, idx) => {
       const parts = line.split(/\s+/);
       return {
@@ -116,27 +185,27 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
     setSuccess('');
     try {
       const results = await Promise.allSettled(
-        batchPreview.map(row =>
+        batchPreview.map((row) =>
           api.post('/v1/nodes', row, {
             auth: { username: getAuth().user, password: getAuth().password }
           })
         )
       );
-      const succeeded = results.filter(r => r.status === 'fulfilled').length;
+      const succeeded = results.filter((result) => result.status === 'fulfilled').length;
       const failed = results.length - succeeded;
       setBatchText('');
       setBatchPreview([]);
       setBatchAdded(true);
       if (failed > 0) {
-        setSuccess(`Добавлено ${succeeded} серверов`);
-        setError(`${failed} серверов не удалось добавить`);
+        setSuccess(`Added ${succeeded} nodes`);
+        setError(`${failed} nodes failed to add`);
       } else {
-        setSuccess(`Добавлено ${succeeded} серверов`);
+        setSuccess(`Added ${succeeded} nodes`);
       }
       loadNodes();
       onReload();
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to add servers');
+      setError(err.response?.data?.detail || 'Failed to add nodes');
     } finally {
       setLoading(false);
     }
@@ -154,7 +223,6 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
 
   const handleDelete = async (id: number) => {
     if (!window.confirm('Are you sure you want to delete this node?')) return;
-    
     setLoading(true);
     try {
       await api.delete(`/v1/nodes/${id}`, {
@@ -202,7 +270,6 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
   const handleCheckConnection = async () => {
     setError('');
     setSuccess('');
-
     if (!formData.url.trim() || !formData.user.trim() || !formData.password.trim()) {
       setError('Fill URL, login and password first');
       return;
@@ -217,7 +284,6 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
       }, {
         auth: { username: getAuth().user, password: getAuth().password }
       });
-
       const payload = res.data || {};
       if (payload.success) {
         const count = Number.isFinite(payload.inbounds_count) ? payload.inbounds_count : null;
@@ -234,151 +300,168 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
 
   return (
     <div className="node-manager">
-      <div className="card p-3 mb-4" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <div className="d-flex justify-content-between align-items-center mb-3">
-          <h6 className="mb-0" style={{ color: colors.accent }}>Узлы панели</h6>
-          <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} onClick={() => { setShowForm(!showForm); setSuccess(''); setError(''); }}>
-            <span className="d-inline-flex align-items-center gap-1">
-              <UIIcon name={showForm ? 'x' : 'plus'} size={14} />
-              {showForm ? 'Отмена' : 'Добавить'}
-            </span>
-          </button>
-        </div>
-
-        {error && <div className="alert alert-danger" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>{error}</div>}
-        {success && <div className="alert alert-success" style={{ backgroundColor: colors.success + '22', borderColor: colors.success, color: colors.success }}>{success}</div>}
-
-        {showForm && (
-          <div>
-            {/* Mode toggle */}
-            <div className="btn-group btn-group-sm mb-3">
-              <button
-                type="button"
-                className="btn"
-                style={addMode === 'form' ? { backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' } : { backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                onClick={() => handleModeSwitch('form')}
-              >
-                Форма
-              </button>
-              <button
-                type="button"
-                className="btn"
-                style={addMode === 'batch' ? { backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' } : { backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                onClick={() => handleModeSwitch('batch')}
-              >
-                Batch текст
-              </button>
+      {showIntake && (
+      <section className="panel-block mb-4">
+          <div className="panel-block__header">
+            <div>
+              <h6 className="panel-block__title">Node intake</h6>
+              <p className="panel-block__hint">Register a single panel or batch-import multiple endpoints.</p>
             </div>
+            <button
+              className="btn btn-sm"
+              style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+              onClick={() => { setShowForm(!showForm); setSuccess(''); setError(''); }}
+            >
+              <span className="d-inline-flex align-items-center gap-1">
+                <UIIcon name={showForm ? 'x' : 'plus'} size={14} />
+                {showForm ? 'Close' : 'Add node'}
+              </span>
+            </button>
+          </div>
 
-            {addMode === 'form' && (
-              <form onSubmit={handleSubmit} className="row g-2 small">
-                <div className="col-md-2">
-                  <input
-                    type="text"
-                    name="name"
-                    className="form-control"
-                    placeholder="Метка (напр. NL)"
-                    value={formData.name}
-                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                    required
-                  />
+          {error && <div className="alert alert-danger mb-3" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>{error}</div>}
+          {success && <div className="alert alert-success mb-3" style={{ backgroundColor: colors.success + '22', borderColor: colors.success, color: colors.success }}>{success}</div>}
+
+          {showForm && (
+            <div className="panel-block__stack">
+              <div>
+                <label className="form-label small" style={{ color: colors.text.secondary }}>Add mode</label>
+                <div className="panel-inline-actions">
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={addMode === 'form' ? { backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText } : { backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                    onClick={() => handleModeSwitch('form')}
+                  >
+                    Single form
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-sm"
+                    style={addMode === 'batch' ? { backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText } : { backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                    onClick={() => handleModeSwitch('batch')}
+                  >
+                    Batch text
+                  </button>
                 </div>
-                <div className="col-md-4">
-                  <input
-                    type="text"
-                    name="url"
-                    className="form-control"
-                    placeholder="https://ip:port/path/"
-                    value={formData.url}
-                    onChange={(e) => setFormData({ ...formData, url: e.target.value })}
-                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                    required
-                  />
-                </div>
-                <div className="col-md-2">
-                  <input
-                    type="text"
-                    name="user"
-                    className="form-control"
-                    placeholder="Логин"
-                    value={formData.user}
-                    onChange={(e) => setFormData({ ...formData, user: e.target.value })}
-                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                    required
-                  />
-                </div>
-                <div className="col-md-2">
-                  <input
-                    type="password"
-                    name="password"
-                    className="form-control"
-                    placeholder="Пароль"
-                    value={formData.password}
-                    onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                    required
-                  />
-                </div>
-                <div className="col-md-2">
-                  <div className="d-flex gap-2">
+              </div>
+
+              {addMode === 'form' ? (
+                <form onSubmit={handleSubmit} className="panel-block__stack">
+                  <div className="panel-field-grid">
+                    <input
+                      type="text"
+                      name="name"
+                      className="form-control"
+                      placeholder="Node label"
+                      value={formData.name}
+                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                      style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                      required
+                    />
+                    <input
+                      type="text"
+                      name="url"
+                      className="form-control"
+                      placeholder="https://host/path/"
+                      value={formData.url}
+                      onChange={(e) => setFormData({ ...formData, url: e.target.value })}
+                      style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                      required
+                    />
+                    <input
+                      type="text"
+                      name="user"
+                      className="form-control"
+                      placeholder="Login"
+                      value={formData.user}
+                      onChange={(e) => setFormData({ ...formData, user: e.target.value })}
+                      style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                      required
+                    />
+                    <input
+                      type="password"
+                      name="password"
+                      className="form-control"
+                      placeholder="Password"
+                      value={formData.password}
+                      onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                      style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                      required
+                    />
+                  </div>
+                  <div className="panel-inline-actions">
                     <button
                       type="button"
-                      className="btn w-100"
+                      className="btn btn-sm"
                       style={{ backgroundColor: colors.warning + '33', borderColor: colors.warning + '66', color: colors.warning }}
                       onClick={handleCheckConnection}
                       disabled={loading || checkingConnection}
                     >
-                      {checkingConnection ? '...' : 'Check'}
+                      {checkingConnection ? 'Checking...' : 'Check connection'}
                     </button>
-                    <button type="submit" className="btn w-100" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} disabled={loading || checkingConnection}>
-                      {loading ? '...' : 'Save'}
+                    <button
+                      type="submit"
+                      className="btn btn-sm"
+                      style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                      disabled={loading || checkingConnection}
+                    >
+                      {loading ? 'Saving...' : 'Save node'}
                     </button>
                   </div>
-                </div>
-              </form>
-            )}
+                </form>
+              ) : (
+                <div className="panel-block__stack">
+                  <p className="small mb-0" style={{ color: colors.text.secondary }}>
+                    Format: <span className="mono-inline">https://server:443/path admin password</span>
+                  </p>
+                  <textarea
+                    className="form-control form-control-sm"
+                    rows={6}
+                    value={batchText}
+                    onChange={(e) => { setBatchText(e.target.value); setBatchPreview([]); setBatchAdded(false); }}
+                    placeholder={'https://server1.com:443 admin password123\nhttps://server2.com/path admin2 password456'}
+                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                  />
+                  <div className="panel-inline-actions">
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                      onClick={parseBatchText}
+                      disabled={!batchText.trim()}
+                    >
+                      Parse and preview
+                    </button>
+                    {batchPreview.length > 0 && (
+                      <button
+                        type="button"
+                        className="btn btn-sm"
+                        style={{ backgroundColor: colors.success, borderColor: colors.success, color: colors.successText }}
+                        onClick={handleBatchAddAll}
+                        disabled={loading || batchAdded}
+                      >
+                        {loading ? 'Adding...' : `Add all (${batchPreview.length})`}
+                      </button>
+                    )}
+                  </div>
 
-            {addMode === 'batch' && (
-              <div>
-                <p className="small mb-1" style={{ color: colors.text.secondary }}>
-                  Формат: <code>https://server.com:443  admin  password</code> (по одному на строку)
-                </p>
-                <textarea
-                  className="form-control form-control-sm mb-2"
-                  rows={5}
-                  value={batchText}
-                  onChange={(e) => { setBatchText(e.target.value); setBatchPreview([]); setBatchAdded(false); }}
-                  placeholder={'https://server1.com:443  admin  password123\nhttps://server2.com:443/path  admin2  password456'}
-                  style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                />
-                <button
-                  type="button"
-                  className="btn btn-sm me-2"
-                  style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
-                  onClick={parseBatchText}
-                  disabled={!batchText.trim()}
-                >
-                  Parse &amp; Preview
-                </button>
-
-                {batchPreview.length > 0 && (
-                  <div className="mt-3">
-                    <div className="table-responsive">
-                      <table className="table table-sm" style={{ color: colors.text.primary }}>
+                  {batchPreview.length > 0 && (
+                    <div className="table-responsive table-shell">
+                      <table className="table table-sm align-middle mb-0" style={{ color: colors.text.primary }}>
                         <thead>
                           <tr style={{ borderColor: colors.border }}>
-                            <th style={{ color: colors.text.secondary }}>Имя</th>
-                            <th style={{ color: colors.text.secondary }}>URL</th>
-                            <th style={{ color: colors.text.secondary }}>Логин</th>
-                            <th style={{ color: colors.text.secondary }}>Пароль</th>
+                            <th>Name</th>
+                            <th>URL</th>
+                            <th>Login</th>
+                            <th>Password</th>
                           </tr>
                         </thead>
                         <tbody>
                           {batchPreview.map((row, idx) => (
                             <tr key={idx} style={{ borderColor: colors.border }}>
                               <td>{row.name}</td>
-                              <td><small>{row.url}</small></td>
+                              <td><small className="mono-inline">{row.url}</small></td>
                               <td>{row.user}</td>
                               <td>{row.password}</td>
                             </tr>
@@ -386,63 +469,103 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
                         </tbody>
                       </table>
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn-sm"
-                      style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
-                      onClick={handleBatchAddAll}
-                      disabled={loading || batchAdded}
-                    >
-                      {loading ? '...' : `Add All (${batchPreview.length})`}
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3" style={{ color: colors.text.secondary }}>Список узлов</h6>
-        {nodes.map((n) => {
-          const status = nodeStatuses[n.id];
-          const dotColor = status === true ? '#22c55e' : status === false ? '#ef4444' : colors.text.secondary;
-          return (
-            <div key={n.id} className="node-list-item d-flex align-items-center gap-2 mb-2 p-2">
-              <span style={{ width: '10px', height: '10px', borderRadius: '50%', flexShrink: 0, backgroundColor: dotColor, display: 'inline-block' }} />
-              <strong style={{ color: colors.text.primary, flexShrink: 0 }}>{n.name}</strong>
-              <span style={{ color: colors.text.secondary }}>|</span>
-              <span style={{ color: colors.text.secondary, flexShrink: 0 }}>{n.ip}:{n.port}</span>
-              <div className="ms-auto d-flex gap-1 flex-shrink-0">
-                <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} onClick={() => handleEditClick(n)} aria-label="Edit node">
-                  <UIIcon name="edit" size={14} />
-                </button>
-                <button className="btn btn-sm" style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }} onClick={() => handleDelete(n.id)} aria-label="Delete node">
-                  <UIIcon name="x" size={14} />
-                </button>
-              </div>
+                  )}
+                </div>
+              )}
             </div>
-          );
-        })}
-        {nodes.length === 0 && <p className="text-center py-3" style={{ color: colors.text.secondary }}>Нет добавленных узлов</p>}
-      </div>
+          )}
+        </section>
+      )}
+
+      {showFleet && (
+      <section className="panel-block h-100">
+        <div className="panel-block__header">
+          <div>
+            <h6 className="panel-block__title">Registered fleet</h6>
+            <p className="panel-block__hint">
+              Edit node names or remove outdated panel entries.
+              {statusLoading ? ' Statuses are still syncing.' : ''}
+            </p>
+          </div>
+        </div>
+
+        {nodes.length > 0 ? (
+          <div className="table-responsive table-shell">
+            <table className="table table-sm align-middle mb-0" style={{ color: colors.text.primary }}>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Address</th>
+                  <th>Status</th>
+                  <th style={{ width: '120px' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {nodes.map((node) => {
+                  const status = nodeStatuses[node.id];
+                  const dotColor = status === true ? colors.success : status === false ? colors.danger : colors.text.secondary;
+                  const statusLabel = status === true ? 'online' : status === false ? 'offline' : 'checking';
+                  return (
+                    <tr key={node.id}>
+                      <td>
+                        <span className="d-inline-flex align-items-center gap-2">
+                          <span className="node-card__dot" style={{ backgroundColor: dotColor }} />
+                          <strong>{node.name}</strong>
+                        </span>
+                      </td>
+                      <td className="mono-inline">{node.ip}:{node.port}</td>
+                      <td style={{ color: status === true ? colors.success : status === false ? colors.danger : colors.text.secondary }}>
+                        {statusLabel}
+                      </td>
+                      <td>
+                        <div className="panel-inline-actions">
+                          <button
+                            className="btn btn-sm"
+                            style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                            onClick={() => handleEditClick(node)}
+                            aria-label="Edit node"
+                          >
+                            <UIIcon name="edit" size={14} />
+                          </button>
+                          <button
+                            className="btn btn-sm"
+                            style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: colors.dangerText }}
+                            onClick={() => handleDelete(node.id)}
+                            aria-label="Delete node"
+                          >
+                            <UIIcon name="x" size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-center py-3 mb-0" style={{ color: colors.text.secondary }}>No nodes registered yet.</p>
+        )}
+      </section>
+      )}
 
       {showEditModal && editingNode && (
         <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
           <div className="modal-dialog modal-dialog-centered">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>Переименовать сервер</h6>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>Rename node</h6>
                 <button type="button" className="btn-close" aria-label="Close" onClick={() => setShowEditModal(false)} />
               </div>
               <div className="modal-body">
                 {error && <div className="alert alert-danger" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>{error}</div>}
-                <p className="small mb-1" style={{ color: colors.text.secondary }}>Текущее имя: <strong style={{ color: colors.text.primary }}>{editingNode.name}</strong></p>
+                <p className="small mb-1" style={{ color: colors.text.secondary }}>
+                  Current name: <strong style={{ color: colors.text.primary }}>{editingNode.name}</strong>
+                </p>
                 <input
                   type="text"
                   className="form-control"
-                  placeholder="Новое имя"
+                  placeholder="New node name"
                   value={editingName}
                   onChange={(e) => setEditingName(e.target.value)}
                   style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
@@ -451,10 +574,10 @@ export const NodeManager: React.FC<{ onReload: () => void }> = ({ onReload }) =>
               </div>
               <div className="modal-footer" style={{ borderColor: colors.border }}>
                 <button className="btn btn-sm" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }} onClick={() => setShowEditModal(false)}>
-                  Отмена
+                  Cancel
                 </button>
-                <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }} onClick={handleSaveName} disabled={loading}>
-                  {loading ? '...' : 'Сохранить'}
+                <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }} onClick={handleSaveName} disabled={loading}>
+                  {loading ? 'Saving...' : 'Save'}
                 </button>
               </div>
             </div>

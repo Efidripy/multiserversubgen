@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
@@ -23,7 +23,6 @@ interface SubscriptionGroup {
   count: number;
 }
 
-
 export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) => {
   const { colors } = useTheme();
   const [emails, setEmails] = useState<string[]>([]);
@@ -40,6 +39,8 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   const [individualSortDir, setIndividualSortDir] = useState<'asc' | 'desc'>('asc');
   const [groupSortField, setGroupSortField] = useState<'name' | 'count'>('count');
   const [groupSortDir, setGroupSortDir] = useState<'asc' | 'desc'>('desc');
+  const [deliveryTransport, setDeliveryTransport] = useState<'all' | 'ws' | 'grpc'>('all');
+  const [deliveryFormat, setDeliveryFormat] = useState<'base64' | 'json' | 'raw'>('base64');
 
   const loadEmails = async () => {
     setLoading(true);
@@ -62,7 +63,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       setLoading(false);
     }
   };
-  
+
   const loadNodes = async () => {
     try {
       const res = await api.get('/v1/nodes', {
@@ -73,31 +74,23 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       console.error('Failed to load nodes:', err);
     }
   };
-  
+
   const analyzeGroups = () => {
-    // Анализ email для группировки
     const groupMap = new Map<string, string[]>();
-    
-    emails.forEach(email => {
-      // Группировка по домену
+
+    emails.forEach((email) => {
       const domain = email.split('@')[1] || 'unknown';
-      if (!groupMap.has(domain)) {
-        groupMap.set(domain, []);
-      }
+      if (!groupMap.has(domain)) groupMap.set(domain, []);
       groupMap.get(domain)!.push(email);
-      
-      // Группировка по префиксам (первые 3-5 символов до цифр)
-      const match = email.match(/^([a-zA-Z]{3,})/); 
+
+      const match = email.match(/^([a-zA-Z]{3,})/);
       if (match) {
         const prefix = match[1].toLowerCase();
-        if (!groupMap.has(prefix)) {
-          groupMap.set(prefix, []);
-        }
+        if (!groupMap.has(prefix)) groupMap.set(prefix, []);
         groupMap.get(prefix)!.push(email);
       }
     });
-    
-    // Создать список групп с 2+ email
+
     const groupList: SubscriptionGroup[] = [];
     groupMap.forEach((emailList, identifier) => {
       if (emailList.length >= 2) {
@@ -108,8 +101,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         });
       }
     });
-    
-    // Сортировка по количеству
+
     groupList.sort((a, b) => b.count - a.count);
     setGroups(groupList);
   };
@@ -118,7 +110,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     loadEmails();
     loadNodes();
   }, []);
-  
+
   useEffect(() => {
     if (viewMode === 'grouped') {
       analyzeGroups();
@@ -129,7 +121,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     try {
       await navigator.clipboard.writeText(text);
       alert('Copied!');
-    } catch (err) {
+    } catch {
       const el = document.createElement('textarea');
       el.value = text;
       document.body.appendChild(el);
@@ -138,23 +130,21 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       document.body.removeChild(el);
     }
   };
-  
-  const buildSubscriptionUrl = (email: string, isGrouped: boolean = false) => {
-    const baseUrl = isGrouped 
-      ? `${apiUrl}/v1/sub-grouped/${email}`
-      : `${apiUrl}/v1/sub/${email}`;
-    
+
+  const buildSubscriptionUrl = (email: string, isGrouped = false) => {
+    const baseUrl = isGrouped ? `${apiUrl}/v1/sub-grouped/${email}` : `${apiUrl}/v1/sub/${email}`;
     const params = new URLSearchParams();
     if (filterProtocol) params.append('protocol', filterProtocol);
     if (selectedNodes.length > 0) params.append('nodes', selectedNodes.join(','));
-    
+    if (deliveryTransport !== 'all') params.append('transport', deliveryTransport);
+    if (deliveryFormat !== 'base64') params.append('format', deliveryFormat);
     return params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
   };
 
   if (loading && emails.length === 0) {
     return <div className="text-center py-5" style={{ color: colors.text.secondary }}>Loading...</div>;
   }
-  
+
   const compareText = (a: string, b: string) =>
     a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 
@@ -190,12 +180,9 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     return byName;
   });
 
-  const groupSortDirectionLabels = (() => {
-    if (groupSortField === 'name') {
-      return { asc: 'A -> Z', desc: 'Z -> A' };
-    }
-    return { asc: 'Small -> Large', desc: 'Large -> Small' };
-  })();
+  const groupSortDirectionLabels = groupSortField === 'name'
+    ? { asc: 'A -> Z', desc: 'Z -> A' }
+    : { asc: 'Small -> Large', desc: 'Large -> Small' };
 
   const applyIndividualSortFromHeader = (field: 'email' | 'downloads' | 'last') => {
     if (individualSortField === field) {
@@ -210,142 +197,177 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     individualSortField === field ? (individualSortDir === 'asc' ? ' ▲' : ' ▼') : '';
 
   const toggleNodeSelection = (nodeName: string) => {
-    setSelectedNodes(prev => 
-      prev.includes(nodeName) 
-        ? prev.filter(n => n !== nodeName)
-        : [...prev, nodeName]
+    setSelectedNodes((prev) =>
+      prev.includes(nodeName) ? prev.filter((node) => node !== nodeName) : [...prev, nodeName]
     );
   };
 
   return (
     <div className="subscription-manager">
-      {/* Фильтры и настройки */}
-      <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.accent }}>
-            <UIIcon name="link" size={16} />
-            Subscriptions
-          </h5>
-          <div className="d-flex align-items-center gap-2">
-            <button
-              className="btn btn-sm"
-              style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
-              onClick={loadEmails}
-              disabled={loading}
-            >
-              <span className="d-inline-flex align-items-center gap-1">
-                <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
-                Refresh Emails
-              </span>
-            </button>
-            <div className="btn-group" role="group">
-            <button
-              className="btn btn-sm"
-              style={{
-                backgroundColor: viewMode === 'individual' ? colors.accent : colors.bg.tertiary,
-                borderColor: colors.border,
-                color: viewMode === 'individual' ? '#ffffff' : colors.text.primary
-              }}
-              onClick={() => setViewMode('individual')}
-            >
-              <span className="d-inline-flex align-items-center gap-1">
-                <UIIcon name="user" size={14} />
-                Individual
-              </span>
-            </button>
-            <button
-              className="btn btn-sm"
-              style={{
-                backgroundColor: viewMode === 'grouped' ? colors.accent : colors.bg.tertiary,
-                borderColor: colors.border,
-                color: viewMode === 'grouped' ? '#ffffff' : colors.text.primary
-              }}
-              onClick={() => setViewMode('grouped')}
-            >
-              <span className="d-inline-flex align-items-center gap-1">
-                <UIIcon name="folder" size={14} />
-                Grouped
-              </span>
-            </button>
-          </div>
-          </div>
-        </div>
-        
-        {error && (
-          <div className="alert mb-2" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
-            {error}
-          </div>
-        )}
-        {successMessage && (
-          <div className="alert mb-2" style={{ backgroundColor: colors.success + '22', borderColor: colors.success, color: colors.success }}>
-            {successMessage}
-          </div>
-        )}
-        {/* Фильтры */}
-        <div className="row g-2 mb-2">
-          <div className="col-md-3">
-            <label className="form-label small" style={{ color: colors.text.secondary }}>Protocol Filter</label>
-            <ChoiceChips
-              options={[
-                { value: '', label: 'All' },
-                { value: 'vless', label: 'VLESS' },
-                { value: 'vmess', label: 'VMess' },
-                { value: 'trojan', label: 'Trojan' },
-              ]}
-              value={filterProtocol}
-              onChange={(value) => setFilterProtocol(value)}
-              colors={colors}
-            />
-          </div>
-          <div className="col-md-9">
-            <label className="form-label small" style={{ color: colors.text.secondary }}>Node Filter (select nodes)</label>
-            <div className="d-flex flex-wrap gap-2">
-              {nodes.map(node => (
-                <button
-                  key={node.id}
-                  className="btn btn-sm"
-                  style={{
-                    backgroundColor: selectedNodes.includes(node.name) ? colors.accent : colors.bg.tertiary,
-                    borderColor: colors.border,
-                    color: selectedNodes.includes(node.name) ? '#ffffff' : colors.text.primary
-                  }}
-                  onClick={() => toggleNodeSelection(node.name)}
-                >
-                  <span className="d-inline-flex align-items-center gap-1">
-                    {selectedNodes.includes(node.name) && <UIIcon name="check" size={12} />}
-                    {node.name}
-                  </span>
-                </button>
-              ))}
-              {selectedNodes.length > 0 && (
-                <button
-                  className="btn btn-sm"
-                  style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
-                  onClick={() => setSelectedNodes([])}
-                >
-                  <span className="d-inline-flex align-items-center gap-1">
-                    <UIIcon name="x" size={12} />
-                    Clear
-                  </span>
-                </button>
-              )}
+      <div className="panel-grid panel-grid--compact mb-3">
+        <section className="panel-block panel-block--wide">
+          <div className="panel-block__header">
+            <div>
+              <h6 className="panel-block__title">Subscription controls</h6>
+              <p className="panel-block__hint">Refresh source emails, switch delivery mode and narrow output by protocol or node.</p>
+            </div>
+            <div className="panel-inline-actions">
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                onClick={loadEmails}
+                disabled={loading}
+              >
+                <span className="d-inline-flex align-items-center gap-1">
+                  <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
+                  Refresh Emails
+                </span>
+              </button>
+              <button
+                className="btn btn-sm"
+                style={{
+                  backgroundColor: viewMode === 'individual' ? colors.accent : colors.bg.tertiary,
+                  borderColor: colors.border,
+                  color: viewMode === 'individual' ? colors.accentText : colors.text.primary
+                }}
+                onClick={() => setViewMode('individual')}
+              >
+                <span className="d-inline-flex align-items-center gap-1">
+                  <UIIcon name="user" size={14} />
+                  Individual
+                </span>
+              </button>
+              <button
+                className="btn btn-sm"
+                style={{
+                  backgroundColor: viewMode === 'grouped' ? colors.accent : colors.bg.tertiary,
+                  borderColor: colors.border,
+                  color: viewMode === 'grouped' ? colors.accentText : colors.text.primary
+                }}
+                onClick={() => setViewMode('grouped')}
+              >
+                <span className="d-inline-flex align-items-center gap-1">
+                  <UIIcon name="folder" size={14} />
+                  Grouped
+                </span>
+              </button>
             </div>
           </div>
-        </div>
-        
-        {(filterProtocol || selectedNodes.length > 0) && (
-          <div className="alert mt-2 mb-0" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.text.primary }}>
-            <small>
-              <strong>Active filters:</strong>
-              {filterProtocol && ` Protocol: ${filterProtocol.toUpperCase()}`}
-              {selectedNodes.length > 0 && ` | Nodes: ${selectedNodes.join(', ')}`}
-            </small>
+
+          {error && (
+            <div className="alert mb-2" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+              {error}
+            </div>
+          )}
+          {successMessage && (
+            <div className="alert mb-2" style={{ backgroundColor: colors.success + '22', borderColor: colors.success, color: colors.success }}>
+              {successMessage}
+            </div>
+          )}
+
+          <div className="row g-2 mb-2">
+            <div className="col-12">
+              <label className="form-label small" style={{ color: colors.text.secondary }}>Node Filter</label>
+              <div className="panel-inline-actions">
+                {nodes.map((node) => (
+                  <button
+                    key={node.id}
+                    className="btn btn-sm"
+                    style={{
+                      backgroundColor: selectedNodes.includes(node.name) ? colors.accent : colors.bg.tertiary,
+                      borderColor: colors.border,
+                      color: selectedNodes.includes(node.name) ? colors.accentText : colors.text.primary
+                    }}
+                    onClick={() => toggleNodeSelection(node.name)}
+                  >
+                    <span className="d-inline-flex align-items-center gap-1">
+                      {selectedNodes.includes(node.name) && <UIIcon name="check" size={12} />}
+                      {node.name}
+                    </span>
+                  </button>
+                ))}
+                {selectedNodes.length > 0 && (
+                  <button
+                    className="btn btn-sm"
+                    style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
+                    onClick={() => setSelectedNodes([])}
+                  >
+                    <span className="d-inline-flex align-items-center gap-1">
+                      <UIIcon name="x" size={12} />
+                      Clear
+                    </span>
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
-        )}
+
+          {(filterProtocol || selectedNodes.length > 0 || deliveryTransport !== 'all' || deliveryFormat !== 'base64') && (
+            <div className="alert mt-2 mb-0" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.text.primary }}>
+              <small>
+                <strong>Active filters:</strong>
+                {filterProtocol && ` Protocol: ${filterProtocol.toUpperCase()}`}
+                {selectedNodes.length > 0 && ` | Nodes: ${selectedNodes.join(', ')}`}
+                {deliveryTransport !== 'all' && ` | Transport: ${deliveryTransport.toUpperCase()}`}
+                {deliveryFormat !== 'base64' && ` | Format: ${deliveryFormat.toUpperCase()}`}
+              </small>
+            </div>
+          )}
+        </section>
+
+        <aside className="panel-block">
+          <div className="panel-block__header">
+            <div>
+              <h6 className="panel-block__title">Delivery profile</h6>
+              <p className="panel-block__hint">Choose what kind of subscription link you want to hand out.</p>
+            </div>
+          </div>
+          <div className="panel-block__stack">
+            <div>
+              <label className="form-label small" style={{ color: colors.text.secondary }}>Subscription profile</label>
+              <ChoiceChips
+                options={[
+                  { value: '', label: 'All' },
+                  { value: 'vless', label: 'VLESS' },
+                  { value: 'vmess', label: 'VMess' },
+                  { value: 'trojan', label: 'Trojan' },
+                ]}
+                value={filterProtocol}
+                onChange={(value) => setFilterProtocol(value)}
+                colors={colors}
+              />
+            </div>
+            <div>
+              <label className="form-label small" style={{ color: colors.text.secondary }}>Transport hint</label>
+              <ChoiceChips
+                options={[
+                  { value: 'all', label: 'All' },
+                  { value: 'ws', label: 'WS' },
+                  { value: 'grpc', label: 'gRPC' },
+                ]}
+                value={deliveryTransport}
+                onChange={(value) => setDeliveryTransport(value)}
+                colors={colors}
+              />
+            </div>
+            <div>
+              <label className="form-label small" style={{ color: colors.text.secondary }}>Output format</label>
+              <ChoiceChips
+                options={[
+                  { value: 'base64', label: 'Base64' },
+                  { value: 'json', label: 'JSON' },
+                  { value: 'raw', label: 'Raw' },
+                ]}
+                value={deliveryFormat}
+                onChange={(value) => setDeliveryFormat(value)}
+                colors={colors}
+              />
+            </div>
+          </div>
+        </aside>
       </div>
-      
-      {/* Подписки */}
-      <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+
+      <section className="panel-block">
         <div className="d-flex justify-content-between align-items-center mb-3 gap-2">
           <h6 className="mb-0" style={{ color: colors.text.primary }}>
             {viewMode === 'individual' ? `Individual Subscriptions (${emails.length})` : `Grouped Subscriptions (${groups.length} groups)`}
@@ -372,78 +394,78 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               />
             </div>
           ) : (
-            <div className="small" style={{ color: colors.text.secondary }}>
-              Click table headers to sort
-            </div>
+            <div className="small" style={{ color: colors.text.secondary }}>Click table headers to sort</div>
           )}
         </div>
+
         {emails.length === 0 ? (
-          <p className="text-center py-3" style={{ color: colors.text.secondary }}>Нет пользователей. Добавьте узлы панели.</p>
+          <p className="text-center py-3 mb-0" style={{ color: colors.text.secondary }}>No users found. Add panel nodes first.</p>
         ) : viewMode === 'individual' ? (
-          <table className="table table-hover small" style={{ color: colors.text.primary }}>
-            <thead>
-              <tr style={{ borderColor: colors.border }}>
-                <th style={{ color: colors.text.secondary }}>
-                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('email')}>
-                    Email{individualSortIndicator('email')}
-                  </button>
-                </th>
-                <th style={{ color: colors.text.secondary }}>
-                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('downloads')}>
-                    Скачиваний{individualSortIndicator('downloads')}
-                  </button>
-                </th>
-                <th style={{ color: colors.text.secondary }}>
-                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('last')}>
-                    Последний раз{individualSortIndicator('last')}
-                  </button>
-                </th>
-                <th style={{ color: colors.text.secondary }}>Ссылка</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sortedEmails.map((email) => (
-                <tr key={email} style={{ borderColor: colors.border }}>
-                  <td className="align-middle">
-                    <strong style={{ color: colors.text.primary }}>{email}</strong>
-                  </td>
-                  <td className="align-middle">
-                    <span className="badge" style={{ backgroundColor: colors.info }}>
-                      {stats[email]?.count || 0}
-                    </span>
-                  </td>
-                  <td className="align-middle">
-                    <small style={{ color: colors.text.secondary }}>{stats[email]?.last || '--'}</small>
-                  </td>
-                  <td className="align-middle">
-                    <div className="input-group input-group-sm">
-                      <input
-                        type="text"
-                        id={`sub-${email}`}
-                        className="form-control form-control-sm"
-                        readOnly
-                        value={buildSubscriptionUrl(email)}
-                        style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                      />
-                      <button
-                        className="btn"
-                        style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
-                        onClick={() => copyToClipboard(buildSubscriptionUrl(email))}
-                      >
-                        Copy
-                      </button>
-                    </div>
-                  </td>
+          <div className="table-responsive table-shell">
+            <table className="table table-hover small mb-0" style={{ color: colors.text.primary }}>
+              <thead>
+                <tr style={{ borderColor: colors.border }}>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('email')}>
+                      Email{individualSortIndicator('email')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('downloads')}>
+                      Downloads{individualSortIndicator('downloads')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('last')}>
+                      Last seen{individualSortIndicator('last')}
+                    </button>
+                  </th>
+                  <th style={{ color: colors.text.secondary }}>Link</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {sortedEmails.map((email) => (
+                  <tr key={email} style={{ borderColor: colors.border }}>
+                    <td className="align-middle">
+                      <strong style={{ color: colors.text.primary }}>{email}</strong>
+                    </td>
+                    <td className="align-middle">
+                      <span className="badge" style={{ backgroundColor: colors.info }}>
+                        {stats[email]?.count || 0}
+                      </span>
+                    </td>
+                    <td className="align-middle">
+                      <small style={{ color: colors.text.secondary }}>{stats[email]?.last || '--'}</small>
+                    </td>
+                    <td className="align-middle">
+                      <div className="input-group input-group-sm">
+                        <input
+                          type="text"
+                          id={`sub-${email}`}
+                          className="form-control form-control-sm"
+                          readOnly
+                          value={buildSubscriptionUrl(email)}
+                          style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                        />
+                        <button
+                          className="btn"
+                          style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                          onClick={() => copyToClipboard(buildSubscriptionUrl(email))}
+                        >
+                          Copy
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
-          // Групповой режим
           <div className="row g-3">
             {sortedGroups.map((group, idx) => (
               <div className="col-md-6" key={idx}>
-                <div className="card p-3" style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border }}>
+                <div className="panel-block h-100">
                   <div className="d-flex justify-content-between align-items-center mb-2">
                     <div>
                       <h6 className="mb-0" style={{ color: colors.accent }}>
@@ -452,23 +474,19 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                           {group.identifier}
                         </span>
                       </h6>
-                      <small style={{ color: colors.text.secondary }}>
-                        {group.count} clients
-                      </small>
+                      <small style={{ color: colors.text.secondary }}>{group.count} clients</small>
                     </div>
-                    <span className="badge" style={{ backgroundColor: colors.accent }}>
-                      {group.count}
-                    </span>
+                    <span className="badge" style={{ backgroundColor: colors.accent }}>{group.count}</span>
                   </div>
-                  
-                  <div className="mb-2" style={{ maxHeight: '100px', overflowY: 'auto' }}>
+
+                  <div className="mb-2" style={{ maxHeight: '120px', overflowY: 'auto' }}>
                     {group.emails.map((email, i) => (
                       <div key={i} className="small" style={{ color: colors.text.secondary }}>
                         • {email}
                       </div>
                     ))}
                   </div>
-                  
+
                   <div className="input-group input-group-sm">
                     <input
                       type="text"
@@ -479,7 +497,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                     />
                     <button
                       className="btn"
-                      style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                      style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                       onClick={() => copyToClipboard(buildSubscriptionUrl(group.identifier, true))}
                     >
                       Copy
@@ -490,14 +508,14 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
             ))}
             {groups.length === 0 && (
               <div className="col-12">
-                <p className="text-center py-3" style={{ color: colors.text.secondary }}>
-                  No groups found. Groups require at least 2 clients with similar identifiers.
+                <p className="text-center py-3 mb-0" style={{ color: colors.text.secondary }}>
+                  No groups found. Groups require at least two clients with similar identifiers.
                 </p>
               </div>
             )}
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 };

@@ -25,6 +25,23 @@ AUTH_CACHE_TTL_SEC = 30
 AUTH_CACHE_NEGATIVE_TTL_SEC = 5
 
 
+def parse_mfa_users(raw: str) -> Dict[str, str]:
+    """Parse ``username:secret`` CSV into a mapping."""
+    result: Dict[str, str] = {}
+    if not raw:
+        return result
+    for item in raw.split(","):
+        item = item.strip()
+        if not item or ":" not in item:
+            continue
+        username, secret = item.split(":", 1)
+        username = username.strip()
+        secret = secret.strip().replace(" ", "")
+        if username and secret:
+            result[username] = secret
+    return result
+
+
 class AuthService:
     """Stateless authentication and authorisation service.
 

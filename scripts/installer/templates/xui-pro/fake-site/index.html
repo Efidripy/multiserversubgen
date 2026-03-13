@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Service Online</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0a0f17;
+      --panel: #101826;
+      --line: #1c2b42;
+      --text: #e7eef8;
+      --muted: #93a2b8;
+      --accent: #2dd4bf;
+    }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background:
+        radial-gradient(circle at top, rgba(45, 212, 191, 0.12), transparent 35%),
+        var(--bg);
+      font-family: Segoe UI, Arial, sans-serif;
+      color: var(--text);
+    }
+    .card {
+      width: min(90vw, 680px);
+      padding: 32px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: linear-gradient(180deg, rgba(16, 24, 38, 0.96), rgba(10, 15, 23, 0.98));
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 32px;
+    }
+    p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    .badge {
+      display: inline-block;
+      margin-bottom: 18px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(45, 212, 191, 0.12);
+      color: var(--accent);
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="badge">Placeholder</div>
+    <h1>Service is online</h1>
+    <p>This is a local placeholder page installed by the Sub-Manager workflow. Replace it later if you want a custom landing page.</p>
+  </main>
+</body>
+</html>

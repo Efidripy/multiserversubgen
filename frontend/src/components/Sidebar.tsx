@@ -34,7 +34,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen,
   onMobileClose,
 }) => {
-  const { colors, theme, toggleTheme } = useTheme();
+  const { colors, theme, stylePreset, toggleTheme, setStylePreset } = useTheme();
   const { t, i18n } = useTranslation();
   const currentLang = (i18n.resolvedLanguage || i18n.language || 'en').toLowerCase();
   const asciiVariants = useMemo(() => MSM_ASCII_VARIANTS, []);
@@ -63,7 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       <aside
-        className={`sidebar${mobileOpen ? ' sidebar--open' : ''}`}
+        className={`sidebar${mobileOpen ? ' sidebar--open' : ''}${stylePreset === '3' ? ' sidebar--preset-3' : ''}`}
         style={{ backgroundColor: colors.bg.secondary, borderRight: `1px solid ${colors.border}` }}
       >
         <div className="sidebar__logo" style={{ borderBottom: `1px solid ${colors.border}` }}>
@@ -117,6 +117,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
               ]}
               value={currentLang.startsWith('ru') ? 'ru' : 'en'}
               onChange={(value) => i18n.changeLanguage(value)}
+              colors={colors}
+            />
+          </div>
+
+          <div className="mt-2">
+            <label className="form-label small mb-1" style={{ color: colors.text.secondary }}>
+              Style
+            </label>
+            <ChoiceChips
+              options={[
+                { value: '1', label: '1' },
+                { value: '3', label: '3' },
+              ]}
+              value={stylePreset}
+              onChange={(value) => setStylePreset(value as '1' | '3')}
               colors={colors}
             />
           </div>

@@ -1,0 +1,25 @@
+[features]
+rmcp_client = true
+
+[mcp_servers.multiserversubgen_filesystem]
+command = "E:\\GitHub\\multiserversubgen\\tools\\mcp\\bin\\filesystem-mcp.cmd"
+
+[mcp_servers.multiserversubgen_git]
+command = "E:\\GitHub\\multiserversubgen\\tools\\mcp\\bin\\git-mcp.cmd"
+env = { GIT_DEFAULT_PATH = "E:\\GitHub\\multiserversubgen", GIT_LOG_LEVEL = "info" }
+
+[mcp_servers.multiserversubgen_postgres]
+command = "E:\\GitHub\\multiserversubgen\\tools\\mcp\\bin\\postgres-mcp.cmd"
+env = { DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/postgres" }
+
+[mcp_servers.multiserversubgen_playwright]
+command = "E:\\GitHub\\multiserversubgen\\tools\\mcp\\bin\\playwright-mcp.cmd"
+
+[mcp_servers.multiserversubgen_docker]
+command = "E:\\GitHub\\multiserversubgen\\tools\\mcp\\bin\\docker-mcp.cmd"
+env = { ALLOWED_CONTAINERS = "app:app_container,db:db_container", DEFAULT_SERVICE = "app", COMMAND_TIMEOUT = "300000" }
+
+[mcp_servers.figma]
+url = "https://mcp.figma.com/mcp"
+bearer_token_env_var = "FIGMA_OAUTH_TOKEN"
+http_headers = { "X-Figma-Region" = "us-east-1" }

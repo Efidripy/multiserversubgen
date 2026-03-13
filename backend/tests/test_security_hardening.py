@@ -3,11 +3,13 @@ import base64
 import json
 import os
 import sys
-from types import SimpleNamespace
+import tempfile
 
 import pytest
+from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+os.environ.setdefault("PROJECT_DIR", tempfile.gettempdir())
 import main
 
 
@@ -52,8 +54,7 @@ def test_check_basic_auth_header_rejects_non_basic_scheme(monkeypatch):
     assert main.check_basic_auth_header("Bearer token-value") is None
 
 
-@pytest.mark.asyncio
-async def test_list_nodes_does_not_return_password(monkeypatch):
+def test_list_nodes_does_not_return_password(monkeypatch):
     rows = [
         {
             "id": 1,
@@ -65,11 +66,13 @@ async def test_list_nodes_does_not_return_password(monkeypatch):
             "base_path": "",
         }
     ]
-    monkeypatch.setattr(main, "check_auth", lambda request: "admin")
-    monkeypatch.setattr(main.sqlite3, "connect", lambda _: _FakeConn(rows))
+    monkeypatch.setattr(main.p, "authenticate", lambda u, p: u == "admin" and p == "secret")
+    monkeypatch.setattr(main.node_service, "list_nodes", lambda: rows)
+    client = TestClient(main.app)
 
-    response = await main.list_nodes(SimpleNamespace(headers={}))
-    payload = json.loads(response.body.decode("utf-8"))
+    response = client.get("/api/v1/nodes", headers={"Authorization": _basic_header("admin", "secret")})
+    payload = response.json()
 
+    assert response.status_code == 200
     assert len(payload) == 1
     assert "password" not in payload[0]

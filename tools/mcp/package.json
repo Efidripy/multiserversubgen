@@ -1,0 +1,14 @@
+{
+  "name": "multiserversubgen-mcp-tools",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Local MCP tooling for the multiserversubgen workspace",
+  "dependencies": {
+    "@modelcontextprotocol/server-filesystem": "2026.1.14",
+    "@modelcontextprotocol/server-postgres": "0.6.2",
+    "@playwright/mcp": "0.0.68",
+    "git-mcp-server": "1.0.0",
+    "mcp-server-docker": "1.0.0"
+  }
+}

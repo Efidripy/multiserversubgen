@@ -41,6 +41,7 @@ compactor:
   working_directory: /var/lib/loki/compactor
   compaction_interval: 10m
   retention_enabled: true
+  delete_request_store: filesystem
   retention_delete_delay: 2h
 
 table_manager:

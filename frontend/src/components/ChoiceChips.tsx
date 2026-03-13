@@ -2,6 +2,7 @@ type ChoiceValue = string | number | boolean;
 
 interface ThemeColors {
   accent: string;
+  accentText: string;
   border: string;
   bg: {
     tertiary: string;
@@ -51,7 +52,7 @@ export function ChoiceChips<T extends ChoiceValue>({
             style={{
               backgroundColor: active ? colors.accent : colors.bg.tertiary,
               borderColor: active ? colors.accent : colors.border,
-              color: active ? '#ffffff' : colors.text.primary,
+              color: active ? colors.accentText : colors.text.primary,
               whiteSpace: 'nowrap',
             }}
           >

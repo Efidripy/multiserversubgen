@@ -68,7 +68,7 @@ const CLIENTS_PAGE_CACHE_KEY = 'sub_manager_clients_page_cache_v1';
 const CLIENTS_PAGE_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 const CLIENTS_PAGE_REFRESH_MS = 5 * 60 * 1000; // background refresh interval
 const ENABLE_LIVE_CLIENT_TRAFFIC = true;
-const TRAFFIC_FETCH_MAX_CLIENTS = 120;
+const TRAFFIC_FETCH_MAX_CLIENTS = 20;
 const TRAFFIC_FETCH_CONCURRENCY = 4;
 const TRAFFIC_FETCH_TIMEOUT_MS = 8000;
 
@@ -159,6 +159,8 @@ export const ClientManager: React.FC = () => {
   // Selection
   const [selectedClientKeys, setSelectedClientKeys] = useState<Set<string>>(new Set());
   const refreshInFlightRef = useRef(false);
+  const requestIdRef = useRef(0);
+  const trafficRefreshTimerRef = useRef<number | null>(null);
   
   useEffect(() => {
     // Show cached snapshot instantly if available, then refresh in background.
@@ -195,6 +197,34 @@ export const ClientManager: React.FC = () => {
   useEffect(() => {
     applyFilters();
   }, [clients, searchTerm, filterNode, filterStatus, filterProtocol, sortField, sortDirection, trafficCache]);
+
+  useEffect(() => {
+    if (!ENABLE_LIVE_CLIENT_TRAFFIC || filteredClients.length === 0) return;
+
+    const visibleSlice = filteredClients.slice(0, TRAFFIC_FETCH_MAX_CLIENTS);
+    const missing = visibleSlice.filter((client) => {
+      if (client.node_id == null) return false;
+      const key = `${client.node_id}:${client.email}`;
+      return !(key in trafficCache);
+    });
+
+    if (missing.length === 0) return;
+
+    if (trafficRefreshTimerRef.current) {
+      window.clearTimeout(trafficRefreshTimerRef.current);
+    }
+
+    trafficRefreshTimerRef.current = window.setTimeout(() => {
+      loadTraffic(missing).catch(() => undefined);
+    }, 350);
+
+    return () => {
+      if (trafficRefreshTimerRef.current) {
+        window.clearTimeout(trafficRefreshTimerRef.current);
+        trafficRefreshTimerRef.current = null;
+      }
+    };
+  }, [filteredClients, trafficCache]);
   
   const loadClients = async (silent = false) => {
     if (refreshInFlightRef.current) return;
@@ -203,62 +233,91 @@ export const ClientManager: React.FC = () => {
     setError('');
     
     try {
-      const [clientsRes, nodesRes, inboundsRes] = await Promise.all([
-        api.get('/v1/clients', { auth: getAuth() }),
-        api.get('/v1/nodes', { auth: getAuth() }),
-        api.get('/v1/inbounds', { auth: getAuth() }),
-      ]);
-      
+      const nodesRes = await api.get('/v1/nodes', { auth: getAuth() });
       const nodeList: { id: number; name: string }[] = nodesRes.data || [];
       const nodeNameToId: Record<string, number> = {};
       nodeList.forEach(n => { nodeNameToId[n.name] = n.id; });
 
-      const mappedClients: Client[] = (clientsRes.data.clients || []).map((c: any) => ({
-        ...c,
-        id: c.id != null ? String(c.id) : null,
-        total: Number(c.total ?? c.totalGB ?? 0) || 0,
-        up: Number(c.up ?? 0) || 0,
-        down: Number(c.down ?? 0) || 0,
-        node_id: nodeNameToId[c.node_name],
-      }));
-      // Defensive dedupe in case API/cache returns accidental repeated rows.
-      const deduped = new Map<string, Client>();
-      mappedClients.forEach((client) => {
-        deduped.set(clientKey(client), client);
-      });
-      const rawClients: Client[] = Array.from(deduped.values());
-      const inboundList: InboundOption[] = (inboundsRes.data?.inbounds || []).map((ib: any) => ({
-        id: ib.id,
-        node_name: ib.node_name,
-        protocol: ib.protocol,
-        remark: ib.remark || '',
-      }));
+      const inboundsPromise = api.get('/v1/inbounds', { auth: getAuth() });
+      const requestId = Date.now();
+      requestIdRef.current = requestId;
+      let pending = nodeList.length;
 
-      setClients(rawClients);
-      setInboundOptions(inboundList);
+      if (nodeList.length === 0) {
+        setClients([]);
+        setLoading(false);
+        refreshInFlightRef.current = false;
+        return;
+      }
+
+      nodeList.forEach((node) => {
+        api.get(`/v1/nodes/${node.id}/clients`, { auth: getAuth() })
+          .then((clientsRes) => {
+            if (requestIdRef.current !== requestId) return;
+            const mappedClients: Client[] = (clientsRes.data.clients || []).map((c: any) => ({
+              ...c,
+              id: c.id != null ? String(c.id) : null,
+              total: Number(c.total ?? c.totalGB ?? 0) || 0,
+              up: Number(c.up ?? 0) || 0,
+              down: Number(c.down ?? 0) || 0,
+              node_id: node.id,
+              node_name: c.node_name || node.name,
+            }));
+            setClients((prev) => {
+              const replaced = [
+                ...prev.filter((client) => (client.node_id ?? nodeNameToId[client.node_name]) !== node.id),
+                ...mappedClients,
+              ];
+              const deduped = new Map<string, Client>();
+              replaced.forEach((client) => {
+                deduped.set(clientKey(client), client);
+              });
+              const next = Array.from(deduped.values());
+              try {
+                const cacheData: ClientsPageCache = {
+                  ts: Date.now(),
+                  clients: next,
+                  trafficCache,
+                  endpointMode: trafficEndpointModeRef.current,
+                };
+                localStorage.setItem(CLIENTS_PAGE_CACHE_KEY, JSON.stringify(cacheData));
+              } catch {}
+              return next;
+            });
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            if (requestIdRef.current !== requestId) return;
+            pending -= 1;
+            if (pending <= 0) {
+              if (!silent && trafficEndpointModeRef.current === 'disabled') {
+                trafficEndpointModeRef.current = 'unknown';
+              }
+              if (!silent) setLoading(false);
+              refreshInFlightRef.current = false;
+            }
+          });
+      });
+
       if (!silent && trafficEndpointModeRef.current === 'disabled') {
         // Re-probe endpoints on manual reload to recover after temporary backend mismatch.
         trafficEndpointModeRef.current = 'unknown';
       }
-      if (!silent && ENABLE_LIVE_CLIENT_TRAFFIC) {
-        loadTraffic(rawClients).catch(() => undefined);
-      }
 
-      // Cache clients immediately, even before traffic refresh completes.
-      try {
-        const cacheData: ClientsPageCache = {
-          ts: Date.now(),
-          clients: rawClients,
-          trafficCache,
-          endpointMode: trafficEndpointModeRef.current,
-        };
-        localStorage.setItem(CLIENTS_PAGE_CACHE_KEY, JSON.stringify(cacheData));
-      } catch {
-        // Ignore localStorage write errors.
-      }
+      inboundsPromise
+        .then((inboundsRes) => {
+          const inboundList: InboundOption[] = (inboundsRes.data?.inbounds || []).map((ib: any) => ({
+            id: ib.id,
+            node_name: ib.node_name,
+            protocol: ib.protocol,
+            remark: ib.remark || '',
+          }));
+          setInboundOptions(inboundList);
+        })
+        .catch(() => undefined);
+
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load clients');
-    } finally {
       if (!silent) setLoading(false);
       refreshInFlightRef.current = false;
     }
@@ -376,7 +435,13 @@ export const ClientManager: React.FC = () => {
       }
     };
 
-    const entries = Array.from(pairs.entries()).slice(0, TRAFFIC_FETCH_MAX_CLIENTS);
+    const entries = Array.from(pairs.entries())
+      .filter(([key]) => !(key in trafficCache))
+      .slice(0, TRAFFIC_FETCH_MAX_CLIENTS);
+    if (entries.length === 0) {
+      setTrafficLoading(false);
+      return;
+    }
     const results: Array<readonly [string, TrafficData | null]> = [];
     let cursor = 0;
 
@@ -397,7 +462,7 @@ export const ClientManager: React.FC = () => {
       Array.from({ length: Math.min(TRAFFIC_FETCH_CONCURRENCY, entries.length) }, () => worker())
     );
 
-    const cache: Record<string, TrafficData | null> = {};
+    const cache: Record<string, TrafficData | null> = { ...trafficCache };
     results.forEach(([key, data]) => { cache[key] = data; });
     setTrafficCache(cache);
     setTrafficLoading(false);
@@ -720,16 +785,6 @@ export const ClientManager: React.FC = () => {
     return gb.toFixed(2) + ' GB';
   };
 
-  const sortDirectionLabels = (() => {
-    if (sortField === 'email' || sortField === 'node') {
-      return { asc: 'A -> Z', desc: 'Z -> A' };
-    }
-    if (sortField === 'expiry') {
-      return { asc: 'Sooner -> Later', desc: 'Later -> Sooner' };
-    }
-    return { asc: 'Small -> Large', desc: 'Large -> Small' };
-  })();
-
   /** Returns bytes from cache if loaded, fallback value if not yet loaded, or null if unavailable. */
   const getTrafficBytes = (key: string | null, field: 'upload' | 'download', fallback: number): number => {
     const safeFallback = asFiniteNumber(fallback) ?? 0;
@@ -773,21 +828,21 @@ export const ClientManager: React.FC = () => {
             <div className="panel-inline-actions">
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                 onClick={() => setShowBatchModal(true)}
               >
                 <span className="d-inline-flex align-items-center gap-1"><UIIcon name="plus" size={14} />Batch Add</span>
               </button>
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
+                style={{ backgroundColor: colors.success, borderColor: colors.success, color: colors.successText }}
                 onClick={exportToCSV}
               >
                 <span className="d-inline-flex align-items-center gap-1"><UIIcon name="download" size={14} />Export CSV</span>
               </button>
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                 onClick={() => loadClients()}
                 disabled={loading}
               >
@@ -859,40 +914,6 @@ export const ClientManager: React.FC = () => {
           <div className="panel-block">
             <div className="panel-block__header">
               <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Sorting</h6>
-                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
-                  Header clicks still work too.
-                </p>
-              </div>
-            </div>
-            <div className="panel-block__stack">
-              <ChoiceChips
-                options={[
-                  { value: 'email', label: 'Email' },
-                  { value: 'node', label: 'Node' },
-                  { value: 'download', label: 'Download' },
-                  { value: 'total', label: 'Total Limit' },
-                  { value: 'expiry', label: 'Expiry' },
-                ]}
-                value={sortField}
-                onChange={(value) => setSortField(value)}
-                colors={colors}
-              />
-              <ChoiceChips
-                options={[
-                  { value: 'asc', label: sortDirectionLabels.asc },
-                  { value: 'desc', label: sortDirectionLabels.desc },
-                ]}
-                value={sortDirection}
-                onChange={(value) => setSortDirection(value)}
-                colors={colors}
-              />
-            </div>
-          </div>
-
-          <div className="panel-block">
-            <div className="panel-block__header">
-              <div>
                 <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Bulk Cleanup</h6>
                 <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
                   Selected and maintenance actions.
@@ -905,7 +926,7 @@ export const ClientManager: React.FC = () => {
                   <strong>{selectedClientKeys.size} clients selected</strong>
                   <button
                     className="btn btn-sm ms-2"
-                    style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }}
+                    style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: colors.dangerText }}
                     onClick={() => handleBatchDelete('selected')}
                   >
                     <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />Delete Selected</span>
@@ -929,7 +950,7 @@ export const ClientManager: React.FC = () => {
                 </button>
                 <button
                   className="btn btn-sm"
-                  style={{ backgroundColor: colors.info, borderColor: colors.info, color: '#ffffff' }}
+                  style={{ backgroundColor: colors.info, borderColor: colors.info, color: colors.infoText }}
                   onClick={() => handleResetTraffic(null)}
                 >
                   <span className="d-inline-flex align-items-center gap-1"><UIIcon name="refresh" size={14} />Reset All Traffic</span>
@@ -942,7 +963,13 @@ export const ClientManager: React.FC = () => {
       
       {/* Client Table */}
       <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        {loading && <div className="text-center py-3"><div className="spinner-border spinner-border-sm"></div></div>}
+        {loading && filteredClients.length > 0 && (
+          <div className="text-center py-1 small" style={{ color: colors.text.secondary }}>
+            <div className="spinner-border spinner-border-sm me-1" style={{ width: '0.75rem', height: '0.75rem' }}></div>
+            Updating client rows...
+          </div>
+        )}
+        {loading && filteredClients.length === 0 && <div className="text-center py-3"><div className="spinner-border spinner-border-sm"></div></div>}
         {!loading && trafficLoading && (
           <div className="text-center py-1 small" style={{ color: colors.text.secondary }}>
             <div className="spinner-border spinner-border-sm me-1" style={{ width: '0.75rem', height: '0.75rem' }}></div>
@@ -954,7 +981,7 @@ export const ClientManager: React.FC = () => {
           <p className="text-center py-3" style={{ color: colors.text.secondary }}>No clients found</p>
         )}
         
-        {!loading && filteredClients.length > 0 && (
+        {filteredClients.length > 0 && (
           <div className="table-responsive">
             <table className="table table-sm table-hover" style={{ color: colors.text.primary }}>
               <thead>
@@ -1066,7 +1093,7 @@ export const ClientManager: React.FC = () => {
                       <td>
                         <button
                           className="btn btn-sm"
-                          style={{ backgroundColor: colors.info, borderColor: colors.info, color: '#ffffff' }}
+                          style={{ backgroundColor: colors.info, borderColor: colors.info, color: colors.infoText }}
                           onClick={() => handleResetTraffic(client)}
                           title="Reset traffic"
                         >
@@ -1230,7 +1257,7 @@ export const ClientManager: React.FC = () => {
                 </button>
                 <button
                   className="btn"
-                  style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                  style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                   onClick={handleBatchAdd}
                   disabled={loading}
                 >

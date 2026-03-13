@@ -15,7 +15,14 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
-from xui_session import XUI_HTTP_TIMEOUT_SEC, login_panel, xui_request
+from xui_session import (
+    XUI_FAST_RETRIES,
+    XUI_FAST_TIMEOUT_SEC,
+    XUI_HTTP_TIMEOUT_SEC,
+    login_panel,
+    login_panel_detailed,
+    xui_request,
+)
 
 logger = logging.getLogger("sub_manager")
 VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
@@ -52,21 +59,45 @@ class ThreeXUIMonitor:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         try:
             password = self.decrypt(node.get("password", ""))
-            if not login_panel(s, base_url, node["user"], password):
+            login_result = login_panel_detailed(
+                s,
+                base_url,
+                node["user"],
+                password,
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
+            if not login_result.get("ok"):
                 logger.warning(f"ThreeXUIMonitor: failed to login to {node['name']}")
-                return None, None
+                return None, None, login_result
         except Exception as exc:
             logger.warning(f"ThreeXUIMonitor: login error for {node['name']}: {exc}")
-            return None, None
-        return s, base_url
+            return None, None, {
+                "ok": False,
+                "reason": "monitor_exception",
+                "error": str(exc),
+            }
+        return s, base_url, {"ok": True, "reason": "ok", "error": ""}
 
     def get_server_status(self, node: Dict) -> Dict:
         """GET /panel/api/server/status — статус CPU, RAM, диска, core service, сети."""
-        s, base_url = self._get_session(node)
+        s, base_url, login_result = self._get_session(node)
         if not s:
-            return {"node": node["name"], "available": False, "error": "Failed to connect"}
+            return {
+                "node": node["name"],
+                "available": False,
+                "status": "offline",
+                "reason": login_result.get("reason", "connection_failed"),
+                "error": login_result.get("error") or "Failed to connect",
+            }
         try:
-            res = xui_request(s, "GET", f"{base_url}/panel/api/server/status")
+            res = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/server/status",
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
@@ -115,18 +146,42 @@ class ThreeXUIMonitor:
             logger.warning(
                 f"ThreeXUIMonitor: server status for {node['name']} returned {res.status_code}"
             )
-            return {"node": node["name"], "available": False, "error": f"HTTP {res.status_code}"}
+            return {
+                "node": node["name"],
+                "available": False,
+                "status": "offline",
+                "reason": f"http_{res.status_code}",
+                "error": f"HTTP {res.status_code}",
+            }
         except Exception as exc:
             logger.warning(f"ThreeXUIMonitor: get_server_status error for {node['name']}: {exc}")
-            return {"node": node["name"], "available": False, "error": str(exc)}
+            return {
+                "node": node["name"],
+                "available": False,
+                "status": "offline",
+                "reason": "request_failed",
+                "error": str(exc),
+            }
 
     def get_inbounds(self, node: Dict) -> Dict:
         """GET /panel/api/inbounds/list — список inbounds."""
-        s, base_url = self._get_session(node)
+        s, base_url, login_result = self._get_session(node)
         if not s:
-            return {"node": node["name"], "available": False, "error": "Failed to connect", "inbounds": []}
+            return {
+                "node": node["name"],
+                "available": False,
+                "reason": login_result.get("reason", "connection_failed"),
+                "error": login_result.get("error") or "Failed to connect",
+                "inbounds": [],
+            }
         try:
-            res = xui_request(s, "GET", f"{base_url}/panel/api/inbounds/list")
+            res = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/inbounds/list",
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
@@ -167,11 +222,23 @@ class ThreeXUIMonitor:
 
     def get_online_clients(self, node: Dict) -> Dict:
         """POST /panel/api/inbounds/onlines — список активных клиентов."""
-        s, base_url = self._get_session(node)
+        s, base_url, login_result = self._get_session(node)
         if not s:
-            return {"node": node["name"], "available": False, "error": "Failed to connect", "online_clients": []}
+            return {
+                "node": node["name"],
+                "available": False,
+                "reason": login_result.get("reason", "connection_failed"),
+                "error": login_result.get("error") or "Failed to connect",
+                "online_clients": [],
+            }
         try:
-            res = xui_request(s, "POST", f"{base_url}/panel/api/inbounds/onlines")
+            res = xui_request(
+                s,
+                "POST",
+                f"{base_url}/panel/api/inbounds/onlines",
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
@@ -190,15 +257,22 @@ class ThreeXUIMonitor:
 
     def get_client_traffic(self, node: Dict, email: str) -> Dict:
         """GET /panel/api/inbounds/getClientTraffics/{email} — трафик клиента."""
-        s, base_url = self._get_session(node)
+        s, base_url, login_result = self._get_session(node)
         if not s:
-            return {"node": node["name"], "available": False, "error": "Failed to connect"}
+            return {
+                "node": node["name"],
+                "available": False,
+                "reason": login_result.get("reason", "connection_failed"),
+                "error": login_result.get("error") or "Failed to connect",
+            }
         try:
             safe_email = quote(email, safe="")
             res = xui_request(
                 s,
                 "GET",
                 f"{base_url}/panel/api/inbounds/getClientTraffics/{safe_email}",
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
             )
             if res.status_code == 200:
                 data = res.json()

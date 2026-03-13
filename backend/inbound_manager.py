@@ -7,16 +7,18 @@ import json
 import logging
 import sys
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
-from xui_session import login_panel, xui_request
+from xui_session import XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC, login_panel, xui_request
 from utils import parse_field_as_dict
 
 logger = logging.getLogger("sub_manager")
 VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
 CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
+INBOUND_MAX_WORKERS = max(1, int(os.getenv("INBOUND_MAX_WORKERS", "8")))
 
 
 def _requests_verify_value():
@@ -51,8 +53,8 @@ class InboundManager:
         Returns:
             Список инбаундов с метаданными
         """
-        inbounds = []
-        for node in nodes:
+        def _collect_node_inbounds(node: Dict) -> List[Dict]:
+            collected: List[Dict] = []
             try:
                 node_inbounds = self._fetch_inbounds_from_node(node)
                 for ib in node_inbounds:
@@ -79,10 +81,21 @@ class InboundManager:
                     security = stream.get("security", "")
                     inbound["security"] = security
                     inbound["is_reality"] = security == "reality"
-                    inbounds.append(inbound)
+                    collected.append(inbound)
             except Exception as exc:
                 logger.warning(f"Failed to fetch inbounds from {node['name']}: {exc}")
-        
+            return collected
+
+        inbounds: List[Dict] = []
+        workers = min(len(nodes), INBOUND_MAX_WORKERS)
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(_collect_node_inbounds, node) for node in nodes]
+            for future in as_completed(futures):
+                try:
+                    inbounds.extend(future.result())
+                except Exception as exc:
+                    logger.warning(f"Failed to aggregate inbounds: {exc}")
+
         return inbounds
     
     def _fetch_inbounds_from_node(self, node: Dict) -> List[Dict]:
@@ -94,10 +107,23 @@ class InboundManager:
         base_url = f"https://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            if not login_panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+            if not login_panel(
+                s,
+                base_url,
+                node['user'],
+                self.decrypt(node.get('password', '')),
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            ):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return []
-            res = xui_request(s, "GET", f"{base_url}/panel/api/inbounds/list")
+            res = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/inbounds/list",
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
             if res.status_code == 200:
                 data = res.json()
                 return data.get("obj", []) if data.get("success", False) else []

@@ -6,8 +6,12 @@ import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
 
 interface ServerStatus {
+  nodeId?: number;
   node: string;
   available: boolean;
+  loadingDetails?: boolean;
+  status?: string;
+  reason?: string;
   timestamp?: string;
   error?: string;
   system?: {
@@ -37,8 +41,21 @@ interface ServerStatus {
   };
 }
 
+interface SnapshotNode {
+  node_id?: number;
+  name: string;
+  available: boolean;
+  status?: string;
+  reason?: string;
+  error?: string;
+  xray_running?: boolean;
+  timestamp?: number;
+}
+
+const SERVER_STATUS_CACHE_KEY = 'sub_manager_server_status_cache_v1';
+
 export const ServerStatus: React.FC = () => {
-  const { colors } = useTheme();
+  const { colors, stylePreset } = useTheme();
   const [servers, setServers] = useState<ServerStatus[]>([]);
   const [nodeIds, setNodeIds] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
@@ -52,6 +69,29 @@ export const ServerStatus: React.FC = () => {
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsError, setLogsError] = useState('');
   const [logsLines, setLogsLines] = useState<string[]>([]);
+
+  const formatStatusReason = (server: ServerStatus) => {
+    const reason = server.reason || '';
+    if (reason === 'auth_failed') return 'Auth failed';
+    if (reason === 'two_factor_required') return '2FA required';
+    if (reason === 'tls_error') return 'TLS error';
+    if (reason === 'timeout') return 'Timeout';
+    if (reason.startsWith('http_')) return reason.replace('_', ' ').toUpperCase();
+    return server.error || 'Connection failed';
+  };
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(SERVER_STATUS_CACHE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as ServerStatus[];
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        setServers(parsed);
+      }
+    } catch {
+      // Ignore malformed cache.
+    }
+  }, []);
 
   useEffect(() => {
     loadServersStatus();
@@ -71,24 +111,110 @@ export const ServerStatus: React.FC = () => {
     setError('');
 
     try {
-      const nodesRes = await api.get('/v1/nodes', { auth: getAuth() });
+      const auth = getAuth();
+      const nodesRes = await api.get('/v1/nodes', { auth });
       const nodes: Array<{ id: number; name: string }> = nodesRes.data || [];
+      setServers((prev) => {
+        const byId = new Map(prev.map((server) => [server.nodeId, server]));
+        return nodes.map((node) => {
+          const existing = byId.get(node.id);
+          return existing
+            ? { ...existing, loadingDetails: true }
+            : {
+                nodeId: node.id,
+                node: node.name,
+                available: false,
+                loadingDetails: true,
+                status: 'loading',
+                reason: 'loading',
+                error: '',
+              };
+        });
+      });
+
+      const snapshotRes = await api.get('/v1/snapshots/latest', { auth });
+      const snapshotNodes: SnapshotNode[] = Array.isArray(snapshotRes.data?.nodes) ? snapshotRes.data.nodes : [];
+      const snapshotByNodeId = new Map<number, SnapshotNode>();
+      const snapshotByName = new Map<string, SnapshotNode>();
+      snapshotNodes.forEach((snapshot) => {
+        if (typeof snapshot.node_id === 'number') snapshotByNodeId.set(snapshot.node_id, snapshot);
+        snapshotByName.set(snapshot.name, snapshot);
+      });
 
       const idMap: Record<string, number> = {};
       nodes.forEach(n => { idMap[n.name] = n.id; });
       setNodeIds(idMap);
 
-      const statuses = await Promise.all(
-        nodes.map(n =>
-          api.get(`/v1/nodes/${n.id}/server-status`, { auth: getAuth() })
-            .then(r => r.data as ServerStatus)
-            .catch(() => ({ node: n.name, available: false, error: 'Connection failed' } as ServerStatus))
-        )
-      );
-      setServers(statuses);
+      const baseStatuses: ServerStatus[] = nodes.map((node) => {
+        const snapshot = snapshotByNodeId.get(node.id) || snapshotByName.get(node.name);
+        return {
+          nodeId: node.id,
+          node: node.name,
+          available: Boolean(snapshot?.available),
+          loadingDetails: Boolean(snapshot?.available),
+          status: snapshot?.status || (snapshot?.available ? 'online' : 'offline'),
+          reason: snapshot?.reason || (snapshot?.available ? 'ok' : 'unknown'),
+          error: snapshot?.error || '',
+          timestamp: snapshot?.timestamp ? new Date(snapshot.timestamp * 1000).toISOString() : undefined,
+          xray: snapshot ? { state: snapshot.xray_running ? 'running' : 'stopped', running: Boolean(snapshot.xray_running), version: '', uptime: 0 } : undefined,
+        };
+      });
+      setServers(baseStatuses);
+      try {
+        localStorage.setItem(SERVER_STATUS_CACHE_KEY, JSON.stringify(baseStatuses));
+      } catch {}
+      setLoading(false);
+
+      nodes.forEach((node) => {
+        const snapshot = snapshotByNodeId.get(node.id) || snapshotByName.get(node.name);
+        if (!snapshot?.available) {
+          return;
+        }
+
+        api.get(`/v1/nodes/${node.id}/server-status`, { auth })
+          .then((response) => {
+            const live = response.data as ServerStatus;
+            setServers((prev) => {
+              const next = prev.map((server) => (
+                server.nodeId !== node.id
+                  ? server
+                  : {
+                      ...server,
+                      ...live,
+                      nodeId: node.id,
+                      node: live.node || node.name,
+                      available: true,
+                      loadingDetails: false,
+                      status: server.status,
+                      reason: server.reason,
+                      error: server.error,
+                    }
+              ));
+              try {
+                localStorage.setItem(SERVER_STATUS_CACHE_KEY, JSON.stringify(next));
+              } catch {}
+              return next;
+            });
+          })
+          .catch(() => {
+            setServers((prev) => {
+              const next = prev.map((server) => (
+                server.nodeId !== node.id
+                  ? server
+                  : {
+                      ...server,
+                      loadingDetails: false,
+                    }
+              ));
+              try {
+                localStorage.setItem(SERVER_STATUS_CACHE_KEY, JSON.stringify(next));
+              } catch {}
+              return next;
+            });
+          });
+      });
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load server status');
-    } finally {
       setLoading(false);
     }
   };
@@ -180,11 +306,12 @@ export const ServerStatus: React.FC = () => {
     if (percent < 80) return '#d29922';
     return '#f85149';
   };
+  const isMinimalPreset = stylePreset === '3';
 
   return (
-    <div className="server-status">
-      <div className="d-flex justify-content-between align-items-center mb-3">
-        <h4 className="mb-0" style={{ color: colors.accent }}>Server Status</h4>
+    <section className="panel-block server-status">
+      <div className="panel-block__header mb-3">
+        <h4 className="mb-0" style={{ color: colors.text.primary }}>Server Status</h4>
         <div className="d-flex align-items-center gap-2">
           <div className="form-check form-check-inline mb-0">
             <input
@@ -200,20 +327,16 @@ export const ServerStatus: React.FC = () => {
           </div>
           <button
             className="btn btn-sm"
-            style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
-            onClick={loadServersStatus}
-            disabled={loading}
-          >
-            <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
-          </button>
-          <button
-            className="btn btn-sm"
-            style={{ backgroundColor: colors.success + '33', borderColor: colors.success + '66', color: colors.success }}
+            style={{
+              backgroundColor: colors.accent,
+              borderColor: colors.accent,
+              color: colors.accentText
+            }}
             onClick={forceRefresh}
             disabled={loading}
-            title="Force collector refresh"
+            title="Refresh server status"
           >
-            🔄
+            <UIIcon name="refresh" size={14} />
           </button>
         </div>
       </div>
@@ -226,7 +349,11 @@ export const ServerStatus: React.FC = () => {
 
       <div className="server-grid">
         {servers.map((server, idx) => (
-          <div className="server-card" key={idx} style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+          <div
+            className="server-card"
+            key={idx}
+            style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, boxShadow: isMinimalPreset ? 'none' : undefined }}
+          >
             {/* Card header */}
             <div className="server-card__header">
               <div className="server-card__name" style={{ color: colors.text.primary }}>
@@ -248,7 +375,16 @@ export const ServerStatus: React.FC = () => {
               <p className="server-card__error small" style={{ color: colors.warning }}>
                 <span className="d-inline-flex align-items-center gap-1">
                   <UIIcon name="warning" size={13} />
-                  {server.error || 'Connection failed'}
+                  {formatStatusReason(server)}
+                </span>
+              </p>
+            )}
+
+            {server.available && server.loadingDetails && (
+              <p className="server-card__error small" style={{ color: colors.text.secondary }}>
+                <span className="d-inline-flex align-items-center gap-1">
+                  <UIIcon name="spinner" size={13} />
+                  Loading live metrics...
                 </span>
               </p>
             )}
@@ -329,7 +465,13 @@ export const ServerStatus: React.FC = () => {
                     </span>
                     <button
                       className="btn btn-sm"
-                      style={{ backgroundColor: colors.warning + '33', borderColor: colors.warning + '66', color: colors.warning, padding: '1px 8px', fontSize: '0.75rem' }}
+                      style={{
+                        backgroundColor: isMinimalPreset ? colors.bg.tertiary : colors.warning + '33',
+                        borderColor: isMinimalPreset ? colors.border : colors.warning + '66',
+                        color: isMinimalPreset ? colors.text.primary : colors.warning,
+                        padding: '1px 8px',
+                        fontSize: '0.75rem'
+                      }}
                       onClick={() => handleRestartCore(server.node)}
                       disabled={!server.xray.running}
                       title="Restart core"
@@ -338,7 +480,13 @@ export const ServerStatus: React.FC = () => {
                     </button>
                     <button
                       className="btn btn-sm"
-                      style={{ backgroundColor: colors.accent + '33', borderColor: colors.accent + '66', color: colors.accent, padding: '1px 8px', fontSize: '0.75rem' }}
+                      style={{
+                        backgroundColor: isMinimalPreset ? colors.bg.tertiary : colors.accent + '33',
+                        borderColor: isMinimalPreset ? colors.border : colors.accent + '66',
+                        color: isMinimalPreset ? colors.text.primary : colors.accent,
+                        padding: '1px 8px',
+                        fontSize: '0.75rem'
+                      }}
                       onClick={() => handleViewLogs(server.node)}
                       title="View logs"
                     >
@@ -386,7 +534,7 @@ export const ServerStatus: React.FC = () => {
                   />
                   <button
                     className="btn btn-sm"
-                    style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                    style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                     disabled={logsLoading || !logsNodeId}
                     onClick={() => { if (logsNodeId) { loadServerLogs(logsNodeId, logsLevel); } }}
                   >
@@ -420,6 +568,6 @@ export const ServerStatus: React.FC = () => {
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 };
