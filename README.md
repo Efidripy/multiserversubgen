@@ -123,6 +123,114 @@ curl -u admin:password https://your-domain/my-panel/api/v1/backup/all \
 3. Только frontend
 4. Только Nginx конфиг
 
+### Windows + SSH
+
+Для пользователя на Windows добавлен PowerShell wrapper:
+
+- [scripts/installer/windows/invoke-remote-deploy.ps1](./scripts/installer/windows/invoke-remote-deploy.ps1)
+- [scripts/installer/windows/windows-install.ps1](./scripts/installer/windows/windows-install.ps1)
+- [scripts/installer/windows/windows-update.ps1](./scripts/installer/windows/windows-update.ps1)
+- [scripts/installer/windows/windows-smoke.ps1](./scripts/installer/windows/windows-smoke.ps1)
+- [scripts/installer/windows/install-answers.example.txt](./scripts/installer/windows/install-answers.example.txt)
+
+Он умеет:
+- упаковать текущее дерево проекта
+- скопировать его на удалённый Ubuntu-сервер
+- запустить `install.sh`, `update.sh` или `scripts/ops/smoke-test.sh`
+- сохранить удалённый лог
+- работать через password-based PuTTY (`plink.exe`/`pscp.exe`)
+- работать через OpenSSH c явным `-KeyPath`
+- использовать нестандартный SSH-порт через `-Port`
+
+Базовые примеры:
+
+```powershell
+# Установка по SSH с answers-файлом
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\invoke-remote-deploy.ps1 `
+  -HostName example.com `
+  -UserName root `
+  -Port 22 `
+  -Mode install `
+  -Password 'your-password' `
+  -AnswersFile .\install-answers.txt
+
+# Полное обновление
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\invoke-remote-deploy.ps1 `
+  -HostName example.com `
+  -UserName root `
+  -Port 22 `
+  -Mode update `
+  -Password 'your-password' `
+  -UpdateChoice 1
+
+# Smoke-проверка
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\invoke-remote-deploy.ps1 `
+  -HostName example.com `
+  -UserName root `
+  -Port 22 `
+  -Mode smoke `
+  -Password 'your-password'
+
+# Key-based запуск через OpenSSH
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\invoke-remote-deploy.ps1 `
+  -HostName example.com `
+  -UserName ubuntu `
+  -Port 22 `
+  -Mode smoke `
+  -KeyPath $HOME\.ssh\id_ed25519
+```
+
+Примечания:
+- для password-based режима wrapper использует `plink.exe` и `pscp.exe` из PuTTY
+- для key-based режима он может использовать штатные `ssh.exe` и `scp.exe`
+- если сервер слушает SSH не на `22`, передай `-Port`
+- если ключ не подхватывается агентом Windows/OpenSSH, передай `-KeyPath`
+- `install` режим требует локальный answers-файл для неинтерактивного запуска `install.sh`
+
+Упрощённые команды для дефолтного пользователя Windows:
+
+```powershell
+# 1. Скопировать шаблон и подставить свои значения
+copy .\scripts\installer\windows\install-answers.example.txt .\install-answers.txt
+
+# 2. Установка
+powershell -ExecutionPolicy Bypass -File .\scripts\installer\windows\windows-install.ps1 `
+  -HostName example.com `
+  -UserName root `
+  -Password 'your-password' `
+  -AnswersFile .\install-answers.txt
+
+# 3. Обновление
+powershell -ExecutionPolicy Bypass -File .\scripts\installer\windows\windows-update.ps1 `
+  -HostName example.com `
+  -UserName root `
+  -Password 'your-password'
+
+# 4. Smoke после установки/обновления
+powershell -ExecutionPolicy Bypass -File .\scripts\installer\windows\windows-smoke.ps1 `
+  -HostName example.com `
+  -UserName root `
+  -Password 'your-password'
+```
+
+Порядок строк в `install-answers.txt`:
+
+```text
+1. project/service name
+2. local app port
+3. public domain
+4. public scheme (http/https)
+5. random panel path? (y/n)
+6. manual panel path (only if previous line = n)
+7. install mode (b/a)
+8. enable monitoring? (y/n)
+9. random grafana path? (y/n, only if monitoring = y)
+10. manual grafana path (only if previous line = n)
+11. enable AdGuard metrics? (y/n)
+12. enable AdGuard Loki/promtail? (y/n)
+13. nginx config index (used only when installer asks to choose an existing nginx site)
+```
+
 ## 📁 Структура проекта
 
 ```

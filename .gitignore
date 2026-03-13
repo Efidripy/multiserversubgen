@@ -2,6 +2,7 @@ node_modules/
 frontend/node_modules/
 backend/build/
 frontend/dist/
+.npm-cache/
 *.pyc
 __pycache__/
 *.egg-info/
@@ -19,3 +20,5 @@ venv/
 *.dump
 .pytest_cache/
 .ruff_cache/
+installer-sync-*.tgz
+xui-core-patch.tgz

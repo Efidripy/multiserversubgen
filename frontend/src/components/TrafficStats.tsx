@@ -53,13 +53,15 @@ interface OnlineClient {
 }
 
 const normalizeEmailKey = (email: string): string => email.trim().toLowerCase();
+const TRAFFIC_STATS_CACHE_KEY = 'sub_manager_traffic_stats_cache_v1';
 
 export const TrafficStats: React.FC = () => {
-  const { colors } = useTheme();
+  const { colors, stylePreset } = useTheme();
   const [trafficData, setTrafficData] = useState<TrafficData[]>([]);
   const [onlineClients, setOnlineClients] = useState<OnlineClient[]>([]);
   const [onlineTrafficTotals, setOnlineTrafficTotals] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
+  const [onlineLoading, setOnlineLoading] = useState(false);
   const [error, setError] = useState('');
   const [groupBy, setGroupBy] = useState<'client' | 'inbound' | 'node'>('client');
   const [topN, setTopN] = useState(10);
@@ -67,8 +69,27 @@ export const TrafficStats: React.FC = () => {
   const [trafficSortDir, setTrafficSortDir] = useState<'asc' | 'desc'>('desc');
   const [onlineSortField, setOnlineSortField] = useState<'email' | 'node' | 'traffic'>('email');
   const [onlineSortDir, setOnlineSortDir] = useState<'asc' | 'desc'>('asc');
+  const chartAccent = stylePreset === '3' ? '#fafafa' : colors.accent;
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(TRAFFIC_STATS_CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as {
+          trafficData?: TrafficData[];
+          onlineClients?: OnlineClient[];
+          onlineTrafficTotals?: Record<string, number>;
+        };
+        if (Array.isArray(parsed.trafficData)) setTrafficData(parsed.trafficData);
+        if (Array.isArray(parsed.onlineClients)) setOnlineClients(parsed.onlineClients);
+        if (parsed.onlineTrafficTotals && typeof parsed.onlineTrafficTotals === 'object') {
+          setOnlineTrafficTotals(parsed.onlineTrafficTotals);
+        }
+      }
+    } catch {
+      // Ignore malformed cache.
+    }
+
     loadTrafficStats();
     loadOnlineClients();
     loadOnlineTrafficTotals();
@@ -123,6 +144,11 @@ export const TrafficStats: React.FC = () => {
         };
       });
       setTrafficData(parsed);
+      try {
+        const raw = localStorage.getItem(TRAFFIC_STATS_CACHE_KEY);
+        const prev = raw ? JSON.parse(raw) : {};
+        localStorage.setItem(TRAFFIC_STATS_CACHE_KEY, JSON.stringify({ ...prev, trafficData: parsed }));
+      } catch {}
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to load traffic stats');
     } finally {
@@ -131,6 +157,7 @@ export const TrafficStats: React.FC = () => {
   };
 
   const loadOnlineClients = async () => {
+    setOnlineLoading(true);
     try {
       const onlineRes = await api.get('/v1/clients/online', { auth: getAuth() });
       const items: Array<{ email: string; node?: string; node_name?: string; inbound_id?: number }> =
@@ -141,8 +168,21 @@ export const TrafficStats: React.FC = () => {
           node_name: c.node_name || c.node || 'unknown',
         }))
       );
+      try {
+        const raw = localStorage.getItem(TRAFFIC_STATS_CACHE_KEY);
+        const prev = raw ? JSON.parse(raw) : {};
+        localStorage.setItem(TRAFFIC_STATS_CACHE_KEY, JSON.stringify({
+          ...prev,
+          onlineClients: items.map((c) => ({
+            email: c.email,
+            node_name: c.node_name || c.node || 'unknown',
+          })),
+        }));
+      } catch {}
     } catch (err: any) {
       console.error('Failed to load online clients:', err);
+    } finally {
+      setOnlineLoading(false);
     }
   };
 
@@ -161,6 +201,11 @@ export const TrafficStats: React.FC = () => {
         totals[key] = (totals[key] || 0) + value;
       });
       setOnlineTrafficTotals(totals);
+      try {
+        const raw = localStorage.getItem(TRAFFIC_STATS_CACHE_KEY);
+        const prev = raw ? JSON.parse(raw) : {};
+        localStorage.setItem(TRAFFIC_STATS_CACHE_KEY, JSON.stringify({ ...prev, onlineTrafficTotals: totals }));
+      } catch {}
     } catch (err: any) {
       console.error('Failed to load online traffic totals:', err);
     }
@@ -257,11 +302,11 @@ export const TrafficStats: React.FC = () => {
       {
         label: 'Download (GB)',
         data: sortedTraffic.map(d => (d.download / 1073741824).toFixed(2)),
-        backgroundColor: colors.accent + 'CC',
-        borderColor: colors.accent,
+        backgroundColor: chartAccent + 'CC',
+        borderColor: chartAccent,
         borderWidth: 1.2,
         borderRadius: 10,
-        hoverBackgroundColor: colors.accent,
+        hoverBackgroundColor: chartAccent,
         hoverBorderColor: '#7dd3fc',
       },
     ],
@@ -287,11 +332,11 @@ export const TrafficStats: React.FC = () => {
         display: false,
       },
       tooltip: {
-        backgroundColor: 'rgba(8, 17, 32, 0.96)',
-        borderColor: 'rgba(125, 211, 252, 0.45)',
+        backgroundColor: stylePreset === '3' ? 'rgba(8, 8, 8, 0.96)' : 'rgba(8, 17, 32, 0.96)',
+        borderColor: stylePreset === '3' ? 'rgba(255, 255, 255, 0.18)' : 'rgba(125, 211, 252, 0.45)',
         borderWidth: 1,
-        titleColor: '#e2e8f0',
-        bodyColor: '#bae6fd',
+        titleColor: stylePreset === '3' ? '#fafafa' : '#e2e8f0',
+        bodyColor: stylePreset === '3' ? '#d4d4d8' : '#bae6fd',
         displayColors: false,
         padding: 10,
         cornerRadius: 10,
@@ -337,19 +382,6 @@ export const TrafficStats: React.FC = () => {
       <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
           <h5 className="mb-0" style={{ color: colors.accent }}>Traffic Statistics</h5>
-          <div>
-            <button
-              className="btn btn-sm"
-              style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
-              onClick={() => {
-                loadTrafficStats();
-                loadOnlineClients();
-              }}
-              disabled={loading}
-            >
-              {loading ? 'Loading...' : 'Refresh'}
-            </button>
-          </div>
         </div>
 
         {error && (
@@ -371,7 +403,7 @@ export const TrafficStats: React.FC = () => {
             <div className="panel-inline-actions">
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                 onClick={() => {
                   loadTrafficStats();
                   loadOnlineClients();
@@ -480,10 +512,12 @@ export const TrafficStats: React.FC = () => {
         <div className="d-flex justify-content-between align-items-center mb-3 gap-2">
           <h6 className="mb-0" style={{ color: colors.text.primary }}>Online Clients ({onlineClients.length})</h6>
           <div className="small" style={{ color: colors.text.secondary }}>
-            Click table headers to sort
+            {onlineLoading ? 'Loading online list...' : 'Click table headers to sort'}
           </div>
         </div>
-        {onlineClients.length === 0 ? (
+        {onlineLoading && onlineClients.length === 0 ? (
+          <div className="text-center py-3"><div className="spinner-border spinner-border-sm"></div></div>
+        ) : onlineClients.length === 0 ? (
           <p className="text-center py-3" style={{ color: colors.text.secondary }}>No clients online</p>
         ) : (
           <div className="table-responsive">

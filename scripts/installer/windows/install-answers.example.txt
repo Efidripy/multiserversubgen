@@ -1,0 +1,13 @@
+sub-manager
+666
+example.com
+https
+n
+panel1234
+b
+y
+n
+grafana12
+n
+n
+0

@@ -251,6 +251,20 @@ class SnapshotCollector:
         name = node.get("name", "unknown")
         try:
             status = self.xui_monitor.get_server_status(node)
+            if not bool(status.get("available")):
+                return {
+                    "name": name,
+                    "node_id": node.get("id"),
+                    "available": False,
+                    "status": status.get("status", "offline"),
+                    "reason": status.get("reason", "unavailable"),
+                    "error": status.get("error", "Failed to connect"),
+                    "xray_running": False,
+                    "cpu": 0,
+                    "online_clients": 0,
+                    "traffic_total": 0,
+                    "timestamp": time.time(),
+                }
             online = self.xui_monitor.get_online_clients(node)
             traffic = self.xui_monitor.get_traffic(node)
 
@@ -262,6 +276,9 @@ class SnapshotCollector:
                 "name": name,
                 "node_id": node.get("id"),
                 "available": available,
+                "status": "online" if available else "offline",
+                "reason": status.get("reason") or ("ok" if available else "unknown"),
+                "error": status.get("error", "") if isinstance(status, dict) else "",
                 "xray_running": ((status.get("xray") or {}).get("running", False) if isinstance(status, dict) else False),
                 "cpu": ((status.get("system") or {}).get("cpu", 0) if isinstance(status, dict) else 0),
                 "online_clients": len((online.get("online_clients") or []) if isinstance(online, dict) else []),
@@ -274,12 +291,14 @@ class SnapshotCollector:
                 "name": name,
                 "node_id": node.get("id"),
                 "available": False,
+                "status": "offline",
+                "reason": "collector_exception",
+                "error": str(exc),
                 "xray_running": False,
                 "cpu": 0,
                 "online_clients": 0,
                 "traffic_total": 0,
                 "timestamp": time.time(),
-                "error": str(exc),
             }
 
     async def _broadcast_delta(self, key: str, snapshot: Dict):
@@ -287,7 +306,7 @@ class SnapshotCollector:
         delta = {"node": key, "snapshot": snapshot}
         if isinstance(previous, dict):
             delta_fields = {}
-            for field in ("available", "xray_running", "cpu", "online_clients", "traffic_total"):
+            for field in ("available", "xray_running", "cpu", "online_clients", "traffic_total", "reason", "error"):
                 old_v = previous.get(field)
                 new_v = snapshot.get(field)
                 if old_v != new_v:

@@ -14,7 +14,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
-from xui_session import login_panel, xui_request
+from xui_session import XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC, login_panel, xui_request
 from utils import parse_field_as_dict
 
 logger = logging.getLogger("sub_manager")
@@ -60,7 +60,14 @@ class ClientManager:
         
         try:
             password = self.decrypt(node.get('password', ''))
-            if not login_panel(s, base_url, node['user'], password):
+            if not login_panel(
+                s,
+                base_url,
+                node['user'],
+                password,
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            ):
                 logger.warning(f"Failed to login to {node['name']}")
                 return None, None
         except Exception as exc:
@@ -76,7 +83,13 @@ class ClientManager:
             return []
         
         try:
-            res = xui_request(s, "GET", f"{base_url}/panel/api/inbounds/list")
+            res = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/inbounds/list",
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
             if res.status_code == 200:
                 data = res.json()
                 return data.get("obj", []) if data.get("success", False) else []

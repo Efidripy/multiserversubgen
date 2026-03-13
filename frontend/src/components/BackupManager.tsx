@@ -227,7 +227,7 @@ export const BackupManager: React.FC = () => {
             <div className="panel-inline-actions">
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                 onClick={downloadAllBackups}
                 disabled={loading || nodes.length === 0}
               >
@@ -311,7 +311,7 @@ export const BackupManager: React.FC = () => {
                     <td>
                       <button
                         className="btn btn-sm"
-                        style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
+                        style={{ backgroundColor: colors.success, borderColor: colors.success, color: colors.successText }}
                         onClick={() => downloadBackup(node.id, node.name)}
                         disabled={loading || backupProgress[node.id] === 'downloading'}
                       >
