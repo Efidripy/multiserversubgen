@@ -249,7 +249,7 @@ function formatTickLabel(tsSec: number, rangeSec: number): string {
 }
 
 export const MonitoringDashboard: React.FC = () => {
-  const { colors } = useTheme();
+  const { colors, stylePreset } = useTheme();
 
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [selectedScope, setSelectedScope] = useState<string>('all'); // "all" | node id as string
@@ -448,12 +448,18 @@ export const MonitoringDashboard: React.FC = () => {
   const labels = history.map((p) => formatTickLabel(p.ts, rangeSec));
   const allScopeSeries = useMemo(() => bucketizeAllNodesHistory(allScopeHistory, rangeSec), [allScopeHistory, rangeSec]);
   const allScopeLabels = allScopeSeries.buckets.map((ts) => formatTickLabel(ts, rangeSec));
+  const chartPalette = useMemo(
+    () => stylePreset === '3'
+      ? ['#fafafa', '#d4d4d8', '#a3a3a3', '#737373', '#525252', '#facc15', '#4ade80', '#ef4444']
+      : CHART_PALETTE,
+    [stylePreset]
+  );
 
   const cpuData = {
     labels: isAllScope ? allScopeLabels : labels,
     datasets: isAllScope
       ? allScopeSeries.perNode.map((node, idx) => {
-          const c = CHART_PALETTE[idx % CHART_PALETTE.length];
+          const c = chartPalette[idx % chartPalette.length];
           return {
             label: node.nodeName,
             data: node.points.map((p) => (p ? Number((p.cpu || 0).toFixed(2)) : null)),
@@ -484,7 +490,7 @@ export const MonitoringDashboard: React.FC = () => {
     labels: isAllScope ? allScopeLabels : labels,
     datasets: isAllScope
       ? allScopeSeries.perNode.map((node, idx) => {
-          const c = CHART_PALETTE[idx % CHART_PALETTE.length];
+          const c = chartPalette[idx % chartPalette.length];
           return {
             label: node.nodeName,
             data: node.points.map((p) => (p ? Number(p.online_clients || 0) : null)),
@@ -515,7 +521,7 @@ export const MonitoringDashboard: React.FC = () => {
     labels: isAllScope ? allScopeLabels : labels,
     datasets: isAllScope
       ? allScopeSeries.perNode.map((node, idx) => {
-          const c = CHART_PALETTE[idx % CHART_PALETTE.length];
+          const c = chartPalette[idx % chartPalette.length];
           return {
             label: node.nodeName,
             data: node.points.map((p) => (p ? Number(bytesToGb(p.traffic_total || 0).toFixed(2)) : null)),
@@ -558,11 +564,11 @@ export const MonitoringDashboard: React.FC = () => {
         },
       },
       tooltip: {
-        backgroundColor: 'rgba(8, 17, 32, 0.96)',
-        borderColor: 'rgba(125, 211, 252, 0.45)',
+        backgroundColor: stylePreset === '3' ? 'rgba(8, 8, 8, 0.96)' : 'rgba(8, 17, 32, 0.96)',
+        borderColor: stylePreset === '3' ? 'rgba(255, 255, 255, 0.18)' : 'rgba(125, 211, 252, 0.45)',
         borderWidth: 1,
-        titleColor: '#e2e8f0',
-        bodyColor: '#bae6fd',
+        titleColor: stylePreset === '3' ? '#fafafa' : '#e2e8f0',
+        bodyColor: stylePreset === '3' ? '#d4d4d8' : '#bae6fd',
         padding: 10,
         cornerRadius: 10,
         displayColors: true,
@@ -580,7 +586,7 @@ export const MonitoringDashboard: React.FC = () => {
       point: {
         hoverRadius: 4,
         hoverBorderWidth: 1.5,
-        hoverBorderColor: '#e0f2fe',
+        hoverBorderColor: stylePreset === '3' ? '#ffffff' : '#e0f2fe',
       },
     },
     scales: {
@@ -657,7 +663,7 @@ export const MonitoringDashboard: React.FC = () => {
     return {
       labels: adguardTrendLabels,
       datasets: (adguardHistory?.series || []).map((s, idx) => {
-        const c = CHART_PALETTE[idx % CHART_PALETTE.length];
+        const c = chartPalette[idx % chartPalette.length];
         return {
           label: `${s.source_name} QPS`,
           data: toRateSeries(s.points || [], 'queries_total'),
@@ -677,7 +683,7 @@ export const MonitoringDashboard: React.FC = () => {
     return {
       labels: adguardTrendLabels,
       datasets: (adguardHistory?.series || []).map((s, idx) => {
-        const c = CHART_PALETTE[idx % CHART_PALETTE.length];
+        const c = chartPalette[idx % chartPalette.length];
         return {
           label: `${s.source_name} Block %`,
           data: (s.points || []).map((p) => (p ? Number((p.blocked_rate || 0).toFixed(2)) : null)),
@@ -697,7 +703,7 @@ export const MonitoringDashboard: React.FC = () => {
     return {
       labels: adguardTrendLabels,
       datasets: (adguardHistory?.series || []).map((s, idx) => {
-        const c = CHART_PALETTE[idx % CHART_PALETTE.length];
+        const c = chartPalette[idx % chartPalette.length];
         return {
           label: `${s.source_name} Latency ms`,
           data: (s.points || []).map((p) => (p ? Number((p.avg_latency_ms || 0).toFixed(2)) : null)),
@@ -714,8 +720,8 @@ export const MonitoringDashboard: React.FC = () => {
   }, [adguardHistory, adguardTrendLabels]);
 
   return (
-    <div className="monitoring-panel card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-      <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+    <div className="monitoring-panel panel-block" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+      <div className="monitoring-panel__header mb-3">
         <h4 className="mb-0" style={{ color: colors.text.primary }}>
           Monitoring
         </h4>
@@ -724,7 +730,7 @@ export const MonitoringDashboard: React.FC = () => {
           href={grafanaUrl}
           target="_blank"
           rel="noreferrer"
-          style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#fff' }}
+          style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
         >
           Открыть Grafana
         </a>
@@ -831,7 +837,7 @@ export const MonitoringDashboard: React.FC = () => {
               <h6 className="mb-0" style={{ color: colors.text.primary }}>AdGuard DNS Monitoring</h6>
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.info, borderColor: colors.info, color: '#fff' }}
+                style={{ backgroundColor: colors.info, borderColor: colors.info, color: colors.infoText }}
                 onClick={collectAdguardNow}
                 disabled={adguardLoading}
               >
@@ -855,7 +861,7 @@ export const MonitoringDashboard: React.FC = () => {
               <div className="col-md-2">
                 <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
                   <div className="small" style={{ color: colors.text.secondary }}>Queries</div>
-                  <strong style={{ color: colors.accent }}>{Math.round(adguardOverview?.summary?.queries_total || 0).toLocaleString()}</strong>
+                  <strong style={{ color: stylePreset === '3' ? colors.text.primary : colors.accent }}>{Math.round(adguardOverview?.summary?.queries_total || 0).toLocaleString()}</strong>
                 </div>
               </div>
               <div className="col-md-2">
@@ -873,7 +879,7 @@ export const MonitoringDashboard: React.FC = () => {
               <div className="col-md-2">
                 <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
                   <div className="small" style={{ color: colors.text.secondary }}>Cache hit</div>
-                  <strong style={{ color: colors.info }}>{(adguardOverview?.summary?.cache_hit_ratio || 0).toFixed(2)}%</strong>
+                  <strong style={{ color: stylePreset === '3' ? colors.text.primary : colors.info }}>{(adguardOverview?.summary?.cache_hit_ratio || 0).toFixed(2)}%</strong>
                 </div>
               </div>
               <div className="col-md-2">
@@ -1076,7 +1082,7 @@ export const MonitoringDashboard: React.FC = () => {
               <div className="col-md-1 d-grid">
                 <button
                   className="btn btn-sm"
-                  style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#fff' }}
+                  style={{ backgroundColor: colors.success, borderColor: colors.success, color: colors.successText }}
                   onClick={async () => {
                     try {
                       await api.post('/v1/adguard/sources', adguardForm, { auth: getAuth() });

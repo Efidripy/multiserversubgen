@@ -9,6 +9,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.setdefault("PROJECT_DIR", "/tmp")
 import main
+from services import subscription_links as subscription_links_service
 
 
 def _make_inbound(security, flow=""):
@@ -47,39 +48,39 @@ def _nodes():
 class TestVlessFlowParameter:
     def setup_method(self):
         # Clear link cache before each test to avoid cache hits
-        main.links_cache.clear()
+        subscription_links_service.links_cache.clear()
 
     def test_reality_with_flow_includes_flow_param(self):
         inbound = _make_inbound("reality", flow="xtls-rprx-vision")
-        with patch("main.fetch_inbounds", return_value=[inbound]):
+        with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
             links = main.get_links_filtered(_nodes(), "user@example.com")
         assert len(links) == 1
         assert "&flow=xtls-rprx-vision&" in links[0]
 
     def test_tls_with_flow_includes_flow_param(self):
         inbound = _make_inbound("tls", flow="xtls-rprx-vision")
-        with patch("main.fetch_inbounds", return_value=[inbound]):
+        with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
             links = main.get_links_filtered(_nodes(), "user@example.com")
         assert len(links) == 1
         assert "&flow=xtls-rprx-vision&" in links[0]
 
     def test_reality_without_flow_omits_flow_param(self):
         inbound = _make_inbound("reality", flow="")
-        with patch("main.fetch_inbounds", return_value=[inbound]):
+        with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
             links = main.get_links_filtered(_nodes(), "user@example.com")
         assert len(links) == 1
         assert "flow" not in links[0]
 
     def test_tls_without_flow_omits_flow_param(self):
         inbound = _make_inbound("tls", flow="")
-        with patch("main.fetch_inbounds", return_value=[inbound]):
+        with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
             links = main.get_links_filtered(_nodes(), "user@example.com")
         assert len(links) == 1
         assert "flow" not in links[0]
 
     def test_reality_flow_udp443_included(self):
         inbound = _make_inbound("reality", flow="xtls-rprx-vision-udp443")
-        with patch("main.fetch_inbounds", return_value=[inbound]):
+        with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
             links = main.get_links_filtered(_nodes(), "user@example.com")
         assert len(links) == 1
         assert "&flow=xtls-rprx-vision-udp443&" in links[0]
@@ -104,7 +105,7 @@ class TestVlessFlowParameter:
             "streamSettings": json.dumps(stream_settings),
             "settings": json.dumps(settings),
         }
-        with patch("main.fetch_inbounds", return_value=[inbound]):
+        with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
             links = main.get_links_filtered(_nodes(), "user@example.com")
         assert len(links) == 1
         assert "flow" not in links[0]

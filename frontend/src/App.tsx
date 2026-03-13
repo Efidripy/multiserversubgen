@@ -17,6 +17,7 @@ import { IconName, UIIcon } from './components/UIIcon';
 
 type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 type NoticeLevel = 'info' | 'success' | 'warning' | 'danger';
+type HeaderStatTone = 'default' | 'accent' | 'success' | 'warning' | 'danger';
 
 interface UiNotification {
   id: string;
@@ -25,6 +26,83 @@ interface UiNotification {
   level: NoticeLevel;
   ts: number;
 }
+
+interface HeaderStat {
+  label: string;
+  value: string;
+  tone?: HeaderStatTone;
+}
+
+interface HeaderSummary {
+  description: string;
+  stats: HeaderStat[];
+}
+
+const HEADER_SUMMARY_CACHE_KEY = 'sub_manager_header_summary_cache_v1';
+const ACTIVE_TAB_CACHE_KEY = 'sub_manager_active_tab_v1';
+
+const TAB_META: Record<TabType, { icon: IconName; labelKey: string; eyebrow: string; description: string }> = {
+  dashboard: {
+    icon: 'dashboard',
+    labelKey: 'nav.dashboard',
+    eyebrow: 'Mission Control',
+    description: 'Local command overview for nodes, xray state and the most important operational checks.'
+  },
+  inbounds: {
+    icon: 'inbounds',
+    labelKey: 'nav.inbounds',
+    eyebrow: 'Ingress Matrix',
+    description: 'Inspect ports, remarks and protocol exposure without leaving the main control surface.'
+  },
+  clients: {
+    icon: 'clients',
+    labelKey: 'nav.clients',
+    eyebrow: 'Client Directory',
+    description: 'Search, sort and manage client records across the connected local panels.'
+  },
+  traffic: {
+    icon: 'traffic',
+    labelKey: 'nav.traffic',
+    eyebrow: 'Usage Telemetry',
+    description: 'Watch active sessions, heavy users and current transfer distribution in one place.'
+  },
+  monitoring: {
+    icon: 'monitoring',
+    labelKey: 'nav.monitoring',
+    eyebrow: 'Signal Deck',
+    description: 'Review stack health, historical charts and AdGuard metrics through the same visual language.'
+  },
+  backup: {
+    icon: 'backup',
+    labelKey: 'nav.backup',
+    eyebrow: 'Recovery Operations',
+    description: 'Operate backups and restores from grouped blocks without a scattered workflow.'
+  },
+  subscriptions: {
+    icon: 'subscriptions',
+    labelKey: 'nav.subscriptions',
+    eyebrow: 'Link Delivery',
+    description: 'Build filtered subscription output and copy delivery links from a tighter control layout.'
+  },
+};
+
+const formatCompactNumber = (value: number) =>
+  new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: value >= 100 ? 0 : 1 }).format(value);
+
+const formatBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const digits = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
+};
+
+const formatPercent = (value: number) => `${Number.isFinite(value) ? value.toFixed(value >= 10 ? 0 : 1) : '0'}%`;
 
 export const App: React.FC = () => {
   const { theme, toggleTheme, colors } = useTheme();
@@ -37,9 +115,24 @@ export const App: React.FC = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authBootstrapDone, setAuthBootstrapDone] = useState(false);
   const [authError, setAuthError] = useState('');
-  const [activeTab, setActiveTab] = useState<TabType>('dashboard');
+  const [activeTab, setActiveTab] = useState<TabType>(() => {
+    try {
+      const raw = localStorage.getItem(ACTIVE_TAB_CACHE_KEY);
+      if (raw && raw in TAB_META) {
+        return raw as TabType;
+      }
+    } catch {
+      // Ignore localStorage read failures.
+    }
+    return 'dashboard';
+  });
   const [key, setKey] = useState(0);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [headerSummary, setHeaderSummary] = useState<HeaderSummary>({
+    description: TAB_META.dashboard.description,
+    stats: [],
+  });
+  const [headerLoading, setHeaderLoading] = useState(false);
 
   const [notifications, setNotifications] = useState<UiNotification[]>([]);
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
@@ -48,6 +141,39 @@ export const App: React.FC = () => {
   const [browserNotifyPermission, setBrowserNotifyPermission] = useState<'default' | 'granted' | 'denied'>('default');
 
   const lastNotifyRef = useRef<Record<string, number>>({});
+  const updateHeaderSummary = (summary: HeaderSummary) => {
+    setHeaderSummary(summary);
+    try {
+      const raw = localStorage.getItem(HEADER_SUMMARY_CACHE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      parsed[activeTab] = summary;
+      localStorage.setItem(HEADER_SUMMARY_CACHE_KEY, JSON.stringify(parsed));
+    } catch {
+      // Ignore cache failures.
+    }
+  };
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(HEADER_SUMMARY_CACHE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Partial<Record<TabType, HeaderSummary>>;
+      const cached = parsed?.[activeTab];
+      if (cached?.description && Array.isArray(cached.stats)) {
+        updateHeaderSummary(cached);
+      }
+    } catch {
+      // Ignore malformed cache.
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVE_TAB_CACHE_KEY, activeTab);
+    } catch {
+      // Ignore localStorage write failures.
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -94,6 +220,213 @@ export const App: React.FC = () => {
       setUnreadCount(0);
     }
   }, [notificationPanelOpen]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    let cancelled = false;
+
+    const buildSummary = async () => {
+      const auth = getAuth();
+      setHeaderLoading(true);
+
+      try {
+        switch (activeTab) {
+          case 'dashboard': {
+            const [nodesRes, snapshotRes] = await Promise.all([
+              api.get('/v1/nodes', { auth }),
+              api.get('/v1/snapshots/latest', { auth }),
+            ]);
+            const nodes = Array.isArray(nodesRes.data) ? nodesRes.data : [];
+            const snapshotNodes = Array.isArray(snapshotRes.data?.nodes) ? snapshotRes.data.nodes : [];
+            const online = snapshotNodes.filter((node: any) => node.available).length;
+            const authBlocked = snapshotNodes.filter((node: any) => node.reason === 'auth_failed' || node.reason === 'two_factor_required').length;
+            const down = snapshotNodes.filter((node: any) => !node.available).length;
+            const xray = snapshotNodes.filter((node: any) => node.xray_running).length;
+            const onlineClients = snapshotNodes.reduce((sum: number, node: any) => sum + (node.online_clients || 0), 0);
+            if (!cancelled) {
+              updateHeaderSummary({
+                description: authBlocked > 0
+                  ? `${online}/${nodes.length || snapshotNodes.length || 0} nodes answer polling. ${authBlocked} node${authBlocked === 1 ? '' : 's'} currently fail auth.`
+                  : `${online}/${nodes.length || snapshotNodes.length || 0} nodes answer polling right now. Xray is up on ${xray} nodes.`,
+                stats: [
+                  { label: 'Registered nodes', value: String(nodes.length || snapshotNodes.length || 0) },
+                  { label: 'Reachable now', value: String(online), tone: online > 0 ? 'success' : 'warning' },
+                  { label: 'Auth issues', value: String(authBlocked), tone: authBlocked > 0 ? 'danger' : 'default' },
+                  { label: 'Offline nodes', value: String(down), tone: down > 0 ? 'warning' : 'default' },
+                  { label: 'Xray running', value: String(xray), tone: xray > 0 ? 'accent' : 'warning' },
+                  { label: 'Online clients', value: formatCompactNumber(onlineClients) },
+                ],
+              });
+            }
+            break;
+          }
+          case 'inbounds': {
+            const res = await api.get('/v1/inbounds', { auth });
+            const inbounds = Array.isArray(res.data) ? res.data : [];
+            const enabled = inbounds.filter((item: any) => item.enable).length;
+            const protocols = new Set(inbounds.map((item: any) => item.protocol).filter(Boolean)).size;
+            const nodesCovered = new Set(inbounds.map((item: any) => item.node_name).filter(Boolean)).size;
+            if (!cancelled) {
+              updateHeaderSummary({
+                description: `Ports and remarks are now summarized directly in the page header instead of a decorative banner.`,
+                stats: [
+                  { label: 'Total inbounds', value: String(inbounds.length) },
+                  { label: 'Enabled', value: String(enabled), tone: enabled > 0 ? 'success' : 'warning' },
+                  { label: 'Protocols', value: String(protocols) },
+                  { label: 'Covered nodes', value: String(nodesCovered) },
+                ],
+              });
+            }
+            break;
+          }
+          case 'clients': {
+            const [clientsRes, nodesRes] = await Promise.all([
+              api.get('/v1/clients', { auth }),
+              api.get('/v1/nodes', { auth }),
+            ]);
+            const clients = Array.isArray(clientsRes.data) ? clientsRes.data : [];
+            const nodes = Array.isArray(nodesRes.data) ? nodesRes.data : [];
+            const enabled = clients.filter((item: any) => item.enable).length;
+            const expiringSoon = clients.filter((item: any) => {
+              const expiry = Number(item.expiryTime || 0);
+              return expiry > Date.now() && expiry - Date.now() <= 7 * 24 * 60 * 60 * 1000;
+            }).length;
+            if (!cancelled) {
+              updateHeaderSummary({
+                description: `Client operations now surface the live fleet size, enabled accounts and upcoming expirations in the header.`,
+                stats: [
+                  { label: 'Client records', value: formatCompactNumber(clients.length) },
+                  { label: 'Enabled', value: formatCompactNumber(enabled), tone: enabled > 0 ? 'success' : 'warning' },
+                  { label: 'Expiring in 7d', value: String(expiringSoon), tone: expiringSoon > 0 ? 'warning' : 'default' },
+                  { label: 'Available nodes', value: String(nodes.length) },
+                ],
+              });
+            }
+            break;
+          }
+          case 'traffic': {
+            const [onlineRes, trafficRes] = await Promise.all([
+              api.get('/v1/clients/online', { auth }),
+              api.get('/v1/traffic/stats', { auth, params: { group_by: 'client' } }),
+            ]);
+            const onlineClients = Array.isArray(onlineRes.data?.online_clients) ? onlineRes.data.online_clients : [];
+            const statsObj = trafficRes.data?.stats || {};
+            const trafficEntries = Object.entries(statsObj) as Array<[string, { up?: number; down?: number; total?: number }]>;
+            const totalTraffic = trafficEntries.reduce((sum, [, value]) => sum + (value.total || value.up || 0) + (value.total ? 0 : value.down || 0), 0);
+            const heaviest = trafficEntries
+              .map(([name, value]) => ({ name, total: value.total || (value.up || 0) + (value.down || 0) }))
+              .sort((a, b) => b.total - a.total)[0];
+            if (!cancelled) {
+              updateHeaderSummary({
+                description: `The traffic header now surfaces who is online, how much data moved and which client currently leads the table.`,
+                stats: [
+                  { label: 'Online now', value: formatCompactNumber(onlineClients.length), tone: onlineClients.length > 0 ? 'success' : 'default' },
+                  { label: 'Tracked entries', value: formatCompactNumber(trafficEntries.length) },
+                  { label: 'Total traffic', value: formatBytes(totalTraffic), tone: 'accent' },
+                  { label: 'Heaviest client', value: heaviest ? heaviest.name : 'None' },
+                ],
+              });
+            }
+            break;
+          }
+          case 'monitoring': {
+            const [depsRes, overviewRes, stackRes] = await Promise.allSettled([
+              api.get('/v1/health/deps', { auth }),
+              api.get('/v1/adguard/overview', { auth }),
+              api.get('/v1/monitoring/stack', { auth }),
+            ]);
+            const deps = depsRes.status === 'fulfilled' ? depsRes.value.data : null;
+            const overview = overviewRes.status === 'fulfilled' ? overviewRes.value.data : null;
+            const stack = stackRes.status === 'fulfilled' ? stackRes.value.data : null;
+            const services = stack?.services ? Object.values(stack.services) as any[] : [];
+            const servicesUp = services.filter((service: any) => service.ok).length;
+            const sourcesTotal = overview?.summary?.sources_total || 0;
+            const sourcesOnline = overview?.summary?.sources_online || 0;
+            if (!cancelled) {
+              updateHeaderSummary({
+                description: `Monitoring now summarizes stack probes and AdGuard collection directly in the first block instead of dead filler text.`,
+                stats: [
+                  { label: 'Stack probes', value: `${servicesUp}/${services.length || 0}`, tone: servicesUp === services.length && services.length > 0 ? 'success' : 'warning' },
+                  { label: 'AdGuard sources', value: `${sourcesOnline}/${sourcesTotal}`, tone: sourcesOnline > 0 ? 'success' : 'warning' },
+                  { label: 'Blocked rate', value: formatPercent(overview?.summary?.blocked_rate || 0), tone: 'accent' },
+                  { label: 'Collector', value: deps?.collector_running ? 'Running' : 'Idle', tone: deps?.collector_running ? 'success' : 'warning' },
+                ],
+              });
+            }
+            break;
+          }
+          case 'backup': {
+            const res = await api.get('/v1/nodes', { auth });
+            const nodes = Array.isArray(res.data) ? res.data : [];
+            const readOnly = nodes.filter((node: any) => Boolean(node.read_only)).length;
+            if (!cancelled) {
+              updateHeaderSummary({
+                description: `Recovery operations now expose fleet coverage and writable targets before you touch import or restore actions.`,
+                stats: [
+                  { label: 'Known nodes', value: String(nodes.length) },
+                  { label: 'Writable', value: String(nodes.length - readOnly), tone: nodes.length - readOnly > 0 ? 'success' : 'warning' },
+                  { label: 'Read-only', value: String(readOnly) },
+                  { label: 'Restore targets', value: String(nodes.length) },
+                ],
+              });
+            }
+            break;
+          }
+          case 'subscriptions': {
+            const [emailsRes, nodesRes] = await Promise.all([
+              api.get('/v1/emails', { auth }),
+              api.get('/v1/nodes', { auth }),
+            ]);
+            const emails = Array.isArray(emailsRes.data?.emails) ? emailsRes.data.emails : [];
+            const stats = emailsRes.data?.stats || {};
+            const domains = new Map<string, number>();
+            let downloads = 0;
+            let latest = 0;
+            emails.forEach((email: string) => {
+              const domain = email.split('@')[1] || 'unknown';
+              domains.set(domain, (domains.get(domain) || 0) + 1);
+              downloads += stats[email]?.count || 0;
+              latest = Math.max(latest, Date.parse(stats[email]?.last || '') || 0);
+            });
+            const groups = Array.from(domains.values()).filter((count) => count >= 2).length;
+            const nodes = Array.isArray(nodesRes.data) ? nodesRes.data : [];
+            if (!cancelled) {
+              updateHeaderSummary({
+                description: `Subscription delivery now promotes real output volume and grouping signals instead of a generic hero statement.`,
+                stats: [
+                  { label: 'Email links', value: formatCompactNumber(emails.length) },
+                  { label: 'Total downloads', value: formatCompactNumber(downloads), tone: downloads > 0 ? 'accent' : 'default' },
+                  { label: 'Reusable groups', value: String(groups) },
+                  { label: 'Nodes in filter', value: String(nodes.length) },
+                ],
+              });
+            }
+            break;
+          }
+          default:
+            break;
+        }
+      } catch {
+        if (!cancelled && headerSummary.stats.length === 0) {
+          updateHeaderSummary({
+            description: TAB_META[activeTab].description,
+            stats: [],
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setHeaderLoading(false);
+        }
+      }
+    };
+
+    buildSummary();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, isAuthenticated, key]);
 
   const pushUiNotification = (title: string, message: string, level: NoticeLevel = 'info', dedupeKey?: string) => {
     const now = Date.now();
@@ -286,7 +619,7 @@ export const App: React.FC = () => {
               </div>
             )}
             {authError && <div className="alert alert-danger" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>{authError}</div>}
-            <button type="submit" className="btn w-100" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}>
+            <button type="submit" className="btn w-100" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}>
               {t('auth.signIn')}
             </button>
           </form>
@@ -295,23 +628,27 @@ export const App: React.FC = () => {
     );
   }
 
-  const tabMeta: Record<TabType, { icon: IconName; label: string }> = {
-    dashboard: { icon: 'dashboard', label: t('nav.dashboard') },
-    inbounds: { icon: 'inbounds', label: t('nav.inbounds') },
-    clients: { icon: 'clients', label: t('nav.clients') },
-    traffic: { icon: 'traffic', label: t('nav.traffic') },
-    monitoring: { icon: 'monitoring', label: t('nav.monitoring') },
-    backup: { icon: 'backup', label: t('nav.backup') },
-    subscriptions: { icon: 'subscriptions', label: t('nav.subscriptions') },
-  };
+  const tabMeta = Object.fromEntries(
+    Object.entries(TAB_META).map(([key, value]) => [
+      key,
+      { ...value, label: t(value.labelKey) },
+    ])
+  ) as Record<TabType, { icon: IconName; labelKey: string; label: string; eyebrow: string; description: string }>;
 
   const renderTabContent = () => {
     switch (activeTab) {
       case 'dashboard':
         return (
           <div className="d-grid gap-3">
-            <NodeManager onReload={() => setKey((prev) => prev + 1)} />
-            <ServerStatus />
+            <NodeManager onReload={() => setKey((prev) => prev + 1)} showFleet={false} />
+            <div className="dashboard-main-grid">
+              <div className="dashboard-main-grid__status">
+                <ServerStatus />
+              </div>
+              <div className="dashboard-main-grid__fleet">
+                <NodeManager onReload={() => setKey((prev) => prev + 1)} showIntake={false} />
+              </div>
+            </div>
           </div>
         );
       case 'inbounds':
@@ -455,6 +792,39 @@ export const App: React.FC = () => {
         )}
 
         <main className="app-content">
+          <section className="app-shell-header">
+            <div className="app-shell-header__hero card p-4">
+              <div className="app-shell-header__main">
+                <div className="app-shell-header__intro">
+                  <div className="app-shell-header__eyebrow">{tabMeta[activeTab].eyebrow}</div>
+                  <h1 className="app-shell-header__title">
+                    <span className="d-inline-flex align-items-center gap-2">
+                      <UIIcon name={tabMeta[activeTab].icon} size={18} />
+                      {tabMeta[activeTab].label}
+                    </span>
+                  </h1>
+                  <p className="app-shell-header__copy">{headerSummary.description}</p>
+                  {headerLoading && <div className="app-shell-header__live-note">Updating data in background...</div>}
+                </div>
+
+                <div className="app-shell-header__stats">
+                  {headerSummary.stats.map((stat) => (
+                    <article key={stat.label} className={`app-shell-stat app-shell-stat--${stat.tone || 'default'}`}>
+                      <span className="app-shell-stat__label">{stat.label}</span>
+                      <span className="app-shell-stat__value">{stat.value}</span>
+                    </article>
+                  ))}
+                  {headerLoading && headerSummary.stats.length === 0 && (
+                    <article className="app-shell-stat app-shell-stat--default">
+                      <span className="app-shell-stat__label">Sync</span>
+                      <span className="app-shell-stat__value">Loading...</span>
+                    </article>
+                  )}
+                </div>
+              </div>
+            </div>
+          </section>
+
           <div className="tab-panel">
             {renderTabContent()}
           </div>

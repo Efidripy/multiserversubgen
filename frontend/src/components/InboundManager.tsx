@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
@@ -25,6 +25,18 @@ interface NodeInfo {
 
 interface InboundTemplateMap {
   [key: string]: Record<string, any>;
+}
+
+interface InboundsPageCache {
+  ts: number;
+  inbounds: Inbound[];
+  allNodes: NodeInfo[];
+  nodeNameToId: Record<string, number>;
+  filterProtocol: string;
+  filterSecurity: string;
+  filterNode: string;
+  sortField: 'name' | 'node' | 'protocol' | 'port' | 'status';
+  sortDirection: 'asc' | 'desc';
 }
 
 const INBOUND_TEMPLATES: InboundTemplateMap = {
@@ -117,6 +129,8 @@ interface InboundManagerProps {
 }
 
 const inboundKey = (ib: Inbound) => `${ib.node_name}:${ib.id}`;
+const INBOUNDS_PAGE_CACHE_KEY = 'sub_manager_inbounds_page_cache_v1';
+const INBOUNDS_PAGE_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 
 export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
   const { colors } = useTheme();
@@ -128,6 +142,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
   const [allNodes, setAllNodes] = useState<NodeInfo[]>([]);
 
   const [loading, setLoading] = useState(false);
+  const [pageLoading, setPageLoading] = useState(false);
   const [error, setError] = useState('');
 
   const [filterProtocol, setFilterProtocol] = useState('');
@@ -150,10 +165,69 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [batchRemark, setBatchRemark] = useState('');
   const [batchEnableMode, setBatchEnableMode] = useState<'none' | 'enable' | 'disable'>('none');
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
+    try {
+      const raw = localStorage.getItem(INBOUNDS_PAGE_CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw) as InboundsPageCache;
+        if (
+          parsed &&
+          typeof parsed.ts === 'number' &&
+          Date.now() - parsed.ts < INBOUNDS_PAGE_CACHE_MAX_AGE_MS
+        ) {
+          if (Array.isArray(parsed.inbounds)) setInbounds(parsed.inbounds);
+          if (Array.isArray(parsed.allNodes)) {
+            setAllNodes(parsed.allNodes);
+            if (addTargetNodeIds.size === 0) {
+              setAddTargetNodeIds(new Set(parsed.allNodes.map((node) => node.id)));
+            }
+          }
+          if (parsed.nodeNameToId && typeof parsed.nodeNameToId === 'object') {
+            setNodeNameToId(parsed.nodeNameToId);
+          }
+          if (typeof parsed.filterProtocol === 'string') setFilterProtocol(parsed.filterProtocol);
+          if (typeof parsed.filterSecurity === 'string') setFilterSecurity(parsed.filterSecurity);
+          if (typeof parsed.filterNode === 'string') setFilterNode(parsed.filterNode);
+          if (parsed.sortField) setSortField(parsed.sortField);
+          if (parsed.sortDirection) setSortDirection(parsed.sortDirection);
+        }
+      }
+    } catch {
+      // Ignore malformed cache.
+    }
+
     loadInbounds();
   }, []);
+
+  useEffect(() => {
+    try {
+      const payload: InboundsPageCache = {
+        ts: Date.now(),
+        inbounds,
+        allNodes,
+        nodeNameToId,
+        filterProtocol,
+        filterSecurity,
+        filterNode,
+        sortField,
+        sortDirection,
+      };
+      localStorage.setItem(INBOUNDS_PAGE_CACHE_KEY, JSON.stringify(payload));
+    } catch {
+      // Ignore cache write failures.
+    }
+  }, [
+    inbounds,
+    allNodes,
+    nodeNameToId,
+    filterProtocol,
+    filterSecurity,
+    filterNode,
+    sortField,
+    sortDirection,
+  ]);
 
   useEffect(() => {
     let filtered = inbounds;
@@ -216,15 +290,11 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
   }, [inbounds, filterProtocol, filterSecurity, filterNode, sortField, sortDirection]);
 
   const loadInbounds = async () => {
-    setLoading(true);
+    setPageLoading(true);
     setError('');
 
     try {
-      const [inboundsRes, nodesRes] = await Promise.all([
-        api.get('/v1/inbounds', { auth: getAuth() }),
-        api.get('/v1/nodes', { auth: getAuth() }),
-      ]);
-
+      const nodesRes = await api.get('/v1/nodes', { auth: getAuth() });
       const nodes: NodeInfo[] = nodesRes.data || [];
       const nameMap: Record<string, number> = {};
       nodes.forEach((n) => {
@@ -236,11 +306,52 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
       if (addTargetNodeIds.size === 0) {
         setAddTargetNodeIds(new Set(nodes.map((n) => n.id)));
       }
-      setInbounds(inboundsRes.data.inbounds || []);
+      const requestId = Date.now();
+      requestIdRef.current = requestId;
+      let pending = nodes.length;
+
+      if (nodes.length === 0) {
+        setInbounds([]);
+        setPageLoading(false);
+        return;
+      }
+
+      nodes.forEach((node) => {
+        api.get(`/v1/nodes/${node.id}/inbounds`, { auth: getAuth() })
+          .then((res) => {
+            if (requestIdRef.current !== requestId) return;
+            const nodeInbounds = Array.isArray(res.data?.inbounds) ? res.data.inbounds : Array.isArray(res.data?.obj) ? res.data.obj : Array.isArray(res.data) ? res.data : [];
+            const normalized: Inbound[] = nodeInbounds.map((ib: any) => ({
+              id: ib.id,
+              node_name: node.name,
+              node_ip: node.name,
+              protocol: ib.protocol,
+              port: Number(ib.port || 0),
+              remark: ib.remark || '',
+              enable: Boolean(ib.enable),
+              security: ib.security || (ib.streamSettings?.security ?? ''),
+              is_reality: Boolean((ib.streamSettings?.security ?? ib.security) === 'reality'),
+            }));
+            setInbounds((prev) => [
+              ...prev.filter((ib) => ib.node_name !== node.name),
+              ...normalized,
+            ]);
+          })
+          .catch(() => {
+            if (requestIdRef.current !== requestId) return;
+            // Keep the last successful rows for this node visible while it is unavailable.
+          })
+          .finally(() => {
+            if (requestIdRef.current !== requestId) return;
+            pending -= 1;
+            if (pending <= 0) {
+              setPageLoading(false);
+            }
+          });
+      });
     } catch (err: any) {
       setError(err.response?.data?.detail || t('messages.operationFailed'));
-    } finally {
-      setLoading(false);
+      setPageLoading(false);
     }
   };
 
@@ -289,16 +400,6 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
   };
   const sortIndicator = (field: 'name' | 'node' | 'protocol' | 'port' | 'status') =>
     sortField === field ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
-
-  const sortDirectionLabels = (() => {
-    if (sortField === 'name' || sortField === 'node' || sortField === 'protocol') {
-      return { asc: 'A -> Z', desc: 'Z -> A' };
-    }
-    if (sortField === 'status') {
-      return { asc: 'Disabled -> Enabled', desc: 'Enabled -> Disabled' };
-    }
-    return { asc: 'Small -> Large', desc: 'Large -> Small' };
-  })();
 
   const handleDelete = async (inbound: Inbound) => {
     if (!window.confirm(`${t('inbounds.confirmDeleteSingle')} \"${inbound.remark || inbound.id}\"?`)) return;
@@ -549,7 +650,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
             <div className="panel-inline-actions">
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
+                style={{ backgroundColor: colors.success, borderColor: colors.success, color: colors.successText }}
                 onClick={() => setShowAddModal(true)}
               >
                 <span className="d-inline-flex align-items-center gap-1">
@@ -559,7 +660,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
               </button>
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                 onClick={loadInbounds}
                 disabled={loading}
               >
@@ -613,39 +714,6 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
             </div>
           </div>
 
-          <div className="panel-block">
-            <div className="panel-block__header">
-              <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Sorting</h6>
-                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
-                  Quick sort controls plus table header sorting.
-                </p>
-              </div>
-            </div>
-            <div className="panel-block__stack">
-              <ChoiceChips
-                options={[
-                  { value: 'name', label: 'Remark' },
-                  { value: 'node', label: 'Node' },
-                  { value: 'protocol', label: 'Protocol' },
-                  { value: 'port', label: 'Port' },
-                  { value: 'status', label: 'Status' },
-                ]}
-                value={sortField}
-                onChange={(value) => setSortField(value)}
-                colors={colors}
-              />
-              <ChoiceChips
-                options={[
-                  { value: 'asc', label: sortDirectionLabels.asc },
-                  { value: 'desc', label: sortDirectionLabels.desc },
-                ]}
-                value={sortDirection}
-                onChange={(value) => setSortDirection(value)}
-                colors={colors}
-              />
-            </div>
-          </div>
         </div>
 
         <div className="card p-2 mb-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
@@ -701,7 +769,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
             <div className="col-lg-4 col-md-12 d-flex gap-2 flex-wrap">
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#fff' }}
+                style={{ backgroundColor: colors.success, borderColor: colors.success, color: colors.successText }}
                 onClick={() => handleBatchEnable(true)}
                 disabled={loading || selectedKeys.size === 0}
               >
@@ -717,7 +785,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
               </button>
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.info, borderColor: colors.info, color: '#fff' }}
+                style={{ backgroundColor: colors.info, borderColor: colors.info, color: colors.infoText }}
                 onClick={handleBatchUpdate}
                 disabled={loading || selectedKeys.size === 0}
               >
@@ -725,7 +793,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
               </button>
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#fff' }}
+                style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: colors.dangerText }}
                 onClick={handleBatchDelete}
                 disabled={loading || selectedKeys.size === 0}
               >
@@ -735,12 +803,19 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
           </div>
         </div>
 
-        {loading && <div className="text-center py-3"><div className="spinner-border spinner-border-sm" role="status"></div></div>}
+        {pageLoading && filteredInbounds.length > 0 && (
+          <div className="text-center py-1 small" style={{ color: colors.text.secondary }}>
+            <div className="spinner-border spinner-border-sm me-1" role="status" style={{ width: '0.75rem', height: '0.75rem' }}></div>
+            Updating inbound rows...
+          </div>
+        )}
+        {pageLoading && filteredInbounds.length === 0 && <div className="text-center py-3"><div className="spinner-border spinner-border-sm" role="status"></div></div>}
 
-        {!loading && filteredInbounds.length === 0 && (
+        {!pageLoading && filteredInbounds.length === 0 && (
           <p className="text-center py-3" style={{ color: colors.text.secondary }}>{t('messages.noDataAvailable')}</p>
         )}
 
+        {filteredInbounds.length > 0 && (
         <div className="table-responsive">
           <table className="table table-sm table-hover" style={{ color: colors.text.primary }}>
             <thead>
@@ -818,7 +893,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                   <td>
                     <button
                       className="btn btn-sm me-1"
-                      style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                      style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                       onClick={() => handleCloneClick(ib)}
                       title={t('inbounds.cloneInbound')}
                     >
@@ -826,7 +901,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                     </button>
                     <button
                       className="btn btn-sm"
-                      style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: '#ffffff' }}
+                      style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: colors.dangerText }}
                       onClick={() => handleDelete(ib)}
                       title={t('inbounds.deleteInbound')}
                     >
@@ -838,6 +913,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
             </tbody>
           </table>
         </div>
+        )}
 
         <div className="mt-2 small" style={{ color: colors.text.secondary }}>
           {t('inbounds.showingCount', { filtered: filteredInbounds.length, total: inbounds.length })}
@@ -918,7 +994,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                 </button>
                 <button
                   className="btn"
-                  style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                  style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                   onClick={handleCloneSubmit}
                   disabled={loading}
                 >
@@ -1000,7 +1076,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                 </button>
                 <button
                   className="btn"
-                  style={{ backgroundColor: colors.success, borderColor: colors.success, color: '#ffffff' }}
+                  style={{ backgroundColor: colors.success, borderColor: colors.success, color: colors.successText }}
                   onClick={handleAddInboundSubmit}
                   disabled={loading}
                 >

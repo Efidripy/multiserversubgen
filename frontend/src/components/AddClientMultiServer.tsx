@@ -263,7 +263,7 @@ export const AddClientMultiServer: React.FC = () => {
                   style={{
                     backgroundColor: active ? colors.accent : colors.bg.tertiary,
                     borderColor: active ? colors.accent : colors.border,
-                    color: active ? '#ffffff' : colors.text.primary,
+                    color: active ? colors.accentText : colors.text.primary,
                     justifyContent: 'flex-start',
                   }}
                 >
@@ -284,7 +284,7 @@ export const AddClientMultiServer: React.FC = () => {
       <div className="panel-inline-actions">
         <button
           className="btn btn-sm"
-          style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+          style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
           onClick={handleSubmit}
           disabled={loading || selectedNodeIds.size === 0}
         >
@@ -361,7 +361,7 @@ export const AddClientMultiServer: React.FC = () => {
               <div className="modal-footer" style={{ borderColor: colors.border }}>
                 <button
                   className="btn btn-sm"
-                  style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: '#ffffff' }}
+                  style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                   onClick={() => setShowResultModal(false)}
                 >
                   Close

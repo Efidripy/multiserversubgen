@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Subscription Page</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 32px;
+      background: #08111b;
+      color: #eef4fb;
+      font-family: Segoe UI, Arial, sans-serif;
+    }
+    .wrap {
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 28px;
+      border: 1px solid #16324c;
+      border-radius: 18px;
+      background: #0d1826;
+    }
+    h1 { margin-top: 0; }
+    code, a {
+      color: #2dd4bf;
+      word-break: break-all;
+    }
+    .block {
+      margin-top: 20px;
+      padding: 14px;
+      border-radius: 12px;
+      background: #09111d;
+      border: 1px solid #13273d;
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <h1>Subscription Page</h1>
+    <p>This local template was installed from the project repository.</p>
+    <div class="block">
+      <strong>Domain:</strong> <code>${DOMAIN}</code>
+    </div>
+    <div class="block">
+      <strong>Subscription:</strong><br>
+      <a href="https://${DOMAIN}${SUB_PATH}">https://${DOMAIN}${SUB_PATH}</a>
+    </div>
+    <div class="block">
+      <strong>JSON:</strong><br>
+      <a href="https://${DOMAIN}${SUB_JSON_PATH}">https://${DOMAIN}${SUB_JSON_PATH}</a>
+    </div>
+    <div class="block">
+      <strong>sing-box:</strong><br>
+      <a href="https://${DOMAIN}/${SUB_PATH}">https://${DOMAIN}/${SUB_PATH}</a>
+    </div>
+  </main>
+</body>
+</html>

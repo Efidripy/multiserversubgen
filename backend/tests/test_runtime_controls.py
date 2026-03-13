@@ -2,12 +2,13 @@
 import base64
 import os
 import sys
+import tempfile
 from types import SimpleNamespace
 
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-os.environ.setdefault("PROJECT_DIR", "/tmp")
+os.environ.setdefault("PROJECT_DIR", tempfile.gettempdir())
 import main
 
 
@@ -50,7 +51,9 @@ def test_traffic_stats_cache_hit(monkeypatch):
             calls["n"] += 1
             return {"stats": {"x": {"up": 1, "down": 2, "total": 3, "count": 1}}, "group_by": group_by}
 
-    monkeypatch.setattr(main, "client_mgr", DummyMgr())
+    dummy_mgr = DummyMgr()
+    monkeypatch.setattr(main, "client_mgr", dummy_mgr)
+    monkeypatch.setattr(main.live_stats_runtime, "client_mgr", dummy_mgr)
     monkeypatch.setattr(main, "TRAFFIC_STATS_CACHE_TTL", 60)
     main.traffic_stats_cache.clear()
 
