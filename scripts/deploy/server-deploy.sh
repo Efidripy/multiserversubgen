@@ -60,7 +60,7 @@ mkdir -p "$PROJECT_DIR"
 cp backend/*.py "$PROJECT_DIR/"
 for pkg in core modules integrations routers services shared; do
   if [[ -d "backend/$pkg" ]]; then
-    rm -rf "$PROJECT_DIR/$pkg"
+    rm -rf "${PROJECT_DIR:?}/$pkg"
     cp -r "backend/$pkg" "$PROJECT_DIR/$pkg"
   fi
 done

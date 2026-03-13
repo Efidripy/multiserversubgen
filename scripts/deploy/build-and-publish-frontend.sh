@@ -41,7 +41,7 @@ npx --no-install tsc
 VITE_BASE="$VITE_BASE" VITE_GRAFANA_PATH="$VITE_GRAFANA_PATH" npx --no-install vite build --outDir "$TMP_BUILD_DIR" --emptyOutDir
 popd >/dev/null
 
-PUBLIC_DOMAIN= PUBLIC_SCHEME= bash "$SCRIPT_DIR/scripts/deploy/verify-frontend-release.sh" "$TMP_BUILD_DIR" "$WEB_PATH"
+PUBLIC_DOMAIN='' PUBLIC_SCHEME='' bash "$SCRIPT_DIR/scripts/deploy/verify-frontend-release.sh" "$TMP_BUILD_DIR" "$WEB_PATH"
 
 if [[ -d "$TARGET_BUILD_DIR" ]]; then
   mv "$TARGET_BUILD_DIR" "$PREV_BUILD_DIR"
@@ -50,7 +50,7 @@ mv "$TMP_BUILD_DIR" "$TARGET_BUILD_DIR"
 rm -rf "$PREV_BUILD_DIR"
 
 if [[ "$SKIP_LIVE_VERIFY" == "1" || -z "$PUBLIC_DOMAIN" ]]; then
-  PUBLIC_DOMAIN= PUBLIC_SCHEME= bash "$SCRIPT_DIR/scripts/deploy/verify-frontend-release.sh" "$TARGET_BUILD_DIR" "$WEB_PATH"
+  PUBLIC_DOMAIN='' PUBLIC_SCHEME='' bash "$SCRIPT_DIR/scripts/deploy/verify-frontend-release.sh" "$TARGET_BUILD_DIR" "$WEB_PATH"
 else
   bash "$SCRIPT_DIR/scripts/deploy/verify-frontend-release.sh" "$TARGET_BUILD_DIR" "$WEB_PATH" "$PUBLIC_SCHEME" "$PUBLIC_DOMAIN"
 fi
