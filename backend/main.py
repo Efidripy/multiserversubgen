@@ -266,6 +266,20 @@ adguard_collector_loop = adguard_runtime.collector_loop
     get_sub_rate_limit_window_sec=lambda: SUB_RATE_LIMIT_WINDOW_SEC,
 )
 
+
+def _sync_auth_service_roles() -> None:
+    auth_service.role_viewers = ROLE_VIEWERS
+    auth_service.role_operators = ROLE_OPERATORS
+
+
+def get_user_role(username: str) -> str:
+    _sync_auth_service_roles()
+    return auth_service.get_user_role(username)
+
+
+def has_min_role(user_role: str, min_role: str) -> bool:
+    return auth_service.has_min_role(user_role, min_role)
+
 (
     invalidate_live_stats_cache,
     get_cached_traffic_stats,
