@@ -46,6 +46,19 @@ class ThreeXUIMonitor:
     def __init__(self, decrypt_func):
         self.decrypt = decrypt_func
 
+    @staticmethod
+    def _normalize_session_result(session_result: tuple) -> tuple:
+        if not isinstance(session_result, tuple):
+            return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
+        if len(session_result) == 3:
+            return session_result
+        if len(session_result) == 2:
+            session, base_url = session_result
+            if session:
+                return session, base_url, {"ok": True, "reason": "ok", "error": ""}
+            return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
+        return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
+
     def _get_session(self, node: Dict) -> tuple:
         """Создать авторизованную сессию для узла.
 
@@ -81,7 +94,7 @@ class ThreeXUIMonitor:
 
     def get_server_status(self, node: Dict) -> Dict:
         """GET /panel/api/server/status — статус CPU, RAM, диска, core service, сети."""
-        s, base_url, login_result = self._get_session(node)
+        s, base_url, login_result = self._normalize_session_result(self._get_session(node))
         if not s:
             return {
                 "node": node["name"],
@@ -95,8 +108,6 @@ class ThreeXUIMonitor:
                 s,
                 "GET",
                 f"{base_url}/panel/api/server/status",
-                timeout=XUI_FAST_TIMEOUT_SEC,
-                retries=XUI_FAST_RETRIES,
             )
             if res.status_code == 200:
                 data = res.json()
@@ -165,7 +176,7 @@ class ThreeXUIMonitor:
 
     def get_inbounds(self, node: Dict) -> Dict:
         """GET /panel/api/inbounds/list — список inbounds."""
-        s, base_url, login_result = self._get_session(node)
+        s, base_url, login_result = self._normalize_session_result(self._get_session(node))
         if not s:
             return {
                 "node": node["name"],
@@ -179,8 +190,6 @@ class ThreeXUIMonitor:
                 s,
                 "GET",
                 f"{base_url}/panel/api/inbounds/list",
-                timeout=XUI_FAST_TIMEOUT_SEC,
-                retries=XUI_FAST_RETRIES,
             )
             if res.status_code == 200:
                 data = res.json()
@@ -222,7 +231,7 @@ class ThreeXUIMonitor:
 
     def get_online_clients(self, node: Dict) -> Dict:
         """POST /panel/api/inbounds/onlines — список активных клиентов."""
-        s, base_url, login_result = self._get_session(node)
+        s, base_url, login_result = self._normalize_session_result(self._get_session(node))
         if not s:
             return {
                 "node": node["name"],
@@ -236,8 +245,6 @@ class ThreeXUIMonitor:
                 s,
                 "POST",
                 f"{base_url}/panel/api/inbounds/onlines",
-                timeout=XUI_FAST_TIMEOUT_SEC,
-                retries=XUI_FAST_RETRIES,
             )
             if res.status_code == 200:
                 data = res.json()
@@ -257,7 +264,7 @@ class ThreeXUIMonitor:
 
     def get_client_traffic(self, node: Dict, email: str) -> Dict:
         """GET /panel/api/inbounds/getClientTraffics/{email} — трафик клиента."""
-        s, base_url, login_result = self._get_session(node)
+        s, base_url, login_result = self._normalize_session_result(self._get_session(node))
         if not s:
             return {
                 "node": node["name"],
@@ -271,8 +278,6 @@ class ThreeXUIMonitor:
                 s,
                 "GET",
                 f"{base_url}/panel/api/inbounds/getClientTraffics/{safe_email}",
-                timeout=XUI_FAST_TIMEOUT_SEC,
-                retries=XUI_FAST_RETRIES,
             )
             if res.status_code == 200:
                 data = res.json()
@@ -357,13 +362,13 @@ class ServerMonitor:
         try:
             # Primary API endpoint for node panel panel (panel/api path)
             primary_url = f"{base_url}/panel/api/server/status"
-            res = xui_request(s, "GET", primary_url)
+            res = xui_request(s, "POST", primary_url)
             
             if res.status_code == 404:
                 # Fallback for older node panel versions
                 fallback_url = f"{base_url}/server/status"
                 logger.debug(f"Primary endpoint 404, falling back to {fallback_url}")
-                res = xui_request(s, "GET", fallback_url)
+                res = xui_request(s, "POST", fallback_url)
             
             if res.status_code != 200:
                 logger.warning(
