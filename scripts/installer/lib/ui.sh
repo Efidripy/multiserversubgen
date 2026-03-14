@@ -106,6 +106,12 @@ installer_select_menu() {
         return 0
     fi
 
+    # No automation value and no terminal — cannot do interactive input; exit cleanly.
+    if [ ! -t 0 ]; then
+        echo "__QUIT__"
+        return 0
+    fi
+
     while true; do
         installer_render_menu "$title" "$subtitle" "$selected" "${items[@]}"
         IFS= read -rsn1 key
