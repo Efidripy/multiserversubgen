@@ -5,6 +5,7 @@ LOG_FILE="/opt/.sub_manager_install.log"
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_DIR="$(cd "${INSTALLER_DIR}/../.." && pwd)"
 source "${INSTALLER_DIR}/lib/locale.sh"
+source "${INSTALLER_DIR}/lib/resource_guard.sh"
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
@@ -324,9 +325,81 @@ selected_cfg_supports_stream_tls_mux() {
     return 1
 }
 
+ensure_stream_public_domain_route() {
+    shopt -s nullglob
+    [ "${PUBLIC_SCHEME:-https}" = "https" ] || { shopt -u nullglob; return 0; }
+    [ -n "${PUBLIC_DOMAIN:-}" ] || { shopt -u nullglob; return 0; }
+    selected_cfg_supports_stream_tls_mux "${SELECTED_CFG:-}" || { shopt -u nullglob; return 0; }
+
+    local stream_files=( /etc/nginx/stream-enabled/*.conf )
+    if [ ${#stream_files[@]} -eq 0 ]; then
+        shopt -u nullglob
+        return 0
+    fi
+
+    python3 - "${PUBLIC_DOMAIN}" "${stream_files[@]}" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+domain = sys.argv[1]
+paths = [Path(p) for p in sys.argv[2:]]
+
+for path in paths:
+    text = path.read_text()
+    if "map $ssl_preread_server_name $sni_name" not in text or "upstream www" not in text:
+        continue
+
+    lines = text.splitlines()
+    start = None
+    end = None
+    for idx, line in enumerate(lines):
+        if re.search(r'map\s+\$ssl_preread_server_name\s+\$sni_name\s*\{', line):
+            start = idx
+            continue
+        if start is not None and line.strip() == "}":
+            end = idx
+            break
+
+    if start is None or end is None:
+        continue
+
+    replacement = f"    {domain} www;"
+    changed = False
+
+    for idx in range(start + 1, end):
+        stripped = lines[idx].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if re.match(rf"{re.escape(domain)}\s+", stripped):
+            if stripped != f"{domain} www;":
+                lines[idx] = replacement
+                changed = True
+            break
+    else:
+        for idx in range(start + 1, end):
+            if lines[idx].strip().startswith("default "):
+                lines.insert(idx, replacement)
+                changed = True
+                break
+
+    if changed:
+        path.write_text("\n".join(lines) + "\n")
+    break
+PY
+
+    nginx -t >/dev/null 2>&1 || { shopt -u nullglob; return 1; }
+    systemctl reload nginx >/dev/null 2>&1 || { shopt -u nullglob; return 1; }
+    shopt -u nullglob
+    return 0
+}
+
 assert_https_reverse_proxy_compatibility() {
     if detect_nginx_stream_tls_conflict; then
         if selected_cfg_supports_stream_tls_mux "${SELECTED_CFG:-}"; then
+            if ! ensure_stream_public_domain_route; then
+                echo "⚠️ Не удалось автоматически обновить nginx stream route для ${PUBLIC_DOMAIN}. Продолжаем установку без остановки."
+            fi
             return 0
         fi
         echo "❌ Обнаружен nginx stream/TLS mux на 443 для текущего хоста."
@@ -532,8 +605,14 @@ select_or_bootstrap_nginx_cfg() {
     fi
 
     if [ -n "${INSTALLER_AUTOMATION_STEPS:-}" ]; then
-        SELECTED_CFG="${configs[0]}"
-        echo "Automation mode: falling back to first nginx config: ${SELECTED_CFG}"
+        SELECTED_CFG="/etc/nginx/sites-available/${PUBLIC_DOMAIN}.conf"
+        if [ ! -f "$SELECTED_CFG" ]; then
+            echo "Automation mode: creating dedicated nginx config for PUBLIC_DOMAIN: ${SELECTED_CFG}"
+            generate_bootstrap_nginx_cfg "$SELECTED_CFG" || return 1
+            ln -sf "$SELECTED_CFG" "/etc/nginx/sites-enabled/$(basename "$SELECTED_CFG")"
+        else
+            echo "Automation mode: using existing nginx config for PUBLIC_DOMAIN: ${SELECTED_CFG}"
+        fi
         ensure_selected_nginx_cfg_https_ready "${SELECTED_CFG}" || return 1
         return 0
     fi
@@ -738,17 +817,23 @@ datasources:
     editable: false
 EOF
 
+    if [ "$adguard_loki_enabled" = "true" ] && resource_guard_should_skip_optional_logs; then
+        echo "⚠️ Very low-resource host detected. Skipping Loki/promtail to keep install stable."
+        adguard_loki_enabled="false"
+    fi
+
     if [ "$adguard_loki_enabled" = "true" ]; then
         if install_loki_promtail_stack; then
             mkdir -p /etc/loki /etc/promtail /var/lib/loki /var/lib/promtail
+            cp "$SCRIPT_DIR/monitoring/loki/loki-config.yml" /etc/loki/config.yml
             cp "$SCRIPT_DIR/monitoring/loki/loki-config.yml" /etc/loki/local-config.yaml
             cp "$SCRIPT_DIR/monitoring/promtail/promtail-config.yml" /etc/promtail/config.yml
             sed -i "s|__ADGUARD_QUERYLOG_PATH__|${adguard_querylog_path}|g" /etc/promtail/config.yml
             sed -i "s|__ADGUARD_SYSTEMD_UNIT__|${adguard_systemd_unit}|g" /etc/promtail/config.yml
-            systemctl enable --now loki >/dev/null 2>&1 || true
-            systemctl enable --now promtail >/dev/null 2>&1 || true
-            systemctl restart loki >/dev/null 2>&1 || true
-            systemctl restart promtail >/dev/null 2>&1 || true
+            chown -R loki /var/lib/loki >/dev/null 2>&1 || true
+            chown -R promtail /var/lib/promtail >/dev/null 2>&1 || true
+            chmod 0755 /var/lib/loki /var/lib/promtail >/dev/null 2>&1 || true
+            resource_guard_restart_services_sequentially loki promtail
             loki_ready="true"
             echo "✓ Loki и promtail настроены."
         else
@@ -783,7 +868,7 @@ providers:
     type: file
     disableDeletion: false
     editable: true
-    updateIntervalSeconds: 30
+    updateIntervalSeconds: 180
     options:
       path: /var/lib/grafana/dashboards
 EOF
@@ -818,15 +903,15 @@ cfg['auth.anonymous']['enabled'] = 'false'
 if 'users' not in cfg:
     cfg['users'] = {}
 cfg['users']['allow_sign_up'] = 'false'
+if 'log' not in cfg:
+    cfg['log'] = {}
+cfg['log']['level'] = 'warn'
 with open('/etc/grafana/grafana.ini', 'w') as f:
     cfg.write(f)
 PYTHON
 
     systemctl daemon-reload
-    systemctl enable --now prometheus >/dev/null 2>&1 || true
-    systemctl enable --now grafana-server >/dev/null 2>&1 || true
-    systemctl restart prometheus >/dev/null 2>&1 || true
-    systemctl restart grafana-server >/dev/null 2>&1 || true
+    resource_guard_restart_services_sequentially prometheus grafana-server
     echo "✓ Prometheus и Grafana настроены."
 }
 
@@ -995,6 +1080,8 @@ run_post_install_checks() {
     echo -e "\nПроверка запуска сервиса..."
     local failures=0
 
+    resource_guard_detect_profile
+
     local health_status=""
     for i in 1 2 3 4 5; do
         sleep 2
@@ -1060,7 +1147,9 @@ run_post_install_checks() {
             echo "✅ Grafana upstream доступен (HTTP $g_status)"
         else
             echo "⚠️ Grafana upstream недоступен или нестандартный код: HTTP ${g_status:-000}"
-            failures=$((failures + 1))
+            if [ "${RESOURCE_LOW_RESOURCE_MODE:-false}" != "true" ]; then
+                failures=$((failures + 1))
+            fi
         fi
     fi
 
@@ -1239,17 +1328,20 @@ update_project() {
     sync_backend_files
     
     echo "Обновление Python-зависимостей..."
-    "$PROJECT_DIR/venv/bin/pip" install --upgrade pip wheel setuptools
-    "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt"
-    "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements-dev.txt"
-    "$PROJECT_DIR/venv/bin/python" -m pytest \
+    resource_guard_export_build_env
+    resource_guard_require_free_mb "${INSTALL_PYTHON_MIN_FREE_MB:-900}" "before Python dependency refresh" "/" || exit 1
+    resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade pip wheel setuptools
+    resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt"
+    resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements-dev.txt"
+    resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pytest \
         "$SCRIPT_DIR/backend/tests/test_runtime_controls.py" \
         "$SCRIPT_DIR/backend/tests/test_security_hardening.py" \
         "$SCRIPT_DIR/backend/tests/test_api_smoke.py" \
         -q
     
     echo "Пересборка React фронтенда..."
-    if ! PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" bash "$SCRIPT_DIR/scripts/deploy/build-and-publish-frontend.sh"; then
+    resource_guard_require_free_mb "${INSTALL_FRONTEND_MIN_FREE_MB:-900}" "before frontend rebuild" "/" || exit 1
+    if ! resource_guard_run_heavy env PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" bash "$SCRIPT_DIR/scripts/deploy/build-and-publish-frontend.sh"; then
         echo "❌ Ошибка сборки/публикации фронтенда. Обновление прервано."
         exit 1
     fi
@@ -1260,6 +1352,7 @@ update_project() {
         sed "s|666|$APP_PORT|g" | \
         sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH\"|g" | \
         sed "s|GRAFANA_WEB_PATH=.*|GRAFANA_WEB_PATH=$GRAFANA_WEB_PATH\"|g" | \
+        sed "s|MONITORING_ENABLED=.*|MONITORING_ENABLED=$MONITORING_ENABLED\"|g" | \
         sed "s|ALLOW_ORIGINS=.*|ALLOW_ORIGINS=$ALLOW_ORIGINS\"|g" | \
         sed "s|VERIFY_TLS=.*|VERIFY_TLS=$VERIFY_TLS\"|g" | \
         sed "s|CA_BUNDLE_PATH=.*|CA_BUNDLE_PATH=$CA_BUNDLE_PATH\"|g" | \
@@ -1314,17 +1407,20 @@ update_project() {
     exit 0
 }
 
+# Timestamp all output in automation/non-interactive mode (profiling + clean logs)
+if [ -n "${INSTALLER_AUTOMATION_STEPS:-}" ] && [ -z "${INSTALLER_TS_FILTER_ACTIVE:-}" ]; then
+    export INSTALLER_TS_FILTER_ACTIVE=1
+    exec > >(while IFS= read -r line; do printf '[%s] %s\n' "$(date +%H:%M:%S)" "$line"; done) 2>&1
+fi
+
 clear_stale_install_markers
 
 if [ -f "$LOG_FILE" ] && has_real_existing_install; then
     case "${INSTALLER_EXISTING_ACTION:-}" in
         reinstall)
-            REINSTALL_SELECTED_CFG="${SELECTED_CFG:-}"
             source "$LOG_FILE"
             uninstall
-            if [ -n "${REINSTALL_SELECTED_CFG:-}" ]; then
-                export SELECTED_CFG="$REINSTALL_SELECTED_CFG"
-            fi
+            unset SELECTED_CFG
             exec bash "$0" "$@"
             ;;
         update)
@@ -1433,6 +1529,10 @@ ADGUARD_METRICS_PATH="/control/prometheus/metrics"
 ADGUARD_LOKI_ENABLED="false"
 ADGUARD_QUERYLOG_PATH="/opt/AdGuardHome/data/querylog.json"
 ADGUARD_SYSTEMD_UNIT="AdGuardHome.service"
+
+resource_guard_detect_profile
+resource_guard_apply_runtime_defaults
+resource_guard_print_summary "install"
 
 read -p "Режим установки: Быстрая или Advanced? (b/a, default: b): " INSTALL_MODE_INPUT
 INSTALL_MODE_INPUT=${INSTALL_MODE_INPUT:-b}
@@ -1569,12 +1669,14 @@ if [[ "$INSTALL_MODE_INPUT" =~ ^[aAфФ]$ ]]; then
 fi
 
 echo "Установка системных пакетов и Python/Node.js..."
+resource_guard_require_free_mb "${INSTALL_MIN_FREE_MB:-700}" "before system package install" "/" || exit 1
 apt_update && apt_install \
     python3-pip \
     python3-venv \
     python3-dev \
     libpam0g-dev \
     build-essential \
+    cpulimit \
     sqlite3 \
     nginx \
     fail2ban \
@@ -1610,11 +1712,13 @@ sync_backend_files
 
 # Создание VENV и установка зависимостей
 echo "Установка Python-зависимостей..."
+resource_guard_export_build_env
+resource_guard_require_free_mb "${INSTALL_PYTHON_MIN_FREE_MB:-900}" "before Python virtualenv and dependency install" "/" || exit 1
 python3 -m venv "$PROJECT_DIR/venv"
-"$PROJECT_DIR/venv/bin/pip" install --upgrade pip wheel setuptools
-"$PROJECT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/backend/requirements.txt"
-"$PROJECT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/backend/requirements-dev.txt"
-"$PROJECT_DIR/venv/bin/python" -m pytest \
+resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade pip wheel setuptools
+resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/backend/requirements.txt"
+resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/backend/requirements-dev.txt"
+resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pytest \
     "$SCRIPT_DIR/backend/tests/test_runtime_controls.py" \
     "$SCRIPT_DIR/backend/tests/test_security_hardening.py" \
     "$SCRIPT_DIR/backend/tests/test_api_smoke.py" \
@@ -1622,7 +1726,8 @@ python3 -m venv "$PROJECT_DIR/venv"
 
 # Сборка React фронтенда
 echo "Сборка React фронтенда..."
-if ! PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$SCRIPT_DIR/scripts/deploy/build-and-publish-frontend.sh"; then
+resource_guard_require_free_mb "${INSTALL_FRONTEND_MIN_FREE_MB:-900}" "before frontend build" "/" || exit 1
+if ! resource_guard_run_heavy env PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$SCRIPT_DIR/scripts/deploy/build-and-publish-frontend.sh"; then
     echo "❌ Ошибка сборки/публикации фронтенда. Установка прервана."
     exit 1
 fi
@@ -1635,6 +1740,7 @@ cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
     sed "s|666|$APP_PORT|g" | \
     sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH\"|g" | \
     sed "s|GRAFANA_WEB_PATH=.*|GRAFANA_WEB_PATH=$GRAFANA_WEB_PATH\"|g" | \
+    sed "s|MONITORING_ENABLED=.*|MONITORING_ENABLED=$MONITORING_ENABLED\"|g" | \
     sed "s|ALLOW_ORIGINS=.*|ALLOW_ORIGINS=$ALLOW_ORIGINS\"|g" | \
     sed "s|VERIFY_TLS=.*|VERIFY_TLS=$VERIFY_TLS\"|g" | \
     sed "s|CA_BUNDLE_PATH=.*|CA_BUNDLE_PATH=$CA_BUNDLE_PATH\"|g" | \
@@ -1706,8 +1812,7 @@ configure_monitoring_stack
 
 # Запуск сервиса
 echo "Запуск сервиса..."
-systemctl daemon-reload
-systemctl enable --now "$PROJECT_NAME.service"
+resource_guard_restart_services_sequentially "$PROJECT_NAME.service"
 
 echo -e "\n✅ УСТАНОВКА ЗАВЕРШЕНА!"
 echo "Порт API: $APP_PORT"

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$SCRIPT_DIR/scripts/installer/lib/resource_guard.sh"
 PROJECT_DIR="${PROJECT_DIR:-/opt/sub-manager}"
 WEB_PATH="${WEB_PATH:-}"
 GRAFANA_WEB_PATH="${GRAFANA_WEB_PATH:-grafana}"
@@ -26,19 +27,22 @@ TARGET_BUILD_DIR="$PROJECT_DIR/build"
 TMP_BUILD_DIR="${PROJECT_DIR}/.build-next"
 PREV_BUILD_DIR="${PROJECT_DIR}/.build-prev"
 
-rm -rf "$TMP_BUILD_DIR" "$PREV_BUILD_DIR"
+resource_guard_detect_profile
+resource_guard_export_build_env
+rm -rf "$FRONTEND_DIR/node_modules" "$FRONTEND_DIR/.vite" "$TMP_BUILD_DIR" "$PREV_BUILD_DIR"
+resource_guard_require_free_mb "${FRONTEND_BUILD_MIN_FREE_MB:-900}" "before frontend dependency install/build" "/"
+
 mkdir -p "$TMP_BUILD_DIR"
 
 pushd "$FRONTEND_DIR" >/dev/null
 if [[ -f package-lock.json ]]; then
-  rm -rf node_modules
-  npm ci
+  resource_guard_run_heavy npm ci --prefer-offline --no-audit --no-fund
 else
-  npm install
+  resource_guard_run_heavy npm install --prefer-offline --no-audit --no-fund
 fi
 
-npx --no-install tsc
-VITE_BASE="$VITE_BASE" VITE_GRAFANA_PATH="$VITE_GRAFANA_PATH" npx --no-install vite build --outDir "$TMP_BUILD_DIR" --emptyOutDir
+resource_guard_run_heavy npx --no-install tsc
+resource_guard_run_heavy env VITE_BASE="$VITE_BASE" VITE_GRAFANA_PATH="$VITE_GRAFANA_PATH" npx --no-install vite build --outDir "$TMP_BUILD_DIR" --emptyOutDir
 popd >/dev/null
 
 PUBLIC_DOMAIN='' PUBLIC_SCHEME='' bash "$SCRIPT_DIR/scripts/deploy/verify-frontend-release.sh" "$TMP_BUILD_DIR" "$WEB_PATH"
@@ -48,6 +52,8 @@ if [[ -d "$TARGET_BUILD_DIR" ]]; then
 fi
 mv "$TMP_BUILD_DIR" "$TARGET_BUILD_DIR"
 rm -rf "$PREV_BUILD_DIR"
+# Post-build: remove npm deps (not needed at runtime, frees ~120MB)
+rm -rf "$FRONTEND_DIR/node_modules" "$FRONTEND_DIR/.vite"
 
 if [[ "$SKIP_LIVE_VERIFY" == "1" || -z "$PUBLIC_DOMAIN" ]]; then
   PUBLIC_DOMAIN='' PUBLIC_SCHEME='' bash "$SCRIPT_DIR/scripts/deploy/verify-frontend-release.sh" "$TARGET_BUILD_DIR" "$WEB_PATH"

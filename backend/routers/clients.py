@@ -12,8 +12,21 @@ def build_clients_router(
     get_node_or_404,
     invalidate_live_stats_cache,
     invalidate_subscription_cache,
+    ws_manager,
 ):
     router = APIRouter()
+
+    async def _broadcast_client_update(payload: Dict):
+        try:
+            await ws_manager.broadcast_client_update(payload)
+        except Exception:
+            return
+
+    async def _broadcast_traffic_update(payload: Dict):
+        try:
+            await ws_manager.broadcast_traffic_update(payload)
+        except Exception:
+            return
 
     def _load_nodes(node_ids=None):
         if node_ids:
@@ -59,6 +72,7 @@ def build_clients_router(
         results = client_mgr.batch_add_clients(nodes, clients_configs)
         invalidate_live_stats_cache()
         invalidate_subscription_cache()
+        await _broadcast_client_update({"action": "batch_add", "result": results, "_delta": True})
         return results
 
     @router.post("/api/v1/clients/add-to-nodes")
@@ -92,6 +106,7 @@ def build_clients_router(
 
         invalidate_live_stats_cache()
         invalidate_subscription_cache()
+        await _broadcast_client_update({"action": "add_to_nodes", "email": email, "result": results, "_delta": True})
         return results
 
     @router.put("/api/v1/clients/{client_uuid}")
@@ -112,6 +127,16 @@ def build_clients_router(
         if success:
             invalidate_live_stats_cache()
             invalidate_subscription_cache()
+            await _broadcast_client_update(
+                {
+                    "action": "update_client",
+                    "node_id": node_id,
+                    "inbound_id": inbound_id,
+                    "client_uuid": client_uuid,
+                    "updates": updates,
+                    "_delta": True,
+                }
+            )
         return {"success": success}
 
     @router.delete("/api/v1/clients/{client_uuid}")
@@ -125,6 +150,15 @@ def build_clients_router(
         if success:
             invalidate_live_stats_cache()
             invalidate_subscription_cache()
+            await _broadcast_client_update(
+                {
+                    "action": "delete_client",
+                    "node_id": node_id,
+                    "inbound_id": inbound_id,
+                    "client_uuid": client_uuid,
+                    "_delta": True,
+                }
+            )
         return {"success": success}
 
     @router.post("/api/v1/clients/batch-delete")
@@ -142,6 +176,15 @@ def build_clients_router(
         )
         invalidate_live_stats_cache()
         invalidate_subscription_cache()
+        await _broadcast_client_update(
+            {
+                "action": "batch_delete",
+                "result": results,
+                "expired_only": data.get("expired_only", False),
+                "depleted_only": data.get("depleted_only", False),
+                "_delta": True,
+            }
+        )
         return results
 
     @router.post("/api/v1/clients/{client_uuid}/reset-traffic")
@@ -158,6 +201,17 @@ def build_clients_router(
 
         node = get_node_or_404(node_id)
         success = client_mgr.reset_client_traffic(node, inbound_id, email)
+        if success:
+            await _broadcast_traffic_update(
+                {
+                    "action": "reset_client_traffic",
+                    "node_id": node_id,
+                    "inbound_id": inbound_id,
+                    "client_uuid": client_uuid,
+                    "email": email,
+                    "_delta": True,
+                }
+            )
         return {"success": success}
 
     return router

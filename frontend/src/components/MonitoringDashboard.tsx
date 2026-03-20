@@ -1,19 +1,22 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import api from '../api';
 import { getAuth } from '../auth';
 import { useTheme } from '../contexts/ThemeContext';
 import { ChoiceChips } from './ChoiceChips';
+import { registerPollingTask } from '../services/pollingScheduler';
+import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
 import {
   Chart as ChartJS,
   CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
 } from 'chart.js';
-import { Line } from 'react-chartjs-2';
+import { Line, Bar } from 'react-chartjs-2';
 
 const lineGlowPlugin = {
   id: 'lineGlowPlugin',
@@ -29,7 +32,7 @@ const lineGlowPlugin = {
   },
 };
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, lineGlowPlugin);
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip, Legend, lineGlowPlugin);
 
 interface NodeItem {
   id: number;
@@ -57,6 +60,24 @@ interface DepsHealth {
     error: string | null;
   };
 }
+
+interface TrafficStatsResponse {
+  stats: Record<string, { up: number; down: number; total: number; count: number }>;
+  group_by: 'client' | 'inbound' | 'node';
+}
+
+interface LiveTrafficPoint {
+  ts: number;
+  nodesTotal: number;
+  peopleTotal: number;
+  inboundsTotal: number;
+  nodeTotals: Record<string, number>;
+}
+
+type TrafficMode = 'history' | 'live';
+type TrafficSource = 'nodes' | 'people' | 'inbounds';
+type TrafficVisualStyle = 'stepped' | 'bars' | 'smooth';
+type TrafficSmoothing = 'raw' | 'sma3' | 'sma5';
 
 interface SnapshotNode {
   name: string;
@@ -171,6 +192,23 @@ const RANGE_OPTIONS = [
   { value: 7 * 24 * 3600, label: '7d' },
 ] as const;
 
+const TRAFFIC_STEP_OPTIONS = [
+  { value: 5, label: '5s' },
+  { value: 10, label: '10s' },
+  { value: 30, label: '30s' },
+  { value: 60, label: '1m' },
+  { value: 5 * 60, label: '5m' },
+  { value: 10 * 60, label: '10m' },
+] as const;
+
+function normalizeStepForMode(mode: TrafficMode, stepSec: number): number {
+  if (mode === 'history') {
+    // History is persisted at >= 30s granularity.
+    return Math.max(30, stepSec);
+  }
+  return Math.max(5, stepSec);
+}
+
 function buildGrafanaUrl(runtimePath?: string): string {
   const normalizePath = (value: string): string => {
     const cleaned = value.trim().replace(/^\/+|\/+$/g, '');
@@ -191,31 +229,113 @@ function buildGrafanaUrl(runtimePath?: string): string {
   return `${window.location.origin}${legacyPath}/`;
 }
 
+const bytesToMb = (bytes: number) => bytes / (1024 * 1024);
 const bytesToGb = (bytes: number) => bytes / (1024 * 1024 * 1024);
 const CHART_PALETTE = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#e11d48', '#84cc16', '#f97316', '#14b8a6'];
 
-function getBucketSec(rangeSec: number): number {
+function getBucketSec(rangeSec: number, preferredStepSec?: number): number {
+  if (preferredStepSec && preferredStepSec > 0) return preferredStepSec;
   if (rangeSec <= 3600) return 60;
   if (rangeSec <= 6 * 3600) return 120;
   if (rangeSec <= 24 * 3600) return 300;
   return 900;
 }
 
-function bucketizeAllNodesHistory(points: HistoryPoint[], rangeSec: number): {
-  buckets: number[];
-  perNode: Array<{ nodeId: number; nodeName: string; points: Array<HistoryPoint | null> }>;
-} {
-  const bucketSec = getBucketSec(rangeSec);
+function buildUsageFromCumulative(points: Array<number | null>): Array<number | null> {
+  let prev: number | null = null;
+  return points.map((cur) => {
+    if (cur === null || Number.isNaN(cur)) return null;
+    if (prev === null) {
+      prev = cur;
+      return 0;
+    }
+    let delta = cur - prev;
+    if (delta < 0) {
+      delta = cur;
+    }
+    prev = cur;
+    return Math.max(0, delta);
+  });
+}
 
-  // Keep only latest point per node in each bucket.
-  const perNodeBucket = new Map<number, Map<number, HistoryPoint>>();
+function smoothSeries(values: Array<number | null>, mode: TrafficSmoothing): Array<number | null> {
+  const windowSize = mode === 'sma3' ? 3 : mode === 'sma5' ? 5 : 1;
+  if (windowSize <= 1) return values;
+
+  return values.map((value, idx) => {
+    if (value === null || Number.isNaN(value)) return null;
+    const start = Math.max(0, idx - windowSize + 1);
+    const sample = values
+      .slice(start, idx + 1)
+      .filter((v): v is number => v !== null && !Number.isNaN(v));
+    if (!sample.length) return value;
+    const avg = sample.reduce((sum, v) => sum + v, 0) / sample.length;
+    return Number(avg.toFixed(2));
+  });
+}
+
+function buildTrafficUsageSeries(points: Array<HistoryPoint | null>): Array<number | null> {
+  let prevTotal: number | null = null;
+  return points.map((point) => {
+    if (!point) return null;
+    const curTotal = Number(point.traffic_total || 0);
+    if (prevTotal === null) {
+      prevTotal = curTotal;
+      return 0;
+    }
+    let delta = curTotal - prevTotal;
+    // If node counter has reset, treat current total as usage since reset.
+    if (delta < 0) {
+      delta = curTotal;
+    }
+    prevTotal = curTotal;
+    return Math.max(0, delta);
+  });
+}
+
+function buildBucketTrafficUsageSeries(
+  perNode: Array<{ nodeId: number; nodeName: string; points: Array<HistoryPoint | null>; bucketsRaw: Map<number, HistoryPoint[]> }>,
+  buckets: number[]
+): Array<number | null> {
+  return buckets.map((bucketTs) => {
+    let totalUsage = 0;
+    for (const nodeData of perNode) {
+      const pointsInBucket = nodeData.bucketsRaw.get(bucketTs) || [];
+      if (pointsInBucket.length === 0) continue;
+      
+      // Sort by timestamp to get first and last points in bucket
+      pointsInBucket.sort((a, b) => a.ts - b.ts);
+      const first = pointsInBucket[0];
+      const last = pointsInBucket[pointsInBucket.length - 1];
+      
+      const lastTotal = Number(last?.traffic_total || 0);
+      const firstTotal = Number(first?.traffic_total || 0);
+      
+      let delta = lastTotal - firstTotal;
+      // Handle counter reset: if delta is negative, treat last total as the usage
+      if (delta < 0) {
+        delta = lastTotal;
+      }
+      totalUsage += Math.max(0, delta);
+    }
+    return totalUsage;
+  });
+}
+
+function bucketizeAllNodesHistory(points: HistoryPoint[], rangeSec: number, preferredStepSec?: number): {
+  buckets: number[];
+  perNode: Array<{ nodeId: number; nodeName: string; points: Array<HistoryPoint | null>; bucketsRaw: Map<number, HistoryPoint[]> }>;
+} {
+  const bucketSec = getBucketSec(rangeSec, preferredStepSec);
+
+  // Group ALL points per node per bucket (for per-bucket delta calculation).
+  const perNodeBucket = new Map<number, Map<number, HistoryPoint[]>>();
   for (const p of points) {
     const bucketTs = Math.floor(p.ts / bucketSec) * bucketSec;
-    const nodeMap = perNodeBucket.get(p.node_id) || new Map<number, HistoryPoint>();
-    const prev = nodeMap.get(bucketTs);
-    if (!prev || p.ts > prev.ts) {
-      nodeMap.set(bucketTs, { ...p, ts: bucketTs });
-    }
+    const nodeMap = perNodeBucket.get(p.node_id) || new Map<number, HistoryPoint[]>();
+    const bucket = nodeMap.get(bucketTs) || [];
+    bucket.push(p);
+    nodeMap.set(bucketTs, bucket);
     perNodeBucket.set(p.node_id, nodeMap);
   }
 
@@ -227,12 +347,19 @@ function bucketizeAllNodesHistory(points: HistoryPoint[], rangeSec: number): {
 
   const perNode = Array.from(perNodeBucket.entries())
     .map(([nodeId, nodeMap]) => {
-      const first = nodeMap.values().next().value as HistoryPoint | undefined;
-      const nodeName = first?.node_name || `Node ${nodeId}`;
+      const firstBucket = Array.from(nodeMap.values())[0] || [];
+      const nodeName = firstBucket[0]?.node_name || `Node ${nodeId}`;
       return {
         nodeId,
         nodeName,
-        points: buckets.map((ts) => nodeMap.get(ts) || null),
+        points: buckets.map((ts) => {
+          const bucket = nodeMap.get(ts) || [];
+          if (bucket.length === 0) return null;
+          // Return latest point in bucket for display purposes.
+          bucket.sort((a, b) => a.ts - b.ts);
+          return bucket[bucket.length - 1];
+        }),
+        bucketsRaw: nodeMap,
       };
     })
     .sort((a, b) => a.nodeName.localeCompare(b.nodeName));
@@ -249,11 +376,19 @@ function formatTickLabel(tsSec: number, rangeSec: number): string {
 }
 
 export const MonitoringDashboard: React.FC = () => {
-  const { colors, stylePreset } = useTheme();
+  const { colors, stylePreset, theme } = useTheme();
 
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [selectedScope, setSelectedScope] = useState<string>('all'); // "all" | node id as string
   const [rangeSec, setRangeSec] = useState<number>(24 * 3600);
+  const [trafficUnit, setTrafficUnit] = useState<'MB' | 'GB'>('MB');
+  const [trafficMode, setTrafficMode] = useState<TrafficMode>('history');
+  const [trafficSource, setTrafficSource] = useState<TrafficSource>('nodes');
+  const [trafficStepSec, setTrafficStepSec] = useState<number>(60);
+  const [trafficVisualStyle, setTrafficVisualStyle] = useState<TrafficVisualStyle>('stepped');
+  const [trafficSmoothing, setTrafficSmoothing] = useState<TrafficSmoothing>('raw');
+  const [liveTrafficSeries, setLiveTrafficSeries] = useState<LiveTrafficPoint[]>([]);
+  const [liveTrafficError, setLiveTrafficError] = useState('');
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [allScopeHistory, setAllScopeHistory] = useState<HistoryPoint[]>([]);
   const [latestSnapshotNodes, setLatestSnapshotNodes] = useState<SnapshotNode[]>([]);
@@ -266,6 +401,7 @@ export const MonitoringDashboard: React.FC = () => {
   const [stackStatus, setStackStatus] = useState<StackStatusResponse | null>(null);
   const [adguardLoading, setAdguardLoading] = useState(false);
   const [adguardError, setAdguardError] = useState('');
+  const realtimeRefreshRef = useRef(0);
   const [adguardForm, setAdguardForm] = useState({
     name: '',
     admin_url: '',
@@ -310,13 +446,26 @@ export const MonitoringDashboard: React.FC = () => {
       if (scope === 'all') {
         if (nodes.length === 0) {
           setHistory([]);
+          setAllScopeHistory([]);
           setLoadingHistory(false);
           return;
         }
         const perNodeLimit = sinceSec >= 7 * 24 * 3600 ? 900 : 1200;
-        const all = await Promise.all(nodes.map((n) => fetchNodeHistory(n.id, sinceSec, perNodeLimit)));
-        setAllScopeHistory(all.flat());
+        const allResults = await Promise.allSettled(
+          nodes.map((n) => fetchNodeHistory(n.id, sinceSec, perNodeLimit))
+        );
+        const successful = allResults
+          .filter((result): result is PromiseFulfilledResult<HistoryPoint[]> => result.status === 'fulfilled')
+          .map((result) => result.value)
+          .flat();
+
+        setAllScopeHistory(successful);
         setHistory([]);
+
+        const failed = allResults.length - allResults.filter((result) => result.status === 'fulfilled').length;
+        if (failed > 0 && successful.length === 0) {
+          setError('Failed to load node history for all servers');
+        }
       } else {
         const nodeId = Number(scope);
         const data = await fetchNodeHistory(nodeId, sinceSec, 2000);
@@ -331,14 +480,31 @@ export const MonitoringDashboard: React.FC = () => {
     }
   };
 
-  const loadLatestSnapshot = async () => {
+  const loadLatestSnapshot = async (): Promise<SnapshotNode[]> => {
     try {
       const res = await api.get('/v1/snapshots/latest', { auth: getAuth() });
-      setLatestSnapshotNodes((res.data?.nodes || []) as SnapshotNode[]);
+      const parsed = (res.data?.nodes || []) as SnapshotNode[];
+      setLatestSnapshotNodes(parsed);
+      return parsed;
     } catch {
       setLatestSnapshotNodes([]);
+      return [];
     }
   };
+
+  const loadTrafficStats = async (
+    groupBy: 'client' | 'inbound' | 'node',
+    limit: number = 0,
+  ): Promise<TrafficStatsResponse> => {
+    const res = await api.get('/v1/traffic/stats', {
+      auth: getAuth(),
+      params: { group_by: groupBy, limit },
+    });
+    return (res.data || { stats: {}, group_by: groupBy }) as TrafficStatsResponse;
+  };
+
+  const sumTrafficTotals = (stats: Record<string, { total: number }>): number =>
+    Object.values(stats || {}).reduce((sum, item) => sum + Number(item?.total || 0), 0);
 
   const loadDepsHealth = async () => {
     try {
@@ -390,6 +556,7 @@ export const MonitoringDashboard: React.FC = () => {
     }
   };
 
+
   const collectAdguardNow = async () => {
     try {
       setAdguardLoading(true);
@@ -419,17 +586,117 @@ export const MonitoringDashboard: React.FC = () => {
     loadHistory(selectedScope, rangeSec);
   }, [selectedScope, rangeSec, nodes.length]);
 
+  const effectiveTrafficSource: TrafficSource = !isAllScope && trafficSource !== 'nodes' ? 'nodes' : trafficSource;
+  const effectiveTrafficMode: TrafficMode = effectiveTrafficSource === 'nodes' ? trafficMode : 'live';
+  const effectiveTrafficStepSec = normalizeStepForMode(effectiveTrafficMode, trafficStepSec);
+
   useEffect(() => {
-    const timer = setInterval(() => {
+    setLiveTrafficSeries([]);
+    setLiveTrafficError('');
+  }, [effectiveTrafficMode, effectiveTrafficSource, selectedScope, rangeSec]);
+
+  useEffect(() => {
+    if (effectiveTrafficMode !== 'live') return;
+
+    let cancelled = false;
+
+    const tick = async () => {
+      try {
+        const snapshot = await loadLatestSnapshot();
+        if (cancelled) return;
+
+        const nodeTotals: Record<string, number> = {};
+        for (const node of snapshot) {
+          nodeTotals[node.name] = Number(node.traffic_total || 0);
+        }
+
+        let peopleTotal = 0;
+        let inboundsTotal = 0;
+        if (effectiveTrafficSource === 'people') {
+          const traffic = await loadTrafficStats('client', 1500);
+          if (cancelled) return;
+          peopleTotal = sumTrafficTotals(traffic.stats);
+        } else if (effectiveTrafficSource === 'inbounds') {
+          const traffic = await loadTrafficStats('inbound', 1500);
+          if (cancelled) return;
+          inboundsTotal = sumTrafficTotals(traffic.stats);
+        }
+
+        const nodesTotal = Object.values(nodeTotals).reduce((sum, v) => sum + Number(v || 0), 0);
+        const ts = Math.floor(Date.now() / 1000);
+
+        setLiveTrafficSeries((prev) => {
+          const next = [...prev, { ts, nodesTotal, peopleTotal, inboundsTotal, nodeTotals }];
+          const cutoff = ts - rangeSec;
+          // Keep only visible window and remove accidental same-second duplicates.
+          const filtered = next.filter((p) => p.ts >= cutoff);
+          const dedup: LiveTrafficPoint[] = [];
+          for (const p of filtered) {
+            if (dedup.length > 0 && dedup[dedup.length - 1].ts === p.ts) {
+              dedup[dedup.length - 1] = p;
+            } else {
+              dedup.push(p);
+            }
+          }
+          return dedup;
+        });
+
+        setLiveTrafficError('');
+      } catch (err: any) {
+        if (!cancelled) {
+          setLiveTrafficError(err?.response?.data?.detail || 'Live traffic sampling failed');
+        }
+      }
+    };
+
+    tick();
+    const dispose = registerPollingTask({
+      id: `monitoring-live:${effectiveTrafficSource}:${selectedScope}:${rangeSec}:${effectiveTrafficStepSec}`,
+      intervalMs: effectiveTrafficStepSec * 1000,
+      hiddenIntervalMs: Math.max(effectiveTrafficStepSec * 3000, 30_000),
+      run: tick,
+    });
+    return () => {
+      cancelled = true;
+      dispose();
+    };
+  }, [effectiveTrafficMode, effectiveTrafficSource, effectiveTrafficStepSec, selectedScope, rangeSec]);
+
+  useEffect(() => {
+    return () => undefined;
+  }, []);
+
+  const handleRealtimeUpdate = useCallback(
+    (update: TrafficUpdate) => {
+      if (update.type !== 'server_status' && update.type !== 'traffic_update' && update.type !== 'client_update') {
+        return;
+      }
+      const now = Date.now();
+      if (now - realtimeRefreshRef.current < 3000) return;
+      realtimeRefreshRef.current = now;
+
+      loadHistory(selectedScope, rangeSec);
+      loadLatestSnapshot();
+      loadDepsHealth();
+      loadStackStatus();
+    },
+    [selectedScope, rangeSec],
+  );
+
+  useTrafficStatsSubscription({
+    channels: ['server_status', 'traffic', 'clients'],
+    onUpdate: handleRealtimeUpdate,
+    onError: (err) => console.warn('[MonitoringDashboard] realtime error:', err),
+    fallbackPollIntervalMs: 60_000,
+    fallbackRun: () => {
       loadHistory(selectedScope, rangeSec);
       loadLatestSnapshot();
       loadDepsHealth();
       loadAdguardOverview();
       loadAdguardHistory();
       loadStackStatus();
-    }, 60_000);
-    return () => clearInterval(timer);
-  }, [selectedScope, rangeSec, nodes.length]);
+    },
+  });
 
   const latestForSelected = useMemo(() => {
     if (isAllScope) return null;
@@ -445,9 +712,86 @@ export const MonitoringDashboard: React.FC = () => {
     return { total, online, onlineClients };
   }, [latestSnapshotNodes]);
 
-  const labels = history.map((p) => formatTickLabel(p.ts, rangeSec));
-  const allScopeSeries = useMemo(() => bucketizeAllNodesHistory(allScopeHistory, rangeSec), [allScopeHistory, rangeSec]);
+  const selectedLiveSnapshotPoint = useMemo(() => {
+    if (isAllScope) return null;
+    const node = latestSnapshotNodes.find((n) => n.node_id === selectedNodeId || n.name === selectedNodeName);
+    if (!node) return null;
+    return {
+      ts: Math.floor(Date.now() / 1000),
+      node_id: node.node_id,
+      node_name: node.name,
+      available: node.available ? 1 : 0,
+      xray_running: node.xray_running ? 1 : 0,
+      cpu: Number(node.cpu || 0),
+      online_clients: Number(node.online_clients || 0),
+      traffic_total: Number(node.traffic_total || 0),
+      poll_ms: 0,
+    } as HistoryPoint;
+  }, [isAllScope, latestSnapshotNodes, selectedNodeId, selectedNodeName]);
+
+  const effectiveHistory = useMemo(() => {
+    if (history.length > 0) return history;
+    if (selectedLiveSnapshotPoint) return [selectedLiveSnapshotPoint];
+    return [] as HistoryPoint[];
+  }, [history, selectedLiveSnapshotPoint]);
+
+  const effectiveAllScopeHistory = useMemo(() => {
+    if (allScopeHistory.length > 0) return allScopeHistory;
+    if (!isAllScope) return [] as HistoryPoint[];
+    if (!latestSnapshotNodes.length) return [] as HistoryPoint[];
+    const ts = Math.floor(Date.now() / 1000);
+    return latestSnapshotNodes.map((node) => ({
+      ts,
+      node_id: node.node_id,
+      node_name: node.name,
+      available: node.available ? 1 : 0,
+      xray_running: node.xray_running ? 1 : 0,
+      cpu: Number(node.cpu || 0),
+      online_clients: Number(node.online_clients || 0),
+      traffic_total: Number(node.traffic_total || 0),
+      poll_ms: 0,
+    }));
+  }, [allScopeHistory, isAllScope, latestSnapshotNodes]);
+
+  const labels = effectiveHistory.map((p) => formatTickLabel(p.ts, rangeSec));
+  const allScopeSeries = useMemo(() => bucketizeAllNodesHistory(effectiveAllScopeHistory, rangeSec), [effectiveAllScopeHistory, rangeSec]);
   const allScopeLabels = allScopeSeries.buckets.map((ts) => formatTickLabel(ts, rangeSec));
+  const historyTrafficBucketSec = normalizeStepForMode('history', trafficStepSec);
+  const trafficHistorySeries = useMemo(
+    () => bucketizeAllNodesHistory(effectiveAllScopeHistory, rangeSec, historyTrafficBucketSec),
+    [effectiveAllScopeHistory, rangeSec, historyTrafficBucketSec]
+  );
+  const trafficHistoryLabels = trafficHistorySeries.buckets.map((ts) => formatTickLabel(ts, rangeSec));
+
+  const liveTrafficWindow = useMemo(() => {
+    if (!liveTrafficSeries.length) return [] as LiveTrafficPoint[];
+    const cutoff = Math.floor(Date.now() / 1000) - rangeSec;
+    return liveTrafficSeries.filter((p) => p.ts >= cutoff);
+  }, [liveTrafficSeries, rangeSec]);
+  const liveTrafficLabels = liveTrafficWindow.map((p) => formatTickLabel(p.ts, rangeSec));
+
+  const trafficLineShape = useMemo(
+    () =>
+      trafficVisualStyle === 'smooth'
+        ? { tension: 0.25, stepped: false as const }
+        : trafficVisualStyle === 'stepped'
+        ? { tension: 0, stepped: true as const }
+        : { tension: 0, stepped: false as const },
+    [trafficVisualStyle]
+  );
+  const renderTrafficAsBars = trafficVisualStyle === 'bars';
+
+  const trafficUnitLabel = trafficUnit;
+  const convertBytes = (bytes: number) => (trafficUnit === 'GB' ? bytesToGb(bytes) : bytesToMb(bytes));
+  const toTrafficUnit = (value: number | null) => (value === null ? null : Number(convertBytes(value).toFixed(2)));
+  const smoothTrafficSeries = (series: Array<number | null>) => smoothSeries(series, trafficSmoothing);
+  const trafficUnitPerIntervalLabel = `${trafficUnitLabel}/interval`;
+  const trafficModeLabel = effectiveTrafficMode === 'live' ? 'Live' : 'History';
+  const trafficSourceLabel = effectiveTrafficSource === 'nodes' ? 'Nodes' : effectiveTrafficSource === 'people' ? 'People' : 'Inbounds';
+  const trafficSmoothingLabel = trafficSmoothing === 'raw' ? 'raw' : trafficSmoothing === 'sma3' ? 'SMA-3' : 'SMA-5';
+  const showingLiveSnapshotFallback = effectiveTrafficMode === 'history' && (isAllScope
+    ? allScopeHistory.length === 0 && effectiveAllScopeHistory.length > 0
+    : history.length === 0 && effectiveHistory.length > 0);
   const chartPalette = useMemo(
     () => stylePreset === '3'
       ? ['#fafafa', '#d4d4d8', '#a3a3a3', '#737373', '#525252', '#facc15', '#4ade80', '#ef4444']
@@ -475,7 +819,7 @@ export const MonitoringDashboard: React.FC = () => {
       : [
           {
             label: 'CPU %',
-            data: history.map((p) => Number((p.cpu || 0).toFixed(2))),
+            data: effectiveHistory.map((p) => Number((p.cpu || 0).toFixed(2))),
             borderColor: colors.warning,
             backgroundColor: colors.warning + '33',
             borderWidth: 2.2,
@@ -506,7 +850,7 @@ export const MonitoringDashboard: React.FC = () => {
       : [
           {
             label: 'Online clients',
-            data: history.map((p) => Number(p.online_clients || 0)),
+            data: effectiveHistory.map((p) => Number(p.online_clients || 0)),
             borderColor: colors.accent,
             backgroundColor: colors.accent + '33',
             borderWidth: 2.2,
@@ -517,36 +861,189 @@ export const MonitoringDashboard: React.FC = () => {
         ],
   };
 
-  const trafficData = {
-    labels: isAllScope ? allScopeLabels : labels,
-    datasets: isAllScope
-      ? allScopeSeries.perNode.map((node, idx) => {
-          const c = chartPalette[idx % chartPalette.length];
-          return {
-            label: node.nodeName,
-            data: node.points.map((p) => (p ? Number(bytesToGb(p.traffic_total || 0).toFixed(2)) : null)),
-            borderColor: c,
-            backgroundColor: c + '33',
-            borderWidth: 2.2,
-            tension: 0.25,
-            pointRadius: 0,
-            pointHoverRadius: 3,
-            spanGaps: true,
-          };
-        })
-      : [
+  const trafficData = useMemo(() => {
+    if (effectiveTrafficMode === 'history') {
+      if (isAllScope) {
+        return {
+          labels: trafficHistoryLabels,
+          datasets: [
+            {
+              label: 'All servers usage',
+              data: smoothTrafficSeries(
+                buildBucketTrafficUsageSeries(trafficHistorySeries.perNode, trafficHistorySeries.buckets).map((bytes) =>
+                  toTrafficUnit(Number(bytes || 0))
+                )
+              ),
+              borderColor: colors.info,
+              backgroundColor: colors.info + '44',
+              borderWidth: 2.8,
+              pointRadius: 0,
+              pointHoverRadius: 4,
+              spanGaps: true,
+              ...trafficLineShape,
+            },
+            ...trafficHistorySeries.perNode.map((node, idx) => {
+              const c = chartPalette[idx % chartPalette.length];
+              const usageSeries = buildTrafficUsageSeries(node.points);
+              const convertedSeries = usageSeries.map((bytes) => toTrafficUnit(bytes));
+              return {
+                label: node.nodeName,
+                data: smoothTrafficSeries(convertedSeries),
+                borderColor: c,
+                backgroundColor: c + '33',
+                borderWidth: 2.2,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                spanGaps: true,
+                ...trafficLineShape,
+              };
+            }),
+          ],
+        };
+      }
+
+      return {
+        labels,
+        datasets: [
           {
-            label: 'Traffic total (GB)',
-            data: history.map((p) => Number(bytesToGb(p.traffic_total || 0).toFixed(2))),
+            label: `Traffic usage (${trafficUnitPerIntervalLabel})`,
+            data: smoothTrafficSeries(buildTrafficUsageSeries(effectiveHistory).map((bytes) => toTrafficUnit(Number(bytes || 0)))),
             borderColor: colors.info,
             backgroundColor: colors.info + '33',
             borderWidth: 2.2,
-            tension: 0.25,
             pointRadius: 0,
             pointHoverRadius: 3,
+            ...trafficLineShape,
           },
         ],
-  };
+      };
+    }
+
+    // Live mode
+    if (!liveTrafficWindow.length) {
+      return { labels: [] as string[], datasets: [] as any[] };
+    }
+
+    if (effectiveTrafficSource === 'people') {
+      const usage = buildUsageFromCumulative(liveTrafficWindow.map((p) => Number(p.peopleTotal || 0)));
+      return {
+        labels: liveTrafficLabels,
+        datasets: [
+          {
+            label: `People usage (${trafficUnitPerIntervalLabel})`,
+            data: smoothTrafficSeries(usage.map((v) => toTrafficUnit(v))),
+            borderColor: colors.success,
+            backgroundColor: colors.success + '33',
+            borderWidth: 2.3,
+            pointRadius: 0,
+            pointHoverRadius: 3,
+            ...trafficLineShape,
+          },
+        ],
+      };
+    }
+
+    if (effectiveTrafficSource === 'inbounds') {
+      const usage = buildUsageFromCumulative(liveTrafficWindow.map((p) => Number(p.inboundsTotal || 0)));
+      return {
+        labels: liveTrafficLabels,
+        datasets: [
+          {
+            label: `Inbound usage (${trafficUnitPerIntervalLabel})`,
+            data: smoothTrafficSeries(usage.map((v) => toTrafficUnit(v))),
+            borderColor: colors.warning,
+            backgroundColor: colors.warning + '33',
+            borderWidth: 2.3,
+            pointRadius: 0,
+            pointHoverRadius: 3,
+            ...trafficLineShape,
+          },
+        ],
+      };
+    }
+
+    // Live + nodes source
+    if (isAllScope) {
+      const totalUsage = buildUsageFromCumulative(liveTrafficWindow.map((p) => Number(p.nodesTotal || 0)));
+      const perNodeDatasets = nodes
+        .map((node, idx) => {
+          const usage = buildUsageFromCumulative(
+            liveTrafficWindow.map((p) => (typeof p.nodeTotals[node.name] === 'number' ? p.nodeTotals[node.name] : null))
+          );
+          if (!usage.some((v) => v !== null)) return null;
+          const c = chartPalette[idx % chartPalette.length];
+          return {
+            label: node.name,
+            data: smoothTrafficSeries(usage.map((v) => toTrafficUnit(v))),
+            borderColor: c,
+            backgroundColor: c + '33',
+            borderWidth: 2.0,
+            pointRadius: 0,
+            pointHoverRadius: 3,
+            spanGaps: true,
+            ...trafficLineShape,
+          };
+        })
+        .filter(Boolean);
+
+      return {
+        labels: liveTrafficLabels,
+        datasets: [
+          {
+            label: `All servers live usage (${trafficUnitPerIntervalLabel})`,
+            data: smoothTrafficSeries(totalUsage.map((v) => toTrafficUnit(v))),
+            borderColor: colors.info,
+            backgroundColor: colors.info + '44',
+            borderWidth: 2.8,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            spanGaps: true,
+            ...trafficLineShape,
+          },
+          ...(perNodeDatasets as any[]),
+        ],
+      };
+    }
+
+    const selectedUsage = buildUsageFromCumulative(
+      liveTrafficWindow.map((p) => (typeof p.nodeTotals[selectedNodeName] === 'number' ? p.nodeTotals[selectedNodeName] : null))
+    );
+    return {
+      labels: liveTrafficLabels,
+      datasets: [
+        {
+          label: `${selectedNodeName} live usage (${trafficUnitPerIntervalLabel})`,
+          data: smoothTrafficSeries(selectedUsage.map((v) => toTrafficUnit(v))),
+          borderColor: colors.info,
+          backgroundColor: colors.info + '33',
+          borderWidth: 2.4,
+          pointRadius: 0,
+          pointHoverRadius: 3,
+          spanGaps: true,
+          ...trafficLineShape,
+        },
+      ],
+    };
+  }, [
+    effectiveTrafficMode,
+    effectiveTrafficSource,
+    isAllScope,
+    trafficHistoryLabels,
+    trafficHistorySeries,
+    labels,
+    effectiveHistory,
+    liveTrafficWindow,
+    liveTrafficLabels,
+    selectedNodeName,
+    trafficUnitPerIntervalLabel,
+    chartPalette,
+    nodes,
+    trafficLineShape,
+    trafficSmoothing,
+    colors.info,
+    colors.success,
+    colors.warning,
+  ]);
 
   const chartOptions = {
     responsive: true,
@@ -564,11 +1061,21 @@ export const MonitoringDashboard: React.FC = () => {
         },
       },
       tooltip: {
-        backgroundColor: stylePreset === '3' ? 'rgba(8, 8, 8, 0.96)' : 'rgba(8, 17, 32, 0.96)',
-        borderColor: stylePreset === '3' ? 'rgba(255, 255, 255, 0.18)' : 'rgba(125, 211, 252, 0.45)',
+        backgroundColor:
+          theme === 'light'
+            ? 'rgba(255, 255, 255, 0.98)'
+            : stylePreset === '3'
+            ? 'rgba(8, 8, 8, 0.96)'
+            : 'rgba(8, 17, 32, 0.96)',
+        borderColor:
+          theme === 'light'
+            ? 'rgba(148, 163, 184, 0.5)'
+            : stylePreset === '3'
+            ? 'rgba(255, 255, 255, 0.18)'
+            : 'rgba(125, 211, 252, 0.45)',
         borderWidth: 1,
-        titleColor: stylePreset === '3' ? '#fafafa' : '#e2e8f0',
-        bodyColor: stylePreset === '3' ? '#d4d4d8' : '#bae6fd',
+        titleColor: theme === 'light' ? '#0f172a' : stylePreset === '3' ? '#fafafa' : '#e2e8f0',
+        bodyColor: theme === 'light' ? '#334155' : stylePreset === '3' ? '#d4d4d8' : '#bae6fd',
         padding: 10,
         cornerRadius: 10,
         displayColors: true,
@@ -586,7 +1093,7 @@ export const MonitoringDashboard: React.FC = () => {
       point: {
         hoverRadius: 4,
         hoverBorderWidth: 1.5,
-        hoverBorderColor: stylePreset === '3' ? '#ffffff' : '#e0f2fe',
+        hoverBorderColor: theme === 'light' ? '#1d4ed8' : stylePreset === '3' ? '#ffffff' : '#e0f2fe',
       },
     },
     scales: {
@@ -608,6 +1115,37 @@ export const MonitoringDashboard: React.FC = () => {
           },
         },
         grid: { color: colors.border + '55' },
+      },
+    },
+  };
+
+  const trafficChartOptions = {
+    ...chartOptions,
+    plugins: {
+      ...chartOptions.plugins,
+      tooltip: {
+        ...chartOptions.plugins.tooltip,
+        callbacks: {
+          label: (context: any) => {
+            const datasetLabel = context?.dataset?.label || '';
+            const y = Number(context?.parsed?.y || 0);
+            return `${datasetLabel}: ${y.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${trafficUnitPerIntervalLabel}`;
+          },
+          title: (items: any[]) => {
+            const base = items?.[0]?.label || '';
+            return `${base} • ${trafficModeLabel} • step ${effectiveTrafficStepSec}s • ${trafficSourceLabel} • ${trafficSmoothingLabel}`;
+          },
+        },
+      },
+    },
+    scales: {
+      ...chartOptions.scales,
+      y: {
+        ...chartOptions.scales.y,
+        ticks: {
+          ...chartOptions.scales.y.ticks,
+          callback: (value: any) => `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${trafficUnitPerIntervalLabel}`,
+        },
       },
     },
   };
@@ -743,7 +1281,7 @@ export const MonitoringDashboard: React.FC = () => {
       )}
 
       <div className="row g-2 mb-3">
-        <div className="col-md-4">
+        <div className="col-md-3">
           <label className="form-label small" style={{ color: colors.text.secondary }}>
             Сервер
           </label>
@@ -757,7 +1295,7 @@ export const MonitoringDashboard: React.FC = () => {
             colors={colors}
           />
         </div>
-        <div className="col-md-4">
+        <div className="col-md-3">
           <label className="form-label small" style={{ color: colors.text.secondary }}>
             Диапазон
           </label>
@@ -768,7 +1306,21 @@ export const MonitoringDashboard: React.FC = () => {
             colors={colors}
           />
         </div>
-        <div className="col-md-4 d-flex align-items-end">
+        <div className="col-md-3">
+          <label className="form-label small" style={{ color: colors.text.secondary }}>
+            Трафик
+          </label>
+          <ChoiceChips
+            options={[
+              { value: 'MB', label: 'MB' },
+              { value: 'GB', label: 'GB' },
+            ]}
+            value={trafficUnit}
+            onChange={(value) => setTrafficUnit(value as 'MB' | 'GB')}
+            colors={colors}
+          />
+        </div>
+        <div className="col-md-3 d-flex align-items-end">
           <button
             className="btn btn-sm w-100"
             style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
@@ -784,6 +1336,79 @@ export const MonitoringDashboard: React.FC = () => {
           >
             {loadingHistory ? 'Обновление...' : 'Обновить'}
           </button>
+        </div>
+      </div>
+
+      <div className="row g-2 mb-3">
+        <div className="col-md-3">
+          <label className="form-label small" style={{ color: colors.text.secondary }}>
+            Режим трафика
+          </label>
+          <ChoiceChips
+            options={[
+              { value: 'history', label: 'History' },
+              { value: 'live', label: 'Live' },
+            ]}
+            value={trafficMode}
+            onChange={(value) => setTrafficMode(value as TrafficMode)}
+            colors={colors}
+          />
+        </div>
+        <div className="col-md-3">
+          <label className="form-label small" style={{ color: colors.text.secondary }}>
+            Источник
+          </label>
+          <ChoiceChips
+            options={[
+              { value: 'nodes', label: 'Nodes' },
+              { value: 'people', label: 'Люди' },
+              { value: 'inbounds', label: 'Инбаунды' },
+            ]}
+            value={trafficSource}
+            onChange={(value) => setTrafficSource(value as TrafficSource)}
+            colors={colors}
+          />
+        </div>
+        <div className="col-md-3">
+          <label className="form-label small" style={{ color: colors.text.secondary }}>
+            Шаг
+          </label>
+          <ChoiceChips
+            options={TRAFFIC_STEP_OPTIONS.map((step) => ({ value: step.value, label: step.label }))}
+            value={trafficStepSec}
+            onChange={(value) => setTrafficStepSec(Number(value))}
+            colors={colors}
+          />
+        </div>
+        <div className="col-md-3">
+          <label className="form-label small" style={{ color: colors.text.secondary }}>
+            Стиль
+          </label>
+          <ChoiceChips
+            options={[
+              { value: 'stepped', label: 'Stepped' },
+              { value: 'bars', label: 'Bars' },
+              { value: 'smooth', label: 'Smooth' },
+            ]}
+            value={trafficVisualStyle}
+            onChange={(value) => setTrafficVisualStyle(value as TrafficVisualStyle)}
+            colors={colors}
+          />
+        </div>
+        <div className="col-md-3">
+          <label className="form-label small" style={{ color: colors.text.secondary }}>
+            Сглаживание
+          </label>
+          <ChoiceChips
+            options={[
+              { value: 'raw', label: 'Raw' },
+              { value: 'sma3', label: 'SMA-3' },
+              { value: 'sma5', label: 'SMA-5' },
+            ]}
+            value={trafficSmoothing}
+            onChange={(value) => setTrafficSmoothing(value as TrafficSmoothing)}
+            colors={colors}
+          />
         </div>
       </div>
 
@@ -831,7 +1456,35 @@ export const MonitoringDashboard: React.FC = () => {
       </div>
 
       <div className="row g-3">
-        <div className="col-12">
+        {trafficSource !== 'nodes' && (
+          <div className="col-12">
+            <div className="alert mb-0" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.info }}>
+              Источник «Люди/Инбаунды» работает в live-режиме (исторические серии per-client/per-inbound сейчас не хранятся).
+            </div>
+          </div>
+        )}
+        {!isAllScope && trafficSource !== 'nodes' && (
+          <div className="col-12">
+            <div className="alert mb-0" style={{ backgroundColor: colors.warning + '22', borderColor: colors.warning, color: colors.warning }}>
+              Для отдельного сервера включён fallback на source=Nodes (агрегация «Люди» корректна только для scope=All servers).
+            </div>
+          </div>
+        )}
+        {liveTrafficError && (
+          <div className="col-12">
+            <div className="alert mb-0" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+              {liveTrafficError}
+            </div>
+          </div>
+        )}
+        {showingLiveSnapshotFallback && (
+          <div className="col-12">
+            <div className="alert mb-0" style={{ backgroundColor: colors.warning + '22', borderColor: colors.warning, color: colors.warning }}>
+              История пока пустая — отображается текущий live snapshot.
+            </div>
+          </div>
+        )}
+        <div className="col-12" style={{ order: 100 }}>
           <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
             <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
               <h6 className="mb-0" style={{ color: colors.text.primary }}>AdGuard DNS Monitoring</h6>
@@ -1113,7 +1766,7 @@ export const MonitoringDashboard: React.FC = () => {
           </div>
         </div>
 
-        <div className="col-12">
+        <div className="col-12" style={{ order: 10 }}>
           <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
             <h6 style={{ color: colors.text.primary }}>CPU ({selectedNodeName})</h6>
             <div style={{ height: 260 }}>
@@ -1121,7 +1774,7 @@ export const MonitoringDashboard: React.FC = () => {
             </div>
           </div>
         </div>
-        <div className="col-12">
+        <div className="col-12" style={{ order: 20 }}>
           <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
             <h6 style={{ color: colors.text.primary }}>Online clients ({selectedNodeName})</h6>
             <div style={{ height: 260 }}>
@@ -1129,14 +1782,21 @@ export const MonitoringDashboard: React.FC = () => {
             </div>
           </div>
         </div>
-        <div className="col-12">
+        <div className="col-12" style={{ order: 30 }}>
           <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <h6 style={{ color: colors.text.primary }}>Traffic total ({selectedNodeName})</h6>
+            <h6 style={{ color: colors.text.primary }}>
+              Traffic usage {trafficUnitPerIntervalLabel} ({selectedNodeName}) • {trafficModeLabel} • {trafficSourceLabel} • step {effectiveTrafficStepSec}s • {trafficSmoothingLabel}
+            </h6>
             <div style={{ height: 260 }}>
-              <Line data={trafficData} options={chartOptions} />
+              {renderTrafficAsBars ? (
+                <Bar data={trafficData} options={trafficChartOptions as any} />
+              ) : (
+                <Line data={trafficData} options={trafficChartOptions} />
+              )}
             </div>
           </div>
         </div>
+
       </div>
     </div>
   );

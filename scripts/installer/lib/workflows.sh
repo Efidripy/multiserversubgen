@@ -158,6 +158,7 @@ run_internal_xui_install() {
     local xui_domain="${PROFILE_XUI_DOMAIN:-vm1.kleva.ru}"
     local xui_reality_domain="${PROFILE_XUI_REALITY_DOMAIN:-vm2.kleva.ru}"
     local xui_tag
+    local status=0
 
     if [ "${INSTALLER_DRY_RUN:-false}" = "true" ]; then
         installer_message "Dry Run" "Would install 3x-ui using the internal core for ${xui_domain} and ${xui_reality_domain}."
@@ -167,18 +168,25 @@ run_internal_xui_install() {
 
     xui_tag="$(xui_pick_release_tag)"
     installer_message "Installing 3x-ui" "Running internal x-ui core for ${xui_domain} and ${xui_reality_domain}..."
-    xui_install_binary "$xui_tag"
-    xui_generate_seed_context "$xui_domain" "$xui_reality_domain"
-    xui_install_sub2sing_box
-    xui_render_sub_templates
-    xui_configure_nginx_and_tls "$xui_domain" "$xui_reality_domain"
-    xui_configure_panel "$xui_domain" "${PROFILE_XUI_CERT_PATH:-}" "${PROFILE_XUI_CERT_KEY_PATH:-}"
-    xui_seed_base_inbounds "$xui_domain" "$xui_reality_domain"
-    xui_collect_summary
-    xui_print_runtime_summary
+    xui_install_binary "$xui_tag" || status=$?
+    if [ "$status" -eq 0 ]; then
+        xui_generate_seed_context "$xui_domain" "$xui_reality_domain"
+        xui_install_sub2sing_box || status=$?
+        if [ "$status" -eq 0 ]; then xui_render_sub_templates || status=$?; fi
+        if [ "$status" -eq 0 ]; then xui_configure_nginx_and_tls "$xui_domain" "$xui_reality_domain" || status=$?; fi
+        if [ "$status" -eq 0 ]; then xui_configure_panel "$xui_domain" "${PROFILE_XUI_CERT_PATH:-}" "${PROFILE_XUI_CERT_KEY_PATH:-}" || status=$?; fi
+        if [ "$status" -eq 0 ]; then xui_seed_base_inbounds "$xui_domain" "$xui_reality_domain" || status=$?; fi
+        if [ "$status" -eq 0 ]; then xui_collect_summary || status=$?; fi
+        if [ "$status" -eq 0 ]; then xui_print_runtime_summary || status=$?; fi
+    fi
+
+    if [ "$status" -ne 0 ]; then
+        return "$status"
+    fi
 
     PROFILE_XUI_DOMAIN="${xui_domain}"
     PROFILE_XUI_REALITY_DOMAIN="${xui_reality_domain}"
+    return 0
 }
 
 collect_common_settings() {
@@ -340,6 +348,7 @@ run_install_with_answers() {
     local answers_file
     local selected_cfg=""
     local exact_cfg=""
+    local status=0
     answers_file="$(mktemp)"
     {
         printf "%s\n" "$PROFILE_PROJECT_NAME"
@@ -389,14 +398,13 @@ run_install_with_answers() {
         fi
     done
 
-    if [ -z "$selected_cfg" ] && [ -n "${SELECTED_CFG:-}" ]; then
-        selected_cfg="${SELECTED_CFG}"
-    fi
-    cat "$answers_file" | sudo env -u INSTALLER_AUTOMATION_STEPS \
+    cat "$answers_file" | sudo env INSTALLER_AUTOMATION_STEPS="${INSTALLER_AUTOMATION_STEPS:-task}" \
         SELECTED_CFG="${selected_cfg}" \
         INSTALLER_EXISTING_ACTION="reinstall" \
         bash "${REPO_ROOT}/install.sh"
+    status=$?
     rm -f "$answers_file"
+    return "$status"
 }
 
 run_update_mode() {
@@ -425,7 +433,7 @@ run_simple_install_over_existing() {
         installer_message "Simple Install Over Existing" "Existing installation detected. Running repair/update path."
         sleep 1
         run_update_mode "1"
-        return 0
+        return $?
     fi
 
     collect_common_settings || return 0
@@ -442,6 +450,7 @@ run_simple_install_over_existing() {
         [ "$confirm" = "y" ] || return 0
     fi
     run_install_with_answers
+    return $?
 }
 
 run_sub_preset() {
@@ -480,6 +489,7 @@ run_sub_preset() {
         [ "$confirm" = "y" ] || return 0
     fi
     run_install_with_answers
+    return $?
 }
 
 run_xui_preset() {
@@ -496,7 +506,7 @@ run_xui_preset() {
         case "$reinstall_choice" in
             __QUIT__|__BACK__) return 0 ;;
             y)
-                run_internal_xui_install
+                run_internal_xui_install || return $?
                 ;;
         esac
     else
@@ -505,7 +515,7 @@ run_xui_preset() {
         case "$install_choice" in
             __QUIT__|__BACK__) return 0 ;;
             y)
-                run_internal_xui_install
+                run_internal_xui_install || return $?
                 ;;
             n) return 0 ;;
         esac
@@ -515,6 +525,7 @@ run_xui_preset() {
         sudo rm -f /etc/systemd/system/sub-manager.service /lib/systemd/system/sub-manager.service
         sudo systemctl daemon-reload >/dev/null 2>&1 || true
     fi
-    run_sub_preset "$profile"
+    run_sub_preset "$profile" || return $?
     repair_xui_nginx_integration
+    return $?
 }

@@ -89,10 +89,13 @@ def build_auth_request_facade(
 
 def build_cache_facade(*, live_stats_runtime, clients_runtime, audit_runtime):
     def invalidate_live_stats_cache():
-        return live_stats_runtime.invalidate_live_stats_cache()
+        return live_stats_runtime.invalidate()
 
     def get_cached_traffic_stats(nodes: List[Dict], group_by: str) -> Dict:
         return live_stats_runtime.get_cached_traffic_stats(nodes, group_by)
+
+    def get_traffic_stats_by_period(nodes: List[Dict], group_by: str, period: str) -> Dict:
+        return live_stats_runtime.get_traffic_stats_by_period(nodes, group_by, period)
 
     def get_cached_online_clients(nodes: List[Dict]) -> List[Dict]:
         return live_stats_runtime.get_cached_online_clients(nodes)
@@ -109,6 +112,7 @@ def build_cache_facade(*, live_stats_runtime, clients_runtime, audit_runtime):
     return (
         invalidate_live_stats_cache,
         get_cached_traffic_stats,
+        get_traffic_stats_by_period,
         get_cached_online_clients,
         get_cached_clients,
         enqueue_audit_event,

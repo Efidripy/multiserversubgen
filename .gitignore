@@ -1,3 +1,7 @@
+# Local project docs (do not publish to root workspace)
+.local_project_docs/
+
+# Build & cache
 node_modules/
 frontend/node_modules/
 backend/build/
@@ -12,13 +16,19 @@ venv/
 .env
 .env.local
 .env.*.local
+
+# Runtime data
 *.db
 *.sqlite
 *.sqlite3
 *.bak
 *.backup
 *.dump
+
+# Tool caches
 .pytest_cache/
 .ruff_cache/
+
+# Archives
 installer-sync-*.tgz
 xui-core-patch.tgz
