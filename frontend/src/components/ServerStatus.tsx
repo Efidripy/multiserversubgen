@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
@@ -56,6 +57,7 @@ const SERVER_STATUS_CACHE_KEY = 'sub_manager_server_status_cache_v1';
 
 export const ServerStatus: React.FC = () => {
   const { colors, stylePreset } = useTheme();
+  const { t } = useTranslation();
   const [servers, setServers] = useState<ServerStatus[]>([]);
   const [nodeIds, setNodeIds] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
@@ -72,12 +74,12 @@ export const ServerStatus: React.FC = () => {
 
   const formatStatusReason = (server: ServerStatus) => {
     const reason = server.reason || '';
-    if (reason === 'auth_failed') return 'Auth failed';
-    if (reason === 'two_factor_required') return '2FA required';
-    if (reason === 'tls_error') return 'TLS error';
-    if (reason === 'timeout') return 'Timeout';
+    if (reason === 'auth_failed') return t('serverStatus.authFailed');
+    if (reason === 'two_factor_required') return t('serverStatus.twoFactorRequired');
+    if (reason === 'tls_error') return t('serverStatus.tlsError');
+    if (reason === 'timeout') return t('serverStatus.timeout');
     if (reason.startsWith('http_')) return reason.replace('_', ' ').toUpperCase();
-    return server.error || 'Connection failed';
+    return server.error || t('serverStatus.connectionFailed');
   };
 
   useEffect(() => {
@@ -214,7 +216,7 @@ export const ServerStatus: React.FC = () => {
           });
       });
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to load server status');
+      setError(err.response?.data?.detail || t('serverStatus.loadFailed'));
       setLoading(false);
     }
   };
@@ -224,16 +226,16 @@ export const ServerStatus: React.FC = () => {
       await api.post('/v1/nodes/refresh-now', {}, { auth: getAuth() });
       await loadServersStatus();
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Force refresh failed');
+      setError(err.response?.data?.detail || t('serverStatus.forceRefreshFailed'));
     }
   };
 
   const handleRestartCore = async (nodeName: string) => {
-    if (!window.confirm('Are you sure you want to restart core service on this server?')) return;
+    if (!window.confirm(t('serverStatus.confirmRestart'))) return;
 
     const nodeId = nodeIds[nodeName];
     if (!nodeId) {
-      alert('Node ID not found');
+      alert(t('serverStatus.nodeIdMissing'));
       return;
     }
 
@@ -241,10 +243,10 @@ export const ServerStatus: React.FC = () => {
       await api.post(`/v1/servers/${nodeId}/restart-xray`, {}, {
         auth: getAuth()
       });
-      alert('Core service restart command sent successfully');
+      alert(t('serverStatus.restartSent'));
       setTimeout(loadServersStatus, 3000);
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to restart core service');
+      alert(err.response?.data?.detail || t('serverStatus.restartFailed'));
     }
   };
 
@@ -264,7 +266,7 @@ export const ServerStatus: React.FC = () => {
         setLogsLines(Array.isArray(payload.logs) ? payload.logs : []);
       }
     } catch (err: any) {
-      setLogsError(err.response?.data?.detail || 'Failed to load logs');
+      setLogsError(err.response?.data?.detail || t('serverStatus.logsLoadFailed'));
       setLogsLines([]);
     } finally {
       setLogsLoading(false);
@@ -274,7 +276,7 @@ export const ServerStatus: React.FC = () => {
   const handleViewLogs = async (nodeName: string) => {
     const nodeId = nodeIds[nodeName];
     if (!nodeId) {
-      alert('Node ID not found');
+      alert(t('serverStatus.nodeIdMissing'));
       return;
     }
     setLogsNodeId(nodeId);
@@ -311,7 +313,7 @@ export const ServerStatus: React.FC = () => {
   return (
     <section className="panel-block server-status">
       <div className="panel-block__header mb-3">
-        <h4 className="mb-0" style={{ color: colors.text.primary }}>Server Status</h4>
+        <h4 className="mb-0" style={{ color: colors.text.primary }}>{t('serverStatus.title')}</h4>
         <div className="d-flex align-items-center gap-2">
           <div className="form-check form-check-inline mb-0">
             <input
@@ -322,7 +324,7 @@ export const ServerStatus: React.FC = () => {
               onChange={(e) => setAutoRefresh(e.target.checked)}
             />
             <label className="form-check-label small" style={{ color: colors.text.secondary }} htmlFor="autoRefresh">
-              Auto ({refreshInterval}s)
+              {t('serverStatus.autoRefresh')} ({refreshInterval}s)
             </label>
           </div>
           <button
@@ -334,7 +336,7 @@ export const ServerStatus: React.FC = () => {
             }}
             onClick={forceRefresh}
             disabled={loading}
-            title="Refresh server status"
+            title={t('common.refresh')}
           >
             <UIIcon name="refresh" size={14} />
           </button>
@@ -367,7 +369,7 @@ export const ServerStatus: React.FC = () => {
                 className="badge"
                 style={{ backgroundColor: server.available ? colors.success : colors.danger }}
               >
-                {server.available ? 'Online' : 'Offline'}
+                {server.available ? t('nodes.online') : t('nodes.offline')}
               </span>
             </div>
 
@@ -384,7 +386,7 @@ export const ServerStatus: React.FC = () => {
               <p className="server-card__error small" style={{ color: colors.text.secondary }}>
                 <span className="d-inline-flex align-items-center gap-1">
                   <UIIcon name="spinner" size={13} />
-                  Loading live metrics...
+                    {t('serverStatus.loadingLiveMetrics')}
                 </span>
               </p>
             )}
@@ -394,7 +396,7 @@ export const ServerStatus: React.FC = () => {
                 {/* CPU */}
                 <div className="server-card__metric">
                   <div className="server-card__metric-row">
-                    <span className="small" style={{ color: colors.text.secondary }}>CPU</span>
+                    <span className="small" style={{ color: colors.text.secondary }}>{t('serverStatus.cpu')}</span>
                     <span className="small" style={{ color: getStatusColor(server.system.cpu) }}>
                       {server.system.cpu.toFixed(1)}%
                     </span>
@@ -406,7 +408,7 @@ export const ServerStatus: React.FC = () => {
                 {/* Memory */}
                 <div className="server-card__metric">
                   <div className="server-card__metric-row">
-                    <span className="small" style={{ color: colors.text.secondary }}>MEM</span>
+                    <span className="small" style={{ color: colors.text.secondary }}>{t('serverStatus.ram')}</span>
                     <span className="small" style={{ color: getStatusColor(server.system.mem.percent) }}>
                       {server.system.mem.percent.toFixed(0)}%
                     </span>
@@ -418,7 +420,7 @@ export const ServerStatus: React.FC = () => {
                 {/* Disk */}
                 <div className="server-card__metric">
                   <div className="server-card__metric-row">
-                    <span className="small" style={{ color: colors.text.secondary }}>DISK</span>
+                    <span className="small" style={{ color: colors.text.secondary }}>{t('serverStatus.disk')}</span>
                     <span className="small" style={{ color: getStatusColor(server.system.disk.percent) }}>
                       {server.system.disk.percent.toFixed(0)}%
                     </span>
@@ -474,7 +476,7 @@ export const ServerStatus: React.FC = () => {
                       }}
                       onClick={() => handleRestartCore(server.node)}
                       disabled={!server.xray.running}
-                      title="Restart core"
+                      title={t('serverStatus.restart')}
                     >
                       <UIIcon name="refresh" size={13} />
                     </button>
@@ -488,9 +490,9 @@ export const ServerStatus: React.FC = () => {
                         fontSize: '0.75rem'
                       }}
                       onClick={() => handleViewLogs(server.node)}
-                      title="View logs"
+                      title={t('serverStatus.logs')}
                     >
-                      Logs
+                      {t('serverStatus.logs')}
                     </button>
                 </div>
               )}
@@ -502,7 +504,7 @@ export const ServerStatus: React.FC = () => {
 
       {servers.length === 0 && !loading && (
         <div className="text-center py-5" style={{ color: colors.text.secondary }}>
-          <p>No servers configured. Add servers in the Servers tab.</p>
+          <p>{t('serverStatus.noServers')}</p>
         </div>
       )}
 
@@ -511,11 +513,11 @@ export const ServerStatus: React.FC = () => {
           <div className="modal-dialog modal-lg modal-dialog-centered">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>Logs: {logsNodeName}</h6>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>{t('serverStatus.logs')}: {logsNodeName}</h6>
                 <button
                   type="button"
                   className="btn-close"
-                  aria-label="Close"
+                  aria-label={t('common.close')}
                   onClick={() => setShowLogsModal(false)}
                 />
               </div>
@@ -538,7 +540,7 @@ export const ServerStatus: React.FC = () => {
                     disabled={logsLoading || !logsNodeId}
                     onClick={() => { if (logsNodeId) { loadServerLogs(logsNodeId, logsLevel); } }}
                   >
-                    {logsLoading ? '...' : 'Refresh'}
+                    {logsLoading ? '...' : t('common.refresh')}
                   </button>
                 </div>
                 {logsError && (
@@ -561,7 +563,7 @@ export const ServerStatus: React.FC = () => {
                     wordBreak: 'break-word',
                   }}
                 >
-                  {logsLines.length > 0 ? logsLines.join('\n') : (logsLoading ? 'Loading logs...' : 'No logs')}
+                  {logsLines.length > 0 ? logsLines.join('\n') : (logsLoading ? t('serverStatus.logsLoading') : t('serverStatus.noLogs'))}
                 </pre>
               </div>
             </div>

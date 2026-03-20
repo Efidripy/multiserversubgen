@@ -5,6 +5,7 @@ LOG_FILE="/opt/.sub_manager_install.log"
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_DIR="$(cd "${INSTALLER_DIR}/../.." && pwd)"
 source "${INSTALLER_DIR}/lib/locale.sh"
+source "${INSTALLER_DIR}/lib/resource_guard.sh"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
 apt_update() {
@@ -198,10 +199,80 @@ selected_cfg_supports_stream_tls_mux() {
     return 1
 }
 
+ensure_stream_public_domain_route() {
+    shopt -s nullglob
+    [ "${PUBLIC_SCHEME:-https}" = "https" ] || { shopt -u nullglob; return 0; }
+    [ -n "${PUBLIC_DOMAIN:-}" ] || { shopt -u nullglob; return 0; }
+    selected_cfg_supports_stream_tls_mux "${SELECTED_CFG:-}" || { shopt -u nullglob; return 0; }
+
+    local stream_files=( /etc/nginx/stream-enabled/*.conf )
+    if [ ${#stream_files[@]} -eq 0 ]; then
+        shopt -u nullglob
+        return 0
+    fi
+
+    python3 - "${PUBLIC_DOMAIN}" "${stream_files[@]}" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+domain = sys.argv[1]
+paths = [Path(p) for p in sys.argv[2:]]
+
+for path in paths:
+    text = path.read_text()
+    if "map $ssl_preread_server_name $sni_name" not in text or "upstream www" not in text:
+        continue
+
+    lines = text.splitlines()
+    start = None
+    end = None
+    for idx, line in enumerate(lines):
+        if re.search(r'map\s+\$ssl_preread_server_name\s+\$sni_name\s*\{', line):
+            start = idx
+            continue
+        if start is not None and line.strip() == "}":
+            end = idx
+            break
+
+    if start is None or end is None:
+        continue
+
+    replacement = f"    {domain} www;"
+    changed = False
+
+    for idx in range(start + 1, end):
+        stripped = lines[idx].strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if re.match(rf"{re.escape(domain)}\s+", stripped):
+            if stripped != f"{domain} www;":
+                lines[idx] = replacement
+                changed = True
+            break
+    else:
+        for idx in range(start + 1, end):
+            if lines[idx].strip().startswith("default "):
+                lines.insert(idx, replacement)
+                changed = True
+                break
+
+    if changed:
+        path.write_text("\n".join(lines) + "\n")
+    break
+PY
+
+    nginx -t >/dev/null 2>&1 || { shopt -u nullglob; return 1; }
+    systemctl reload nginx >/dev/null 2>&1 || { shopt -u nullglob; return 1; }
+    shopt -u nullglob
+    return 0
+}
+
 assert_https_reverse_proxy_compatibility() {
     if detect_nginx_stream_tls_conflict; then
         if selected_cfg_supports_stream_tls_mux "${SELECTED_CFG:-}"; then
-            return 0
+            ensure_stream_public_domain_route
+            return $?
         fi
         echo "❌ Обнаружен nginx stream/TLS mux на 443 для текущего хоста."
         echo "   Такой сервер перехватывает HTTPS до обычного http server block и ломает панель под ${PUBLIC_DOMAIN}."
@@ -414,17 +485,23 @@ datasources:
     editable: false
 EOF
 
+    if [ "$adguard_loki_enabled" = "true" ] && resource_guard_should_skip_optional_logs; then
+        echo "  ⚠️ Very low-resource host detected. Skipping Loki/promtail to keep update stable."
+        adguard_loki_enabled="false"
+    fi
+
     if [ "$adguard_loki_enabled" = "true" ]; then
         if apt_install loki promtail >/dev/null 2>&1; then
             mkdir -p /etc/loki /etc/promtail /var/lib/loki /var/lib/promtail
+            cp "$SCRIPT_DIR/monitoring/loki/loki-config.yml" /etc/loki/config.yml
             cp "$SCRIPT_DIR/monitoring/loki/loki-config.yml" /etc/loki/local-config.yaml
             cp "$SCRIPT_DIR/monitoring/promtail/promtail-config.yml" /etc/promtail/config.yml
             sed -i "s|__ADGUARD_QUERYLOG_PATH__|${adguard_querylog_path}|g" /etc/promtail/config.yml
             sed -i "s|__ADGUARD_SYSTEMD_UNIT__|${adguard_systemd_unit}|g" /etc/promtail/config.yml
-            systemctl enable --now loki >/dev/null 2>&1 || true
-            systemctl enable --now promtail >/dev/null 2>&1 || true
-            systemctl restart loki >/dev/null 2>&1 || true
-            systemctl restart promtail >/dev/null 2>&1 || true
+            chown -R loki /var/lib/loki >/dev/null 2>&1 || true
+            chown -R promtail /var/lib/promtail >/dev/null 2>&1 || true
+            chmod 0755 /var/lib/loki /var/lib/promtail >/dev/null 2>&1 || true
+            resource_guard_restart_services_sequentially loki promtail
             loki_ready="true"
             echo "  ✓ Loki и promtail настроены."
         else
@@ -459,7 +536,7 @@ providers:
     type: file
     disableDeletion: false
     editable: true
-    updateIntervalSeconds: 30
+    updateIntervalSeconds: 180
     options:
       path: /var/lib/grafana/dashboards
 EOF
@@ -494,14 +571,14 @@ cfg['auth.anonymous']['enabled'] = 'false'
 if 'users' not in cfg:
     cfg['users'] = {}
 cfg['users']['allow_sign_up'] = 'false'
+if 'log' not in cfg:
+    cfg['log'] = {}
+cfg['log']['level'] = 'warn'
 with open('/etc/grafana/grafana.ini', 'w') as f:
     cfg.write(f)
 PYTHON
 
-    systemctl enable --now prometheus >/dev/null 2>&1 || true
-    systemctl enable --now grafana-server >/dev/null 2>&1 || true
-    systemctl restart prometheus >/dev/null 2>&1 || true
-    systemctl restart grafana-server >/dev/null 2>&1 || true
+    resource_guard_restart_services_sequentially prometheus grafana-server
     echo "  ✓ Prometheus и Grafana настроены"
 }
 
@@ -756,6 +833,9 @@ if [ ! -f "$LOG_FILE" ]; then
 fi
 
 source "$LOG_FILE"
+if ! command -v cpulimit >/dev/null 2>&1; then
+    apt_install cpulimit >/dev/null 2>&1 || true
+fi
 ALLOW_ORIGINS=${ALLOW_ORIGINS:-"http://localhost:5173,http://127.0.0.1:5173"}
 VERIFY_TLS=${VERIFY_TLS:-"true"}
 CA_BUNDLE_PATH=${CA_BUNDLE_PATH:-""}
@@ -963,6 +1043,9 @@ if [[ "$public_choice" == "y" ]]; then
 fi
 normalize_public_access_vars
 assert_https_reverse_proxy_compatibility || exit 1
+resource_guard_detect_profile
+resource_guard_apply_runtime_defaults
+resource_guard_print_summary "update"
 
 # Сохранить параметры после возможного изменения hardening-настроек
 write_install_log
@@ -1019,10 +1102,12 @@ case $update_choice in
         echo "  ✓ Скопировано $(ls -1 "$SCRIPT_DIR/backend/"*.py | wc -l) модулей"
         
         echo "[3/5] Обновление Python-зависимостей..."
-        "$PROJECT_DIR/venv/bin/pip" install --upgrade pip > /dev/null 2>&1
-        "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
-        "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements-dev.txt" > /dev/null 2>&1
-        "$PROJECT_DIR/venv/bin/python" -m pytest \
+        resource_guard_export_build_env
+        resource_guard_require_free_mb "${UPDATE_PYTHON_MIN_FREE_MB:-700}" "before Python dependency refresh" "/" || exit 1
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade pip > /dev/null 2>&1
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements-dev.txt" > /dev/null 2>&1
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pytest \
             "$SCRIPT_DIR/backend/tests/test_runtime_controls.py" \
             "$SCRIPT_DIR/backend/tests/test_security_hardening.py" \
             "$SCRIPT_DIR/backend/tests/test_api_smoke.py" \
@@ -1030,7 +1115,8 @@ case $update_choice in
         echo "  ✓ Зависимости обновлены"
         
         echo "[4/5] Пересборка Frontend..."
-        if ! PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$SCRIPT_DIR/scripts/deploy/build-and-publish-frontend.sh"; then
+        resource_guard_require_free_mb "${UPDATE_FRONTEND_MIN_FREE_MB:-900}" "before full frontend rebuild" "/" || exit 1
+        if ! resource_guard_run_heavy env PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$SCRIPT_DIR/scripts/deploy/build-and-publish-frontend.sh"; then
             echo "  ❌ Ошибка сборки/публикации фронтенда. Обновление прервано."
             exit 1
         fi
@@ -1042,6 +1128,7 @@ case $update_choice in
             sed "s|666|$APP_PORT|g" | \
             sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH\"|g" | \
             sed "s|GRAFANA_WEB_PATH=.*|GRAFANA_WEB_PATH=$GRAFANA_WEB_PATH\"|g" | \
+            sed "s|MONITORING_ENABLED=.*|MONITORING_ENABLED=$MONITORING_ENABLED\"|g" | \
             sed "s|ALLOW_ORIGINS=.*|ALLOW_ORIGINS=$ALLOW_ORIGINS\"|g" | \
             sed "s|VERIFY_TLS=.*|VERIFY_TLS=$VERIFY_TLS\"|g" | \
             sed "s|CA_BUNDLE_PATH=.*|CA_BUNDLE_PATH=$CA_BUNDLE_PATH\"|g" | \
@@ -1066,8 +1153,7 @@ case $update_choice in
             sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS\"|g" | \
             sed "s|MFA_TOTP_WS_STRICT=.*|MFA_TOTP_WS_STRICT=$MFA_TOTP_WS_STRICT\"|g" > \
             "/etc/systemd/system/$PROJECT_NAME.service"
-        systemctl daemon-reload
-        systemctl start "$PROJECT_NAME"
+        resource_guard_restart_services_sequentially "$PROJECT_NAME"
         configure_monitoring_stack
         SNIPPET_FILE="/etc/nginx/snippets/${PROJECT_NAME}.conf"
         mkdir -p /etc/nginx/snippets
@@ -1085,9 +1171,11 @@ case $update_choice in
         echo "  ✓ Скопировано $(ls -1 "$SCRIPT_DIR/backend/"*.py | wc -l) модулей"
         
         echo "  → Обновление зависимостей..."
-        "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
-        "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements-dev.txt" > /dev/null 2>&1
-        "$PROJECT_DIR/venv/bin/python" -m pytest \
+        resource_guard_export_build_env
+        resource_guard_require_free_mb "${UPDATE_PYTHON_MIN_FREE_MB:-700}" "before backend dependency refresh" "/" || exit 1
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements-dev.txt" > /dev/null 2>&1
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pytest \
             "$SCRIPT_DIR/backend/tests/test_runtime_controls.py" \
             "$SCRIPT_DIR/backend/tests/test_security_hardening.py" \
             "$SCRIPT_DIR/backend/tests/test_api_smoke.py" \
@@ -1099,6 +1187,7 @@ case $update_choice in
             sed "s|666|$APP_PORT|g" | \
             sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH\"|g" | \
             sed "s|GRAFANA_WEB_PATH=.*|GRAFANA_WEB_PATH=$GRAFANA_WEB_PATH\"|g" | \
+            sed "s|MONITORING_ENABLED=.*|MONITORING_ENABLED=$MONITORING_ENABLED\"|g" | \
             sed "s|ALLOW_ORIGINS=.*|ALLOW_ORIGINS=$ALLOW_ORIGINS\"|g" | \
             sed "s|VERIFY_TLS=.*|VERIFY_TLS=$VERIFY_TLS\"|g" | \
             sed "s|CA_BUNDLE_PATH=.*|CA_BUNDLE_PATH=$CA_BUNDLE_PATH\"|g" | \
@@ -1123,8 +1212,7 @@ case $update_choice in
             sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS\"|g" | \
             sed "s|MFA_TOTP_WS_STRICT=.*|MFA_TOTP_WS_STRICT=$MFA_TOTP_WS_STRICT\"|g" > \
             "/etc/systemd/system/$PROJECT_NAME.service"
-        systemctl daemon-reload
-        systemctl start "$PROJECT_NAME"
+        resource_guard_restart_services_sequentially "$PROJECT_NAME"
         configure_monitoring_stack
         SNIPPET_FILE="/etc/nginx/snippets/${PROJECT_NAME}.conf"
         mkdir -p /etc/nginx/snippets
@@ -1135,7 +1223,9 @@ case $update_choice in
         
     3) # Только Frontend
         echo "[1/2] Пересборка Frontend..."
-        if ! PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$SCRIPT_DIR/scripts/deploy/build-and-publish-frontend.sh"; then
+        resource_guard_export_build_env
+        resource_guard_require_free_mb "${UPDATE_FRONTEND_MIN_FREE_MB:-900}" "before frontend-only rebuild" "/" || exit 1
+        if ! resource_guard_run_heavy env PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$SCRIPT_DIR/scripts/deploy/build-and-publish-frontend.sh"; then
             echo "  ❌ Ошибка сборки/публикации фронтенда. Обновление прервано."
             exit 1
         fi

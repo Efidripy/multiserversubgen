@@ -27,6 +27,10 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+# Default to VERIFY_TLS=false to support self-signed certificates
+# Can be overridden with VERIFY_TLS=true environment variable
+VERIFY_TLS = os.getenv("VERIFY_TLS", "false").strip().lower() in ("1", "true", "yes", "on")
+
 XUI_HTTP_TIMEOUT_SEC = max(1.0, _env_float("XUI_HTTP_TIMEOUT_SEC", 12.0))
 XUI_HTTP_RETRIES = max(0, _env_int("XUI_HTTP_RETRIES", 2))
 XUI_HTTP_RETRY_BACKOFF_SEC = max(0.0, _env_float("XUI_HTTP_RETRY_BACKOFF_SEC", 0.35))

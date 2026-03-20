@@ -1,6 +1,7 @@
 import axios, { InternalAxiosRequestConfig } from 'axios';
 import { cacheService } from './services/cacheService';
 import { getAuth } from './auth';
+import { requestActivityStore } from './services/requestActivity';
 
 /**
  * API base URL used by all frontend requests.
@@ -24,12 +25,12 @@ export const API_BASE: string =
  * Used by the request interceptor to determine how long to cache each GET response.
  */
 export const CACHE_TTL = {
-  NODES: 0,
-  CLIENTS: 0,
-  TRAFFIC: 0,
-  INBOUNDS: 0,
-  EMAILS: 0,
-  DEFAULT: 0,
+  NODES: 30_000,
+  CLIENTS: 10_000,
+  TRAFFIC: 8_000,
+  INBOUNDS: 20_000,
+  EMAILS: 20_000,
+  DEFAULT: 5_000,
 } as const;
 
 /** Map URL path fragments to their cache TTL. */
@@ -48,11 +49,75 @@ function getTTLForUrl(url: string): number {
   return CACHE_TTL.DEFAULT;
 }
 
+function stableStringify(value: unknown): string {
+  if (value == null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`).join(',')}}`;
+}
+
 function buildCacheKey(url: string, params: unknown): string {
-  if (params == null) return url;
-  // Sort object keys so that {a:1, b:2} and {b:2, a:1} map to the same key.
-  const stable = JSON.stringify(params, Object.keys(params as Record<string, unknown>).sort());
-  return url + ':' + stable;
+  if (params == null) return `GET:${url}`;
+  return `GET:${url}:${stableStringify(params)}`;
+}
+
+function deriveResourceTag(url: string): string {
+  const match = url.match(/^(\/v\d+\/[^/?]+)/);
+  return match?.[1] ?? url;
+}
+
+function deriveCacheTags(url: string): string[] {
+  const tags = new Set<string>();
+  const resource = deriveResourceTag(url);
+  tags.add(`resource:${resource}`);
+
+  if (resource.startsWith('/v1/nodes')) tags.add('domain:nodes');
+  if (resource.startsWith('/v1/clients')) tags.add('domain:clients');
+  if (resource.startsWith('/v1/inbounds')) tags.add('domain:inbounds');
+  if (resource.startsWith('/v1/traffic')) tags.add('domain:traffic');
+  if (resource.startsWith('/v1/emails')) tags.add('domain:emails');
+
+  const nodeMatch = url.match(/\/v1\/nodes\/(\d+)/);
+  if (nodeMatch) tags.add(`node:${nodeMatch[1]}`);
+
+  return Array.from(tags);
+}
+
+function invalidateForMutation(url: string): void {
+  const resource = deriveResourceTag(url);
+  cacheService.invalidateByTag(`resource:${resource}`);
+
+  if (resource.startsWith('/v1/nodes')) {
+    cacheService.invalidateByTag('domain:nodes');
+    cacheService.invalidateByTag('domain:clients');
+    cacheService.invalidateByTag('domain:inbounds');
+    cacheService.invalidateByTag('domain:emails');
+    cacheService.invalidateByTag('domain:traffic');
+  }
+
+  if (resource.startsWith('/v1/clients')) {
+    cacheService.invalidateByTag('domain:clients');
+    cacheService.invalidateByTag('domain:traffic');
+    cacheService.invalidateByTag('domain:emails');
+  }
+
+  if (resource.startsWith('/v1/inbounds')) {
+    cacheService.invalidateByTag('domain:inbounds');
+    cacheService.invalidateByTag('domain:emails');
+    cacheService.invalidateByTag('domain:traffic');
+  }
+
+  if (resource.startsWith('/v1/traffic')) {
+    cacheService.invalidateByTag('domain:traffic');
+  }
+
+  // Backward compatible safety net for older keys.
+  cacheService.invalidate(resource);
 }
 
 /** Pre-configured axios instance – use this instead of raw axios for all API calls. */
@@ -64,6 +129,7 @@ const api = axios.create({ baseURL: API_BASE });
  * immediately without making a network round-trip.
  */
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
+  requestActivityStore.increment();
   const auth = getAuth();
   if (auth.totpCode) {
     config.headers = config.headers ?? {};
@@ -84,6 +150,9 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
     }
   }
   return config;
+}, (error) => {
+  requestActivityStore.decrement();
+  return Promise.reject(error);
 });
 
 /**
@@ -93,6 +162,7 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
  *    so stale data is never served after a mutation.
  */
 api.interceptors.response.use((response) => {
+  requestActivityStore.decrement();
   const method = response.config.method?.toLowerCase();
   const url = response.config.url ?? '';
 
@@ -100,26 +170,16 @@ api.interceptors.response.use((response) => {
     const ttl = getTTLForUrl(url);
     if (ttl > 0) {
       const key = buildCacheKey(url, response.config.params);
-      cacheService.set(key, response, ttl);
+        cacheService.set(key, response, ttl, deriveCacheTags(url));
     }
   } else if (method === 'post' || method === 'put' || method === 'delete') {
-    // Derive the resource segment (e.g. '/v1/nodes') and invalidate all cached
-    // entries for that resource so the next GET fetches fresh data.
-    const match = url.match(/^(\/v\d+\/[^/?]+)/);
-    if (match) {
-      const resource = match[1];
-      cacheService.invalidate(resource);
-      if (
-        resource.startsWith('/v1/clients') ||
-        resource.startsWith('/v1/inbounds') ||
-        resource.startsWith('/v1/nodes')
-      ) {
-        cacheService.invalidate('/v1/emails');
-      }
-    }
+      invalidateForMutation(url);
   }
 
   return response;
+}, (error) => {
+  requestActivityStore.decrement();
+  return Promise.reject(error);
 });
 
 export default api;

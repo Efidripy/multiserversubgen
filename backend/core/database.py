@@ -38,7 +38,8 @@ _SCHEMA_STATEMENTS = [
         user         TEXT,
         password     TEXT,
         base_path    TEXT DEFAULT '',
-        read_only    INTEGER DEFAULT 0
+        read_only    INTEGER DEFAULT 0,
+        scheme       TEXT DEFAULT 'https'
     )
     """,
     # Subscription groups

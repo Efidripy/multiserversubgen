@@ -81,9 +81,7 @@ class TestEventBus:
             received.append(data)
 
         bus.subscribe("test.event", handler)
-        asyncio.get_event_loop().run_until_complete(
-            bus.emit("test.event", {"key": "value"})
-        )
+        asyncio.run(bus.emit("test.event", {"key": "value"}))
         assert received == [{"key": "value"}]
 
     def test_multiple_handlers(self):
@@ -98,7 +96,7 @@ class TestEventBus:
 
         bus.subscribe("ev", h1)
         bus.subscribe("ev", h2)
-        asyncio.get_event_loop().run_until_complete(bus.emit("ev"))
+        asyncio.run(bus.emit("ev"))
         assert log == ["h1", "h2"]
 
     def test_wildcard_handler(self):
@@ -109,7 +107,7 @@ class TestEventBus:
             log.append("all")
 
         bus.subscribe("*", catch_all)
-        asyncio.get_event_loop().run_until_complete(bus.emit("any.event"))
+        asyncio.run(bus.emit("any.event"))
         assert log == ["all"]
 
     def test_unsubscribe(self):
@@ -121,7 +119,7 @@ class TestEventBus:
 
         bus.subscribe("ev", handler)
         bus.unsubscribe("ev", handler)
-        asyncio.get_event_loop().run_until_complete(bus.emit("ev"))
+        asyncio.run(bus.emit("ev"))
         assert log == []
 
     def test_sync_handler_called(self):
@@ -132,7 +130,7 @@ class TestEventBus:
             log.append(data)
 
         bus.subscribe("ev", sync_handler)
-        asyncio.get_event_loop().run_until_complete(bus.emit("ev", {"x": 1}))
+        asyncio.run(bus.emit("ev", {"x": 1}))
         assert log == [{"x": 1}]
 
     def test_handler_exception_does_not_propagate(self):
@@ -143,7 +141,7 @@ class TestEventBus:
 
         bus.subscribe("ev", bad_handler)
         # Should not raise
-        asyncio.get_event_loop().run_until_complete(bus.emit("ev"))
+        asyncio.run(bus.emit("ev"))
 
     def test_all_events(self):
         bus = EventBus()
@@ -245,15 +243,15 @@ class TestModuleRegistry:
     def test_start_all_calls_lifecycle(self):
         mod = _DummyModule()
         self.registry.register(mod)
-        asyncio.get_event_loop().run_until_complete(self.registry.start_all())
+        asyncio.run(self.registry.start_all())
         assert mod.initialized
         assert mod.started
 
     def test_stop_all_calls_stop(self):
         mod = _DummyModule()
         self.registry.register(mod)
-        asyncio.get_event_loop().run_until_complete(self.registry.start_all())
-        asyncio.get_event_loop().run_until_complete(self.registry.stop_all())
+        asyncio.run(self.registry.start_all())
+        asyncio.run(self.registry.stop_all())
         assert mod.stopped
 
     def test_dependency_order(self):
@@ -289,7 +287,7 @@ class TestModuleRegistry:
 
         self.registry.register(B())
         self.registry.register(A())
-        asyncio.get_event_loop().run_until_complete(self.registry.start_all())
+        asyncio.run(self.registry.start_all())
         assert order.index("a_init") < order.index("b_init")
         assert order.index("a_start") < order.index("b_start")
 
@@ -319,10 +317,8 @@ class TestModuleRegistry:
 
     def test_health_check_all(self):
         self.registry.register(_DummyModule())
-        asyncio.get_event_loop().run_until_complete(self.registry.start_all())
-        results = asyncio.get_event_loop().run_until_complete(
-            self.registry.health_check_all()
-        )
+        asyncio.run(self.registry.start_all())
+        results = asyncio.run(self.registry.health_check_all())
         assert "dummy" in results
         assert results["dummy"]["state"] == "healthy"
 
@@ -330,7 +326,7 @@ class TestModuleRegistry:
         mod = _DummyModule()
         mod.enabled = False
         self.registry.register(mod)
-        asyncio.get_event_loop().run_until_complete(self.registry.start_all())
+        asyncio.run(self.registry.start_all())
         assert not mod.started
 
 
@@ -377,7 +373,7 @@ class TestJobQueue:
             if len(calls) < 2:
                 raise ValueError("first attempt fails")
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             q._run_with_retry(failing_then_ok, "test", retry=2, timeout=None)
         )
         assert len(calls) == 2

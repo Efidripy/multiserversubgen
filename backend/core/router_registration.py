@@ -24,6 +24,7 @@ def register_app_routers(
     mfa_totp_enabled,
     get_node_or_404,
     get_cached_traffic_stats,
+    get_traffic_stats_by_period,
     get_cached_online_clients,
     list_nodes,
     xui_monitor,
@@ -70,6 +71,7 @@ def register_app_routers(
     mfa_totp_ws_strict,
     pam_authenticate,
     handle_websocket_message,
+    monitoring_enabled=True,
 ):
     app.include_router(
         build_observability_router(
@@ -84,12 +86,14 @@ def register_app_routers(
             verify_totp_code=verify_totp_code,
             get_user_role=get_user_role,
             mfa_totp_enabled=mfa_totp_enabled,
+            monitoring_enabled=monitoring_enabled,
         )
     )
     app.include_router(
         build_live_data_router(
             get_node_or_404=get_node_or_404,
             get_cached_traffic_stats=get_cached_traffic_stats,
+            get_traffic_stats_by_period=get_traffic_stats_by_period,
             get_cached_online_clients=get_cached_online_clients,
             list_nodes=list_nodes,
             xui_monitor=xui_monitor,
@@ -133,6 +137,7 @@ def register_app_routers(
             get_node_or_404=get_node_or_404,
             invalidate_live_stats_cache=invalidate_live_stats_cache,
             invalidate_subscription_cache=invalidate_subscription_cache,
+            ws_manager=ws_manager,
         )
     )
     app.include_router(
@@ -147,32 +152,33 @@ def register_app_routers(
             logger=logger,
         )
     )
-    app.include_router(
-        build_monitoring_router(
-            check_auth=check_auth,
-            db_path=db_path,
-            verify_tls_default=verify_tls_default,
-            encrypt=encrypt,
-            list_adguard_sources=list_adguard_sources,
-            collect_adguard_once=collect_adguard_once,
-            adguard_latest=adguard_latest,
-            adguard_latest_lock=adguard_latest_lock,
-            adguard_collect_interval_sec=adguard_collect_interval_sec,
-            build_adguard_summary=build_adguard_summary,
-            build_adguard_history=build_adguard_history,
-            parse_basic_auth_pair=parse_basic_auth_pair,
-            http_probe=http_probe,
-            prom_query=prom_query,
-            prometheus_url=prometheus_url,
-            loki_url=loki_url,
-            grafana_url=grafana_url,
-            prometheus_basic_auth=prometheus_basic_auth,
-            loki_basic_auth=loki_basic_auth,
-            grafana_basic_auth=grafana_basic_auth,
-            web_path=web_path,
-            grafana_web_path=grafana_web_path,
+    if monitoring_enabled:
+        app.include_router(
+            build_monitoring_router(
+                check_auth=check_auth,
+                db_path=db_path,
+                verify_tls_default=verify_tls_default,
+                encrypt=encrypt,
+                list_adguard_sources=list_adguard_sources,
+                collect_adguard_once=collect_adguard_once,
+                adguard_latest=adguard_latest,
+                adguard_latest_lock=adguard_latest_lock,
+                adguard_collect_interval_sec=adguard_collect_interval_sec,
+                build_adguard_summary=build_adguard_summary,
+                build_adguard_history=build_adguard_history,
+                parse_basic_auth_pair=parse_basic_auth_pair,
+                http_probe=http_probe,
+                prom_query=prom_query,
+                prometheus_url=prometheus_url,
+                loki_url=loki_url,
+                grafana_url=grafana_url,
+                prometheus_basic_auth=prometheus_basic_auth,
+                loki_basic_auth=loki_basic_auth,
+                grafana_basic_auth=grafana_basic_auth,
+                web_path=web_path,
+                grafana_web_path=grafana_web_path,
+            )
         )
-    )
     app.include_router(
         build_operations_router(
             check_auth=check_auth,
