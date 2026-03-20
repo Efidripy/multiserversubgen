@@ -641,9 +641,9 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
           <div className="panel-block">
             <div className="panel-block__header">
               <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Actions</h6>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>{t('common.actions')}</h6>
                 <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
-                  Create new inbound or refresh data.
+                  {t('inbounds.actionsHint')}
                 </p>
               </div>
             </div>
@@ -675,9 +675,9 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
           <div className="panel-block panel-block--wide">
             <div className="panel-block__header">
               <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Filters</h6>
+                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>{t('common.filter')}</h6>
                 <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
-                  Protocol, security and node filters grouped together.
+                  {t('inbounds.filtersHint')}
                 </p>
               </div>
             </div>
@@ -806,7 +806,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
         {pageLoading && filteredInbounds.length > 0 && (
           <div className="text-center py-1 small" style={{ color: colors.text.secondary }}>
             <div className="spinner-border spinner-border-sm me-1" role="status" style={{ width: '0.75rem', height: '0.75rem' }}></div>
-            Updating inbound rows...
+            {t('inbounds.loadingRows')}
           </div>
         )}
         {pageLoading && filteredInbounds.length === 0 && <div className="text-center py-3"><div className="spinner-border spinner-border-sm" role="status"></div></div>}
@@ -825,7 +825,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                     type="checkbox"
                     checked={allFilteredSelected}
                     onChange={toggleSelectAllFiltered}
-                    aria-label="Select all"
+                    aria-label={t('common.selectAll')}
                   />
                 </th>
                 <th style={{ color: colors.text.secondary }}>
@@ -952,12 +952,12 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                     className="form-control"
                     value={clonePort}
                     onChange={(e) => setClonePort(e.target.value)}
-                    placeholder="empty = keep source/default"
+                    placeholder={t('inbounds.clonePortPlaceholder')}
                     style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
                   />
                 </div>
                 <div className="mb-3">
-                  <label className="form-label small" style={{ color: colors.text.secondary }}>Target nodes</label>
+                  <label className="form-label small" style={{ color: colors.text.secondary }}>{t('inbounds.targetNodes')}</label>
                   <div className="d-flex flex-wrap gap-2">
                     {allNodes.map((node) => (
                       <label key={node.id} className="d-inline-flex align-items-center gap-2 small" style={{ color: colors.text.primary }}>
@@ -1021,7 +1021,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
               <div className="modal-body">
                 <div className="row g-3">
                   <div className="col-md-4">
-                    <label className="form-label small" style={{ color: colors.text.secondary }}>Template</label>
+                    <label className="form-label small" style={{ color: colors.text.secondary }}>{t('inbounds.template')}</label>
                     <ChoiceChips
                       options={[
                         { value: 'vless', label: 'VLESS' },
@@ -1034,7 +1034,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                     />
                   </div>
                   <div className="col-md-8">
-                    <label className="form-label small" style={{ color: colors.text.secondary }}>Target nodes</label>
+                    <label className="form-label small" style={{ color: colors.text.secondary }}>{t('inbounds.targetNodes')}</label>
                     <div className="d-flex flex-wrap gap-2">
                       {allNodes.map((node) => (
                         <label key={node.id} className="d-inline-flex align-items-center gap-2 small" style={{ color: colors.text.primary }}>
@@ -1051,7 +1051,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                 </div>
                 <div className="mt-3">
                   <label className="form-label small" style={{ color: colors.text.secondary }}>
-                    Inbound JSON config (full control)
+                    {t('inbounds.jsonConfigLabel')}
                   </label>
                   <textarea
                     className="form-control"
@@ -1061,7 +1061,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                     style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, fontFamily: 'monospace' }}
                   />
                   <div className="small mt-2" style={{ color: colors.text.secondary }}>
-                    Field structure is sent as-is to 3x-ui `/panel/api/inbounds/add`. Use this to configure any protocol-specific options.
+                    {t('inbounds.jsonConfigHint')}
                   </div>
                 </div>
               </div>
@@ -1080,7 +1080,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload }) => {
                   onClick={handleAddInboundSubmit}
                   disabled={loading}
                 >
-                  {loading ? 'Adding...' : 'Add inbound'}
+                  {loading ? t('inbounds.adding') : t('inbounds.addInbound')}
                 </button>
               </div>
             </div>

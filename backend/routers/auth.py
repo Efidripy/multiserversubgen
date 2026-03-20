@@ -9,6 +9,7 @@ def build_auth_router(
     verify_totp_code,
     get_user_role,
     mfa_totp_enabled,
+    monitoring_enabled,
 ):
     router = APIRouter()
 
@@ -30,5 +31,15 @@ def build_auth_router(
     @router.get("/api/v1/auth/mfa-status")
     async def mfa_status():
         return {"enabled": mfa_totp_enabled}
+
+    @router.get("/api/v1/features")
+    async def features(request: Request):
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        return {
+            "monitoringEnabled": bool(monitoring_enabled),
+            "mfaEnabled": bool(mfa_totp_enabled),
+        }
 
     return router

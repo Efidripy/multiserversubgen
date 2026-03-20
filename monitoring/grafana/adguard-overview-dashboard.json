@@ -468,7 +468,7 @@
       "type": "logs"
     }
   ],
-  "refresh": "30s",
+  "refresh": "3m",
   "schemaVersion": 39,
   "style": "dark",
   "tags": ["adguard", "dns", "loki", "prometheus", "sub-manager"],

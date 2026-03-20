@@ -24,7 +24,10 @@ def init_db(db_path: str) -> None:
                       name TEXT,
                       panel_url TEXT,
                       username TEXT,
+                      user TEXT,
                       password TEXT,
+                      port TEXT DEFAULT '443',
+                      base_path TEXT DEFAULT '',
                       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                       enabled INTEGER DEFAULT 1,
                       read_only INTEGER DEFAULT 0,
@@ -32,12 +35,15 @@ def init_db(db_path: str) -> None:
                       access_path TEXT DEFAULT '',
                       api_base TEXT DEFAULT '',
                       ip TEXT DEFAULT '',
-                      verify_tls INTEGER DEFAULT 1)"""
+                      verify_tls INTEGER DEFAULT 1,
+                      scheme TEXT DEFAULT 'https')"""
         )
 
         node_columns = [r[1] for r in conn.execute("PRAGMA table_info(nodes)").fetchall()]
         if node_columns:
             migrations = [
+                ("panel_url", "ALTER TABLE nodes ADD COLUMN panel_url TEXT"),
+                ("username", "ALTER TABLE nodes ADD COLUMN username TEXT"),
                 ("enabled", "ALTER TABLE nodes ADD COLUMN enabled INTEGER DEFAULT 1"),
                 ("read_only", "ALTER TABLE nodes ADD COLUMN read_only INTEGER DEFAULT 0"),
                 ("source_type", "ALTER TABLE nodes ADD COLUMN source_type TEXT DEFAULT 'xui'"),
@@ -45,10 +51,53 @@ def init_db(db_path: str) -> None:
                 ("api_base", "ALTER TABLE nodes ADD COLUMN api_base TEXT DEFAULT ''"),
                 ("ip", "ALTER TABLE nodes ADD COLUMN ip TEXT DEFAULT ''"),
                 ("verify_tls", "ALTER TABLE nodes ADD COLUMN verify_tls INTEGER DEFAULT 1"),
+                ("user", "ALTER TABLE nodes ADD COLUMN user TEXT"),
+                ("port", "ALTER TABLE nodes ADD COLUMN port TEXT DEFAULT '443'"),
+                ("base_path", "ALTER TABLE nodes ADD COLUMN base_path TEXT DEFAULT ''"),
+                ("scheme", "ALTER TABLE nodes ADD COLUMN scheme TEXT DEFAULT 'https'"),
             ]
             for col_name, stmt in migrations:
                 if col_name not in node_columns:
                     conn.execute(stmt)
+
+            conn.execute(
+                """
+                UPDATE nodes
+                SET user = username
+                WHERE (user IS NULL OR user = '')
+                  AND IFNULL(username, '') <> ''
+                """
+            )
+            conn.execute(
+                """
+                UPDATE nodes
+                SET username = user
+                WHERE (username IS NULL OR username = '')
+                  AND IFNULL(user, '') <> ''
+                """
+            )
+            conn.execute(
+                """
+                UPDATE nodes
+                SET base_path = access_path
+                WHERE (base_path IS NULL OR base_path = '')
+                  AND IFNULL(access_path, '') <> ''
+                """
+            )
+            conn.execute(
+                """
+                UPDATE nodes
+                SET scheme = 'https'
+                WHERE scheme IS NULL OR scheme = ''
+                """
+            )
+            conn.execute(
+                """
+                UPDATE nodes
+                SET scheme = 'http'
+                WHERE LOWER(IFNULL(panel_url, '')) LIKE 'http://%'
+                """
+            )
 
         conn.execute(
             """CREATE TABLE IF NOT EXISTS backup_history

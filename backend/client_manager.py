@@ -18,7 +18,7 @@ from xui_session import XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC, login_panel, xui
 from utils import parse_field_as_dict
 
 logger = logging.getLogger("sub_manager")
-VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
+VERIFY_TLS = os.getenv("VERIFY_TLS", "false").strip().lower() in ("1", "true", "yes", "on")
 CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
 TRAFFIC_MAX_WORKERS = max(1, int(os.getenv("TRAFFIC_MAX_WORKERS", "8")))
 
@@ -56,7 +56,8 @@ class ClientManager:
         s.verify = _requests_verify_value()
         b_path = node.get("base_path", "").strip("/")
         prefix = f"/{b_path}" if b_path else ""
-        base_url = f"https://{node['ip']}:{node['port']}{prefix}"
+        scheme = node.get("scheme", "https")
+        base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
         
         try:
             password = self.decrypt(node.get('password', ''))
@@ -97,6 +98,7 @@ class ClientManager:
             logger.warning(f"Failed to fetch inbounds from {node['name']}: {exc}")
         
         return []
+
     
     def get_all_clients(self, nodes: List[Dict], email_filter: Optional[str] = None) -> List[Dict]:
         """Получить всех клиентов со всех узлов
