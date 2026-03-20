@@ -1,107 +1,67 @@
-# 📋 Исправления и предложения по улучшению
+# Статус улучшений (источник правды)
 
-## ✅ Обнаруженные и исправленные ошибки
+Обновлено: 2026-03-20 (завершены шаги 1–11, e2e deploy to vm1 validated)
 
-### 1. README.md — некорректное форматирование кода
-- **Проблема**: Неправильный синтаксис кода блокаbash (отсутствующий обратный слэш)
-- **Исправлено**: Исправлено на стандартный markdown-кодблок `bash`
+## ✅ Уже сделано (подтверждено по коду)
 
-### 2. install.sh — отсутствие валидации выбора nginx конфига
-- **Проблема**: Если пользователь вводит несуществующий номер или текст, скрипт падает с ошибкой
-- **Исправлено**: Добавлена проверка на цифровой ввод в диапазоне доступных конфигов, и проверка, что список конфигов не пуст
+1. Backend gzip-сжатие включено (`GZipMiddleware` в `backend/main.py`).
+2. WebSocket endpoint есть (`/ws` в `backend/routers/realtime.py`, подключается через `router_registration`).
+3. Service Worker добавлен (`frontend/public/sw.js` + менеджер).
+4. Performance monitoring добавлен (`frontend/src/services/performanceMonitoring.ts`).
+5. Delta updates протокол добавлен (`frontend/src/services/deltaUpdates.ts`).
+6. IndexedDB-кэш добавлен (`frontend/src/services/indexedDBManager.ts`).
+7. Error boundary есть (в `frontend/src/main.tsx` используется `RootErrorBoundary`).
+8. Статус узлов реализован (Online/Offline/Checking в `frontend/src/components/NodeManager.tsx`).
+9. Test Connection реализован:
+   - UI: кнопка в `NodeManager.tsx`
+   - API: `/v1/nodes/check-connection`
+10. Шифрование паролей узлов уже реализовано (Fernet в `backend/crypto.py`, применение в роутерах/сервисах).
+11. Prometheus endpoint `/metrics` уже реализован (`backend/routers/observability.py`).
+12. Python unit/smoke tests уже есть (`backend/tests/*.py`).
+13. Real-time интеграция во фронтенд завершена:
+   - `useTrafficStatsSubscription` подключен в `TrafficStats.tsx`, `ClientManager.tsx`, `MonitoringDashboard.tsx`.
+14. WebSocket broadcasting на backend завершён:
+   - отправка `server_status` / `traffic_update` / `client_update` из `backend/services/collector.py` (1 broadcast call ✓);
+   - отправка `client_update`/`traffic_update` из мутаций `backend/routers/clients.py` (7 broadcast calls ✓).
+15. Фронтенд сборка проходит (`npm run build`), i18n baseline обновлён (233).
+16. Backend синтаксис/смоук проходят:
+   - `python -m compileall backend`
+   - `python -m pytest -q backend/tests/test_api_smoke.py backend/tests/test_security_hardening.py`.
+17. **Deploy на vm1 успешен (2026-03-20 23:43 UTC):**
+   - Все Python файлы развернуты в `/opt/sub-manager/` с корректной иерархией (core/, routers/, services/ как подпапки);
+   - Frontend build (`backend/build/`) развёрнут и обслуживается;
+   - Service статус: active ✓
+   - Health endpoint: HTTP 200 ✓
+   - API StatsByPeriod: HTTP 200 ✓
+   - Panel доступен по пути `/27b3dl1c/`: HTTP 200 ✓
+   - WebSocket endpoint регистрация: `@router.websocket("/ws")` найдена в коде ✓
 
-### 3. Ограниченность протоколов (только VLESS Reality)
-- **Проблема**: Не поддерживаются VMess и Trojan, а также TLS без Reality
-- **Исправлено**:
-  - Добавлена поддержка VMess через JSON-кодирование в base64
-  - Добавлена поддержка Trojan (Reality/TLS)
-  - Поддержка TLS для VLESS
+## 🟡 Начато, но не доведено до полного завершения
 
-### 4. Проблема с дублированием location блоков в Nginx
-- **Проблема**: Скрипт удалял блоки по regex-паттерну, что могло сломать конфиг
-- **Исправлено**: Проверка на существование блока перед добавлением, предотвращает дублирование
+1. WebSocket e2e тестирование:
+   - Backend broadcasts код развернут и подтвержден (grep_search);
+   - HTTP endpoint доступен;
+   - WebSocket connection с клиента не тестирована (требует `websockets` lib на vm1 или browser WebSocket API);
+   - **Путь вперёд**: использовать браузер для прямого подключения в DevTools, или установить websockets на vm1 и запустить Python e2e тест.
 
-### 5. Отсутствие health-check’а
-- **Исправлено**: Добавлен эндпоинт `/health` для мониторинга сервиса
+2. Деплой/путь панели:
+   - рабочий путь сейчас `https://vm1.kleva.ru/27b3dl1c/` (200),
+   - старый `.../unkau9du/` не активен (404), нужно не путать в runbook’ах.
 
-## 💡 Рекомендации по дальнейшим улучшениям
+## ⏳ Не начато
 
-### Безопасность
-1. **Хранение паролей в открытом виде**
-   - Шифровать пароли узлов в БД (например, Fernet из `cryptography`)
+1. Docker containerization (`Dockerfile`, `docker-compose.yml`).
+2. Telegram notifications.
+3. Pre-commit hooks (`.pre-commit-config.yaml`).
+4. Полное вычищение heredoc-генерации из `install.sh` в сторону 100% file-based шаблонов (частично структурировано, но не закрыто как задача).
 
-2. **Уникальные сессии и cookie-авторизация**
-   - Добавить JWT с expire вместо чистой Basic Auth
+## Ближайший порядок работ
 
-3. **CSRF-токены**
-   - Защитить формы от подделки межсайтовых запросов
+1. **WebSocket полная e2e проверка** (рекомендуется):
+   - Способ 1: Установить `websockets` на vm1 и запустить `test-ws-e2e-vm1.py` локально или на vm1;
+   - Способ 2: Открыть браузер на `https://vm1.kleva.ru/27b3dl1c/`, перейти в Network (DevTools), и проверить что WS upgrade происходит;
+   - Ожидаемо: WebSocket connection successful → subscribe message sent → broadcast messages received.
 
-### UX
-4. **Подтверждение удаления узлов**
-   - Добавить диалог `onclick="return confirm(...)"` для кнопки удаления
+2. Обновить runbook'и под текущий `WEB_PATH` (`/27b3dl1c/`) и убрать старые ссылки из документации.
 
-5. **Статус узлов**
-   - Добавить индикатор Online/Offline для каждого узла (с пингом или проверкой API)
-
-6. **Тестовые запросы к узлам**
-   - Кнопка "Test Connection" перед добавлением узла
-
-7. **Пагинация и фильтр**
-   - Если пользователей >50 — разбить на страницы и добавить поиск по email
-
-### Технические улучшения
-8. **Кеширование**
-   - Сделать TTL кэша конфигурируемым (в `/etc/opt/sub_manager/config.yaml`) и включить кэш в файл
-
-9. **Logging**
-   - Добавить ротацию логов через logrotate
-
-10. **Docker-контейнеризация**
-    - Создать `Dockerfile` и `docker-compose.yml` для простого разворачивания
-
-11. **Миграции БД**
-    Вынести схему в отдельные SQL-файлы миграций; при обновлении накатывать только новые
-
-12. **Единственные источники данных**
-    - Не генерировать Python-код внутри install.sh как heredoc, а вынести в отдельные файлы (main.py, index.html, systemd service, nginx config); установить/обновлять их через `cp` и `sed` — так проще править и diff’ить
-
-### Новая функциональность
-13. **Автоматическое бекапирование**
-    - Перед удалением/переустановкой создавать timestamped бекап `/var/backups/sub_manager/20260220_...`
-
-14. **Telegram-уведомления**
-    - Отправлять статистику и алерты через `python-telegram-bot` или `telegram-send`
-
-15. **Интеграция с Prometheus**
-    - Добавить `/metrics` эндпоинт для экспорта метрик (кол-во узлов, скачиваний, latency API)
-
-16. **Мультиязычность UI**
-    - Возможность переключения языков (ru/en) на frontend
-
-17. **API-ключи для внешних систем**
-    - Добавить функцию генерации API-ключей и `/api/v1/` namespace для внешней интеграции
-
-### Документация
-18. **Примеры конфигураций**
-    - Добавить примеры Nginx-конфигов для разных схем (subdomains, отдельные порты)
-
-19. **Файл LICENSE**
-    - Уже есть MIT – достаточно; можно добавить CONTRIBUTORS.md для совместных правок
-
-### Тестирование
-20. **Unit-тексты на Python**
-    - Написать pytest для функций get_emails и get_links (моки для requests и sqlite3)
-
-21. **Интеграционные тесты**
-    - Скрипт `test.sh` с развертыванием тестовой БД и проверкой эндпоинтов, сравнивая структуру JSON с эталонами
-
-22. **Pre-commit хуки**
-    - Проверка синтаксиса shell, python, html перед коммитом
-
-## Приоритеты (что сделать первым)
-
-1. **Вынести код на файлы** (#12) — сделает проект чище и легче для поддержки
-2. **Шифрование паролей** (#1) — критично для безопасности
-3. **Статус узлов и тест-коннекшн** (#5, #6) — UX-boost
-
-После этого можно браться за Docker (#10), Telegram (#14) и другие фичи.
+3. Решить по Docker/Telegram/pre-commit как следующей очереди задач.
