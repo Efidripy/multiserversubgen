@@ -11,26 +11,52 @@ def build_live_data_router(
     get_cached_online_clients: Callable[[list], list],
     list_nodes: Callable[[], list],
     xui_monitor,
+    get_traffic_stats_by_period: Callable[[list, str, str], Dict] = None,
 ):
     router = APIRouter()
+    period_stats_handler = get_traffic_stats_by_period
+
+    def _apply_limit(payload: Dict, limit: int) -> Dict:
+        if limit <= 0:
+            return payload
+        stats = payload.get("stats") if isinstance(payload, dict) else None
+        if not isinstance(stats, dict):
+            return payload
+
+        top_items = sorted(
+            stats.items(),
+            key=lambda item: float(
+                (item[1] or {}).get("total")
+                or ((item[1] or {}).get("up", 0) + (item[1] or {}).get("down", 0))
+            ),
+            reverse=True,
+        )[:limit]
+
+        trimmed = dict(payload)
+        trimmed["stats"] = dict(top_items)
+        trimmed["count"] = len(top_items)
+        return trimmed
 
     @router.get("/api/v1/traffic/stats")
-    async def get_traffic_stats(request: Request, group_by: str = "client"):
+    async def get_traffic_stats(request: Request, group_by: str = "client", limit: int = 0):
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401)
         if group_by not in ["client", "inbound", "node"]:
             raise HTTPException(status_code=400, detail="group_by must be client, inbound, or node")
         nodes = await run_in_threadpool(list_nodes)
-        return await run_in_threadpool(get_cached_traffic_stats, nodes, group_by)
+        payload = await run_in_threadpool(get_cached_traffic_stats, nodes, group_by)
+        return _apply_limit(payload, limit)
 
     @router.get("/api/v1/clients/online")
-    async def get_online_clients(request: Request):
+    async def get_online_clients(request: Request, limit: int = 0):
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401)
         nodes = await run_in_threadpool(list_nodes)
         online = await run_in_threadpool(get_cached_online_clients, nodes)
+        if limit > 0:
+            online = online[:limit]
         return {"online_clients": online, "count": len(online)}
 
     @router.get("/api/v1/dashboard/summary")
@@ -112,5 +138,26 @@ def build_live_data_router(
     async def get_node_client_traffic_legacy(request: Request, node_id: int, email: str):
         # Backward-compatible path-based endpoint.
         return await _get_node_client_traffic_impl(request, node_id, email)
+
+    @router.get("/api/v1/traffic/stats-by-period")
+    async def get_traffic_stats_period(request: Request, group_by: str = "client", period: str = "all_time", limit: int = 0):
+        """Get traffic stats for a specific period (day, week, month, year, all_time)"""
+        user = getattr(request.state, "auth_user", None)
+        if not user:
+            raise HTTPException(status_code=401)
+        if group_by not in ["client", "inbound", "node"]:
+            raise HTTPException(status_code=400, detail="group_by must be client, inbound, or node")
+        if period not in ["day", "week", "month", "year", "all_time"]:
+            raise HTTPException(status_code=400, detail="period must be day, week, month, year, or all_time")
+        
+        if not period_stats_handler:
+            # Fallback to regular stats if handler not provided
+            nodes = await run_in_threadpool(list_nodes)
+            payload = await run_in_threadpool(get_cached_traffic_stats, nodes, group_by)
+            return _apply_limit(payload, limit)
+        
+        nodes = await run_in_threadpool(list_nodes)
+        payload = await run_in_threadpool(period_stats_handler, nodes, group_by, period)
+        return _apply_limit(payload, limit)
 
     return router

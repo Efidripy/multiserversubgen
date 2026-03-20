@@ -2,11 +2,15 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 
 type Theme = 'light' | 'dark';
 type StylePreset = '1' | '3';
+type ThemeMode = '1' | '2' | '3';
 
 interface ThemeContextType {
   theme: Theme;
   stylePreset: StylePreset;
+  themeMode: ThemeMode;
   toggleTheme: () => void;
+  cycleThemeMode: () => void;
+  setThemeMode: (mode: ThemeMode) => void;
   setStylePreset: (preset: StylePreset) => void;
   colors: {
     bg: {
@@ -34,6 +38,7 @@ interface ThemeContextType {
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+const THEME_MODE_STORAGE_KEY = 'app_theme_mode';
 
 export const useTheme = () => {
   const context = useContext(ThemeContext);
@@ -92,6 +97,19 @@ const darkTheme = {
 };
 
 const normalizeStylePreset = (value: string | null): StylePreset => (value === '3' ? '3' : '1');
+const normalizeTheme = (value: string | null): Theme => (value === 'light' ? 'light' : 'dark');
+const normalizeThemeMode = (value: string | null): ThemeMode => (value === '1' || value === '2' || value === '3' ? value : '2');
+
+const resolveThemeMode = (theme: Theme, stylePreset: StylePreset): ThemeMode => {
+  if (theme === 'light') return '1';
+  return stylePreset === '3' ? '3' : '2';
+};
+
+const resolveThemeConfig = (mode: ThemeMode): { theme: Theme; stylePreset: StylePreset } => {
+  if (mode === '1') return { theme: 'light', stylePreset: '1' };
+  if (mode === '2') return { theme: 'dark', stylePreset: '1' };
+  return { theme: 'dark', stylePreset: '3' };
+};
 
 function getColors(theme: Theme, stylePreset: StylePreset) {
   if (stylePreset === '3' && theme === 'dark') {
@@ -128,25 +146,47 @@ interface ThemeProviderProps {
 }
 
 export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
+  const [themeMode, setThemeModeState] = useState<ThemeMode>(() => {
+    const explicitMode = localStorage.getItem(THEME_MODE_STORAGE_KEY);
+    if (explicitMode) return normalizeThemeMode(explicitMode);
+    const savedTheme = normalizeTheme(localStorage.getItem('app_theme'));
+    const savedPreset = normalizeStylePreset(localStorage.getItem('app_style_preset'));
+    return resolveThemeMode(savedTheme, savedPreset);
+  });
+
+  const initialConfig = resolveThemeConfig(themeMode);
   const [theme, setTheme] = useState<Theme>(() => {
-    const saved = localStorage.getItem('app_theme');
-    return (saved as Theme) || 'dark';
+    return initialConfig.theme;
   });
   const [stylePreset, setStylePresetState] = useState<StylePreset>(() => {
-    return normalizeStylePreset(localStorage.getItem('app_style_preset'));
+    return initialConfig.stylePreset;
   });
 
   const colors = getColors(theme, stylePreset);
 
   useEffect(() => {
+    const modeConfig = resolveThemeConfig(themeMode);
+    if (theme !== modeConfig.theme) {
+      setTheme(modeConfig.theme);
+      return;
+    }
+    if (stylePreset !== modeConfig.stylePreset) {
+      setStylePresetState(modeConfig.stylePreset);
+    }
+  }, [themeMode, theme, stylePreset]);
+
+  useEffect(() => {
     localStorage.setItem('app_theme', theme);
     localStorage.setItem('app_style_preset', stylePreset);
+    localStorage.setItem(THEME_MODE_STORAGE_KEY, themeMode);
     document.body.style.backgroundColor = colors.bg.primary;
     document.body.style.color = colors.text.primary;
     document.body.classList.toggle('theme-light', theme === 'light');
     document.body.classList.toggle('theme-dark', theme === 'dark');
     document.body.classList.remove('style-preset-1', 'style-preset-3');
     document.body.classList.add(`style-preset-${stylePreset}`);
+    document.body.classList.remove('theme-mode-1', 'theme-mode-2', 'theme-mode-3');
+    document.body.classList.add(`theme-mode-${themeMode}`);
     // Set CSS custom properties for use in App.css
     const root = document.documentElement;
     root.style.setProperty('--bg-primary', colors.bg.primary);
@@ -169,18 +209,43 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
     // Pre-computed semi-transparent accent variants used in App.css
     root.style.setProperty('--accent-focus-ring', hexToRgba(colors.accent, 0.22));
     root.style.setProperty('--accent-row-hover', hexToRgba(colors.accent, 0.06));
-  }, [theme, colors, stylePreset]);
+  }, [theme, colors, stylePreset, themeMode]);
+
+  const setThemeMode = (mode: ThemeMode) => {
+    const normalizedMode = normalizeThemeMode(mode);
+    setThemeModeState(normalizedMode);
+  };
+
+  const cycleThemeMode = () => {
+    setThemeModeState((prev) => (prev === '1' ? '2' : prev === '2' ? '3' : '1'));
+  };
 
   const toggleTheme = () => {
-    setTheme(prev => prev === 'light' ? 'dark' : 'light');
+    if (themeMode === '3') {
+      setThemeMode('1');
+      return;
+    }
+    setThemeMode(themeMode === '1' ? '2' : '1');
   };
 
   const setStylePreset = (preset: StylePreset) => {
-    setStylePresetState(normalizeStylePreset(preset));
+    const normalizedPreset = normalizeStylePreset(preset);
+    setThemeMode(resolveThemeMode(theme, normalizedPreset));
   };
 
   return (
-    <ThemeContext.Provider value={{ theme, stylePreset, toggleTheme, setStylePreset, colors }}>
+    <ThemeContext.Provider
+      value={{
+        theme,
+        stylePreset,
+        themeMode,
+        toggleTheme,
+        cycleThemeMode,
+        setThemeMode,
+        setStylePreset,
+        colors,
+      }}
+    >
       {children}
     </ThemeContext.Provider>
   );

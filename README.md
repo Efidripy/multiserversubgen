@@ -2,6 +2,16 @@
 
 Комплексная система управления несколькими серверами с современным React интерфейсом.
 
+## 📚 Documentation
+
+**Start here:**
+- **[Local Project Docs](./.local_project_docs/README.md)** — project setup, operational guides, and test variables
+- **[Workspace Knowledge](E:\GitHub\workspace\knowledge\projects\multiserversubgen.md)** — workspace context and multi-project patterns
+- **[API Documentation](./.local_project_docs/API_DOCUMENTATION.md)** — backend API reference
+- **[Components Guide](./.local_project_docs/COMPONENTS_GUIDE.md)** — React component architecture
+
+---
+
 ## ✨ Что нового в v3.1
 
 ### 🎨 Система тем
@@ -122,6 +132,19 @@ curl -u admin:password https://your-domain/my-panel/api/v1/backup/all \
 2. Только backend
 3. Только frontend
 4. Только Nginx конфиг
+
+### Текущий operational статус (2026-03-14)
+
+- `first.kleva.ru` (low-resource профиль), preset `2.4`: установка завершена успешно, публичная панель доступна.
+- `vm1.kleva.ru`, preset `2.4`: установка завершена успешно после фикса provisioning YAML Grafana.
+- Для автоматических прогонов installer теперь даёт стабильные timestamp-метки, что упрощает поэтапный профайлинг выполнения.
+
+### Размеры и хранение на сервере
+
+- Runtime приложения в основном состоит из Python `venv` (`/opt/sub-manager/venv`).
+- Frontend `node_modules` требуется только на этапе сборки и не нужен для runtime.
+- После сборки и публикации frontend build-time зависимости очищаются автоматически.
+- Рекомендуется периодически проверять и удалять устаревшие ручные backup-директории в `/root`.
 
 ### Windows + SSH
 
@@ -317,6 +340,9 @@ Monitoring assets:
   - публикуют Grafana через subpath `/$WEB_PATH/grafana/` в Nginx
   - отключают `auth.anonymous` в Grafana и биндуют её на `127.0.0.1:3000`
   - поддерживают IP allowlist и optional mTLS (клиентские сертификаты) для путей панели
+
+Troubleshooting (Grafana provisioning):
+- Если `grafana-server` падает с ошибкой `Failed to read dashboards config` и `yaml: ... mapping values are not allowed in this context`, проверьте отступы в provisioning-файле dashboard и перезапустите `grafana-server`.
 
 ### Ops Scripts
 - `scripts/ops/smoke-test.sh` — быстрый smoke после установки/обновления (`systemd`, `nginx`, `/health`, публичный URL).

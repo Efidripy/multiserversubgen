@@ -918,7 +918,7 @@ textarea.form-control::placeholder {
 
 /* Native select popup styling (supported in Chromium/partially in Firefox) */
 .form-select {
-  color-scheme: dark;
+  color-scheme: normal;
 }
 
 .form-select option,
@@ -1621,7 +1621,7 @@ body.theme-light .app-shell-side__label {
 
 body.theme-light .app-shell-header__title,
 body.theme-light .app-shell-header__title svg {
-  color: #ffffff;
+  color: var(--text-primary);
 }
 
 @keyframes appFadeIn {

@@ -70,20 +70,40 @@ def build_nodes_router(
             url = "https://" + str(url)
 
         parsed = urlparse(str(url))
+        if not parsed.hostname:
+            raise HTTPException(status_code=400, detail="Invalid URL")
+
+        scheme = parsed.scheme or "https"
+        port = str(parsed.port) if parsed.port else "443"
+        base_path = parsed.path.strip("/")
+        prefix = f"/{base_path}" if base_path else ""
+        canonical_panel_url = f"{scheme}://{parsed.hostname}:{port}{prefix}"
 
         try:
             encrypted_password = encrypt(str(password))
             with sqlite3.connect(db_path) as conn:
                 conn.execute(
-                    "INSERT INTO nodes (name, ip, port, user, password, base_path, read_only) VALUES (?,?,?,?,?,?,?)",
+                    """
+                    INSERT INTO nodes (
+                        name, panel_url, username, user,
+                        password, ip, port, base_path, access_path,
+                        read_only, scheme, verify_tls
+                    )
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                    """,
                     (
                         name,
-                        parsed.hostname,
-                        str(parsed.port) if parsed.port else "443",
+                        canonical_panel_url,
+                        node_user,
                         node_user,
                         encrypted_password,
-                        parsed.path.strip("/"),
+                        parsed.hostname,
+                        port,
+                        base_path,
+                        base_path,
                         1 if read_only else 0,
+                        scheme,
+                        0,
                     ),
                 )
                 conn.commit()
@@ -91,7 +111,10 @@ def build_nodes_router(
             logger.error(f"Error adding node: {exc}")
             raise HTTPException(status_code=500, detail=str(exc))
 
-        invalidate_subscription_cache()
+        try:
+            invalidate_subscription_cache()
+        except Exception as exc:
+            logger.warning(f"Node added but cache invalidation failed: {exc}")
         return {"status": "success"}
 
     @router.post("/api/v1/nodes/check-connection")
@@ -115,13 +138,14 @@ def build_nodes_router(
             raise HTTPException(status_code=400, detail="Invalid URL")
 
         scheme = parsed.scheme or "https"
-        port = parsed.port or (443 if scheme == "https" else 80)
+        port = parsed.port or 443
         base_path = parsed.path.strip("/")
         prefix = f"/{base_path}" if base_path else ""
         base_url = f"{scheme}://{parsed.hostname}:{port}{prefix}"
 
         session = requests.Session()
-        session.verify = requests_verify
+        # Always allow self-signed certificates for connectivity probing.
+        session.verify = False
 
         try:
             if not login_panel(session, base_url, node_user, password):
@@ -160,9 +184,31 @@ def build_nodes_router(
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
 
-        name = str(data.get("name", "")).strip()
-        if not name:
-            raise HTTPException(status_code=400, detail="Name cannot be empty")
+        has_name = "name" in data
+        has_read_only = "read_only" in data
+        if not has_name and not has_read_only:
+            raise HTTPException(status_code=400, detail="No updatable fields provided")
+
+        new_name = None
+        if has_name:
+            new_name = str(data.get("name", "")).strip()
+            if not new_name:
+                raise HTTPException(status_code=400, detail="Name cannot be empty")
+
+        def _coerce_bool(value) -> bool:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, (int, float)):
+                return bool(value)
+            if isinstance(value, str):
+                normalized = value.strip().lower()
+                if normalized in {"1", "true", "yes", "on"}:
+                    return True
+                if normalized in {"0", "false", "no", "off", ""}:
+                    return False
+            return bool(value)
+
+        new_read_only = _coerce_bool(data.get("read_only")) if has_read_only else None
 
         try:
             with sqlite3.connect(db_path) as conn:
@@ -171,8 +217,25 @@ def build_nodes_router(
                     raise HTTPException(status_code=404, detail="Node not found")
 
                 old_name = str(existing[0] or "")
-                result = conn.execute("UPDATE nodes SET name = ? WHERE id = ?", (name, node_id))
-                conn.execute("UPDATE node_history SET node_name = ? WHERE node_id = ?", (name, node_id))
+                update_fields = []
+                update_values = []
+
+                if has_name:
+                    update_fields.append("name = ?")
+                    update_values.append(new_name)
+
+                if has_read_only:
+                    update_fields.append("read_only = ?")
+                    update_values.append(1 if new_read_only else 0)
+
+                update_values.append(node_id)
+                result = conn.execute(
+                    f"UPDATE nodes SET {', '.join(update_fields)} WHERE id = ?",
+                    tuple(update_values),
+                )
+
+                if has_name:
+                    conn.execute("UPDATE node_history SET node_name = ? WHERE node_id = ?", (new_name, node_id))
                 conn.commit()
                 if result.rowcount == 0:
                     raise HTTPException(status_code=404, detail="Node not found")
@@ -184,11 +247,15 @@ def build_nodes_router(
 
         node_id_str = str(node_id)
         with node_metric_labels_lock:
-            if old_name and old_name != name:
+            if has_name and old_name and old_name != new_name:
                 remove_node_metric_labels(old_name, node_id_str)
-            node_metric_labels_state[node_id_str] = name
+            if has_name:
+                node_metric_labels_state[node_id_str] = new_name
 
-        invalidate_subscription_cache()
+        try:
+            invalidate_subscription_cache()
+        except Exception as exc:
+            logger.warning(f"Node updated but cache invalidation failed: {exc}")
         return {"status": "success"}
 
     @router.delete("/api/v1/nodes/{node_id}")
@@ -205,7 +272,10 @@ def build_nodes_router(
             logger.error(f"Error deleting node: {exc}")
             raise HTTPException(status_code=500, detail=str(exc))
 
-        invalidate_subscription_cache()
+        try:
+            invalidate_subscription_cache()
+        except Exception as exc:
+            logger.warning(f"Node deleted but cache invalidation failed: {exc}")
         return {"status": "success"}
 
     @router.post("/api/v1/nodes/refresh-now")

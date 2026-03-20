@@ -27,15 +27,19 @@ class NodeService:
         panel_url = str(node.get("panel_url") or "").strip()
         parsed = urlparse(panel_url) if panel_url else None
         if parsed:
+            if parsed.scheme and not node.get("scheme"):
+                node["scheme"] = parsed.scheme
             if not node.get("ip") and parsed.hostname:
                 node["ip"] = parsed.hostname
             if not node.get("port"):
-                node["port"] = str(parsed.port or (443 if parsed.scheme == "https" else 80))
+                node["port"] = str(parsed.port or 443)
             if not node.get("base_path") and parsed.path:
                 node["base_path"] = parsed.path.strip("/")
         else:
             if not node.get("port"):
                 node["port"] = "443"
+        if not node.get("scheme"):
+            node["scheme"] = "https"
         return node
 
     def list_nodes(self) -> List[Dict]:

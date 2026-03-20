@@ -304,16 +304,63 @@ class SnapshotCollector:
     async def _broadcast_delta(self, key: str, snapshot: Dict):
         previous = self._latest["nodes"].get(key)
         delta = {"node": key, "snapshot": snapshot}
+        delta_fields = {}
         if isinstance(previous, dict):
-            delta_fields = {}
             for field in ("available", "xray_running", "cpu", "online_clients", "traffic_total", "reason", "error"):
                 old_v = previous.get(field)
                 new_v = snapshot.get(field)
                 if old_v != new_v:
                     delta_fields[field] = {"old": old_v, "new": new_v}
             delta["changes"] = delta_fields
+        else:
+            delta["changes"] = {
+                "available": {"old": None, "new": snapshot.get("available")},
+                "online_clients": {"old": None, "new": snapshot.get("online_clients")},
+                "traffic_total": {"old": None, "new": snapshot.get("traffic_total")},
+            }
+            delta_fields = delta["changes"]
 
         await self.ws_manager.broadcast(
             {"type": "snapshot_delta", "data": delta, "timestamp": time.time()},
             channel="snapshot_delta",
         )
+
+        # Backward-compatible channel broadcasts consumed by frontend real-time hooks.
+        try:
+            await self.ws_manager.broadcast_server_status(
+                {
+                    "node": key,
+                    "node_id": snapshot.get("node_id"),
+                    "available": snapshot.get("available"),
+                    "status": snapshot.get("status"),
+                    "reason": snapshot.get("reason"),
+                    "cpu": snapshot.get("cpu"),
+                    "xray_running": snapshot.get("xray_running"),
+                    "_delta": bool(delta_fields),
+                    "changes": delta_fields,
+                }
+            )
+
+            if "traffic_total" in delta_fields:
+                await self.ws_manager.broadcast_traffic_update(
+                    {
+                        "node": key,
+                        "node_id": snapshot.get("node_id"),
+                        "traffic_total": snapshot.get("traffic_total", 0),
+                        "_delta": True,
+                        "changes": {"traffic_total": delta_fields.get("traffic_total")},
+                    }
+                )
+
+            if "online_clients" in delta_fields:
+                await self.ws_manager.broadcast_client_update(
+                    {
+                        "node": key,
+                        "node_id": snapshot.get("node_id"),
+                        "online_clients": snapshot.get("online_clients", 0),
+                        "_delta": True,
+                        "changes": {"online_clients": delta_fields.get("online_clients")},
+                    }
+                )
+        except Exception as exc:
+            logger.warning(f"Collector websocket broadcast failed for {key}: {exc}")

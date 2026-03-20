@@ -61,6 +61,7 @@ SETTINGS = load_app_settings(parse_mfa_users=parse_mfa_users)
 PROJECT_DIR = SETTINGS.project_dir
 WEB_PATH = SETTINGS.web_path
 GRAFANA_WEB_PATH = SETTINGS.grafana_web_path
+MONITORING_ENABLED = SETTINGS.monitoring_enabled
 root_path = SETTINGS.root_path
 CACHE_TTL = SETTINGS.cache_ttl
 ALLOW_ORIGINS = SETTINGS.allow_origins
@@ -283,6 +284,7 @@ def has_min_role(user_role: str, min_role: str) -> bool:
 (
     invalidate_live_stats_cache,
     get_cached_traffic_stats,
+    get_traffic_stats_by_period,
     get_cached_online_clients,
     get_cached_clients,
     enqueue_audit_event,
@@ -330,8 +332,10 @@ register_app_routers(
     verify_totp_code=verify_totp_code,
     get_user_role=get_user_role,
     mfa_totp_enabled=MFA_TOTP_ENABLED,
+    monitoring_enabled=MONITORING_ENABLED,
     get_node_or_404=partial(get_node_or_404, node_service),
     get_cached_traffic_stats=get_cached_traffic_stats,
+    get_traffic_stats_by_period=get_traffic_stats_by_period,
     get_cached_online_clients=get_cached_online_clients,
     list_nodes=node_service.list_nodes,
     xui_monitor=xui_monitor,

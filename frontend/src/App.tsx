@@ -9,11 +9,13 @@ import { ClientManager } from './components/ClientManager';
 import { TrafficStats } from './components/TrafficStats';
 import { BackupManager } from './components/BackupManager';
 import { MonitoringDashboard } from './components/MonitoringDashboard';
-import { Sidebar } from './components/Sidebar';
+import { Sidebar, SidebarNavItem } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
 import { useWebSocket } from './hooks/useWebSocket';
 import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials } from './auth';
 import { IconName, UIIcon } from './components/UIIcon';
+import { requestActivityStore } from './services/requestActivity';
+import { readStaleCache, writeStaleCache } from './services/staleCache';
 
 type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 type NoticeLevel = 'info' | 'success' | 'warning' | 'danger';
@@ -38,51 +40,56 @@ interface HeaderSummary {
   stats: HeaderStat[];
 }
 
+interface FeatureFlagsResponse {
+  monitoringEnabled?: boolean;
+}
+
 const HEADER_SUMMARY_CACHE_KEY = 'sub_manager_header_summary_cache_v1';
+const HEADER_SUMMARY_CACHE_MAX_AGE_MS = 15 * 60 * 1000;
 const ACTIVE_TAB_CACHE_KEY = 'sub_manager_active_tab_v1';
 
-const TAB_META: Record<TabType, { icon: IconName; labelKey: string; eyebrow: string; description: string }> = {
+const TAB_META: Record<TabType, { icon: IconName; labelKey: string; eyebrowKey: string; descriptionKey: string }> = {
   dashboard: {
     icon: 'dashboard',
     labelKey: 'nav.dashboard',
-    eyebrow: 'Mission Control',
-    description: 'Local command overview for nodes, xray state and the most important operational checks.'
+    eyebrowKey: 'tabEyebrow.dashboard',
+    descriptionKey: 'tabDescription.dashboard',
   },
   inbounds: {
     icon: 'inbounds',
     labelKey: 'nav.inbounds',
-    eyebrow: 'Ingress Matrix',
-    description: 'Inspect ports, remarks and protocol exposure without leaving the main control surface.'
+    eyebrowKey: 'tabEyebrow.inbounds',
+    descriptionKey: 'tabDescription.inbounds',
   },
   clients: {
     icon: 'clients',
     labelKey: 'nav.clients',
-    eyebrow: 'Client Directory',
-    description: 'Search, sort and manage client records across the connected local panels.'
+    eyebrowKey: 'tabEyebrow.clients',
+    descriptionKey: 'tabDescription.clients',
   },
   traffic: {
     icon: 'traffic',
     labelKey: 'nav.traffic',
-    eyebrow: 'Usage Telemetry',
-    description: 'Watch active sessions, heavy users and current transfer distribution in one place.'
+    eyebrowKey: 'tabEyebrow.traffic',
+    descriptionKey: 'tabDescription.traffic',
   },
   monitoring: {
     icon: 'monitoring',
     labelKey: 'nav.monitoring',
-    eyebrow: 'Signal Deck',
-    description: 'Review stack health, historical charts and AdGuard metrics through the same visual language.'
+    eyebrowKey: 'tabEyebrow.monitoring',
+    descriptionKey: 'tabDescription.monitoring',
   },
   backup: {
     icon: 'backup',
     labelKey: 'nav.backup',
-    eyebrow: 'Recovery Operations',
-    description: 'Operate backups and restores from grouped blocks without a scattered workflow.'
+    eyebrowKey: 'tabEyebrow.backup',
+    descriptionKey: 'tabDescription.backup',
   },
   subscriptions: {
     icon: 'subscriptions',
     labelKey: 'nav.subscriptions',
-    eyebrow: 'Link Delivery',
-    description: 'Build filtered subscription output and copy delivery links from a tighter control layout.'
+    eyebrowKey: 'tabEyebrow.subscriptions',
+    descriptionKey: 'tabDescription.subscriptions',
   },
 };
 
@@ -105,7 +112,7 @@ const formatBytes = (bytes: number) => {
 const formatPercent = (value: number) => `${Number.isFinite(value) ? value.toFixed(value >= 10 ? 0 : 1) : '0'}%`;
 
 export const App: React.FC = () => {
-  const { theme, toggleTheme, colors } = useTheme();
+  const { themeMode, cycleThemeMode, colors } = useTheme();
   const { t } = useTranslation();
 
   const [user, setUser] = useState('');
@@ -126,13 +133,16 @@ export const App: React.FC = () => {
     }
     return 'dashboard';
   });
+  const [mountedTabs, setMountedTabs] = useState<TabType[]>(() => [activeTab]);
   const [key, setKey] = useState(0);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [headerSummary, setHeaderSummary] = useState<HeaderSummary>({
-    description: TAB_META.dashboard.description,
+    description: t(TAB_META.dashboard.descriptionKey),
     stats: [],
   });
   const [headerLoading, setHeaderLoading] = useState(false);
+  const [pendingRequests, setPendingRequests] = useState(0);
+  const [monitoringEnabled, setMonitoringEnabled] = useState(true);
 
   const [notifications, setNotifications] = useState<UiNotification[]>([]);
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
@@ -143,27 +153,22 @@ export const App: React.FC = () => {
   const lastNotifyRef = useRef<Record<string, number>>({});
   const updateHeaderSummary = (summary: HeaderSummary) => {
     setHeaderSummary(summary);
-    try {
-      const raw = localStorage.getItem(HEADER_SUMMARY_CACHE_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      parsed[activeTab] = summary;
-      localStorage.setItem(HEADER_SUMMARY_CACHE_KEY, JSON.stringify(parsed));
-    } catch {
-      // Ignore cache failures.
-    }
+    const parsed = readStaleCache<Partial<Record<TabType, HeaderSummary>>>(
+      HEADER_SUMMARY_CACHE_KEY,
+      Number.MAX_SAFE_INTEGER,
+    ).data || {};
+    parsed[activeTab] = summary;
+    writeStaleCache(HEADER_SUMMARY_CACHE_KEY, parsed);
   };
 
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(HEADER_SUMMARY_CACHE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as Partial<Record<TabType, HeaderSummary>>;
-      const cached = parsed?.[activeTab];
-      if (cached?.description && Array.isArray(cached.stats)) {
-        updateHeaderSummary(cached);
-      }
-    } catch {
-      // Ignore malformed cache.
+    const cachedStore = readStaleCache<Partial<Record<TabType, HeaderSummary>>>(
+      HEADER_SUMMARY_CACHE_KEY,
+      HEADER_SUMMARY_CACHE_MAX_AGE_MS,
+    ).data;
+    const cached = cachedStore?.[activeTab];
+    if (cached?.description && Array.isArray(cached.stats)) {
+      setHeaderSummary(cached);
     }
   }, [activeTab]);
 
@@ -174,6 +179,48 @@ export const App: React.FC = () => {
       // Ignore localStorage write failures.
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    setMountedTabs((prev) => (prev.includes(activeTab) ? prev : [...prev, activeTab]));
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+    let cancelled = false;
+    const loadFeatures = async () => {
+      try {
+        const auth = getAuth();
+        const res = await api.get('/v1/features', { auth });
+        const payload = (res.data || {}) as FeatureFlagsResponse;
+        if (!cancelled) {
+          setMonitoringEnabled(payload.monitoringEnabled !== false);
+        }
+      } catch {
+        if (!cancelled) {
+          setMonitoringEnabled(true);
+        }
+      }
+    };
+    loadFeatures();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!monitoringEnabled && activeTab === 'monitoring') {
+      setActiveTab('dashboard');
+    }
+  }, [monitoringEnabled, activeTab]);
+
+  useEffect(() => {
+    const unsubscribe = requestActivityStore.subscribe((pending) => {
+      setPendingRequests(pending);
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -247,15 +294,23 @@ export const App: React.FC = () => {
             if (!cancelled) {
               updateHeaderSummary({
                 description: authBlocked > 0
-                  ? `${online}/${nodes.length || snapshotNodes.length || 0} nodes answer polling. ${authBlocked} node${authBlocked === 1 ? '' : 's'} currently fail auth.`
-                  : `${online}/${nodes.length || snapshotNodes.length || 0} nodes answer polling right now. Xray is up on ${xray} nodes.`,
+                  ? t('header.dashboard.descAuthIssue', {
+                      online,
+                      total: nodes.length || snapshotNodes.length || 0,
+                      authBlocked,
+                    })
+                  : t('header.dashboard.descHealthy', {
+                      online,
+                      total: nodes.length || snapshotNodes.length || 0,
+                      xray,
+                    }),
                 stats: [
-                  { label: 'Registered nodes', value: String(nodes.length || snapshotNodes.length || 0) },
-                  { label: 'Reachable now', value: String(online), tone: online > 0 ? 'success' : 'warning' },
-                  { label: 'Auth issues', value: String(authBlocked), tone: authBlocked > 0 ? 'danger' : 'default' },
-                  { label: 'Offline nodes', value: String(down), tone: down > 0 ? 'warning' : 'default' },
-                  { label: 'Xray running', value: String(xray), tone: xray > 0 ? 'accent' : 'warning' },
-                  { label: 'Online clients', value: formatCompactNumber(onlineClients) },
+                  { label: t('header.dashboard.registeredNodes'), value: String(nodes.length || snapshotNodes.length || 0) },
+                  { label: t('header.dashboard.reachableNow'), value: String(online), tone: online > 0 ? 'success' : 'warning' },
+                  { label: t('header.dashboard.authIssues'), value: String(authBlocked), tone: authBlocked > 0 ? 'danger' : 'default' },
+                  { label: t('header.dashboard.offlineNodes'), value: String(down), tone: down > 0 ? 'warning' : 'default' },
+                  { label: t('header.dashboard.xrayRunning'), value: String(xray), tone: xray > 0 ? 'accent' : 'warning' },
+                  { label: t('header.dashboard.onlineClients'), value: formatCompactNumber(onlineClients) },
                 ],
               });
             }
@@ -269,12 +324,12 @@ export const App: React.FC = () => {
             const nodesCovered = new Set(inbounds.map((item: any) => item.node_name).filter(Boolean)).size;
             if (!cancelled) {
               updateHeaderSummary({
-                description: `Ports and remarks are now summarized directly in the page header instead of a decorative banner.`,
+                description: t('header.inbounds.description'),
                 stats: [
-                  { label: 'Total inbounds', value: String(inbounds.length) },
-                  { label: 'Enabled', value: String(enabled), tone: enabled > 0 ? 'success' : 'warning' },
-                  { label: 'Protocols', value: String(protocols) },
-                  { label: 'Covered nodes', value: String(nodesCovered) },
+                  { label: t('header.inbounds.totalInbounds'), value: String(inbounds.length) },
+                  { label: t('header.inbounds.enabled'), value: String(enabled), tone: enabled > 0 ? 'success' : 'warning' },
+                  { label: t('header.inbounds.protocols'), value: String(protocols) },
+                  { label: t('header.inbounds.coveredNodes'), value: String(nodesCovered) },
                 ],
               });
             }
@@ -294,12 +349,12 @@ export const App: React.FC = () => {
             }).length;
             if (!cancelled) {
               updateHeaderSummary({
-                description: `Client operations now surface the live fleet size, enabled accounts and upcoming expirations in the header.`,
+                description: t('header.clients.description'),
                 stats: [
-                  { label: 'Client records', value: formatCompactNumber(clients.length) },
-                  { label: 'Enabled', value: formatCompactNumber(enabled), tone: enabled > 0 ? 'success' : 'warning' },
-                  { label: 'Expiring in 7d', value: String(expiringSoon), tone: expiringSoon > 0 ? 'warning' : 'default' },
-                  { label: 'Available nodes', value: String(nodes.length) },
+                  { label: t('header.clients.clientRecords'), value: formatCompactNumber(clients.length) },
+                  { label: t('header.clients.enabled'), value: formatCompactNumber(enabled), tone: enabled > 0 ? 'success' : 'warning' },
+                  { label: t('header.clients.expiringIn7d'), value: String(expiringSoon), tone: expiringSoon > 0 ? 'warning' : 'default' },
+                  { label: t('header.clients.availableNodes'), value: String(nodes.length) },
                 ],
               });
             }
@@ -319,12 +374,12 @@ export const App: React.FC = () => {
               .sort((a, b) => b.total - a.total)[0];
             if (!cancelled) {
               updateHeaderSummary({
-                description: `The traffic header now surfaces who is online, how much data moved and which client currently leads the table.`,
+                description: t('header.traffic.description'),
                 stats: [
-                  { label: 'Online now', value: formatCompactNumber(onlineClients.length), tone: onlineClients.length > 0 ? 'success' : 'default' },
-                  { label: 'Tracked entries', value: formatCompactNumber(trafficEntries.length) },
-                  { label: 'Total traffic', value: formatBytes(totalTraffic), tone: 'accent' },
-                  { label: 'Heaviest client', value: heaviest ? heaviest.name : 'None' },
+                  { label: t('header.traffic.onlineNow'), value: formatCompactNumber(onlineClients.length), tone: onlineClients.length > 0 ? 'success' : 'default' },
+                  { label: t('header.traffic.trackedEntries'), value: formatCompactNumber(trafficEntries.length) },
+                  { label: t('header.traffic.totalTraffic'), value: formatBytes(totalTraffic), tone: 'accent' },
+                  { label: t('header.traffic.heaviestClient'), value: heaviest ? heaviest.name : t('header.common.none') },
                 ],
               });
             }
@@ -345,12 +400,12 @@ export const App: React.FC = () => {
             const sourcesOnline = overview?.summary?.sources_online || 0;
             if (!cancelled) {
               updateHeaderSummary({
-                description: `Monitoring now summarizes stack probes and AdGuard collection directly in the first block instead of dead filler text.`,
+                description: t('header.monitoring.description'),
                 stats: [
-                  { label: 'Stack probes', value: `${servicesUp}/${services.length || 0}`, tone: servicesUp === services.length && services.length > 0 ? 'success' : 'warning' },
-                  { label: 'AdGuard sources', value: `${sourcesOnline}/${sourcesTotal}`, tone: sourcesOnline > 0 ? 'success' : 'warning' },
-                  { label: 'Blocked rate', value: formatPercent(overview?.summary?.blocked_rate || 0), tone: 'accent' },
-                  { label: 'Collector', value: deps?.collector_running ? 'Running' : 'Idle', tone: deps?.collector_running ? 'success' : 'warning' },
+                  { label: t('header.monitoring.stackProbes'), value: `${servicesUp}/${services.length || 0}`, tone: servicesUp === services.length && services.length > 0 ? 'success' : 'warning' },
+                  { label: t('header.monitoring.adguardSources'), value: `${sourcesOnline}/${sourcesTotal}`, tone: sourcesOnline > 0 ? 'success' : 'warning' },
+                  { label: t('header.monitoring.blockedRate'), value: formatPercent(overview?.summary?.blocked_rate || 0), tone: 'accent' },
+                  { label: t('header.monitoring.collector'), value: deps?.collector_running ? t('header.monitoring.collectorRunning') : t('header.monitoring.collectorIdle'), tone: deps?.collector_running ? 'success' : 'warning' },
                 ],
               });
             }
@@ -362,12 +417,12 @@ export const App: React.FC = () => {
             const readOnly = nodes.filter((node: any) => Boolean(node.read_only)).length;
             if (!cancelled) {
               updateHeaderSummary({
-                description: `Recovery operations now expose fleet coverage and writable targets before you touch import or restore actions.`,
+                description: t('header.backup.description'),
                 stats: [
-                  { label: 'Known nodes', value: String(nodes.length) },
-                  { label: 'Writable', value: String(nodes.length - readOnly), tone: nodes.length - readOnly > 0 ? 'success' : 'warning' },
-                  { label: 'Read-only', value: String(readOnly) },
-                  { label: 'Restore targets', value: String(nodes.length) },
+                  { label: t('header.backup.knownNodes'), value: String(nodes.length) },
+                  { label: t('header.backup.writable'), value: String(nodes.length - readOnly), tone: nodes.length - readOnly > 0 ? 'success' : 'warning' },
+                  { label: t('header.backup.readOnly'), value: String(readOnly) },
+                  { label: t('header.backup.restoreTargets'), value: String(nodes.length) },
                 ],
               });
             }
@@ -393,12 +448,12 @@ export const App: React.FC = () => {
             const nodes = Array.isArray(nodesRes.data) ? nodesRes.data : [];
             if (!cancelled) {
               updateHeaderSummary({
-                description: `Subscription delivery now promotes real output volume and grouping signals instead of a generic hero statement.`,
+                description: t('header.subscriptions.description'),
                 stats: [
-                  { label: 'Email links', value: formatCompactNumber(emails.length) },
-                  { label: 'Total downloads', value: formatCompactNumber(downloads), tone: downloads > 0 ? 'accent' : 'default' },
-                  { label: 'Reusable groups', value: String(groups) },
-                  { label: 'Nodes in filter', value: String(nodes.length) },
+                  { label: t('header.subscriptions.emailLinks'), value: formatCompactNumber(emails.length) },
+                  { label: t('header.subscriptions.totalDownloads'), value: formatCompactNumber(downloads), tone: downloads > 0 ? 'accent' : 'default' },
+                  { label: t('header.subscriptions.reusableGroups'), value: String(groups) },
+                  { label: t('header.subscriptions.nodesInFilter'), value: String(nodes.length) },
                 ],
               });
             }
@@ -410,7 +465,7 @@ export const App: React.FC = () => {
       } catch {
         if (!cancelled && headerSummary.stats.length === 0) {
           updateHeaderSummary({
-            description: TAB_META[activeTab].description,
+            description: t(TAB_META[activeTab].descriptionKey),
             stats: [],
           });
         }
@@ -571,10 +626,10 @@ export const App: React.FC = () => {
             </h5>
             <button
               className="btn btn-sm btn-outline-secondary"
-              onClick={toggleTheme}
-              title={t('theme.toggle')}
+              onClick={cycleThemeMode}
+              title={t('app.themeToggleTitle')}
             >
-              {theme === 'dark' ? <UIIcon name="sun" size={16} /> : <UIIcon name="moon" size={16} />}
+              {themeMode === '1' ? <UIIcon name="sun" size={16} /> : <UIIcon name="moon" size={16} />}
             </button>
           </div>
           <form onSubmit={(e) => { e.preventDefault(); handleLogin(); }}>
@@ -631,12 +686,27 @@ export const App: React.FC = () => {
   const tabMeta = Object.fromEntries(
     Object.entries(TAB_META).map(([key, value]) => [
       key,
-      { ...value, label: t(value.labelKey) },
+      {
+        ...value,
+        label: t(value.labelKey),
+        eyebrow: t(value.eyebrowKey),
+        description: t(value.descriptionKey),
+      },
     ])
-  ) as Record<TabType, { icon: IconName; labelKey: string; label: string; eyebrow: string; description: string }>;
+  ) as Record<TabType, { icon: IconName; labelKey: string; label: string; eyebrowKey: string; descriptionKey: string; eyebrow: string; description: string }>;
 
-  const renderTabContent = () => {
-    switch (activeTab) {
+  const visibleTabs: TabType[] = (monitoringEnabled
+    ? ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring', 'backup', 'subscriptions']
+    : ['dashboard', 'inbounds', 'clients', 'traffic', 'backup', 'subscriptions']);
+
+  const sidebarItems: SidebarNavItem[] = visibleTabs.map((tabId) => ({
+    id: tabId,
+    icon: TAB_META[tabId].icon,
+    labelKey: TAB_META[tabId].labelKey,
+  }));
+
+  const renderTabContent = (tab: TabType) => {
+    switch (tab) {
       case 'dashboard':
         return (
           <div className="d-grid gap-3">
@@ -658,7 +728,7 @@ export const App: React.FC = () => {
       case 'traffic':
         return <TrafficStats />;
       case 'monitoring':
-        return <MonitoringDashboard />;
+        return monitoringEnabled ? <MonitoringDashboard /> : null;
       case 'backup':
         return <BackupManager />;
       case 'subscriptions':
@@ -687,6 +757,7 @@ export const App: React.FC = () => {
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
+        items={sidebarItems}
         user={user}
         onLogout={handleLogout}
         mobileOpen={mobileSidebarOpen}
@@ -804,7 +875,7 @@ export const App: React.FC = () => {
                     </span>
                   </h1>
                   <p className="app-shell-header__copy">{headerSummary.description}</p>
-                  {headerLoading && <div className="app-shell-header__live-note">Updating data in background...</div>}
+                  {(headerLoading || pendingRequests > 0) && <div className="app-shell-header__live-note">{t('header.updating')}</div>}
                 </div>
 
                 <div className="app-shell-header__stats">
@@ -816,8 +887,8 @@ export const App: React.FC = () => {
                   ))}
                   {headerLoading && headerSummary.stats.length === 0 && (
                     <article className="app-shell-stat app-shell-stat--default">
-                      <span className="app-shell-stat__label">Sync</span>
-                      <span className="app-shell-stat__value">Loading...</span>
+                      <span className="app-shell-stat__label">{t('header.sync')}</span>
+                      <span className="app-shell-stat__value">{t('app.loading')}</span>
                     </article>
                   )}
                 </div>
@@ -826,7 +897,15 @@ export const App: React.FC = () => {
           </section>
 
           <div className="tab-panel">
-            {renderTabContent()}
+            {mountedTabs.map((tabId) => (
+              <section
+                key={tabId}
+                style={{ display: activeTab === tabId ? 'block' : 'none' }}
+                aria-hidden={activeTab !== tabId}
+              >
+                {renderTabContent(tabId)}
+              </section>
+            ))}
           </div>
         </main>
       </div>

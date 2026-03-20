@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
@@ -9,6 +10,7 @@ interface Node {
   name: string;
   ip: string;
   port: string;
+  read_only?: boolean;
 }
 
 interface BatchPreviewRow {
@@ -20,6 +22,16 @@ interface BatchPreviewRow {
 
 const NODE_STATUS_CACHE_KEY = 'sub_manager_node_status_cache_v1';
 const NODE_LIST_CACHE_KEY = 'sub_manager_node_list_cache_v1';
+const NODE_SNAPSHOT_TTL_MS = 20_000;
+
+type NodeSnapshotPayload = {
+  nodes: Node[];
+  statuses: Record<number, boolean | null>;
+};
+
+let sharedNodeSnapshot: NodeSnapshotPayload | null = null;
+let sharedNodeSnapshotTs = 0;
+let sharedNodeSnapshotInFlight: Promise<NodeSnapshotPayload> | null = null;
 
 export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean; showFleet?: boolean }> = ({
   onReload,
@@ -27,6 +39,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
   showFleet = true,
 }) => {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [nodeStatuses, setNodeStatuses] = useState<Record<number, boolean | null>>({});
   const [statusLoading, setStatusLoading] = useState(false);
@@ -43,7 +56,12 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
   const [editingName, setEditingName] = useState('');
   const [showEditModal, setShowEditModal] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(false);
-  const statusRequestIdRef = useRef(0);
+  const [readOnlyUpdating, setReadOnlyUpdating] = useState<Record<number, boolean>>({});
+
+  const invalidateSharedSnapshot = () => {
+    sharedNodeSnapshot = null;
+    sharedNodeSnapshotTs = 0;
+  };
 
   useEffect(() => {
     try {
@@ -68,73 +86,59 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
 
   const loadNodes = async () => {
     try {
-      const auth = { username: getAuth().user, password: getAuth().password };
-      const nodesRes = await api.get('/v1/nodes', { auth });
-      const nodeList = Array.isArray(nodesRes.data) ? nodesRes.data : [];
-      setNodes(nodeList);
-      try {
-        localStorage.setItem(NODE_LIST_CACHE_KEY, JSON.stringify(nodeList));
-      } catch {}
-      let cachedStatuses: Record<number, boolean | null> = {};
-      try {
-        const raw = localStorage.getItem(NODE_STATUS_CACHE_KEY);
-        cachedStatuses = raw ? JSON.parse(raw) : {};
-      } catch {
-        cachedStatuses = {};
+      const now = Date.now();
+      if (sharedNodeSnapshot && now - sharedNodeSnapshotTs < NODE_SNAPSHOT_TTL_MS) {
+        setNodes(sharedNodeSnapshot.nodes);
+        setNodeStatuses(sharedNodeSnapshot.statuses);
+        setStatusLoading(false);
+        return;
       }
-      const initial: Record<number, boolean | null> = {};
-      nodeList.forEach((node) => { initial[node.id] = node.id in cachedStatuses ? cachedStatuses[node.id] : null; });
-      setNodeStatuses(initial);
+
+      if (!sharedNodeSnapshotInFlight) {
+        sharedNodeSnapshotInFlight = (async () => {
+          const auth = { username: getAuth().user, password: getAuth().password };
+          const nodesRes = await api.get('/v1/nodes', { auth });
+          const nodeList = Array.isArray(nodesRes.data) ? nodesRes.data : [];
+          const statuses: Record<number, boolean | null> = {};
+
+          await Promise.all(
+            nodeList.map(async (node) => {
+              try {
+                const response = await api.get(`/v1/nodes/${node.id}/server-status`, { auth });
+                statuses[node.id] = Boolean(response.data?.available);
+              } catch {
+                statuses[node.id] = false;
+              }
+            }),
+          );
+
+          const payload: NodeSnapshotPayload = { nodes: nodeList, statuses };
+          sharedNodeSnapshot = payload;
+          sharedNodeSnapshotTs = Date.now();
+
+          try {
+            localStorage.setItem(NODE_LIST_CACHE_KEY, JSON.stringify(nodeList));
+            localStorage.setItem(NODE_STATUS_CACHE_KEY, JSON.stringify(statuses));
+          } catch {
+            // Ignore cache failures.
+          }
+
+          return payload;
+        })().finally(() => {
+          sharedNodeSnapshotInFlight = null;
+        });
+      }
+
       setStatusLoading(true);
-      const requestId = Date.now();
-      statusRequestIdRef.current = requestId;
-      loadNodeStatuses(nodeList, requestId);
+      const payload = await sharedNodeSnapshotInFlight;
+      setNodes(payload.nodes);
+      setNodeStatuses(payload.statuses);
+      setStatusLoading(false);
     } catch (err) {
       console.error('Failed to load nodes:', err);
-      setError('Failed to load nodes');
-    }
-  };
-
-  const loadNodeStatuses = async (nodeList: Node[], requestId: number) => {
-    if (nodeList.length === 0) {
+      setError(t('nodes.loadFailed'));
       setStatusLoading(false);
-      return;
     }
-
-    let pending = nodeList.length;
-    nodeList.forEach((node) => {
-      api.get(`/v1/nodes/${node.id}/server-status`, {
-        auth: { username: getAuth().user, password: getAuth().password }
-      })
-        .then((response) => {
-          if (statusRequestIdRef.current !== requestId) return;
-          const available = Boolean(response.data?.available);
-          setNodeStatuses((prev) => {
-            const next = { ...prev, [node.id]: available };
-            try {
-              localStorage.setItem(NODE_STATUS_CACHE_KEY, JSON.stringify(next));
-            } catch {}
-            return next;
-          });
-        })
-        .catch(() => {
-          if (statusRequestIdRef.current !== requestId) return;
-          setNodeStatuses((prev) => {
-            const next = { ...prev, [node.id]: false };
-            try {
-              localStorage.setItem(NODE_STATUS_CACHE_KEY, JSON.stringify(next));
-            } catch {}
-            return next;
-          });
-        })
-        .finally(() => {
-          if (statusRequestIdRef.current !== requestId) return;
-          pending -= 1;
-          if (pending <= 0) {
-            setStatusLoading(false);
-          }
-        });
-    });
   };
 
   useEffect(() => {
@@ -152,11 +156,12 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
         auth: { username: getAuth().user, password: getAuth().password }
       });
       setFormData({ name: '', url: '', user: '', password: '' });
-      setSuccess('Server added successfully');
+      setSuccess(t('nodes.addSuccess'));
+      invalidateSharedSnapshot();
       loadNodes();
       onReload();
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to add node');
+      setError(err.response?.data?.detail || t('nodes.addFailed'));
     } finally {
       setLoading(false);
     }
@@ -197,15 +202,15 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
       setBatchPreview([]);
       setBatchAdded(true);
       if (failed > 0) {
-        setSuccess(`Added ${succeeded} nodes`);
-        setError(`${failed} nodes failed to add`);
+        setSuccess(t('nodes.batchAdded', { count: succeeded }));
+        setError(t('nodes.batchFailed', { count: failed }));
       } else {
-        setSuccess(`Added ${succeeded} nodes`);
+        setSuccess(t('nodes.batchAdded', { count: succeeded }));
       }
       loadNodes();
       onReload();
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to add nodes');
+      setError(err.response?.data?.detail || t('nodes.batchAddFailed'));
     } finally {
       setLoading(false);
     }
@@ -222,18 +227,45 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
   };
 
   const handleDelete = async (id: number) => {
-    if (!window.confirm('Are you sure you want to delete this node?')) return;
+    if (!window.confirm(t('nodes.confirmDelete'))) return;
     setLoading(true);
     try {
       await api.delete(`/v1/nodes/${id}`, {
         auth: { username: getAuth().user, password: getAuth().password }
       });
+      invalidateSharedSnapshot();
       loadNodes();
       onReload();
     } catch (err) {
       console.error('Failed to delete node:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleToggleReadOnly = async (node: Node) => {
+    const nextReadOnly = !Boolean(node.read_only);
+    setReadOnlyUpdating((prev) => ({ ...prev, [node.id]: true }));
+    setError('');
+    setSuccess('');
+    try {
+      await api.put(
+        `/v1/nodes/${node.id}`,
+        { read_only: nextReadOnly },
+        {
+          auth: { username: getAuth().user, password: getAuth().password },
+        }
+      );
+      setNodes((prev) =>
+        prev.map((n) => (n.id === node.id ? { ...n, read_only: nextReadOnly } : n))
+      );
+      invalidateSharedSnapshot();
+      setSuccess(t('nodes.switchModeSuccess', { name: node.name, mode: nextReadOnly ? t('nodes.modeReadOnly') : t('nodes.modeWrite') }));
+      onReload();
+    } catch (err: any) {
+      setError(err.response?.data?.detail || t('nodes.switchModeFailed'));
+    } finally {
+      setReadOnlyUpdating((prev) => ({ ...prev, [node.id]: false }));
     }
   };
 
@@ -247,7 +279,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     if (!editingNode) return;
     const trimmed = editingName.trim();
     if (!trimmed) {
-      setError('Name cannot be empty');
+      setError(t('nodes.nameEmpty'));
       return;
     }
     setLoading(true);
@@ -258,10 +290,11 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
       });
       setShowEditModal(false);
       setEditingNode(null);
+      invalidateSharedSnapshot();
       loadNodes();
       onReload();
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to update node');
+      setError(err.response?.data?.detail || t('nodes.updateFailed'));
     } finally {
       setLoading(false);
     }
@@ -271,7 +304,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     setError('');
     setSuccess('');
     if (!formData.url.trim() || !formData.user.trim() || !formData.password.trim()) {
-      setError('Fill URL, login and password first');
+      setError(t('nodes.fillConnectionFields'));
       return;
     }
 
@@ -287,12 +320,12 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
       const payload = res.data || {};
       if (payload.success) {
         const count = Number.isFinite(payload.inbounds_count) ? payload.inbounds_count : null;
-        setSuccess(count !== null ? `Connection OK, inbounds: ${count}` : 'Connection OK');
+        setSuccess(count !== null ? t('nodes.connectionOkWithInbounds', { count }) : t('nodes.connectionOk'));
       } else {
-        setError(payload.message || 'Connection failed');
+        setError(payload.message || t('nodes.connectionFailed'));
       }
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Connection check failed');
+      setError(err.response?.data?.detail || t('nodes.connectionCheckFailed'));
     } finally {
       setCheckingConnection(false);
     }
@@ -304,8 +337,8 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
       <section className="panel-block mb-4">
           <div className="panel-block__header">
             <div>
-              <h6 className="panel-block__title">Node intake</h6>
-              <p className="panel-block__hint">Register a single panel or batch-import multiple endpoints.</p>
+              <h6 className="panel-block__title">{t('nodes.intakeTitle')}</h6>
+              <p className="panel-block__hint">{t('nodes.intakeHint')}</p>
             </div>
             <button
               className="btn btn-sm"
@@ -314,7 +347,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
             >
               <span className="d-inline-flex align-items-center gap-1">
                 <UIIcon name={showForm ? 'x' : 'plus'} size={14} />
-                {showForm ? 'Close' : 'Add node'}
+                {showForm ? t('common.cancel') : t('nodes.addNode')}
               </span>
             </button>
           </div>
@@ -325,7 +358,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
           {showForm && (
             <div className="panel-block__stack">
               <div>
-                <label className="form-label small" style={{ color: colors.text.secondary }}>Add mode</label>
+                <label className="form-label small" style={{ color: colors.text.secondary }}>{t('nodes.addMode')}</label>
                 <div className="panel-inline-actions">
                   <button
                     type="button"
@@ -333,7 +366,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                     style={addMode === 'form' ? { backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText } : { backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
                     onClick={() => handleModeSwitch('form')}
                   >
-                    Single form
+                    {t('nodes.singleForm')}
                   </button>
                   <button
                     type="button"
@@ -341,7 +374,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                     style={addMode === 'batch' ? { backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText } : { backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
                     onClick={() => handleModeSwitch('batch')}
                   >
-                    Batch text
+                    {t('nodes.batchText')}
                   </button>
                 </div>
               </div>
@@ -353,7 +386,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                       type="text"
                       name="name"
                       className="form-control"
-                      placeholder="Node label"
+                      placeholder={t('nodes.nodeLabel')}
                       value={formData.name}
                       onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                       style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
@@ -373,7 +406,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                       type="text"
                       name="user"
                       className="form-control"
-                      placeholder="Login"
+                      placeholder={t('auth.username')}
                       value={formData.user}
                       onChange={(e) => setFormData({ ...formData, user: e.target.value })}
                       style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
@@ -383,7 +416,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                       type="password"
                       name="password"
                       className="form-control"
-                      placeholder="Password"
+                      placeholder={t('auth.password')}
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                       style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
@@ -398,7 +431,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                       onClick={handleCheckConnection}
                       disabled={loading || checkingConnection}
                     >
-                      {checkingConnection ? 'Checking...' : 'Check connection'}
+                      {checkingConnection ? t('nodes.checking') : t('nodes.checkConnection')}
                     </button>
                     <button
                       type="submit"
@@ -406,14 +439,14 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                       style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                       disabled={loading || checkingConnection}
                     >
-                      {loading ? 'Saving...' : 'Save node'}
+                      {loading ? t('nodes.saving') : t('common.save')}
                     </button>
                   </div>
                 </form>
               ) : (
                 <div className="panel-block__stack">
                   <p className="small mb-0" style={{ color: colors.text.secondary }}>
-                    Format: <span className="mono-inline">https://server:443/path admin password</span>
+                    {t('nodes.batchFormat')}: <span className="mono-inline">https://server:443/path admin password</span>
                   </p>
                   <textarea
                     className="form-control form-control-sm"
@@ -431,7 +464,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                       onClick={parseBatchText}
                       disabled={!batchText.trim()}
                     >
-                      Parse and preview
+                      {t('nodes.parsePreview')}
                     </button>
                     {batchPreview.length > 0 && (
                       <button
@@ -441,7 +474,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                         onClick={handleBatchAddAll}
                         disabled={loading || batchAdded}
                       >
-                        {loading ? 'Adding...' : `Add all (${batchPreview.length})`}
+                        {loading ? t('nodes.adding') : t('nodes.addAll', { count: batchPreview.length })}
                       </button>
                     )}
                   </div>
@@ -451,10 +484,10 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                       <table className="table table-sm align-middle mb-0" style={{ color: colors.text.primary }}>
                         <thead>
                           <tr style={{ borderColor: colors.border }}>
-                            <th>Name</th>
-                            <th>URL</th>
-                            <th>Login</th>
-                            <th>Password</th>
+                            <th>{t('common.name')}</th>
+                            <th>{t('nodes.nodeUrl')}</th>
+                            <th>{t('auth.username')}</th>
+                            <th>{t('auth.password')}</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -481,10 +514,10 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
       <section className="panel-block h-100">
         <div className="panel-block__header">
           <div>
-            <h6 className="panel-block__title">Registered fleet</h6>
+            <h6 className="panel-block__title">{t('nodes.registeredFleet')}</h6>
             <p className="panel-block__hint">
-              Edit node names or remove outdated panel entries.
-              {statusLoading ? ' Statuses are still syncing.' : ''}
+              {t('nodes.fleetHint')}
+              {statusLoading ? ` ${t('nodes.statusSyncing')}` : ''}
             </p>
           </div>
         </div>
@@ -494,17 +527,18 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
             <table className="table table-sm align-middle mb-0" style={{ color: colors.text.primary }}>
               <thead>
                 <tr>
-                  <th>Name</th>
-                  <th>Address</th>
-                  <th>Status</th>
-                  <th style={{ width: '120px' }}>Actions</th>
+                  <th>{t('common.name')}</th>
+                  <th>{t('nodes.address')}</th>
+                  <th>{t('common.status')}</th>
+                  <th>{t('nodes.access')}</th>
+                  <th style={{ width: '120px' }}>{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody>
                 {nodes.map((node) => {
                   const status = nodeStatuses[node.id];
                   const dotColor = status === true ? colors.success : status === false ? colors.danger : colors.text.secondary;
-                  const statusLabel = status === true ? 'online' : status === false ? 'offline' : 'checking';
+                  const statusLabel = status === true ? t('nodes.online') : status === false ? t('nodes.offline') : t('nodes.checking');
                   return (
                     <tr key={node.id}>
                       <td>
@@ -518,12 +552,29 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                         {statusLabel}
                       </td>
                       <td>
+                        <button
+                          className="btn btn-sm"
+                          style={Boolean(node.read_only)
+                            ? { backgroundColor: colors.warning + '22', borderColor: colors.warning, color: colors.warning }
+                            : { backgroundColor: colors.success + '22', borderColor: colors.success, color: colors.success }}
+                          onClick={() => handleToggleReadOnly(node)}
+                          disabled={loading || Boolean(readOnlyUpdating[node.id])}
+                          title={Boolean(node.read_only) ? t('nodes.switchWrite') : t('nodes.switchReadOnly')}
+                        >
+                          {readOnlyUpdating[node.id]
+                            ? '...'
+                            : Boolean(node.read_only)
+                            ? 'RO'
+                            : 'RW'}
+                        </button>
+                      </td>
+                      <td>
                         <div className="panel-inline-actions">
                           <button
                             className="btn btn-sm"
                             style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
                             onClick={() => handleEditClick(node)}
-                            aria-label="Edit node"
+                            aria-label={t('common.edit')}
                           >
                             <UIIcon name="edit" size={14} />
                           </button>
@@ -531,7 +582,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                             className="btn btn-sm"
                             style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: colors.dangerText }}
                             onClick={() => handleDelete(node.id)}
-                            aria-label="Delete node"
+                            aria-label={t('common.delete')}
                           >
                             <UIIcon name="x" size={14} />
                           </button>
@@ -544,7 +595,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
             </table>
           </div>
         ) : (
-          <p className="text-center py-3 mb-0" style={{ color: colors.text.secondary }}>No nodes registered yet.</p>
+          <p className="text-center py-3 mb-0" style={{ color: colors.text.secondary }}>{t('nodes.noNodesYet')}</p>
         )}
       </section>
       )}
@@ -554,18 +605,18 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
           <div className="modal-dialog modal-dialog-centered">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>Rename node</h6>
-                <button type="button" className="btn-close" aria-label="Close" onClick={() => setShowEditModal(false)} />
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>{t('nodes.renameNode')}</h6>
+                <button type="button" className="btn-close" aria-label={t('common.close')} onClick={() => setShowEditModal(false)} />
               </div>
               <div className="modal-body">
                 {error && <div className="alert alert-danger" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>{error}</div>}
                 <p className="small mb-1" style={{ color: colors.text.secondary }}>
-                  Current name: <strong style={{ color: colors.text.primary }}>{editingNode.name}</strong>
+                  {t('nodes.currentName')}: <strong style={{ color: colors.text.primary }}>{editingNode.name}</strong>
                 </p>
                 <input
                   type="text"
                   className="form-control"
-                  placeholder="New node name"
+                  placeholder={t('nodes.newNodeName')}
                   value={editingName}
                   onChange={(e) => setEditingName(e.target.value)}
                   style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
@@ -574,10 +625,10 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
               </div>
               <div className="modal-footer" style={{ borderColor: colors.border }}>
                 <button className="btn btn-sm" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }} onClick={() => setShowEditModal(false)}>
-                  Cancel
+                  {t('common.cancel')}
                 </button>
                 <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }} onClick={handleSaveName} disabled={loading}>
-                  {loading ? 'Saving...' : 'Save'}
+                  {loading ? t('nodes.saving') : t('common.save')}
                 </button>
               </div>
             </div>

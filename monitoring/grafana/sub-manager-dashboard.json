@@ -4,7 +4,7 @@
   "timezone": "browser",
   "schemaVersion": 39,
   "version": 1,
-  "refresh": "10s",
+  "refresh": "3m",
   "panels": [
     {
       "type": "timeseries",
@@ -68,11 +68,11 @@
     },
     {
       "type": "timeseries",
-      "title": "Traffic Total by Node (bytes)",
+      "title": "Traffic Usage by Node (MB/5m)",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
       "targets": [
         {
-          "expr": "sub_manager_node_traffic_total_bytes",
+          "expr": "clamp_min(delta(sub_manager_node_traffic_total_bytes[5m]), 0) / 1024 / 1024",
           "legendFormat": "{{node_name}}",
           "refId": "A"
         }
