@@ -56,6 +56,7 @@ xui_seed_nginx_bootstrap_files() {
     sudo mkdir -p /etc/nginx/conf.d /etc/nginx/modules-enabled /etc/nginx/sites-available /etc/nginx/sites-enabled /etc/nginx/snippets /etc/nginx/stream-enabled
     if [ ! -f /etc/nginx/nginx.conf ]; then
         sudo tee /etc/nginx/nginx.conf >/dev/null <<'EOF'
+user www-data;
 worker_processes auto;
 pid /run/nginx.pid;
 include /etc/nginx/modules-enabled/*.conf;
@@ -65,9 +66,14 @@ events {
 }
 
 http {
+    sendfile on;
+    tcp_nopush on;
+    types_hash_max_size 2048;
+    include /etc/nginx/mime.types;
     default_type application/octet-stream;
     access_log /var/log/nginx/access.log;
     error_log /var/log/nginx/error.log;
+    gzip on;
     include /etc/nginx/conf.d/*.conf;
     include /etc/nginx/sites-enabled/*;
 }

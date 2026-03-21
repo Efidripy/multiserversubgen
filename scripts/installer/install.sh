@@ -965,6 +965,37 @@ PYTHON
 
     systemctl daemon-reload
     resource_guard_restart_services_sequentially prometheus grafana-server
+
+    local grafana_ready="false"
+    local grafana_status=""
+    local i
+    for i in 1 2 3 4 5 6; do
+        grafana_status="$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${GRAFANA_HTTP_PORT}/login" 2>/dev/null || true)"
+        if [[ "$grafana_status" =~ ^(200|301|302)$ ]]; then
+            grafana_ready="true"
+            break
+        fi
+        sleep 2
+    done
+
+    if [ "$grafana_ready" != "true" ]; then
+        echo "⚠️ Grafana upstream not ready after first start (HTTP ${grafana_status:-000}). Retrying restart once..."
+        resource_guard_restart_services_sequentially grafana-server
+        for i in 1 2 3 4 5 6; do
+            grafana_status="$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${GRAFANA_HTTP_PORT}/login" 2>/dev/null || true)"
+            if [[ "$grafana_status" =~ ^(200|301|302)$ ]]; then
+                grafana_ready="true"
+                break
+            fi
+            sleep 2
+        done
+    fi
+
+    if [ "$grafana_ready" = "true" ]; then
+        echo "✓ Grafana upstream ready on 127.0.0.1:${GRAFANA_HTTP_PORT} (HTTP ${grafana_status})"
+    else
+        echo "⚠️ Grafana upstream is still not ready (HTTP ${grafana_status:-000}). Public /${GRAFANA_WEB_PATH}/ may return 502 until service stabilizes."
+    fi
     echo "✓ Prometheus и Grafana настроены."
 }
 
