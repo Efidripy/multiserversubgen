@@ -93,6 +93,73 @@ installer_render_menu() {
     printf "\n${UI_DIM}Controls: Up/Down move   Enter select   Esc back   q quit${UI_RESET}\n"
 }
 
+installer_use_line_menu() {
+    case "${INSTALLER_UI_MODE:-line}" in
+        line) return 0 ;;
+        arrows) return 1 ;;
+    esac
+
+    if [ "${TERM:-}" = "dumb" ]; then
+        return 0
+    fi
+
+    # Git Bash / MSYS terminals often handle raw single-key reads unreliably.
+    if [ -n "${MSYSTEM:-}" ] || [ -n "${MINGW_PREFIX:-}" ] || [ -n "${CYGWIN:-}" ]; then
+        return 0
+    fi
+
+    return 1
+}
+
+installer_select_menu_line_mode() {
+    local title="$1"
+    local subtitle="$2"
+    shift 2
+    local items=("$@")
+    local idx=0
+    local choice
+
+    if [ ! -t 0 ]; then
+        echo "__QUIT__"
+        return 0
+    fi
+
+    while true; do
+        installer_message "$title" "$subtitle"
+        idx=0
+        for item in "${items[@]}"; do
+            printf "  %s) %s\n" "$idx" "$item"
+            idx=$((idx + 1))
+        done
+        printf "\n${UI_DIM}Enter option number, 'b' for back, 'q' to quit:${UI_RESET} "
+        IFS= read -r choice
+
+        case "$choice" in
+            q|Q)
+                echo "__QUIT__"
+                return 0
+                ;;
+            b|B)
+                echo "__BACK__"
+                return 0
+                ;;
+            '')
+                echo "0"
+                return 0
+                ;;
+            *[!0-9]*)
+                continue
+                ;;
+            *)
+                if [ "$choice" -ge 0 ] && [ "$choice" -lt "${#items[@]}" ]; then
+                    echo "$choice"
+                    return 0
+                fi
+                ;;
+        esac
+    done
+}
+
 installer_select_menu() {
     local title="$1"
     local subtitle="$2"
@@ -109,6 +176,11 @@ installer_select_menu() {
     # No automation value and no terminal — cannot do interactive input; exit cleanly.
     if [ ! -t 0 ]; then
         echo "__QUIT__"
+        return 0
+    fi
+
+    if installer_use_line_menu; then
+        installer_select_menu_line_mode "$title" "$subtitle" "${items[@]}"
         return 0
     fi
 
