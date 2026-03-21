@@ -774,6 +774,85 @@ print("changed" if inserted else "unchanged")
 PYTHON
 }
 
+ensure_nginx_http_mime_types() {
+    local nginx_conf="/etc/nginx/nginx.conf"
+    [ -f "$nginx_conf" ] || return 0
+
+    NGINX_CONF_PATH="$nginx_conf" python3 <<'PYTHON'
+from pathlib import Path
+import re
+import os
+
+path = Path(os.environ["NGINX_CONF_PATH"])
+text = path.read_text()
+
+if re.search(r'(^|\n)\s*http\s*\{', text) is None:
+    raise SystemExit(0)
+
+if 'include /etc/nginx/mime.types;' in text:
+    raise SystemExit(0)
+
+lines = text.splitlines()
+out = []
+in_http = False
+inserted = False
+depth = 0
+
+for line in lines:
+    stripped = line.strip()
+    if not in_http and re.match(r'^\s*http\s*\{\s*$', line):
+        in_http = True
+        depth = 1
+        out.append(line)
+        continue
+
+    if in_http:
+        if stripped.startswith('#'):
+            out.append(line)
+            continue
+
+        opens = line.count('{')
+        closes = line.count('}')
+
+        if not inserted and 'default_type' in stripped:
+            indent = re.match(r'^(\s*)', line).group(1)
+            out.append(f"{indent}include /etc/nginx/mime.types;")
+            inserted = True
+
+        out.append(line)
+        depth += opens - closes
+
+        if depth <= 0:
+            in_http = False
+        continue
+
+    out.append(line)
+
+if not inserted:
+    final = []
+    in_http = False
+    depth = 0
+    for line in out:
+        stripped = line.strip()
+        if not in_http and re.match(r'^\s*http\s*\{\s*$', line):
+            in_http = True
+            depth = 1
+            final.append(line)
+            final.append('    include /etc/nginx/mime.types;')
+            inserted = True
+            continue
+        final.append(line)
+        if in_http and not stripped.startswith('#'):
+            depth += line.count('{') - line.count('}')
+            if depth <= 0:
+                in_http = False
+    out = final
+
+if inserted:
+    path.write_text("\n".join(out) + "\n")
+PYTHON
+}
+
 configure_monitoring_stack() {
     if [ "${MONITORING_ENABLED:-true}" != "true" ]; then
         echo "Мониторинг отключен: пропускаем настройку Prometheus/Grafana."
@@ -1468,6 +1547,7 @@ update_project() {
     SNIPPET_FILE="/etc/nginx/snippets/${PROJECT_NAME}.conf"
     mkdir -p /etc/nginx/snippets
     generate_nginx_snippet "$SNIPPET_FILE"
+    ensure_nginx_http_mime_types
     nginx -t && systemctl restart nginx
     
     echo -e "\n✅ ОБНОВЛЕНИЕ ЗАВЕРШЕНО!"
@@ -1869,6 +1949,8 @@ echo "✓ Создан snippet: $SNIPPET_FILE"
 echo "Проверка include snippet в выбранном nginx cfg..."
 ensure_nginx_snippet_include_in_cfg "$SELECTED_CFG" >/dev/null || true
 echo "✓ Include обработан в $SELECTED_CFG"
+
+ensure_nginx_http_mime_types
 
 nginx -t && systemctl restart nginx
 
