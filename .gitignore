@@ -1,5 +1,7 @@
 # Local project docs (do not publish to root workspace)
 .local_project_docs/
+KNOWLEDGE_INDEX.md
+docs/KNOWLEDGE_INDEX.md
 
 # Build & cache
 node_modules/
