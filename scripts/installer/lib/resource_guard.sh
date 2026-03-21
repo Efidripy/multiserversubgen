@@ -208,17 +208,40 @@ resource_guard_should_skip_optional_logs() {
 
 resource_guard_restart_services_sequentially() {
     local service
+    local service_timeout
+
+    _rg_systemctl_with_timeout() {
+        local timeout_sec="$1"
+        shift
+        if command -v timeout >/dev/null 2>&1; then
+            timeout "$timeout_sec" "$@"
+            return $?
+        fi
+        "$@"
+    }
 
     resource_guard_detect_profile
     systemctl daemon-reload >/dev/null 2>&1 || true
+    service_timeout="${RESOURCE_SYSTEMCTL_TIMEOUT_SEC:-60}"
 
     for service in "$@"; do
         [ -n "$service" ] || continue
+        echo "Service step: ${service} (timeout ${service_timeout}s)"
         systemctl enable "$service" >/dev/null 2>&1 || true
         if systemctl is-active --quiet "$service"; then
-            systemctl restart "$service" >/dev/null 2>&1 || systemctl start "$service" >/dev/null 2>&1 || true
+            if ! _rg_systemctl_with_timeout "$service_timeout" systemctl restart "$service" >/dev/null 2>&1; then
+                echo "⚠️ restart timeout/failure for ${service}; trying start."
+                _rg_systemctl_with_timeout "$service_timeout" systemctl start "$service" >/dev/null 2>&1 || true
+            fi
         else
-            systemctl start "$service" >/dev/null 2>&1 || true
+            if ! _rg_systemctl_with_timeout "$service_timeout" systemctl start "$service" >/dev/null 2>&1; then
+                echo "⚠️ start timeout/failure for ${service}."
+            fi
+        fi
+        if systemctl is-active --quiet "$service"; then
+            echo "✓ ${service} is active"
+        else
+            echo "⚠️ ${service} is not active after restart attempt"
         fi
         if [ "${RESOURCE_LOW_RESOURCE_MODE}" = "true" ]; then
             sleep "${RESOURCE_SERVICE_SETTLE_SEC:-3}"
