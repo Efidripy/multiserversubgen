@@ -473,6 +473,59 @@ ensure_tls_material() {
         return 0
     fi
 
+    should_use_letsencrypt_for_domain() {
+        local domain="$1"
+        local cert_mode="${TLS_CERT_MODE:-auto}"
+        local server_ip
+        local domain_ip
+
+        case "$cert_mode" in
+            self-signed) return 1 ;;
+            letsencrypt) ;;
+            auto) ;;
+            *) cert_mode="auto" ;;
+        esac
+
+        command -v certbot >/dev/null 2>&1 || return 1
+
+        server_ip="$(ip route get 8.8.8.8 2>/dev/null | grep -Po 'src \K\S+' | head -n 1 || true)"
+        if [[ ! "$server_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            server_ip="$(curl -4 -fsS https://ipv4.icanhazip.com 2>/dev/null | tr -d '[:space:]' || true)"
+        fi
+
+        domain_ip="$(getent ahostsv4 "$domain" 2>/dev/null | awk 'NR==1 {print $1}')"
+
+        [ -n "$server_ip" ] || return 1
+        [ -n "$domain_ip" ] || return 1
+        [ "$server_ip" = "$domain_ip" ] || return 1
+
+        case "$server_ip" in
+            10.*|127.*|169.254.*|192.168.*|100.64.*|100.65.*|100.66.*|100.67.*|100.68.*|100.69.*|100.7[0-9].*|100.8[0-9].*|100.9[0-9].*)
+                return 1
+                ;;
+            172.1[6-9].*|172.2[0-9].*|172.3[0-1].*)
+                return 1
+                ;;
+        esac
+
+        return 0
+    }
+
+    if should_use_letsencrypt_for_domain "${PUBLIC_DOMAIN}"; then
+        echo "TLS сертификаты для ${PUBLIC_DOMAIN} не найдены. Пытаемся получить Let's Encrypt..."
+        systemctl stop nginx >/dev/null 2>&1 || true
+        if certbot certonly --standalone --non-interactive --agree-tos --register-unsafely-without-email -d "${PUBLIC_DOMAIN}" >/dev/null 2>&1; then
+            systemctl start nginx >/dev/null 2>&1 || true
+            if [ -f "$letsencrypt_cert" ] && [ -f "$letsencrypt_key" ]; then
+                NGINX_SSL_CERT="$letsencrypt_cert"
+                NGINX_SSL_KEY="$letsencrypt_key"
+                return 0
+            fi
+        fi
+        systemctl start nginx >/dev/null 2>&1 || true
+        echo "⚠️ Не удалось получить Let's Encrypt для ${PUBLIC_DOMAIN}. Переходим на self-signed."
+    fi
+
     local tls_dir="/etc/ssl/${PROJECT_NAME}"
     NGINX_SSL_CERT="${tls_dir}/fullchain.pem"
     NGINX_SSL_KEY="${tls_dir}/privkey.pem"
@@ -1682,9 +1735,12 @@ apt_update && apt_install \
     fail2ban \
     psmisc \
     openssl \
+    ca-certificates \
     curl \
     wget \
-    git
+    git \
+    certbot \
+    python3-certbot-nginx
 
 select_or_bootstrap_nginx_cfg || { echo "❌ Не удалось подготовить nginx site config."; exit 1; }
 assert_https_reverse_proxy_compatibility || exit 1

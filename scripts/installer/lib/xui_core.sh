@@ -202,6 +202,9 @@ xui_generate_panel_settings() {
     PROFILE_XUI_PANEL_PATH="${PROFILE_XUI_PANEL_PATH:-$(xui_random_token 10)}"
     PROFILE_XUI_USERNAME="${PROFILE_XUI_USERNAME:-$(xui_random_token 10)}"
     PROFILE_XUI_PASSWORD="${PROFILE_XUI_PASSWORD:-$(xui_random_token 14)}"
+    if declare -F report_capture_xui_runtime >/dev/null 2>&1; then
+        report_capture_xui_runtime
+    fi
 }
 
 xui_configure_panel() {
@@ -358,6 +361,9 @@ xui_collect_summary() {
         PROFILE_XUI_SUB2SING_URL="https://${PROFILE_XUI_DOMAIN}/${PROFILE_XUI_SUB2SING_PATH}/"
     fi
     PROFILE_XUI_SUB2SING_STATUS="$(systemctl is-active sub2sing-box 2>/dev/null || true)"
+    if declare -F report_capture_xui_runtime >/dev/null 2>&1; then
+        report_capture_xui_runtime
+    fi
 }
 
 xui_install_sub2sing_box() {
@@ -507,6 +513,16 @@ xui_should_use_letsencrypt() {
     [ -n "$server_ip" ] || return 1
     [ -n "$domain_ip" ] || return 1
     [ "$server_ip" = "$domain_ip" ] || return 1
+
+    case "$server_ip" in
+        10.*|127.*|169.254.*|192.168.*|100.64.*|100.65.*|100.66.*|100.67.*|100.68.*|100.69.*|100.7[0-9].*|100.8[0-9].*|100.9[0-9].*)
+            return 1
+            ;;
+        172.1[6-9].*|172.2[0-9].*|172.3[0-1].*)
+            return 1
+            ;;
+    esac
+
     return 0
 }
 
