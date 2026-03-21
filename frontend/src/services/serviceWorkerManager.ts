@@ -122,9 +122,13 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
+  const basePath = self.registration && self.registration.scope
+    ? new URL(self.registration.scope).pathname.replace(/\/$/, '')
+    : '';
+  const apiPrefix = basePath + '/' + 'api' + '/';
 
   // API calls: network first, fallback to nearest stale cache
-  if (url.pathname.startsWith('/api/')) {
+  if (url.pathname.startsWith(apiPrefix)) {
     event.respondWith(
       fetch(request)
         .then((response) => {

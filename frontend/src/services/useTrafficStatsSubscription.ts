@@ -4,6 +4,7 @@
  */
 import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { wsManager } from './webSocketManager';
+import { API_BASE } from '../api';
 
 export interface TrafficUpdate {
   type: 'traffic_update' | 'client_update' | 'server_status' | 'inbound_update';
@@ -138,7 +139,7 @@ export function useTrafficStatsSubscription({
           return;
         }
 
-        const response = await fetch('/api/clients/stats/traffic?period=day');
+        const response = await fetch(`${API_BASE}/clients/stats/traffic?period=day`);
         if (!response.ok) return;
         const data = await response.json();
         onUpdate({

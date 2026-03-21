@@ -2,6 +2,7 @@
  * Тестирование Service Worker и offline режима
  * Проверяет кэширование, фоновую синхронизацию и восстановление соединения
  */
+import { API_BASE } from '../api';
 
 export interface ServiceWorkerTestResult {
   name: string;
@@ -13,6 +14,7 @@ export interface ServiceWorkerTestResult {
 
 export class ServiceWorkerTester {
   private testResults: ServiceWorkerTestResult[] = [];
+  private readonly healthEndpoint = `${API_BASE}/health`;
 
   /**
    * Запустить все тесты Service Worker
@@ -120,7 +122,7 @@ export class ServiceWorkerTester {
     const startTime = performance.now();
     try {
       // Имитировать API запрос
-      const response = await fetch('/api/health', {
+      const response = await fetch(this.healthEndpoint, {
         method: 'GET',
       }).catch(async () => {
         // Fallback на кэш если сеть недоступна
@@ -128,7 +130,7 @@ export class ServiceWorkerTester {
         const appCache = cacheNames.find((name) => name.includes('sub-manager'));
         if (appCache) {
           const cache = await caches.open(appCache);
-          return (await cache.match('/api/health')) || new Response('{}', { status: 503 });
+          return (await cache.match(this.healthEndpoint)) || new Response('{}', { status: 503 });
         }
         throw new Error('Нет сетевого соединения и кэш недоступен');
       });

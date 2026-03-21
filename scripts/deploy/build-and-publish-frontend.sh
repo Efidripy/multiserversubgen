@@ -2,6 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/scripts/installer/lib/resource_guard.sh"
 PROJECT_DIR="${PROJECT_DIR:-/opt/sub-manager}"
 WEB_PATH="${WEB_PATH:-}"
