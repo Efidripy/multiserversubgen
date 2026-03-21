@@ -132,16 +132,16 @@ installer_select_menu_line_mode() {
         display_idx=1
         zero_item_idx=""
         for item in "${items[@]}"; do
-            if printf '%s' "$item" | grep -Eq '^[[:space:]]*0([.)[:space:]]|$)'; then
+            if printf '%s' "$item" | grep -Eq '^[[:space:]]*0([.)]|[[:space:]])'; then
                 zero_item_idx="$idx"
             fi
             printf "  %s) %s\n" "$display_idx" "$item" >&2
             idx=$((idx + 1))
             display_idx=$((display_idx + 1))
         done
-        printf "%b" "\n${UI_DIM}Enter option number (1..${#items[@]}), 'b' for back, 'q' to quit${UI_RESET}"
+        printf "%b" "\n${UI_DIM}Enter option number (1..${#items[@]}), 'b' for back, 'q' to quit${UI_RESET}" >&2
         if [ -n "$zero_item_idx" ]; then
-            printf "%b" "${UI_DIM}; 0 for the explicit '0.*' item${UI_RESET}"
+            printf "%b" "${UI_DIM}; 0 for the explicit '0.*' item${UI_RESET}" >&2
         fi
         printf "%b" "${UI_DIM}:${UI_RESET} " >&2
         IFS= read -r choice
@@ -187,7 +187,7 @@ installer_select_menu() {
     local key
 
     for idx in "${!items[@]}"; do
-        if printf '%s' "${items[$idx]}" | grep -Eq '^[[:space:]]*0([.)[:space:]]|$)'; then
+        if printf '%s' "${items[$idx]}" | grep -Eq '^[[:space:]]*0([.)]|[[:space:]])'; then
             zero_item_idx="$idx"
             break
         fi
