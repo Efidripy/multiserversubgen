@@ -54,7 +54,7 @@ sudo ./update.sh
 - [Гайд по подпискам](./docs/SUBSCRIPTION_GUIDE.md)
 - [Снимки интерфейса](./screens.md)
 - [Текущий статус улучшений](./docs/IMPROVEMENTS.md)
-- [Индекс знаний проекта](./docs/KNOWLEDGE_INDEX.md)
+- Индекс знаний проекта: `./KNOWLEDGE_INDEX.md` (локальный файл, не публикуется в Git)
 
 ## Лицензия
 
