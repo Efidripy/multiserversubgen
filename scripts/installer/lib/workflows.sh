@@ -14,10 +14,28 @@ generate_random_path() {
 
 sanitize_domain_host() {
     local value="${1:-}"
+    value="${value//$'\r'/}"
+    value="$(printf "%s" "$value" | awk 'NF {last=$0} END {print last}')"
+    value="$(printf "%s" "$value" | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')"
+    value="$(printf "%s" "$value" | sed -E 's/^[[:space:]]*Default:[[:space:]]*//; s/^[[:space:]]*>[[:space:]]*//; s/[[:space:]]+$//')"
     value="${value#http://}"
     value="${value#https://}"
     value="${value%%/*}"
     value="${value%/}"
+    value="$(printf "%s" "$value" | tr -cd '[:alnum:].-')"
+    printf "%s" "$value"
+}
+
+sanitize_service_name() {
+    local value="${1:-}"
+    value="${value//$'\r'/}"
+    value="$(printf "%s" "$value" | awk 'NF {last=$0} END {print last}')"
+    value="$(printf "%s" "$value" | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')"
+    value="$(printf "%s" "$value" | sed -E 's/^[[:space:]]*Default:[[:space:]]*//; s/^[[:space:]]*>[[:space:]]*//; s/[[:space:]]+$//')"
+    value="$(printf "%s" "$value" | tr -cd '[:alnum:]_.-')"
+    if [ -z "$value" ]; then
+        value="sub-manager"
+    fi
     printf "%s" "$value"
 }
 
@@ -202,7 +220,10 @@ for raw in lines_path.read_text(encoding="utf-8").splitlines():
     raw = raw.rstrip("\n")
     if not raw:
         continue
-    section, key, value = raw.split("\t", 2)
+    parts = raw.split("\t", 2)
+    if len(parts) != 3:
+        continue
+    section, key, value = parts
     if section == "meta":
         data["meta"][key] = value
     elif section == "domain":
@@ -648,7 +669,7 @@ collect_common_settings() {
     local default_domain
     default_domain="$(hostname -f 2>/dev/null || hostname)"
 
-    PROFILE_PROJECT_NAME="$(installer_prompt_text "Project Name" "Service name for this install." "sub-manager")"
+    PROFILE_PROJECT_NAME="$(sanitize_service_name "$(installer_prompt_text "Project Name" "Service name for this install." "sub-manager")")"
     PROFILE_APP_PORT="$(installer_prompt_text "Application Port" "Local port for Sub-Manager." "666")"
     PROFILE_PUBLIC_DOMAIN="$(sanitize_domain_host "$(installer_prompt_text "Public Domain" "Public hostname without http/https." "${default_domain}")")"
 
@@ -691,7 +712,7 @@ collect_xui_common_settings() {
 
     default_domain="$(hostname -f 2>/dev/null || hostname)"
 
-    PROFILE_PROJECT_NAME="$(installer_prompt_text "Project Name" "Service name for this install." "sub-manager")"
+    PROFILE_PROJECT_NAME="$(sanitize_service_name "$(installer_prompt_text "Project Name" "Service name for this install." "sub-manager")")"
     PROFILE_APP_PORT="$(installer_prompt_text "Application Port" "Local port for Sub-Manager." "666")"
 
     while true; do
@@ -932,11 +953,34 @@ run_install_with_answers() {
         fi
     done
 
+    local heartbeat_pid=""
+    local start_ts now_ts elapsed
+
+    start_ts="$(date +%s 2>/dev/null || printf '0')"
+    (
+        while true; do
+            sleep 20 || break
+            now_ts="$(date +%s 2>/dev/null || printf '0')"
+            elapsed=$((now_ts - start_ts))
+            printf "\n[installer] still running... %ss elapsed (build/install in progress)\n" "$elapsed" >&2
+        done
+    ) &
+    heartbeat_pid="$!"
+
+    set +e
     cat "$answers_file" | sudo env INSTALLER_AUTOMATION_STEPS="${INSTALLER_AUTOMATION_STEPS:-task}" \
         SELECTED_CFG="${selected_cfg}" \
         INSTALLER_EXISTING_ACTION="reinstall" \
+        INSTALLER_VERBOSE_PROGRESS="1" \
         bash "${REPO_ROOT}/install.sh"
     status=$?
+    set -e
+
+    if [ -n "$heartbeat_pid" ]; then
+        kill "$heartbeat_pid" >/dev/null 2>&1 || true
+        wait "$heartbeat_pid" 2>/dev/null || true
+    fi
+
     rm -f "$answers_file"
     if [ "$status" -eq 0 ]; then
         report_capture_install_log
