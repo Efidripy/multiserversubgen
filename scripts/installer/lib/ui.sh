@@ -117,6 +117,8 @@ installer_select_menu_line_mode() {
     shift 2
     local items=("$@")
     local idx=0
+    local display_idx=1
+    local zero_item_idx=""
     local choice
 
     if [ ! -t 0 ]; then
@@ -127,11 +129,21 @@ installer_select_menu_line_mode() {
     while true; do
         installer_message "$title" "$subtitle"
         idx=0
+        display_idx=1
+        zero_item_idx=""
         for item in "${items[@]}"; do
-            printf "  %s) %s\n" "$idx" "$item" >&2
+            if printf '%s' "$item" | grep -Eq '^[[:space:]]*0([.)[:space:]]|$)'; then
+                zero_item_idx="$idx"
+            fi
+            printf "  %s) %s\n" "$display_idx" "$item" >&2
             idx=$((idx + 1))
+            display_idx=$((display_idx + 1))
         done
-        printf "%b" "\n${UI_DIM}Enter option number, 'b' for back, 'q' to quit:${UI_RESET} " >&2
+        printf "%b" "\n${UI_DIM}Enter option number (1..${#items[@]}), 'b' for back, 'q' to quit${UI_RESET}"
+        if [ -n "$zero_item_idx" ]; then
+            printf "%b" "${UI_DIM}; 0 for the explicit '0.*' item${UI_RESET}"
+        fi
+        printf "%b" "${UI_DIM}:${UI_RESET} " >&2
         IFS= read -r choice
 
         case "$choice" in
@@ -151,8 +163,12 @@ installer_select_menu_line_mode() {
                 continue
                 ;;
             *)
-                if [ "$choice" -ge 0 ] && [ "$choice" -lt "${#items[@]}" ]; then
-                    echo "$choice"
+                if [ "$choice" -eq 0 ] && [ -n "$zero_item_idx" ]; then
+                    echo "$zero_item_idx"
+                    return 0
+                fi
+                if [ "$choice" -ge 1 ] && [ "$choice" -le "${#items[@]}" ]; then
+                    echo $((choice - 1))
                     return 0
                 fi
                 ;;
@@ -166,7 +182,17 @@ installer_select_menu() {
     shift 2
     local items=("$@")
     local selected=0
+    local zero_item_idx=""
+    local idx=0
     local key
+
+    for idx in "${!items[@]}"; do
+        if printf '%s' "${items[$idx]}" | grep -Eq '^[[:space:]]*0([.)[:space:]]|$)'; then
+            zero_item_idx="$idx"
+            break
+        fi
+    done
+
     installer_automation_next || true
     if [ -n "${INSTALLER_AUTOMATION_VALUE:-}" ]; then
         printf "%s" "$INSTALLER_AUTOMATION_VALUE"
@@ -219,8 +245,12 @@ installer_select_menu() {
                 ;;
             [0-9])
                 local numeric=$((10#$key))
-                if [ "$numeric" -lt "${#items[@]}" ]; then
-                    echo "$numeric"
+                if [ "$numeric" -eq 0 ] && [ -n "$zero_item_idx" ]; then
+                    echo "$zero_item_idx"
+                    return 0
+                fi
+                if [ "$numeric" -ge 1 ] && [ "$numeric" -le "${#items[@]}" ]; then
+                    echo $((numeric - 1))
                     return 0
                 fi
                 ;;
@@ -264,9 +294,9 @@ installer_prompt_text() {
 
     installer_message "$title" "$prompt"
     if [ -n "$default_value" ]; then
-        printf "${UI_YELLOW}Default:${UI_RESET} %s\n\n" "$default_value"
+        printf "%b\n\n" "${UI_YELLOW}Default:${UI_RESET} $default_value" >&2
     fi
-    printf "> "
+    printf "> " >&2
     IFS= read -r value
     if [ -z "$value" ]; then
         value="$default_value"
