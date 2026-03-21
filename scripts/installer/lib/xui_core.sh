@@ -202,6 +202,8 @@ xui_generate_panel_settings() {
     PROFILE_XUI_PANEL_PATH="${PROFILE_XUI_PANEL_PATH:-$(xui_random_token 10)}"
     PROFILE_XUI_USERNAME="${PROFILE_XUI_USERNAME:-$(xui_random_token 10)}"
     PROFILE_XUI_PASSWORD="${PROFILE_XUI_PASSWORD:-$(xui_random_token 14)}"
+    PROFILE_XUI_GENERATED_USERNAME="${PROFILE_XUI_USERNAME}"
+    PROFILE_XUI_GENERATED_PASSWORD="${PROFILE_XUI_PASSWORD}"
     if declare -F report_capture_xui_runtime >/dev/null 2>&1; then
         report_capture_xui_runtime
     fi
