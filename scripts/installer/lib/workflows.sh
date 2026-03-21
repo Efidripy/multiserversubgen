@@ -385,6 +385,29 @@ report_capture_install_log() {
 }
 
 report_capture_xui_runtime() {
+    local xui_db="/etc/x-ui/x-ui.db"
+
+    if [ -z "${PROFILE_XUI_PANEL_PATH:-}" ] && [ -f "$xui_db" ] && command -v sqlite3 >/dev/null 2>&1; then
+        PROFILE_XUI_PANEL_PATH="$(sudo sqlite3 "$xui_db" "SELECT value FROM settings WHERE key='webBasePath' LIMIT 1;" 2>/dev/null | tr -d '\r' | tr -d '/' || true)"
+    fi
+    if [ -z "${PROFILE_XUI_PANEL_PORT:-}" ] && [ -f "$xui_db" ] && command -v sqlite3 >/dev/null 2>&1; then
+        PROFILE_XUI_PANEL_PORT="$(sudo sqlite3 "$xui_db" "SELECT value FROM settings WHERE key='webPort' LIMIT 1;" 2>/dev/null | tr -d '\r' || true)"
+    fi
+    if [ -z "${PROFILE_XUI_USERNAME:-}" ] && [ -f "$xui_db" ] && command -v sqlite3 >/dev/null 2>&1; then
+        PROFILE_XUI_USERNAME="$(sudo sqlite3 "$xui_db" "SELECT value FROM settings WHERE key='username' LIMIT 1;" 2>/dev/null | tr -d '\r' || true)"
+    fi
+
+    if [ -z "${PROFILE_XUI_USERNAME:-}" ] && [ -n "${PROFILE_XUI_GENERATED_USERNAME:-}" ]; then
+        PROFILE_XUI_USERNAME="${PROFILE_XUI_GENERATED_USERNAME}"
+    fi
+    if [ -z "${PROFILE_XUI_PASSWORD:-}" ] && [ -n "${PROFILE_XUI_GENERATED_PASSWORD:-}" ]; then
+        PROFILE_XUI_PASSWORD="${PROFILE_XUI_GENERATED_PASSWORD}"
+    fi
+
+    if [ -z "${PROFILE_XUI_PANEL_URL:-}" ] && [ -n "${PROFILE_XUI_DOMAIN:-}" ] && [ -n "${PROFILE_XUI_PANEL_PATH:-}" ]; then
+        PROFILE_XUI_PANEL_URL="${PROFILE_PUBLIC_SCHEME:-https}://${PROFILE_XUI_DOMAIN}/${PROFILE_XUI_PANEL_PATH}/"
+    fi
+
     local has_xui_context="false"
     if [ -n "${PROFILE_XUI_DOMAIN:-}" ] || \
        [ -n "${PROFILE_XUI_REALITY_DOMAIN:-}" ] || \
@@ -1110,6 +1133,9 @@ run_xui_preset() {
             __QUIT__|__BACK__) return 0 ;;
             y)
                 run_internal_xui_install || return $?
+                ;;
+            n)
+                report_add_note "3x-ui reuse mode: existing panel password is not recoverable from x-ui.db; report will include password only if generated in this run."
                 ;;
         esac
     else
