@@ -674,9 +674,89 @@ repair_xui_nginx_integration() {
     done
 
     if command -v nginx >/dev/null 2>&1; then
+        ensure_nginx_http_mime_types_workflow
         sudo nginx -t
         sudo systemctl reload nginx
     fi
+}
+
+ensure_nginx_http_mime_types_workflow() {
+    local nginx_conf="/etc/nginx/nginx.conf"
+    [ -f "$nginx_conf" ] || return 0
+
+    sudo NGINX_CONF_PATH="$nginx_conf" python3 <<'PYTHON'
+from pathlib import Path
+import os
+import re
+
+path = Path(os.environ["NGINX_CONF_PATH"])
+text = path.read_text()
+
+if re.search(r'(^|\n)\s*http\s*\{', text) is None:
+    raise SystemExit(0)
+
+if 'include /etc/nginx/mime.types;' in text:
+    raise SystemExit(0)
+
+lines = text.splitlines()
+out = []
+in_http = False
+inserted = False
+depth = 0
+
+for line in lines:
+    stripped = line.strip()
+    if not in_http and re.match(r'^\s*http\s*\{\s*$', line):
+        in_http = True
+        depth = 1
+        out.append(line)
+        continue
+
+    if in_http:
+        if stripped.startswith('#'):
+            out.append(line)
+            continue
+
+        opens = line.count('{')
+        closes = line.count('}')
+
+        if not inserted and 'default_type' in stripped:
+            indent = re.match(r'^(\s*)', line).group(1)
+            out.append(f"{indent}include /etc/nginx/mime.types;")
+            inserted = True
+
+        out.append(line)
+        depth += opens - closes
+
+        if depth <= 0:
+            in_http = False
+        continue
+
+    out.append(line)
+
+if not inserted:
+    final = []
+    in_http = False
+    depth = 0
+    for line in out:
+        stripped = line.strip()
+        if not in_http and re.match(r'^\s*http\s*\{\s*$', line):
+            in_http = True
+            depth = 1
+            final.append(line)
+            final.append('    include /etc/nginx/mime.types;')
+            inserted = True
+            continue
+        final.append(line)
+        if in_http and not stripped.startswith('#'):
+            depth += line.count('{') - line.count('}')
+            if depth <= 0:
+                in_http = False
+    out = final
+
+if inserted:
+    path.write_text("\n".join(out) + "\n")
+PYTHON
 }
 
 run_internal_xui_install() {
