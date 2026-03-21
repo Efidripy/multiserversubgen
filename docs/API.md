@@ -4,7 +4,7 @@
 
 ## Полная спецификация
 
-- [API_DOCUMENTATION.md](../API_DOCUMENTATION.md)
+- [API_DOCUMENTATION.md](./API_DOCUMENTATION.md)
 
 ## Основные группы эндпоинтов
 
