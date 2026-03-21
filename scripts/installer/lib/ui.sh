@@ -22,7 +22,7 @@ if [ -n "${INSTALLER_AUTOMATION_STEPS:-}" ] && [ -z "${INSTALLER_AUTOMATION_FILE
 fi
 
 installer_banner() {
-    cat <<'EOF'
+    cat >&2 <<'EOF'
 +--------------------------------------------------------------+
 |  __  __       _ _   _                                       |
 | |  \/  |_   _| | |_(_)___  ___ _ ____   _____ _ __ ___      |
@@ -36,11 +36,11 @@ EOF
 }
 
 installer_cursor() {
-    printf "${UI_WHITE}[${UI_RED}+${UI_WHITE}]${UI_RESET}"
+    printf "%b" "${UI_WHITE}[${UI_RED}+${UI_WHITE}]${UI_RESET}" >&2
 }
 
 installer_empty_cursor() {
-    printf "${UI_WHITE}[ ]${UI_RESET}"
+    printf "%b" "${UI_WHITE}[ ]${UI_RESET}" >&2
 }
 
 installer_automation_next() {
@@ -69,28 +69,28 @@ installer_render_menu() {
     local selected="$3"
     shift 3
 
-    printf "${UI_CLEAR}"
+    printf "%b" "${UI_CLEAR}" >&2
     installer_banner
-    printf "\n${UI_CYAN}%s${UI_RESET}\n" "$title"
+    printf "%b\n" "\n${UI_CYAN}${title}${UI_RESET}" >&2
     if [ -n "$subtitle" ]; then
-        printf "${UI_DIM}%s${UI_RESET}\n" "$subtitle"
+        printf "%b\n" "${UI_DIM}${subtitle}${UI_RESET}" >&2
     fi
-    printf "\n"
+    printf "\n" >&2
 
     local idx=0
     local item
     for item in "$@"; do
-        printf "  "
+        printf "  " >&2
         if [ "$idx" -eq "$selected" ]; then
             installer_cursor
         else
             installer_empty_cursor
         fi
-        printf " %s\n" "$item"
+        printf " %s\n" "$item" >&2
         idx=$((idx + 1))
     done
 
-    printf "\n${UI_DIM}Controls: Up/Down move   Enter select   Esc back   q quit${UI_RESET}\n"
+    printf "%b\n" "\n${UI_DIM}Controls: Up/Down move   Enter select   Esc back   q quit${UI_RESET}" >&2
 }
 
 installer_use_line_menu() {
@@ -128,10 +128,10 @@ installer_select_menu_line_mode() {
         installer_message "$title" "$subtitle"
         idx=0
         for item in "${items[@]}"; do
-            printf "  %s) %s\n" "$idx" "$item"
+            printf "  %s) %s\n" "$idx" "$item" >&2
             idx=$((idx + 1))
         done
-        printf "\n${UI_DIM}Enter option number, 'b' for back, 'q' to quit:${UI_RESET} "
+        printf "%b" "\n${UI_DIM}Enter option number, 'b' for back, 'q' to quit:${UI_RESET} " >&2
         IFS= read -r choice
 
         case "$choice" in
@@ -232,20 +232,20 @@ installer_pause() {
     if [ -n "${INSTALLER_AUTOMATION_STEPS:-}" ]; then
         return 0
     fi
-    printf "\n${UI_DIM}Press any key to continue...${UI_RESET}"
+    printf "%b" "\n${UI_DIM}Press any key to continue...${UI_RESET}" >&2
     IFS= read -rsn1 _
 }
 
 installer_message() {
     local title="$1"
     local body="$2"
-    printf "${UI_CLEAR}"
+    printf "%b" "${UI_CLEAR}" >&2
     installer_banner
-    printf "\n${UI_CYAN}%s${UI_RESET}\n" "$title"
+    printf "%b\n" "\n${UI_CYAN}${title}${UI_RESET}" >&2
     if [ -n "$body" ]; then
-        printf "${UI_DIM}%s${UI_RESET}\n" "$body"
+        printf "%b\n" "${UI_DIM}${body}${UI_RESET}" >&2
     fi
-    printf "\n"
+    printf "\n" >&2
 }
 
 installer_prompt_text() {
