@@ -17,7 +17,7 @@ sanitize_domain_host() {
     value="${value//$'\r'/}"
     value="$(printf "%s" "$value" | awk 'NF {last=$0} END {print last}')"
     value="$(printf "%s" "$value" | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')"
-    value="$(printf "%s" "$value" | sed -E 's/^[[:space:]]*Default:[[:space:]]*//; s/^[[:space:]]*>[[:space:]]*//; s/[[:space:]]+$//')"
+    value="$(printf "%s" "$value" | sed -E 's/^[[:space:]]*[[]?[0-9;]*m?Default:[[:space:]]*//; s/^[[:space:]]*Default:[[:space:]]*//; s/^[[:space:]]*>[[:space:]]*//; s/[[:space:]]+$//')"
     value="${value#http://}"
     value="${value#https://}"
     value="${value%%/*}"
@@ -31,7 +31,7 @@ sanitize_service_name() {
     value="${value//$'\r'/}"
     value="$(printf "%s" "$value" | awk 'NF {last=$0} END {print last}')"
     value="$(printf "%s" "$value" | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')"
-    value="$(printf "%s" "$value" | sed -E 's/^[[:space:]]*Default:[[:space:]]*//; s/^[[:space:]]*>[[:space:]]*//; s/[[:space:]]+$//')"
+    value="$(printf "%s" "$value" | sed -E 's/^[[:space:]]*[[]?[0-9;]*m?Default:[[:space:]]*//; s/^[[:space:]]*Default:[[:space:]]*//; s/^[[:space:]]*>[[:space:]]*//; s/[[:space:]]+$//')"
     value="$(printf "%s" "$value" | tr -cd '[:alnum:]_.-')"
     if [ -z "$value" ]; then
         value="sub-manager"
@@ -539,6 +539,32 @@ clear_stale_install_markers() {
     return 0
 }
 
+cleanup_malformed_nginx_site_entries() {
+    local dir entry base_pair
+    local -a bad_bases=()
+
+    for dir in /etc/nginx/sites-available /etc/nginx/sites-enabled; do
+        [ -d "$dir" ] || continue
+        while IFS= read -r -d '' entry; do
+            base_pair="$(basename "$entry")"
+            case "$base_pair" in
+                *Default:*|*\>*|*" "*)
+                    bad_bases+=("$base_pair")
+                    ;;
+            esac
+        done < <(sudo find "$dir" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
+    done
+
+    [ ${#bad_bases[@]} -gt 0 ] || return 0
+
+    local base
+    for base in "${bad_bases[@]}"; do
+        sudo rm -f "/etc/nginx/sites-available/${base}" "/etc/nginx/sites-enabled/${base}" 2>/dev/null || true
+    done
+
+    report_add_note "Removed malformed nginx site entries containing invalid UI residue (Default:/spaces/>)."
+}
+
 ensure_sub_manager_nginx_include() {
     local site_file="$1"
     [ -f "$site_file" ] || return 0
@@ -731,7 +757,6 @@ collect_xui_common_settings() {
     local default_domain
     local xui_domain
     local xui_reality_domain
-    local panel_host_choice
 
     default_domain="$(hostname -f 2>/dev/null || hostname)"
 
@@ -739,11 +764,11 @@ collect_xui_common_settings() {
     PROFILE_APP_PORT="$(installer_prompt_text "Application Port" "Local port for Sub-Manager." "666")"
 
     while true; do
-        xui_domain="$(sanitize_domain_host "$(installer_prompt_text "3x-ui Main Domain" "Primary domain for 3x-ui and related endpoints." "${PROFILE_XUI_DOMAIN:-${default_domain}}")")"
-        xui_reality_domain="$(sanitize_domain_host "$(installer_prompt_text "3x-ui Reality Domain" "Second domain for REALITY/secondary 3x-ui endpoints." "${PROFILE_XUI_REALITY_DOMAIN:-${default_domain}}")")"
+        xui_domain="$(sanitize_domain_host "$(installer_prompt_text "3x-ui Main Domain" "Enter MAIN domain manually (required)." "")")"
+        xui_reality_domain="$(sanitize_domain_host "$(installer_prompt_text "3x-ui Reality Domain" "Enter SECOND domain manually (required)." "")")"
 
         if [ -z "$xui_domain" ] || [ -z "$xui_reality_domain" ]; then
-            installer_message "Invalid Domains" "Both domains are required for the 3x-ui preset."
+            installer_message "Invalid Domains" "Both domains must be entered manually and cannot be empty."
             installer_pause
             continue
         fi
@@ -757,17 +782,7 @@ collect_xui_common_settings() {
 
     PROFILE_XUI_DOMAIN="$xui_domain"
     PROFILE_XUI_REALITY_DOMAIN="$xui_reality_domain"
-
-    panel_host_choice="$(installer_select_menu \
-        "Panel Host Domain" \
-        "Choose which of the two domains should host the Sub-Manager panel." \
-        "$PROFILE_XUI_DOMAIN" \
-        "$PROFILE_XUI_REALITY_DOMAIN")"
-    case "$panel_host_choice" in
-        __QUIT__|__BACK__) return 1 ;;
-        1) PROFILE_PUBLIC_DOMAIN="$PROFILE_XUI_DOMAIN" ;;
-        *) PROFILE_PUBLIC_DOMAIN="$PROFILE_XUI_REALITY_DOMAIN" ;;
-    esac
+    PROFILE_PUBLIC_DOMAIN="$PROFILE_XUI_DOMAIN"
 
     local scheme_choice
     scheme_choice="$(installer_select_menu \
@@ -967,6 +982,7 @@ run_install_with_answers() {
     fi
 
     clear_stale_install_markers
+    cleanup_malformed_nginx_site_entries
     for exact_cfg in \
         "/etc/nginx/sites-available/${PROFILE_PUBLIC_DOMAIN}" \
         "/etc/nginx/sites-available/${PROFILE_PUBLIC_DOMAIN}.conf"; do
