@@ -49,12 +49,12 @@ sudo ./update.sh
 
 ### Дополнительно
 
-- [Полная API-документация](./API_DOCUMENTATION.md)
-- [Гайд по компонентам](./COMPONENTS_GUIDE.md)
-- [Гайд по подпискам](./SUBSCRIPTION_GUIDE.md)
+- [Полная API-документация](./docs/API_DOCUMENTATION.md)
+- [Гайд по компонентам](./docs/COMPONENTS_GUIDE.md)
+- [Гайд по подпискам](./docs/SUBSCRIPTION_GUIDE.md)
 - [Снимки интерфейса](./screens.md)
-- [Текущий статус улучшений](./IMPROVEMENTS.md)
-- [Индекс знаний проекта](./KNOWLEDGE_INDEX.md)
+- [Текущий статус улучшений](./docs/IMPROVEMENTS.md)
+- [Индекс знаний проекта](./docs/KNOWLEDGE_INDEX.md)
 
 ## Лицензия
 
