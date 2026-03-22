@@ -1,3 +1,6 @@
+
+СНИМКИ СТАРЫЕ!
+
 ![01 20260302-b5816539271f44ddb210519582ca22c4-orig](https://github.com/user-attachments/assets/bc033477-1aad-4f8c-ad70-6af1c1f3ab49)
 ![02 20260302-6319e59af1d046d9ab925dcaa78a49a8-orig](https://github.com/user-attachments/assets/f3f40a49-4c1e-464e-bebf-47b364337187)
 ![03 20260302-42c73234c0b145d89c081d2b19a9c3f4-orig](https://github.com/user-attachments/assets/a6cf37a1-41cf-435a-8082-30d8bca7c21d)
