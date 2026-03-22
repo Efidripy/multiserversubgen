@@ -657,6 +657,7 @@ repair_xui_nginx_integration() {
     local domains=()
     local domain
     local site_file
+    local mime_types_status="unknown"
 
     [ -f /etc/nginx/snippets/sub-manager.conf ] || return 0
 
@@ -674,7 +675,8 @@ repair_xui_nginx_integration() {
     done
 
     if command -v nginx >/dev/null 2>&1; then
-        ensure_nginx_http_mime_types_workflow
+        mime_types_status="$(ensure_nginx_http_mime_types_workflow)"
+        [ -n "$mime_types_status" ] && report_add_note "mime.types ${mime_types_status}"
         sudo nginx -t
         sudo systemctl reload nginx
     fi
@@ -696,6 +698,7 @@ if re.search(r'(^|\n)\s*http\s*\{', text) is None:
     raise SystemExit(0)
 
 if 'include /etc/nginx/mime.types;' in text:
+    print("injected: no")
     raise SystemExit(0)
 
 lines = text.splitlines()
@@ -756,6 +759,7 @@ if not inserted:
 
 if inserted:
     path.write_text("\n".join(out) + "\n")
+    print("injected: yes")
 PYTHON
 }
 
