@@ -301,6 +301,16 @@ report_print_summary() {
     installer_message "Installation Summary" "Important final data from this run."
     printf "${UI_GREEN}Mode:${UI_RESET} %s\n" "${REPORT_META[install_mode]:-unknown}"
     printf "${UI_GREEN}Preset:${UI_RESET} %s\n" "${REPORT_META[preset_label]:-${REPORT_META[preset_id]:-unknown}}"
+    if [ "${REPORT_META[preset_id]:-}" = "3.0" ]; then
+        printf "${UI_GREEN}3x-ui URL:${UI_RESET} %s\n" "${REPORT_SERVICE_FIELDS[xui.url]:-unknown}"
+        printf "${UI_GREEN}3x-ui Login:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[xui.username]:-unknown}"
+        printf "${UI_GREEN}3x-ui Password:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[xui.password]:-unknown}"
+        printf "${UI_GREEN}sub2sing-box:${UI_RESET} %s\n" "${REPORT_SERVICE_FIELDS[xui.sub2sing_url]:-unknown}"
+        printf "${UI_GREEN}JSON Report:${UI_RESET} %s\n" "${REPORT_META[report_json_path]:-unknown}"
+        printf "${UI_GREEN}ENV Report:${UI_RESET} %s\n" "${REPORT_META[report_env_path]:-unknown}"
+        printf "\n${UI_YELLOW}Save these credentials and report files before leaving this host.${UI_RESET}\n\n"
+        return 0
+    fi
     if [ ${#REPORT_MODULES[@]} -gt 0 ]; then
         printf "${UI_GREEN}Modules:${UI_RESET} %s\n" "$(IFS=', '; printf "%s" "${REPORT_MODULES[*]}")"
     fi
@@ -529,7 +539,7 @@ report_prepare_xui_preset() {
     report_init
     report_set_meta install_mode "advanced"
     case "$profile" in
-        minimal) report_set_meta preset_id "3.0"; report_set_meta preset_label "3.0 nginx + 3x-ui (minimal)" ;;
+        minimal) report_set_meta preset_id "3.0"; report_set_meta preset_label "3.0 3x-ui" ;;
         only) report_set_meta preset_id "3.1"; report_set_meta preset_label "3.1 3x-ui + Sub-Manager only" ;;
         monitoring) report_set_meta preset_id "3.2"; report_set_meta preset_label "3.2 3x-ui + Sub-Manager + Prometheus + Grafana" ;;
         logs) report_set_meta preset_id "3.3"; report_set_meta preset_label "3.3 3x-ui + Sub-Manager + Prometheus + Grafana + Loki + promtail" ;;
@@ -952,6 +962,53 @@ collect_xui_common_settings() {
     return 0
 }
 
+collect_xui_minimal_settings() {
+    local xui_domain
+    local xui_reality_domain
+
+    while true; do
+        xui_domain="$(sanitize_domain_host "$(installer_prompt_text "3x-ui Main Domain" "Enter MAIN domain manually (required)." "")")"
+        xui_reality_domain="$(sanitize_domain_host "$(installer_prompt_text "3x-ui Reality Domain" "Enter SECOND domain manually (required)." "")")"
+
+        if [ -z "$xui_domain" ] || [ -z "$xui_reality_domain" ]; then
+            installer_message "Invalid Domains" "Both domains must be entered manually and cannot be empty."
+            installer_pause
+            continue
+        fi
+        if [ "$xui_domain" = "$xui_reality_domain" ]; then
+            installer_message "Duplicate Domains" "The two 3x-ui domains must be different."
+            installer_pause
+            continue
+        fi
+        break
+    done
+
+    PROFILE_XUI_DOMAIN="$xui_domain"
+    PROFILE_XUI_REALITY_DOMAIN="$xui_reality_domain"
+    PROFILE_PUBLIC_DOMAIN="$PROFILE_XUI_DOMAIN"
+    PROFILE_PUBLIC_SCHEME="https"
+    PROFILE_MONITORING="n"
+    PROFILE_PANEL_RANDOM="y"
+    PROFILE_WEB_PATH=""
+
+    # Keep defaults deterministic for downstream export logic,
+    # while avoiding any extra prompts in 3.0 mode.
+    PROFILE_PROJECT_NAME="sub-manager"
+    PROFILE_APP_PORT="666"
+    PROFILE_SSH_PORT="22"
+
+    return 0
+}
+
+show_xui_minimal_result() {
+    installer_message "3x-ui Minimal Install" "nginx + 3x-ui installed successfully."
+    printf "${UI_GREEN}3x-ui Panel:${UI_RESET} %s\n" "${PROFILE_XUI_PANEL_URL:-unknown}"
+    printf "${UI_GREEN}3x-ui Login:${UI_RESET} %s\n" "${PROFILE_XUI_USERNAME:-unknown}"
+    printf "${UI_GREEN}3x-ui Password:${UI_RESET} %s\n" "${PROFILE_XUI_PASSWORD:-unknown}"
+    printf "${UI_GREEN}sub2sing-box:${UI_RESET} %s\n" "${PROFILE_XUI_SUB2SING_URL:-unknown}"
+    printf "\n"
+}
+
 collect_monitoring_settings() {
     PROFILE_MONITORING="y"
     PROFILE_GRAFANA_RANDOM="y"
@@ -1313,10 +1370,22 @@ run_xui_preset() {
     elif command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files 2>/dev/null | grep -q '^x-ui\.service'; then
         xui_existing="true"
     fi
-    collect_xui_common_settings || return 0
+    if [ "$profile" = "minimal" ]; then
+        collect_xui_minimal_settings || return 0
+    else
+        collect_xui_common_settings || return 0
+    fi
     report_prepare_xui_preset "$profile"
     report_apply_profile_modules "$profile"
     report_capture_xui_runtime
+
+    if [ "$profile" = "minimal" ]; then
+        run_internal_xui_install || return $?
+        report_prepare_xui_preset "$profile"
+        report_capture_xui_runtime
+        show_xui_minimal_result
+        return 0
+    fi
 
     if [ "$xui_existing" = "true" ]; then
         local reinstall_choice

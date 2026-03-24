@@ -488,6 +488,90 @@ PY
     rm -f "$tmp_page" "$tmp_clash"
 }
 
+xui_install_root_landing_template() {
+    local template_base="${REPO_ROOT}/scripts/installer/templates"
+    local local_pool="${template_base}/.local-randomfakehtml"
+    local sample_pool="${template_base}/.local-randomfakehtml-sample"
+    local fallback_dir="${template_base}/xui-pro/fake-site"
+    local target_dir="/var/www/html"
+    local selected_zip=""
+    local extract_dir=""
+    local web_root=""
+    local zip_candidates=()
+
+    if [ -d "$local_pool" ]; then
+        while IFS= read -r f; do zip_candidates+=("$f"); done < <(find "$local_pool" -maxdepth 1 -type f -name '*.zip' | sort)
+    fi
+    if [ -d "$sample_pool" ]; then
+        while IFS= read -r f; do zip_candidates+=("$f"); done < <(find "$sample_pool" -maxdepth 1 -type f -name '*.zip' | sort)
+    fi
+
+    sudo mkdir -p "$target_dir"
+
+    if [ "${#zip_candidates[@]}" -gt 0 ]; then
+        selected_zip="$(printf '%s\n' "${zip_candidates[@]}" | shuf -n 1)"
+        extract_dir="$(mktemp -d)"
+
+        if ! python3 - "$selected_zip" "$extract_dir" <<'PY'
+from pathlib import Path
+import shutil
+import sys
+import zipfile
+
+zip_path = Path(sys.argv[1])
+dst = Path(sys.argv[2])
+if not zip_path.exists():
+    raise SystemExit(2)
+with zipfile.ZipFile(zip_path) as zf:
+    zf.extractall(dst)
+
+# pick best web root:
+# 1) extracted root if has index.html
+# 2) first directory containing index.html
+root = dst
+if not (root / "index.html").exists():
+    candidates = sorted(p.parent for p in dst.rglob("index.html") if p.is_file())
+    if candidates:
+        root = candidates[0]
+    else:
+        raise SystemExit(3)
+
+marker = dst / ".selected-web-root"
+marker.write_text(str(root))
+PY
+        then
+            web_root="$(cat "$extract_dir/.selected-web-root" 2>/dev/null || true)"
+            if [ -n "$web_root" ] && [ -d "$web_root" ]; then
+                sudo find "$target_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+                (
+                    cd "$web_root"
+                    tar -cf - .
+                ) | sudo tar -xf - -C "$target_dir"
+
+                if [ -f "$target_dir/index.html" ]; then
+                    PROFILE_XUI_MAIN_TEMPLATE_SOURCE="zip"
+                    PROFILE_XUI_MAIN_TEMPLATE_NAME="$(basename "$selected_zip")"
+                    rm -rf "$extract_dir"
+                    return 0
+                fi
+            fi
+        fi
+
+        rm -rf "$extract_dir"
+    fi
+
+    # fallback: bundled local placeholder page
+    if [ -f "$fallback_dir/index.html" ]; then
+        sudo find "$target_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+        sudo install -m 0644 "$fallback_dir/index.html" "$target_dir/index.html"
+        PROFILE_XUI_MAIN_TEMPLATE_SOURCE="fallback"
+        PROFILE_XUI_MAIN_TEMPLATE_NAME="fake-site/index.html"
+        return 0
+    fi
+
+    return 1
+}
+
 xui_detect_public_ipv4() {
     local ip
     ip="$(ip route get 8.8.8.8 2>/dev/null | grep -Po 'src \\K\\S+' | head -n 1 || true)"
@@ -833,6 +917,7 @@ xui_configure_nginx_and_tls() {
     xui_write_nginx_includes
     xui_write_stream_mux "$domain" "$reality_domain"
     xui_write_site_configs "$domain" "$reality_domain" "$domain_cert" "$domain_key" "$reality_cert" "$reality_key"
+    xui_install_root_landing_template || true
     sudo nginx -t
     sudo systemctl reload nginx
 
