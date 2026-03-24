@@ -8,7 +8,7 @@ LOG_FILE="/opt/.sub_manager_install.log"
 
 REMOVE_MODE="${REMOVE_MODE:-keep-db}"
 REMOVE_FORCE="${REMOVE_FORCE:-false}"
-REMOVE_SCOPE="${REMOVE_SCOPE:-soft}"
+REMOVE_SCOPE="${REMOVE_SCOPE:-hard}"
 
 PROJECT_NAME="sub-manager"
 PROJECT_DIR="/opt/sub-manager"
@@ -70,6 +70,7 @@ hard_cleanup_stack() {
         "$PROJECT_NAME"
         nginx
         x-ui
+        AdGuardHome
         prometheus
         grafana-server
         loki
@@ -80,6 +81,8 @@ hard_cleanup_stack() {
 
     local units=(
         "/etc/systemd/system/${PROJECT_NAME}.service"
+        "/etc/systemd/system/x-ui.service"
+        "/etc/systemd/system/AdGuardHome.service"
         "/etc/systemd/system/loki.service"
         "/etc/systemd/system/promtail.service"
         "/etc/systemd/system/sub2sing-box.service"
@@ -106,16 +109,28 @@ hard_cleanup_stack() {
     local cleanup_paths=(
         "$PROJECT_DIR"
         /usr/local/x-ui
+        /usr/local/bin/x-ui
+        /usr/bin/x-ui
         /etc/x-ui
+        /opt/AdGuardHome
+        /etc/AdGuardHome
+        /var/lib/AdGuardHome
+        /var/log/AdGuardHome
         /etc/nginx
+        /var/log/nginx
         /etc/grafana
         /etc/prometheus
         /etc/loki
         /etc/promtail
         /etc/letsencrypt
+        /etc/ssl/sub-manager
         /var/lib/grafana
         /var/lib/loki
         /var/lib/promtail
+        /var/log/prometheus
+        /var/log/grafana
+        /var/log/loki
+        /var/log/promtail
         /var/www/html
         /etc/fail2ban
         /usr/local/bin/loki
