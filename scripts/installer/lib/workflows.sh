@@ -48,6 +48,16 @@ sanitize_path_token() {
     printf "%s" "$value"
 }
 
+sanitize_tcp_port() {
+    local value="${1:-}"
+    local default_port="${2:-22}"
+    if [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -ge 1 ] && [ "$value" -le 65535 ]; then
+        printf "%s" "$value"
+    else
+        printf "%s" "$default_port"
+    fi
+}
+
 declare -ga REPORT_MODULES=()
 declare -ga REPORT_SYSTEMD_UNITS=()
 declare -ga REPORT_NOTES=()
@@ -273,6 +283,11 @@ report_finalize_env() {
         printf "GRAFANA_PASSWORD=%q\n" "${REPORT_CREDENTIALS[grafana.password]:-}"
         printf "ADGUARD_USERNAME=%q\n" "${REPORT_CREDENTIALS[adguard.username]:-}"
         printf "ADGUARD_PASSWORD=%q\n" "${REPORT_CREDENTIALS[adguard.password]:-}"
+        printf "ADGUARD_PANEL_URL=%q\n" "${REPORT_SERVICE_FIELDS[adguard.panel_url]:-}"
+        printf "ADGUARD_DOH_URL=%q\n" "${REPORT_SERVICE_FIELDS[adguard.doh_url]:-}"
+        printf "ADGUARD_PANEL_PATH=%q\n" "${REPORT_SERVICE_FIELDS[adguard.panel_path]:-}"
+        printf "ADGUARD_DOH_PATH=%q\n" "${REPORT_SERVICE_FIELDS[adguard.doh_path]:-}"
+        printf "ADGUARD_DNS_BIND=%q\n" "${REPORT_SERVICE_FIELDS[adguard.dns_bind]:-}"
     } > "$env_path"
     chmod 600 "$env_path" 2>/dev/null || true
 }
@@ -299,6 +314,15 @@ report_print_summary() {
         printf "${UI_GREEN}Grafana URL:${UI_RESET} %s\n" "${REPORT_SERVICE_FIELDS[grafana.url]}"
         [ -n "${REPORT_CREDENTIALS[grafana.username]:-}" ] && printf "${UI_GREEN}Grafana Login:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[grafana.username]}"
         [ -n "${REPORT_CREDENTIALS[grafana.password]:-}" ] && printf "${UI_GREEN}Grafana Password:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[grafana.password]}"
+    fi
+    if [ "${REPORT_SERVICE_FIELDS[adguard.enabled]:-false}" = "true" ]; then
+        [ -n "${REPORT_SERVICE_FIELDS[adguard.panel_url]:-}" ] && printf "${UI_GREEN}AdGuard Panel URL:${UI_RESET} %s\n" "${REPORT_SERVICE_FIELDS[adguard.panel_url]}"
+        [ -n "${REPORT_SERVICE_FIELDS[adguard.doh_url]:-}" ] && printf "${UI_GREEN}AdGuard DoH URL:${UI_RESET} %s\n" "${REPORT_SERVICE_FIELDS[adguard.doh_url]}"
+        [ -n "${REPORT_SERVICE_FIELDS[adguard.panel_path]:-}" ] && printf "${UI_GREEN}AdGuard Panel Path:${UI_RESET} /%s/\n" "${REPORT_SERVICE_FIELDS[adguard.panel_path]}"
+        [ -n "${REPORT_SERVICE_FIELDS[adguard.doh_path]:-}" ] && printf "${UI_GREEN}AdGuard DoH Path:${UI_RESET} /%s/\n" "${REPORT_SERVICE_FIELDS[adguard.doh_path]}"
+        [ -n "${REPORT_SERVICE_FIELDS[adguard.dns_bind]:-}" ] && printf "${UI_GREEN}AdGuard DNS Bind:${UI_RESET} %s\n" "${REPORT_SERVICE_FIELDS[adguard.dns_bind]}"
+        [ -n "${REPORT_CREDENTIALS[adguard.username]:-}" ] && printf "${UI_GREEN}AdGuard Login:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[adguard.username]}"
+        [ -n "${REPORT_CREDENTIALS[adguard.password]:-}" ] && printf "${UI_GREEN}AdGuard Password:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[adguard.password]}"
     fi
     printf "${UI_GREEN}JSON Report:${UI_RESET} %s\n" "${REPORT_META[report_json_path]:-unknown}"
     printf "${UI_GREEN}ENV Report:${UI_RESET} %s\n" "${REPORT_META[report_env_path]:-unknown}"
@@ -361,6 +385,24 @@ report_capture_install_log() {
             ADGUARD_SYSTEMD_UNIT)
                 [ "$adguard_enabled" = "true" ] && [ -n "$value" ] && report_add_systemd_unit "$value"
                 ;;
+            ADGUARD_INSTALL_ENABLED)
+                [ "$value" = "true" ] && report_set_service_field adguard enabled "true"
+                ;;
+            ADGUARD_WEB_PATH)
+                [ -n "$value" ] && report_set_service_field adguard panel_path "$value"
+                ;;
+            ADGUARD_DOH_PATH)
+                [ -n "$value" ] && report_set_service_field adguard doh_path "$value"
+                ;;
+            ADGUARD_DNS_BIND)
+                [ -n "$value" ] && report_set_service_field adguard dns_bind "$value"
+                ;;
+            ADGUARD_ADMIN_USER)
+                [ -n "$value" ] && report_set_credential adguard username "$value"
+                ;;
+            ADGUARD_ADMIN_PASS)
+                [ -n "$value" ] && report_set_credential adguard password "$value"
+                ;;
         esac
     done < "$log_file"
 
@@ -377,6 +419,14 @@ report_capture_install_log() {
     if [ -n "$domain" ] && [ -n "$grafana_path" ] && [ "${REPORT_SERVICE_FIELDS[grafana.enabled]:-false}" = "true" ]; then
         report_set_service_field grafana url "${scheme}://${domain}/${grafana_path}/"
         report_set_service_field grafana path "/${grafana_path}/"
+    fi
+    local adguard_panel_path="${REPORT_SERVICE_FIELDS[adguard.panel_path]:-}"
+    local adguard_doh_path="${REPORT_SERVICE_FIELDS[adguard.doh_path]:-}"
+    if [ -n "$domain" ] && [ -n "$adguard_panel_path" ] && [ "${REPORT_SERVICE_FIELDS[adguard.enabled]:-false}" = "true" ]; then
+        report_set_service_field adguard panel_url "${scheme}://${domain}/${adguard_panel_path}/"
+    fi
+    if [ -n "$domain" ] && [ -n "$adguard_doh_path" ] && [ "${REPORT_SERVICE_FIELDS[adguard.enabled]:-false}" = "true" ]; then
+        report_set_service_field adguard doh_url "${scheme}://${domain}/${adguard_doh_path}/"
     fi
 
     report_add_file install_log "$log_file"
@@ -479,6 +529,7 @@ report_prepare_xui_preset() {
     report_init
     report_set_meta install_mode "advanced"
     case "$profile" in
+        minimal) report_set_meta preset_id "3.0"; report_set_meta preset_label "3.0 nginx + 3x-ui (minimal)" ;;
         only) report_set_meta preset_id "3.1"; report_set_meta preset_label "3.1 3x-ui + Sub-Manager only" ;;
         monitoring) report_set_meta preset_id "3.2"; report_set_meta preset_label "3.2 3x-ui + Sub-Manager + Prometheus + Grafana" ;;
         logs) report_set_meta preset_id "3.3"; report_set_meta preset_label "3.3 3x-ui + Sub-Manager + Prometheus + Grafana + Loki + promtail" ;;
@@ -488,7 +539,7 @@ report_prepare_xui_preset() {
     report_add_module "core.nginx"
     report_add_module "core.tls"
     report_add_module "svc.3xui"
-    report_add_module "svc.sub-manager"
+    [ "$profile" != "minimal" ] && report_add_module "svc.sub-manager"
     report_set_domain public_domain "${PROFILE_PUBLIC_DOMAIN:-}"
     report_set_domain public_scheme "${PROFILE_PUBLIC_SCHEME:-}"
 }
@@ -804,13 +855,14 @@ collect_common_settings() {
 
     PROFILE_PROJECT_NAME="$(sanitize_service_name "$(installer_prompt_text "Project Name" "Service name for this install." "sub-manager")")"
     PROFILE_APP_PORT="$(installer_prompt_text "Application Port" "Local port for Sub-Manager." "666")"
+    PROFILE_SSH_PORT="$(sanitize_tcp_port "$(installer_prompt_text "SSH Port" "SSH port for fail2ban + UFW rules." "22")" "22")"
     PROFILE_PUBLIC_DOMAIN="$(sanitize_domain_host "$(installer_prompt_text "Public Domain" "Public hostname without http/https." "${default_domain}")")"
 
     local scheme_choice
     scheme_choice="$(installer_select_menu \
         "Public URL Scheme" \
         "Choose how the public URLs should be generated." \
-        "https" \
+        "● https (default)" \
         "http")"
     case "$scheme_choice" in
         __QUIT__|__BACK__) return 1 ;;
@@ -846,6 +898,7 @@ collect_xui_common_settings() {
 
     PROFILE_PROJECT_NAME="$(sanitize_service_name "$(installer_prompt_text "Project Name" "Service name for this install." "sub-manager")")"
     PROFILE_APP_PORT="$(installer_prompt_text "Application Port" "Local port for Sub-Manager." "666")"
+    PROFILE_SSH_PORT="$(sanitize_tcp_port "$(installer_prompt_text "SSH Port" "SSH port for fail2ban + UFW rules." "22")" "22")"
 
     while true; do
         xui_domain="$(sanitize_domain_host "$(installer_prompt_text "3x-ui Main Domain" "Enter MAIN domain manually (required)." "")")"
@@ -872,7 +925,7 @@ collect_xui_common_settings() {
     scheme_choice="$(installer_select_menu \
         "Public URL Scheme" \
         "Choose how the public URLs should be generated." \
-        "https" \
+        "● https (default)" \
         "http")"
     case "$scheme_choice" in
         __QUIT__|__BACK__) return 1 ;;
@@ -909,6 +962,13 @@ collect_monitoring_settings() {
     PROFILE_ADGUARD_LOKI="n"
     PROFILE_ADGUARD_QUERYLOG_PATH=""
     PROFILE_ADGUARD_SYSTEMD_UNIT=""
+    PROFILE_ADGUARD_INSTALL_ENABLED="n"
+    PROFILE_ADGUARD_DNS_BIND="127.0.0.1:5353"
+    PROFILE_ADGUARD_WEB_PORT="3000"
+    PROFILE_ADGUARD_WEB_PATH=""
+    PROFILE_ADGUARD_DOH_PATH=""
+    PROFILE_ADGUARD_ADMIN_USER=""
+    PROFILE_ADGUARD_ADMIN_PASS=""
 
     if [ "${1:-y}" = "n" ]; then
         PROFILE_MONITORING="n"
@@ -935,6 +995,11 @@ collect_monitoring_settings() {
         PROFILE_ADGUARD_LOKI="y"
         PROFILE_ADGUARD_QUERYLOG_PATH="/opt/AdGuardHome/data/querylog.json"
         PROFILE_ADGUARD_SYSTEMD_UNIT="AdGuardHome.service"
+        PROFILE_ADGUARD_INSTALL_ENABLED="y"
+        PROFILE_ADGUARD_WEB_PATH="$(generate_random_path | tr '[:upper:]' '[:lower:]')"
+        PROFILE_ADGUARD_DOH_PATH="$(generate_random_path | tr '[:upper:]' '[:lower:]')"
+        PROFILE_ADGUARD_ADMIN_USER="adg$(generate_random_path | tr '[:upper:]' '[:lower:]')"
+        PROFILE_ADGUARD_ADMIN_PASS="$(generate_random_path)$(generate_random_path)"
     fi
 
     if [ "${3:-n}" = "y" ]; then
@@ -980,24 +1045,30 @@ collect_monitoring_settings() {
 
 show_install_summary() {
     installer_message "$1" "$2"
-    printf "${UI_GREEN}Project:${UI_RESET} %s\n" "$PROFILE_PROJECT_NAME"
-    printf "${UI_GREEN}Port:${UI_RESET} %s\n" "$PROFILE_APP_PORT"
-    printf "${UI_GREEN}Domain:${UI_RESET} %s\n" "$PROFILE_PUBLIC_DOMAIN"
-    printf "${UI_GREEN}Scheme:${UI_RESET} %s\n" "$PROFILE_PUBLIC_SCHEME"
-    if [ "$PROFILE_PANEL_RANDOM" = "y" ]; then
+    printf "${UI_GREEN}Project:${UI_RESET} %s\n" "${PROFILE_PROJECT_NAME:-sub-manager}"
+    printf "${UI_GREEN}Port:${UI_RESET} %s\n" "${PROFILE_APP_PORT:-666}"
+    printf "${UI_GREEN}SSH Port:${UI_RESET} %s\n" "${PROFILE_SSH_PORT:-22}"
+    printf "${UI_GREEN}Domain:${UI_RESET} %s\n" "${PROFILE_PUBLIC_DOMAIN:-unknown}"
+    printf "${UI_GREEN}Scheme:${UI_RESET} %s\n" "${PROFILE_PUBLIC_SCHEME:-https}"
+    if [ "${PROFILE_PANEL_RANDOM:-y}" = "y" ]; then
         printf "${UI_GREEN}Panel Path:${UI_RESET} random\n"
     else
-        printf "${UI_GREEN}Panel Path:${UI_RESET} /%s/\n" "$PROFILE_WEB_PATH"
+        printf "${UI_GREEN}Panel Path:${UI_RESET} /%s/\n" "${PROFILE_WEB_PATH:-$(generate_random_path)}"
     fi
     if [ "${PROFILE_MONITORING:-n}" = "y" ]; then
         printf "${UI_GREEN}Monitoring:${UI_RESET} enabled\n"
-        if [ "$PROFILE_GRAFANA_RANDOM" = "y" ]; then
+        if [ "${PROFILE_GRAFANA_RANDOM:-y}" = "y" ]; then
             printf "${UI_GREEN}Grafana Path:${UI_RESET} random\n"
         else
-            printf "${UI_GREEN}Grafana Path:${UI_RESET} /%s/\n" "$PROFILE_GRAFANA_PATH"
+            printf "${UI_GREEN}Grafana Path:${UI_RESET} /%s/\n" "${PROFILE_GRAFANA_PATH:-$(generate_random_path)}"
         fi
-        printf "${UI_GREEN}AdGuard Metrics:${UI_RESET} %s\n" "$PROFILE_ADGUARD_METRICS"
-        printf "${UI_GREEN}AdGuard Loki:${UI_RESET} %s\n" "$PROFILE_ADGUARD_LOKI"
+        printf "${UI_GREEN}AdGuard Metrics:${UI_RESET} %s\n" "${PROFILE_ADGUARD_METRICS:-n}"
+        printf "${UI_GREEN}AdGuard Loki:${UI_RESET} %s\n" "${PROFILE_ADGUARD_LOKI:-n}"
+        if [ "${PROFILE_ADGUARD_INSTALL_ENABLED:-n}" = "y" ]; then
+            printf "${UI_GREEN}AdGuard Panel Path:${UI_RESET} /%s/\n" "${PROFILE_ADGUARD_WEB_PATH:-random}"
+            printf "${UI_GREEN}AdGuard DoH Path:${UI_RESET} /%s/\n" "${PROFILE_ADGUARD_DOH_PATH:-random}"
+            printf "${UI_GREEN}AdGuard DNS Bind:${UI_RESET} %s\n" "${PROFILE_ADGUARD_DNS_BIND:-127.0.0.1:5353}"
+        fi
     else
         printf "${UI_GREEN}Monitoring:${UI_RESET} disabled\n"
     fi
@@ -1028,30 +1099,31 @@ run_install_with_answers() {
     local status=0
     answers_file="$(mktemp)"
     {
-        printf "%s\n" "$PROFILE_PROJECT_NAME"
-        printf "%s\n" "$PROFILE_APP_PORT"
-        printf "%s\n" "$PROFILE_PUBLIC_DOMAIN"
-        printf "%s\n" "$PROFILE_PUBLIC_SCHEME"
-        printf "%s\n" "$PROFILE_PANEL_RANDOM"
-        if [ "$PROFILE_PANEL_RANDOM" = "n" ]; then
-            printf "%s\n" "$PROFILE_WEB_PATH"
+        printf "%s\n" "${PROFILE_PROJECT_NAME:-sub-manager}"
+        printf "%s\n" "${PROFILE_APP_PORT:-666}"
+        printf "%s\n" "${PROFILE_SSH_PORT:-22}"
+        printf "%s\n" "${PROFILE_PUBLIC_DOMAIN:-$(hostname -f 2>/dev/null || hostname)}"
+        printf "%s\n" "${PROFILE_PUBLIC_SCHEME:-https}"
+        printf "%s\n" "${PROFILE_PANEL_RANDOM:-y}"
+        if [ "${PROFILE_PANEL_RANDOM:-y}" = "n" ]; then
+            printf "%s\n" "${PROFILE_WEB_PATH:-$(generate_random_path)}"
         fi
         printf "b\n"
         printf "%s\n" "${PROFILE_MONITORING:-n}"
         if [ "${PROFILE_MONITORING:-n}" = "y" ]; then
-            printf "%s\n" "$PROFILE_GRAFANA_RANDOM"
-            if [ "$PROFILE_GRAFANA_RANDOM" = "n" ]; then
-                printf "%s\n" "$PROFILE_GRAFANA_PATH"
+            printf "%s\n" "${PROFILE_GRAFANA_RANDOM:-y}"
+            if [ "${PROFILE_GRAFANA_RANDOM:-y}" = "n" ]; then
+                printf "%s\n" "${PROFILE_GRAFANA_PATH:-$(generate_random_path)}"
             fi
-            printf "%s\n" "$PROFILE_ADGUARD_METRICS"
-            if [ "$PROFILE_ADGUARD_METRICS" = "y" ]; then
-                printf "%s\n" "$PROFILE_ADGUARD_METRICS_TARGETS"
-                printf "%s\n" "$PROFILE_ADGUARD_METRICS_PATH"
+            printf "%s\n" "${PROFILE_ADGUARD_METRICS:-n}"
+            if [ "${PROFILE_ADGUARD_METRICS:-n}" = "y" ]; then
+                printf "%s\n" "${PROFILE_ADGUARD_METRICS_TARGETS:-127.0.0.1:3000}"
+                printf "%s\n" "${PROFILE_ADGUARD_METRICS_PATH:-/control/prometheus/metrics}"
             fi
-            printf "%s\n" "$PROFILE_ADGUARD_LOKI"
-            if [ "$PROFILE_ADGUARD_LOKI" = "y" ]; then
-                printf "%s\n" "$PROFILE_ADGUARD_QUERYLOG_PATH"
-                printf "%s\n" "$PROFILE_ADGUARD_SYSTEMD_UNIT"
+            printf "%s\n" "${PROFILE_ADGUARD_LOKI:-n}"
+            if [ "${PROFILE_ADGUARD_LOKI:-n}" = "y" ]; then
+                printf "%s\n" "${PROFILE_ADGUARD_QUERYLOG_PATH:-/opt/AdGuardHome/data/querylog.json}"
+                printf "%s\n" "${PROFILE_ADGUARD_SYSTEMD_UNIT:-AdGuardHome.service}"
             fi
         fi
     } >"$answers_file"
@@ -1095,6 +1167,26 @@ run_install_with_answers() {
         SELECTED_CFG="${selected_cfg}" \
         INSTALLER_EXISTING_ACTION="reinstall" \
         INSTALLER_VERBOSE_PROGRESS="1" \
+        PROFILE_XUI_DOMAIN="${PROFILE_XUI_DOMAIN:-}" \
+        PROFILE_XUI_REALITY_DOMAIN="${PROFILE_XUI_REALITY_DOMAIN:-}" \
+        PROFILE_XUI_PANEL_PATH="${PROFILE_XUI_PANEL_PATH:-}" \
+        PROFILE_XUI_PANEL_URL="${PROFILE_XUI_PANEL_URL:-}" \
+        PROFILE_XUI_USERNAME="${PROFILE_XUI_USERNAME:-}" \
+        PROFILE_XUI_PASSWORD="${PROFILE_XUI_PASSWORD:-}" \
+        PROFILE_XUI_WEBSUB_URL="${PROFILE_XUI_WEBSUB_URL:-}" \
+        PROFILE_XUI_SUB2SING_URL="${PROFILE_XUI_SUB2SING_URL:-}" \
+        XUI_DOMAIN="${PROFILE_XUI_DOMAIN:-}" \
+        XUI_PANEL_URL="${PROFILE_XUI_PANEL_URL:-}" \
+        XUI_USERNAME="${PROFILE_XUI_USERNAME:-}" \
+        XUI_PASSWORD="${PROFILE_XUI_PASSWORD:-}" \
+        SSH_PORT="${PROFILE_SSH_PORT:-22}" \
+        ADGUARD_INSTALL_ENABLED="$( [ "${PROFILE_ADGUARD_INSTALL_ENABLED:-n}" = "y" ] && printf "true" || printf "false" )" \
+        ADGUARD_DNS_BIND="${PROFILE_ADGUARD_DNS_BIND:-127.0.0.1:5353}" \
+        ADGUARD_WEB_PORT="${PROFILE_ADGUARD_WEB_PORT:-3000}" \
+        ADGUARD_WEB_PATH="${PROFILE_ADGUARD_WEB_PATH:-}" \
+        ADGUARD_DOH_PATH="${PROFILE_ADGUARD_DOH_PATH:-}" \
+        ADGUARD_ADMIN_USER="${PROFILE_ADGUARD_ADMIN_USER:-}" \
+        ADGUARD_ADMIN_PASS="${PROFILE_ADGUARD_ADMIN_PASS:-}" \
         bash "${REPO_ROOT}/install.sh"
     status=$?
     set -e
@@ -1125,11 +1217,11 @@ run_update_mode() {
 run_remove_mode() {
     local mode="$1"
     if [ "${INSTALLER_DRY_RUN:-false}" = "true" ]; then
-        installer_message "Dry Run" "Would run remove.sh with REMOVE_MODE=${mode}."
+        installer_message "Dry Run" "Would run remove.sh with REMOVE_MODE=${mode}, REMOVE_SCOPE=hard."
         installer_pause
         return 0
     fi
-    REMOVE_MODE="$mode" REMOVE_FORCE=true bash "${INSTALLER_DIR}/remove.sh"
+    REMOVE_MODE="$mode" REMOVE_SCOPE=hard REMOVE_FORCE=true bash "${INSTALLER_DIR}/remove.sh"
 }
 
 run_simple_install_over_existing() {
