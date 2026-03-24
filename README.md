@@ -1,18 +1,40 @@
 # Multi-Server Subscription Manager
 
-Современная панель управления multi-node инфраструктурой (FastAPI + React/Vite) с поддержкой subpath-деплоя, мониторинга и batch-операций.
+> Единая control-plane панель для multi-node инфраструктуры: управление узлами, клиентами, подписками и эксплуатацией — в одном интерфейсе.
 
-## Что это
+![Platform](https://img.shields.io/badge/platform-Linux-0f172a)
+![Backend](https://img.shields.io/badge/backend-FastAPI-059669)
+![Frontend](https://img.shields.io/badge/frontend-React%20%2B%20Vite-2563eb)
+![Auth](https://img.shields.io/badge/auth-Basic%20Auth-orange)
+![License](https://img.shields.io/badge/license-MIT-7c3aed)
 
-`multiserversubgen` — это проект для управления несколькими node-panel серверами в едином интерфейсе:
+---
 
-- управление узлами
-- inbounds и clients
-- статистика трафика
-- backup/restore
-- observability и monitoring-интеграции
+## Почему это удобно
 
-## Быстрый старт: установка
+`multiserversubgen` создан для сценария, где серверов и клиентов уже много, а хаоса должно быть мало.
+
+Вы получаете:
+
+- централизованное управление несколькими узлами;
+- операции с inbound/client (включая batch-подход);
+- мониторинг статуса и health-сигналов;
+- backup/restore без ручного «танца с бубном»;
+- production-ориентированный install/update pipeline.
+
+## Что внутри 🚀
+
+| Область | Возможности |
+|---|---|
+| Node management | Добавление/удаление узлов, контроль доступности |
+| Inbounds & Clients | Управление, фильтрация, batch-операции |
+| Traffic & Analytics | Статистика трафика и operational срезы |
+| Backup / Restore | Экспорт/импорт данных, базовые recovery-сценарии |
+| Ops-ready runtime | `systemd`, `nginx`, subpath-деплой, health-check |
+
+## Быстрый старт
+
+### 1) Установка
 
 ```bash
 git clone https://github.com/Efidripy/multiserversubgen
@@ -21,14 +43,28 @@ chmod +x install.sh
 sudo ./install.sh
 ```
 
-После установки проверьте:
+Что настраивается автоматически:
+
+- backend (FastAPI + venv);
+- frontend-сборка (Vite) с публикацией в `backend/build`;
+- `systemd`-сервис `sub-manager`;
+- `nginx`-маршрутизация для subpath;
+- базовые security/ops элементы профиля.
+
+### 2) Проверка работоспособности
 
 ```bash
 systemctl is-active sub-manager
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:666/health
+curl -s -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1:666/health
 ```
 
-## Быстрый старт: обновление
+Публичная проверка панели:
+
+```bash
+curl -k -s -o /dev/null -w 'panel=%{http_code}\n' https://<your-domain>/<web-path>/
+```
+
+### 3) Обновление
 
 ```bash
 cd multiserversubgen
@@ -38,24 +74,49 @@ sudo ./update.sh
 
 Перед обновлением рекомендуется сделать backup через API.
 
+## Архитектура (на пальцах)
+
+```mermaid
+flowchart LR
+	U[Operator / Admin] --> W[Web UI\nReact + Vite]
+	W --> A[API\nFastAPI]
+	A --> N1[Node #1]
+	A --> N2[Node #2]
+	A --> N3[Node #N]
+	A --> B[(Backups)]
+	A --> M[Metrics / Ops Signals]
+	NG[Nginx + Subpath] --> W
+```
+
+Ключевые директории:
+
+- `backend/` — API и сервисная логика;
+- `frontend/` — интерфейс управления;
+- `scripts/installer/` — пресеты и installer-flow;
+- `monitoring/`, `nginx/`, `systemd/` — инфраструктурный слой.
+
 ## Документация
 
-### Основное
+### Стартовая база
 
-- [Установка (подробно)](./docs/INSTALL.md)
-- [Обновление (подробно)](./docs/UPDATE.md)
-- [Ops / Эксплуатация](./docs/OPS.md)
+- [Установка](./docs/INSTALL.md)
+- [Обновление](./docs/UPDATE.md)
+- [Эксплуатация (Ops)](./docs/OPS.md)
 - [API (входная точка)](./docs/API.md)
 
-### Дополнительно
+### Глубже
 
 - [Полная API-документация](./docs/API_DOCUMENTATION.md)
 - [Гайд по компонентам](./docs/COMPONENTS_GUIDE.md)
 - [Гайд по подпискам](./docs/SUBSCRIPTION_GUIDE.md)
-- [Снимки интерфейса](./screens.md)
-- [Текущий статус улучшений](./docs/IMPROVEMENTS.md)
-- Индекс знаний проекта: `./KNOWLEDGE_INDEX.md` (локальный файл, не публикуется в Git)
+- [Статус улучшений](./docs/IMPROVEMENTS.md)
+
+## Практичные заметки для production
+
+- Минимум: Ubuntu 20.04+ (рекомендуется 24.04), root, домен/поддомен.
+- Аутентификация: Basic Auth (рекомендуется HTTPS и ограничения в `nginx`).
+- Для subpath-сценария фронтенд должен быть собран с корректным `VITE_BASE`.
 
 ## Лицензия
 
-MIT
+Проект распространяется по лицензии [MIT](./LICENSE).
