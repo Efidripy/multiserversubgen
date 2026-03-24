@@ -13,7 +13,7 @@ preview_screen() {
             installer_render_menu "Main Menu" "Press Enter for the standard install or choose another mode." 0 \
                 "1. Standard Install" \
                 "2. Advanced Install: Sub-Manager presets" \
-                "3. Advanced Install: 3x-ui + Sub-Manager presets" \
+                "3. Advanced Install: 3x-ui presets" \
                 "4. Update Existing Installation" \
                 "5. Remove Installation" \
                 "0. Exit"
@@ -28,8 +28,8 @@ preview_screen() {
                 "2.6 Back"
             ;;
         xui)
-            installer_render_menu "Advanced Install: 3x-ui (with optional Sub-Manager)" "Choose a preset that includes 3x-ui." 0 \
-                "3.0 nginx + 3x-ui (minimal, no Sub-Manager)" \
+            installer_render_menu "Advanced Install: 3x-ui" "Choose a preset." 0 \
+                "3.0 3x-ui" \
                 "3.1 3x-ui + Sub-Manager only" \
                 "3.2 3x-ui + Sub-Manager + Prometheus + Grafana" \
                 "3.3 3x-ui + Sub-Manager + Prometheus + Grafana + Loki + promtail" \
@@ -101,9 +101,9 @@ run_with_result() {
 handle_xui_menu() {
     local choice
     choice="$(installer_select_menu \
-        "Advanced Install: 3x-ui (with optional Sub-Manager)" \
-        "Choose a preset that includes 3x-ui." \
-        "3.0 nginx + 3x-ui (minimal, no Sub-Manager)" \
+        "Advanced Install: 3x-ui" \
+        "Choose a preset." \
+        "3.0 3x-ui" \
         "3.1 3x-ui + Sub-Manager only" \
         "3.2 3x-ui + Sub-Manager + Prometheus + Grafana" \
         "3.3 3x-ui + Sub-Manager + Prometheus + Grafana + Loki + promtail" \
@@ -186,7 +186,7 @@ run_menu() {
             "Press Enter for the standard install or choose another mode." \
             "1. Standard Install" \
             "2. Advanced Install: Sub-Manager presets" \
-            "3. Advanced Install: 3x-ui + Sub-Manager presets" \
+            "3. Advanced Install: 3x-ui presets" \
             "4. Update Existing Installation" \
             "5. Remove Installation" \
             "0. Exit")"
