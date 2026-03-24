@@ -39,3 +39,7 @@ xui-core-patch.tgz
 add-nginx-directives.sh
 fix-nginx-adguard.sh
 reset-adguard-pass.sh
+
+# Local template zip pools
+scripts/installer/templates/.local-randomfakehtml/
+!scripts/installer/templates/.local-randomfakehtml-sample/
