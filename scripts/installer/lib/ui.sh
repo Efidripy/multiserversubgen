@@ -2,14 +2,14 @@
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/locale.sh"
 
-UI_RED='\033[1;31m'
-UI_WHITE='\033[1;37m'
-UI_DIM='\033[0;37m'
-UI_CYAN='\033[1;36m'
-UI_GREEN='\033[1;32m'
-UI_YELLOW='\033[1;33m'
-UI_RESET='\033[0m'
-UI_CLEAR='\033[2J\033[H'
+UI_RED=$'\033[1;31m'
+UI_WHITE=$'\033[1;37m'
+UI_DIM=$'\033[0;37m'
+UI_CYAN=$'\033[1;36m'
+UI_GREEN=$'\033[1;32m'
+UI_YELLOW=$'\033[1;33m'
+UI_RESET=$'\033[0m'
+UI_CLEAR=$'\033[2J\033[H'
 
 INSTALLER_AUTOMATION_STEPS="${INSTALLER_AUTOMATION_STEPS:-}"
 INSTALLER_AUTOMATION_FILE="${INSTALLER_AUTOMATION_FILE:-}"
@@ -308,8 +308,16 @@ installer_prompt_yes_no() {
     local title="$1"
     local prompt="$2"
     local default_choice="${3:-y}"
-    local options=("Yes" "No")
+    local options
     local selected=""
+    
+    # Add marker (●) to default option
+    if [ "$default_choice" = "y" ]; then
+        options=("● Yes (default)" "No")
+    else
+        options=("Yes" "● No (default)")
+    fi
+    
     installer_automation_next || true
     if [ -n "${INSTALLER_AUTOMATION_VALUE:-}" ]; then
         printf "%s" "$INSTALLER_AUTOMATION_VALUE"
@@ -325,4 +333,171 @@ installer_prompt_yes_no() {
         1) printf "n" ;;
         *) printf "%s" "$default_choice" ;;
     esac
+}
+
+# Красивый отчет установки с полной информацией о доступах
+print_installation_report() {
+    local app_port="$1"
+    local xui_path="$2"
+    local xui_domain="$3"
+    local scheme="$4"
+    local grafana_path="${5:-}"
+    local grafana_enabled="${6:-false}"
+    local adguard_path="${7:-}"
+    local adguard_doh_path="${8:-}"
+    local adguard_user="${9:-}"
+    local adguard_pass="${10:-}"
+    local adguard_enabled="${11:-false}"
+    local selected_cfg="${12:-}"
+    
+    local sub_manager_url="${scheme}://${xui_domain}/${xui_path}/"
+    local adguard_panel_url=""
+    local adguard_doh_url=""
+    local xui_panel_url="${PROFILE_XUI_PANEL_URL:-${XUI_PANEL_URL:-}}"
+    local xui_user="${PROFILE_XUI_USERNAME:-${XUI_USERNAME:-}}"
+    local xui_pass="${PROFILE_XUI_PASSWORD:-${XUI_PASSWORD:-}}"
+    local xui_present="false"
+    local xui_db="/etc/x-ui/x-ui.db"
+
+    if [ -n "$adguard_path" ]; then
+        adguard_panel_url="${scheme}://${xui_domain}/${adguard_path}/"
+    fi
+    if [ -n "$adguard_doh_path" ]; then
+        adguard_doh_url="${scheme}://${xui_domain}/${adguard_doh_path}/"
+    fi
+
+    cat >&2 <<EOF
+
+╔════════════════════════════════════════════════════════════════╗
+║                                                                ║
+║        ${UI_GREEN}✅ УСТАНОВКА УСПЕШНО ЗАВЕРШЕНА!${UI_RESET}                 ║
+║                                                                ║
+╚════════════════════════════════════════════════════════════════╝
+
+${UI_YELLOW}┌─ ОСНОВНЫЕ ПАРАМЕТРЫ ─────────────────────────────────────┐${UI_RESET}
+${UI_YELLOW}│${UI_RESET}
+${UI_YELLOW}│${UI_RESET}  API Port: ${UI_CYAN}${app_port}${UI_RESET}
+${UI_YELLOW}│${UI_RESET}  Protocol: ${UI_CYAN}${scheme}${UI_RESET}
+${UI_YELLOW}│${UI_RESET}  Domain:   ${UI_CYAN}${xui_domain}${UI_RESET}
+${UI_YELLOW}│${UI_RESET}
+${UI_YELLOW}└───────────────────────────────────────────────────────────┘${UI_RESET}
+
+${UI_GREEN}┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓${UI_RESET}
+${UI_GREEN}┃                 📋 ДОСТУПНЫЕ СЕРВИСЫ                   ┃${UI_RESET}
+${UI_GREEN}┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛${UI_RESET}
+
+${UI_CYAN}--- Sub-Manager ---${UI_RESET}
+    URL:  ${UI_GREEN}${sub_manager_url}${UI_RESET}
+    Путь: /${xui_path}/
+    Вход: Системные учетные данные (логин/пароль)
+
+EOF
+
+    if [ -n "$xui_panel_url" ] || [ -n "$xui_user" ] || [ -n "$xui_pass" ] || \
+       [ -f "/etc/systemd/system/x-ui.service" ] || [ -d "/etc/x-ui" ]; then
+        xui_present="true"
+    fi
+
+    # Fallback: extract 3x-ui context from runtime DB / x-ui CLI when env vars are missing
+    # (common in mixed reinstall flows where install.sh is invoked without full xui context).
+    if [ "$xui_present" = "true" ] && [ -f "$xui_db" ] && command -v sqlite3 >/dev/null 2>&1; then
+        if [ -z "$xui_user" ]; then
+            xui_user="$(sqlite3 "$xui_db" "SELECT value FROM settings WHERE key='username' LIMIT 1;" 2>/dev/null | tr -d '\r' || true)"
+        fi
+
+        if [ -z "$xui_pass" ]; then
+            xui_pass="$(sqlite3 "$xui_db" "SELECT value FROM settings WHERE key='password' LIMIT 1;" 2>/dev/null | tr -d '\r' || true)"
+        fi
+
+        if [ -z "$xui_panel_url" ]; then
+            local db_panel_path=""
+            db_panel_path="$(sqlite3 "$xui_db" "SELECT value FROM settings WHERE key='webBasePath' LIMIT 1;" 2>/dev/null | tr -d '\r' | tr -d '/' || true)"
+            if [ -n "$db_panel_path" ]; then
+                xui_panel_url="${scheme}://${xui_domain}/${db_panel_path}/"
+            fi
+        fi
+    fi
+
+    if [ "$xui_present" = "true" ] && { [ -z "$xui_panel_url" ] || [ -z "$xui_user" ] || [ -z "$xui_pass" ]; }; then
+        local xui_cli=""
+        if [ -x "/usr/local/x-ui/x-ui" ]; then
+            xui_cli="/usr/local/x-ui/x-ui"
+        elif command -v x-ui >/dev/null 2>&1; then
+            xui_cli="$(command -v x-ui)"
+        fi
+
+        if [ -n "$xui_cli" ]; then
+            local xui_settings_raw=""
+            local cli_panel_path=""
+            local cli_username=""
+            local cli_password=""
+            xui_settings_raw="$($xui_cli setting -show true 2>/dev/null || true)"
+
+            if [ -n "$xui_settings_raw" ]; then
+                cli_panel_path="$(printf "%s\n" "$xui_settings_raw" | sed -nE "s/.*[Ww]eb[Bb]ase[Pp]ath[^a-zA-Z0-9_\/-]*([a-zA-Z0-9_\/-]+).*/\1/p" | head -n 1 | tr -d '/' )"
+                cli_username="$(printf "%s\n" "$xui_settings_raw" | sed -nE "s/.*[Uu]ser[Nn]ame[^a-zA-Z0-9_\.-]*([a-zA-Z0-9_\.-]+).*/\1/p" | head -n 1)"
+                cli_password="$(printf "%s\n" "$xui_settings_raw" | sed -nE "s/.*[Pp]ass[Ww]ord[^a-zA-Z0-9_\.-]*([a-zA-Z0-9_\.-]+).*/\1/p" | head -n 1)"
+
+                if [ -z "$xui_panel_url" ] && [ -n "$cli_panel_path" ]; then
+                    xui_panel_url="${scheme}://${xui_domain}/${cli_panel_path}/"
+                fi
+                if [ -z "$xui_user" ] && [ -n "$cli_username" ]; then
+                    xui_user="$cli_username"
+                fi
+                if [ -z "$xui_pass" ] && [ -n "$cli_password" ]; then
+                    xui_pass="$cli_password"
+                fi
+            fi
+        fi
+    fi
+
+    if [ "$xui_present" = "true" ]; then
+        cat >&2 <<EOF
+${UI_CYAN}--- 3x-ui ---${UI_RESET}
+    URL:  ${UI_GREEN}${xui_panel_url:-unknown}${UI_RESET}
+    Вход: ${UI_CYAN}${xui_user:-unknown}${UI_RESET} / ${UI_CYAN}${xui_pass:-unknown}${UI_RESET}
+
+EOF
+    fi
+
+    if [ "$grafana_enabled" = "true" ] && [ -n "$grafana_path" ]; then
+        cat >&2 <<EOF
+${UI_CYAN}--- Grafana ---${UI_RESET}
+   URL:  ${UI_GREEN}${scheme}://${xui_domain}/${grafana_path}/${UI_RESET}
+   Путь: /${grafana_path}/
+    Вход: Grafana пользователь (admin/admin)
+
+EOF
+    fi
+
+    if [ "$adguard_enabled" = "true" ] && [ -n "$adguard_path" ]; then
+        cat >&2 <<EOF
+${UI_CYAN}--- AdGuard Home ---${UI_RESET}
+    Panel URL: ${UI_GREEN}${adguard_panel_url}${UI_RESET}
+    DoH URL:   ${UI_GREEN}${adguard_doh_url}${UI_RESET}
+   DNS Bind:  127.0.0.1:5353
+   Login:     ${UI_CYAN}${adguard_user}${UI_RESET}
+   Password:  ${UI_CYAN}${adguard_pass}${UI_RESET}
+
+EOF
+    fi
+
+    cat >&2 <<EOF
+${UI_YELLOW}┌─ ПОЛЕЗНЫЕ КОМАНДЫ ───────────────────────────────────┐${UI_RESET}
+${UI_YELLOW}│${UI_RESET}
+${UI_YELLOW}│${UI_RESET}  Проверка здоровья сервиса:
+${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash /root/multiserversubgen-live/scripts/ops/smoke-test.sh${UI_RESET}
+${UI_YELLOW}│${UI_RESET}
+${UI_YELLOW}│${UI_RESET}  Резервная копия & восстановление:
+${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash /root/multiserversubgen-live/scripts/ops/backup-restore-check.sh${UI_RESET}
+${UI_YELLOW}│${UI_RESET}
+${UI_YELLOW}│${UI_RESET}  Проверка безопасности:
+${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash /root/multiserversubgen-live/scripts/ops/hardening-profile.sh audit${UI_RESET}
+${UI_YELLOW}│${UI_RESET}
+${UI_YELLOW}└───────────────────────────────────────────────────────┘${UI_RESET}
+
+${UI_GREEN}✓ Все компоненты установлены и запущены${UI_RESET}
+${UI_GREEN}✓ Система полностью готова к использованию${UI_RESET}
+
+EOF
 }

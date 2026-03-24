@@ -5,6 +5,7 @@ LOG_FILE="/opt/.sub_manager_install.log"
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_DIR="$(cd "${INSTALLER_DIR}/../.." && pwd)"
 source "${INSTALLER_DIR}/lib/locale.sh"
+source "${INSTALLER_DIR}/lib/ui.sh"
 source "${INSTALLER_DIR}/lib/resource_guard.sh"
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
@@ -274,6 +275,39 @@ generate_random_path() {
     tr -dc 'a-z0-9' </dev/urandom | head -c 8
 }
 
+generate_random_secret() {
+    local length="${1:-16}"
+    tr -dc 'a-zA-Z0-9' </dev/urandom | head -c "$length"
+}
+
+extract_port_from_bind() {
+    local bind="${1:-127.0.0.1:5353}"
+    local port="${bind##*:}"
+    if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+        port="5353"
+    fi
+    echo "$port"
+}
+
+extract_host_from_bind() {
+    local bind="${1:-127.0.0.1:5353}"
+    local host="${bind%:*}"
+    if [ -z "$host" ] || [ "$host" = "$bind" ]; then
+        host="127.0.0.1"
+    fi
+    echo "$host"
+}
+
+normalize_tcp_port() {
+    local value="${1:-}"
+    local default_port="${2:-22}"
+    if [[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -ge 1 ] && [ "$value" -le 65535 ]; then
+        echo "$value"
+    else
+        echo "$default_port"
+    fi
+}
+
 normalize_public_access_vars() {
     PUBLIC_DOMAIN="${PUBLIC_DOMAIN#http://}"
     PUBLIC_DOMAIN="${PUBLIC_DOMAIN#https://}"
@@ -415,6 +449,7 @@ assert_https_reverse_proxy_compatibility() {
 write_install_log() {
     local keys=(
         PROJECT_NAME PROJECT_DIR SELECTED_CFG APP_PORT PUBLIC_DOMAIN PUBLIC_SCHEME WEB_PATH
+        SSH_PORT
         USE_PROXY ALLOW_ORIGINS VERIFY_TLS CA_BUNDLE_PATH READ_ONLY_MODE
         SUB_RATE_LIMIT_COUNT SUB_RATE_LIMIT_WINDOW_SEC TRAFFIC_STATS_CACHE_TTL
         ONLINE_CLIENTS_CACHE_TTL TRAFFIC_STATS_STALE_TTL ONLINE_CLIENTS_STALE_TTL
@@ -424,6 +459,8 @@ write_install_log() {
         MONITORING_ENABLED GRAFANA_WEB_PATH GRAFANA_HTTP_PORT
         ADGUARD_METRICS_ENABLED ADGUARD_METRICS_TARGETS ADGUARD_METRICS_PATH
         ADGUARD_LOKI_ENABLED ADGUARD_QUERYLOG_PATH ADGUARD_SYSTEMD_UNIT
+        ADGUARD_INSTALL_ENABLED ADGUARD_DNS_BIND ADGUARD_WEB_PORT ADGUARD_WEB_PATH ADGUARD_DOH_PATH
+        ADGUARD_ADMIN_USER ADGUARD_ADMIN_PASS
         SECURITY_MTLS_ENABLED SECURITY_MTLS_CA_PATH SECURITY_IP_ALLOWLIST
         MFA_TOTP_ENABLED MFA_TOTP_USERS MFA_TOTP_WS_STRICT
         PREEXISTING_NGINX_INSTALLED PREEXISTING_PROMETHEUS_INSTALLED
@@ -564,6 +601,8 @@ server {
 
     ssl_certificate ${NGINX_SSL_CERT};
     ssl_certificate_key ${NGINX_SSL_KEY};
+    port_in_redirect off;
+    absolute_redirect off;
 
 ${snippet_include}
 }
@@ -851,6 +890,204 @@ if not inserted:
 if inserted:
     path.write_text("\n".join(out) + "\n")
 PYTHON
+}
+
+install_adguard_home_binary() {
+    if [ -x /opt/AdGuardHome/AdGuardHome ]; then
+        return 0
+    fi
+
+    local arch
+    arch="$(uname -m 2>/dev/null || echo x86_64)"
+    case "$arch" in
+        x86_64|amd64) arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        armv7l|armv7) arch="armv7" ;;
+        *)
+            echo "❌ Unsupported architecture for AdGuardHome auto-install: ${arch}"
+            return 1
+            ;;
+    esac
+
+    apt_install curl tar wget >/dev/null 2>&1 || true
+
+    local tmp_dir
+    local archive_path
+    local download_url
+    local download_ok="false"
+    local -a download_urls
+    tmp_dir="$(mktemp -d)"
+    archive_path="${tmp_dir}/AdGuardHome.tar.gz"
+    download_urls=(
+        "https://static.adguard.com/adguardhome/release/AdGuardHome_linux_${arch}.tar.gz"
+        "https://github.com/AdguardTeam/AdGuardHome/releases/latest/download/AdGuardHome_linux_${arch}.tar.gz"
+    )
+
+    for download_url in "${download_urls[@]}"; do
+        echo "Скачивание AdGuard Home: ${download_url}"
+        if curl -fL \
+            --retry 3 \
+            --retry-all-errors \
+            --retry-delay 2 \
+            --connect-timeout 15 \
+            --max-time 300 \
+            --speed-time 30 \
+            --speed-limit 10240 \
+            -A "Mozilla/5.0" \
+            "$download_url" \
+            -o "$archive_path"; then
+            download_ok="true"
+            break
+        fi
+
+        echo "⚠️ curl download failed or timed out for ${download_url}. Trying wget fallback..."
+        if wget \
+            --tries=3 \
+            --timeout=30 \
+            --read-timeout=120 \
+            --user-agent="Mozilla/5.0" \
+            -O "$archive_path" \
+            "$download_url"; then
+            download_ok="true"
+            break
+        fi
+    done
+
+    if [ "$download_ok" != "true" ]; then
+        echo "❌ Не удалось скачать AdGuard Home архив (all mirrors failed)."
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    if ! tar -xzf "$archive_path" -C "$tmp_dir"; then
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    mkdir -p /opt
+    rm -rf /opt/AdGuardHome
+    cp -r "${tmp_dir}/AdGuardHome" /opt/AdGuardHome
+    chmod +x /opt/AdGuardHome/AdGuardHome
+    rm -rf "$tmp_dir"
+
+    if ! /opt/AdGuardHome/AdGuardHome -s install >/dev/null 2>&1; then
+        # Some hosts already have service skeletons; continue if binary is present.
+        [ -x /opt/AdGuardHome/AdGuardHome ] || return 1
+    fi
+
+    return 0
+}
+
+configure_adguard_home() {
+    if [ "${ADGUARD_INSTALL_ENABLED:-false}" != "true" ]; then
+        return 0
+    fi
+
+    ADGUARD_WEB_PATH="$(echo "${ADGUARD_WEB_PATH:-$(generate_random_path)}" | tr -cd '[:alnum:]')"
+    ADGUARD_DOH_PATH="$(echo "${ADGUARD_DOH_PATH:-$(generate_random_path)}" | tr -cd '[:alnum:]')"
+    ADGUARD_ADMIN_USER="$(echo "${ADGUARD_ADMIN_USER:-adg$(generate_random_path)}" | tr -cd '[:alnum:]')"
+    ADGUARD_ADMIN_PASS="${ADGUARD_ADMIN_PASS:-$(generate_random_secret 20)}"
+    [ -n "$ADGUARD_WEB_PATH" ] || ADGUARD_WEB_PATH="$(generate_random_path)"
+    [ -n "$ADGUARD_DOH_PATH" ] || ADGUARD_DOH_PATH="$(generate_random_path)"
+    [ -n "$ADGUARD_ADMIN_USER" ] || ADGUARD_ADMIN_USER="adg$(generate_random_path)"
+
+    local dns_host dns_port
+    dns_host="$(extract_host_from_bind "${ADGUARD_DNS_BIND:-127.0.0.1:5353}")"
+    dns_port="$(extract_port_from_bind "${ADGUARD_DNS_BIND:-127.0.0.1:5353}")"
+    local adguard_setup_web_port
+    adguard_setup_web_port=$((ADGUARD_WEB_PORT + 1))
+    if [ "$adguard_setup_web_port" -le 0 ] || [ "$adguard_setup_web_port" -gt 65535 ]; then
+        adguard_setup_web_port=3001
+    fi
+
+    echo "Настройка AdGuard Home..."
+    if ! install_adguard_home_binary; then
+        echo "❌ Не удалось установить AdGuard Home binary."
+        return 1
+    fi
+
+    systemctl daemon-reload >/dev/null 2>&1 || true
+    systemctl enable AdGuardHome >/dev/null 2>&1 || true
+    systemctl restart AdGuardHome >/dev/null 2>&1 || true
+
+    local i status_code=""
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+        status_code="$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${ADGUARD_WEB_PORT}/" 2>/dev/null || true)"
+        if [[ "$status_code" =~ ^(200|301|302|303|307|308)$ ]]; then
+            break
+        fi
+        sleep 1
+    done
+
+    local setup_code=""
+    setup_code="$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${ADGUARD_WEB_PORT}/control/install/get_addresses" 2>/dev/null || true)"
+    if [[ "$setup_code" =~ ^(200|204)$ ]]; then
+        local payload
+        payload="$(cat <<EOF
+    {"web":{"ip":"127.0.0.1","port":${adguard_setup_web_port}},"dns":{"ip":"${dns_host}","port":${dns_port}},"username":"${ADGUARD_ADMIN_USER}","password":"${ADGUARD_ADMIN_PASS}"}
+EOF
+)"
+        if ! curl -fsS -X POST "http://127.0.0.1:${ADGUARD_WEB_PORT}/control/install/configure" \
+            -H "Content-Type: application/json" \
+            --data "$payload" >/dev/null 2>&1; then
+            echo "⚠️ Не удалось завершить первичный setup AdGuard через API (возможно уже настроен ранее)."
+        fi
+    fi
+
+    # Ensure bcrypt is available so we can enforce generated credentials in YAML.
+    if ! python3 -c 'import bcrypt' >/dev/null 2>&1; then
+        apt_install python3-bcrypt >/dev/null 2>&1 || true
+    fi
+    if ! python3 -c 'import bcrypt' >/dev/null 2>&1; then
+        echo "❌ Не удалось загрузить модуль bcrypt (python3-bcrypt)."
+        echo "   Невозможно гарантировать синхронизацию сгенерированного пароля AdGuard."
+        return 1
+    fi
+
+    # Enforce critical fields in YAML for idempotent reruns.
+    python3 - "$dns_host" "$dns_port" "${ADGUARD_WEB_PORT}" "${ADGUARD_ADMIN_USER}" "${ADGUARD_ADMIN_PASS}" <<'PY'
+from pathlib import Path
+import re
+import sys
+import bcrypt
+
+dns_host = sys.argv[1]
+dns_port = sys.argv[2]
+web_port = sys.argv[3]
+admin_user = sys.argv[4]
+admin_pass = sys.argv[5]
+cfg = Path('/opt/AdGuardHome/AdGuardHome.yaml')
+
+if not cfg.exists():
+    raise SystemExit(0)
+
+text = cfg.read_text(encoding='utf-8', errors='ignore')
+
+def replace_block(text: str, key: str, replacement: str) -> str:
+    pattern = rf'(?ms)^{re.escape(key)}:\n(?:^[ \t].*\n?)*'
+    if re.search(pattern, text):
+        return re.sub(pattern, replacement, text, count=1)
+    if not text.endswith('\n'):
+        text += '\n'
+    return text + replacement
+
+text = replace_block(text, 'http', f'http:\n  address: 127.0.0.1:{web_port}\n')
+text = replace_block(text, 'dns', f'dns:\n  bind_hosts:\n    - {dns_host}\n  port: {dns_port}\n')
+hashed_pass = bcrypt.hashpw(admin_pass.encode('utf-8'), bcrypt.gensalt(rounds=10)).decode('utf-8')
+text = replace_block(text, 'users', f'users:\n  - name: {admin_user}\n    password: {hashed_pass}\n')
+
+cfg.write_text(text, encoding='utf-8')
+PY
+
+    systemctl restart AdGuardHome >/dev/null 2>&1 || true
+
+    local metrics_status=""
+    metrics_status="$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${ADGUARD_WEB_PORT}${ADGUARD_METRICS_PATH:-/control/prometheus/metrics}" 2>/dev/null || true)"
+    if [[ "$metrics_status" =~ ^(200|401|403)$ ]]; then
+        echo "✓ AdGuard Home поднят (metrics endpoint HTTP ${metrics_status})"
+    else
+        echo "⚠️ AdGuard Home запущен, но metrics endpoint вернул HTTP ${metrics_status:-000}"
+    fi
 }
 
 configure_monitoring_stack() {
@@ -1203,6 +1440,54 @@ ${mtls_directives}${allowlist_directives}    proxy_pass http://127.0.0.1:$GRAFAN
 SNIPPET
     fi
 
+    if [ "${ADGUARD_INSTALL_ENABLED:-false}" = "true" ]; then
+        cat >> "$snippet_file" <<SNIPPET
+
+# --- AdGuard Home panel under random path ---
+location = /$ADGUARD_WEB_PATH {
+    return 301 /$ADGUARD_WEB_PATH/;
+}
+location ^~ /$ADGUARD_WEB_PATH/ {
+${mtls_directives}${allowlist_directives}    proxy_pass http://127.0.0.1:$ADGUARD_WEB_PORT/;
+    absolute_redirect off;
+    port_in_redirect off;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Forwarded-Host \$host;
+    proxy_set_header X-Forwarded-Port \$server_port;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header X-Script-Name /$ADGUARD_WEB_PATH;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_redirect ~^https?://[^/]+:7443/(.*)$ /\$1;
+    proxy_redirect ~^https?://127\\.0\\.0\\.1(?::\d+)?/(.*)$ https://\$host/$ADGUARD_WEB_PATH/\$1;
+    proxy_redirect / /$ADGUARD_WEB_PATH/;
+}
+
+# --- AdGuard Home DoH under random path ---
+location = /$ADGUARD_DOH_PATH {
+    return 307 /$ADGUARD_DOH_PATH/;
+}
+location ^~ /$ADGUARD_DOH_PATH/ {
+${mtls_directives}${allowlist_directives}    proxy_pass http://127.0.0.1:$ADGUARD_WEB_PORT/dns-query;
+    absolute_redirect off;
+    port_in_redirect off;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Forwarded-Host \$host;
+    proxy_set_header X-Forwarded-Port \$server_port;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_redirect ~^https?://[^/]+:7443/dns-query/?$ /$ADGUARD_DOH_PATH/;
+    proxy_redirect ~^https?://127\\.0\\.0\\.1(?::\d+)?/(.*)$ https://\$host/$ADGUARD_DOH_PATH/\$1;
+    proxy_redirect / /$ADGUARD_DOH_PATH/;
+}
+SNIPPET
+    fi
+
     cat >> "$snippet_file" <<SNIPPET
 
 # --- Root favicon fallback (browser requests /favicon.ico) ---
@@ -1316,7 +1601,107 @@ run_post_install_checks() {
         fi
     fi
 
+    if [ "${ADGUARD_INSTALL_ENABLED:-false}" = "true" ]; then
+        local adg_panel_status=""
+        local adg_doh_status=""
+        adg_panel_status=$(curl -ksS -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${ADGUARD_WEB_PATH}/" 2>/dev/null || true)
+        if [[ "$adg_panel_status" =~ ^(200|301|302)$ ]]; then
+            echo "✅ AdGuard панель доступна (HTTP $adg_panel_status)"
+        else
+            echo "❌ AdGuard панель недоступна: HTTP ${adg_panel_status:-000}"
+            failures=$((failures + 1))
+        fi
+
+        adg_doh_status=$(curl -ksS -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${ADGUARD_DOH_PATH}/" 2>/dev/null || true)
+        if [[ "$adg_doh_status" =~ ^(200|302|307|308|400|401|403|404|405)$ ]]; then
+            echo "✅ AdGuard DoH endpoint отвечает (HTTP $adg_doh_status)"
+        else
+            echo "⚠️ AdGuard DoH endpoint вернул неожиданный код: HTTP ${adg_doh_status:-000}"
+            failures=$((failures + 1))
+        fi
+    fi
+
     return "$failures"
+}
+
+configure_fail2ban_security() {
+    mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d
+
+    local ssh_port_safe
+    ssh_port_safe="$(normalize_tcp_port "${SSH_PORT:-22}" "22")"
+    SSH_PORT="$ssh_port_safe"
+
+    cat > /etc/fail2ban/filter.d/multi-manager-api.conf <<'EOF'
+[Definition]
+# Match auth failures from Sub-Manager API and WebSocket handshake.
+failregex = ^<HOST> -.*"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) .*/api/v1/.*" (401|403)
+            ^<HOST> -.*"GET .*/ws(\?.*)? HTTP/.*" (401|403)
+EOF
+
+    local panel_path_regex="$WEB_PATH"
+    if [ "${MONITORING_ENABLED:-false}" = "true" ] && [ -n "${GRAFANA_WEB_PATH:-}" ]; then
+        panel_path_regex="${panel_path_regex}|${GRAFANA_WEB_PATH}"
+    fi
+    if [ "${ADGUARD_INSTALL_ENABLED:-false}" = "true" ] && [ -n "${ADGUARD_WEB_PATH:-}" ]; then
+        panel_path_regex="${panel_path_regex}|${ADGUARD_WEB_PATH}"
+    fi
+    panel_path_regex="${panel_path_regex}|admin|login|signin|auth"
+
+    cat > /etc/fail2ban/filter.d/multi-panels-auth.conf <<EOF
+[Definition]
+# Broad panel auth protection for nginx-backed panels (Sub-Manager/Grafana/AdGuard/other login endpoints).
+failregex = ^<HOST> -.*"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /(${panel_path_regex})(/.*)? HTTP/.*" (401|403)
+EOF
+
+    cat > /etc/fail2ban/jail.d/multi-manager.local <<EOF
+[multi-manager-api]
+enabled  = true
+port     = http,https
+filter   = multi-manager-api
+logpath  = /var/log/nginx/access.log
+maxretry = 5
+findtime = 600
+bantime  = 300
+
+[multi-panels-auth]
+enabled  = true
+port     = http,https
+filter   = multi-panels-auth
+logpath  = /var/log/nginx/access.log
+maxretry = 8
+findtime = 600
+bantime  = 1800
+
+[sshd-custom]
+enabled  = true
+port     = ${ssh_port_safe}
+filter   = sshd
+backend  = systemd
+maxretry = 6
+findtime = 600
+bantime  = 3600
+EOF
+
+    systemctl restart fail2ban >/dev/null 2>&1 || true
+}
+
+configure_ufw_firewall() {
+    local ssh_port_safe
+    ssh_port_safe="$(normalize_tcp_port "${SSH_PORT:-22}" "22")"
+    SSH_PORT="$ssh_port_safe"
+
+    apt_install ufw >/dev/null 2>&1 || true
+    if ! command -v ufw >/dev/null 2>&1; then
+        echo "⚠️ ufw не найден, пропускаем настройку firewall."
+        return 0
+    fi
+
+    ufw --force default deny incoming >/dev/null 2>&1 || true
+    ufw --force default allow outgoing >/dev/null 2>&1 || true
+    ufw allow 80/tcp >/dev/null 2>&1 || true
+    ufw allow 443/tcp >/dev/null 2>&1 || true
+    ufw allow "${ssh_port_safe}/tcp" >/dev/null 2>&1 || true
+    ufw --force enable >/dev/null 2>&1 || true
 }
 
 uninstall() {
@@ -1328,6 +1713,8 @@ uninstall() {
     rm -f "/etc/systemd/system/$PROJECT_NAME.service"
     rm -f "/etc/fail2ban/jail.d/multi-manager.local"
     rm -f "/etc/fail2ban/filter.d/multi-manager.conf"
+    rm -f "/etc/fail2ban/filter.d/multi-manager-api.conf"
+    rm -f "/etc/fail2ban/filter.d/multi-panels-auth.conf"
     systemctl daemon-reload
     systemctl restart fail2ban
     if [ -f "${SELECTED_CFG}.bak" ]; then
@@ -1395,6 +1782,8 @@ uninstall_nuke() {
 
     rm -f "/etc/fail2ban/jail.d/multi-manager.local"
     rm -f "/etc/fail2ban/filter.d/multi-manager.conf"
+    rm -f "/etc/fail2ban/filter.d/multi-manager-api.conf"
+    rm -f "/etc/fail2ban/filter.d/multi-panels-auth.conf"
     systemctl restart fail2ban >/dev/null 2>&1 || true
 
     rm -f /etc/prometheus/rules/sub-manager-rules.yml
@@ -1464,6 +1853,14 @@ update_project() {
     ADGUARD_LOKI_ENABLED=${ADGUARD_LOKI_ENABLED:-"false"}
     ADGUARD_QUERYLOG_PATH=${ADGUARD_QUERYLOG_PATH:-"/opt/AdGuardHome/data/querylog.json"}
     ADGUARD_SYSTEMD_UNIT=${ADGUARD_SYSTEMD_UNIT:-"AdGuardHome.service"}
+    ADGUARD_INSTALL_ENABLED=${ADGUARD_INSTALL_ENABLED:-"false"}
+    ADGUARD_DNS_BIND=${ADGUARD_DNS_BIND:-"127.0.0.1:5353"}
+    ADGUARD_WEB_PORT=${ADGUARD_WEB_PORT:-"3000"}
+    ADGUARD_WEB_PATH=${ADGUARD_WEB_PATH:-""}
+    ADGUARD_DOH_PATH=${ADGUARD_DOH_PATH:-""}
+    ADGUARD_ADMIN_USER=${ADGUARD_ADMIN_USER:-""}
+    ADGUARD_ADMIN_PASS=${ADGUARD_ADMIN_PASS:-""}
+    SSH_PORT=${SSH_PORT:-"22"}
     PUBLIC_DOMAIN=${PUBLIC_DOMAIN:-"$(hostname -f)"}
     PUBLIC_SCHEME=${PUBLIC_SCHEME:-"https"}
     SECURITY_MTLS_ENABLED=${SECURITY_MTLS_ENABLED:-"false"}
@@ -1544,6 +1941,9 @@ update_project() {
     systemctl start "$PROJECT_NAME"
 
     configure_monitoring_stack
+    configure_adguard_home
+    configure_fail2ban_security
+    configure_ufw_firewall
     SNIPPET_FILE="/etc/nginx/snippets/${PROJECT_NAME}.conf"
     mkdir -p /etc/nginx/snippets
     generate_nginx_snippet "$SNIPPET_FILE"
@@ -1561,6 +1961,16 @@ update_project() {
         echo "  Путь: /$GRAFANA_WEB_PATH/"
         echo "  Способ подключения: Nginx reverse proxy -> Grafana (Grafana login)"
         echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/$GRAFANA_WEB_PATH/"
+    fi
+    if [ "${ADGUARD_INSTALL_ENABLED:-false}" = "true" ]; then
+        echo -e "\033[1;34mAdGuard Home\033[0m"
+        echo "  DNS bind: ${ADGUARD_DNS_BIND}"
+        echo "  Panel path: /${ADGUARD_WEB_PATH}/"
+        echo "  DoH path: /${ADGUARD_DOH_PATH}/"
+        echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${ADGUARD_WEB_PATH}/"
+        echo "  DoH URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${ADGUARD_DOH_PATH}/"
+        echo "  Login: ${ADGUARD_ADMIN_USER}"
+        echo "  Password: ${ADGUARD_ADMIN_PASS}"
     fi
     echo "Ops:"
     echo "  sudo bash $SCRIPT_DIR/scripts/ops/smoke-test.sh"
@@ -1635,6 +2045,8 @@ read -p "Имя проекта/сервиса (sub-manager): " PROJECT_NAME
 PROJECT_NAME=${PROJECT_NAME:-sub-manager}
 read -p "Локальный порт Python (666): " APP_PORT
 APP_PORT=${APP_PORT:-666}
+read -p "SSH порт для fail2ban/UFW (22): " SSH_PORT
+SSH_PORT="$(normalize_tcp_port "${SSH_PORT:-22}" "22")"
 read -p "Публичный домен для ссылок (без http/https, Enter = auto): " PUBLIC_DOMAIN
 read -p "Схема публичного URL (http/https, default: https): " PUBLIC_SCHEME
 PUBLIC_SCHEME=${PUBLIC_SCHEME:-https}
@@ -1693,6 +2105,13 @@ ADGUARD_METRICS_PATH="/control/prometheus/metrics"
 ADGUARD_LOKI_ENABLED="false"
 ADGUARD_QUERYLOG_PATH="/opt/AdGuardHome/data/querylog.json"
 ADGUARD_SYSTEMD_UNIT="AdGuardHome.service"
+ADGUARD_INSTALL_ENABLED="${ADGUARD_INSTALL_ENABLED:-false}"
+ADGUARD_DNS_BIND="${ADGUARD_DNS_BIND:-127.0.0.1:5353}"
+ADGUARD_WEB_PORT="${ADGUARD_WEB_PORT:-3000}"
+ADGUARD_WEB_PATH="${ADGUARD_WEB_PATH:-}"
+ADGUARD_DOH_PATH="${ADGUARD_DOH_PATH:-}"
+ADGUARD_ADMIN_USER="${ADGUARD_ADMIN_USER:-}"
+ADGUARD_ADMIN_PASS="${ADGUARD_ADMIN_PASS:-}"
 
 resource_guard_detect_profile
 resource_guard_apply_runtime_defaults
@@ -1805,6 +2224,13 @@ if [ "$MONITORING_ENABLED" = "true" ]; then
         ADGUARD_QUERYLOG_PATH=${ADGUARD_QUERYLOG_PATH:-/opt/AdGuardHome/data/querylog.json}
         read -p "Systemd unit AdGuard для journal (default: AdGuardHome.service): " ADGUARD_SYSTEMD_UNIT
         ADGUARD_SYSTEMD_UNIT=${ADGUARD_SYSTEMD_UNIT:-AdGuardHome.service}
+    fi
+
+    if [ "$ADGUARD_INSTALL_ENABLED" = "true" ]; then
+        ADGUARD_WEB_PATH="${ADGUARD_WEB_PATH:-$(generate_random_path)}"
+        ADGUARD_DOH_PATH="${ADGUARD_DOH_PATH:-$(generate_random_path)}"
+        ADGUARD_ADMIN_USER="${ADGUARD_ADMIN_USER:-adg$(generate_random_path)}"
+        ADGUARD_ADMIN_PASS="${ADGUARD_ADMIN_PASS:-$(generate_random_secret 20)}"
     fi
 else
     GRAFANA_WEB_PATH="grafana"
@@ -1954,55 +2380,33 @@ ensure_nginx_http_mime_types
 
 nginx -t && systemctl restart nginx
 
-# Fail2Ban
-mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d
-
-cat > /etc/fail2ban/filter.d/multi-manager.conf <<'EOF'
-[Definition]
-# Match real auth failures across API methods and WebSocket handshake.
-failregex = ^<HOST> -.*"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) .*/api/v1/.*" (401|403)
-            ^<HOST> -.*"GET .*/ws(\?.*)? HTTP/.*" (401|403)
-EOF
-
-cat > /etc/fail2ban/jail.d/multi-manager.local <<EOF
-[multi-manager]
-enabled  = true
-port     = 0-65535
-filter   = multi-manager
-logpath  = /var/log/nginx/access.log
-maxretry = 5
-findtime = 600
-bantime  = 300
-EOF
-
-systemctl restart fail2ban
+configure_fail2ban_security
+configure_ufw_firewall
 
 configure_monitoring_stack
+configure_adguard_home
 
 # Запуск сервиса
 echo "Запуск сервиса..."
 resource_guard_restart_services_sequentially "$PROJECT_NAME.service"
 
-echo -e "\n✅ УСТАНОВКА ЗАВЕРШЕНА!"
-echo "Порт API: $APP_PORT"
-echo -e "\n\033[1;35m******** ДОСТУПЫ ********\033[0m"
-echo -e "\033[1;36mПанель\033[0m"
-echo "  Путь: /$WEB_PATH/"
-echo "  Способ подключения: Nginx reverse proxy -> FastAPI (логин/пароль системы)"
-echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/$WEB_PATH/"
-echo "  Каноничный URL панели: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/$WEB_PATH/"
-echo "  Используйте именно этот URL (без /my-panel, если путь сгенерирован случайно)."
-if [ "$MONITORING_ENABLED" = "true" ]; then
-    echo -e "\033[1;33mGrafana\033[0m"
-    echo "  Путь: /$GRAFANA_WEB_PATH/"
-    echo "  Способ подключения: Nginx reverse proxy -> Grafana (Grafana login)"
-    echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/$GRAFANA_WEB_PATH/"
-fi
-echo "Ops:"
-echo "  sudo bash $SCRIPT_DIR/scripts/ops/smoke-test.sh"
-echo "  sudo bash $SCRIPT_DIR/scripts/ops/backup-restore-check.sh"
-echo "  sudo bash $SCRIPT_DIR/scripts/ops/hardening-profile.sh audit"
-echo -e "\033[1;35m*************************\033[0m"
+# ===== КРАСИВЫЙ ОТЧЕТ ВЫВОДА ВЫПОЛНЯЕТСЯ НИЖЕ =====
+echo ""
+# Красивый отчет с полной информацией о доступах
+echo "Debug: Preparing to print installation report..."
+print_installation_report \
+    "$APP_PORT" \
+    "$WEB_PATH" \
+    "$PUBLIC_DOMAIN" \
+    "$PUBLIC_SCHEME" \
+    "${GRAFANA_WEB_PATH:-}" \
+    "${MONITORING_ENABLED:-false}" \
+    "${ADGUARD_WEB_PATH:-}" \
+    "${ADGUARD_DOH_PATH:-}" \
+    "${ADGUARD_ADMIN_USER:-}" \
+    "${ADGUARD_ADMIN_PASS:-}" \
+    "${ADGUARD_INSTALL_ENABLED:-false}" \
+    "${SELECTED_CFG:-}"
 
 if ! run_post_install_checks; then
     echo "❌ Пост-проверка установки не пройдена."

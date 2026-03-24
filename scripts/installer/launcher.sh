@@ -28,7 +28,8 @@ preview_screen() {
                 "2.6 Back"
             ;;
         xui)
-            installer_render_menu "Advanced Install: 3x-ui + Sub-Manager" "Choose a preset that includes 3x-ui." 0 \
+            installer_render_menu "Advanced Install: 3x-ui (with optional Sub-Manager)" "Choose a preset that includes 3x-ui." 0 \
+                "3.0 nginx + 3x-ui (minimal, no Sub-Manager)" \
                 "3.1 3x-ui + Sub-Manager only" \
                 "3.2 3x-ui + Sub-Manager + Prometheus + Grafana" \
                 "3.3 3x-ui + Sub-Manager + Prometheus + Grafana + Loki + promtail" \
@@ -65,7 +66,9 @@ show_execution_result() {
         if [ "$status" -eq 0 ]; then
             report_mark_success
             report_finalize_outputs
-            report_print_summary
+            if [ "${INSTALLER_SHOW_SUMMARY:-false}" = "true" ]; then
+                report_print_summary
+            fi
         else
             report_mark_failure
             report_finalize_outputs
@@ -98,8 +101,9 @@ run_with_result() {
 handle_xui_menu() {
     local choice
     choice="$(installer_select_menu \
-        "Advanced Install: 3x-ui + Sub-Manager" \
+        "Advanced Install: 3x-ui (with optional Sub-Manager)" \
         "Choose a preset that includes 3x-ui." \
+        "3.0 nginx + 3x-ui (minimal, no Sub-Manager)" \
         "3.1 3x-ui + Sub-Manager only" \
         "3.2 3x-ui + Sub-Manager + Prometheus + Grafana" \
         "3.3 3x-ui + Sub-Manager + Prometheus + Grafana + Loki + promtail" \
@@ -107,11 +111,12 @@ handle_xui_menu() {
         "3.5 3x-ui + Sub-Manager + Custom Extras" \
         "3.6 Back")"
     case "$choice" in
-        0) run_with_result "3.1 Selected" run_xui_preset "only" ;;
-        1) run_with_result "3.2 Selected" run_xui_preset "monitoring" ;;
-        2) run_with_result "3.3 Selected" run_xui_preset "logs" ;;
-        3) run_with_result "3.4 Selected" run_xui_preset "adguard" ;;
-        4) run_with_result "3.5 Selected" run_xui_preset "custom" ;;
+        0) run_with_result "3.0 Selected" run_xui_preset "minimal" ;;
+        1) run_with_result "3.1 Selected" run_xui_preset "only" ;;
+        2) run_with_result "3.2 Selected" run_xui_preset "monitoring" ;;
+        3) run_with_result "3.3 Selected" run_xui_preset "logs" ;;
+        4) run_with_result "3.4 Selected" run_xui_preset "adguard" ;;
+        5) run_with_result "3.5 Selected" run_xui_preset "custom" ;;
         __QUIT__) exit 0 ;;
     esac
 }
@@ -142,7 +147,7 @@ handle_update_menu() {
     choice="$(installer_select_menu \
         "Update Existing Installation" \
         "Choose what should be updated or repaired." \
-        "4.1 Full Update" \
+        "● 4.1 Full Update (recommended)" \
         "4.2 Backend Only" \
         "4.3 Frontend Only" \
         "4.4 Nginx Config Only" \
@@ -163,12 +168,12 @@ handle_remove_menu() {
     choice="$(installer_select_menu \
         "Remove Installation" \
         "Choose whether the database should be preserved." \
-        "5.1 Remove and Keep Database" \
-        "5.2 Remove Including Database" \
+        "● 5.1 Full Cleanup + Keep Database (recommended)" \
+        "5.2 Full Cleanup + Remove Database" \
         "5.3 Back")"
     case "$choice" in
-        0) run_with_result "5.1 Remove and Keep Database" run_remove_mode "keep-db" ;;
-        1) run_with_result "5.2 Remove Including Database" run_remove_mode "drop-db" ;;
+        0) run_with_result "5.1 Full Cleanup + Keep Database" run_remove_mode "keep-db" ;;
+        1) run_with_result "5.2 Full Cleanup + Remove Database" run_remove_mode "drop-db" ;;
         __QUIT__) exit 0 ;;
     esac
 }
