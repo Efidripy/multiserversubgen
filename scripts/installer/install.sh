@@ -1724,6 +1724,7 @@ findtime = 600
 bantime  = 3600
 EOF
 
+    systemctl enable fail2ban >/dev/null 2>&1 || true
     systemctl restart fail2ban >/dev/null 2>&1 || true
 }
 
