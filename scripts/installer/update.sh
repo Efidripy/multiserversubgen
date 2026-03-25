@@ -793,6 +793,68 @@ location ^~ /$WEB_PATH/ {
 SNIPPET
 }
 
+configure_fail2ban_security() {
+    mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d
+
+    local ssh_port_safe
+    ssh_port_safe="$(awk '/^[[:space:]]*Port[[:space:]]+[0-9]+/{print $2; exit}' /etc/ssh/sshd_config 2>/dev/null || true)"
+    [ -n "$ssh_port_safe" ] || ssh_port_safe="22"
+
+    cat > /etc/fail2ban/filter.d/multi-manager-api.conf <<'EOF'
+[Definition]
+# Match auth failures from Sub-Manager API and WebSocket handshake.
+failregex = ^<HOST> -.*"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) .*/api/v1/.*" (401|403)
+            ^<HOST> -.*"GET .*/ws(\?.*)? HTTP/.*" (401|403)
+EOF
+
+    local panel_path_regex="$WEB_PATH"
+    if [ "${MONITORING_ENABLED:-false}" = "true" ] && [ -n "${GRAFANA_WEB_PATH:-}" ]; then
+        panel_path_regex="${panel_path_regex}|${GRAFANA_WEB_PATH}"
+    fi
+    if [ "${ADGUARD_INSTALL_ENABLED:-false}" = "true" ] && [ -n "${ADGUARD_WEB_PATH:-}" ]; then
+        panel_path_regex="${panel_path_regex}|${ADGUARD_WEB_PATH}"
+    fi
+    panel_path_regex="${panel_path_regex}|admin|login|signin|auth"
+
+    cat > /etc/fail2ban/filter.d/multi-panels-auth.conf <<EOF
+[Definition]
+# Broad panel auth protection for nginx-backed panels (Sub-Manager/Grafana/AdGuard/other login endpoints).
+failregex = ^<HOST> -.*"(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS) /(${panel_path_regex})(/.*)? HTTP/.*" (401|403)
+EOF
+
+    cat > /etc/fail2ban/jail.d/multi-manager.local <<EOF
+[multi-manager-api]
+enabled  = true
+port     = http,https
+filter   = multi-manager-api
+logpath  = /var/log/nginx/access.log
+maxretry = 5
+findtime = 600
+bantime  = 300
+
+[multi-panels-auth]
+enabled  = true
+port     = http,https
+filter   = multi-panels-auth
+logpath  = /var/log/nginx/access.log
+maxretry = 8
+findtime = 600
+bantime  = 1800
+
+[sshd-custom]
+enabled  = true
+port     = ${ssh_port_safe}
+filter   = sshd
+backend  = systemd
+maxretry = 6
+findtime = 600
+bantime  = 3600
+EOF
+
+    systemctl enable fail2ban >/dev/null 2>&1 || true
+    systemctl restart fail2ban >/dev/null 2>&1 || true
+}
+
 run_post_update_checks() {
     echo ""
     echo "Пост-проверка после обновления:"
@@ -1303,6 +1365,8 @@ case $update_choice in
         fi
         ;;
 esac
+
+configure_fail2ban_security
 
 echo ""
 echo "======================================================"
