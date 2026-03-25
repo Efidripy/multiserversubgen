@@ -94,6 +94,7 @@ xui_ensure_system_prerequisites() {
         libnginx-mod-stream \
         openssl \
         sqlite3 \
+        fail2ban \
         certbot \
         python3-certbot-nginx >/dev/null; then
         sudo DEBIAN_FRONTEND=noninteractive dpkg --force-confnew --configure -a >/dev/null 2>&1 || true
@@ -108,6 +109,7 @@ xui_ensure_system_prerequisites() {
             libnginx-mod-stream \
             openssl \
             sqlite3 \
+            fail2ban \
             certbot \
             python3-certbot-nginx >/dev/null
     fi
@@ -933,9 +935,54 @@ xui_configure_nginx_and_tls() {
     xui_install_root_landing_template || true
     sudo nginx -t
     sudo systemctl reload nginx
+    xui_configure_fail2ban_security
 
     PROFILE_XUI_CERT_PATH="$domain_cert"
     PROFILE_XUI_CERT_KEY_PATH="$domain_key"
+}
+
+xui_configure_fail2ban_security() {
+    local ssh_port
+    local panel_path
+
+    ssh_port="$(awk '/^[[:space:]]*Port[[:space:]]+[0-9]+/{print $2; exit}' /etc/ssh/sshd_config 2>/dev/null || true)"
+    [ -n "$ssh_port" ] || ssh_port="22"
+
+    panel_path="${PROFILE_XUI_PANEL_PATH:-}"
+    panel_path="${panel_path#/}"
+    panel_path="${panel_path%/}"
+    [ -n "$panel_path" ] || panel_path="xui"
+
+    sudo mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d
+
+    sudo tee /etc/fail2ban/filter.d/xui-panel-login.conf >/dev/null <<EOF
+[Definition]
+failregex = ^<HOST> -.* "(GET|POST) /${panel_path}/login[^\"]* HTTP/[0-9.]+" (200|401|403|404|429) .*
+ignoreregex =
+EOF
+
+    sudo tee /etc/fail2ban/jail.d/xui-core.local >/dev/null <<EOF
+[sshd]
+enabled = true
+port = ${ssh_port}
+backend = systemd
+maxretry = 6
+findtime = 10m
+bantime = 1h
+
+[xui-panel-login]
+enabled = true
+port = http,https
+filter = xui-panel-login
+logpath = /var/log/nginx/access.log
+maxretry = 15
+findtime = 10m
+bantime = 2h
+action = %(action_)s
+EOF
+
+    sudo systemctl enable fail2ban >/dev/null 2>&1 || true
+    sudo systemctl restart fail2ban >/dev/null 2>&1 || true
 }
 
 xui_print_runtime_summary() {
