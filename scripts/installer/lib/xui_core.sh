@@ -498,12 +498,18 @@ xui_install_root_landing_template() {
     local extract_dir=""
     local web_root=""
     local zip_candidates=()
+    local selected_pool=""
 
-    if [ -d "$local_pool" ]; then
-        while IFS= read -r f; do zip_candidates+=("$f"); done < <(find "$local_pool" -maxdepth 1 -type f -name '*.zip' | sort)
-    fi
+    # Prefer the curated sample pool (10 approved archives). Use the broad local pool
+    # only when sample pool is unavailable/empty.
     if [ -d "$sample_pool" ]; then
         while IFS= read -r f; do zip_candidates+=("$f"); done < <(find "$sample_pool" -maxdepth 1 -type f -name '*.zip' | sort)
+    fi
+    if [ "${#zip_candidates[@]}" -gt 0 ]; then
+        selected_pool="sample"
+    elif [ -d "$local_pool" ]; then
+        while IFS= read -r f; do zip_candidates+=("$f"); done < <(find "$local_pool" -maxdepth 1 -type f -name '*.zip' | sort)
+        [ "${#zip_candidates[@]}" -gt 0 ] && selected_pool="local"
     fi
 
     sudo mkdir -p "$target_dir"
@@ -551,6 +557,7 @@ PY
                 if [ -f "$target_dir/index.html" ]; then
                     PROFILE_XUI_MAIN_TEMPLATE_SOURCE="zip"
                     PROFILE_XUI_MAIN_TEMPLATE_NAME="$(basename "$selected_zip")"
+                    [ -n "$selected_pool" ] && PROFILE_XUI_MAIN_TEMPLATE_POOL="$selected_pool"
                     rm -rf "$extract_dir"
                     return 0
                 fi
@@ -825,6 +832,12 @@ xui_write_site_configs() {
     local reality_key="$6"
 
     sudo mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
+
+    # Stream mux owns 443. Keep default vhost disabled to avoid bind() conflicts and
+    # remove stale *.conf variants for the same domains that can cause duplicate server_name.
+    sudo rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/default.conf /etc/nginx/sites-enabled/default.* 2>/dev/null || true
+    sudo rm -f "/etc/nginx/sites-available/${domain}.conf" "/etc/nginx/sites-enabled/${domain}.conf" 2>/dev/null || true
+    sudo rm -f "/etc/nginx/sites-available/${reality_domain}.conf" "/etc/nginx/sites-enabled/${reality_domain}.conf" 2>/dev/null || true
 
     sudo tee /etc/nginx/sites-available/80.conf >/dev/null <<EOF
 server {
