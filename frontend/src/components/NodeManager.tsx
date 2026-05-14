@@ -16,8 +16,9 @@ interface Node {
 interface BatchPreviewRow {
   name: string;
   url: string;
-  user: string;
-  password: string;
+  user?: string;
+  password?: string;
+  bearer_token?: string;
 }
 
 const NODE_STATUS_CACHE_KEY = 'sub_manager_node_status_cache_v1';
@@ -46,7 +47,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [addMode, setAddMode] = useState<'form' | 'batch'>('form');
-  const [formData, setFormData] = useState({ name: '', url: '', user: '', password: '' });
+  const [formData, setFormData] = useState({ name: '', url: '', user: '', password: '', bearer_token: '' });
   const [batchText, setBatchText] = useState('');
   const [batchPreview, setBatchPreview] = useState<BatchPreviewRow[]>([]);
   const [batchAdded, setBatchAdded] = useState(false);
@@ -151,11 +152,34 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     setError('');
     setSuccess('');
 
+    // Validate that either bearer_token OR (user + password) is provided
+    const hasToken = formData.bearer_token.trim();
+    const hasCredentials = formData.user.trim() && formData.password.trim();
+
+    if (!hasToken && !hasCredentials) {
+      setError(t('nodes.fillConnectionFields'));
+      setLoading(false);
+      return;
+    }
+
     try {
-      await api.post('/v1/nodes', formData, {
+      // Build payload - only include filled fields
+      const payload: any = {
+        name: formData.name,
+        url: formData.url,
+      };
+      
+      if (hasToken) {
+        payload.bearer_token = formData.bearer_token;
+      } else {
+        payload.user = formData.user;
+        payload.password = formData.password;
+      }
+
+      await api.post('/v1/nodes', payload, {
         auth: { username: getAuth().user, password: getAuth().password }
       });
-      setFormData({ name: '', url: '', user: '', password: '' });
+      setFormData({ name: '', url: '', user: '', password: '', bearer_token: '' });
       setSuccess(t('nodes.addSuccess'));
       invalidateSharedSnapshot();
       loadNodes();
@@ -172,12 +196,20 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     const lines = batchText.split('\n').map((line) => line.trim()).filter(Boolean);
     const rows: BatchPreviewRow[] = lines.map((line, idx) => {
       const parts = line.split(/\s+/);
-      return {
+      const row: BatchPreviewRow = {
         name: `Server-${idx + 1}`,
         url: parts[0] || '',
-        user: parts[1] || '',
-        password: parts[2] || '',
       };
+      
+      // Check if second part is bearer token (starts with "bearer:")
+      if (parts[1]?.startsWith('bearer:')) {
+        row.bearer_token = parts[1].substring(7); // Remove "bearer:" prefix
+      } else {
+        row.user = parts[1] || '';
+        row.password = parts[2] || '';
+      }
+      
+      return row;
     });
     setBatchPreview(rows);
     setBatchAdded(false);
@@ -218,7 +250,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
 
   const handleModeSwitch = (mode: 'form' | 'batch') => {
     setAddMode(mode);
-    setFormData({ name: '', url: '', user: '', password: '' });
+    setFormData({ name: '', url: '', user: '', password: '', bearer_token: '' });
     setBatchText('');
     setBatchPreview([]);
     setBatchAdded(false);
@@ -303,18 +335,31 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
   const handleCheckConnection = async () => {
     setError('');
     setSuccess('');
-    if (!formData.url.trim() || !formData.user.trim() || !formData.password.trim()) {
+    
+    const hasToken = formData.bearer_token.trim();
+    const hasCredentials = formData.user.trim() && formData.password.trim();
+    
+    if (!formData.url.trim()) {
+      setError(t('nodes.fillConnectionFields'));
+      return;
+    }
+    
+    if (!hasToken && !hasCredentials) {
       setError(t('nodes.fillConnectionFields'));
       return;
     }
 
     setCheckingConnection(true);
     try {
-      const res = await api.post('/v1/nodes/check-connection', {
-        url: formData.url,
-        user: formData.user,
-        password: formData.password,
-      }, {
+      const checkData: any = { url: formData.url };
+      if (hasToken) {
+        checkData.bearer_token = formData.bearer_token;
+      } else {
+        checkData.user = formData.user;
+        checkData.password = formData.password;
+      }
+      
+      const res = await api.post('/v1/nodes/check-connection', checkData, {
         auth: { username: getAuth().user, password: getAuth().password }
       });
       const payload = res.data || {};
@@ -396,7 +441,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                       type="text"
                       name="url"
                       className="form-control"
-                      placeholder="https://host/path/"
+                      placeholder="https://server:443/path/"
                       value={formData.url}
                       onChange={(e) => setFormData({ ...formData, url: e.target.value })}
                       style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
@@ -410,7 +455,6 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                       value={formData.user}
                       onChange={(e) => setFormData({ ...formData, user: e.target.value })}
                       style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                      required
                     />
                     <input
                       type="password"
@@ -420,9 +464,26 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                       style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                      required
                     />
                   </div>
+
+                  <div className="panel-block__stack">
+                    <div>
+                      <label className="form-label small" style={{ color: colors.text.secondary }}>
+                        Bearer Token
+                      </label>
+                      <input
+                        type="password"
+                        name="bearer_token"
+                        className="form-control"
+                        placeholder="token or bearer:TOKEN"
+                        value={formData.bearer_token}
+                        onChange={(e) => setFormData({ ...formData, bearer_token: e.target.value })}
+                        style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                      />
+                    </div>
+                  </div>
+
                   <div className="panel-inline-actions">
                     <button
                       type="button"
@@ -446,14 +507,14 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
               ) : (
                 <div className="panel-block__stack">
                   <p className="small mb-0" style={{ color: colors.text.secondary }}>
-                    {t('nodes.batchFormat')}: <span className="mono-inline">https://server:443/path admin password</span>
+                    Примеры: <span className="mono-inline">https://server:443/path admin password</span> • <span className="mono-inline">https://server:443/path bearer:TOKEN</span>
                   </p>
                   <textarea
                     className="form-control form-control-sm"
                     rows={6}
                     value={batchText}
                     onChange={(e) => { setBatchText(e.target.value); setBatchPreview([]); setBatchAdded(false); }}
-                    placeholder={'https://server1.com:443 admin password123\nhttps://server2.com/path admin2 password456'}
+                    placeholder={"https://server:443/path admin password\nhttps://server:443/path bearer:TOKEN\nhttps://server:443/path admin2 password"}
                     style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
                   />
                   <div className="panel-inline-actions">

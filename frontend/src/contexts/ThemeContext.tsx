@@ -100,6 +100,19 @@ const normalizeStylePreset = (value: string | null): StylePreset => (value === '
 const normalizeTheme = (value: string | null): Theme => (value === 'light' ? 'light' : 'dark');
 const normalizeThemeMode = (value: string | null): ThemeMode => (value === '1' || value === '2' || value === '3' ? value : '2');
 
+        // Get initial theme from window.APP_CONFIG if available
+        const getInitialThemeFromConfig = (): Theme => {
+          try {
+            const config = (window as any).APP_CONFIG;
+            if (config?.theme === 'light' || config?.theme === 'dark') {
+              return config.theme as Theme;
+            }
+          } catch (e) {
+            // Ignore errors, fall back to default
+          }
+          return 'dark';
+        };
+
 const resolveThemeMode = (theme: Theme, stylePreset: StylePreset): ThemeMode => {
   if (theme === 'light') return '1';
   return stylePreset === '3' ? '3' : '2';
@@ -156,7 +169,9 @@ export const ThemeProvider: React.FC<ThemeProviderProps> = ({ children }) => {
 
   const initialConfig = resolveThemeConfig(themeMode);
   const [theme, setTheme] = useState<Theme>(() => {
-    return initialConfig.theme;
+  // Try to get theme from window.APP_CONFIG first
+  const configTheme = getInitialThemeFromConfig();
+  return configTheme || initialConfig.theme;
   });
   const [stylePreset, setStylePresetState] = useState<StylePreset>(() => {
     return initialConfig.stylePreset;

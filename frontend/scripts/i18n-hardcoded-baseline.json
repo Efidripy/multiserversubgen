@@ -1,7 +1,11 @@
 {
-  "generatedAt": "2026-03-20T18:21:41.805Z",
+  "generatedAt": "2026-05-10T19:40:12.422Z",
   "count": 233,
   "ids": [
+    "src/components/NodeManager.tsx:472:jsx-text:Bearer Token",
+    "src/components/NodeManager.tsx:479:attr-string:token or bearer:TOKEN",
+    "src/components/NodeManager.tsx:509:jsx-text:Примеры:",
+    "src/components/NodeManager.tsx:380:jsx-text:{showIntake && (",
     "src/App.tsx:104:jsx-text:= 1024 && unitIndex",
     "src/App.tsx:348:jsx-text:Date.now() && expiry - Date.now()",
     "src/App.tsx:635:jsx-text:{ e.preventDefault(); handleLogin(); }}>",
@@ -232,8 +236,8 @@
     "src/services/indexedDBManager.ts:65:jsx-text:(storeName: string, key: any): Promise",
     "src/services/pollingScheduler.ts:5:jsx-text:void | Promise",
     "src/services/staleCache.ts:12:jsx-text:(key: string, maxAgeMs: number): StaleCacheReadResult",
-    "src/services/swTester.ts:133:call-string:Нет сетевого соединения и кэш недоступен",
-    "src/services/swTester.ts:137:call-string:Response is undefined",
-    "src/services/useTrafficStatsSubscription.ts:20:jsx-text:void | Promise"
+    "src/services/swTester.ts:135:call-string:Нет сетевого соединения и кэш недоступен",
+    "src/services/swTester.ts:139:call-string:Response is undefined",
+    "src/services/useTrafficStatsSubscription.ts:21:jsx-text:void | Promise"
   ]
 }

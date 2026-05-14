@@ -109,26 +109,194 @@ def login_panel(
     username: str,
     password: str,
     *,
+    bearer_token: str | None = None,
     timeout: float | None = None,
     retries: int | None = None,
 ) -> bool:
     """Авторизоваться на node panel панели.
 
-    Сначала пробует ``POST {base_url}/panel/login`` (корректный путь для
-    установок под подпутём), при получении 404 делает fallback на
-    ``POST {base_url}/login`` (стандартный путь без подпутья).
+    Поддерживает три метода авторизации (в порядке приоритета):
+    1. Bearer token (если передан) - пропускает CSRF, не нужна session cookie
+    2. CSRF token (новые версии 3x-ui) - GET /csrf-token + POST /login с X-CSRF-Token header
+    3. Legacy метод (старые версии) - POST /panel/login или /login
 
     Args:
         session: requests.Session для хранения cookie между запросами.
         base_url: Базовый URL вида ``https://host:port[/base_path]``.
         username: Логин пользователя node panel.
         password: Пароль пользователя node panel (уже расшифрованный).
+        bearer_token: (Optional) API token для Bearer авторизации. Если передан, 
+                     используется вместо username/password. Пропускает CSRF.
+        timeout: Timeout для HTTP запросов.
+        retries: Количество retry для HTTP запросов.
 
     Returns:
         True если авторизация прошла успешно, False иначе.
     """
+    # Метод 1: Bearer token (если передан)
+    if bearer_token:
+        logger.debug(f"Attempting Bearer token authentication")
+        if _validate_bearer_token(session, base_url, bearer_token, timeout, retries):
+            logger.info("node panel Bearer token authentication succeeded")
+            # Сохраняем token в session для последующих запросов
+            session.headers.update({"Authorization": f"Bearer {bearer_token}"})
+            return True
+        logger.debug("Bearer token validation failed, falling back to credential auth")
+
     credentials = {"username": username, "password": password}
 
+    # Метод 2: CSRF token (новые версии)
+    csrf_login_result = _try_login_with_csrf(
+        session, base_url, credentials, timeout, retries
+    )
+    if csrf_login_result is not None:
+        return csrf_login_result
+
+    # Метод 3: Legacy метод (старые версии, без CSRF)
+    logger.debug("node panel CSRF login failed or not supported, trying legacy method")
+    return _try_login_legacy(session, base_url, credentials, timeout, retries)
+
+
+def _validate_bearer_token(
+    session: requests.Session,
+    base_url: str,
+    bearer_token: str,
+    timeout: float | None,
+    retries: int | None,
+) -> bool:
+    """Валидировать Bearer token через API запрос к /panel/api/inbounds/list.
+
+    Returns:
+        True если token валиден, False иначе.
+    """
+    try:
+        resp = xui_request(
+            session,
+            "GET",
+            f"{base_url}/panel/api/inbounds/list",
+            headers={"Authorization": f"Bearer {bearer_token}"},
+            timeout=timeout,
+            retries=retries,
+        )
+    except requests.RequestException as exc:
+        logger.debug(f"Bearer token validation request failed: {exc}")
+        return False
+
+    if resp.status_code != 200:
+        logger.debug(
+            f"Bearer token validation returned status {resp.status_code}"
+        )
+        return False
+
+    # Проверить что это валидный ответ API
+    try:
+        data = resp.json()
+        if not data.get("success", False):
+            logger.debug("Bearer token validation returned success=false")
+            return False
+    except ValueError:
+        logger.debug("Bearer token validation response is not JSON")
+        return False
+
+    logger.debug("Bearer token validation successful")
+    return True
+
+
+def _try_login_with_csrf(
+    session: requests.Session,
+    base_url: str,
+    credentials: Dict[str, str],
+    timeout: float | None,
+    retries: int | None,
+) -> bool | None:
+    """Попытка логина с CSRF token (новый метод).
+
+    Returns:
+        True если вошли, False если ошибка, None если CSRF не поддерживается.
+    """
+    # Шаг 1: Получить CSRF token
+    csrf_url = f"{base_url}/csrf-token"
+    try:
+        resp = xui_request(session, "GET", csrf_url, timeout=timeout, retries=retries)
+    except requests.RequestException as exc:
+        logger.debug(f"Could not fetch CSRF token from {csrf_url}: {exc}")
+        return None
+
+    if resp.status_code != 200:
+        logger.debug(f"CSRF endpoint {csrf_url} returned {resp.status_code}, CSRF not supported")
+        return None
+
+    # Попытка извлечь CSRF token из JSON
+    try:
+        csrf_data = resp.json()
+        csrf_token = csrf_data.get("obj")
+        if not csrf_token:
+            logger.debug("CSRF response has no 'obj' field, CSRF not supported")
+            return None
+    except ValueError:
+        logger.debug("CSRF response is not JSON, CSRF not supported")
+        return None
+
+    logger.debug(f"Got CSRF token, attempting login with token")
+
+    # Шаг 2: Логин с CSRF token
+    for login_path in ("/login", "/panel/login"):
+        url = f"{base_url}{login_path}"
+
+        try:
+            resp = xui_request(
+                session,
+                "POST",
+                url,
+                data=credentials,
+                headers={"X-CSRF-Token": csrf_token},
+                timeout=timeout,
+                retries=retries,
+            )
+        except requests.RequestException as exc:
+            logger.debug(f"CSRF login request to {url} failed: {exc}")
+            continue
+
+        if resp.status_code == 404:
+            logger.debug(f"CSRF login path {url} not found, trying next path")
+            continue
+
+        if resp.status_code != 200:
+            logger.debug(
+                f"CSRF login at {url} returned {resp.status_code}; "
+                f"response: {resp.text[:100]!r}"
+            )
+            continue
+
+        # Проверить успех через JSON
+        try:
+            data = resp.json()
+            if not data.get("success", True):
+                logger.debug(f"CSRF login returned success=false: {resp.text[:100]}")
+                continue
+        except ValueError:
+            pass  # Не JSON — считаем успехом если статус 200
+
+        logger.info(f"node panel CSRF login succeeded at {url}")
+        return True
+
+    # CSRF токен получен, но логин не удался
+    logger.debug("CSRF token obtained but login failed at all paths")
+    return False
+
+
+def _try_login_legacy(
+    session: requests.Session,
+    base_url: str,
+    credentials: Dict[str, str],
+    timeout: float | None,
+    retries: int | None,
+) -> bool:
+    """Попытка логина без CSRF token (старый метод, для совместимости).
+
+    Returns:
+        True если вошли, False иначе.
+    """
     for login_path in ("/panel/login", "/login"):
         url = f"{base_url}{login_path}"
         try:
@@ -141,36 +309,35 @@ def login_panel(
                 retries=retries,
             )
         except requests.RequestException as exc:
-            logger.warning(f"node panel login request to {url} failed: {exc}")
-            return False
+            logger.debug(f"node panel login request to {url} failed: {exc}")
+            continue
 
-        if resp.status_code == 404 and login_path == "/panel/login":
-            # Установка без подпутья — пробуем legacy-путь
-            logger.debug(f"node panel {url} returned 404, trying legacy /login")
+        if resp.status_code == 404:
+            logger.debug(f"node panel login path {url} returned 404, trying next path")
             continue
 
         if resp.status_code != 200:
-            logger.warning(
+            logger.debug(
                 f"node panel login at {url} returned status {resp.status_code}; "
-                f"response (first 200 chars): {resp.text[:200]!r}"
+                f"response: {resp.text[:100]!r}"
             )
-            return False
+            continue
 
         # Попытка определить успех через JSON (если панель отвечает JSON)
         try:
             data = resp.json()
             if not data.get("success", True):
-                logger.warning(
-                    f"node panel login at {url} returned success=false; "
-                    f"response (first 200 chars): {resp.text[:200]!r}"
+                logger.debug(
+                    f"node panel login at {url} returned success=false"
                 )
-                return False
+                continue
         except ValueError:
             pass  # Ответ не JSON — считаем успехом если статус 200
 
-        logger.debug(f"node panel login succeeded at {url}")
+        logger.info(f"node panel login (legacy) succeeded at {url}")
         return True
 
+    logger.warning(f"node panel login failed at all paths for {base_url}")
     return False
 
 
@@ -180,12 +347,68 @@ def login_panel_detailed(
     username: str,
     password: str,
     *,
+    bearer_token: str | None = None,
     timeout: float | None = None,
     retries: int | None = None,
 ) -> Dict[str, Any]:
+    """Детальный логин с информацией об ошибке. Поддерживает Bearer, CSRF и legacy методы."""
+    # Метод 1: Bearer token (если передан)
+    if bearer_token:
+        logger.debug("Attempting Bearer token authentication (detailed)")
+        if _validate_bearer_token(session, base_url, bearer_token, timeout, retries):
+            logger.info("Bearer token authentication succeeded (detailed)")
+            session.headers.update({"Authorization": f"Bearer {bearer_token}"})
+            return {
+                "ok": True,
+                "status_code": 200,
+                "reason": "bearer_token_validated",
+                "error": "",
+                "login_url": f"{base_url}/panel/api",
+            }
+        logger.debug("Bearer token validation failed (detailed), falling back to credential auth")
+
     credentials = {"username": username, "password": password}
 
-    for login_path in ("/panel/login", "/login"):
+    # Сначала пробуем CSRF метод
+    csrf_result = _try_login_with_csrf_detailed(session, base_url, credentials, timeout, retries)
+    if csrf_result is not None:
+        return csrf_result
+
+    # Fallback на legacy метод
+    logger.debug("CSRF login failed or not supported, trying legacy method")
+    return _try_login_legacy_detailed(session, base_url, credentials, timeout, retries)
+
+
+def _try_login_with_csrf_detailed(
+    session: requests.Session,
+    base_url: str,
+    credentials: Dict[str, str],
+    timeout: float | None,
+    retries: int | None,
+) -> Dict[str, Any] | None:
+    """При CSRF методе. Returns result dict if ok/error, None if not supported."""
+    # Получить CSRF токен
+    csrf_url = f"{base_url}/csrf-token"
+    try:
+        resp = xui_request(session, "GET", csrf_url, timeout=timeout, retries=retries)
+    except requests.RequestException as exc:
+        logger.debug(f"Could not fetch CSRF token: {exc}")
+        return None
+
+    if resp.status_code != 200:
+        logger.debug(f"CSRF endpoint returned {resp.status_code}, not supported")
+        return None
+
+    try:
+        csrf_data = resp.json()
+        csrf_token = csrf_data.get("obj")
+        if not csrf_token:
+            return None
+    except ValueError:
+        return None
+
+    # Логин с CSRF
+    for login_path in ("/login", "/panel/login"):
         url = f"{base_url}{login_path}"
         try:
             resp = xui_request(
@@ -193,28 +416,18 @@ def login_panel_detailed(
                 "POST",
                 url,
                 data=credentials,
+                headers={"X-CSRF-Token": csrf_token},
                 timeout=timeout,
                 retries=retries,
             )
         except requests.RequestException as exc:
-            logger.warning(f"node panel login request to {url} failed: {exc}")
-            return {
-                "ok": False,
-                "status_code": None,
-                "reason": _infer_login_failure_reason(None, "", exc),
-                "error": str(exc),
-                "login_url": url,
-            }
+            logger.debug(f"CSRF login request failed: {exc}")
+            continue
 
-        if resp.status_code == 404 and login_path == "/panel/login":
-            logger.debug(f"node panel {url} returned 404, trying legacy /login")
+        if resp.status_code == 404:
             continue
 
         if resp.status_code != 200:
-            logger.warning(
-                f"node panel login at {url} returned status {resp.status_code}; "
-                f"response (first 200 chars): {resp.text[:200]!r}"
-            )
             return {
                 "ok": False,
                 "status_code": int(resp.status_code),
@@ -226,10 +439,6 @@ def login_panel_detailed(
         try:
             data = resp.json()
             if not data.get("success", True):
-                logger.warning(
-                    f"node panel login at {url} returned success=false; "
-                    f"response (first 200 chars): {resp.text[:200]!r}"
-                )
                 return {
                     "ok": False,
                     "status_code": int(resp.status_code),
@@ -240,7 +449,80 @@ def login_panel_detailed(
         except ValueError:
             pass
 
-        logger.debug(f"node panel login succeeded at {url}")
+        logger.info(f"CSRF login succeeded at {url}")
+        return {
+            "ok": True,
+            "status_code": int(resp.status_code),
+            "reason": "ok",
+            "error": "",
+            "login_url": url,
+        }
+
+    # CSRF токен получен но логин не вышел
+    return {
+        "ok": False,
+        "status_code": None,
+        "reason": "csrf_login_failed",
+        "error": "CSRF token obtained but login failed",
+        "login_url": f"{base_url}/login",
+    }
+
+
+def _try_login_legacy_detailed(
+    session: requests.Session,
+    base_url: str,
+    credentials: Dict[str, str],
+    timeout: float | None,
+    retries: int | None,
+) -> Dict[str, Any]:
+    """Legacy логин без CSRF."""
+    for login_path in ("/panel/login", "/login"):
+        url = f"{base_url}{login_path}"
+        try:
+            resp = xui_request(
+                session,
+                "POST",
+                url,
+                data=credentials,
+                timeout=timeout,
+                retries=retries,
+            )
+        except requests.RequestException as exc:
+            logger.debug(f"Login request to {url} failed: {exc}")
+            return {
+                "ok": False,
+                "status_code": None,
+                "reason": _infer_login_failure_reason(None, "", exc),
+                "error": str(exc),
+                "login_url": url,
+            }
+
+        if resp.status_code == 404:
+            continue
+
+        if resp.status_code != 200:
+            return {
+                "ok": False,
+                "status_code": int(resp.status_code),
+                "reason": _infer_login_failure_reason(int(resp.status_code), resp.text),
+                "error": f"HTTP {resp.status_code}",
+                "login_url": url,
+            }
+
+        try:
+            data = resp.json()
+            if not data.get("success", True):
+                return {
+                    "ok": False,
+                    "status_code": int(resp.status_code),
+                    "reason": _infer_login_failure_reason(int(resp.status_code), resp.text),
+                    "error": str(data.get("msg") or "Login failed"),
+                    "login_url": url,
+                }
+        except ValueError:
+            pass
+
+        logger.info(f"Legacy login succeeded at {url}")
         return {
             "ok": True,
             "status_code": int(resp.status_code),
