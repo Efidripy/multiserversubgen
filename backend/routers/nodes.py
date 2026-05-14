@@ -61,10 +61,17 @@ def build_nodes_router(
         url = data.get("url")
         node_user = data.get("user")
         password = data.get("password")
+        bearer_token = data.get("bearer_token")
         read_only = bool(data.get("read_only", False))
 
-        if not all([name, url, node_user, password]):
-            raise HTTPException(status_code=400, detail="Missing required fields")
+        if not all([name, url]):
+            raise HTTPException(status_code=400, detail="name and url are required")
+        
+        # Either bearer token OR (user + password) required
+        has_token = bool(bearer_token)
+        has_credentials = bool(node_user and password)
+        if not has_token and not has_credentials:
+            raise HTTPException(status_code=400, detail="Either bearer_token OR (user+password) required")
 
         if not str(url).startswith(("http://", "https://")):
             url = "https://" + str(url)
@@ -80,7 +87,13 @@ def build_nodes_router(
         canonical_panel_url = f"{scheme}://{parsed.hostname}:{port}{prefix}"
 
         try:
-            encrypted_password = encrypt(str(password))
+            # Store bearer token with prefix, or encrypt password
+            if bearer_token:
+                encrypted_password = encrypt(f"bearer:{bearer_token}")
+                stored_user = "bearer_token"
+            else:
+                encrypted_password = encrypt(str(password))
+                stored_user = node_user
             with sqlite3.connect(db_path) as conn:
                 conn.execute(
                     """
@@ -94,8 +107,8 @@ def build_nodes_router(
                     (
                         name,
                         canonical_panel_url,
-                        node_user,
-                        node_user,
+                        stored_user,
+                        stored_user,
                         encrypted_password,
                         parsed.hostname,
                         port,
@@ -126,9 +139,16 @@ def build_nodes_router(
         url = str(data.get("url") or "").strip()
         node_user = str(data.get("user") or "").strip()
         password = str(data.get("password") or "").strip()
+        bearer_token = str(data.get("bearer_token") or "").strip()
 
-        if not all([url, node_user, password]):
-            raise HTTPException(status_code=400, detail="Missing required fields")
+        if not url:
+            raise HTTPException(status_code=400, detail="URL is required")
+        
+        # Either bearer token OR (user + password) required
+        has_token = bool(bearer_token)
+        has_credentials = bool(node_user and password)
+        if not has_token and not has_credentials:
+            raise HTTPException(status_code=400, detail="Either bearer_token OR (user+password) required")
 
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
@@ -148,8 +168,12 @@ def build_nodes_router(
         session.verify = False
 
         try:
-            if not login_panel(session, base_url, node_user, password):
-                return {"success": False, "message": "Login failed", "base_url": base_url}
+            if bearer_token:
+                if not login_panel(session, base_url, bearer_token=bearer_token):
+                    return {"success": False, "message": "Login failed", "base_url": base_url}
+            else:
+                if not login_panel(session, base_url, node_user, password):
+                    return {"success": False, "message": "Login failed", "base_url": base_url}
 
             inbounds_count = None
             details = ""

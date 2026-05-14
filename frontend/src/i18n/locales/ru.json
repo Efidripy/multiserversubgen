@@ -42,7 +42,8 @@
     "created": "Создано",
     "updated": "Обновлено",
     "yes": "Да",
-    "no": "Нет"
+    "no": "Нет",
+    "or": "или"
   },
   "nodes": {
     "title": "Управление узлами",
@@ -51,11 +52,19 @@
     "deleteNode": "Удалить узел",
     "nodeName": "Название узла",
     "nodeUrl": "URL узла",
+    "nodeUrlPlaceholder": "https://host/path/",
     "username": "Логин",
     "password": "Пароль",
+    "bearerTokenLabel": "Bearer Token",
+    "bearerTokenPlaceholder": "Bearer Token (опционально)",
+    "bearerTokenHint": "Опционально. Используйте вместо логина и пароля, если панель поддерживает API-токены.",
     "basePath": "Базовый путь",
     "connected": "Подключено",
-    "disconnected": "Отключено"
+    "disconnected": "Отключено",
+    "batchFormatPasswordExample": "https://server:443/path admin password",
+    "batchFormatBearerExample": "https://server:443/path bearer:TOKEN",
+    "batchBearerHint": "В пакетном режиме также поддерживается формат bearer:TOKEN во втором поле каждой строки.",
+    "batchPlaceholder": "https://server1.com:443 admin password123\nhttps://server2.com/path bearer:YOUR_TOKEN_HERE\nhttps://server3.com admin2 password456"
   },
   "clients": {
     "title": "Управление клиентами",

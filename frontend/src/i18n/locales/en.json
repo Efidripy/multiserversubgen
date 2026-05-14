@@ -42,7 +42,8 @@
     "created": "Created",
     "updated": "Updated",
     "yes": "Yes",
-    "no": "No"
+    "no": "No",
+    "or": "or"
   },
   "nodes": {
     "title": "Node Manager",
@@ -51,11 +52,19 @@
     "deleteNode": "Delete Node",
     "nodeName": "Node Name",
     "nodeUrl": "Node URL",
+    "nodeUrlPlaceholder": "https://host/path/",
     "username": "Username",
     "password": "Password",
+    "bearerTokenLabel": "Bearer Token",
+    "bearerTokenPlaceholder": "Bearer Token (optional)",
+    "bearerTokenHint": "Optional. Use this instead of username and password when the panel supports API tokens.",
     "basePath": "Base Path",
     "connected": "Connected",
-    "disconnected": "Disconnected"
+    "disconnected": "Disconnected",
+    "batchFormatPasswordExample": "https://server:443/path admin password",
+    "batchFormatBearerExample": "https://server:443/path bearer:TOKEN",
+    "batchBearerHint": "Batch mode also accepts bearer:TOKEN as the second item on each line.",
+    "batchPlaceholder": "https://server1.com:443 admin password123\nhttps://server2.com/path bearer:YOUR_TOKEN_HERE\nhttps://server3.com admin2 password456"
   },
   "clients": {
     "title": "Client Manager",
