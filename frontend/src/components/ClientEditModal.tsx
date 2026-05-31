@@ -17,6 +17,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from './Toast';
 import api from '../api';
 import { getAuth } from '../auth';
+import { useTranslation } from 'react-i18next';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -96,6 +97,7 @@ const Row: React.FC<{ label: string; hint?: string; children: React.ReactNode; c
 export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) => {
   const { colors } = useTheme();
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   // ── Form state ──────────────────────────────────────────────────────────────
   const [email, setEmail] = useState(client.email);
@@ -155,28 +157,28 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
         updates,
       }, { auth: getAuth() });
 
-      toast(`Saved: ${email}`, 'success');
+      toast(t('clients.savedClient', { email }), 'success');
       onSaved();
       onClose();
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Failed to save');
+      setError(e.response?.data?.detail || t('clients.saveFailed'));
     } finally {
       setSaving(false);
     }
   };
 
   const handleResetTraffic = async () => {
-    if (!window.confirm(`Reset traffic for "${email}"?`)) return;
+    if (!window.confirm(t('clients.confirmResetTrafficForEmail', { email }))) return;
     setResetTrafficLoading(true);
     try {
       await api.post(`/v1/clients/${encodeURIComponent(client.id || email)}/reset-traffic`, {}, {
         auth: getAuth(),
         params: { node_id: client.node_id, inbound_id: client.inbound_id },
       });
-      toast(`Traffic reset: ${email}`, 'success');
+      toast(t('clients.trafficResetForEmail', { email }), 'success');
       onSaved();
     } catch (e: any) {
-      toast(e.response?.data?.detail || 'Reset failed', 'error');
+      toast(e.response?.data?.detail || t('clients.resetFailed'), 'error');
     } finally {
       setResetTrafficLoading(false); }
   };
@@ -194,17 +196,17 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div className="drawer" role="dialog" aria-modal="true" aria-label="Edit Client">
+    <div className="drawer" role="dialog" aria-modal="true" aria-label={t('messages.editClient')}>
       <div className="drawer__backdrop" onClick={onClose} />
       <div className="drawer__panel">
 
         {/* Header */}
         <div className="drawer__header">
           <div>
-            <div className="drawer__title">Edit Client</div>
+            <div className="drawer__title">{t('messages.editClient')}</div>
             {client.email && <div className="drawer__subtitle">{client.email}</div>}
           </div>
-          <button className="drawer__close" aria-label="Close" onClick={onClose}>✕</button>
+          <button className="drawer__close" aria-label={t('common.close')} onClick={onClose}>✕</button>
         </div>
 
         {/* Body */}
@@ -212,7 +214,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
             {error && <div className="alert alert-danger mb-3">{error}</div>}
 
             {/* Enabled */}
-            <Row label="Enabled" colors={colors}>
+            <Row label={t('common.enabled')} colors={colors}>
               <div className="form-check form-switch mb-0">
                 <input className="form-check-input" type="checkbox" role="switch"
                   id="ce-enable" checked={enable} onChange={e => setEnable(e.target.checked)} />
@@ -220,7 +222,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
             </Row>
 
             {/* Email */}
-            <Row label="Email" colors={colors}>
+            <Row label={t('clients.email')} colors={colors}>
               <div className="d-flex align-items-center gap-2">
                 <input
                   className="form-control form-control-sm"
@@ -231,7 +233,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
                 <button
                   className="btn btn-sm"
                   style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary, flexShrink: 0, fontSize: '0.82rem' }}
-                  title="Generate random email"
+                  title={t('clients.generateRandomEmail')}
                   onClick={() => setEmail(`user_${Math.random().toString(36).slice(2, 8)}`)}
                 >↻</button>
               </div>
@@ -250,14 +252,14 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
                 <button
                   className="btn btn-sm"
                   style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary, flexShrink: 0, fontSize: '0.82rem' }}
-                  title="Generate new UUID"
+                  title={t('clients.generateNewUuid')}
                   onClick={() => setUuid(generateUUID())}
                 >↻</button>
               </div>
             </Row>
 
             {/* Comment / Remark */}
-            <Row label="Comment" colors={colors}>
+            <Row label={t('clients.comment')} colors={colors}>
               <input
                 className="form-control form-control-sm"
                 style={inputStyle}
@@ -269,7 +271,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
 
             {/* Flow — only for VLESS + Reality/TCP */}
             {showFlow && (
-              <Row label="Flow" colors={colors}>
+              <Row label={t('clients.flowLabel')} colors={colors}>
                 <select
                   className="form-select form-select-sm"
                   style={inputStyle}
@@ -284,7 +286,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
             )}
 
             {/* Total Flow (GB) */}
-            <Row label="Total Flow" hint="Traffic limit in GB. 0 = unlimited." colors={colors}>
+            <Row label={t('clients.totalFlow')} hint={t('clients.totalFlowHint')} colors={colors}>
               <input
                 type="number"
                 step="0.1"
@@ -297,7 +299,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
             </Row>
 
             {/* IP Limit */}
-            <Row label="IP Limit" hint="Max simultaneous IPs. 0 = unlimited." colors={colors}>
+            <Row label={t('clients.ipLimit')} hint={t('clients.ipLimitHint')} colors={colors}>
               <input
                 type="number"
                 min="0"
@@ -309,7 +311,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
             </Row>
 
             {/* Usage */}
-            <Row label="Usage" colors={colors}>
+            <Row label={t('clients.usage')} colors={colors}>
               <div className="d-flex align-items-center gap-2 flex-wrap">
                 <span className="usage-badge" style={{ color: usageColor }}>
                   {formatBytes(client.up)} / {formatBytes(client.down)} ({formatBytes(usedBytes)})
@@ -317,7 +319,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
                 <button
                   className="btn btn-sm p-1"
                   style={{ background: 'none', border: 'none', color: colors.text.tertiary, fontSize: '0.85rem' }}
-                  title="Reset traffic"
+                  title={t('clients.resetTraffic')}
                   disabled={resetTrafficLoading}
                   onClick={handleResetTraffic}
                 >
@@ -330,14 +332,14 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
                     <div className="progress-track__fill" style={{ width: `${usagePct}%`, background: usageColor }} />
                   </div>
                   <div style={{ fontSize: '0.68rem', color: colors.text.tertiary, marginTop: '2px' }}>
-                    {usagePct.toFixed(1)}% of {formatBytes(totalBytes)}
+                    {t('clients.usageOfTotal', { pct: usagePct.toFixed(1), total: formatBytes(totalBytes) })}
                   </div>
                 </div>
               )}
             </Row>
 
             {/* Start After First Use — UI only toggle, maps to expiryTime=0 */}
-            <Row label="Start After First Use" hint="Expiry countdown begins on first connection (not yet in API)." colors={colors}>
+            <Row label={t('clients.startAfterFirstUse')} hint={t('clients.startAfterFirstUseHint')} colors={colors}>
               <div className="form-check form-switch mb-0">
                 <input className="form-check-input" type="checkbox" role="switch"
                   id="ce-start-after" disabled
@@ -348,7 +350,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
             </Row>
 
             {/* Duration / Expiry */}
-            <Row label="Duration" hint="Expiry date. Leave empty for no expiry." colors={colors}>
+            <Row label={t('clients.duration')} hint={t('clients.durationHint')} colors={colors}>
               <div className="d-flex align-items-center gap-2">
                 <input
                   type="date"
@@ -361,7 +363,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
                   <button
                     className="btn btn-sm"
                     style={{ background: 'none', border: 'none', color: colors.text.tertiary, fontSize: '0.8rem' }}
-                    title="Clear expiry (no expiry)"
+                    title={t('clients.clearExpiryTitle')}
                     onClick={() => setExpiryDate('')}
                   >✕</button>
                 )}
@@ -373,9 +375,9 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
                     const now = Date.now();
                     const diff = ms - now;
                     const days = Math.ceil(diff / 86400000);
-                    if (days < 0) return <span style={{ color: colors.danger }}>Expired {Math.abs(days)}d ago</span>;
-                    if (days === 0) return <span style={{ color: colors.warning }}>Expires today</span>;
-                    return <span style={{ color: colors.text.tertiary }}>{days}d remaining</span>;
+                    if (days < 0) return <span style={{ color: colors.danger }}>{t('clients.expiredDaysAgo', { days: Math.abs(days) })}</span>;
+                    if (days === 0) return <span style={{ color: colors.warning }}>{t('clients.expiresToday')}</span>;
+                    return <span style={{ color: colors.text.tertiary }}>{t('clients.daysRemaining', { days })}</span>;
                   })()}
                 </div>
               )}
@@ -393,14 +395,14 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
                       const past = base < Date.now() ? Date.now() : base;
                       setExpiryDate(toDateInput(past + days * 86400000));
                     }}
-                    title={`Set expiry to ${days} days from now (or from current expiry)`}
+                    title={t('clients.setExpiryDaysTitle', { days })}
                   >+{days}d</button>
                 ))}
                 <button className="btn btn-sm"
                   style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '6px',
                     backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.tertiary }}
                   onClick={() => setExpiryDate('')}
-                  title="No expiry"
+                  title={t('clients.noExpiry')}
                 >∞</button>
               </div>
             </Row>
@@ -412,7 +414,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
           <button
             className="btn btn-sm btn-ghost-accent"
             onClick={onClose}
-          >Close</button>
+          >{t('common.close')}</button>
           <button
             className="btn btn-sm"
             style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText, fontWeight: 700 }}

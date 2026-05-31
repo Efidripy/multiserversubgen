@@ -373,7 +373,8 @@ def build_clients_router(
     @router.get("/api/v1/clients/online")
     async def get_online_clients(request: Request):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         nodes = node_service.list_nodes()
         online = client_mgr.get_online_clients(nodes)
         return {"online": online, "count": len(online)}
@@ -383,7 +384,8 @@ def build_clients_router(
     @router.get("/api/v1/clients/{email}/ips")
     async def get_client_ips(request: Request, email: str, node_id: Optional[int] = None):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         nodes = [get_node_or_404(node_id)] if node_id else node_service.list_nodes()
         results = []
         for node in nodes:
@@ -395,7 +397,8 @@ def build_clients_router(
     @router.post("/api/v1/clients/{email}/clear-ips")
     async def clear_client_ips(request: Request, email: str, data: Dict):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         node_id = data.get("node_id")
         nodes = [get_node_or_404(node_id)] if node_id else node_service.list_nodes()
         ok = any(client_mgr.clear_client_ips(n, email) for n in nodes)
@@ -405,7 +408,8 @@ def build_clients_router(
     async def find_clients_by_ip(request: Request, ip: str, node_id: Optional[int] = None):
         """Search which clients have connected from a given IP address."""
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         if not ip or not ip.strip():
             raise HTTPException(status_code=400, detail="ip parameter required")
         nodes = [get_node_or_404(node_id)] if node_id else node_service.list_nodes()
@@ -428,7 +432,8 @@ def build_clients_router(
     @router.post("/api/v1/clients/last-online")
     async def get_last_online(request: Request, data: Dict):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         node_ids = data.get("node_ids")
         emails = data.get("emails")
         nodes = _load_nodes(node_ids=node_ids)
@@ -444,10 +449,12 @@ def build_clients_router(
     @router.post("/api/v1/clients/bulk-reset-traffic")
     async def bulk_reset_traffic(request: Request, data: Dict):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         emails = data.get("emails", [])
         node_ids = data.get("node_ids")
-        if not emails: raise HTTPException(status_code=400, detail="emails required")
+        if not emails:
+            raise HTTPException(status_code=400, detail="emails required")
         nodes = _load_nodes(node_ids=node_ids)
         result = client_mgr.bulk_reset_traffic(nodes, emails)
         if result.get("successful", 0) > 0:
@@ -459,25 +466,29 @@ def build_clients_router(
     @router.post("/api/v1/clients/{email}/attach")
     async def attach_client(request: Request, email: str, data: Dict):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         node_id = data.get("node_id")
         inbound_ids = data.get("inbound_ids", [])
         if not node_id or not inbound_ids:
             raise HTTPException(status_code=400, detail="node_id and inbound_ids required")
         ok = client_mgr.attach_client(get_node_or_404(node_id), email, inbound_ids)
-        if ok: invalidate_subscription_cache()
+        if ok:
+            invalidate_subscription_cache()
         return {"success": ok}
 
     @router.post("/api/v1/clients/{email}/detach")
     async def detach_client(request: Request, email: str, data: Dict):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         node_id = data.get("node_id")
         inbound_ids = data.get("inbound_ids", [])
         if not node_id or not inbound_ids:
             raise HTTPException(status_code=400, detail="node_id and inbound_ids required")
         ok = client_mgr.detach_client(get_node_or_404(node_id), email, inbound_ids)
-        if ok: invalidate_subscription_cache()
+        if ok:
+            invalidate_subscription_cache()
         return {"success": ok}
 
     # --- Groups ---
@@ -485,56 +496,67 @@ def build_clients_router(
     @router.get("/api/v1/nodes/{node_id}/client-groups")
     async def get_client_groups(request: Request, node_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return client_mgr.get_client_groups(get_node_or_404(node_id))
 
     @router.post("/api/v1/nodes/{node_id}/client-groups")
     async def create_client_group(request: Request, node_id: int, data: Dict):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         name = (data.get("name") or "").strip()
-        if not name: raise HTTPException(status_code=400, detail="name required")
+        if not name:
+            raise HTTPException(status_code=400, detail="name required")
         ok = client_mgr.create_client_group(get_node_or_404(node_id), name)
         return {"success": ok}
 
     @router.put("/api/v1/nodes/{node_id}/client-groups/{group_name}")
     async def rename_client_group(request: Request, node_id: int, group_name: str, data: Dict):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         new_name = (data.get("newName") or "").strip()
-        if not new_name: raise HTTPException(status_code=400, detail="newName required")
+        if not new_name:
+            raise HTTPException(status_code=400, detail="newName required")
         ok = client_mgr.rename_client_group(get_node_or_404(node_id), group_name, new_name)
         return {"success": ok}
 
     @router.delete("/api/v1/nodes/{node_id}/client-groups/{group_name}")
     async def delete_client_group(request: Request, node_id: int, group_name: str):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         ok = client_mgr.delete_client_group(get_node_or_404(node_id), group_name)
         return {"success": ok}
 
     @router.post("/api/v1/nodes/{node_id}/client-groups/{group_name}/add")
     async def add_to_group(request: Request, node_id: int, group_name: str, data: Dict):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         emails = data.get("emails", [])
-        if not emails: raise HTTPException(status_code=400, detail="emails required")
+        if not emails:
+            raise HTTPException(status_code=400, detail="emails required")
         ok = client_mgr.add_to_group(get_node_or_404(node_id), group_name, emails)
         return {"success": ok}
 
     @router.post("/api/v1/nodes/{node_id}/client-groups/{group_name}/remove")
     async def remove_from_group(request: Request, node_id: int, group_name: str, data: Dict):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         emails = data.get("emails", [])
-        if not emails: raise HTTPException(status_code=400, detail="emails required")
+        if not emails:
+            raise HTTPException(status_code=400, detail="emails required")
         ok = client_mgr.remove_from_group(get_node_or_404(node_id), group_name, emails)
         return {"success": ok}
 
     @router.get("/api/v1/nodes/{node_id}/client-groups/{group_name}/emails")
     async def get_group_emails(request: Request, node_id: int, group_name: str):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return client_mgr.get_group_emails(get_node_or_404(node_id), group_name)
 
     # --- Sub links by subscription ID ---
@@ -542,7 +564,8 @@ def build_clients_router(
     @router.get("/api/v1/clients/sub-links/{sub_id}")
     async def get_sub_links(request: Request, sub_id: str, node_id: Optional[int] = None):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         nodes = [get_node_or_404(node_id)] if node_id else node_service.list_nodes()
         all_links = []
         for node in nodes:

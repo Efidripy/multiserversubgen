@@ -12,6 +12,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from './Toast';
+import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { getAuth } from '../auth';
 
@@ -127,6 +128,7 @@ const SectionHeader: React.FC<{ title: string; colors: any; collapsible?: boolea
 export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, onSaved }) => {
   const { colors } = useTheme();
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   // ── Parse raw data ──────────────────────────────────────────────────────────
   const ss0 = parseJ(inbound.streamSettings);
@@ -310,14 +312,14 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
       const res = await api.post(`/v1/nodes/${nodeId}/generate-keypair`, {}, { auth: getAuth() });
       if (res.data?.privateKey) setRealPrivateKey(res.data.privateKey);
       if (res.data?.publicKey) setRealPublicKey(res.data.publicKey);
-      toast('New Reality keys generated', 'success');
+      toast(t('inbounds.realityKeysGenerated'), 'success');
     } catch {
       // fallback: generate short IDs at least
       const arr = new Uint8Array(8);
       crypto.getRandomValues(arr);
       const hex = Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
       setRealShortIds(hex);
-      toast('Key gen not available — generated shortId only', 'warning');
+      toast(t('inbounds.keyGenUnavailable'), 'warning');
     } finally { setGenKeyLoading(false); }
   };
 
@@ -335,11 +337,11 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
         sniffing: buildSniffing(),
       };
       await api.put(`/v1/inbounds/${nodeId}/${inbound.id}`, updates, { auth: getAuth() });
-      toast(`Saved: ${remark || inbound.id}`, 'success');
+      toast(t('inbounds.savedInbound', { name: remark || inbound.id }), 'success');
       onSaved();
       onClose();
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Failed to save');
+      setError(e.response?.data?.detail || t('inbounds.saveFailed'));
     } finally { setSaving(false); }
   };
 
@@ -360,20 +362,20 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
   }, [onClose]);
 
   return (
-    <div className="drawer" role="dialog" aria-modal="true" aria-label="Modify Inbound">
+    <div className="drawer" role="dialog" aria-modal="true" aria-label={t('inbounds.modifyInbound')}>
       <div className="drawer__backdrop" onClick={onClose} />
       <div className="drawer__panel">
 
         {/* Header */}
         <div className="drawer__header">
           <div>
-            <div className="drawer__title">Modify Inbound</div>
+            <div className="drawer__title">{t('inbounds.modifyInbound')}</div>
             <div className="drawer__subtitle">{inbound.protocol.toUpperCase()} · {inbound.node_name}</div>
           </div>
           <div className="d-flex align-items-center gap-2">
             <button className={`${secTabCls(activeTab === 'form')} seg-tab--sm`} role="tab" aria-selected={activeTab === 'form'} onClick={() => setActiveTab('form')}>Form</button>
             <button className={`${secTabCls(activeTab === 'raw')} seg-tab--sm`} role="tab" aria-selected={activeTab === 'raw'} onClick={() => setActiveTab('raw')}>Raw JSON</button>
-            <button className="drawer__close" aria-label="Close" onClick={onClose}>✕</button>
+            <button className="drawer__close" aria-label={t('common.close')} onClick={onClose}>✕</button>
           </div>
         </div>
 
@@ -385,7 +387,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
               // Raw JSON view (read-only info)
               <div>
                 <p style={{ fontSize: '0.78rem', color: colors.text.secondary, marginBottom: '8px' }}>
-                  Full inbound config (read-only). Edit in Form tab.
+                  {t('inbounds.fullConfigReadOnlyHint')}
                 </p>
                 <pre style={{ ...inputStyle, borderRadius: '8px', border: `1px solid ${colors.border}`, padding: '10px', fontSize: '0.73rem', overflowX: 'auto', maxHeight: '500px' }}>
                   {JSON.stringify({ remark, port, enable, listen: listenIP, streamSettings: buildStreamSettings(), sniffing: buildSniffing() }, null, 2)}
@@ -398,13 +400,13 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                 <div style={{ height: '1px', background: colors.border, margin: '8px 0' }} />
 
                 <Field label="Remark" colors={colors}>
-                  <TextInput value={remark} onChange={setRemark} placeholder="inbound name" colors={colors} />
+                  <TextInput value={remark} onChange={setRemark} placeholder={t('inbounds.inboundNamePlaceholder')} colors={colors} />
                 </Field>
                 <Field label="Protocol" colors={colors}>
                   <input className="form-control form-control-sm" value={inbound.protocol} readOnly style={{ ...inputStyle, opacity: 0.6 }} />
                 </Field>
                 <Field label="Listen IP" colors={colors} hint="Leave empty to listen on all IPs">
-                  <TextInput value={listenIP} onChange={setListenIP} placeholder="0.0.0.0 or leave empty" colors={colors} />
+                  <TextInput value={listenIP} onChange={setListenIP} placeholder={t('inbounds.listenPlaceholder')} colors={colors} />
                 </Field>
                 <Field label="Port" colors={colors}>
                   <NumInput value={port} onChange={setPort} colors={colors} />
@@ -425,7 +427,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                 {network === 'ws' && (
                   <>
                     <Field label="Host" colors={colors}>
-                      <TextInput value={wsHost} onChange={setWsHost} placeholder="e.g. example.com" colors={colors} />
+                      <TextInput value={wsHost} onChange={setWsHost} placeholder={t('inbounds.exampleDomainPlaceholder')} colors={colors} />
                     </Field>
                     <Field label="Path" colors={colors}>
                       <TextInput value={wsPath} onChange={setWsPath} placeholder="/path" colors={colors} />
@@ -479,7 +481,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                 {network === 'httpupgrade' && (
                   <>
                     <Field label="Host" colors={colors}>
-                      <TextInput value={huHost} onChange={setHuHost} placeholder="e.g. example.com" colors={colors} />
+                      <TextInput value={huHost} onChange={setHuHost} placeholder={t('inbounds.exampleDomainPlaceholder')} colors={colors} />
                     </Field>
                     <Field label="Path" colors={colors}>
                       <TextInput value={huPath} onChange={setHuPath} placeholder="/path" colors={colors} />
@@ -498,7 +500,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                       <Select value={domainStrategy} onChange={setDomainStrategy} options={DOMAIN_STRATEGIES} colors={colors} />
                     </Field>
                     <Field label="TCP Congestion" colors={colors}>
-                      <TextInput value={tcpCongestion} onChange={setTcpCongestion} placeholder="bbr / cubic" colors={colors} />
+                      <TextInput value={tcpCongestion} onChange={setTcpCongestion} placeholder={t('inbounds.tcpCongestionPlaceholder')} colors={colors} />
                     </Field>
                     <Field label="TProxy" colors={colors}>
                       <Select value={tproxy} onChange={setTproxy} options={['off', 'redirect', 'tproxy']} colors={colors} />
@@ -528,33 +530,33 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                       <Select value={realUtls} onChange={(v) => { setRealUtls(v); setRealFingerprint(v); }} options={FINGERPRINTS.filter(f => f)} colors={colors} />
                     </Field>
                     <Field label="Target" colors={colors} hint="dest for reality">
-                      <TextInput value={realDest} onChange={setRealDest} placeholder="127.0.0.1:443 or domain:port" colors={colors} />
+                      <TextInput value={realDest} onChange={setRealDest} placeholder={t('inbounds.realityTargetPlaceholder')} colors={colors} />
                     </Field>
                     <Field label="SNI" colors={colors}>
                       <TextInput value={realServerNames} onChange={setRealServerNames} placeholder="comma-separated" colors={colors} />
                     </Field>
                     <Field label="Short IDs" colors={colors} hint="comma-separated hex">
-                      <TextInput value={realShortIds} onChange={setRealShortIds} placeholder="hex short IDs" mono colors={colors} />
+                      <TextInput value={realShortIds} onChange={setRealShortIds} placeholder={t('inbounds.shortIdsPlaceholder')} mono colors={colors} />
                     </Field>
                     <Field label="SpiderX" colors={colors}>
                       <TextInput value={realSpiderX} onChange={setRealSpiderX} placeholder="/" colors={colors} />
                     </Field>
                     <Field label="Public Key" colors={colors}>
-                      <TextInput value={realPublicKey} onChange={setRealPublicKey} placeholder="auto-filled on key gen" mono colors={colors} />
+                      <TextInput value={realPublicKey} onChange={setRealPublicKey} placeholder={t('inbounds.keyGenPlaceholder')} mono colors={colors} />
                     </Field>
                     <Field label="Private Key" colors={colors}>
-                      <TextInput value={realPrivateKey} onChange={setRealPrivateKey} placeholder="auto-filled on key gen" mono colors={colors} />
+                      <TextInput value={realPrivateKey} onChange={setRealPrivateKey} placeholder={t('inbounds.keyGenPlaceholder')} mono colors={colors} />
                     </Field>
                     <div className="d-flex gap-2 mt-1 mb-1">
                       <button className="btn btn-sm"
                         style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText, fontSize: '0.75rem' }}
                         onClick={handleGenKeys} disabled={genKeyLoading}>
-                        {genKeyLoading ? '…' : '⚙ Get New Cert'}
+                        {genKeyLoading ? '…' : `⚙ ${t('inbounds.getNewCert')}`}
                       </button>
                       <button className="btn btn-sm"
                         style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary, fontSize: '0.75rem' }}
                         onClick={() => { setRealPrivateKey(''); setRealPublicKey(''); }}>
-                        Clear
+                        {t('common.clear')}
                       </button>
                     </div>
                   </>
@@ -564,7 +566,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                 {security === 'tls' && (
                   <>
                     <Field label="Server Name" colors={colors}>
-                      <TextInput value={tlsServerName} onChange={setTlsServerName} placeholder="e.g. example.com" colors={colors} />
+                      <TextInput value={tlsServerName} onChange={setTlsServerName} placeholder={t('inbounds.exampleDomainPlaceholder')} colors={colors} />
                     </Field>
                     <Toggle id="tls-insecure" checked={tlsAllowInsecure} onChange={setTlsAllowInsecure} label="Allow Insecure" colors={colors} />
                   </>
@@ -593,10 +595,10 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                         <Toggle id="sniff-meta" checked={sniffMetaOnly} onChange={setSniffMetaOnly} label="Metadata Only" colors={colors} />
                         <Toggle id="sniff-route" checked={sniffRouteOnly} onChange={setSniffRouteOnly} label="Route Only" colors={colors} />
                         <Field label="IPs Excluded" colors={colors}>
-                          <TextInput value={sniffIPsExcl} onChange={setSniffIPsExcl} placeholder="IP/CIDR/geoip:*/ext:*" colors={colors} />
+                          <TextInput value={sniffIPsExcl} onChange={setSniffIPsExcl} placeholder={t('inbounds.ipRulesPlaceholder')} colors={colors} />
                         </Field>
                         <Field label="Domains Excluded" colors={colors}>
-                          <TextInput value={sniffDomsExcl} onChange={setSniffDomsExcl} placeholder="domain:*/ext:*" colors={colors} />
+                          <TextInput value={sniffDomsExcl} onChange={setSniffDomsExcl} placeholder={t('inbounds.domainRulesPlaceholder')} colors={colors} />
                         </Field>
                       </>
                     )}
@@ -608,11 +610,11 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
 
         {/* Footer */}
         <div className="drawer__footer">
-          <button className="btn btn-sm btn-ghost-accent" onClick={onClose}>Close</button>
+          <button className="btn btn-sm btn-ghost-accent" onClick={onClose}>{t('common.close')}</button>
           <button className="btn btn-sm"
             style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText, fontWeight: 700 }}
             onClick={handleSave} disabled={saving}>
-            {saving ? '…' : 'Update'}
+            {saving ? '…' : t('common.update')}
           </button>
         </div>
 

@@ -4,9 +4,8 @@ import logging
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
-import requests
 
 from crypto import decrypt
 from utils import parse_field_as_dict

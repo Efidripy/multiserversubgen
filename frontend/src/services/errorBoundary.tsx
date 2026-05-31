@@ -4,6 +4,7 @@
  */
 
 import React, { ReactNode, ErrorInfo, useState, useEffect } from 'react';
+import i18n from '../i18n/config';
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -80,11 +81,11 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
             margin: '20px',
           }}
         >
-          <h2>⚠️ Что-то пошло не так</h2>
+          <h2>⚠️ {i18n.t('errorBoundary.title')}</h2>
           <p>{error?.message}</p>
           {!isOnline && (
             <p style={{ color: '#d32f2f', fontWeight: 'bold' }}>
-              📵 Нет соединения. Некоторые функции недоступны.
+              📵 {i18n.t('errorBoundary.offlineHint')}
             </p>
           )}
           <button
@@ -99,10 +100,10 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
               cursor: 'pointer',
             }}
           >
-            Попробовать снова
+            {i18n.t('errorBoundary.tryAgain')}
           </button>
           <details style={{ marginTop: '20px', textAlign: 'left' }}>
-            <summary>Детали ошибки</summary>
+            <summary>{i18n.t('errorBoundary.errorDetails')}</summary>
             <pre style={{ overflow: 'auto', backgroundColor: '#f5f5f5', padding: '10px' }}>
               {error?.stack}
             </pre>

@@ -4,6 +4,7 @@
  */
 
 import React from 'react';
+import { devLog } from '../utils/devLogger';
 
 export interface DeltaUpdate<T> {
   type: 'full' | 'partial' | 'delete';
@@ -44,7 +45,7 @@ class WebSocketManager {
         this.ws = new WebSocket(this.url);
 
         this.ws.onopen = () => {
-          console.log('[WebSocket] Connected');
+          devLog('[WebSocket] Connected');
           this.isConnecting = false;
           this.reconnectDelay = 1000;
 
@@ -73,7 +74,7 @@ class WebSocketManager {
         };
 
         this.ws.onclose = () => {
-          console.log('[WebSocket] Disconnected');
+          devLog('[WebSocket] Disconnected');
           this.isConnecting = false;
           this.ws = null;
           this.attemptReconnect();

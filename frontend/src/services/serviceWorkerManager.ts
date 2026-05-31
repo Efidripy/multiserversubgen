@@ -2,6 +2,7 @@
  * Service Worker Registration & Management
  * Handles offline support, asset caching, and background sync
  */
+import { devLog } from '../utils/devLogger';
 
 export interface ServiceWorkerOptions {
   workerPath?: string;
@@ -38,13 +39,13 @@ class ServiceWorkerManager {
         const newWorker = this.registration!.installing;
         newWorker?.addEventListener('statechange', () => {
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            console.log('[SW] Update available');
+            devLog('[SW] Update available');
             options.onUpdate?.();
           }
         });
       });
 
-      console.log('[SW] Registered successfully');
+      devLog('[SW] Registered successfully');
       options.onReady?.();
     } catch (error) {
       console.error('[SW] Registration failed:', error);
@@ -53,12 +54,12 @@ class ServiceWorkerManager {
     // Monitor online/offline state
     window.addEventListener('online', () => {
       this.isOnline = true;
-      console.log('[SW] Back online');
+      devLog('[SW] Back online');
     });
 
     window.addEventListener('offline', () => {
       this.isOnline = false;
-      console.log('[SW] Offline');
+      devLog('[SW] Offline');
       options.onOffline?.();
     });
   }
@@ -188,7 +189,6 @@ self.addEventListener('sync', (event) => {
           });
 
           // Process pending mutations here
-          console.log('[SW] Background sync completed');
         } catch (err) {
           console.error('[SW] Background sync failed:', err);
           throw err;

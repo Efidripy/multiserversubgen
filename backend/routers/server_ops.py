@@ -74,102 +74,122 @@ def build_server_ops_router(
     @router.get("/api/v1/nodes/{node_id}/xray-logs")
     async def get_xray_logs(request: Request, node_id: int, count: int = 100, level: str = "info"):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         node = get_node_or_404(node_id)
         return server_monitor.get_xray_logs(node, count=count, level=level)
 
     @router.get("/api/v1/nodes/{node_id}/xray-versions")
     async def get_xray_versions(request: Request, node_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return server_monitor.get_xray_versions(get_node_or_404(node_id))
 
     @router.post("/api/v1/nodes/{node_id}/install-xray/{version}")
     async def install_xray(request: Request, node_id: int, version: str):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return server_monitor.install_xray(get_node_or_404(node_id), version)
 
     @router.post("/api/v1/nodes/{node_id}/update-geofile")
     async def update_geofile(request: Request, node_id: int, data: Dict = None):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         file_name = (data or {}).get("fileName", "")
         return server_monitor.update_geofile(get_node_or_404(node_id), file_name)
 
     @router.post("/api/v1/nodes/{node_id}/stop-xray")
     async def stop_xray(request: Request, node_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         ok = server_monitor.stop_xray(get_node_or_404(node_id))
         return {"success": ok}
 
     @router.post("/api/v1/nodes/{node_id}/update-panel")
     async def update_panel(request: Request, node_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return server_monitor.update_panel(get_node_or_404(node_id))
 
     @router.get("/api/v1/nodes/{node_id}/xray-metrics")
     async def get_xray_metrics(request: Request, node_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return server_monitor.get_xray_metrics(get_node_or_404(node_id))
 
     @router.get("/api/v1/nodes/{node_id}/outbounds-traffic")
     async def get_outbounds_traffic(request: Request, node_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return server_monitor.get_outbounds_traffic(get_node_or_404(node_id))
 
     @router.get("/api/v1/nodes/{node_id}/generate-uuid")
     async def generate_uuid(request: Request, node_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return server_monitor.generate_uuid(get_node_or_404(node_id))
 
     @router.get("/api/v1/nodes/{node_id}/generate-x25519")
     async def generate_x25519(request: Request, node_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return server_monitor.generate_x25519_cert(get_node_or_404(node_id))
 
     @router.get("/api/v1/nodes/{node_id}/generate-vless-enc")
     async def generate_vless_enc(request: Request, node_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return server_monitor.generate_vless_enc(get_node_or_404(node_id))
 
     @router.get("/api/v1/nodes/{node_id}/generate-mldsa65")
     async def generate_mldsa65(request: Request, node_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return server_monitor.generate_mldsa65(get_node_or_404(node_id))
 
     @router.get("/api/v1/nodes/{node_id}/xray-config")
     async def get_xray_config(request: Request, node_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return server_monitor.get_xray_config(get_node_or_404(node_id))
 
     @router.post("/api/v1/nodes/{node_id}/backup-telegram")
     async def backup_telegram(request: Request, node_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         return server_monitor.backup_to_telegram(get_node_or_404(node_id))
 
     @router.delete("/api/v1/nodes/{node_id}/api-tokens/{token_id}")
     async def delete_api_token(request: Request, node_id: int, token_id: int):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
+        if not user:
+            raise HTTPException(status_code=401)
         ok = server_monitor.delete_api_token(get_node_or_404(node_id), token_id)
         return {"success": ok}
 
     @router.post("/api/v1/nodes/{node_id}/api-tokens/{token_id}/set-enabled")
     async def set_api_token_enabled(request: Request, node_id: int, token_id: int, data: Dict):
         user = check_auth(request)
-        if not user: raise HTTPException(status_code=401)
-        ok = server_monitor.set_api_token_enabled(get_node_or_404(node_id), token_id, bool(data.get("enabled", True)))
+        if not user:
+            raise HTTPException(status_code=401)
+        ok = server_monitor.set_api_token_enabled(
+            get_node_or_404(node_id),
+            token_id,
+            bool(data.get("enabled", True)),
+        )
         return {"success": ok}
 
     return router

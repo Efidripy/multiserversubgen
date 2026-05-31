@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { getAuth } from '../auth';
 import { ChoiceChips } from './ChoiceChips';
@@ -27,6 +28,7 @@ const FLOW_OPTIONS = [
 ];
 
 export const AddClientMultiServer: React.FC = () => {
+  const { t } = useTranslation();
   const [email, setEmail] = useState('');
   const [flow, setFlow] = useState('');
   const [inboundId, setInboundId] = useState('1');
@@ -51,7 +53,7 @@ export const AddClientMultiServer: React.FC = () => {
       setNodes(nodeList);
       setSelectedNodeIds(new Set(nodeList.map((node) => node.id)));
     } catch {
-      setError('Failed to load node list');
+      setError(t('clients.addMulti.loadNodesFailed'));
     }
   };
 
@@ -67,13 +69,13 @@ export const AddClientMultiServer: React.FC = () => {
 
   const handleSubmit = async () => {
     if (!email.trim()) {
-      setError('Email is required');
+      setError(t('clients.addMulti.emailRequired'));
       return;
     }
 
     const inboundIdNum = parseInt(inboundId, 10);
     if (Number.isNaN(inboundIdNum) || inboundIdNum < 1) {
-      setError('A valid inbound ID is required');
+      setError(t('clients.addMulti.validInboundRequired'));
       return;
     }
 
@@ -104,7 +106,7 @@ export const AddClientMultiServer: React.FC = () => {
       setResult(res.data as AddResult);
       setShowResultModal(true);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to add client');
+      setError(err.response?.data?.detail || t('clients.addMulti.addFailed'));
     } finally {
       setLoading(false);
     }
@@ -114,7 +116,7 @@ export const AddClientMultiServer: React.FC = () => {
     <div className="card p-3 mb-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
       <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: 'var(--accent)' }}>
         <UIIcon name="servers" size={15} />
-        Add Client to Multiple Servers
+        {t('clients.addMulti.title')}
       </h6>
 
       {error && (
@@ -130,9 +132,9 @@ export const AddClientMultiServer: React.FC = () => {
         <div className="panel-block panel-block--wide">
           <div className="panel-block__header">
             <div>
-              <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>Client Profile</h6>
+              <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>{t('clients.addMulti.profileTitle')}</h6>
               <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
-                Basic client settings in one place.
+                {t('clients.addMulti.profileHint')}
               </p>
             </div>
           </div>
@@ -140,20 +142,20 @@ export const AddClientMultiServer: React.FC = () => {
           <div className="panel-field-grid">
             <div>
               <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-                Email
+                {t('clients.email')}
               </label>
               <input
                 type="email"
                 className="form-control form-control-sm"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="user@example.com"
+                placeholder={t('clients.addMulti.emailPlaceholder')}
                 style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
               <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-                Inbound ID
+                {t('clients.inboundIdLabel')}
               </label>
               <input
                 type="number"
@@ -166,7 +168,7 @@ export const AddClientMultiServer: React.FC = () => {
             </div>
             <div>
               <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-                Total GB (0 = inf)
+                {t('clients.addMulti.totalGbLabel')}
               </label>
               <input
                 type="number"
@@ -179,7 +181,7 @@ export const AddClientMultiServer: React.FC = () => {
             </div>
             <div>
               <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-                Expiry Date
+                {t('clients.addMulti.expiryDate')}
               </label>
               <input
                 type="date"
@@ -194,7 +196,7 @@ export const AddClientMultiServer: React.FC = () => {
           <div className="panel-grid panel-grid--compact mt-3">
             <div>
               <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-                Flow
+                {t('clients.flowLabel')}
               </label>
               <ChoiceChips
                 options={FLOW_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
@@ -209,8 +211,8 @@ export const AddClientMultiServer: React.FC = () => {
               </label>
               <ChoiceChips
                 options={[
-                  { value: true, label: 'Enabled' },
-                  { value: false, label: 'Disabled' },
+                  { value: true, label: t('clients.addMulti.enabled') },
+                  { value: false, label: t('clients.disabled') },
                 ]}
                 value={enable}
                 onChange={(value) => setEnable(value)}
@@ -223,9 +225,9 @@ export const AddClientMultiServer: React.FC = () => {
         <div className="panel-block panel-block--wide">
           <div className="panel-block__header">
             <div>
-              <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>Target Servers</h6>
+              <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>{t('clients.addMulti.targetServers')}</h6>
               <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
-                Select one, many or all servers for this client.
+                {t('clients.addMulti.targetServersHint')}
               </p>
             </div>
             <div className="panel-inline-actions">
@@ -234,20 +236,20 @@ export const AddClientMultiServer: React.FC = () => {
                 style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 onClick={handleSelectAll}
               >
-                All
+                {t('common.all')}
               </button>
               <button
                 className="btn btn-sm"
                 style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 onClick={handleSelectNone}
               >
-                None
+                {t('common.none')}
               </button>
             </div>
           </div>
 
           <div className="small mb-2" style={{ color: 'var(--text-secondary)' }}>
-            {selectedNodeIds.size}/{nodes.length} selected
+            {t('clients.addMulti.selectedServers', { selected: selectedNodeIds.size, total: nodes.length })}
           </div>
           <div className="panel-selection-grid">
             {nodes.map((node) => {
@@ -273,7 +275,7 @@ export const AddClientMultiServer: React.FC = () => {
               );
             })}
             {nodes.length === 0 && (
-              <span className="small" style={{ color: 'var(--text-secondary)' }}>No servers configured</span>
+              <span className="small" style={{ color: 'var(--text-secondary)' }}>{t('clients.addMulti.noServers')}</span>
             )}
           </div>
         </div>
@@ -288,7 +290,7 @@ export const AddClientMultiServer: React.FC = () => {
         >
           <span className="d-inline-flex align-items-center gap-1">
             <UIIcon name={loading ? 'spinner' : 'plus'} size={14} />
-            {loading ? 'Adding...' : `Add to ${selectedNodeIds.size} Server${selectedNodeIds.size !== 1 ? 's' : ''}`}
+            {loading ? t('clients.addMulti.adding') : t('clients.addMulti.addToServers', { count: selectedNodeIds.size })}
           </span>
         </button>
       </div>
@@ -302,7 +304,7 @@ export const AddClientMultiServer: React.FC = () => {
             >
               <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
                 <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>
-                  Add Client Results
+                  {t('clients.addMulti.resultsTitle')}
                 </h6>
                 <button
                   type="button"
@@ -313,7 +315,7 @@ export const AddClientMultiServer: React.FC = () => {
               <div className="modal-body">
                 <div className="d-flex gap-3 mb-3">
                   <span className="badge fs-6" style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
-                    Total: {result.summary.total}
+                    {t('common.total')}: {result.summary.total}
                   </span>
                   <span className="badge fs-6" style={{ backgroundColor: 'var(--success)' }}>
                     <span className="d-inline-flex align-items-center gap-1"><UIIcon name="check" size={12} />{result.summary.successful}</span>
@@ -327,9 +329,9 @@ export const AddClientMultiServer: React.FC = () => {
                   <table className="table table-sm" style={{ color: 'var(--text-primary)' }}>
                     <thead>
                       <tr style={{ borderColor: 'var(--border-color)' }}>
-                        <th style={{ color: 'var(--text-secondary)' }}>Server</th>
-                        <th style={{ color: 'var(--text-secondary)' }}>Status</th>
-                        <th style={{ color: 'var(--text-secondary)' }}>Details</th>
+                        <th style={{ color: 'var(--text-secondary)' }}>{t('common.server')}</th>
+                        <th style={{ color: 'var(--text-secondary)' }}>{t('common.status')}</th>
+                        <th style={{ color: 'var(--text-secondary)' }}>{t('common.details')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -340,12 +342,12 @@ export const AddClientMultiServer: React.FC = () => {
                             {item.success ? (
                               <span className="d-inline-flex align-items-center gap-1" style={{ color: 'var(--success)' }}>
                                 <UIIcon name="check" size={13} />
-                                Success
+                                {t('common.success')}
                               </span>
                             ) : (
                               <span className="d-inline-flex align-items-center gap-1" style={{ color: 'var(--danger)' }}>
                                 <UIIcon name="x" size={13} />
-                                Failed
+                                {t('common.failed')}
                               </span>
                             )}
                           </td>
@@ -362,7 +364,7 @@ export const AddClientMultiServer: React.FC = () => {
                   style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
                   onClick={() => setShowResultModal(false)}
                 >
-                  Close
+                  {t('common.close')}
                 </button>
               </div>
             </div>

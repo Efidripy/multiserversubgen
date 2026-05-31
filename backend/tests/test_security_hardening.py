@@ -1,16 +1,16 @@
 """Security regression tests for auth and node listing."""
 import base64
-import json
 import os
 import sys
 import tempfile
 
-import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.setdefault("PROJECT_DIR", tempfile.gettempdir())
 import main
+from routers.realtime import build_realtime_router
 
 
 class _FakeCursor:
@@ -76,3 +76,26 @@ def test_list_nodes_does_not_return_password(monkeypatch):
     assert response.status_code == 200
     assert len(payload) == 1
     assert "password" not in payload[0]
+
+
+def test_websocket_auth_uses_first_message_not_query_string(monkeypatch):
+    app = FastAPI()
+    app.include_router(
+        build_realtime_router(
+            check_basic_auth_header=main.check_basic_auth_header,
+            verify_totp_code=lambda _user, _code: False,
+            mfa_totp_ws_strict=False,
+            pam_authenticate=lambda u, p: u == "admin" and p == "secret",
+            ws_manager=main.ws_manager,
+            handle_websocket_message=main.handle_websocket_message,
+            logger=main.logger,
+        )
+    )
+    client = TestClient(app)
+
+    with client.websocket_connect("/ws") as websocket:
+        websocket.send_json({"type": "auth", "username": "admin", "password": "secret"})
+        websocket.send_json({"type": "subscribe", "channel": "traffic"})
+        response = websocket.receive_json()
+
+    assert response == {"type": "subscribed", "channel": "traffic", "status": "success"}

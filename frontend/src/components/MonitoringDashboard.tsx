@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
+import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { getAuth } from '../auth';
 import { ChoiceChips } from './ChoiceChips';
@@ -78,6 +79,13 @@ type TrafficMode = 'history' | 'live';
 type TrafficSource = 'nodes' | 'people' | 'inbounds';
 type TrafficVisualStyle = 'stepped' | 'bars' | 'smooth';
 type TrafficSmoothing = 'raw' | 'sma3' | 'sma5';
+type NullableNumberSeries = (number | null)[];
+interface BucketedNodeHistory {
+  nodeId: number;
+  nodeName: string;
+  points: (HistoryPoint | null)[];
+  bucketsRaw: Map<number, HistoryPoint[]>;
+}
 
 interface SnapshotNode {
   name: string;
@@ -241,7 +249,7 @@ function getBucketSec(rangeSec: number, preferredStepSec?: number): number {
   return 900;
 }
 
-function buildUsageFromCumulative(points: Array<number | null>): Array<number | null> {
+function buildUsageFromCumulative(points: NullableNumberSeries): NullableNumberSeries {
   let prev: number | null = null;
   return points.map((cur) => {
     if (cur === null || Number.isNaN(cur)) return null;
@@ -258,7 +266,7 @@ function buildUsageFromCumulative(points: Array<number | null>): Array<number | 
   });
 }
 
-function smoothSeries(values: Array<number | null>, mode: TrafficSmoothing): Array<number | null> {
+function smoothSeries(values: NullableNumberSeries, mode: TrafficSmoothing): NullableNumberSeries {
   const windowSize = mode === 'sma3' ? 3 : mode === 'sma5' ? 5 : 1;
   if (windowSize <= 1) return values;
 
@@ -274,7 +282,7 @@ function smoothSeries(values: Array<number | null>, mode: TrafficSmoothing): Arr
   });
 }
 
-function buildTrafficConsumptionSeries(points: Array<HistoryPoint | null>): Array<number | null> {
+function buildTrafficConsumptionSeries(points: (HistoryPoint | null)[]): NullableNumberSeries {
   let baseTotal: number | null = null;
   let prevTotal: number | null = null;
   let accumulated = 0;
@@ -299,9 +307,9 @@ function buildTrafficConsumptionSeries(points: Array<HistoryPoint | null>): Arra
 }
 
 function buildBucketTrafficConsumptionSeries(
-  perNode: Array<{ nodeId: number; nodeName: string; points: Array<HistoryPoint | null>; bucketsRaw: Map<number, HistoryPoint[]> }>,
+  perNode: BucketedNodeHistory[],
   buckets: number[]
-): Array<number | null> {
+): NullableNumberSeries {
   let cumulative = 0;
   return buckets.map((bucketTs) => {
     let intervalUsage = 0;
@@ -331,7 +339,7 @@ function buildBucketTrafficConsumptionSeries(
 
 function bucketizeAllNodesHistory(points: HistoryPoint[], rangeSec: number, preferredStepSec?: number): {
   buckets: number[];
-  perNode: Array<{ nodeId: number; nodeName: string; points: Array<HistoryPoint | null>; bucketsRaw: Map<number, HistoryPoint[]> }>;
+  perNode: BucketedNodeHistory[];
 } {
   const bucketSec = getBucketSec(rangeSec, preferredStepSec);
 
@@ -384,6 +392,7 @@ function formatTickLabel(tsSec: number, rangeSec: number): string {
 
 export const MonitoringDashboard: React.FC = () => {
   const { stylePreset } = useTheme();
+  const { t } = useTranslation();
 
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [selectedScope, setSelectedScope] = useState<string>('all'); // "all" | node id as string
@@ -474,7 +483,7 @@ export const MonitoringDashboard: React.FC = () => {
 
         const failed = allResults.length - allResults.filter((result) => result.status === 'fulfilled').length;
         if (failed > 0 && successful.length === 0) {
-          setError('Failed to load node history for all servers');
+          setError(t('monitoringDashboard.loadAllHistoryFailed'));
         }
       } else {
         const nodeId = Number(scope);
@@ -484,7 +493,7 @@ export const MonitoringDashboard: React.FC = () => {
       }
       setError('');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to load node history');
+      setError(err.response?.data?.detail || t('monitoringDashboard.loadHistoryFailed'));
     } finally {
       setLoadingHistory(false);
     }
@@ -537,7 +546,7 @@ export const MonitoringDashboard: React.FC = () => {
       setAdguardOverview(res.data as AdGuardOverview);
       setAdguardError('');
     } catch (err: any) {
-      setAdguardError(err?.response?.data?.detail || 'Failed to load AdGuard overview');
+      setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.loadAdguardOverviewFailed'));
       setAdguardOverview(null);
     } finally {
       setAdguardLoading(false);
@@ -574,7 +583,7 @@ export const MonitoringDashboard: React.FC = () => {
       await Promise.all([loadAdguardOverview(), loadAdguardSources(), loadAdguardHistory(), loadStackStatus()]);
       setAdguardError('');
     } catch (err: any) {
-      setAdguardError(err?.response?.data?.detail || 'Failed to collect AdGuard data');
+      setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.collectAdguardFailed'));
     } finally {
       setAdguardLoading(false);
     }
@@ -828,7 +837,7 @@ export const MonitoringDashboard: React.FC = () => {
         })
       : [
           {
-            label: 'CPU %',
+            label: t('monitoringDashboard.cpuPercent'),
             data: effectiveHistory.map((p) => Number((p.cpu || 0).toFixed(2))),
             borderColor: 'var(--warning)',
             backgroundColor: 'color-mix(in srgb, var(--warning) 20%, transparent)',
@@ -859,7 +868,7 @@ export const MonitoringDashboard: React.FC = () => {
         })
       : [
           {
-            label: 'Online clients',
+            label: t('monitoringDashboard.onlineClients'),
             data: effectiveHistory.map((p) => Number(p.online_clients || 0)),
             borderColor: 'var(--accent)',
             backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
@@ -878,7 +887,7 @@ export const MonitoringDashboard: React.FC = () => {
           labels: trafficHistoryLabels,
           datasets: [
             {
-              label: 'All servers usage',
+              label: t('monitoringDashboard.allServersUsage'),
               data: smoothTrafficSeries(
                 buildBucketTrafficConsumptionSeries(trafficHistorySeries.perNode, trafficHistorySeries.buckets).map((bytes) =>
                   toTrafficUnit(Number(bytes || 0))
@@ -1268,7 +1277,7 @@ export const MonitoringDashboard: React.FC = () => {
     <div className="monitoring-panel panel-block" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
       <div className="monitoring-panel__header mb-3">
         <h4 className="mb-0" style={{ color: 'var(--text-primary)' }}>
-          Monitoring
+          {t('nav.monitoring')}
         </h4>
         <a
           className="btn btn-sm"
@@ -1277,7 +1286,7 @@ export const MonitoringDashboard: React.FC = () => {
           rel="noreferrer"
           style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
         >
-          Открыть Grafana
+          {t('monitoringDashboard.openGrafana')}
         </a>
       </div>
 
@@ -1290,11 +1299,11 @@ export const MonitoringDashboard: React.FC = () => {
       <div className="row g-2 mb-3">
         <div className="col-md-3">
           <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            Сервер
+            {t('common.server')}
           </label>
           <ChoiceChips
             options={[
-              { value: 'all', label: 'Все' },
+              { value: 'all', label: t('common.all') },
               ...nodes.map((n) => ({ value: String(n.id), label: n.name })),
             ]}
             value={selectedScope}
@@ -1304,7 +1313,7 @@ export const MonitoringDashboard: React.FC = () => {
         </div>
         <div className="col-md-3">
           <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            Диапазон
+            {t('monitoringDashboard.range')}
           </label>
           <ChoiceChips
             options={RANGE_OPTIONS.map((range) => ({ value: range.value, label: range.label }))}
@@ -1315,7 +1324,7 @@ export const MonitoringDashboard: React.FC = () => {
         </div>
         <div className="col-md-3">
           <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            Трафик
+            {t('traffic.title')}
           </label>
           <ChoiceChips
             options={[
@@ -1341,7 +1350,7 @@ export const MonitoringDashboard: React.FC = () => {
             }}
             disabled={loadingHistory}
           >
-            {loadingHistory ? 'Обновление...' : 'Обновить'}
+            {loadingHistory ? t('header.updating') : t('common.refresh')}
           </button>
         </div>
       </div>
@@ -1349,7 +1358,7 @@ export const MonitoringDashboard: React.FC = () => {
       <div className="row g-2 mb-3">
         <div className="col-md-3">
           <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            Режим трафика
+            {t('monitoringDashboard.trafficMode')}
           </label>
           <ChoiceChips
             options={[
@@ -1363,13 +1372,13 @@ export const MonitoringDashboard: React.FC = () => {
         </div>
         <div className="col-md-3">
           <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            Источник
+            {t('monitoringDashboard.source')}
           </label>
           <ChoiceChips
             options={[
               { value: 'nodes', label: 'Nodes' },
-              { value: 'people', label: 'Люди' },
-              { value: 'inbounds', label: 'Инбаунды' },
+              { value: 'people', label: t('monitoringDashboard.people') },
+              { value: 'inbounds', label: t('nav.inbounds') },
             ]}
             value={trafficSource}
             onChange={(value) => setTrafficSource(value as TrafficSource)}
@@ -1378,7 +1387,7 @@ export const MonitoringDashboard: React.FC = () => {
         </div>
         <div className="col-md-3">
           <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            Шаг
+            {t('monitoringDashboard.step')}
           </label>
           <ChoiceChips
             options={TRAFFIC_STEP_OPTIONS.map((step) => ({ value: step.value, label: step.label }))}
@@ -1389,7 +1398,7 @@ export const MonitoringDashboard: React.FC = () => {
         </div>
         <div className="col-md-3">
           <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            Стиль
+            {t('monitoringDashboard.style')}
           </label>
           <ChoiceChips
             options={[
@@ -1404,7 +1413,7 @@ export const MonitoringDashboard: React.FC = () => {
         </div>
         <div className="col-md-3">
           <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            Сглаживание
+            {t('monitoringDashboard.smoothing')}
           </label>
           <ChoiceChips
             options={[
@@ -1439,21 +1448,21 @@ export const MonitoringDashboard: React.FC = () => {
         <div className="col-md-3">
           <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
             <div className="small" style={{ color: 'var(--text-secondary)' }}>
-              {isAllScope ? 'Nodes online' : 'Node status'}
+              {isAllScope ? t('monitoringDashboard.nodesOnline') : t('monitoringDashboard.nodeStatus')}
             </div>
             <strong style={{ color: isAllScope ? 'var(--success)' : latestForSelected?.available ? 'var(--success)' : 'var(--danger)' }}>
               {isAllScope
                 ? `${allNodesStatus.online}/${allNodesStatus.total}`
                 : latestForSelected?.available
-                ? 'online'
-                : 'offline'}
+                ? t('nodes.online')
+                : t('nodes.offline')}
             </strong>
           </div>
         </div>
         <div className="col-md-3">
           <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
             <div className="small" style={{ color: 'var(--text-secondary)' }}>
-              {isAllScope ? 'Online clients (all)' : 'Current online clients'}
+              {isAllScope ? t('monitoringDashboard.onlineClientsAll') : t('monitoringDashboard.currentOnlineClients')}
             </div>
             <strong style={{ color: 'var(--accent)' }}>
               {isAllScope ? allNodesStatus.onlineClients : latestForSelected?.online_clients ?? 0}
@@ -1466,14 +1475,14 @@ export const MonitoringDashboard: React.FC = () => {
         {trafficSource !== 'nodes' && (
           <div className="col-12">
             <div className="alert mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--info) 14%, transparent)', borderColor: 'var(--info)', color: 'var(--info)' }}>
-              Источник «Люди/Инбаунды» работает в live-режиме (исторические серии per-client/per-inbound сейчас не хранятся).
+              {t('monitoringDashboard.liveSourceHint')}
             </div>
           </div>
         )}
         {!isAllScope && trafficSource !== 'nodes' && (
           <div className="col-12">
             <div className="alert mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--warning) 14%, transparent)', borderColor: 'var(--warning)', color: 'var(--warning)' }}>
-              Для отдельного сервера включён fallback на source=Nodes (агрегация «Люди» корректна только для scope=All servers).
+              {t('monitoringDashboard.singleServerFallbackHint')}
             </div>
           </div>
         )}
@@ -1487,21 +1496,21 @@ export const MonitoringDashboard: React.FC = () => {
         {showingLiveSnapshotFallback && (
           <div className="col-12">
             <div className="alert mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--warning) 14%, transparent)', borderColor: 'var(--warning)', color: 'var(--warning)' }}>
-              История пока пустая — отображается текущий live snapshot.
+              {t('monitoringDashboard.liveSnapshotFallbackHint')}
             </div>
           </div>
         )}
         <div className="col-12" style={{ order: 100 }}>
           <div className="card p-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
             <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-              <h6 className="mb-0" style={{ color: 'var(--text-primary)' }}>AdGuard DNS Monitoring</h6>
+              <h6 className="mb-0" style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.adguardTitle')}</h6>
               <button
                 className="btn btn-sm"
                 style={{ backgroundColor: 'var(--info)', borderColor: 'var(--info)', color: '#ffffff' }}
                 onClick={collectAdguardNow}
                 disabled={adguardLoading}
               >
-                {adguardLoading ? 'Сбор...' : 'Собрать сейчас'}
+                {adguardLoading ? t('monitoringDashboard.collecting') : t('monitoringDashboard.collectNow')}
               </button>
             </div>
 
@@ -1514,37 +1523,37 @@ export const MonitoringDashboard: React.FC = () => {
             <div className="row g-2 mb-3">
               <div className="col-md-2">
                 <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Sources</div>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.sources')}</div>
                   <strong style={{ color: 'var(--text-primary)' }}>{adguardOverview?.summary?.sources_online || 0}/{adguardOverview?.summary?.sources_total || 0}</strong>
                 </div>
               </div>
               <div className="col-md-2">
                 <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Queries</div>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.queries')}</div>
                   <strong style={{ color: stylePreset === '3' ? 'var(--text-primary)' : 'var(--accent)' }}>{Math.round(adguardOverview?.summary?.queries_total || 0).toLocaleString()}</strong>
                 </div>
               </div>
               <div className="col-md-2">
                 <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Block rate</div>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.blockRate')}</div>
                   <strong style={{ color: 'var(--warning)' }}>{(adguardOverview?.summary?.blocked_rate || 0).toFixed(2)}%</strong>
                 </div>
               </div>
               <div className="col-md-2">
                 <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Latency</div>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.latency')}</div>
                   <strong style={{ color: 'var(--success)' }}>{(adguardOverview?.summary?.avg_latency_ms || 0).toFixed(1)} ms</strong>
                 </div>
               </div>
               <div className="col-md-2">
                 <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Cache hit</div>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.cacheHit')}</div>
                   <strong style={{ color: stylePreset === '3' ? 'var(--text-primary)' : 'var(--info)' }}>{(adguardOverview?.summary?.cache_hit_ratio || 0).toFixed(2)}%</strong>
                 </div>
               </div>
               <div className="col-md-2">
                 <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Upstream errors</div>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.upstreamErrors')}</div>
                   <strong style={{ color: 'var(--danger)' }}>{Math.round(adguardOverview?.summary?.upstream_errors || 0).toLocaleString()}</strong>
                 </div>
               </div>
@@ -1555,7 +1564,7 @@ export const MonitoringDashboard: React.FC = () => {
                 <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
                   <div className="small" style={{ color: 'var(--text-secondary)' }}>Prometheus</div>
                   <strong style={{ color: stackStatus?.services?.prometheus?.ok ? 'var(--success)' : 'var(--warning)' }}>
-                    {stackStatus?.services?.prometheus?.ok ? 'online' : 'offline'}
+                    {stackStatus?.services?.prometheus?.ok ? t('nodes.online') : t('nodes.offline')}
                   </strong>
                 </div>
               </div>
@@ -1563,7 +1572,7 @@ export const MonitoringDashboard: React.FC = () => {
                 <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
                   <div className="small" style={{ color: 'var(--text-secondary)' }}>Loki</div>
                   <strong style={{ color: stackStatus?.services?.loki?.ok ? 'var(--success)' : 'var(--warning)' }}>
-                    {stackStatus?.services?.loki?.ok ? 'online' : 'offline'}
+                    {stackStatus?.services?.loki?.ok ? t('nodes.online') : t('nodes.offline')}
                   </strong>
                 </div>
               </div>
@@ -1571,13 +1580,13 @@ export const MonitoringDashboard: React.FC = () => {
                 <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
                   <div className="small" style={{ color: 'var(--text-secondary)' }}>Grafana</div>
                   <strong style={{ color: stackStatus?.services?.grafana?.ok ? 'var(--success)' : 'var(--warning)' }}>
-                    {stackStatus?.services?.grafana?.ok ? 'online' : 'offline'}
+                    {stackStatus?.services?.grafana?.ok ? t('nodes.online') : t('nodes.offline')}
                   </strong>
                 </div>
               </div>
               <div className="col-md-3">
                 <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Prom up</div>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.promUp')}</div>
                   <strong style={{ color: 'var(--text-primary)' }}>
                     {Math.round(Number(stackStatus?.prometheus_metrics?.up_sum || 0))}
                   </strong>
@@ -1590,7 +1599,7 @@ export const MonitoringDashboard: React.FC = () => {
                 <div className="col-12">
                   <div className="card p-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
                     <div className="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
-                      <h6 className="mb-0" style={{ color: 'var(--text-primary)' }}>AdGuard Queries/sec (per source)</h6>
+                      <h6 className="mb-0" style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.adguardQpsTitle')}</h6>
                       <small style={{ color: 'var(--text-secondary)' }}>
                         Δqueries: {Math.round(adguardHistory?.summary?.queries_delta || 0).toLocaleString()} | QPS: {(adguardHistory?.summary?.queries_per_sec || 0).toFixed(3)}
                       </small>
@@ -1602,7 +1611,7 @@ export const MonitoringDashboard: React.FC = () => {
                 </div>
                 <div className="col-md-6">
                   <div className="card p-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                    <h6 className="mb-2" style={{ color: 'var(--text-primary)' }}>AdGuard Block rate %</h6>
+                    <h6 className="mb-2" style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.adguardBlockRateTitle')}</h6>
                     <div style={{ height: 220 }}>
                       <Line data={adguardBlockRateData} options={chartOptions} />
                     </div>
@@ -1610,7 +1619,7 @@ export const MonitoringDashboard: React.FC = () => {
                 </div>
                 <div className="col-md-6">
                   <div className="card p-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                    <h6 className="mb-2" style={{ color: 'var(--text-primary)' }}>AdGuard Latency ms</h6>
+                    <h6 className="mb-2" style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.adguardLatencyTitle')}</h6>
                     <div style={{ height: 220 }}>
                       <Line data={adguardLatencyData} options={chartOptions} />
                     </div>
@@ -1623,21 +1632,21 @@ export const MonitoringDashboard: React.FC = () => {
               <table className="table table-sm align-middle mb-0" style={{ color: 'var(--text-primary)' }}>
                 <thead>
                   <tr>
-                    <th>Source</th>
-                    <th>Status</th>
-                    <th>Queries</th>
-                    <th>Blocked</th>
-                    <th>Block %</th>
-                    <th>Latency</th>
-                    <th>Cache %</th>
-                    <th>Errors</th>
+                    <th>{t('monitoringDashboard.source')}</th>
+                    <th>{t('common.status')}</th>
+                    <th>{t('monitoringDashboard.queries')}</th>
+                    <th>{t('monitoringDashboard.blocked')}</th>
+                    <th>{t('monitoringDashboard.blockPercent')}</th>
+                    <th>{t('monitoringDashboard.latency')}</th>
+                    <th>{t('monitoringDashboard.cachePercent')}</th>
+                    <th>{t('monitoringDashboard.errors')}</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(adguardOverview?.sources || []).map((s) => (
                     <tr key={s.source_id}>
                       <td>{s.source_name}</td>
-                      <td style={{ color: s.available ? 'var(--success)' : 'var(--danger)' }}>{s.available ? 'online' : 'offline'}</td>
+                      <td style={{ color: s.available ? 'var(--success)' : 'var(--danger)' }}>{s.available ? t('nodes.online') : t('nodes.offline')}</td>
                       <td>{Math.round(s.queries_total || 0).toLocaleString()}</td>
                       <td>{Math.round(s.blocked_total || 0).toLocaleString()}</td>
                       <td>{(s.blocked_rate || 0).toFixed(2)}%</td>
@@ -1648,7 +1657,7 @@ export const MonitoringDashboard: React.FC = () => {
                   ))}
                   {!(adguardOverview?.sources || []).length && (
                     <tr>
-                      <td colSpan={8} style={{ color: 'var(--text-secondary)' }}>Нет данных AdGuard. Добавьте источник ниже и нажмите «Собрать сейчас».</td>
+                      <td colSpan={8} style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.noAdguardData')}</td>
                     </tr>
                   )}
                 </tbody>
@@ -1657,7 +1666,7 @@ export const MonitoringDashboard: React.FC = () => {
 
             <div className="row g-3 mb-2">
               <div className="col-md-6">
-                <h6 style={{ color: 'var(--text-primary)' }}>Top blocked domains</h6>
+                <h6 style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.topBlockedDomains')}</h6>
                 <div className="d-flex gap-2 mb-2">
                   <select
                     className="form-select form-select-sm"
@@ -1665,14 +1674,14 @@ export const MonitoringDashboard: React.FC = () => {
                     value={blockedSourceFilter}
                     onChange={(e) => setBlockedSourceFilter(e.target.value)}
                   >
-                    <option value="all">All sources</option>
+                    <option value="all">{t('monitoringDashboard.allSources')}</option>
                     {(adguardOverview?.sources || []).map((s) => (
                       <option key={s.source_id} value={String(s.source_id)}>{s.source_name}</option>
                     ))}
                   </select>
                   <input
                     className="form-control form-control-sm"
-                    placeholder="Search domain…"
+                    placeholder={t('monitoringDashboard.searchDomainPlaceholder')}
                     value={blockedSearch}
                     onChange={(e) => setBlockedSearch(e.target.value)}
                     style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
@@ -1699,14 +1708,14 @@ export const MonitoringDashboard: React.FC = () => {
                   ))}
                   {!topBlockedDomains.length && (
                     <li className="list-group-item" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}>
-                      Пока нет данных
+                      {t('monitoringDashboard.noDataYet')}
                     </li>
                   )}
                 </ul>
                 </div>
               </div>
               <div className="col-md-6">
-                <h6 style={{ color: 'var(--text-primary)' }}>Top clients</h6>
+                <h6 style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.topClients')}</h6>
                 <ul className="list-group">
                   {topClients.map((it) => (
                     <li key={it.name} className="list-group-item d-flex justify-content-between" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}>
@@ -1716,7 +1725,7 @@ export const MonitoringDashboard: React.FC = () => {
                   ))}
                   {!topClients.length && (
                     <li className="list-group-item" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}>
-                      Пока нет данных
+                      {t('monitoringDashboard.noDataYet')}
                     </li>
                   )}
                 </ul>
@@ -1724,12 +1733,12 @@ export const MonitoringDashboard: React.FC = () => {
             </div>
 
             <hr style={{ borderColor: 'var(--border-color)' }} />
-            <h6 className="mb-2" style={{ color: 'var(--text-primary)' }}>Добавить источник AdGuard</h6>
+            <h6 className="mb-2" style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.addAdguardSource')}</h6>
             <div className="row g-2">
               <div className="col-md-2">
                 <input
                   className="form-control form-control-sm"
-                  placeholder="Name"
+                  placeholder={t('common.name')}
                   value={adguardForm.name}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, name: e.target.value }))}
                   style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
@@ -1738,7 +1747,7 @@ export const MonitoringDashboard: React.FC = () => {
               <div className="col-md-3">
                 <input
                   className="form-control form-control-sm"
-                  placeholder="Admin URL"
+                  placeholder={t('monitoringDashboard.adminUrl')}
                   value={adguardForm.admin_url}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, admin_url: e.target.value }))}
                   style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
@@ -1747,7 +1756,7 @@ export const MonitoringDashboard: React.FC = () => {
               <div className="col-md-2">
                 <input
                   className="form-control form-control-sm"
-                  placeholder="DNS URL (optional)"
+                  placeholder={t('monitoringDashboard.dnsUrlOptional')}
                   value={adguardForm.dns_url}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, dns_url: e.target.value }))}
                   style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
@@ -1756,7 +1765,7 @@ export const MonitoringDashboard: React.FC = () => {
               <div className="col-md-2">
                 <input
                   className="form-control form-control-sm"
-                  placeholder="Username"
+                  placeholder={t('auth.username')}
                   value={adguardForm.username}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, username: e.target.value }))}
                   style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
@@ -1766,7 +1775,7 @@ export const MonitoringDashboard: React.FC = () => {
                 <input
                   className="form-control form-control-sm"
                   type="password"
-                  placeholder="Password"
+                  placeholder={t('auth.password')}
                   value={adguardForm.password}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, password: e.target.value }))}
                   style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
@@ -1790,17 +1799,17 @@ export const MonitoringDashboard: React.FC = () => {
                       });
                       await Promise.all([loadAdguardSources(), collectAdguardNow()]);
                     } catch (err: any) {
-                      setAdguardError(err?.response?.data?.detail || 'Failed to add AdGuard source');
+                      setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.addAdguardSourceFailed'));
                     }
                   }}
                 >
-                  Add
+                  {t('common.add')}
                 </button>
               </div>
             </div>
             {!!adguardSources.length && (
               <div className="small mt-2" style={{ color: 'var(--text-secondary)' }}>
-                Sources configured: {adguardSources.map((s) => s.name).join(', ')}
+                {t('monitoringDashboard.sourcesConfigured', { sources: adguardSources.map((s) => s.name).join(', ') })}
               </div>
             )}
           </div>
@@ -1816,7 +1825,7 @@ export const MonitoringDashboard: React.FC = () => {
         </div>
         <div className="col-12" style={{ order: 20 }}>
           <div className="card p-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
-            <h6 style={{ color: 'var(--text-primary)' }}>Online clients ({selectedNodeName})</h6>
+            <h6 style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.onlineClientsChart', { node: selectedNodeName })}</h6>
             <div style={{ height: 260 }}>
               <Line data={onlineData} options={chartOptions} />
             </div>
@@ -1825,7 +1834,7 @@ export const MonitoringDashboard: React.FC = () => {
         <div className="col-12" style={{ order: 30 }}>
           <div className="card p-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
             <h6 style={{ color: 'var(--text-primary)' }}>
-              Traffic consumption {trafficConsumptionLabel} ({selectedNodeName}) • {trafficModeLabel} • {trafficSourceLabel} • step {effectiveTrafficStepSec}s • {trafficSmoothingLabel}
+              {t('monitoringDashboard.trafficConsumptionTitle', { label: trafficConsumptionLabel, node: selectedNodeName, mode: trafficModeLabel, source: trafficSourceLabel, step: effectiveTrafficStepSec, smoothing: trafficSmoothingLabel })}
             </h6>
             <div style={{ height: 260 }}>
               {renderTrafficAsBars ? (

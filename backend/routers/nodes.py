@@ -1,7 +1,7 @@
-import sqlite3
 from services.db_bootstrap import connect
 import time
 from typing import Callable, Dict
+from shared.sql import update_by_id_query
 from urllib.parse import urlparse
 
 import requests
@@ -15,6 +15,7 @@ def build_nodes_router(
     *,
     check_auth: Callable[[Request], str | None],
     node_service,
+    get_node_or_404: Callable[[int], Dict],
     db_path: str,
     encrypt: Callable[[str], str],
     requests_verify,
@@ -271,21 +272,21 @@ def build_nodes_router(
                 update_values = []
 
                 if has_name:
-                    update_fields.append("name = ?")
+                    update_fields.append("name")
                     update_values.append(new_name)
 
                 if has_read_only:
-                    update_fields.append("read_only = ?")
+                    update_fields.append("read_only")
                     update_values.append(1 if new_read_only else 0)
 
                 if has_bearer:
                     new_bearer = str(data.get("bearer_token") or "").strip()
                     if new_bearer:
-                        update_fields.append("password = ?")
+                        update_fields.append("password")
                         update_values.append(encrypt(f"bearer:{new_bearer}"))
-                        update_fields.append("username = ?")
+                        update_fields.append("username")
                         update_values.append("bearer_token")
-                        update_fields.append("user = ?")
+                        update_fields.append("user")
                         update_values.append("bearer_token")
                     else:
                         raise HTTPException(status_code=400, detail="bearer_token cannot be empty")
@@ -294,16 +295,16 @@ def build_nodes_router(
                     new_pass = str(data.get("password") or "").strip()
                     if not new_user or not new_pass:
                         raise HTTPException(status_code=400, detail="user and password cannot be empty")
-                    update_fields.append("password = ?")
+                    update_fields.append("password")
                     update_values.append(encrypt(new_pass))
-                    update_fields.append("username = ?")
+                    update_fields.append("username")
                     update_values.append(new_user)
-                    update_fields.append("user = ?")
+                    update_fields.append("user")
                     update_values.append(new_user)
 
                 update_values.append(node_id)
                 result = conn.execute(
-                    f"UPDATE nodes SET {', '.join(update_fields)} WHERE id = ?",
+                    update_by_id_query("nodes", update_fields),
                     tuple(update_values),
                 )
 

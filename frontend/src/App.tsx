@@ -880,7 +880,7 @@ export const App: React.FC = () => {
           <button
             className="app-topbar__menu-btn"
             onClick={() => setMobileSidebarOpen(true)}
-            aria-label="Open menu"
+            aria-label={t('main.openMenu')}
             style={{ color: colors.text.primary, backgroundColor: colors.bg.tertiary, border: `1px solid ${colors.border}` }}
           >
             <UIIcon name="menu" size={16} />

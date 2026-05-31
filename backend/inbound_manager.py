@@ -274,32 +274,6 @@ class InboundManager:
             logger.warning(f"Failed to delete inbound from {node['name']}: {exc}")
             return False
     
-    def reset_inbound_traffic(self, node: Dict, inbound_id: int) -> bool:
-        if self._is_read_only(node):
-            logger.info(f"Skip reset inbound traffic on read-only node {node['name']}")
-            return False
-        """Сбросить статистику инбаунда"""
-        s = requests.Session()
-        s.verify = _requests_verify_value()
-        b_path = node.get("base_path", "").strip("/")
-        prefix = f"/{b_path}" if b_path else ""
-        scheme = node.get("scheme", "https")
-        base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
-        
-        try:
-            username, password, bearer_token = extract_node_auth(node, self.decrypt)
-            if not login_panel(s, base_url, username, password, bearer_token=bearer_token):
-                logger.warning(f"node panel login failed for node {node['name']}")
-                return False
-            res = xui_request(
-                s,
-                "POST",
-                f"{base_url}/panel/api/inbounds/resetClientTraffic/{inbound_id}",
-            )
-            return self._xui_success(res)
-        except Exception as exc:
-            logger.warning(f"Failed to reset inbound traffic: {exc}")
-            return False
     
     def update_inbound(self, node: Dict, inbound_id: int, updates: Dict) -> bool:
         if self._is_read_only(node):

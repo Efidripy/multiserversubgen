@@ -1,25 +1,12 @@
-import requests
-import json
-import base64
-import io
-import zipfile
 import pam
-import datetime
 import os
-import logging
 import asyncio
 from functools import partial
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock, Thread
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from urllib.parse import urlparse
 import urllib3
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-import pyotp
 try:
     import redis
 except Exception:
@@ -35,14 +22,10 @@ from core.main_facades import (
 )
 from core.request_middleware import build_request_controls_and_audit_middleware
 from modules.auth.service import AuthService, parse_mfa_users
-from services.adguard_runtime import AdGuardRuntime
-from services.clients_runtime import ClientsRuntime
 from services.db_bootstrap import (
     init_db as bootstrap_db,
     sync_node_history_names_with_nodes as sync_node_history_names_with_nodes_db,
 )
-from services.live_stats_runtime import LiveStatsRuntime
-from services.metrics_runtime import MetricsRuntime
 from services.node_access import get_node_or_404
 from core.app_runtime_bundle import build_app_runtime_bundle
 from core.router_registration import register_app_routers
@@ -52,10 +35,12 @@ from shared.http_config import get_requests_verify_value
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from crypto import encrypt, decrypt
-from xui_session import XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC, login_panel, xui_request
-from utils import parse_field_as_dict
+from xui_session import login_panel, xui_request
 from websocket_manager import manager as ws_manager, handle_websocket_message
 import services.subscription_links as subscription_links_service
+
+from shared.logging import configure_logging
+configure_logging()
 
 SETTINGS = load_app_settings(parse_mfa_users=parse_mfa_users)
 PROJECT_DIR = SETTINGS.project_dir
@@ -266,8 +251,8 @@ collect_adguard_once = adguard_runtime.collect_once
 adguard_collector_loop = adguard_runtime.collector_loop
 
 (
-    get_user_role,
-    has_min_role,
+    _facade_get_user_role,
+    _facade_has_min_role,
     check_basic_auth_header,
     verify_totp_code,
     extract_basic_auth_username,
@@ -293,11 +278,11 @@ def _sync_auth_service_roles() -> None:
 
 def get_user_role(username: str) -> str:
     _sync_auth_service_roles()
-    return auth_service.get_user_role(username)
+    return _facade_get_user_role(username)
 
 
 def has_min_role(user_role: str, min_role: str) -> bool:
-    return auth_service.has_min_role(user_role, min_role)
+    return _facade_has_min_role(user_role, min_role)
 
 (
     invalidate_live_stats_cache,

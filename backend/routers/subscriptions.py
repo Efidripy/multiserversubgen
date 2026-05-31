@@ -3,6 +3,7 @@ import datetime
 import json
 import sqlite3
 from services.db_bootstrap import connect
+from shared.sql import update_by_id_query
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -231,32 +232,35 @@ def build_subscriptions_router(
         updates = []
         params = []
         if "name" in data:
-            updates.append("name = ?")
+            updates.append("name")
             params.append(data["name"])
         if "identifier" in data:
-            updates.append("identifier = ?")
+            updates.append("identifier")
             params.append(data["identifier"])
         if "description" in data:
-            updates.append("description = ?")
+            updates.append("description")
             params.append(data["description"])
         if "email_patterns" in data:
-            updates.append("email_patterns = ?")
+            updates.append("email_patterns")
             params.append(json.dumps(data["email_patterns"]))
         if "node_filters" in data:
-            updates.append("node_filters = ?")
+            updates.append("node_filters")
             params.append(json.dumps(data["node_filters"]))
         if "protocol_filter" in data:
-            updates.append("protocol_filter = ?")
+            updates.append("protocol_filter")
             params.append(data["protocol_filter"])
         if not updates:
             raise HTTPException(status_code=400, detail="No updates provided")
 
-        updates.append("updated_at = CURRENT_TIMESTAMP")
         params.append(group_id)
         try:
             with connect(db_path) as conn:
                 conn.execute(
-                    f"UPDATE subscription_groups SET {', '.join(updates)} WHERE id = ?",
+                    update_by_id_query(
+                        "subscription_groups",
+                        updates,
+                        extra_set=("updated_at = CURRENT_TIMESTAMP",),
+                    ),
                     params,
                 )
                 conn.commit()

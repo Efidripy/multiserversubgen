@@ -373,9 +373,7 @@ class TestJobQueue:
             if len(calls) < 2:
                 raise ValueError("first attempt fails")
 
-        result = asyncio.run(
-            q._run_with_retry(failing_then_ok, "test", retry=2, timeout=None)
-        )
+        asyncio.run(q._run_with_retry(failing_then_ok, "test", retry=2, timeout=None))
         assert len(calls) == 2
 
     def test_status_returns_list(self):

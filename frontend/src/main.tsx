@@ -13,6 +13,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { performanceMonitor } from './services/performanceMonitoring';
 import { swManager } from './services/serviceWorkerManager';
 import { indexedDBManager } from './services/indexedDBManager';
+import { devLog } from './utils/devLogger';
 
 type ErrorBoundaryState = { hasError: boolean; message: string };
 
@@ -96,24 +97,24 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 // Initialize optimizations after app renders
 (async () => {
   // Performance monitoring
-  console.log('[Init] Starting performance monitoring...');
+  devLog('[Init] Starting performance monitoring...');
   performanceMonitor.startMeasure('app-initial-load');
 
   // Service Worker registration
-  console.log('[Init] Registering Service Worker...');
+  devLog('[Init] Registering Service Worker...');
   await swManager.register({
-    onReady: () => console.log('[SW] Ready for offline support'),
-    onUpdate: () => console.log('[SW] Update available!'),
-    onOffline: () => console.log('[SW] Offline mode activated'),
+    onReady: () => devLog('[SW] Ready for offline support'),
+    onUpdate: () => devLog('[SW] Update available!'),
+    onOffline: () => devLog('[SW] Offline mode activated'),
   }).catch((err) => {
     console.warn('[SW] Registration failed (non-critical):', err);
   });
 
   // IndexedDB initialization
-  console.log('[Init] Initializing IndexedDB...');
+  devLog('[Init] Initializing IndexedDB...');
   try {
     await indexedDBManager.init();
-    console.log('[IndexedDB] Initialized successfully');
+    devLog('[IndexedDB] Initialized successfully');
   } catch (err) {
     console.warn('[IndexedDB] Initialization failed (non-critical):', err);
   }
@@ -121,17 +122,16 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   // Optional: Prune old data from IndexedDB (90+ days old traffic history)
   try {
     const pruned = await indexedDBManager.pruneOlderThan('traffic_history', 90 * 24 * 60 * 60 * 1000);
-    console.log(`[IndexedDB] Pruned ${pruned} old records`);
+    devLog(`[IndexedDB] Pruned ${pruned} old records`);
   } catch (err) {
     console.warn('[IndexedDB] Prune failed:', err);
   }
 
   const loadTime = performanceMonitor.endMeasure('app-initial-load');
-  console.log(`[Init] App initialization complete in ${loadTime.toFixed(2)}ms`);
+  devLog(`[Init] App initialization complete in ${loadTime.toFixed(2)}ms`);
 
   // Export metrics after a delay to allow data collection
   setTimeout(() => {
-    console.log(performanceMonitor.exportMetrics());
+    devLog(performanceMonitor.exportMetrics());
   }, 5000);
 })();
-

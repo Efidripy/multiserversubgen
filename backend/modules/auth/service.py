@@ -10,7 +10,6 @@ import base64
 import hashlib
 import logging
 import time
-from collections import defaultdict
 from threading import Lock
 from typing import Dict, Optional, Set, Tuple
 

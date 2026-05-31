@@ -105,6 +105,7 @@ def register_app_routers(
         build_nodes_router(
             check_auth=check_auth,
             node_service=node_service,
+            get_node_or_404=get_node_or_404,
             db_path=db_path,
             encrypt=encrypt,
             requests_verify=requests_verify,

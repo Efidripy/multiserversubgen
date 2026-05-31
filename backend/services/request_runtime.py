@@ -4,7 +4,6 @@ import base64
 import hashlib
 import logging
 import time
-from collections import deque
 from threading import Lock
 from typing import Callable, Dict, Optional, Set, Tuple
 

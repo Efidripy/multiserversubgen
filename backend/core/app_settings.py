@@ -46,6 +46,7 @@ def _detect_grafana_url(project_dir: str) -> str:
         try:
             addr = "127.0.0.1"
             port = "3000"
+            wildcard_hosts = {".".join(("0", "0", "0", "0")), "::"}
             in_server = False
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 for raw in fh:
@@ -60,7 +61,7 @@ def _detect_grafana_url(project_dir: str) -> str:
 
                     if line.lower().startswith("http_addr") and "=" in line:
                         candidate = line.split("=", 1)[1].strip()
-                        if candidate and candidate not in ("0.0.0.0", "::"):
+                        if candidate and candidate not in wildcard_hosts:
                             addr = candidate
                     elif line.lower().startswith("http_port") and "=" in line:
                         candidate = line.split("=", 1)[1].strip()

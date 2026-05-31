@@ -558,7 +558,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     try {
       const parsed = JSON.parse(addJsonConfig);
       if (!parsed || typeof parsed !== 'object') {
-        throw new Error('Inbound config must be a JSON object');
+        throw new Error(t('inbounds.jsonObjectRequired'));
       }
       const payload: Record<string, any> = {
         ...parsed,
@@ -570,7 +570,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       onReload?.();
     } catch (err: any) {
       if (err instanceof SyntaxError) {
-        setError('Invalid JSON in inbound config');
+        setError(t('inbounds.invalidJsonConfig'));
       } else {
         setError(err.response?.data?.detail || err.message || t('messages.operationFailed'));
       }
@@ -681,10 +681,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       const raw = JSON.parse(importJson);
       parsed = Array.isArray(raw) ? raw : [raw];
     } catch {
-      setImportError('Invalid JSON — must be an array of inbound objects');
+      setImportError(t('inbounds.importInvalidJson'));
       return;
     }
-    if (parsed.length === 0) { setImportError('No inbounds to import'); return; }
+    if (parsed.length === 0) { setImportError(t('inbounds.importNoItems')); return; }
     setImportLoading(true);
     let ok = 0, fail = 0;
     const nodeIds = importTargetNodeIds.size > 0 ? Array.from(importTargetNodeIds) : null;
@@ -695,7 +695,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       } catch { fail++; }
     }
     setImportLoading(false);
-    const resultMsg = `Import done: ${ok} added, ${fail} failed`;
+    const resultMsg = t('inbounds.importDone', { ok, fail });
     setImportResult(resultMsg);
     toast(resultMsg, ok > 0 ? 'success' : 'error');
     if (ok > 0) { await loadInbounds(); onReload?.(); }
@@ -727,13 +727,13 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   };
 
   const handleResetAllTraffic = async () => {
-    if (!window.confirm('Reset ALL client traffic on ALL nodes? This cannot be undone.')) return;
+    if (!window.confirm(t('inbounds.confirmResetAllTraffic'))) return;
     try {
       const res = await api.post('/v1/automation/reset-all-traffic', {}, { auth: getAuth() });
       const total = res.data?.total_reset ?? res.data?.count ?? '?';
-      toast(`Traffic reset for ${total} clients`, 'success');
+      toast(t('inbounds.resetTrafficDone', { count: total }), 'success');
       await loadInbounds();
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const protocols = Array.from(new Set(inbounds.map((ib) => ib.protocol)));
@@ -794,7 +794,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               <input
                 type="text"
                 className="form-control form-control-sm"
-                placeholder="Search remark, port, node…"
+                placeholder={t('inbounds.searchPlaceholder')}
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
                 style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)', maxWidth: '220px' }}
@@ -819,9 +819,9 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               />
               <ChoiceChips
                 options={[
-                  { value: 'all', label: 'All' },
-                  { value: 'enabled', label: '● Active' },
-                  { value: 'disabled', label: '○ Disabled' },
+                  { value: 'all', label: t('common.all') },
+                  { value: 'enabled', label: `● ${t('inbounds.active')}` },
+                  { value: 'disabled', label: `○ ${t('common.disabled')}` },
                 ]}
                 value={filterEnabledStatus}
                 onChange={(value) => setFilterEnabledStatus(value as 'all' | 'enabled' | 'disabled')}
@@ -831,17 +831,17 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                 className="btn btn-sm"
                 style={{ backgroundColor: filterEmptyOnly ? 'var(--warning)' : 'var(--bg-tertiary)', borderColor: filterEmptyOnly ? 'var(--warning)' : 'var(--border-color)', color: filterEmptyOnly ? '#000' : 'var(--text-primary)' }}
                 onClick={() => setFilterEmptyOnly(v => !v)}
-                title="Show only inbounds with 0 clients"
+                title={t('inbounds.emptyOnlyTitle')}
               >
-                ∅ Empty only
+                ∅ {t('inbounds.emptyOnly')}
               </button>
               <button
                 className="btn btn-sm"
                 style={{ backgroundColor: filterDuplicatesOnly ? 'var(--danger)' : 'var(--bg-tertiary)', borderColor: filterDuplicatesOnly ? 'var(--danger)' : 'var(--border-color)', color: filterDuplicatesOnly ? '#fff' : 'var(--text-primary)' }}
                 onClick={() => setFilterDuplicatesOnly(v => !v)}
-                title="Show only inbounds with duplicate ports on the same node"
+                title={t('inbounds.duplicatesTitle')}
               >
-                ⚠ Duplicates
+                ⚠ {t('inbounds.duplicates')}
               </button>
               <button
                 className="btn btn-sm"
@@ -899,7 +899,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                 >
                   <span className="d-inline-flex align-items-center gap-1">
                     <UIIcon name="plus" size={14} />
-                    Add Inbound
+                    {t('inbounds.addInbound')}
                   </span>
                 </button>
                 <button
@@ -977,10 +977,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               <button
                 className="btn btn-sm"
                 style={{ backgroundColor: 'var(--warning)' + '22', borderColor: 'var(--warning)' + '66', color: 'var(--warning)' }}
-                title="Reset traffic for selected inbounds"
+                title={t('inbounds.resetSelectedTitle')}
                 disabled={loading || selectedKeys.size === 0}
                 onClick={async () => {
-                  if (!window.confirm(`Reset traffic for ${selectedKeys.size} selected inbound(s)?`)) return;
+                  if (!window.confirm(t('inbounds.confirmResetSelected', { count: selectedKeys.size }))) return;
                   let ok = 0; let fail = 0;
                   for (const ib of selectedInbounds) {
                     const nodeObj = allNodes.find(n => n.name === ib.node_name);
@@ -990,31 +990,31 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                       ok++;
                     } catch { fail++; }
                   }
-                  toast(`Reset traffic: ${ok} done${fail ? `, ${fail} failed` : ''}`, ok > 0 ? 'success' : 'error');
+                  toast(t('inbounds.resetSelectedResult', { ok, fail }), ok > 0 ? 'success' : 'error');
                 }}
               >
-                ↺ Reset Selected
+                ↺ {t('inbounds.resetSelected')}
               </button>
               <button
                 className="btn btn-sm"
                 style={{ backgroundColor: 'var(--danger)' + '22', borderColor: 'var(--danger)' + '66', color: 'var(--danger)' }}
-                title="Reset ALL client traffic on ALL nodes"
+                title={t('inbounds.resetAllTitle')}
                 onClick={handleResetAllTraffic}
               >
-                ↺ Reset All Traffic
+                ↺ {t('inbounds.resetAllTraffic')}
               </button>
               <button
                 className="btn btn-sm"
                 style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
-                title="Import inbounds from JSON"
+                title={t('inbounds.importJsonTitle')}
                 onClick={() => { setImportJson(''); setImportTargetNodeIds(new Set()); setImportError(''); setImportResult(''); setShowImportModal(true); }}
               >
-                ⬆ Import JSON
+                ⬆ {t('inbounds.importJson')}
               </button>
               <button
                 className="btn btn-sm"
                 style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
-                title="Export selected inbounds as JSON (all visible if none selected)"
+                title={t('inbounds.exportJsonTitle')}
                 onClick={() => {
                   const toExport = selectedKeys.size > 0 ? selectedInbounds : filteredInbounds;
                   const data = toExport.map(ib => ({
@@ -1032,15 +1032,15 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                   a.download = `inbounds_export_${new Date().toISOString().slice(0,10)}.json`;
                   a.click();
                   URL.revokeObjectURL(url);
-                  toast(`Exported ${toExport.length} inbound(s)`, 'success');
+                  toast(t('inbounds.exportedJson', { count: toExport.length }), 'success');
                 }}
               >
-                ⬇ Export JSON
+                ⬇ {t('inbounds.exportJson')}
               </button>
               <button
                 className="btn btn-sm"
                 style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
-                title="Export selected/visible inbounds as CSV"
+                title={t('inbounds.exportCsvTitle')}
                 onClick={() => {
                   const toExport = selectedKeys.size > 0 ? selectedInbounds : filteredInbounds;
                   const headers = ['Node', 'Remark', 'Protocol', 'Port', 'Enable', 'Security', 'Clients'];
@@ -1056,10 +1056,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                   a.download = `inbounds_${new Date().toISOString().slice(0,10)}.csv`;
                   a.click();
                   URL.revokeObjectURL(url);
-                  toast(`Exported ${toExport.length} inbound(s) as CSV`, 'success');
+                  toast(t('inbounds.exportedCsv', { count: toExport.length }), 'success');
                 }}
               >
-                ⬇ CSV
+                ⬇ {t('inbounds.csv')}
               </button>
             </div>
           </div>
@@ -1091,10 +1091,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         )}
 
         {!pageLoading && filteredInbounds.length === 0 && inbounds.length === 0 && (
-          <EmptyState icon="⇄" title="No inbounds yet" hint="Add a new inbound or clone one from an existing node." />
+          <EmptyState icon="⇄" title={t('inbounds.emptyTitle')} hint={t('inbounds.emptyHint')} />
         )}
         {!pageLoading && filteredInbounds.length === 0 && inbounds.length > 0 && (
-          <EmptyState icon="⊘" title="No inbounds match filters" hint="Clear the active filters to see all inbounds." />
+          <EmptyState icon="⊘" title={t('inbounds.noMatchesTitle')} hint={t('inbounds.noMatchesHint')} />
         )}
 
         {inbounds.length > 0 && (() => {
@@ -1104,10 +1104,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
           return (
             <div className="d-flex flex-wrap gap-2 mb-2">
               {[
-                { label: 'Total', value: inbounds.length, color: 'var(--text-primary)' },
-                { label: 'Enabled', value: enabled, color: 'var(--success)' },
-                { label: 'Disabled', value: inbounds.length - enabled, color: 'var(--text-secondary)' },
-                ...(totalClients > 0 ? [{ label: 'Clients', value: totalClients, color: 'var(--accent)' }] : []),
+                { label: t('common.total'), value: inbounds.length, color: 'var(--text-primary)' },
+                { label: t('common.enabled'), value: enabled, color: 'var(--success)' },
+                { label: t('common.disabled'), value: inbounds.length - enabled, color: 'var(--text-secondary)' },
+                ...(totalClients > 0 ? [{ label: t('inbounds.clients'), value: totalClients, color: 'var(--accent)' }] : []),
                 ...Object.entries(byProto).map(([p, n]) => ({ label: p.toUpperCase(), value: n, color: 'var(--info)' })),
               ].map(s => (
                 <span key={s.label} className="badge px-2 py-1" style={{ backgroundColor: 'var(--bg-tertiary)', color: s.color, fontWeight: 400, fontSize: '0.75rem' }}>
@@ -1120,14 +1120,14 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
         {filteredInbounds.length > ibPageSize && (
           <div className="d-flex align-items-center gap-2 mb-2 flex-wrap small" style={{ color: 'var(--text-secondary)' }}>
-            <span>Page {ibPage}/{Math.ceil(filteredInbounds.length / ibPageSize)} ({(ibPage - 1) * ibPageSize + 1}–{Math.min(ibPage * ibPageSize, filteredInbounds.length)} of {filteredInbounds.length})</span>
+            <span>{t('inbounds.pageStatus', { page: ibPage, pages: Math.ceil(filteredInbounds.length / ibPageSize), from: (ibPage - 1) * ibPageSize + 1, to: Math.min(ibPage * ibPageSize, filteredInbounds.length), total: filteredInbounds.length })}</span>
             <div className="d-flex gap-1">
               <button className="btn btn-sm" style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)', padding: '1px 6px' }} disabled={ibPage <= 1} onClick={() => setIbPage(p => p - 1)}>‹</button>
               <button className="btn btn-sm" style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)', padding: '1px 6px' }} disabled={ibPage >= Math.ceil(filteredInbounds.length / ibPageSize)} onClick={() => setIbPage(p => p + 1)}>›</button>
             </div>
             <select className="form-select form-select-sm" style={{ width: 'auto', backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)', fontSize: '0.72rem' }}
               value={ibPageSize} onChange={e => { setIbPageSize(Number(e.target.value)); setIbPage(1); }}>
-              {[25, 50, 100, 200].map(n => <option key={n} value={n}>{n}/page</option>)}
+              {[25, 50, 100, 200].map(n => <option key={n} value={n}>{t('inbounds.rowsPerPageOption', { count: n })}</option>)}
             </select>
           </div>
         )}
@@ -1173,8 +1173,8 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                 </th>
                 <th style={{ color: 'var(--text-secondary)' }}>
                   <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }}
-                    onClick={() => applySortFromHeader('clients')} title="Sort by client count">
-                    Clients{sortField === 'clients' ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : ''}
+                    onClick={() => applySortFromHeader('clients')} title={t('inbounds.sortByClientCount')}>
+                    {t('inbounds.clients')}{sortField === 'clients' ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : ''}
                   </button>
                 </th>
                 <th style={{ color: 'var(--text-secondary)' }}>{t('common.actions')}</th>
@@ -1188,31 +1188,31 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                       type="checkbox"
                       checked={selectedKeys.has(inboundKey(ib))}
                       onChange={() => toggleSelectOne(ib)}
-                      aria-label={`Select ${ib.remark || ib.id}`}
+                      aria-label={t('inbounds.selectInbound', { name: ib.remark || ib.id })}
                     />
                   </td>
                   <td>
                     <span
                       className="badge"
                       style={{ backgroundColor: filterNode === ib.node_name ? 'var(--accent)' : 'var(--bg-tertiary)', color: filterNode === ib.node_name ? '#000f14' : 'var(--text-primary)', cursor: 'pointer' }}
-                      title={filterNode === ib.node_name ? 'Click to clear node filter' : `Click to filter by ${ib.node_name}`}
+                      title={filterNode === ib.node_name ? t('inbounds.clearNodeFilter') : t('inbounds.filterByNodeName', { node: ib.node_name })}
                       onClick={() => setFilterNode(prev => prev === ib.node_name ? '' : ib.node_name)}
                     >
                       {ib.node_name}
                     </span>
                   </td>
                   <td
-                    title="Double-click to quick edit remark"
+                    title={t('inbounds.quickEditRemarkTitle')}
                     onDoubleClick={async () => {
-                      const newRemark = window.prompt(`New remark for inbound #${ib.id} (${ib.node_name}):`, ib.remark || '');
+                      const newRemark = window.prompt(t('inbounds.newRemarkPrompt', { id: ib.id, node: ib.node_name }), ib.remark || '');
                       if (newRemark === null || newRemark === ib.remark) return;
                       const nodeObj = allNodes.find(n => n.name === ib.node_name);
                       if (!nodeObj) return;
                       try {
                         await api.put(`/v1/inbounds/${nodeObj.id}/${ib.id}`, { remark: newRemark }, { auth: getAuth() });
                         setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, remark: newRemark } : x));
-                        toast(`Remark updated: ${newRemark || '(empty)'}`, 'success');
-                      } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+                        toast(t('inbounds.remarkUpdated', { remark: newRemark || t('inbounds.emptyRemark') }), 'success');
+                      } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                     }}
                   >
                     {ib.remark || <span style={{ color: 'var(--text-secondary)' }}>-</span>}
@@ -1221,7 +1221,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                     <span
                       className="badge"
                       style={{ backgroundColor: filterProtocol === ib.protocol ? 'var(--warning)' : 'var(--accent)', cursor: 'pointer' }}
-                      title={filterProtocol === ib.protocol ? 'Click to clear protocol filter' : `Click to filter by ${ib.protocol}`}
+                      title={filterProtocol === ib.protocol ? t('inbounds.clearProtocolFilter') : t('inbounds.filterByProtocolName', { protocol: ib.protocol })}
                       onClick={() => setFilterProtocol(prev => prev === ib.protocol ? '' : ib.protocol)}
                     >
                       {ib.protocol.toUpperCase()}
@@ -1230,26 +1230,26 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                   <td className="text-monospace">
                     <span
                       style={isDuplicatePort(ib) ? { color: 'var(--warning)', fontWeight: 700 } : undefined}
-                      title={isDuplicatePort(ib) ? `⚠ Port ${ib.port} is used by multiple inbounds on ${ib.node_name}` : undefined}
+                      title={isDuplicatePort(ib) ? t('inbounds.duplicatePortTitle', { port: ib.port, node: ib.node_name }) : undefined}
                     >
                       {ib.port}
                       {isDuplicatePort(ib) && <span className="ms-1" style={{ fontSize: '0.65rem' }}>⚠</span>}
                     </span>
                     <button className="btn btn-sm p-0 ms-1" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', opacity: 0.5, fontSize: '0.65rem' }}
-                      title="Copy port number"
+                      title={t('inbounds.copyPortNumber')}
                       onClick={() => navigator.clipboard.writeText(String(ib.port))}>📋</button>
                   </td>
                   <td>
                     {ib.is_reality && (
                       <span className="badge" style={{ backgroundColor: filterSecurity === 'reality' ? 'var(--warning)' : 'var(--success)', cursor: 'pointer' }}
-                        onClick={() => setFilterSecurity(prev => prev === 'reality' ? '' : 'reality')} title="Filter by Reality">
-                        Reality
+                        onClick={() => setFilterSecurity(prev => prev === 'reality' ? '' : 'reality')} title={t('inbounds.filterByReality')}>
+                        {t('inbounds.reality')}
                       </span>
                     )}
                     {!ib.is_reality && ib.security && (
                       <span className="badge" style={{ backgroundColor: filterSecurity === ib.security ? 'var(--warning)' : 'var(--info)', cursor: 'pointer' }}
                         onClick={() => setFilterSecurity(prev => prev === (ib.security ?? '') ? '' : (ib.security ?? ''))}
-                        title={`Filter by ${ib.security}`}>
+                        title={t('inbounds.filterBySecurityName', { security: ib.security })}>
                         {ib.security}
                       </span>
                     )}
@@ -1263,7 +1263,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                         color: ib.enable ? 'var(--success)' : 'var(--text-secondary)',
                         fontSize: '0.85rem', cursor: 'pointer'
                       }}
-                      title={ib.enable ? t('common.enabled') + ' — click to disable' : t('common.disabled') + ' — click to enable'}
+                      title={ib.enable ? t('inbounds.clickToDisable') : t('inbounds.clickToEnable')}
                       onClick={async () => {
                         const nodeObj = allNodes.find(n => n.name === ib.node_name);
                         if (!nodeObj) return;
@@ -1271,8 +1271,8 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                         try {
                           await api.post(`/v1/inbounds/${nodeObj.id}/${ib.id}/set-enable`, { enable: !ib.enable }, { auth: { username: user, password } });
                           setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, enable: !ib.enable } : x));
-                          toast(`${ib.remark || `#${ib.id}`}: ${!ib.enable ? 'enabled' : 'disabled'}`, 'success');
-                        } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+                          toast(t('inbounds.enableToggled', { name: ib.remark || `#${ib.id}`, status: !ib.enable ? t('common.enabled') : t('common.disabled') }), 'success');
+                        } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                       }}
                     >
                       {ib.enable ? '● ' + t('common.enabled') : '○ ' + t('common.disabled')}
@@ -1287,7 +1287,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                           color: ib.client_count > 0 ? '#000f14' : 'var(--text-secondary)',
                           cursor: ib.client_count > 0 && onNavigateToClients ? 'pointer' : 'default',
                         }}
-                        title={ib.client_count > 0 && onNavigateToClients ? `View ${ib.client_count} clients in this inbound` : undefined}
+                        title={ib.client_count > 0 && onNavigateToClients ? t('inbounds.viewClientsTitle', { count: ib.client_count }) : undefined}
                         onClick={() => ib.client_count && ib.client_count > 0 && onNavigateToClients && onNavigateToClients(ib.id, ib.remark || `#${ib.id}`)}
                       >
                         {ib.client_count}
@@ -1308,7 +1308,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                     <button
                       className="btn btn-sm me-1"
                       style={{ backgroundColor: 'var(--success)', borderColor: 'var(--success)', color: '#fff' }}
-                      title="Add client to this inbound"
+                      title={t('inbounds.addClientTitle')}
                       onClick={() => onAddClientToInbound && onAddClientToInbound(ib.id, ib.node_name)}
                       disabled={!onAddClientToInbound}
                     >
@@ -1325,7 +1325,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                     <button
                       className="btn btn-sm me-1"
                       style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
-                      title="View full inbound config as JSON"
+                      title={t('inbounds.viewConfigTitle')}
                       onClick={() => { setConfigModalInbound(ib); setShowConfigModal(true); }}
                     >
                       {'{}'}
@@ -1333,7 +1333,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                     <button
                       className="btn btn-sm me-1"
                       style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
-                      title="Copy JSON config"
+                      title={t('inbounds.copyJsonConfig')}
                       onClick={() => {
                         const config = {
                           protocol: ib.protocol,
@@ -1343,7 +1343,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                           streamSettings: ib.streamSettings || {},
                         };
                         navigator.clipboard.writeText(JSON.stringify(config, null, 2));
-                        toast('Config copied', 'info');
+                        toast(t('inbounds.configCopied'), 'info');
                       }}
                     >
                       <UIIcon name="copy" size={14} />
@@ -1384,21 +1384,21 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
           <span>{t('inbounds.showingCount', { filtered: filteredInbounds.length, total: inbounds.length })}</span>
           {filteredInbounds.some(ib => ib.client_count !== undefined) && (
             <span>
-              Clients in view: {filteredInbounds.reduce((s, ib) => s + (ib.client_count ?? 0), 0)}
+              {t('inbounds.clientsInView', { count: filteredInbounds.reduce((s, ib) => s + (ib.client_count ?? 0), 0) })}
             </span>
           )}
           {selectedKeys.size > 0 && (
             <span style={{ color: 'var(--accent)' }}>
-              {selectedKeys.size} selected
+              {t('inbounds.selectedInline', { count: selectedKeys.size })}
             </span>
           )}
           <button className="btn btn-sm py-0 px-1" style={{ backgroundColor: 'transparent', border: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem' }}
-            title="Copy all visible ports as comma-separated list"
+            title={t('inbounds.copyVisiblePortsTitle')}
             onClick={() => {
               const ports = filteredInbounds.slice(0, ibPage * ibPageSize).map(ib => ib.port).filter(Boolean).join(', ');
-              navigator.clipboard.writeText(ports).then(() => toast(`Copied ${filteredInbounds.slice(0, ibPage * ibPageSize).length} ports`, 'info'));
+              navigator.clipboard.writeText(ports).then(() => toast(t('inbounds.copiedPorts', { count: filteredInbounds.slice(0, ibPage * ibPageSize).length }), 'info'));
             }}>
-            📋 Copy ports
+            📋 {t('inbounds.copyPorts')}
           </button>
           {(() => {
             const dupCount = inbounds.filter(ib => isDuplicatePort(ib)).length;
@@ -1406,10 +1406,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               <button
                 className="btn btn-sm py-0 px-1"
                 style={{ background: 'none', border: 'none', color: 'var(--warning)', fontSize: '0.72rem' }}
-                title="Click to show only duplicate port conflicts"
+                title={t('inbounds.showDuplicateConflictsTitle')}
                 onClick={() => setFilterDuplicatesOnly(v => !v)}
               >
-                ⚠ {dupCount} port conflict{dupCount !== 1 ? 's' : ''}
+                ⚠ {t('inbounds.portConflicts', { count: dupCount })}
               </button>
             ) : null;
           })()}
@@ -1425,7 +1425,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                 <div className="drawer__title">{t('inbounds.cloneInbound')}</div>
                 <div className="drawer__subtitle">{cloneSource?.remark || `#${cloneSource?.id}`}</div>
               </div>
-              <button className="drawer__close" aria-label="Close" onClick={() => setShowCloneModal(false)}>✕</button>
+              <button className="drawer__close" aria-label={t('common.close')} onClick={() => setShowCloneModal(false)}>✕</button>
             </div>
             <div className="drawer__body">
               <div className="mb-3">
@@ -1444,9 +1444,9 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                   <label className="form-label small mb-0">{t('inbounds.targetNodes')}</label>
                   <div className="d-flex gap-1">
                     <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.72rem' }}
-                      onClick={() => setCloneTargetNodeIds(new Set(allNodes.map(n => n.id)))}>All</button>
+                      onClick={() => setCloneTargetNodeIds(new Set(allNodes.map(n => n.id)))}>{t('common.all')}</button>
                     <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.72rem' }}
-                      onClick={() => setCloneTargetNodeIds(new Set())}>None</button>
+                      onClick={() => setCloneTargetNodeIds(new Set())}>{t('common.none')}</button>
                   </div>
                 </div>
                 <div className="d-flex flex-wrap gap-2">
@@ -1463,7 +1463,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                     </label>
                   ))}
                 </div>
-                <p className="small mt-2" style={{ color: 'var(--text-secondary)' }}>You can clone into the same node too.</p>
+                <p className="small mt-2" style={{ color: 'var(--text-secondary)' }}>{t('inbounds.cloneSameNodeHint')}</p>
               </div>
               <p className="small" style={{ color: 'var(--text-secondary)' }}>{t('inbounds.cloneHint')}</p>
             </div>
@@ -1485,10 +1485,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
           <div className="drawer__panel drawer__panel--wide">
             <div className="drawer__header">
               <div>
-                <div className="drawer__title">Add Inbound</div>
-                <div className="drawer__subtitle">Template + JSON config</div>
+                <div className="drawer__title">{t('inbounds.addInbound')}</div>
+                <div className="drawer__subtitle">{t('inbounds.addSubtitle')}</div>
               </div>
-              <button className="drawer__close" aria-label="Close" onClick={() => setShowAddModal(false)}>✕</button>
+              <button className="drawer__close" aria-label={t('common.close')} onClick={() => setShowAddModal(false)}>✕</button>
             </div>
             <div className="drawer__body">
               <div className="mb-3">
@@ -1508,9 +1508,9 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                   <label className="form-label small mb-0">{t('inbounds.targetNodes')}</label>
                   <div className="d-flex gap-1">
                     <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.72rem' }}
-                      onClick={() => setAddTargetNodeIds(new Set(allNodes.map(n => n.id)))}>All</button>
+                      onClick={() => setAddTargetNodeIds(new Set(allNodes.map(n => n.id)))}>{t('common.all')}</button>
                     <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.72rem' }}
-                      onClick={() => setAddTargetNodeIds(new Set())}>None</button>
+                      onClick={() => setAddTargetNodeIds(new Set())}>{t('common.none')}</button>
                   </div>
                 </div>
                 <div className="d-flex flex-wrap gap-2">
@@ -1563,14 +1563,14 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
           <div className="drawer__panel drawer__panel--wide">
             <div className="drawer__header">
               <div>
-                <div className="drawer__title">Import Inbounds</div>
-                <div className="drawer__subtitle">Paste JSON array — compatible with Export format</div>
+                <div className="drawer__title">{t('inbounds.importInbounds')}</div>
+                <div className="drawer__subtitle">{t('inbounds.importSubtitle')}</div>
               </div>
-              <button className="drawer__close" aria-label="Close" onClick={() => setShowImportModal(false)}>✕</button>
+              <button className="drawer__close" aria-label={t('common.close')} onClick={() => setShowImportModal(false)}>✕</button>
             </div>
             <div className="drawer__body">
               <div className="mb-3">
-                <label className="form-label small">Target nodes</label>
+                <label className="form-label small">{t('inbounds.targetNodes')}</label>
                 <div className="d-flex flex-wrap gap-1">
                   {allNodes.map(n => (
                     <label key={n.id} className="d-flex align-items-center gap-1 px-2 py-1 rounded"
@@ -1589,7 +1589,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                 </div>
               </div>
               <div>
-                <label className="form-label small">JSON config</label>
+                <label className="form-label small">{t('inbounds.jsonConfig')}</label>
                 <textarea className="form-control font-monospace" rows={12}
                   value={importJson} onChange={e => setImportJson(e.target.value)}
                   placeholder={'[\n  {\n    "protocol": "vless",\n    "port": 8443,\n    ...\n  }\n]'}
@@ -1599,10 +1599,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               {importResult && <div className="alert alert-success mt-2 py-1 small">{importResult}</div>}
             </div>
             <div className="drawer__footer">
-              <button className="btn btn-ghost-accent" onClick={() => setShowImportModal(false)}>Cancel</button>
+              <button className="btn btn-ghost-accent" onClick={() => setShowImportModal(false)}>{t('common.cancel')}</button>
               <button className="btn btn-accent" onClick={handleImportSubmit}
                 disabled={importLoading || !importJson.trim()}>
-                {importLoading ? 'Importing…' : 'Import'}
+                {importLoading ? t('inbounds.importing') : t('common.import')}
               </button>
             </div>
           </div>
@@ -1621,10 +1621,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               </div>
               <div className="d-flex gap-2 align-items-center">
                 <button className="btn btn-sm btn-neutral"
-                  onClick={() => { navigator.clipboard.writeText(JSON.stringify(configModalInbound, null, 2)); toast('Config copied', 'info'); }}>
-                  📋 Copy
+                  onClick={() => { navigator.clipboard.writeText(JSON.stringify(configModalInbound, null, 2)); toast(t('inbounds.configCopied'), 'info'); }}>
+                  📋 {t('common.copy')}
                 </button>
-                <button className="drawer__close" aria-label="Close" onClick={() => setShowConfigModal(false)}>✕</button>
+                <button className="drawer__close" aria-label={t('common.close')} onClick={() => setShowConfigModal(false)}>✕</button>
               </div>
             </div>
             <div className="drawer__body">

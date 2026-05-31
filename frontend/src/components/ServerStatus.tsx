@@ -412,7 +412,7 @@ export const ServerStatus: React.FC = () => {
       if (payload.error) { setLogsError(String(payload.error)); setLogsLines([]); }
       else setLogsLines(Array.isArray(payload.logs) ? payload.logs : []);
     } catch (err: any) {
-      setLogsError(err.response?.data?.detail || 'Failed to load logs');
+      setLogsError(err.response?.data?.detail || t('serverStatus.failedToLoadLogs'));
       setLogsLines([]);
     } finally {
       setLogsLoading(false);
@@ -449,7 +449,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleInstallXray = async (version: string) => {
-    if (!versionNodeId || !window.confirm(`Install Xray ${version}?`)) return;
+    if (!versionNodeId || !window.confirm(t('serverStatus.confirmInstallXray', { version }))) return;
     setVersionInstalling(version);
     try {
       await api.post(`/v1/nodes/${versionNodeId}/install-xray/${version}`, {}, { auth: getAuth() });
@@ -470,20 +470,23 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleStopXray = async (nodeId: number) => {
-    if (!window.confirm('Stop Xray service on this node?')) return;
+    if (!window.confirm(t('serverStatus.confirmStopXray'))) return;
     try {
       const res = await api.post(`/v1/nodes/${nodeId}/stop-xray`, {}, { auth: getAuth() });
-      if (res.data?.success) { toast('Xray stopped', 'success'); setTimeout(loadServersStatus, 2000); }
-      else toast('Failed to stop Xray', 'error');
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+      if (res.data?.success) { toast(t('serverStatus.xrayStopped'), 'success'); setTimeout(loadServersStatus, 2000); }
+      else toast(t('common.failed'), 'error');
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const handleUpdatePanel = async (nodeId: number) => {
-    if (!window.confirm('Update 3x-ui panel? The panel will restart.')) return;
+    if (!window.confirm(t('serverStatus.confirmUpdatePanel'))) return;
     try {
       const res = await api.post(`/v1/nodes/${nodeId}/update-panel`, {}, { auth: getAuth() });
-      toast(res.data?.msg || (res.data?.success ? 'Panel update started' : 'Failed'), res.data?.success ? 'success' : 'error');
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+      toast(
+        res.data?.msg || (res.data?.success ? t('serverStatus.panelUpdateStarted') : t('common.failed')),
+        res.data?.success ? 'success' : 'error',
+      );
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const handleOpenMetrics = async (nodeId: number, nodeName: string) => {
@@ -517,16 +520,16 @@ export const ServerStatus: React.FC = () => {
       await api.post(`/v1/nodes/${apiTokensNodeId}/api-tokens`, { name: apiTokenNewName.trim() }, { auth: getAuth() });
       setApiTokenNewName('');
       await handleOpenApiTokens(apiTokensNodeId, apiTokensNodeName);
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const handleDeleteApiToken = async (tokenId: number) => {
-    if (!apiTokensNodeId || !window.confirm('Delete this API token?')) return;
+    if (!apiTokensNodeId || !window.confirm(t('serverStatus.confirmDeleteApiToken'))) return;
     try {
       await api.delete(`/v1/nodes/${apiTokensNodeId}/api-tokens/${tokenId}`, { auth: getAuth() });
       setApiTokensList(prev => prev.filter(t => t.id !== tokenId));
-      toast('Token deleted', 'success');
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+      toast(t('serverStatus.apiTokenDeleted'), 'success');
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const handleToggleApiToken = async (tokenId: number, enabled: boolean) => {
@@ -534,8 +537,8 @@ export const ServerStatus: React.FC = () => {
     try {
       await api.post(`/v1/nodes/${apiTokensNodeId}/api-tokens/${tokenId}/set-enabled`, { enabled }, { auth: getAuth() });
       setApiTokensList(prev => prev.map(t => t.id === tokenId ? { ...t, enable: enabled } : t));
-      toast(enabled ? 'Token enabled' : 'Token disabled', 'info');
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+      toast(enabled ? t('serverStatus.apiTokenEnabled') : t('serverStatus.apiTokenDisabled'), 'info');
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const handleOpenUpdateInfo = async (nodeId: number, nodeName: string) => {
@@ -594,15 +597,18 @@ export const ServerStatus: React.FC = () => {
   const handleUpdateGeofile = async (nodeId: number) => {
     try {
       const res = await api.post(`/v1/nodes/${nodeId}/update-geofile`, {}, { auth: getAuth() });
-      toast(res.data?.msg || 'Geofile updated', 'success');
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+      toast(res.data?.msg || t('serverStatus.geofileUpdated'), 'success');
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const handleBackupTelegram = async (nodeId: number) => {
     try {
       const res = await api.post(`/v1/nodes/${nodeId}/backup-telegram`, {}, { auth: getAuth() });
-      toast(res.data?.msg || (res.data?.success ? 'Backup sent to Telegram' : 'Failed'), res.data?.success !== false ? 'success' : 'error');
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+      toast(
+        res.data?.msg || (res.data?.success ? t('serverStatus.telegramBackupSent') : t('common.failed')),
+        res.data?.success !== false ? 'success' : 'error',
+      );
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const formatUptime = (seconds: number) => {
@@ -637,13 +643,13 @@ export const ServerStatus: React.FC = () => {
           {t('serverStatus.title')}
           {servers.length > 0 && (
             <span className="small" style={{ color: colors.text.secondary, fontWeight: 400, fontSize: '0.8rem' }}>
-              {servers.filter(s => s.available).length}/{servers.length} online
+              {t('serverStatus.onlineCount', { online: servers.filter(s => s.available).length, total: servers.length })}
             </span>
           )}
           {collectorStatus && (
-            <span className="badge" title={`Polling: ${collectorStatus.mode} | WS: ${collectorStatus.ws}`}
+            <span className="badge" title={t('serverStatus.collectorTitle', { mode: collectorStatus.mode, ws: collectorStatus.ws })}
               style={{ backgroundColor: collectorStatus.running ? colors.success : colors.warning, fontSize: '0.65rem', fontWeight: 400 }}>
-              {collectorStatus.running ? `● ${collectorStatus.mode}` : '○ stopped'}
+              {collectorStatus.running ? t('serverStatus.collectorRunningMode', { mode: collectorStatus.mode }) : t('serverStatus.collectorStopped')}
             </span>
           )}
         </h4>
@@ -694,7 +700,7 @@ export const ServerStatus: React.FC = () => {
 
       {servers.length > 1 && (
         <div className="d-flex gap-2 mb-2 align-items-center flex-wrap">
-          <span className="small" style={{ color: colors.text.secondary }}>Sort:</span>
+          <span className="small" style={{ color: colors.text.secondary }}>{t('common.sort')}:</span>
           {(['name', 'cpu', 'status', 'clients'] as const).map(s => (
             <button key={s}
               className={`seg-tab seg-tab--xs${cardSort === s ? ' seg-tab--active' : ''}`}
@@ -708,10 +714,10 @@ export const ServerStatus: React.FC = () => {
       {servers.filter(s => s.available && s.nodeId).length > 1 && (
         <div className="d-flex gap-2 mb-3 flex-wrap">
           <button className="btn btn-sm btn-ghost-warning"
-            title="Restart Xray on ALL online nodes"
+            title={t('serverStatus.restartAllTitle')}
             onClick={async () => {
               const online = servers.filter(s => s.available && s.nodeId);
-              if (!window.confirm(`Restart Xray on all ${online.length} online nodes?`)) return;
+              if (!window.confirm(t('serverStatus.confirmRestartAll', { count: online.length }))) return;
               let ok = 0; let fail = 0;
               for (const s of online) {
                 try {
@@ -719,17 +725,17 @@ export const ServerStatus: React.FC = () => {
                   ok++;
                 } catch { fail++; }
               }
-              toast(`Restart sent: ${ok} OK, ${fail} failed`, ok > 0 ? 'success' : 'error');
+              toast(t('serverStatus.restartAllResult', { ok, fail }), ok > 0 ? 'success' : 'error');
               setTimeout(loadServersStatus, 5000);
             }}
           >
-            ⟳ Restart All Xray
+            ⟳ {t('serverStatus.restartAllXray')}
           </button>
           <button className="btn btn-sm btn-ghost-accent"
-            title="Update geofiles on ALL online nodes"
+            title={t('serverStatus.updateAllGeofilesTitle')}
             onClick={async () => {
               const online = servers.filter(s => s.available && s.nodeId);
-              if (!window.confirm(`Update geofiles on all ${online.length} online nodes?`)) return;
+              if (!window.confirm(t('serverStatus.confirmUpdateGeofileAll', { count: online.length }))) return;
               let ok = 0;
               for (const s of online) {
                 try {
@@ -737,30 +743,30 @@ export const ServerStatus: React.FC = () => {
                   ok++;
                 } catch { /* continue */ }
               }
-              toast(`Geofiles updated on ${ok} nodes`, 'success');
+              toast(t('serverStatus.geofileUpdatedAll', { count: ok }), 'success');
             }}
           >
-            🌍 Update All Geofiles
+            🌍 {t('serverStatus.updateAllGeofiles')}
           </button>
           <button className="btn btn-sm btn-ghost-accent"
-            title="Copy fleet status summary to clipboard"
+            title={t('serverStatus.copyFleetSummaryTitle')}
             onClick={() => {
-              const lines: string[] = [`Fleet Status — ${new Date().toLocaleString()}`, ''];
+              const lines: string[] = [`${t('serverStatus.fleetStatus')} — ${new Date().toLocaleString()}`, ''];
               for (const s of servers) {
-                const status = s.available ? '✓ Online' : '✗ Offline';
+                const status = s.available ? t('serverStatus.statusOnline') : t('serverStatus.statusOffline');
                 const cpu = s.system ? `CPU: ${s.system.cpu.toFixed(1)}%` : '';
                 const ram = s.system?.mem ? `RAM: ${((s.system.mem.current / s.system.mem.total) * 100).toFixed(0)}%` : '';
-                const clients = onlineCountByNode[s.nodeId ?? 0] !== undefined ? `Clients: ${onlineCountByNode[s.nodeId ?? 0]}` : '';
+                const clients = onlineCountByNode[s.nodeId ?? 0] !== undefined ? `${t('serverStatus.clientsLabel')}: ${onlineCountByNode[s.nodeId ?? 0]}` : '';
                 const latency = s.nodeId && latencyByNode[s.nodeId] !== undefined ? `Ping: ${latencyByNode[s.nodeId]}ms` : '';
                 const parts = [status, cpu, ram, clients, latency].filter(Boolean).join(' | ');
                 lines.push(`${s.node}: ${parts}`);
               }
               navigator.clipboard.writeText(lines.join('\n'))
-                .then(() => toast('Fleet summary copied to clipboard', 'success'))
-                .catch(() => toast('Clipboard unavailable', 'error'));
+                .then(() => toast(t('serverStatus.fleetSummaryCopied'), 'success'))
+                .catch(() => toast(t('serverStatus.clipboardUnavailable'), 'error'));
             }}
           >
-            📋 Copy Summary
+            📋 {t('serverStatus.copySummary')}
           </button>
         </div>
       )}
@@ -776,11 +782,11 @@ export const ServerStatus: React.FC = () => {
         return (
           <div className="d-flex flex-wrap gap-2 mb-2">
             {[
-              { label: 'Online', value: `${onlineServers.length}/${servers.length}`, color: onlineServers.length === servers.length ? colors.success : onlineServers.length === 0 ? colors.danger : colors.warning },
-              { label: 'Avg CPU', value: withSystem.length > 0 ? `${avgCpu.toFixed(1)}%` : '—', color: getStatusColor(avgCpu) },
-              ...(totalRam > 0 ? [{ label: 'Fleet RAM', value: `${(usedRam / 1073741824).toFixed(1)}/${(totalRam / 1073741824).toFixed(1)} GB`, color: getStatusColor((usedRam / totalRam) * 100) }] : []),
-              ...(maxCpuNode && (maxCpuNode.system?.cpu ?? 0) > 80 ? [{ label: 'Hot', value: `${maxCpuNode.node} ${(maxCpuNode.system!.cpu).toFixed(0)}%`, color: colors.danger }] : []),
-              { label: 'Online clients', value: totalOnlineClients > 0 ? String(totalOnlineClients) : '—', color: colors.accent },
+              { label: t('serverStatus.online'), value: `${onlineServers.length}/${servers.length}`, color: onlineServers.length === servers.length ? colors.success : onlineServers.length === 0 ? colors.danger : colors.warning },
+              { label: t('serverStatus.avgCpu'), value: withSystem.length > 0 ? `${avgCpu.toFixed(1)}%` : '—', color: getStatusColor(avgCpu) },
+              ...(totalRam > 0 ? [{ label: t('serverStatus.fleetRam'), value: `${(usedRam / 1073741824).toFixed(1)}/${(totalRam / 1073741824).toFixed(1)} GB`, color: getStatusColor((usedRam / totalRam) * 100) }] : []),
+              ...(maxCpuNode && (maxCpuNode.system?.cpu ?? 0) > 80 ? [{ label: t('serverStatus.hot'), value: `${maxCpuNode.node} ${(maxCpuNode.system!.cpu).toFixed(0)}%`, color: colors.danger }] : []),
+              { label: t('serverStatus.onlineClients'), value: totalOnlineClients > 0 ? String(totalOnlineClients) : '—', color: colors.accent },
             ].map(stat => (
               <span key={stat.label} className="badge px-2 py-1" style={{ backgroundColor: colors.bg.tertiary, color: stat.color, fontWeight: 400, fontSize: '0.78rem' }}>
                 {stat.label}: <strong>{stat.value}</strong>
@@ -812,16 +818,16 @@ export const ServerStatus: React.FC = () => {
                 {server.node}
                 {server.nodeId && updateAvailableNodes.has(server.nodeId) && (
                   <span className="chip is-warning is-clickable ms-1"
-                    title="Panel update available — click to view"
+                    title={t('serverStatus.panelUpdateAvailableTitle')}
                     onClick={() => server.nodeId && handleOpenUpdateInfo(server.nodeId, server.node)}>
-                    ⬆ update
+                    ⬆ {t('serverStatus.updateShort')}
                   </span>
                 )}
                 {server.nodeId && (
                   <button
                     className="btn btn-sm p-0 ms-1"
                     style={{ background: 'none', border: 'none', color: colors.text.tertiary, fontSize: '0.75rem' }}
-                    title="Refresh this node"
+                    title={t('serverStatus.refreshThisNode')}
                     disabled={Boolean(server.loadingDetails)}
                     onClick={() => refreshSingleNode(server.nodeId!, server.node)}
                   >
@@ -837,14 +843,14 @@ export const ServerStatus: React.FC = () => {
                 </span>
                 {server.nodeId && onlineCountByNode[server.nodeId] !== undefined && onlineCountByNode[server.nodeId] > 0 && (
                   <span className="chip is-accent" style={{ fontSize: '0.65rem', padding: '1px 7px' }}
-                    title="Online clients on this node">
+                    title={t('serverStatus.onlineClientsOnNode')}>
                     👤 {onlineCountByNode[server.nodeId]}
                   </span>
                 )}
                 {server.nodeId && latencyByNode[server.nodeId] !== undefined && (
                   <span
                     className={`latency-badge ${latencyByNode[server.nodeId] < 100 ? 'is-fast' : latencyByNode[server.nodeId] < 300 ? 'is-ok' : 'is-slow'}`}
-                    title="Panel API latency"
+                    title={t('serverStatus.panelApiLatency')}
                   >
                     {latencyByNode[server.nodeId]}ms
                   </span>
@@ -922,7 +928,7 @@ export const ServerStatus: React.FC = () => {
                 {/* Footer row */}
                 <div className="server-card__footer-row">
                   {server.network && (
-                    <span className="small" style={{ color: colors.text.secondary }} title="Network: ↑ upload / ↓ download since reboot">
+                    <span className="small" style={{ color: colors.text.secondary }} title={t('serverStatus.networkSinceReboot')}>
                       ↑{formatBytes(server.network.upload)} ↓{formatBytes(server.network.download)}
                     </span>
                   )}
@@ -933,17 +939,17 @@ export const ServerStatus: React.FC = () => {
                     </span>
                   </span>
                   {server.system.loads && server.system.loads.length > 0 && (
-                    <span className="small" title="Load averages 1m / 5m / 15m" style={{ color: colors.text.secondary }}>
+                    <span className="small" title={t('serverStatus.loadAveragesTitle')} style={{ color: colors.text.secondary }}>
                       LA: {server.system.loads.slice(0,3).map(l => l.toFixed(2)).join(' / ')}
                     </span>
                   )}
                   {server.system.swap && server.system.swap.total > 0 && (
-                    <span className="small" title="Swap usage" style={{ color: colors.text.secondary }}>
+                    <span className="small" title={t('serverStatus.swapUsage')} style={{ color: colors.text.secondary }}>
                       Swap: {formatBytes(server.system.swap.current)}/{formatBytes(server.system.swap.total)}
                     </span>
                   )}
                   {server.nodeId && latencyByNode[server.nodeId] && (
-                    <span className="small" title="API response time"
+                    <span className="small" title={t('serverStatus.apiResponseTime')}
                       style={{ color: latencyByNode[server.nodeId] > 2000 ? colors.warning : latencyByNode[server.nodeId] > 5000 ? colors.danger : colors.text.secondary }}>
                       {latencyByNode[server.nodeId]}ms
                     </span>
@@ -959,7 +965,7 @@ export const ServerStatus: React.FC = () => {
                 {server.xray && (
                   <div className="server-card__xray" style={{ borderTop: `1px solid ${colors.border}` }}>
                     <span className="small" style={{ color: colors.text.secondary }}>
-                      Core {server.xray.version}{server.xray.uptime > 0 ? ` (up ${formatUptime(server.xray.uptime)})` : ''}
+                      {t('serverStatus.coreLabel')} {server.xray.version}{server.xray.uptime > 0 ? ` (${t('serverStatus.upFor', { uptime: formatUptime(server.xray.uptime) })})` : ''}
                       {server.xray.running ? (
                         <span className="badge ms-1 d-inline-flex align-items-center justify-content-center" style={{ backgroundColor: colors.success }}>
                           <UIIcon name="statusOn" size={12} />
@@ -975,7 +981,7 @@ export const ServerStatus: React.FC = () => {
                       onClick={() => handleRestartCore(server.node)}
                       disabled={!server.xray.running}
                       title={t('serverStatus.restart')}
-                      aria-label="Restart Xray"
+                      aria-label={t('serverStatus.restartXray')}
                     >
                       <UIIcon name="refresh" size={13} />
                     </button>
@@ -983,56 +989,56 @@ export const ServerStatus: React.FC = () => {
                       <button
                         className="xray-icon-btn xray-icon-btn--danger"
                         disabled={!server.xray.running}
-                        title="Stop Xray"
-                        aria-label="Stop Xray"
-                        onClick={async () => {
-                          if (!window.confirm(`Stop Xray on "${server.node}"?`)) return;
-                          try {
-                            await api.post(`/v1/nodes/${server.nodeId}/stop-xray`, {}, { auth: getAuth() });
-                            toast(`Xray stopped on ${server.node}`, 'warning');
-                            setTimeout(() => refreshSingleNode(server.nodeId!), 2000);
-                          } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
-                        }}
-                      >■</button>
+                              title={t('serverStatus.stopXray')}
+                              aria-label={t('serverStatus.stopXray')}
+                              onClick={async () => {
+                                if (!window.confirm(t('serverStatus.confirmStopXrayNode', { node: server.node }))) return;
+                                try {
+                                  await api.post(`/v1/nodes/${server.nodeId}/stop-xray`, {}, { auth: getAuth() });
+                                  toast(t('serverStatus.xrayStoppedNode', { node: server.node }), 'warning');
+                                  setTimeout(() => refreshSingleNode(server.nodeId!), 2000);
+                                } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
+                              }}
+                            >■</button>
                     )}
                     <button
                       className="xray-icon-btn xray-icon-btn--accent"
                       onClick={() => handleViewLogs(server.node)}
                       title={t('serverStatus.logs')}
-                      aria-label="View logs"
+                      aria-label={t('serverStatus.viewLogs')}
                     >
                       {t('serverStatus.logs')}
                     </button>
                     {server.nodeId && (
                       <>
-                        <button className="xray-icon-btn xray-icon-btn--danger" aria-label="Reset All Traffics"
-                          onClick={async () => { if (!window.confirm('Reset all inbound traffics?')) return; try { await api.post(`/v1/inbounds/${server.nodeId}/reset-all-traffics`, {}, { auth: getAuth() }); } catch (e) { console.error(e); } }} title="Reset All Traffics">↺</button>
-                        <button className="xray-icon-btn" aria-label="Key Generator"
-                          onClick={() => handleOpenKeyGen(server.nodeId!)} title="Key Generator">🔑</button>
-                        <button className="xray-icon-btn" aria-label="Xray Versions"
-                          onClick={() => handleOpenVersions(server.nodeId!, server.node)} title="Xray Versions">📦</button>
-                        <button className="xray-icon-btn" aria-label="Outbound Traffic"
-                          onClick={() => handleOpenOutbounds(server.nodeId!, server.node)} title="Outbound Traffic">📊</button>
-                        <button className="xray-icon-btn" aria-label="Update Geofiles"
-                          onClick={() => handleUpdateGeofile(server.nodeId!)} title="Update Geofiles">🌍</button>
-                        <button className="xray-icon-btn" aria-label="Backup to Telegram"
-                          onClick={() => handleBackupTelegram(server.nodeId!)} title="Backup to Telegram">📤</button>
-                        <button className="xray-icon-btn xray-icon-btn--danger" aria-label="Stop Xray"
-                          onClick={() => handleStopXray(server.nodeId!)} title="Stop Xray">⏹</button>
-                        <button className="xray-icon-btn" aria-label="Update Panel"
-                          onClick={() => handleUpdatePanel(server.nodeId!)} title="Update Panel">⬆</button>
-                        <button className="xray-icon-btn" aria-label="Xray Metrics"
-                          onClick={() => handleOpenMetrics(server.nodeId!, server.node)} title="Xray Metrics">📈</button>
-                        <button className="xray-icon-btn" aria-label="API Tokens"
-                          onClick={() => handleOpenApiTokens(server.nodeId!, server.node)} title="API Tokens">🔐</button>
-                        <button className="xray-icon-btn" aria-label="Panel Update Info"
-                          onClick={() => handleOpenUpdateInfo(server.nodeId!, server.node)} title="Panel Update Info">ℹ</button>
-                        <button className="xray-icon-btn" aria-label="Xray Observatory"
-                          onClick={() => handleOpenObservatory(server.nodeId!, server.node)} title="Xray Observatory">🔭</button>
-                        <button className="xray-icon-btn" aria-label="Server History Chart"
-                          onClick={() => handleOpenHistory(server.nodeId!, server.node)} title="Server History Chart">📉</button>
-                        <button className="xray-icon-btn" aria-label="View Xray Config"
-                          onClick={() => handleOpenXrayConfig(server.nodeId!, server.node)} title="View Xray Config">⚙</button>
+                        <button className="xray-icon-btn xray-icon-btn--danger" aria-label={t('serverStatus.resetAllTraffics')}
+                          onClick={async () => { if (!window.confirm(t('serverStatus.confirmResetAllTraffics'))) return; try { await api.post(`/v1/inbounds/${server.nodeId}/reset-all-traffics`, {}, { auth: getAuth() }); } catch (e) { console.error(e); } }} title={t('serverStatus.resetAllTraffics')}>↺</button>
+                        <button className="xray-icon-btn" aria-label={t('serverStatus.keyGenerator')}
+                          onClick={() => handleOpenKeyGen(server.nodeId!)} title={t('serverStatus.keyGenerator')}>🔑</button>
+                        <button className="xray-icon-btn" aria-label={t('serverStatus.xrayVersionsTitle')}
+                          onClick={() => handleOpenVersions(server.nodeId!, server.node)} title={t('serverStatus.xrayVersionsTitle')}>📦</button>
+                        <button className="xray-icon-btn" aria-label={t('serverStatus.outboundTraffic')}
+                          onClick={() => handleOpenOutbounds(server.nodeId!, server.node)} title={t('serverStatus.outboundTraffic')}>📊</button>
+                        <button className="xray-icon-btn" aria-label={t('serverStatus.updateGeofiles')}
+                          onClick={() => handleUpdateGeofile(server.nodeId!)} title={t('serverStatus.updateGeofiles')}>🌍</button>
+                        <button className="xray-icon-btn" aria-label={t('serverStatus.backupToTelegram')}
+                          onClick={() => handleBackupTelegram(server.nodeId!)} title={t('serverStatus.backupToTelegram')}>📤</button>
+                        <button className="xray-icon-btn xray-icon-btn--danger" aria-label={t('serverStatus.stopXray')}
+                          onClick={() => handleStopXray(server.nodeId!)} title={t('serverStatus.stopXray')}>⏹</button>
+                        <button className="xray-icon-btn" aria-label={t('serverStatus.updatePanel')}
+                          onClick={() => handleUpdatePanel(server.nodeId!)} title={t('serverStatus.updatePanel')}>⬆</button>
+                        <button className="xray-icon-btn" aria-label={t('serverStatus.xrayMetricsTitle')}
+                          onClick={() => handleOpenMetrics(server.nodeId!, server.node)} title={t('serverStatus.xrayMetricsTitle')}>📈</button>
+                        <button className="xray-icon-btn" aria-label={t('serverStatus.apiTokensTitle')}
+                          onClick={() => handleOpenApiTokens(server.nodeId!, server.node)} title={t('serverStatus.apiTokensTitle')}>🔐</button>
+                        <button className="xray-icon-btn" aria-label={t('serverStatus.panelUpdateInfo')}
+                          onClick={() => handleOpenUpdateInfo(server.nodeId!, server.node)} title={t('serverStatus.panelUpdateInfo')}>ℹ</button>
+                        <button className="xray-icon-btn" aria-label={t('serverStatus.xrayObservatory')}
+                          onClick={() => handleOpenObservatory(server.nodeId!, server.node)} title={t('serverStatus.xrayObservatory')}>🔭</button>
+                        <button className="xray-icon-btn" aria-label={t('serverStatus.serverHistoryChart')}
+                          onClick={() => handleOpenHistory(server.nodeId!, server.node)} title={t('serverStatus.serverHistoryChart')}>📉</button>
+                        <button className="xray-icon-btn" aria-label={t('serverStatus.viewXrayConfig')}
+                          onClick={() => handleOpenXrayConfig(server.nodeId!, server.node)} title={t('serverStatus.viewXrayConfig')}>⚙</button>
                       </>
                     )}
                 </div>
@@ -1076,7 +1082,7 @@ export const ServerStatus: React.FC = () => {
                     {logsLoading ? '...' : t('common.refresh')}
                   </button>
                   <button className="btn btn-sm" style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
-                    title="Download logs as text file"
+                    title={t('serverStatus.downloadLogsAsText')}
                     onClick={() => {
                       const blob = new Blob([logsLines.join('\n')], { type: 'text/plain' });
                       const url = URL.createObjectURL(blob);
@@ -1086,7 +1092,7 @@ export const ServerStatus: React.FC = () => {
                       a.click();
                       URL.revokeObjectURL(url);
                     }}>
-                    ⬇ Download
+                    ⬇ {t('common.download')}
                   </button>
                 </div>
                 {logsError && (
@@ -1122,7 +1128,7 @@ export const ServerStatus: React.FC = () => {
           <div className="modal-dialog">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>🔑 Key Generator</h6>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>🔑 {t('serverStatus.keyGenerator')}</h6>
                 <button type="button" className="btn-close btn-close-white" onClick={() => setShowKeyGen(false)} />
               </div>
               <div className="modal-body">
@@ -1130,7 +1136,7 @@ export const ServerStatus: React.FC = () => {
                   {(['uuid', 'x25519', 'vless-enc', 'mldsa65'] as const).map(type => (
                     <button key={type} className="btn btn-sm" style={{ backgroundColor: colors.accent, color: colors.accentText }}
                       onClick={() => generateKey(type)} disabled={keyGenLoading}>
-                      Generate {type.toUpperCase()}
+                      {t('serverStatus.generate')} {type.toUpperCase()}
                     </button>
                   ))}
                 </div>
@@ -1141,7 +1147,7 @@ export const ServerStatus: React.FC = () => {
                       <input readOnly className="form-control form-control-sm" value={String(v)}
                         style={{ fontFamily: 'monospace', backgroundColor: colors.bg.primary, color: colors.text.primary, borderColor: colors.border }} />
                       <button className="btn btn-sm" style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
-                        onClick={() => navigator.clipboard.writeText(String(v))}>Copy</button>
+                        onClick={() => navigator.clipboard.writeText(String(v))}>{t('common.copy')}</button>
                     </div>
                   </div>
                 ))}
@@ -1158,19 +1164,19 @@ export const ServerStatus: React.FC = () => {
           <div className="modal-dialog">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>📦 Xray Versions — {versionNodeName}</h6>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>{t('serverStatus.xrayVersionsTitle')} — {versionNodeName}</h6>
                 <button type="button" className="btn-close btn-close-white" onClick={() => setShowVersionModal(false)} />
               </div>
               <div className="modal-body">
                 {versionLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!versionLoading && xrayVersions.length === 0 && <p style={{ color: colors.text.secondary }}>No versions available</p>}
+                {!versionLoading && xrayVersions.length === 0 && <p style={{ color: colors.text.secondary }}>{t('serverStatus.noVersionsAvailable')}</p>}
                 <div className="d-flex flex-column gap-1">
                   {xrayVersions.map(v => (
                     <div key={v} className="d-flex justify-content-between align-items-center p-2 rounded" style={{ backgroundColor: colors.bg.tertiary }}>
                       <span style={{ fontFamily: 'monospace', color: colors.text.primary }}>{v}</span>
                       <button className="btn btn-sm" style={{ backgroundColor: colors.accent, color: colors.accentText }}
                         onClick={() => handleInstallXray(v)} disabled={versionInstalling === v}>
-                        {versionInstalling === v ? '...' : 'Install'}
+                        {versionInstalling === v ? '...' : t('serverStatus.install')}
                       </button>
                     </div>
                   ))}
@@ -1187,7 +1193,7 @@ export const ServerStatus: React.FC = () => {
           <div className="modal-dialog modal-lg">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>📈 Xray Metrics — {metricsNodeName}</h6>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>{t('serverStatus.xrayMetricsTitle')} — {metricsNodeName}</h6>
                 <div className="d-flex gap-2 align-items-center">
                   <button className="btn btn-sm" style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
                     disabled={metricsLoading}
@@ -1199,7 +1205,7 @@ export const ServerStatus: React.FC = () => {
               </div>
               <div className="modal-body">
                 {metricsLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!metricsLoading && !metricsData && <p style={{ color: colors.text.secondary }}>No metrics data (requires Xray metrics enabled in panel settings)</p>}
+                {!metricsLoading && !metricsData && <p style={{ color: colors.text.secondary }}>{t('serverStatus.noMetricsData')}</p>}
                 {!metricsLoading && metricsData && (
                   <pre style={{ backgroundColor: colors.bg.primary, color: colors.text.primary, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '10px', maxHeight: '60vh', overflow: 'auto', fontSize: '12px', marginBottom: 0 }}>
                     {typeof metricsData === 'string' ? metricsData : JSON.stringify(metricsData, null, 2)}
@@ -1217,12 +1223,12 @@ export const ServerStatus: React.FC = () => {
           <div className="modal-dialog modal-lg">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>🔐 API Tokens — {apiTokensNodeName}</h6>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>{t('serverStatus.apiTokensTitle')} — {apiTokensNodeName}</h6>
                 <button type="button" className="btn-close btn-close-white" onClick={() => setShowApiTokensModal(false)} />
               </div>
               <div className="modal-body">
                 {apiTokensLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!apiTokensLoading && apiTokensList.length === 0 && <p style={{ color: colors.text.secondary }}>No API tokens</p>}
+                {!apiTokensLoading && apiTokensList.length === 0 && <p style={{ color: colors.text.secondary }}>{t('serverStatus.noApiTokens')}</p>}
                 <div className="d-flex flex-column gap-2 mb-3">
                   {apiTokensList.map((token: any) => (
                     <div key={token.id} className="d-flex align-items-center justify-content-between p-2 rounded" style={{ backgroundColor: colors.bg.tertiary }}>
@@ -1238,22 +1244,22 @@ export const ServerStatus: React.FC = () => {
                           {token.enable ? 'ON' : 'OFF'}
                         </button>
                         <button className="btn btn-sm" style={{ backgroundColor: 'transparent', borderColor: colors.border, color: colors.text.secondary, padding: '2px 6px' }}
-                          onClick={() => token.token && navigator.clipboard.writeText(token.token)} title="Copy token">
+                          onClick={() => token.token && navigator.clipboard.writeText(token.token)} title={t('serverStatus.copyToken')}>
                           📋
                         </button>
                         <button className="btn btn-sm" style={{ backgroundColor: 'transparent', borderColor: colors.danger + '66', color: colors.danger, padding: '2px 6px' }}
-                          onClick={() => handleDeleteApiToken(token.id)} title="Delete">✕</button>
+                          onClick={() => handleDeleteApiToken(token.id)} title={t('common.delete')}>✕</button>
                       </div>
                     </div>
                   ))}
                 </div>
                 <div className="d-flex gap-2">
-                  <input className="form-control form-control-sm" placeholder="New token name" value={apiTokenNewName} onChange={e => setApiTokenNewName(e.target.value)}
+                  <input className="form-control form-control-sm" placeholder={t('serverStatus.newTokenName')} value={apiTokenNewName} onChange={e => setApiTokenNewName(e.target.value)}
                     style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
                     onKeyDown={e => { if (e.key === 'Enter') handleCreateApiToken(); }} />
                   <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText, whiteSpace: 'nowrap' }}
                     onClick={handleCreateApiToken} disabled={!apiTokenNewName.trim()}>
-                    + Create
+                    + {t('serverStatus.createTokenShort')}
                   </button>
                 </div>
               </div>
@@ -1268,14 +1274,14 @@ export const ServerStatus: React.FC = () => {
           <div className="modal-dialog modal-lg">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>📊 Outbound Traffic — {outboundsNodeName}</h6>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>📊 {t('serverStatus.outboundTraffic')} — {outboundsNodeName}</h6>
                 <button type="button" className="btn-close btn-close-white" onClick={() => setShowOutboundsModal(false)} />
               </div>
               <div className="modal-body">
                 {outboundsLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!outboundsLoading && outboundsData.length === 0 && <p style={{ color: colors.text.secondary }}>No outbound data</p>}
+                {!outboundsLoading && outboundsData.length === 0 && <p style={{ color: colors.text.secondary }}>{t('serverStatus.noOutboundData')}</p>}
                 <table className="table table-sm" style={{ color: colors.text.primary }}>
-                  <thead><tr style={{ color: colors.text.secondary }}><th>Tag</th><th>Upload</th><th>Download</th><th>Total</th></tr></thead>
+                  <thead><tr style={{ color: colors.text.secondary }}><th>{t('serverStatus.tag')}</th><th>{t('traffic.upload')}</th><th>{t('traffic.download')}</th><th>{t('common.total')}</th></tr></thead>
                   <tbody>
                     {outboundsData.map((o: any, i) => (
                       <tr key={i}>
@@ -1298,13 +1304,13 @@ export const ServerStatus: React.FC = () => {
           <div className="modal-dialog modal-lg modal-dialog-centered">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>📉 Server History — {historyNodeName}</h6>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>📉 {t('serverStatus.serverHistory')} — {historyNodeName}</h6>
                 <button type="button" className="btn-close btn-close-white" onClick={() => setShowHistoryModal(false)} />
               </div>
               <div className="modal-body">
                 <div className="d-flex gap-2 mb-3 flex-wrap">
                   <ChoiceChips
-                    options={[{value:'cpu',label:'CPU'},{value:'mem',label:'RAM'},{value:'disk',label:'Disk'},{value:'netSent',label:'Net↑'},{value:'netRecv',label:'Net↓'}]}
+                    options={[{value:'cpu',label:'CPU'},{value:'mem',label:'RAM'},{value:'disk',label:t('serverStatus.diskShort')},{value:'netSent',label:t('serverStatus.netUp')},{value:'netRecv',label:t('serverStatus.netDown')}]}
                     value={historyMetric}
                     onChange={v => {
                       const m = v as typeof historyMetric;
@@ -1326,7 +1332,7 @@ export const ServerStatus: React.FC = () => {
                 </div>
                 {historyLoading && <div className="text-center py-4"><div className="spinner-border spinner-border-sm" /></div>}
                 {!historyLoading && historyData.length === 0 && (
-                  <p style={{ color: colors.text.secondary }}>No history data (requires 3x-ui v3 with statistics enabled)</p>
+                  <p style={{ color: colors.text.secondary }}>{t('serverStatus.noHistoryData')}</p>
                 )}
                 {!historyLoading && historyData.length > 0 && (() => {
                   const isBytes = historyMetric === 'netSent' || historyMetric === 'netRecv';
@@ -1376,12 +1382,12 @@ export const ServerStatus: React.FC = () => {
           <div className="modal-dialog">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>ℹ Panel Update — {updateInfoNodeName}</h6>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>ℹ {t('serverStatus.panelUpdate')} — {updateInfoNodeName}</h6>
                 <button type="button" className="btn-close btn-close-white" onClick={() => setShowUpdateInfoModal(false)} />
               </div>
               <div className="modal-body">
                 {updateInfoLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!updateInfoLoading && !updateInfoData && <p style={{ color: colors.text.secondary }}>No update info available</p>}
+                {!updateInfoLoading && !updateInfoData && <p style={{ color: colors.text.secondary }}>{t('serverStatus.noUpdateInfo')}</p>}
                 {!updateInfoLoading && updateInfoData && (() => {
                   const d = updateInfoData;
                   const hasUpdate = d.isUpdatable ?? d.has_update ?? false;
@@ -1390,22 +1396,22 @@ export const ServerStatus: React.FC = () => {
                   return (
                     <div>
                       <div className="mb-2 d-flex align-items-center gap-2">
-                        <span style={{ color: colors.text.secondary }}>Current:</span>
+                        <span style={{ color: colors.text.secondary }}>{t('serverStatus.current')}:</span>
                         <span style={{ fontFamily: 'monospace', color: colors.text.primary }}>{current}</span>
                       </div>
                       <div className="mb-2 d-flex align-items-center gap-2">
-                        <span style={{ color: colors.text.secondary }}>Latest:</span>
+                        <span style={{ color: colors.text.secondary }}>{t('serverStatus.latest')}:</span>
                         <span style={{ fontFamily: 'monospace', color: colors.text.primary }}>{latest}</span>
                       </div>
                       <div className="mb-3 d-flex align-items-center gap-2">
-                        <span style={{ color: colors.text.secondary }}>Update available:</span>
+                        <span style={{ color: colors.text.secondary }}>{t('serverStatus.updateAvailableLabel')}:</span>
                         <span className="badge" style={{ backgroundColor: hasUpdate ? colors.warning : colors.success }}>
-                          {hasUpdate ? 'YES' : 'Up to date'}
+                          {hasUpdate ? t('common.yes') : t('serverStatus.upToDate')}
                         </span>
                       </div>
                       {d.releaseNotes && (
                         <details>
-                          <summary style={{ color: colors.text.secondary, cursor: 'pointer', fontSize: '0.85rem' }}>Release notes</summary>
+                          <summary style={{ color: colors.text.secondary, cursor: 'pointer', fontSize: '0.85rem' }}>{t('serverStatus.releaseNotes')}</summary>
                           <pre style={{ backgroundColor: colors.bg.primary, color: colors.text.primary, border: `1px solid ${colors.border}`, borderRadius: '6px', padding: '8px', marginTop: '6px', fontSize: '11px', maxHeight: '200px', overflow: 'auto' }}>
                             {d.releaseNotes}
                           </pre>
@@ -1426,7 +1432,7 @@ export const ServerStatus: React.FC = () => {
           <div className="modal-dialog modal-lg">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>🔭 Xray Observatory — {observatoryNodeName}</h6>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>🔭 {t('serverStatus.xrayObservatory')} — {observatoryNodeName}</h6>
                 <div className="d-flex gap-2 align-items-center">
                   <button className="btn btn-sm" style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
                     disabled={observatoryLoading}
@@ -1438,7 +1444,7 @@ export const ServerStatus: React.FC = () => {
               </div>
               <div className="modal-body">
                 {observatoryLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!observatoryLoading && !observatoryData && <p style={{ color: colors.text.secondary }}>No observatory data (requires BurstObservatory in Xray config)</p>}
+                {!observatoryLoading && !observatoryData && <p style={{ color: colors.text.secondary }}>{t('serverStatus.noObservatoryData')}</p>}
                 {!observatoryLoading && observatoryData && (() => {
                   const statsList: any[] = observatoryData.status ?? observatoryData.states ?? observatoryData.observers ?? [];
                   if (Array.isArray(statsList) && statsList.length > 0) {
@@ -1449,12 +1455,12 @@ export const ServerStatus: React.FC = () => {
                             <div className="d-flex justify-content-between align-items-center">
                               <span style={{ fontFamily: 'monospace', color: colors.text.primary, fontWeight: 600 }}>{obs.OutboundTag ?? obs.outboundTag ?? obs.tag ?? `#${i}`}</span>
                               <span className="badge" style={{ backgroundColor: obs.Alive ?? obs.alive ? colors.success : colors.danger }}>
-                                {(obs.Alive ?? obs.alive) ? 'Alive' : 'Dead'}
+                                {(obs.Alive ?? obs.alive) ? t('serverStatus.alive') : t('serverStatus.dead')}
                               </span>
                             </div>
                             {(obs.Delay ?? obs.delay) !== undefined && (
                               <div className="small mt-1" style={{ color: colors.text.secondary }}>
-                                Delay: {obs.Delay ?? obs.delay} ms
+                                {t('serverStatus.delay')}: {obs.Delay ?? obs.delay} ms
                               </div>
                             )}
                           </div>
@@ -1479,7 +1485,7 @@ export const ServerStatus: React.FC = () => {
           <div className="modal-dialog modal-xl">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>⚙ Xray Config — {xrayConfigNodeName}</h6>
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>⚙ {t('serverStatus.xrayConfig')} — {xrayConfigNodeName}</h6>
                 <div className="d-flex gap-2 align-items-center">
                   {xrayConfigData && !xrayConfigData.error && (
                     <button className="btn btn-sm" style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
@@ -1492,7 +1498,7 @@ export const ServerStatus: React.FC = () => {
                         a.click();
                         URL.revokeObjectURL(url);
                       }}>
-                      ⬇ Download JSON
+                      ⬇ {t('serverStatus.downloadJson')}
                     </button>
                   )}
                   <button type="button" className="btn-close btn-close-white" onClick={() => setShowXrayConfig(false)} />

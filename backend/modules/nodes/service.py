@@ -6,6 +6,8 @@ import logging
 import sqlite3
 from typing import Dict, List, Optional
 
+from shared.sql import update_by_id_query
+
 logger = logging.getLogger(__name__)
 
 
@@ -123,25 +125,25 @@ class NodesService:
         fields = []
         params = []
         if "name" in updates:
-            fields.append("name = ?")
+            fields.append("name")
             params.append(updates["name"])
         if "ip" in updates:
-            fields.append("ip = ?")
+            fields.append("ip")
             params.append(updates["ip"])
         if "port" in updates:
-            fields.append("port = ?")
+            fields.append("port")
             params.append(updates["port"])
         if "user" in updates:
-            fields.append("user = ?")
+            fields.append("user")
             params.append(updates["user"])
         if "password" in updates:
-            fields.append("password = ?")
+            fields.append("password")
             params.append(self._encrypt(updates["password"]))
         if "base_path" in updates:
-            fields.append("base_path = ?")
+            fields.append("base_path")
             params.append(updates["base_path"])
         if "read_only" in updates:
-            fields.append("read_only = ?")
+            fields.append("read_only")
             params.append(1 if bool(updates["read_only"]) else 0)
 
         if not fields:
@@ -150,7 +152,8 @@ class NodesService:
         params.append(node_id)
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
-                f"UPDATE nodes SET {', '.join(fields)} WHERE id = ?", params
+                update_by_id_query("nodes", fields),
+                params,
             )
             conn.commit()
         return self.get_node(node_id)

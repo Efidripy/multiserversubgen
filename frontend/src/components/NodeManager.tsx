@@ -675,7 +675,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
           <button
             className="btn btn-sm"
             style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
-            title="Test connection to all nodes simultaneously"
+            title={t('nodes.testAllConnectionsTitle')}
             disabled={statusLoading || nodes.length === 0}
             onClick={async () => {
               setStatusLoading(true);
@@ -695,20 +695,20 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
               setStatusLoading(false);
               const ok = results.filter(r => r.status === 'fulfilled' && r.value.ok).length;
               const fail = results.length - ok;
-              toast(`Connection test: ${ok} online, ${fail} unreachable`, ok === results.length ? 'success' : fail === results.length ? 'error' : 'warning');
+              toast(t('nodes.connectionTestResult', { ok, fail }), ok === results.length ? 'success' : fail === results.length ? 'error' : 'warning');
             }}
           >
-            ⟳ Test All
+            ⟳ {t('nodes.testAll')}
           </button>
         </div>
 
         {selectedNodeIds.size > 0 && (
           <div className="d-flex gap-2 mb-2 align-items-center p-2 rounded" style={{ backgroundColor: colors.bg.tertiary, border: `1px solid ${colors.border}` }}>
-            <span className="small" style={{ color: colors.text.secondary }}>{selectedNodeIds.size} selected</span>
+            <span className="small" style={{ color: colors.text.secondary }}>{t('nodes.selectedInline', { count: selectedNodeIds.size })}</span>
             <button className="btn btn-sm btn-ghost-info"
-              title="Download backups from selected nodes"
+              title={t('nodes.downloadSelectedBackupsTitle')}
               onClick={async () => {
-                if (!window.confirm(`Download backups from ${selectedNodeIds.size} selected nodes?`)) return;
+                if (!window.confirm(t('nodes.confirmDownloadSelectedBackups', { count: selectedNodeIds.size }))) return;
                 const auth = getAuth();
                 let ok = 0, fail = 0;
                 for (const id of selectedNodeIds) {
@@ -723,27 +723,27 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                     ok++;
                   } catch { fail++; }
                 }
-                toast(`Backup: ${ok} downloaded${fail ? `, ${fail} failed` : ''}`, ok > 0 ? 'success' : 'error');
+                toast(t('nodes.backupSelectedResult', { ok, fail }), ok > 0 ? 'success' : 'error');
               }}>
-              ⬇ Backup
+              ⬇ {t('nodes.backup')}
             </button>
             <button className="btn btn-sm btn-ghost-warning"
-              title="Restart Xray on selected nodes"
+              title={t('nodes.restartSelectedXrayTitle')}
               onClick={async () => {
-                if (!window.confirm(`Restart Xray on ${selectedNodeIds.size} selected nodes?`)) return;
+                if (!window.confirm(t('nodes.confirmRestartSelectedXray', { count: selectedNodeIds.size }))) return;
                 const { user, password } = getAuth();
                 let ok = 0, fail = 0;
                 for (const id of selectedNodeIds) {
                   try { await api.post(`/v1/servers/${id}/restart-xray`, {}, { auth: { username: user, password } }); ok++; }
                   catch { fail++; }
                 }
-                toast(`Restart: ${ok} OK, ${fail} failed`, ok > 0 ? 'success' : 'error');
+                toast(t('nodes.restartSelectedResult', { ok, fail }), ok > 0 ? 'success' : 'error');
               }}>
-              ↺ Restart Xray
+              ↺ {t('serverStatus.restartXray')}
             </button>
             <button className="btn btn-sm btn-ghost-accent"
               onClick={() => setSelectedNodeIds(new Set())}>
-              ✕ Clear
+              ✕ {t('common.clear')}
             </button>
           </div>
         )}
@@ -752,9 +752,9 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
           <>
           {allTags.length > 0 && (
             <div className="d-flex gap-1 flex-wrap mb-2 align-items-center">
-              <span className="small" style={{ color: colors.text.secondary }}>Tag filter:</span>
+              <span className="small" style={{ color: colors.text.secondary }}>{t('nodes.tagFilter')}</span>
               <button className="btn btn-sm" style={{ fontSize: '0.72rem', padding: '1px 7px', backgroundColor: !filterTag ? colors.accent : colors.bg.tertiary, borderColor: !filterTag ? colors.accent : colors.border, color: !filterTag ? colors.accentText : colors.text.secondary }}
-                onClick={() => setFilterTag('')}>All</button>
+                onClick={() => setFilterTag('')}>{t('common.all')}</button>
               {allTags.map(tag => (
                 <button key={tag} className="btn btn-sm" style={{ fontSize: '0.72rem', padding: '1px 7px', backgroundColor: filterTag === tag ? colors.accent : colors.bg.tertiary, borderColor: filterTag === tag ? colors.accent : colors.border, color: filterTag === tag ? colors.accentText : colors.text.secondary }}
                   onClick={() => setFilterTag(prev => prev === tag ? '' : tag)}>{tag}</button>
@@ -866,14 +866,14 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                                   href={panelUrl}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  title={`Open panel: ${panelUrl}`}
+                                  title={t('nodes.openPanelTitle', { url: panelUrl })}
                                 >
                                   ↗
                                 </a>
                                 <button
                                   className="btn btn-sm"
                                   style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
-                                  title={`Copy URL: ${panelUrl}`}
+                                  title={t('nodes.copyUrlTitle', { url: panelUrl })}
                                   onClick={() => navigator.clipboard.writeText(panelUrl)}
                                 >
                                   📋
@@ -884,7 +884,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                           <button
                             className="btn btn-sm"
                             style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
-                            title="Test this node connection"
+                            title={t('nodes.testThisConnectionTitle')}
                             onClick={async () => {
                               const nodeUrl = node.url || `${(node as any).scheme || 'http'}://${node.ip}:${node.port}`;
                               const t0 = Date.now();
@@ -895,10 +895,10 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                                 const ok = res.data?.success === true;
                                 setNodeStatuses(prev => ({ ...prev, [node.id]: ok }));
                                 if (ok) setNodePing(prev => ({ ...prev, [node.id]: ping }));
-                                toast(`${node.name}: ${ok ? `online (${ping}ms)` : 'offline'}`, ok ? 'success' : 'error');
+                                toast(`${node.name}: ${ok ? t('nodes.onlineWithPing', { ping }) : t('nodes.offline')}`, ok ? 'success' : 'error');
                               } catch {
                                 setNodeStatuses(prev => ({ ...prev, [node.id]: false }));
-                                toast(`${node.name}: connection failed`, 'error');
+                                toast(t('nodes.nodeConnectionFailed', { node: node.name }), 'error');
                               }
                             }}
                           >
@@ -907,7 +907,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                           <button
                             className="btn btn-sm"
                             style={{ backgroundColor: tags.length > 0 ? colors.accent + '33' : colors.bg.tertiary, borderColor: tags.length > 0 ? colors.accent + '88' : colors.border, color: tags.length > 0 ? colors.accent : colors.text.secondary }}
-                            title={tags.length > 0 ? `Tags: ${tags.join(', ')}` : 'Add tags (comma-separated)'}
+                            title={tags.length > 0 ? t('nodes.tagsTitle', { tags: tags.join(', ') }) : t('nodes.addTagsTitle')}
                             onClick={() => {
                               const current = tags.join(', ');
                               const input = window.prompt(`Tags for "${node.name}" (comma-separated):`, current);

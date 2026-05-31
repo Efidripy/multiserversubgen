@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useToast } from './Toast';
+import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { getAuth } from '../auth';
 import { ChoiceChips } from './ChoiceChips';
@@ -25,6 +26,7 @@ interface SubscriptionGroup {
 
 export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) => {
   const { toast } = useToast();
+  const { t } = useTranslation();
   const [emails, setEmails] = useState<string[]>([]);
   const [qrUrl, setQrUrl] = useState('');
   const [showQr, setShowQr] = useState(false);
@@ -57,11 +59,11 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       });
       setEmails(res.data.emails || []);
       setStats(res.data.stats || {});
-      setSuccessMessage('Emails refreshed successfully');
+      setSuccessMessage(t('subscriptions.emailsRefreshed'));
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err: any) {
       console.error('Failed to load subscriptions:', err);
-      setError(err.response?.data?.detail || 'Failed to refresh emails');
+      setError(err.response?.data?.detail || t('subscriptions.refreshEmailsFailed'));
     } finally {
       setLoading(false);
     }
@@ -123,7 +125,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      toast('Copied!', 'info');
+      toast(t('subscriptions.copied'), 'info');
     } catch {
       const el = document.createElement('textarea');
       el.value = text;
@@ -145,7 +147,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   };
 
   if (loading && emails.length === 0) {
-    return <div className="text-center py-5" style={{ color: 'var(--text-secondary)' }}>Loading...</div>;
+    return <div className="text-center py-5" style={{ color: 'var(--text-secondary)' }}>{t('app.loading')}</div>;
   }
 
   const compareText = (a: string, b: string) =>
@@ -188,8 +190,8 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   });
 
   const groupSortDirectionLabels = groupSortField === 'name'
-    ? { asc: 'A -> Z', desc: 'Z -> A' }
-    : { asc: 'Small -> Large', desc: 'Large -> Small' };
+    ? { asc: t('subscriptions.sortAZ'), desc: t('subscriptions.sortZA') }
+    : { asc: t('subscriptions.sortSmallLarge'), desc: t('subscriptions.sortLargeSmall') };
 
   const applyIndividualSortFromHeader = (field: 'email' | 'downloads' | 'last') => {
     if (individualSortField === field) {
@@ -215,8 +217,8 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         <section className="panel-block panel-block--wide">
           <div className="panel-block__header">
             <div>
-              <h6 className="panel-block__title">Subscription controls</h6>
-              <p className="panel-block__hint">Refresh source emails, switch delivery mode and narrow output by protocol or node.</p>
+              <h6 className="panel-block__title">{t('subscriptions.controlsTitle')}</h6>
+              <p className="panel-block__hint">{t('subscriptions.controlsHint')}</p>
             </div>
             <div className="panel-inline-actions">
               <button
@@ -227,13 +229,13 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               >
                 <span className="d-inline-flex align-items-center gap-1">
                   <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
-                  Refresh Emails
+                  {t('subscriptions.refreshEmails')}
                 </span>
               </button>
               <input
                 type="text"
                 className="form-control form-control-sm"
-                placeholder="Search emails…"
+                placeholder={t('subscriptions.searchEmailsPlaceholder')}
                 value={emailSearch}
                 onChange={e => setEmailSearch(e.target.value)}
                 style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)', width: '180px' }}
@@ -241,7 +243,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               <button
                 className="btn btn-sm"
                 style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
-                title="Copy all subscription links to clipboard"
+                title={t('subscriptions.copyAllLinksTitle')}
                 onClick={async () => {
                   const allLinks = filteredEmails.map(email => buildSubscriptionUrl(email));
                   await copyToClipboard(allLinks.join('\n'));
@@ -250,7 +252,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               >
                 <span className="d-inline-flex align-items-center gap-1">
                   <UIIcon name="copy" size={14} />
-                  Copy All Links ({filteredEmails.length})
+                  {t('subscriptions.copyAllLinks', { count: filteredEmails.length })}
                 </span>
               </button>
               <button
@@ -264,7 +266,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               >
                 <span className="d-inline-flex align-items-center gap-1">
                   <UIIcon name="user" size={14} />
-                  Individual
+                  {t('subscriptions.individual')}
                 </span>
               </button>
               <button
@@ -278,7 +280,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               >
                 <span className="d-inline-flex align-items-center gap-1">
                   <UIIcon name="folder" size={14} />
-                  Grouped
+                  {t('subscriptions.grouped')}
                 </span>
               </button>
             </div>
@@ -297,7 +299,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
 
           <div className="row g-2 mb-2">
             <div className="col-12">
-              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>Node Filter</label>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('subscriptions.nodeFilter')}</label>
               <div className="panel-inline-actions">
                 {nodes.map((node) => (
                   <button
@@ -324,7 +326,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                   >
                     <span className="d-inline-flex align-items-center gap-1">
                       <UIIcon name="x" size={12} />
-                      Clear
+                      {t('common.clear')}
                     </span>
                   </button>
                 )}
@@ -335,11 +337,11 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
           {(filterProtocol || selectedNodes.length > 0 || deliveryTransport !== 'all' || deliveryFormat !== 'base64') && (
             <div className="alert mt-2 mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--info) 14%, transparent)', borderColor: 'var(--info)', color: 'var(--text-primary)' }}>
               <small>
-                <strong>Active filters:</strong>
-                {filterProtocol && ` Protocol: ${filterProtocol.toUpperCase()}`}
-                {selectedNodes.length > 0 && ` | Nodes: ${selectedNodes.join(', ')}`}
-                {deliveryTransport !== 'all' && ` | Transport: ${deliveryTransport.toUpperCase()}`}
-                {deliveryFormat !== 'base64' && ` | Format: ${deliveryFormat.toUpperCase()}`}
+                <strong>{t('subscriptions.activeFilters')}:</strong>
+                {filterProtocol && ` ${t('subscriptions.protocolFilter')}: ${filterProtocol.toUpperCase()}`}
+                {selectedNodes.length > 0 && ` | ${t('subscriptions.nodeFilters')}: ${selectedNodes.join(', ')}`}
+                {deliveryTransport !== 'all' && ` | ${t('subscriptions.transportHint')}: ${deliveryTransport.toUpperCase()}`}
+                {deliveryFormat !== 'base64' && ` | ${t('subscriptions.outputFormat')}: ${deliveryFormat.toUpperCase()}`}
               </small>
             </div>
           )}
@@ -348,16 +350,16 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         <aside className="panel-block">
           <div className="panel-block__header">
             <div>
-              <h6 className="panel-block__title">Delivery profile</h6>
-              <p className="panel-block__hint">Choose what kind of subscription link you want to hand out.</p>
+              <h6 className="panel-block__title">{t('subscriptions.deliveryProfile')}</h6>
+              <p className="panel-block__hint">{t('subscriptions.deliveryHint')}</p>
             </div>
           </div>
           <div className="panel-block__stack">
             <div>
-              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>Subscription profile</label>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('subscriptions.subscriptionProfile')}</label>
               <ChoiceChips
                 options={[
-                  { value: '', label: 'All' },
+                  { value: '', label: t('common.all') },
                   { value: 'vless', label: 'VLESS' },
                   { value: 'vmess', label: 'VMess' },
                   { value: 'trojan', label: 'Trojan' },
@@ -368,10 +370,10 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               />
             </div>
             <div>
-              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>Transport hint</label>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('subscriptions.transportHint')}</label>
               <ChoiceChips
                 options={[
-                  { value: 'all', label: 'All' },
+                  { value: 'all', label: t('common.all') },
                   { value: 'ws', label: 'WS' },
                   { value: 'grpc', label: 'gRPC' },
                 ]}
@@ -381,7 +383,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               />
             </div>
             <div>
-              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>Output format</label>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('subscriptions.outputFormat')}</label>
               <ChoiceChips
                 options={[
                   { value: 'base64', label: 'Base64' },
@@ -400,14 +402,14 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       <section className="panel-block">
         <div className="d-flex justify-content-between align-items-center mb-3 gap-2">
           <h6 className="mb-0" style={{ color: 'var(--text-primary)' }}>
-            {viewMode === 'individual' ? `Individual Subscriptions (${emails.length})` : `Grouped Subscriptions (${groups.length} groups)`}
+            {viewMode === 'individual' ? t('subscriptions.individualTitle', { count: emails.length }) : t('subscriptions.groupedTitle', { count: groups.length })}
           </h6>
           {viewMode === 'grouped' ? (
             <div className="d-flex gap-2">
               <ChoiceChips
                 options={[
-                  { value: 'count', label: 'Count' },
-                  { value: 'name', label: 'Group' },
+                  { value: 'count', label: t('subscriptions.count') },
+                  { value: 'name', label: t('subscriptions.group') },
                 ]}
                 value={groupSortField}
                 onChange={(value) => setGroupSortField(value)}
@@ -424,12 +426,12 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               />
             </div>
           ) : (
-            <div className="small" style={{ color: 'var(--text-secondary)' }}>Click table headers to sort</div>
+            <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('traffic.sortHint')}</div>
           )}
         </div>
 
         {emails.length === 0 ? (
-          <p className="text-center py-3 mb-0" style={{ color: 'var(--text-secondary)' }}>No users found. Add panel nodes first.</p>
+          <p className="text-center py-3 mb-0" style={{ color: 'var(--text-secondary)' }}>{t('subscriptions.noUsersFound')}</p>
         ) : viewMode === 'individual' ? (
           <div className="table-responsive table-shell">
             <table className="table table-hover small mb-0" style={{ color: 'var(--text-primary)' }}>
@@ -437,20 +439,20 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                 <tr style={{ borderColor: 'var(--border-color)' }}>
                   <th style={{ color: 'var(--text-secondary)' }}>
                     <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyIndividualSortFromHeader('email')}>
-                      Email{individualSortIndicator('email')}
+                      {t('clients.email')}{individualSortIndicator('email')}
                     </button>
                   </th>
                   <th style={{ color: 'var(--text-secondary)' }}>
                     <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyIndividualSortFromHeader('downloads')}>
-                      Downloads{individualSortIndicator('downloads')}
+                      {t('subscriptions.downloads')}{individualSortIndicator('downloads')}
                     </button>
                   </th>
                   <th style={{ color: 'var(--text-secondary)' }}>
                     <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyIndividualSortFromHeader('last')}>
-                      Last seen{individualSortIndicator('last')}
+                      {t('subscriptions.lastSeen')}{individualSortIndicator('last')}
                     </button>
                   </th>
-                  <th style={{ color: 'var(--text-secondary)' }}>Link</th>
+                  <th style={{ color: 'var(--text-secondary)' }}>{t('subscriptions.link')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -482,12 +484,12 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                           style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
                           onClick={() => copyToClipboard(buildSubscriptionUrl(email))}
                         >
-                          Copy
+                          {t('common.copy')}
                         </button>
                         <button
                           className="btn"
                           style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
-                          title="Show QR code"
+                          title={t('subscriptions.showQrCode')}
                           onClick={() => { setQrUrl(buildSubscriptionUrl(email)); setShowQr(true); }}
                         >
                           ▦
@@ -513,9 +515,9 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                         </span>
                       </h6>
                       <small style={{ color: 'var(--text-secondary)' }}>
-                        {group.count} client{group.count !== 1 ? 's' : ''}
+                        {t('subscriptions.clientCount', { count: group.count })}
                         {group.emails && group.emails.length > 0 && group.emails.length !== group.count && (
-                          <span style={{ color: 'var(--text-secondary)' }}> · {group.emails.length} emails</span>
+                          <span style={{ color: 'var(--text-secondary)' }}> · {t('subscriptions.emailCount', { count: group.emails.length })}</span>
                         )}
                       </small>
                     </div>
@@ -543,18 +545,18 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                       style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
                       onClick={() => copyToClipboard(buildSubscriptionUrl(group.identifier, true))}
                     >
-                      Copy
+                      {t('common.copy')}
                     </button>
                     <button
                       className="btn"
                       style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
-                      title="Copy all individual subscription links for this group"
+                      title={t('subscriptions.copyGroupLinksTitle')}
                       onClick={async () => {
                         const links = group.emails.map(e => buildSubscriptionUrl(e)).join('\n');
                         await copyToClipboard(links);
                       }}
                     >
-                      All links
+                      {t('subscriptions.allLinks')}
                     </button>
                   </div>
                 </div>
@@ -563,7 +565,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
             {groups.length === 0 && (
               <div className="col-12">
                 <p className="text-center py-3 mb-0" style={{ color: 'var(--text-secondary)' }}>
-                  No groups found. Groups require at least two clients with similar identifiers.
+                  {t('subscriptions.noGroupsFound')}
                 </p>
               </div>
             )}
@@ -577,13 +579,13 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
           <div className="modal-dialog modal-dialog-centered">
             <div className="modal-content" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
               <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
-                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>▦ Subscription QR Code</h6>
+                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>▦ {t('subscriptions.qrCodeTitle')}</h6>
                 <button type="button" className="btn-close btn-close-white" onClick={() => setShowQr(false)} />
               </div>
               <div className="modal-body d-flex flex-column align-items-center gap-3">
                 <img
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(qrUrl)}`}
-                  alt="Subscription QR"
+                  alt={t('subscriptions.qrCodeAlt')}
                   width={280} height={280}
                   style={{ border: '2px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff' }}
                 />
@@ -591,7 +593,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                   <input readOnly className="form-control form-control-sm" value={qrUrl}
                     style={{ fontFamily: 'monospace', fontSize: '11px', backgroundColor: 'var(--bg-primary)', color: 'var(--text-secondary)', borderColor: 'var(--border-color)' }} />
                   <button className="btn btn-sm" style={{ backgroundColor: 'var(--accent)', color: '#000f14', whiteSpace: 'nowrap' }}
-                    onClick={() => copyToClipboard(qrUrl)}>Copy</button>
+                    onClick={() => copyToClipboard(qrUrl)}>{t('common.copy')}</button>
                 </div>
               </div>
             </div>

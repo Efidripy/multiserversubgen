@@ -2,10 +2,9 @@
 WebSocket Manager для real-time обновлений
 """
 import asyncio
-import json
 import logging
 from typing import Set, Dict, Any
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket
 
 logger = logging.getLogger("websocket_manager")
 
@@ -30,9 +29,10 @@ class ConnectionManager:
             except Exception as e:
                 logger.error(f"Activity callback error: {e}")
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, *, accept: bool = True):
         """Принять новое соединение"""
-        await websocket.accept()
+        if accept:
+            await websocket.accept()
         self.active_connections.add(websocket)
         self.subscriptions[websocket] = set()
         logger.info(f"New WebSocket connection. Total: {len(self.active_connections)}")

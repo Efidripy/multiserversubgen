@@ -5,6 +5,7 @@
 import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { wsManager } from './webSocketManager';
 import { API_BASE } from '../api';
+import { devLog } from '../utils/devLogger';
 
 export interface TrafficUpdate {
   type: 'traffic_update' | 'client_update' | 'server_status' | 'inbound_update';
@@ -125,13 +126,13 @@ export function useTrafficStatsSubscription({
       if (fallbackIntervalRef.current !== null) {
         window.clearInterval(fallbackIntervalRef.current);
         fallbackIntervalRef.current = null;
-        console.log('[TrafficStats] WebSocket подключен - polling отключен');
+        devLog('[TrafficStats] WebSocket подключен - polling отключен');
       }
       return;
     }
 
     // WebSocket недоступен - использовать fallback polling
-    console.log('[TrafficStats] Offline/WS недоступен - используем fallback polling');
+    devLog('[TrafficStats] Offline/WS недоступен - используем fallback polling');
     fallbackIntervalRef.current = window.setInterval(async () => {
       try {
         if (fallbackRun) {

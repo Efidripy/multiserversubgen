@@ -4,6 +4,7 @@
  */
 import React, { useEffect, useState } from 'react';
 import { performanceMonitor } from '../services/performanceMonitoring';
+import { useTranslation } from 'react-i18next';
 
 export interface PerformanceMetrics {
   fcp?: number; // First Contentful Paint (ms)
@@ -16,6 +17,7 @@ export interface PerformanceMetrics {
 }
 
 export const PerformanceMetricsDashboard: React.FC = () => {
+  const { t } = useTranslation();
   const [metrics, setMetrics] = useState<PerformanceMetrics | null>(null);
   const [history, setHistory] = useState<(PerformanceMetrics | undefined)[]>([]);
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -96,18 +98,18 @@ export const PerformanceMetricsDashboard: React.FC = () => {
   const getStatusText = (status: 'good' | 'needs-improvement' | 'poor'): string => {
     switch (status) {
       case 'good':
-        return 'Хорошо';
+        return t('performance.good');
       case 'needs-improvement':
-        return 'Требует улучшения';
+        return t('performance.needsImprovement');
       case 'poor':
-        return 'Плохо';
+        return t('performance.poor');
     }
   };
 
   if (!metrics) {
     return (
       <div style={{ padding: '1rem', color: '#666' }}>
-        ⏳ Загрузка метрик производительности...
+        ⏳ {t('performance.loading')}
       </div>
     );
   }
@@ -122,7 +124,7 @@ export const PerformanceMetricsDashboard: React.FC = () => {
           marginBottom: '1.5rem',
         }}
       >
-        <h2 style={{ margin: 0 }}>🎯 Метрики производительности</h2>
+        <h2 style={{ margin: 0 }}>🎯 {t('performance.title')}</h2>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <button
             onClick={updateMetrics}
@@ -135,7 +137,7 @@ export const PerformanceMetricsDashboard: React.FC = () => {
               cursor: 'pointer',
             }}
           >
-            🔄 Обновить
+            🔄 {t('common.refresh')}
           </button>
           <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <input
@@ -143,7 +145,7 @@ export const PerformanceMetricsDashboard: React.FC = () => {
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.checked)}
             />
-            Авто-обновление
+            {t('performance.autoRefresh')}
           </label>
         </div>
       </div>
@@ -167,7 +169,7 @@ export const PerformanceMetricsDashboard: React.FC = () => {
           }}
         >
           <div style={{ fontSize: '0.875rem', color: '#666', marginBottom: '0.5rem' }}>
-            Largest Contentful Paint (LCP)
+            {t('performance.lcp')}
           </div>
           <div style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>
             {metrics.lcp?.toFixed(0) || '—'} ms
@@ -176,7 +178,7 @@ export const PerformanceMetricsDashboard: React.FC = () => {
             {getStatusText(getLCPStatus(metrics.lcp))}
           </div>
           <div style={{ fontSize: '0.75rem', color: '#999', marginTop: '0.5rem' }}>
-            Цель: ≤ 2500ms (хорошо)
+            {t('performance.targetLcp')}
           </div>
         </div>
 
@@ -190,7 +192,7 @@ export const PerformanceMetricsDashboard: React.FC = () => {
           }}
         >
           <div style={{ fontSize: '0.875rem', color: '#666', marginBottom: '0.5rem' }}>
-            Cumulative Layout Shift (CLS)
+            {t('performance.cls')}
           </div>
           <div style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>
             {metrics.cls?.toFixed(3) || '—'}
@@ -199,7 +201,7 @@ export const PerformanceMetricsDashboard: React.FC = () => {
             {getStatusText(getCLSStatus(metrics.cls))}
           </div>
           <div style={{ fontSize: '0.75rem', color: '#999', marginTop: '0.5rem' }}>
-            Цель: ≤ 0.1 (хорошо)
+            {t('performance.targetCls')}
           </div>
         </div>
 
@@ -213,7 +215,7 @@ export const PerformanceMetricsDashboard: React.FC = () => {
           }}
         >
           <div style={{ fontSize: '0.875rem', color: '#666', marginBottom: '0.5rem' }}>
-            First Contentful Paint (FCP)
+            {t('performance.fcp')}
           </div>
           <div style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>
             {metrics.fcp?.toFixed(0) || '—'} ms
@@ -222,7 +224,7 @@ export const PerformanceMetricsDashboard: React.FC = () => {
             {getStatusText(getFCPStatus(metrics.fcp))}
           </div>
           <div style={{ fontSize: '0.75rem', color: '#999', marginTop: '0.5rem' }}>
-            Цель: ≤ 1800ms (хорошо)
+            {t('performance.targetFcp')}
           </div>
         </div>
 
@@ -236,13 +238,13 @@ export const PerformanceMetricsDashboard: React.FC = () => {
           }}
         >
           <div style={{ fontSize: '0.875rem', color: '#666', marginBottom: '0.5rem' }}>
-            Time to Interactive (TTI)
+            {t('performance.tti')}
           </div>
           <div style={{ fontSize: '2rem', fontWeight: 'bold', marginBottom: '0.5rem' }}>
             {metrics.tti?.toFixed(0) || '—'} ms
           </div>
           <div style={{ fontSize: '0.875rem', color: '#3b82f6' }}>
-            Время интерактивности
+            {t('performance.ttiHint')}
           </div>
         </div>
       </div>
@@ -257,7 +259,7 @@ export const PerformanceMetricsDashboard: React.FC = () => {
             marginBottom: '1rem',
           }}
         >
-          <h3 style={{ marginTop: 0 }}>📡 Латенция API</h3>
+          <h3 style={{ marginTop: 0 }}>📡 {t('performance.apiLatency')}</h3>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem' }}>
             {Object.entries(metrics.apiLatencies).map(([endpoint, latency]) => (
               <div key={endpoint} style={{ backgroundColor: 'white', padding: '0.75rem', borderRadius: '0.375rem' }}>
@@ -266,7 +268,7 @@ export const PerformanceMetricsDashboard: React.FC = () => {
                   {latency.avg.toFixed(0)} ms
                 </div>
                 <div style={{ fontSize: '0.75rem', color: '#999' }}>
-                  мин: {latency.min.toFixed(0)}ms | макс: {latency.max.toFixed(0)}ms | выборок: {latency.count}
+                  {t('performance.latencyStats', { min: latency.min.toFixed(0), max: latency.max.toFixed(0), count: latency.count })}
                 </div>
               </div>
             ))}
@@ -285,7 +287,7 @@ export const PerformanceMetricsDashboard: React.FC = () => {
           }}
         >
           <div style={{ color: '#dc2626' }}>
-            ⚠️ Ошибки JavaScript: <strong>{metrics.errorCount}</strong>
+            ⚠️ {t('performance.javascriptErrors')}: <strong>{metrics.errorCount}</strong>
           </div>
         </div>
       )}
@@ -300,9 +302,9 @@ export const PerformanceMetricsDashboard: React.FC = () => {
             marginTop: '1.5rem',
           }}
         >
-          <h3 style={{ marginTop: 0 }}>📈 История (последние {history.length} измерений)</h3>
+          <h3 style={{ marginTop: 0 }}>📈 {t('performance.historyTitle', { count: history.length })}</h3>
           <div style={{ fontSize: '0.875rem', color: '#666', marginTop: '1rem' }}>
-            <div>Средние значения за период:</div>
+            <div>{t('performance.periodAverages')}:</div>
             <ul style={{ margin: '0.5rem 0', paddingLeft: '1.25rem' }}>
               <li>
                 LCP: {(history.filter(Boolean).reduce((sum, m) => sum + (m?.lcp || 0), 0) / Math.max(history.filter(Boolean).length, 1)).toFixed(0)} ms

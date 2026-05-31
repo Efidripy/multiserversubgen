@@ -744,10 +744,10 @@ export const ClientManager: React.FC = () => {
       : `/v1/clients/${encodeURIComponent(attachClient.email)}/detach`;
     try {
       await api.post(endpoint, { node_id: attachClient.node_id, inbound_ids: Array.from(attachSelected) }, { auth: getAuth() });
-      toast(`${attachMode === 'attach' ? 'Attached' : 'Detached'} successfully`, 'success');
+      toast(t(attachMode === 'attach' ? 'clients.attachedSuccess' : 'clients.detachedSuccess'), 'success');
       setShowAttachModal(false);
       loadClients(true);
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const handleOpenGroups = async (nodeId: number, nodeName: string) => {
@@ -1274,9 +1274,9 @@ export const ClientManager: React.FC = () => {
               </button>
               <label
                 className="btn btn-sm btn-neutral mb-0"
-                title="Import clients from CSV (columns: email, totalGB, expiry_days, protocol)"
+                title={t('clients.importCsvTitle')}
               >
-                <span className="d-inline-flex align-items-center gap-1"><UIIcon name="upload" size={14} /> Import CSV</span>
+                <span className="d-inline-flex align-items-center gap-1"><UIIcon name="upload" size={14} /> {t('clients.importCsv')}</span>
                 <input type="file" accept=".csv,.txt" className="d-none"
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
@@ -1291,12 +1291,12 @@ export const ClientManager: React.FC = () => {
                       const [email] = lines[i].split(',');
                       if (email?.trim()) emails.push(email.trim());
                     }
-                    if (emails.length === 0) { toast('No emails found in CSV', 'error'); return; }
+                    if (emails.length === 0) { toast(t('clients.noEmailsInCsv'), 'error'); return; }
                     // Open batch modal with these emails pre-filled
                     const emailsStr = emails.join('\n');
                     setBatchText(emailsStr);
                     setShowBatchModal(true);
-                    toast(`Loaded ${emails.length} emails from CSV`, 'info');
+                    toast(t('clients.loadedEmailsFromCsv', { count: emails.length }), 'info');
                   }}
                 />
               </label>
@@ -1313,9 +1313,9 @@ export const ClientManager: React.FC = () => {
               <button
                 className={`btn btn-sm ${autoRefresh ? 'btn-ghost-accent' : 'btn-neutral'}`}
                 onClick={() => setAutoRefresh(v => !v)}
-                title={autoRefresh ? `Auto-refresh every ${refreshInterval}s — click to stop` : 'Enable auto-refresh'}
+                title={autoRefresh ? t('clients.autoRefreshEvery', { seconds: refreshInterval }) : t('clients.enableAutoRefresh')}
               >
-                ⟳ Auto
+                {t('clients.auto')}
               </button>
               {autoRefresh && (
                 <select className="form-select form-select-sm form-select-inline"
@@ -1364,7 +1364,7 @@ export const ClientManager: React.FC = () => {
                   onChange={e => setFilterInboundId(e.target.value ? Number(e.target.value) : null)}
                   style={{ maxWidth: '180px', fontSize: '0.75rem' }}
                 >
-                  <option value="">All inbounds</option>
+                  <option value="">{t('clients.allInbounds')}</option>
                   {inboundOptions.slice(0, 40).map((ib, i) => (
                     <option key={`${i}-${ib.id}`} value={ib.id}>{ib.remark || `#${ib.id}`} ({ib.node_name})</option>
                   ))}
@@ -1408,7 +1408,7 @@ export const ClientManager: React.FC = () => {
                 onClick={() => setOnlineFirst(v => !v)}
                 title="Show online clients first"
               >
-                ● Online first
+                {t('clients.onlineFirst')}
               </button>
               <button
                 className="btn btn-sm btn-neutral"
@@ -1425,7 +1425,7 @@ export const ClientManager: React.FC = () => {
                   toast(`${dupes.length} duplicate email(s) found — showing first: "${dupes[0][0]}" (${dupes[0][1].join(', ')})`, 'warning');
                 }}
               >
-                ⎊ Duplicates
+                {t('clients.duplicates')}
               </button>
               {(searchTerm || filterNode || filterProtocol || filterStatus || filterExpiringSoon || filterInboundId !== null) && (
                 <button
@@ -1459,12 +1459,12 @@ export const ClientManager: React.FC = () => {
                 <div className="selection-bar">
                   <strong className="selection-bar__count">{t('clients.selectedCount', { count: selectedClientKeys.size })}</strong>
                   <button className="btn btn-sm btn-neutral"
-                    title="Copy emails of selected clients to clipboard"
+                    title={t('clients.copySelectedEmails')}
                     onClick={() => {
                       const emails = filteredClients.filter(c => selectedClientKeys.has(clientKey(c))).map(c => c.email);
                       navigator.clipboard.writeText(emails.join('\n')).then(() => toast(`Copied ${emails.length} email(s)`, 'info'));
                     }}>
-                    <UIIcon name="copy" size={13} /> Copy emails
+                    <UIIcon name="copy" size={13} /> {t('clients.copyEmails')}
                   </button>
                   <button className="btn btn-sm btn-danger-fill" onClick={() => handleBatchDelete('selected')}>
                     <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={13} />{t('clients.deleteSelected')}</span>
@@ -1479,7 +1479,7 @@ export const ClientManager: React.FC = () => {
                         loadClients(true);
                       } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
                     }}>
-                    ● Enable
+                    {t('common.enable')}
                   </button>
                   <button className="btn btn-sm btn-neutral"
                     onClick={async () => {
@@ -1491,14 +1491,14 @@ export const ClientManager: React.FC = () => {
                         loadClients(true);
                       } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
                     }}>
-                    ○ Disable
+                    {t('common.disable')}
                   </button>
                   <button className="btn btn-sm btn-accent"
                     onClick={() => { setBulkAdjustMode('add'); setShowBulkAdjust(true); }}>
                     +days/GB
                   </button>
                   <button className="btn btn-sm btn-neutral"
-                    title="Set an exact traffic limit for selected clients"
+                    title={t('clients.setExactLimitTitle')}
                     onClick={async () => {
                       const selected = filteredClients.filter(c => selectedClientKeys.has(clientKey(c)));
                       const input = window.prompt(`Set traffic limit (GB) for ${selected.length} clients (0 = unlimited):`, '50');
@@ -1518,7 +1518,7 @@ export const ClientManager: React.FC = () => {
                       toast(`Limit set for ${done} clients`, 'success');
                       loadClients(true);
                     }}>
-                    Set Limit
+                    {t('clients.setLimit')}
                   </button>
                   <button className="btn btn-sm btn-info-fill"
                     onClick={async () => {
@@ -1531,10 +1531,10 @@ export const ClientManager: React.FC = () => {
                         loadClients(true);
                       } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
                     }}>
-                    Reset Traffic
+                    {t('clients.resetTraffic')}
                   </button>
                   <button className="btn btn-sm btn-ghost-warning"
-                    title="Freeze all selected clients (expire immediately + disable)"
+                    title={t('clients.freezeSelectedTitle')}
                     onClick={async () => {
                       const selected = filteredClients.filter(c => selectedClientKeys.has(clientKey(c)));
                       if (!window.confirm(`Freeze ${selected.length} clients? This sets expiry=now and disables them.`)) return;
@@ -1554,7 +1554,7 @@ export const ClientManager: React.FC = () => {
                       toast(`Frozen ${done} clients`, 'warning');
                       loadClients(true);
                     }}>
-                    🧊 Freeze Selected
+                    {t('clients.freezeSelected')}
                   </button>
                   <button className="btn btn-sm btn-neutral"
                     title="Export selected clients as CSV"
@@ -1575,7 +1575,7 @@ export const ClientManager: React.FC = () => {
                       a.click(); URL.revokeObjectURL(url);
                       toast(`Exported ${selected.length} clients`, 'success');
                     }}>
-                    <UIIcon name="download" size={13} /> Export CSV
+                    <UIIcon name="download" size={13} /> {t('clients.exportCsv')}
                   </button>
                   <button className="btn btn-sm btn-neutral"
                     title="Download subscription links for all selected clients"
@@ -1602,7 +1602,7 @@ export const ClientManager: React.FC = () => {
                       a.click();
                       URL.revokeObjectURL(url);
                     }}>
-                    <UIIcon name="download" size={13} /> Export Links
+                    <UIIcon name="download" size={13} /> {t('clients.exportLinks')}
                   </button>
                   <button className="btn btn-sm btn-neutral"
                     onClick={async () => {
@@ -1624,27 +1624,27 @@ export const ClientManager: React.FC = () => {
                         toast(`Added ${selectedEmails.length} clients to "${groupName}"`, 'success');
                       } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
                     }}>
-                    <UIIcon name="group" size={13} /> Add to Group
+                    <UIIcon name="group" size={13} /> {t('clients.addToGroup')}
                   </button>
                 </div>
               )}
               <div className="d-flex gap-2 mb-2 flex-wrap align-items-center">
-                <span className="small text-muted-2">Quick select:</span>
+                <span className="small text-muted-2">{t('clients.quickSelect')}</span>
                 <button className="btn btn-sm btn-ghost-danger" style={{ fontSize: '0.75rem' }}
                   onClick={() => selectAllBy(c => c.expiryTime > 0 && c.expiryTime < Date.now())}>
-                  + All Expired
+                  {t('clients.selectAllExpired')}
                 </button>
                 <button className="btn btn-sm btn-ghost-warning" style={{ fontSize: '0.75rem' }}
                   onClick={() => selectAllBy(c => c.total > 0 && c.up + c.down >= c.total)}>
-                  + All Depleted
+                  {t('clients.selectAllDepleted')}
                 </button>
                 <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.75rem' }}
                   onClick={() => selectAllBy(c => !c.enable)}>
-                  + All Disabled
+                  {t('clients.selectAllDisabled')}
                 </button>
                 <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.75rem' }}
                   onClick={() => setSelectedClientKeys(new Set())}>
-                  Clear selection
+                  {t('clients.clearSelection')}
                 </button>
               </div>
               <div className="panel-inline-actions">
@@ -1675,26 +1675,26 @@ export const ClientManager: React.FC = () => {
                 </button>
                 <button
                   className="btn btn-sm btn-warning-fill"
-                  title="Reset traffic for all depleted clients"
+                  title={t('clients.resetDepletedTitle')}
                   onClick={async () => {
                     const depleted = clients.filter(c => c.total > 0 && c.up + c.down >= c.total);
-                    if (depleted.length === 0) { toast('No depleted clients', 'info'); return; }
-                    if (!window.confirm(`Reset traffic for ${depleted.length} depleted clients?`)) return;
+                    if (depleted.length === 0) { toast(t('clients.noDepletedClients'), 'info'); return; }
+                    if (!window.confirm(t('clients.confirmResetDepleted', { count: depleted.length }))) return;
                     const { user, password } = getAuth();
                     try {
                       const res = await api.post('/v1/clients/bulk-reset-traffic', {
                         emails: depleted.map(c => c.email),
                       }, { auth: { username: user, password } });
-                      toast(`Reset: ${res.data?.successful ?? depleted.length} clients`, 'success');
+                      toast(t('clients.resetDepletedResult', { count: res.data?.successful ?? depleted.length }), 'success');
                       loadClients(true);
                     } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
                   }}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="refresh" size={14} /> Reset Depleted</span>
+                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="refresh" size={14} /> {t('clients.resetDepleted')}</span>
                 </button>
                 <button
                   className="btn btn-sm btn-info-fill"
-                  title="Renew all expired clients — prompts for number of days"
+                  title={t('clients.renewExpiredTitle')}
                   onClick={async () => {
                     const expired = clients.filter(c => c.expiryTime > 0 && c.expiryTime < Date.now());
                     if (expired.length === 0) { toast('No expired clients found', 'info'); return; }
@@ -1713,7 +1713,7 @@ export const ClientManager: React.FC = () => {
                     } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
                   }}
                 >
-                  <span className="d-inline-flex align-items-center gap-1">⟳ Renew Expired</span>
+                  <span className="d-inline-flex align-items-center gap-1">{t('clients.renewExpired')}</span>
                 </button>
                 <button
                   className="btn btn-sm btn-ghost-warning"
@@ -1735,7 +1735,7 @@ export const ClientManager: React.FC = () => {
                     } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
                   }}
                 >
-                  ⏱ Extend Expiring
+                  {t('clients.extendExpiring')}
                 </button>
                 <button
                   className="btn btn-sm btn-accent"
@@ -1763,31 +1763,31 @@ export const ClientManager: React.FC = () => {
                 </button>
                 <button
                   className={`btn btn-sm ${denseView ? 'btn-accent' : 'btn-neutral'}`}
-                  title="Toggle compact/dense table view"
+                  title={t('clients.toggleDenseView')}
                   onClick={() => setDenseView(v => !v)}
                 >
                   <span className="d-inline-flex align-items-center gap-1">⚏ Dense</span>
                 </button>
                 <button
                   className="btn btn-sm btn-neutral"
-                  title="Find clients by IP address"
+                  title={t('clients.findByIpTitle')}
                   onClick={() => { setIpSearchValue(''); setIpSearchResults([]); setShowIpSearch(true); }}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="search" size={13} /> Find by IP</span>
+                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="search" size={13} /> {t('clients.findByIp')}</span>
                 </button>
                 <button
                   className="btn btn-sm btn-neutral"
-                  title="Copy all visible email addresses to clipboard"
+                  title={t('clients.copyVisibleEmailsTitle')}
                   onClick={() => {
                     const emails = filteredClients.map(c => c.email).join('\n');
-                    navigator.clipboard.writeText(emails).then(() => toast(`Copied ${filteredClients.length} emails`, 'info'));
+                    navigator.clipboard.writeText(emails).then(() => toast(t('clients.copiedEmailsCount', { count: filteredClients.length }), 'info'));
                   }}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="copy" size={13} /> Copy Emails</span>
+                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="copy" size={13} /> {t('clients.copyEmails')}</span>
                 </button>
                 <button
                   className="btn btn-sm btn-neutral"
-                  title="Export visible clients as JSON"
+                  title={t('clients.exportVisibleJsonTitle')}
                   onClick={() => {
                     const data = filteredClients.map(c => ({
                       email: c.email, protocol: c.protocol, node: c.node_name,
@@ -1807,7 +1807,7 @@ export const ClientManager: React.FC = () => {
                 </button>
                 <button
                   className="btn btn-sm btn-neutral"
-                  title="Export visible clients as CSV"
+                  title={t('clients.exportVisibleCsvTitle')}
                   onClick={() => {
                     const rows = filteredClients.map(c => {
                       const exp = c.expiryTime > 0 ? new Date(c.expiryTime).toISOString().slice(0,10) : '';
@@ -1884,7 +1884,7 @@ export const ClientManager: React.FC = () => {
             <button className="btn btn-sm btn-neutral" disabled={currentPage >= Math.ceil(filteredClients.length / pageSize)} onClick={() => setCurrentPage(Math.ceil(filteredClients.length / pageSize))}>»</button>
           </div>
           <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.72rem' }}
-            title="Add all clients on this page to selection"
+            title={t('clients.selectPageTitle')}
             onClick={() => {
               const pageClients = filteredClients.slice((currentPage - 1) * pageSize, currentPage * pageSize);
               setSelectedClientKeys(prev => {
@@ -1893,7 +1893,7 @@ export const ClientManager: React.FC = () => {
                 return next;
               });
             }}>
-            ☑ Select page
+            {t('clients.selectPage')}
           </button>
           <select className="form-select form-select-sm form-select-inline"
             value={currentPage} onChange={e => setCurrentPage(Number(e.target.value))}>
@@ -1903,7 +1903,7 @@ export const ClientManager: React.FC = () => {
           </select>
           <select className="form-select form-select-sm form-select-inline"
             value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
-            title="Rows per page">
+            title={t('clients.rowsPerPage')}>
             {[25, 50, 100, 200, 500].map(n => <option key={n} value={n}>{n} / page</option>)}
           </select>
         </div>
@@ -1947,13 +1947,13 @@ export const ClientManager: React.FC = () => {
             icon="👤"
             title={t('clients.noClientsFound')}
             hint="Add clients to your inbounds on the Inbounds tab, or use Batch Add below."
-            action={{ label: '+ Batch Add', onClick: () => setShowBatchModal(true) }}
+            action={{ label: t('clients.batchAdd'), onClick: () => setShowBatchModal(true) }}
           />
         )}
         {!loading && filteredClients.length === 0 && clients.length > 0 && (
           <EmptyState
             icon="⊘"
-            title="No clients match your filters"
+            title={t('clients.noClientsMatchFilters')}
             hint="Try clearing the search or changing filter options."
           />
         )}
@@ -1991,7 +1991,7 @@ export const ClientManager: React.FC = () => {
                     </button>
                     {' / '}
                     <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ fontSize: '0.72rem' }} onClick={() => applySortFromHeader('usedPct')}
-                      title="Sort by % of traffic used">
+                      title={t('clients.sortByUsedPct')}>
                       %{sortIndicator('usedPct')}
                     </button>
                   </th>
@@ -2014,7 +2014,7 @@ export const ClientManager: React.FC = () => {
                   )}
                   <th className="col-hide-md" style={{ color: 'var(--text-secondary)' }}>
                     <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applySortFromHeader('health')}
-                      title="Sort by client health score">
+                      title={t('clients.sortByHealthScore')}>
                       Health{sortIndicator('health')}
                     </button>
                   </th>
@@ -2052,19 +2052,19 @@ export const ClientManager: React.FC = () => {
                           )}
                           <strong
                             style={{ color: 'var(--text-primary)', cursor: 'pointer' }}
-                            title="Click to expand details | Double-click to copy email"
+                            title={t('clients.expandOrCopyHint')}
                             onClick={() => setExpandedKey(prev => prev === clientKey(client) ? null : clientKey(client))}
                             onDoubleClick={e => { e.stopPropagation(); navigator.clipboard.writeText(client.email).then(() => toast('Email copied', 'info')); }}
                           >
                             {expandedKey === clientKey(client) ? '▾' : '▸'} {client.email}
                           </strong>
                           {(client as any).subId && (
-                            <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginLeft: '2px' }} title="Has subscription link">🔗</span>
+                            <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginLeft: '2px' }} title={t('clients.hasSubscriptionLink')}>🔗</span>
                           )}
                           <button
                             className="btn btn-sm p-0 ms-1"
                             style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', opacity: 0.6 }}
-                            title="Copy subscription links"
+                            title={t('clients.copySubscriptionLinks')}
                             onClick={async () => {
                               const { user, password } = getAuth();
                               try {
@@ -2084,7 +2084,7 @@ export const ClientManager: React.FC = () => {
                           <button
                             className="btn btn-sm p-0 ms-1"
                             style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', opacity: 0.6 }}
-                            title="Show QR codes"
+                            title={t('clients.showQrCodes')}
                             onClick={async () => {
                               const { user, password } = getAuth();
                               try {
@@ -2169,7 +2169,7 @@ export const ClientManager: React.FC = () => {
                       <td className="col-hide-md">
                         <span
                           style={{ cursor: 'pointer', color: client.total > 0 ? 'var(--text-primary)' : 'var(--text-secondary)' }}
-                          title="Click to set traffic limit (GB)"
+                          title={t('clients.setTrafficLimitTitle')}
                           onClick={async () => {
                             const identifier = clientIdentifier(client);
                             if (!identifier) return;
@@ -2194,7 +2194,7 @@ export const ClientManager: React.FC = () => {
                       <td>
                         <div
                           style={{ cursor: 'pointer' }}
-                          title="Click to set expiry date"
+                          title={t('clients.setExpiryDateTitle')}
                           onClick={async () => {
                             const identifier = clientIdentifier(client);
                             if (!identifier) return;
@@ -2265,8 +2265,8 @@ export const ClientManager: React.FC = () => {
                             <UIIcon name="refresh" size={13} />
                           </button>
                           <button className="row-action-btn row-action-btn--success"
-                            title="Renew: add days to expiry"
-                            aria-label="Renew: add days to expiry"
+                            title={t('clients.renewAddDaysTitle')}
+                            aria-label={t('clients.renewAddDaysTitle')}
                             onClick={async () => {
                               const identifier = clientIdentifier(client);
                               if (!identifier) return;
@@ -2284,11 +2284,11 @@ export const ClientManager: React.FC = () => {
                                 loadClients(true);
                               } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
                             }}>
-                            +d
+                            {t('clients.addDaysShort')}
                           </button>
                           <button className="row-action-btn row-action-btn--warning"
-                            title="Freeze: set expiry to now"
-                            aria-label="Freeze client"
+                            title={t('clients.freezeNowTitle')}
+                            aria-label={t('clients.freezeClient')}
                             onClick={async () => {
                               if (!window.confirm(`Freeze "${client.email}"? This sets expiry to now.`)) return;
                               const identifier = clientIdentifier(client);
@@ -2305,8 +2305,8 @@ export const ClientManager: React.FC = () => {
                             <UIIcon name="snowflake" size={13} />
                           </button>
                           <button className="row-action-btn row-action-btn--info"
-                            title="View active IPs"
-                            aria-label="View active IPs"
+                            title={t('clients.viewActiveIps')}
+                            aria-label={t('clients.viewActiveIps')}
                             onClick={async () => {
                               const { user, password } = getAuth();
                               try {
@@ -2321,8 +2321,8 @@ export const ClientManager: React.FC = () => {
                             IP
                           </button>
                           <button className="row-action-btn row-action-btn--warning"
-                            title="Clear stored IPs"
-                            aria-label="Clear stored IPs"
+                            title={t('clients.clearStoredIps')}
+                            aria-label={t('clients.clearStoredIps')}
                             onClick={async () => {
                               if (!window.confirm(`Clear stored IPs for "${client.email}"?`)) return;
                               try {
@@ -2330,17 +2330,17 @@ export const ClientManager: React.FC = () => {
                                 toast('IPs cleared', 'success');
                               } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
                             }}>
-                            ✕IP
+                            {t('clients.clearIp')}
                           </button>
                           <button className="row-action-btn row-action-btn--info"
-                            title="Attach/Detach inbounds"
-                            aria-label="Attach or detach inbounds"
+                            title={t('clients.attachDetachInbounds')}
+                            aria-label={t('clients.attachOrDetachInbounds')}
                             onClick={() => handleOpenAttach(client, 'attach')}>
                             <UIIcon name="attach" size={13} />
                           </button>
                           <button className="row-action-btn row-action-btn--accent"
-                            title="Duplicate client"
-                            aria-label="Duplicate client"
+                            title={t('clients.duplicateClient')}
+                            aria-label={t('clients.duplicateClient')}
                             onClick={() => {
                               setBatchText(`${client.email}_copy`);
                               if (client.inbound_id) setBatchInboundId(client.inbound_id.toString());
@@ -2353,7 +2353,7 @@ export const ClientManager: React.FC = () => {
                             aria-label={clientNotes[clientKey(client)] ? 'Edit note' : 'Add note'}
                             onClick={() => {
                               const key = clientKey(client);
-                              const note = window.prompt('Client note (stored locally):', clientNotes[key] || '');
+                              const note = window.prompt(t('clients.localNotePrompt'), clientNotes[key] || '');
                               if (note !== null) saveClientNote(key, note);
                             }}>
                             <UIIcon name="note" size={13} />
@@ -2392,8 +2392,8 @@ export const ClientManager: React.FC = () => {
                                 <strong>Email:</strong>
                                 <span style={{ color: 'var(--text-primary)' }}>{client.email}</span>
                                 <button className="row-action-btn"
-                                  title="Copy email"
-                                  aria-label="Copy email address"
+                                  title={t('clients.copyEmail')}
+                                  aria-label={t('clients.copyEmailAddress')}
                                   style={{ fontSize: '0.75rem' }}
                                   onClick={() => copyWithFeedback(client.email, `email-${clientKey(client)}`, 'Email copied')}>
                                   {copiedKey === `email-${clientKey(client)}` ? <UIIcon name="check" size={12} /> : <UIIcon name="copy" size={12} />}
@@ -2401,36 +2401,36 @@ export const ClientManager: React.FC = () => {
                               </span>
                             {clientNotes[clientKey(client)] && (
                               <span className="d-inline-flex align-items-center gap-1 text-accent">
-                                <strong>📝 Note:</strong>
+                                <strong>{t('clients.noteLabel')}</strong>
                                 <span>{clientNotes[clientKey(client)]}</span>
                                 <button className="btn btn-sm p-0" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '0.7rem' }}
-                                  title="Clear note"
+                                  title={t('clients.clearNote')}
                                   onClick={() => saveClientNote(clientKey(client), '')}>✕</button>
                               </span>
                             )}
                             {client.inbound_id && <span><strong>Inbound:</strong> #{client.inbound_id}</span>}
-                              {client.node_id && <span><strong>Node ID:</strong> {client.node_id}</span>}
+                              {client.node_id && <span><strong>{t('clients.nodeIdLabel')}</strong> {client.node_id}</span>}
                               {client.protocol && <span><strong>Protocol:</strong> {client.protocol}</span>}
                               {(client as any).id && (
                                 <span className="d-inline-flex align-items-center gap-1">
                                   <strong>UUID:</strong>
                                   <code style={{ fontSize: '0.72rem' }}>{(client as any).id}</code>
                                   <button className="btn btn-sm p-0" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
-                                    title="Copy UUID"
-                                    onClick={() => navigator.clipboard.writeText((client as any).id).then(() => toast('UUID copied', 'info'))}>
+                                    title={t('clients.copyUuid')}
+                                    onClick={() => navigator.clipboard.writeText((client as any).id).then(() => toast(t('clients.uuidCopied'), 'info'))}>
                                     <UIIcon name="copy" size={12} />
                                   </button>
                                 </span>
                               )}
                               {(client as any).subId && (
                                 <span className="d-inline-flex align-items-center gap-1">
-                                  <strong>Sub ID:</strong>
+                                  <strong>{t('clients.subIdLabel')}</strong>
                                   <code style={{ fontSize: '0.72rem' }}>{(client as any).subId}</code>
                                   <button className="btn btn-sm p-0" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)' }}
-                                    title="Copy subscription URL"
+                                    title={t('clients.copySubscriptionUrl')}
                                     onClick={() => {
                                       const url = `${window.location.origin}/sub/${(client as any).subId}`;
-                                      navigator.clipboard.writeText(url).then(() => toast('Sub URL copied', 'info'));
+                                      navigator.clipboard.writeText(url).then(() => toast(t('clients.subUrlCopied'), 'info'));
                                     }}>
                                     🔗
                                   </button>
@@ -2452,7 +2452,7 @@ export const ClientManager: React.FC = () => {
                               {(client as any).flow && <span><strong>Flow:</strong> {(client as any).flow}</span>}
                               {(client as any).tgId && <span><strong>Telegram:</strong> {(client as any).tgId}</span>}
                               {onlineEmails.has(client.email) && (
-                                <span className="badge" style={{ backgroundColor: 'var(--success)', fontSize: '0.7rem' }}>● Online now</span>
+                                <span className="badge" style={{ backgroundColor: 'var(--success)', fontSize: '0.7rem' }}>{t('clients.onlineNow')}</span>
                               )}
                               {lastOnlineMap[client.email] && !onlineEmails.has(client.email) && (
                                 <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>
@@ -2508,7 +2508,7 @@ export const ClientManager: React.FC = () => {
                     rows={8}
                     value={batchText}
                     onChange={(e) => setBatchText(e.target.value)}
-                    placeholder="user1@example.com&#10;user2@example.com&#10;user3@example.com"
+                    placeholder={t('clients.batchEmailsPlaceholder')}
     
                   />
                 </div>
@@ -2713,7 +2713,7 @@ export const ClientManager: React.FC = () => {
                 <button type="button" className="btn-close btn-close-white" onClick={() => setShowBulkAdjust(false)} />
               </div>
               <div className="modal-body">
-                <p className="small mb-2" style={{ color: 'var(--text-secondary)' }}>Applies to all selected clients (or all visible if none selected).</p>
+                <p className="small mb-2" style={{ color: 'var(--text-secondary)' }}>{t('clients.bulkAdjustScopeHint')}</p>
                 <div className="d-flex gap-2 mb-3">
                   <button className="btn btn-sm" style={{ backgroundColor: bulkAdjustMode === 'add' ? 'var(--accent)' : 'var(--bg-tertiary)', borderColor: bulkAdjustMode === 'add' ? 'var(--accent)' : 'var(--border-color)', color: bulkAdjustMode === 'add' ? '#000f14' : 'var(--text-secondary)' }}
                     onClick={() => setBulkAdjustMode('add')}>+ Add Days / GB</button>
@@ -2735,10 +2735,10 @@ export const ClientManager: React.FC = () => {
                   </>
                 ) : (
                   <div className="mb-3">
-                    <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>Set expiry date for all selected clients:</label>
+                    <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('clients.setExpiryForSelected')}</label>
                     <input type="date" className="form-control" value={bulkSetExpiryDate} onChange={e => setBulkSetExpiryDate(e.target.value)}
                       style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }} />
-                    <div className="small mt-1" style={{ color: 'var(--text-secondary)' }}>This sets the exact expiry date, overwriting existing dates.</div>
+                    <div className="small mt-1" style={{ color: 'var(--text-secondary)' }}>{t('clients.setExpiryOverwriteHint')}</div>
                   </div>
                 )}
               </div>
@@ -2771,7 +2771,7 @@ export const ClientManager: React.FC = () => {
                   Select inbounds to {attachMode} this client {attachMode === 'attach' ? 'to' : 'from'}:
                 </p>
                 {attachLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!attachLoading && attachInbounds.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>No inbounds found for this node</p>}
+                {!attachLoading && attachInbounds.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>{t('clients.noInboundsForNode')}</p>}
                 <div className="d-flex flex-column gap-1 mb-3">
                   {attachInbounds.map(ib => (
                     <label key={ib.id} className="d-flex align-items-center gap-2 p-2 rounded" style={{ backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer' }}>
@@ -2815,7 +2815,7 @@ export const ClientManager: React.FC = () => {
                 {/* Node selector if no node chosen yet */}
                 {!groupsNodeId && (
                   <div className="mb-3">
-                    <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>Select node:</label>
+                    <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('clients.selectNode')}</label>
                     <div className="d-flex flex-wrap gap-2">
                       {Array.from(new Map(clients.filter(c => c.node_id).map(c => [c.node_name, c.node_id!]))).map(([name, id]) => (
                         <button key={id} className="btn btn-sm" style={{ backgroundColor: 'var(--accent)', color: '#000f14' }}
@@ -2833,19 +2833,19 @@ export const ClientManager: React.FC = () => {
 
                     {/* Create group */}
                     <div className="d-flex gap-2 mb-3">
-                      <input className="form-control form-control-sm" placeholder="New group name" value={groupNewName}
+                      <input className="form-control form-control-sm" placeholder={t('clients.newGroupName')} value={groupNewName}
                         onChange={e => setGroupNewName(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') handleCreateGroup(); }}
                         style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }} />
                       <button className="btn btn-sm" style={{ backgroundColor: 'var(--accent)', color: '#000f14', whiteSpace: 'nowrap' }}
-                        onClick={handleCreateGroup} disabled={!groupNewName.trim()}>+ Create</button>
+                        onClick={handleCreateGroup} disabled={!groupNewName.trim()}>{t('clients.createWithPlus')}</button>
                     </div>
 
                     {/* Rename group */}
                     {groupRenameFrom && (
                       <div className="d-flex gap-2 mb-3 p-2 rounded" style={{ backgroundColor: 'var(--bg-tertiary)' }}>
                         <span className="small" style={{ color: 'var(--text-secondary)', alignSelf: 'center' }}>Rename "{groupRenameFrom}":</span>
-                        <input className="form-control form-control-sm" placeholder="New name" value={groupRenameTo}
+                        <input className="form-control form-control-sm" placeholder={t('common.name')} value={groupRenameTo}
                           onChange={e => setGroupRenameTo(e.target.value)}
                           onKeyDown={e => { if (e.key === 'Enter') handleRenameGroup(); }}
                           style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }} />
@@ -2858,7 +2858,7 @@ export const ClientManager: React.FC = () => {
 
                     {/* Groups list */}
                     {!groupsLoading && groupsList.length === 0 && (
-                      <p style={{ color: 'var(--text-secondary)' }}>No groups yet</p>
+                      <p style={{ color: 'var(--text-secondary)' }}>{t('clients.noGroupsYet')}</p>
                     )}
                     <div className="d-flex flex-column gap-2">
                       {groupsList.map(group => (
@@ -2882,7 +2882,7 @@ export const ClientManager: React.FC = () => {
                             <div className="mt-1 ms-2 p-2 rounded" style={{ backgroundColor: 'var(--bg-primary)', border: `1px solid ${'var(--border-color)'}` }}>
                               {groupMembersLoading && <div className="spinner-border spinner-border-sm" />}
                               {!groupMembersLoading && groupMemberEmails.length === 0 && (
-                                <p className="small mb-2" style={{ color: 'var(--text-secondary)' }}>No members</p>
+                                <p className="small mb-2" style={{ color: 'var(--text-secondary)' }}>{t('clients.noMembers')}</p>
                               )}
                               <div className="d-flex flex-wrap gap-1 mb-2">
                                 {groupMemberEmails.map(email => (
@@ -2894,7 +2894,7 @@ export const ClientManager: React.FC = () => {
                                 ))}
                               </div>
                               <div className="d-flex gap-2">
-                                <input className="form-control form-control-sm" placeholder="email1, email2 (or newlines)"
+                                <input className="form-control form-control-sm" placeholder={t('clients.groupEmailsPlaceholder')}
                                   value={groupAddEmails} onChange={e => setGroupAddEmails(e.target.value)}
                                   style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }} />
                                 <button className="btn btn-sm" style={{ backgroundColor: 'var(--accent)', color: '#000f14', whiteSpace: 'nowrap' }}
@@ -2919,17 +2919,17 @@ export const ClientManager: React.FC = () => {
           <div className="modal-dialog modal-lg">
             <div className="modal-content" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
               <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
-                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>🔍 Find Clients by IP Address</h6>
+                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>{t('clients.findByIpModalTitle')}</h6>
                 <button type="button" className="btn-close btn-close-white" onClick={() => setShowIpSearch(false)} />
               </div>
               <div className="modal-body">
                 <p className="small mb-2" style={{ color: 'var(--text-secondary)' }}>
-                  Enter an IP address to find which clients have connected from it. Queries all nodes — may take a moment.
+                  {t('clients.findByIpModalHint')}
                 </p>
                 <div className="d-flex gap-2 mb-3">
                   <input
                     className="form-control"
-                    placeholder="e.g. 1.2.3.4"
+                    placeholder={t('clients.ipPlaceholder')}
                     value={ipSearchValue}
                     onChange={e => setIpSearchValue(e.target.value)}
                     onKeyDown={async e => {

@@ -496,7 +496,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
               <input
                 type="text"
                 className="form-control form-control-sm"
-                placeholder="Search email or node…"
+                placeholder={t('traffic.searchEmailOrNode')}
                 value={trafficSearch}
                 onChange={e => setTrafficSearch(e.target.value)}
                 style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)', width: '160px', fontSize: '0.75rem' }}
@@ -508,14 +508,14 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
                   onChange={e => setFilterNodeName(e.target.value)}
                   style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)', width: 'auto', fontSize: '0.75rem' }}
                 >
-                  <option value="">All nodes</option>
+                  <option value="">{t('clients.allNodes')}</option>
                   {trafficNodeNames.map(n => <option key={n} value={n}>{n}</option>)}
                 </select>
               )}
               <button
                 className="btn btn-sm"
                 style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
-                title="Clear local cache and force full reload"
+                title={t('traffic.clearCacheTitle')}
                 onClick={() => {
                   try { localStorage.removeItem(TRAFFIC_STATS_CACHE_KEY); } catch {}
                   setTrafficData([]);
@@ -523,12 +523,12 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
                   loadOnlineClients();
                 }}
               >
-                ✕ Clear Cache
+                ✕ {t('traffic.clearCache')}
               </button>
               <button
                 className="btn btn-sm"
                 style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
-                title="Export traffic data as CSV"
+                title={t('traffic.exportCsvTitle')}
                 disabled={trafficData.length === 0}
                 onClick={() => {
                   const rows = trafficData.map(d => [
@@ -549,7 +549,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
                   URL.revokeObjectURL(url);
                 }}
               >
-                ⬇ CSV
+                ⬇ {t('traffic.csv')}
               </button>
             </div>
           </div>
@@ -742,7 +742,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
       {/* Per-node traffic summary */}
       {groupBy === 'client' && trafficNodeNames.length > 1 && (
         <div className="card p-3 mt-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-          <div className="small mb-2" style={{ color: 'var(--text-secondary)' }}>Traffic by node</div>
+          <div className="small mb-2" style={{ color: 'var(--text-secondary)' }}>{t('traffic.trafficByNode')}</div>
           <div className="d-flex flex-wrap gap-2">
             {trafficNodeNames.map(nodeName => {
               const nodeTotal = trafficData.filter(d => d.node_name === nodeName).reduce((s, d) => s + d.total, 0);

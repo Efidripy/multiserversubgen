@@ -3,6 +3,7 @@ import api from '../api';
 import { getAuth } from '../auth';
 import { useTheme } from '../contexts/ThemeContext';
 import { UIIcon } from './UIIcon';
+import { useTranslation } from 'react-i18next';
 
 interface TopClient {
   email: string;
@@ -30,6 +31,7 @@ const formatBytes = (bytes: number): string => {
 
 export const DashboardSummary: React.FC<{ onNavigate?: (tab: string) => void }> = ({ onNavigate }) => {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -54,7 +56,7 @@ export const DashboardSummary: React.FC<{ onNavigate?: (tab: string) => void }> 
     <div className="card p-4" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
       <div className="d-flex align-items-center gap-2" style={{ color: colors.text.tertiary }}>
         <div className="spinner-border spinner-border-sm spinner-accent" style={{ width: '14px', height: '14px', borderWidth: '0.12em' }} />
-        <span style={{ fontSize: '0.78rem' }}>Loading…</span>
+        <span style={{ fontSize: '0.78rem' }}>{t('messages.loadingData')}</span>
       </div>
     </div>
   );
@@ -63,42 +65,42 @@ export const DashboardSummary: React.FC<{ onNavigate?: (tab: string) => void }> 
 
   const kpiCards = [
     {
-      label: 'Nodes',
+      label: t('nodes.title'),
       value: String(summary.nodes_total),
       icon: 'servers' as const,
       badge: 'accent',
       tab: 'monitoring',
     },
     {
-      label: 'Clients',
+      label: t('clients.title'),
       value: String(summary.clients_total),
       icon: 'clients' as const,
       badge: 'info',
       tab: 'clients',
     },
     {
-      label: 'Online',
+      label: t('traffic.onlineClients'),
       value: String(summary.online_clients_total),
       icon: 'statusOn' as const,
       badge: 'success',
       tab: 'clients',
     },
     {
-      label: 'Upload',
+      label: t('traffic.upload'),
       value: formatBytes(summary.traffic.upload),
       icon: 'upload' as const,
       badge: 'warning',
       tab: 'traffic',
     },
     {
-      label: 'Download',
+      label: t('traffic.download'),
       value: formatBytes(summary.traffic.download),
       icon: 'download' as const,
       badge: 'danger',
       tab: 'traffic',
     },
     {
-      label: 'Total Traffic',
+      label: t('traffic.totalTraffic'),
       value: formatBytes(summary.traffic.total),
       icon: 'traffic' as const,
       badge: 'neutral',
@@ -110,7 +112,7 @@ export const DashboardSummary: React.FC<{ onNavigate?: (tab: string) => void }> 
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
       {/* Section header */}
       <div className="d-flex align-items-center justify-content-between">
-        <h2 className="section-title mb-0">Fleet Overview</h2>
+        <h2 className="section-title mb-0">{t('dashboardSummary.fleetOverview')}</h2>
         <div className="d-flex align-items-center gap-2">
           {loading && (
             <div className="spinner-border spinner-border-sm spinner-accent" style={{ width: '12px', height: '12px', borderWidth: '0.14em' }} />
@@ -124,8 +126,8 @@ export const DashboardSummary: React.FC<{ onNavigate?: (tab: string) => void }> 
             className="xray-icon-btn"
             onClick={load}
             disabled={loading}
-            aria-label="Refresh summary"
-            title="Refresh"
+            aria-label={t('dashboardSummary.refreshSummary')}
+            title={t('common.refresh')}
           >
             <UIIcon name="refresh" size={14} />
           </button>
@@ -139,7 +141,7 @@ export const DashboardSummary: React.FC<{ onNavigate?: (tab: string) => void }> 
             key={card.label}
             className={`kpi-card${onNavigate ? ' is-clickable' : ''}`}
             onClick={() => onNavigate?.(card.tab)}
-            title={onNavigate ? `Go to ${card.tab}` : undefined}
+            title={onNavigate ? t('dashboardSummary.goToTab', { tab: card.tab }) : undefined}
           >
             <div className="kpi-card__body">
               <div className="kpi-card__label">{card.label}</div>
@@ -168,7 +170,7 @@ export const DashboardSummary: React.FC<{ onNavigate?: (tab: string) => void }> 
       {summary.top_clients.length > 0 && (
         <div>
           <div className="section-title--sm mb-2" style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: colors.text.tertiary }}>
-            Top by traffic
+            {t('dashboardSummary.topByTraffic')}
           </div>
           <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
             <div className="d-flex flex-column gap-2">

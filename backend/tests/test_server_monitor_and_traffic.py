@@ -2,10 +2,8 @@
 import sys
 import os
 import json
-import types
 from unittest.mock import MagicMock, patch, call
 
-import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 

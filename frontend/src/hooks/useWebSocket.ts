@@ -76,14 +76,6 @@ export const useWebSocket = ({
       const auth = getAuth();
       const wsPath = `${basePath}/ws`;
       let wsUrl = url || `${protocol}//${host}${wsPath}`;
-      if (!url && auth.username && auth.password) {
-        const token = btoa(`${auth.username}:${auth.password}`);
-        const params = new URLSearchParams({ token });
-        if (auth.totpCode) {
-          params.set('totp', auth.totpCode);
-        }
-        wsUrl += `?${params.toString()}`;
-      }
 
       wsRef.current = new WebSocket(wsUrl);
 
@@ -94,6 +86,15 @@ export const useWebSocket = ({
         everConnectedRef.current = true;
         initialConnectFailCountRef.current = 0;
         reconnectCooldownUntilRef.current = 0;
+
+        if (!url && auth.username && auth.password) {
+          safeSend({
+            type: 'auth',
+            username: auth.username,
+            password: auth.password,
+            totp: auth.totpCode,
+          });
+        }
 
         // Subscribe to channels
         channelsRef.current.forEach((channel) => {

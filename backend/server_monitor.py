@@ -3,14 +3,14 @@
 Статус системы, core service-процесса, проверка доступности
 """
 import requests
-import json
 import logging
 import base64
+import time
 from urllib.parse import quote
 import sys
 import os
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -894,67 +894,84 @@ class ServerMonitor:
             return {"error": str(exc)}
 
     def stop_xray(self, node):
-        if self._is_read_only(node): return False
+        if self._is_read_only(node):
+            return False
         s, base_url, _ = self._normalize_session_result(self._get_session(node))
-        if not s: return False
+        if not s:
+            return False
         try:
             res = xui_request(s, "POST", f"{base_url}/panel/api/server/stopXrayService", timeout=10)
             return self._xui_success(res)
         except Exception as exc:
-            logger.warning("stop_xray %s: %s", node["name"], exc); return False
+            logger.warning("stop_xray %s: %s", node["name"], exc)
+            return False
 
     def get_xray_versions(self, node):
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return {"error": r.get("error"), "versions": []}
+        if not s:
+            return {"error": r.get("error"), "versions": []}
         try:
             res = xui_request(s, "GET", f"{base_url}/panel/api/server/getXrayVersion", timeout=15)
             if res.status_code == 200:
                 data = res.json()
-                if data.get("success"): return {"node": node["name"], "versions": data.get("obj") or []}
+                if data.get("success"):
+                    return {"node": node["name"], "versions": data.get("obj") or []}
             return {"error": f"HTTP {res.status_code}", "versions": []}
-        except Exception as exc: return {"error": str(exc), "versions": []}
+        except Exception as exc:
+            return {"error": str(exc), "versions": []}
 
     def install_xray(self, node, version: str):
-        if self._is_read_only(node): return {"error": "read-only"}
+        if self._is_read_only(node):
+            return {"error": "read-only"}
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return {"error": r.get("error")}
+        if not s:
+            return {"error": r.get("error")}
         try:
             res = xui_request(s, "POST", f"{base_url}/panel/api/server/installXray/{version}", timeout=180)
             if res.status_code == 200:
                 data = res.json()
                 return {"success": data.get("success", False), "msg": data.get("msg", "")}
             return {"error": f"HTTP {res.status_code}"}
-        except Exception as exc: return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": str(exc)}
 
     def update_geofile(self, node, file_name: str = ""):
-        if self._is_read_only(node): return {"error": "read-only"}
+        if self._is_read_only(node):
+            return {"error": "read-only"}
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return {"error": r.get("error")}
+        if not s:
+            return {"error": r.get("error")}
         try:
             path = f"{base_url}/panel/api/server/updateGeofile"
-            if file_name: path = f"{path}/{file_name}"
+            if file_name:
+                path = f"{path}/{file_name}"
             res = xui_request(s, "POST", path, timeout=60)
             if res.status_code == 200:
                 data = res.json()
                 return {"success": data.get("success", False), "msg": data.get("msg", "")}
             return {"error": f"HTTP {res.status_code}"}
-        except Exception as exc: return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": str(exc)}
 
     def update_panel(self, node):
-        if self._is_read_only(node): return {"error": "read-only"}
+        if self._is_read_only(node):
+            return {"error": "read-only"}
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return {"error": r.get("error")}
+        if not s:
+            return {"error": r.get("error")}
         try:
             res = xui_request(s, "POST", f"{base_url}/panel/api/server/updatePanel", timeout=180)
             if res.status_code == 200:
                 data = res.json()
                 return {"success": data.get("success", False), "msg": data.get("msg", "")}
             return {"error": f"HTTP {res.status_code}"}
-        except Exception as exc: return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": str(exc)}
 
     def get_xray_logs(self, node, count: int = 100, level: str = "info"):
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return {"error": r.get("error"), "logs": []}
+        if not s:
+            return {"error": r.get("error"), "logs": []}
         try:
             res = xui_request(s, "POST", f"{base_url}/panel/api/server/xraylogs/{count}",
                               json={"level": level, "syslog": False}, timeout=15)
@@ -964,101 +981,126 @@ class ServerMonitor:
                 logs = raw.split("\n") if isinstance(raw, str) else (raw if isinstance(raw, list) else [])
                 return {"node": node["name"], "logs": logs}
             return {"error": f"HTTP {res.status_code}", "logs": []}
-        except Exception as exc: return {"error": str(exc), "logs": []}
+        except Exception as exc:
+            return {"error": str(exc), "logs": []}
 
     def get_xray_metrics(self, node):
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return {"error": r.get("error")}
+        if not s:
+            return {"error": r.get("error")}
         try:
             res = xui_request(s, "GET", f"{base_url}/panel/api/server/xrayMetricsState")
             if res.status_code == 200:
                 data = res.json()
-                if data.get("success"): return {"node": node["name"], "metrics": data.get("obj")}
+                if data.get("success"):
+                    return {"node": node["name"], "metrics": data.get("obj")}
             return {"error": f"HTTP {res.status_code}"}
-        except Exception as exc: return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": str(exc)}
 
     def get_outbounds_traffic(self, node):
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return {"error": r.get("error"), "outbounds": []}
+        if not s:
+            return {"error": r.get("error"), "outbounds": []}
         try:
             res = xui_request(s, "GET", f"{base_url}/panel/xray/getOutboundsTraffic")
             if res.status_code == 200:
                 data = res.json()
-                if data.get("success"): return {"node": node["name"], "outbounds": data.get("obj") or []}
+                if data.get("success"):
+                    return {"node": node["name"], "outbounds": data.get("obj") or []}
             return {"error": f"HTTP {res.status_code}", "outbounds": []}
-        except Exception as exc: return {"error": str(exc), "outbounds": []}
+        except Exception as exc:
+            return {"error": str(exc), "outbounds": []}
 
     def generate_uuid(self, node):
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return {"error": r.get("error")}
+        if not s:
+            return {"error": r.get("error")}
         try:
             res = xui_request(s, "GET", f"{base_url}/panel/api/server/getNewUUID")
             if res.status_code == 200:
                 data = res.json()
-                if data.get("success"): return {"uuid": data.get("obj", "")}
+                if data.get("success"):
+                    return {"uuid": data.get("obj", "")}
             return {"error": f"HTTP {res.status_code}"}
-        except Exception as exc: return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": str(exc)}
 
     def generate_x25519_cert(self, node):
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return {"error": r.get("error")}
+        if not s:
+            return {"error": r.get("error")}
         try:
             res = xui_request(s, "GET", f"{base_url}/panel/api/server/getNewX25519Cert")
             if res.status_code == 200:
                 data = res.json()
-                if data.get("success"): return data.get("obj") or {}
+                if data.get("success"):
+                    return data.get("obj") or {}
             return {"error": f"HTTP {res.status_code}"}
-        except Exception as exc: return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": str(exc)}
 
     def generate_vless_enc(self, node):
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return {"error": r.get("error")}
+        if not s:
+            return {"error": r.get("error")}
         try:
             res = xui_request(s, "GET", f"{base_url}/panel/api/server/getNewVlessEnc")
             if res.status_code == 200:
                 data = res.json()
-                if data.get("success"): return data.get("obj") or {}
+                if data.get("success"):
+                    return data.get("obj") or {}
             return {"error": f"HTTP {res.status_code}"}
-        except Exception as exc: return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": str(exc)}
 
     def generate_mldsa65(self, node):
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return {"error": r.get("error")}
+        if not s:
+            return {"error": r.get("error")}
         try:
             res = xui_request(s, "GET", f"{base_url}/panel/api/server/getNewmldsa65")
             if res.status_code == 200:
                 data = res.json()
-                if data.get("success"): return data.get("obj") or {}
+                if data.get("success"):
+                    return data.get("obj") or {}
             return {"error": f"HTTP {res.status_code}"}
-        except Exception as exc: return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": str(exc)}
 
     def backup_to_telegram(self, node):
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return {"error": r.get("error")}
+        if not s:
+            return {"error": r.get("error")}
         try:
             res = xui_request(s, "POST", f"{base_url}/panel/api/backuptotgbot", timeout=30)
             if res.status_code == 200:
                 data = res.json()
                 return {"success": data.get("success", False), "msg": data.get("msg", "")}
             return {"error": f"HTTP {res.status_code}"}
-        except Exception as exc: return {"error": str(exc)}
+        except Exception as exc:
+            return {"error": str(exc)}
 
     def delete_api_token(self, node, token_id: int):
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return False
+        if not s:
+            return False
         try:
             res = xui_request(s, "POST", f"{base_url}/panel/setting/apiTokens/delete/{token_id}")
             return self._xui_success(res)
         except Exception as exc:
-            logger.warning("delete_api_token %s: %s", node["name"], exc); return False
+            logger.warning("delete_api_token %s: %s", node["name"], exc)
+            return False
 
     def set_api_token_enabled(self, node, token_id: int, enabled: bool):
         s, base_url, r = self._normalize_session_result(self._get_session(node))
-        if not s: return False
+        if not s:
+            return False
         try:
             res = xui_request(s, "POST",
                               f"{base_url}/panel/setting/apiTokens/setEnabled/{token_id}",
                               json={"enabled": enabled})
             return self._xui_success(res)
         except Exception as exc:
-            logger.warning("set_api_token_enabled %s: %s", node["name"], exc); return False
+            logger.warning("set_api_token_enabled %s: %s", node["name"], exc)
+            return False

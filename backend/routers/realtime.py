@@ -1,6 +1,9 @@
-import base64
+import asyncio
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+
+
+WS_AUTH_TIMEOUT_SEC = 5
 
 
 def build_realtime_router(
@@ -17,22 +20,26 @@ def build_realtime_router(
 
     @router.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
+        auth_message = None
         user = check_basic_auth_header(websocket.headers.get("Authorization"))
         if not user:
-            token = websocket.query_params.get("token")
-            if token:
-                try:
-                    decoded = base64.b64decode(token).decode("utf-8")
-                    username, password = decoded.split(":", 1)
-                    if pam_authenticate(username, password):
+            await websocket.accept()
+            try:
+                auth_message = await asyncio.wait_for(websocket.receive_json(), timeout=WS_AUTH_TIMEOUT_SEC)
+                if auth_message.get("type") == "auth":
+                    username = str(auth_message.get("username") or "")
+                    password = str(auth_message.get("password") or "")
+                    if username and password and pam_authenticate(username, password):
                         user = username
-                except Exception:
-                    user = None
+            except Exception:
+                user = None
         if not user:
             await websocket.close(code=1008)
             return
 
-        ws_totp_code = websocket.query_params.get("totp") or websocket.headers.get("X-TOTP-Code")
+        ws_totp_code = websocket.headers.get("X-TOTP-Code")
+        if not ws_totp_code and auth_message:
+            ws_totp_code = auth_message.get("totp")
         if mfa_totp_ws_strict:
             if not verify_totp_code(user, ws_totp_code):
                 await websocket.close(code=1008)
@@ -42,7 +49,7 @@ def build_realtime_router(
                 await websocket.close(code=1008)
                 return
 
-        await ws_manager.connect(websocket)
+        await ws_manager.connect(websocket, accept=auth_message is None)
         try:
             while True:
                 data = await websocket.receive_json()

@@ -29,7 +29,7 @@ from collections import defaultdict, deque
 from threading import Lock
 from typing import Any, Callable, Deque, Dict, Optional, Tuple
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 

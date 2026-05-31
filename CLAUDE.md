@@ -8,6 +8,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Stack: **FastAPI** (Python, PAM auth) + **React/TypeScript/Vite** (Bootstrap 5, i18next, Chart.js). Frontend builds into `backend/build/`.
 
+## Mandatory AgentMemory MCP Usage
+
+If MCP `agentmemory` is available in the current session, use it for every non-trivial task in this repository.
+
+Required workflow:
+- search/read relevant memories before code cleanup, security work, architecture changes, audits, and convention changes;
+- write durable decisions, important findings, and cross-session handoff context back to memory;
+- keep repository docs and workspace docs as source of truth, using AgentMemory as persistent searchable context;
+- if the local AgentMemory runtime is running but not exposed through active MCP tools/resources/templates, report that and continue with file-based context.
+
+Known local runtime hints:
+- engine: `ws://localhost:49134`
+- OTel endpoint: `ws://localhost:49134/otel`
+- viewer: `http://localhost:3113`
+
+### AgentMemory Token-Saving Checkpoints
+
+Save a compact AgentMemory checkpoint after each meaningful cleanup, audit, security, architecture, or implementation iteration.
+
+Use this shape:
+
+```text
+multiserversubgen checkpoint:
+done: ...
+current debt/status: ...
+next: ...
+checks: ...
+risks/notes: ...
+```
+
+Save project status, next target, changed files, validation results, i18n debt counts, security decisions, and known pitfalls.
+
+Do not save source dumps, secrets, private `.local_project_docs` content, raw logs, or unverified guesses.
+
 ## Development Commands
 
 ### Backend

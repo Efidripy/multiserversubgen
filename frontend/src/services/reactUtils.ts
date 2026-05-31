@@ -4,6 +4,7 @@
  */
 
 import React, { useMemo, useCallback, useRef } from 'react';
+import { devLog } from '../utils/devLogger';
 
 /**
  * Deep comparison for props (for React.memo)
@@ -180,7 +181,7 @@ export function usePerformanceMeasure(componentName: string, enabled = false) {
     if (enabled && renderStartRef.current > 0) {
       const renderTime = performance.now() - renderStartRef.current;
       renderCountRef.current++;
-      console.log(
+      devLog(
         `[Perf] ${componentName} render #${renderCountRef.current}: ${renderTime.toFixed(2)}ms`,
       );
     }

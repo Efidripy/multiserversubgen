@@ -148,7 +148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 width: '100%',
                 marginBottom: '4px',
               }}
-              title="Keyboard shortcuts"
+              title={t('sidebar.keyboardShortcutsTitle')}
               onClick={() => {
                 const shortcuts = [
                   'Tab navigation:',
@@ -182,7 +182,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 alert(shortcuts);
               }}
             >
-              ⌨ Shortcuts
+              ⌨ {t('sidebar.shortcuts')}
             </button>
             <a
               href="/api/docs"
@@ -198,9 +198,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 textAlign: 'center',
                 marginBottom: '4px',
               }}
-              title="Open FastAPI interactive documentation"
+              title={t('sidebar.apiDocsTitle')}
             >
-              📖 API Docs
+              📖 {t('sidebar.apiDocs')}
             </a>
             <button
               className="sidebar__footer-btn sidebar__logout"

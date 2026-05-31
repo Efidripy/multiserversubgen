@@ -2,7 +2,6 @@
 Модуль управления клиентами node panel
 Содержит функции для управления клиентами: добавление, обновление, удаление, статистика
 """
-import requests
 import json
 import logging
 import uuid
@@ -335,34 +334,34 @@ class ClientManager:
         if self._is_read_only(node):
             logger.info(f"Skip add client on read-only node {node['name']}")
             return False
-        """Добавить клиента в инбаунд
-        
-        Args:
-            node: Конфигурация узла
-            inbound_id: ID инбаунда
-            client_config: Конфигурация клиента
-            
-        Returns:
-            True при успехе
-        """
+        """Добавить клиента в инбаунд"""
+        email = client_config.get("email", "")
+        logger.info(
+            "add_client START node=%r inbound_id=%s email=%r config=%s",
+            node["name"], inbound_id, email,
+            {k: v for k, v in client_config.items() if k not in ("id", "password")},
+        )
         s, base_url = self._get_session(node)
         if not s:
+            logger.warning("add_client: session failed for node=%r email=%r", node["name"], email)
             return False
 
         try:
-            # Пробуем v3 если нода поддерживает
             api_version = get_node_api_version(base_url)
+            logger.debug("add_client: api_version=%r node=%r", api_version, node["name"])
             if api_version != "v2":
                 result = self._add_client_v3(
                     s, base_url,
-                    email=client_config.get("email", ""),
+                    email=email,
                     inbound_ids=[inbound_id],
                     config=client_config,
                 )
                 if result is not None:
                     set_node_api_version(base_url, "v3")
+                    logger.info("add_client v3 END node=%r email=%r result=%s", node["name"], email, result)
                     return result
                 set_node_api_version(base_url, "v2")
+                logger.debug("add_client: v3 returned None, falling back to v2 for node=%r", node["name"])
 
             # v2 fallback
             payload = {
@@ -370,9 +369,11 @@ class ClientManager:
                 "settings": json.dumps({"clients": [client_config]})
             }
             res = xui_request(s, "POST", f"{base_url}/panel/api/inbounds/addClient", json=payload)
-            return self._xui_success(res)
+            ok = self._xui_success(res)
+            logger.info("add_client v2 END node=%r email=%r result=%s http_status=%s", node["name"], email, ok, res.status_code)
+            return ok
         except Exception as exc:
-            logger.warning(f"Failed to add client to {node['name']}: {exc}")
+            logger.warning("add_client FAILED node=%r email=%r inbound_id=%s error=%s", node["name"], email, inbound_id, exc)
             return False
     
     def batch_add_clients(self, nodes: List[Dict], clients_configs: List[Dict]) -> Dict:

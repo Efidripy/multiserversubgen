@@ -250,23 +250,35 @@ def xui_request(
 
     for attempt in range(attempts):
         try:
+            log_kwargs = {k: v for k, v in kwargs.items() if k not in ("data",)}
+            logger.debug("XUI %s %s attempt=%d kwargs=%s", method.upper(), url, attempt, log_kwargs)
             response = session.request(
                 method=method.upper(),
                 url=url,
                 timeout=actual_timeout,
                 **kwargs,
             )
+            logger.debug(
+                "XUI %s %s -> HTTP %d body=%r",
+                method.upper(), url, response.status_code,
+                response.text[:500] if response.text else "",
+            )
             if (
                 response.status_code in XUI_HTTP_RETRY_STATUSES
                 and attempt < attempts - 1
             ):
                 sleep_for = XUI_HTTP_RETRY_BACKOFF_SEC * (2 ** attempt)
+                logger.warning(
+                    "XUI %s %s HTTP %d, retry in %.1fs (attempt %d/%d)",
+                    method.upper(), url, response.status_code, sleep_for, attempt + 1, attempts,
+                )
                 if sleep_for > 0:
                     time.sleep(sleep_for)
                 continue
             return response
         except requests.RequestException as exc:
             last_exc = exc
+            logger.warning("XUI %s %s request error (attempt %d/%d): %s", method.upper(), url, attempt + 1, attempts, exc)
             if attempt >= attempts - 1:
                 raise
             sleep_for = XUI_HTTP_RETRY_BACKOFF_SEC * (2 ** attempt)
@@ -310,7 +322,7 @@ def login_panel(
     """
     # Метод 1: Bearer token (если передан)
     if bearer_token:
-        logger.debug(f"Attempting Bearer token authentication")
+        logger.debug("Attempting Bearer token authentication")
         if _validate_bearer_token(session, base_url, bearer_token, timeout, retries):
             logger.info("node panel Bearer token authentication succeeded")
             # Сохраняем token в session для последующих запросов
