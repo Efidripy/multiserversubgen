@@ -4,8 +4,22 @@ import logging
 import sqlite3
 
 
+def connect(db_path: str) -> sqlite3.Connection:
+    """Открыть соединение с SQLite с оптимальными настройками.
+
+    journal_mode=WAL персистентна (хранится в файле), synchronous=NORMAL — нет,
+    поэтому выставляем её на каждом новом соединении.
+
+    Используйте эту функцию везде вместо ``sqlite3.connect(db_path)`` напрямую.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
 def init_db(db_path: str) -> None:
-    with sqlite3.connect(db_path) as conn:
+    with connect(db_path) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         columns = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
         if columns and "role" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'viewer'")

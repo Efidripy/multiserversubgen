@@ -36,6 +36,10 @@ class LiveStatsRuntime:
         self.online_clients_cache_ttl = online_clients_cache_ttl
         self.online_clients_stale_ttl = online_clients_stale_ttl
         self.logger = logger
+        # In-memory snapshot fallback when Redis is unavailable.
+        # Key: "traffic_snapshot:{group_by}:{period}:{bucket_id}"
+        # Value: {"ts": float, "stats": dict}
+        self._memory_snapshots: Dict[str, dict] = {}
 
     def invalidate(self) -> None:
         self.traffic_stats_cache.clear()
@@ -120,8 +124,14 @@ class LiveStatsRuntime:
             existing = self.redis_get_json(redis_key)
             if existing is not None:
                 continue
+            # Check in-memory fallback before writing
+            if redis_key in self._memory_snapshots:
+                continue
+            snapshot_value = {"ts": now_ts, "stats": stats_data}
             ttl_seconds = seconds * 2
-            self.redis_set_json(redis_key, {"ts": now_ts, "stats": stats_data}, ttl_seconds)
+            self.redis_set_json(redis_key, snapshot_value, ttl_seconds)
+            # Always keep in-memory copy as fallback when Redis is absent
+            self._memory_snapshots[redis_key] = snapshot_value
 
     def _load_period_snapshot(self, group_by: str, period: str, seconds_back: int, now_ts: float):
         """Load the best available snapshot around the requested period start."""
@@ -143,6 +153,9 @@ class LiveStatsRuntime:
         for bucket in candidate_buckets:
             redis_key_snapshot = f"traffic_snapshot:{group_by}:{period}:{bucket}"
             snapshot = self.redis_get_json(redis_key_snapshot)
+            if not isinstance(snapshot, dict):
+                # Fallback to in-memory when Redis is unavailable
+                snapshot = self._memory_snapshots.get(redis_key_snapshot)
             if not isinstance(snapshot, dict):
                 continue
             snapshot_stats = snapshot.get("stats", {})

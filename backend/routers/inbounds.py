@@ -7,6 +7,7 @@ def build_inbounds_router(
     *,
     check_auth,
     inbound_mgr,
+    get_cached_inbounds,
     node_service,
     get_node_or_404,
     invalidate_subscription_cache,
@@ -31,17 +32,41 @@ def build_inbounds_router(
             raise HTTPException(status_code=401)
 
         nodes = node_service.list_nodes()
-        inbounds = inbound_mgr.get_all_inbounds(nodes)
+        inbounds = get_cached_inbounds(nodes)
 
         if protocol:
-            inbounds = [ib for ib in inbounds if ib["protocol"] == protocol]
+            inbounds = [ib for ib in inbounds if ib.get("protocol") == protocol]
         if security:
-            inbounds = [ib for ib in inbounds if ib["security"] == security]
+            inbounds = [ib for ib in inbounds if ib.get("security") == security]
 
         return JSONResponse(
             content={"inbounds": inbounds, "count": len(inbounds)},
-            headers={"Cache-Control": "private, max-age=300"},
+            headers={"Cache-Control": "private, max-age=30"},
         )
+
+    @router.get("/api/v1/inbounds/stats")
+    async def get_inbound_stats(request: Request):
+        """Return aggregate stats: total count, by protocol, by security, enabled vs disabled."""
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401)
+        nodes = node_service.list_nodes()
+        inbounds = get_cached_inbounds(nodes)
+        by_protocol: dict = {}
+        by_security: dict = {}
+        enabled = sum(1 for ib in inbounds if ib.get("enable"))
+        for ib in inbounds:
+            p = ib.get("protocol", "unknown")
+            by_protocol[p] = by_protocol.get(p, 0) + 1
+            s = "reality" if ib.get("is_reality") else (ib.get("security") or "none")
+            by_security[s] = by_security.get(s, 0) + 1
+        return {
+            "total": len(inbounds),
+            "enabled": enabled,
+            "disabled": len(inbounds) - enabled,
+            "by_protocol": by_protocol,
+            "by_security": by_security,
+        }
 
     @router.post("/api/v1/inbounds")
     async def add_inbound(request: Request, config: Dict):
@@ -172,5 +197,66 @@ def build_inbounds_router(
 
         await ws_manager.broadcast_inbound_update({"action": "batch_delete", "result": result})
         return result
+
+    @router.post("/api/v1/inbounds/{node_id}/{inbound_id}/set-enable")
+    async def set_inbound_enable(request: Request, node_id: int, inbound_id: int, data: Dict):
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401)
+        node = get_node_or_404(node_id)
+        enable = bool(data.get("enable", True))
+        success = inbound_mgr.set_inbound_enable(node, inbound_id, enable)
+        if success:
+            invalidate_live_stats_cache()
+        return {"success": success}
+
+    @router.post("/api/v1/inbounds/{node_id}/{inbound_id}/reset-traffic")
+    async def reset_inbound_traffic(request: Request, node_id: int, inbound_id: int):
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401)
+        node = get_node_or_404(node_id)
+        success = inbound_mgr.reset_inbound_traffic(node, inbound_id)
+        if success:
+            invalidate_live_stats_cache()
+        return {"success": success}
+
+    @router.post("/api/v1/inbounds/{node_id}/{inbound_id}/del-all-clients")
+    async def del_all_inbound_clients(request: Request, node_id: int, inbound_id: int):
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401)
+        node = get_node_or_404(node_id)
+        result = inbound_mgr.del_all_inbound_clients(node, inbound_id)
+        if "error" not in result:
+            invalidate_subscription_cache()
+            invalidate_live_stats_cache()
+        return result
+
+    @router.post("/api/v1/inbounds/{node_id}/reset-all-traffics")
+    async def reset_all_inbound_traffics(request: Request, node_id: int):
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401)
+        node = get_node_or_404(node_id)
+        success = inbound_mgr.reset_all_inbound_traffics(node)
+        if success:
+            invalidate_live_stats_cache()
+        return {"success": success}
+
+    @router.put("/api/v1/inbounds/{node_id}/{inbound_id}")
+    async def update_inbound(request: Request, node_id: int, inbound_id: int, data: Dict):
+        """Update a single inbound's configuration directly (port, remark, settings, etc.)."""
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401)
+        node = get_node_or_404(node_id)
+        updates = {k: v for k, v in data.items() if k != "node_id"}
+        if not updates:
+            raise HTTPException(status_code=400, detail="No updates provided")
+        success = inbound_mgr.update_inbound(node, inbound_id, updates)
+        if success:
+            invalidate_live_stats_cache()
+        return {"success": success}
 
     return router

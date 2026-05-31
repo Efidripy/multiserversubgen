@@ -1549,9 +1549,21 @@ location = /$WEB_PATH {
 location = /$WEB_PATH/ {
     root $PROJECT_DIR/build;
     try_files /index.html =404;
+    add_header Cache-Control "no-cache, no-store, must-revalidate" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
     add_header Referrer-Policy "same-origin" always;
+}
+
+# --- Static assets (hashed, immutable cache, hard 404 on miss) ---
+# MUST precede the SPA catch-all so missing assets never serve index.html,
+# which would poison the service worker cache (white-screen-on-first-visit bug).
+location ^~ /$WEB_PATH/assets/ {
+    rewrite ^/$WEB_PATH/(.*)$ /\$1 break;
+    root $PROJECT_DIR/build;
+    try_files \$uri =404;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+    add_header X-Content-Type-Options "nosniff" always;
 }
 
 # --- React SPA (static files + SPA fallback) ---
@@ -1559,6 +1571,7 @@ location ^~ /$WEB_PATH/ {
     rewrite ^/$WEB_PATH/(.*)$ /\$1 break;
     root $PROJECT_DIR/build;
     try_files \$uri \$uri/ /index.html;
+    add_header Cache-Control "no-cache, no-store, must-revalidate" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "DENY" always;
     add_header Referrer-Policy "same-origin" always;

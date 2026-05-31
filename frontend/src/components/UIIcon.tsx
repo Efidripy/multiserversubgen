@@ -31,7 +31,14 @@ export type IconName =
   | 'folder'
   | 'spinner'
   | 'statusOn'
-  | 'statusOff';
+  | 'statusOff'
+  | 'snowflake'
+  | 'duplicate'
+  | 'note'
+  | 'ip'
+  | 'group'
+  | 'clear'
+  | 'attach';
 
 interface UIIconProps {
   name: IconName;
@@ -269,6 +276,58 @@ export const UIIcon: React.FC<UIIconProps> = ({ name, size = 18, className }) =>
         <svg {...props}>
           <circle cx="12" cy="12" r="8" />
           <path d="M9.5 9.5l5 5M14.5 9.5l-5 5" />
+        </svg>
+      );
+    case 'snowflake':
+      return (
+        <svg {...props}>
+          <path d="M12 2v20M2 12h20M4.93 4.93l14.14 14.14M19.07 4.93 4.93 19.07" />
+          <path d="M12 6l-2-2m2 2 2-2M12 18l-2 2m2-2 2 2M6 12l-2-2m2 2-2 2M18 12l2-2m-2 2 2 2" />
+        </svg>
+      );
+    case 'duplicate':
+      return (
+        <svg {...props}>
+          <rect x="8" y="8" width="12" height="12" rx="2" />
+          <path d="M4 16V6a2 2 0 0 1 2-2h10" />
+        </svg>
+      );
+    case 'note':
+      return (
+        <svg {...props}>
+          <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+          <path d="M14 3v5h5M8 13h8M8 17h5" />
+        </svg>
+      );
+    case 'ip':
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 3a14 14 0 0 1 0 18M3 12h18M3.6 7h16.8M3.6 17h16.8" />
+        </svg>
+      );
+    case 'group':
+      return (
+        <svg {...props}>
+          <path d="M3 5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+          <path d="M13 5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2Z" />
+          <path d="M3 15a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+          <path d="M13 17h8M17 13v8" />
+        </svg>
+      );
+    case 'clear':
+      return (
+        <svg {...props}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="m15 9-6 6M9 9l6 6" />
+        </svg>
+      );
+    case 'attach':
+      return (
+        <svg {...props}>
+          <path d="M8 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3" />
+          <path d="M12 12V3" />
+          <path d="m9 6 3-3 3 3" />
         </svg>
       );
     default:

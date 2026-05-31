@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useToast } from './Toast';
 import api from '../api';
-import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
 import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
@@ -14,7 +14,7 @@ interface Node {
 
 
 export const BackupManager: React.FC = () => {
-  const { colors } = useTheme();
+  const { toast } = useToast();
   const [nodes, setNodes] = useState<Node[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -52,12 +52,14 @@ export const BackupManager: React.FC = () => {
       });
 
       const blob = new Blob([res.data], { type: 'application/x-sqlite3' });
+      const sizeKB = (blob.size / 1024).toFixed(1);
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `backup_${nodeName}_${new Date().toISOString().split('T')[0]}.db`;
       a.click();
       window.URL.revokeObjectURL(url);
+      toast(`Downloaded backup: ${nodeName} (${sizeKB} KB)`, 'success');
 
       setBackupProgress({ ...backupProgress, [nodeId]: 'success' });
       setTimeout(() => {
@@ -95,7 +97,7 @@ export const BackupManager: React.FC = () => {
       a.click();
       window.URL.revokeObjectURL(url);
 
-      alert('All backups downloaded successfully');
+      toast('All backups downloaded successfully', 'success');
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Failed to download all backups');
     } finally {
@@ -111,7 +113,7 @@ export const BackupManager: React.FC = () => {
 
   const importBackup = async () => {
     if (!selectedNode || !importFile) {
-      alert('Please select a node and a backup file');
+      toast('Please select a node and a backup file', 'warning');
       return;
     }
 
@@ -133,7 +135,7 @@ export const BackupManager: React.FC = () => {
         }
       });
 
-      alert('Database imported successfully. Please restart core service.');
+      toast('Database imported. Restart core service to apply.', 'success');
       setImportFile(null);
       setSelectedNode(null);
     } catch (err: any) {
@@ -200,16 +202,16 @@ export const BackupManager: React.FC = () => {
 
   return (
     <div className="backup-manager">
-      <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+      <div className="card p-3 mb-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
         <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.accent }}>
+          <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: 'var(--accent)' }}>
             <UIIcon name="backup" size={16} />
             Backup & Restore
           </h5>
         </div>
 
         {error && (
-          <div className="alert alert-danger" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+          <div className="alert alert-danger">
             {error}
           </div>
         )}
@@ -218,8 +220,8 @@ export const BackupManager: React.FC = () => {
           <div className="panel-block">
             <div className="panel-block__header">
               <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Actions</h6>
-                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>Actions</h6>
+                <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
                   Export one backup archive for all nodes.
                 </p>
               </div>
@@ -227,7 +229,7 @@ export const BackupManager: React.FC = () => {
             <div className="panel-inline-actions">
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
                 onClick={downloadAllBackups}
                 disabled={loading || nodes.length === 0}
               >
@@ -236,18 +238,41 @@ export const BackupManager: React.FC = () => {
                   Download All Backups
                 </span>
               </button>
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                title="Send backup from every node to its configured Telegram bot"
+                disabled={loading || nodes.length === 0}
+                onClick={async () => {
+                  if (!window.confirm(`Send backup to Telegram for all ${nodes.length} nodes?`)) return;
+                  setLoading(true);
+                  let ok = 0; let fail = 0;
+                  for (const node of nodes) {
+                    try {
+                      await api.post(`/v1/nodes/${node.id}/backup-telegram`, {}, { auth: getAuth() });
+                      ok++;
+                    } catch { fail++; }
+                  }
+                  setLoading(false);
+                  toast(`Telegram backup: ${ok} sent, ${fail} failed`, ok > 0 ? 'success' : 'error');
+                }}
+              >
+                <span className="d-inline-flex align-items-center gap-1">
+                  📤 Backup All to Telegram
+                </span>
+              </button>
             </div>
           </div>
           <div className="panel-block panel-block--wide">
             <div className="panel-block__header">
               <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Notes</h6>
-                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>Notes</h6>
+                <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
                   Backups include the complete database and should be stored securely.
                 </p>
               </div>
             </div>
-            <div className="alert mb-0" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.text.primary }}>
+            <div className="alert mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--info) 14%, transparent)', borderColor: 'var(--info)', color: 'var(--text-primary)' }}>
               <strong>Important:</strong> Backups contain the complete database including all client configurations.
               Make sure to store backups securely. When restoring, the core service may need to be restarted.
             </div>
@@ -256,51 +281,51 @@ export const BackupManager: React.FC = () => {
       </div>
 
       {/* Backup List */}
-      <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+      <div className="card p-3 mb-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
         <div className="d-flex justify-content-between align-items-center mb-3 gap-2">
-          <h6 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
+          <h6 className="mb-0 d-flex align-items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <UIIcon name="download" size={14} />
             Download Backups
           </h6>
-          <div className="small" style={{ color: colors.text.secondary }}>
+          <div className="small" style={{ color: 'var(--text-secondary)' }}>
             Click table headers to sort
           </div>
         </div>
         
         {nodes.length === 0 ? (
-          <p className="text-center py-3" style={{ color: colors.text.secondary }}>
+          <p className="text-center py-3" style={{ color: 'var(--text-secondary)' }}>
             No servers configured. Add servers in the Servers tab.
           </p>
         ) : (
           <div className="table-responsive">
-            <table className="table table-sm table-hover" style={{ color: colors.text.primary }}>
+            <table className="table table-sm table-hover" style={{ color: 'var(--text-primary)' }}>
               <thead>
-                <tr style={{ borderColor: colors.border }}>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('name')}>
+                <tr style={{ borderColor: 'var(--border-color)' }}>
+                  <th style={{ color: 'var(--text-secondary)' }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applySortFromHeader('name')}>
                       Node{sortIndicator('name')}
                     </button>
                   </th>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('address')}>
+                  <th style={{ color: 'var(--text-secondary)' }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applySortFromHeader('address')}>
                       Address{sortIndicator('address')}
                     </button>
                   </th>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applySortFromHeader('status')}>
+                  <th style={{ color: 'var(--text-secondary)' }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applySortFromHeader('status')}>
                       Status{sortIndicator('status')}
                     </button>
                   </th>
-                  <th style={{ color: colors.text.secondary }}>Action</th>
+                  <th style={{ color: 'var(--text-secondary)' }}>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {sortedNodes.map((node) => (
-                  <tr key={node.id} style={{ borderColor: colors.border }}>
+                  <tr key={node.id} style={{ borderColor: 'var(--border-color)' }}>
                     <td>
-                      <strong style={{ color: colors.text.primary }}>{node.name}</strong>
+                      <strong style={{ color: 'var(--text-primary)' }}>{node.name}</strong>
                     </td>
-                    <td style={{ color: colors.text.secondary }}>
+                    <td style={{ color: 'var(--text-secondary)' }}>
                       {node.ip}:{node.port}
                     </td>
                     <td>
@@ -309,17 +334,32 @@ export const BackupManager: React.FC = () => {
                       </span>
                     </td>
                     <td>
-                      <button
-                        className="btn btn-sm"
-                        style={{ backgroundColor: colors.success, borderColor: colors.success, color: colors.successText }}
-                        onClick={() => downloadBackup(node.id, node.name)}
-                        disabled={loading || backupProgress[node.id] === 'downloading'}
-                      >
-                        <span className="d-inline-flex align-items-center gap-1">
-                          <UIIcon name="download" size={14} />
-                          Download
-                        </span>
-                      </button>
+                      <div className="d-flex gap-1">
+                        <button
+                          className="btn btn-sm"
+                          style={{ backgroundColor: 'var(--success)', borderColor: 'var(--success)', color: '#ffffff' }}
+                          onClick={() => downloadBackup(node.id, node.name)}
+                          disabled={loading || backupProgress[node.id] === 'downloading'}
+                        >
+                          <span className="d-inline-flex align-items-center gap-1">
+                            <UIIcon name="download" size={14} />
+                            Download
+                          </span>
+                        </button>
+                        <button
+                          className="btn btn-sm"
+                          style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
+                          title="Send backup to Telegram bot configured on this node"
+                          onClick={async () => {
+                            try {
+                              const res = await api.post(`/v1/nodes/${node.id}/backup-telegram`, {}, { auth: getAuth() });
+                              toast(res.data?.msg || (res.data?.success ? 'Backup sent to Telegram' : 'Failed'), res.data?.success !== false ? 'success' : 'error');
+                            } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+                          }}
+                        >
+                          📤
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -330,13 +370,13 @@ export const BackupManager: React.FC = () => {
       </div>
 
       {/* Restore Section */}
-      <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
+      <div className="card p-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+        <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: 'var(--text-primary)' }}>
           <UIIcon name="upload" size={14} />
           Restore from Backup
         </h6>
         
-        <div className="alert alert-warning" style={{ backgroundColor: colors.warning + '22', borderColor: colors.warning, color: colors.text.primary }}>
+        <div className="alert alert-warning">
           <strong>Warning:</strong> Restoring a backup will REPLACE the current database. Make sure you have a recent backup before proceeding.
         </div>
 
@@ -344,8 +384,8 @@ export const BackupManager: React.FC = () => {
           <div className="panel-block">
             <div className="panel-block__header">
               <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Target Node</h6>
-                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>Target Node</h6>
+                <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
                   Choose where the database will be restored.
                 </p>
               </div>
@@ -357,15 +397,15 @@ export const BackupManager: React.FC = () => {
               ]}
               value={selectedNode || 0}
               onChange={(value) => setSelectedNode(value || null)}
-              colors={colors}
+              
               size="md"
             />
           </div>
           <div className="panel-block">
             <div className="panel-block__header">
               <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Backup File</h6>
-                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>Backup File</h6>
+                <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
                   Upload `.db`, `.sqlite` or `.sqlite3`.
                 </p>
               </div>
@@ -375,21 +415,21 @@ export const BackupManager: React.FC = () => {
               className="form-control"
               accept=".db,.sqlite,.sqlite3"
               onChange={handleFileChange}
-              style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+              style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
             />
           </div>
           <div className="panel-block">
             <div className="panel-block__header">
               <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Restore</h6>
-                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>Restore</h6>
+                <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
                   Run restore only after checking node and file.
                 </p>
               </div>
             </div>
             <button
               className="btn w-100"
-              style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
+              style={{ backgroundColor: 'var(--warning)', borderColor: 'var(--warning)', color: 'var(--text-primary)' }}
               onClick={importBackup}
               disabled={loading || !selectedNode || !importFile}
             >
@@ -402,29 +442,29 @@ export const BackupManager: React.FC = () => {
         </div>
 
         {importFile && (
-          <div className="mt-3 p-2" style={{ backgroundColor: colors.bg.tertiary, borderRadius: '4px' }}>
-            <small style={{ color: colors.text.secondary }}>
-              Selected file: <strong style={{ color: colors.text.primary }}>{importFile.name}</strong> ({formatBytes(importFile.size)})
+          <div className="mt-3 p-2" style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '4px' }}>
+            <small style={{ color: 'var(--text-secondary)' }}>
+              Selected file: <strong style={{ color: 'var(--text-primary)' }}>{importFile.name}</strong> ({formatBytes(importFile.size)})
             </small>
           </div>
         )}
       </div>
 
       {/* Automation Info */}
-      <div className="card p-3 mt-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
+      <div className="card p-3 mt-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+        <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: 'var(--text-primary)' }}>
           <UIIcon name="backup" size={14} />
           Automated Backups
         </h6>
-        <p style={{ color: colors.text.secondary }}>
+        <p style={{ color: 'var(--text-secondary)' }}>
           For automated backup scheduling, you can set up a cron job on your server:
         </p>
-        <div className="p-3" style={{ backgroundColor: colors.bg.tertiary, borderRadius: '4px', fontFamily: 'monospace' }}>
-          <code style={{ color: colors.text.primary }}>
+        <div className="p-3" style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '4px', fontFamily: 'monospace' }}>
+          <code style={{ color: 'var(--text-primary)' }}>
             0 3 * * * curl -u username:password https://your-domain/api/v1/backup/all -o /backups/backup_$(date +\%Y\%m\%d).zip
           </code>
         </div>
-        <p className="mt-2 mb-0 small" style={{ color: colors.text.secondary }}>
+        <p className="mt-2 mb-0 small" style={{ color: 'var(--text-secondary)' }}>
           This example runs daily at 3 AM and saves all backups to /backups directory.
         </p>
       </div>

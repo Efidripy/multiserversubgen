@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useTheme } from '../contexts/ThemeContext';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
-import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
 import { ChoiceChips } from './ChoiceChips';
 import { mergeStaleCacheRecord, readStaleCache } from '../services/staleCache';
@@ -65,9 +65,9 @@ type TrafficStatsCache = {
   onlineTrafficTotals?: Record<string, number>;
 };
 
-export const TrafficStats: React.FC = () => {
+export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => void }> = ({ onNavigateToClient }) => {
   const { t } = useTranslation();
-  const { colors, stylePreset, theme } = useTheme();
+  const { stylePreset } = useTheme();
   const [trafficData, setTrafficData] = useState<TrafficData[]>([]);
   const [onlineClients, setOnlineClients] = useState<OnlineClient[]>([]);
   const [onlineTrafficTotals, setOnlineTrafficTotals] = useState<Record<string, number>>({});
@@ -78,7 +78,9 @@ export const TrafficStats: React.FC = () => {
   const [groupBy, setGroupBy] = useState<'client' | 'inbound' | 'node'>('client');
   const [period, setPeriod] = useState<'day' | 'week' | 'month' | 'year' | 'all_time'>('all_time');
   const [topN, setTopN] = useState(10);
-  const [trafficSortField, setTrafficSortField] = useState<'name' | 'download' | 'total'>('download');
+  const [filterNodeName, setFilterNodeName] = useState('');
+  const [trafficSearch, setTrafficSearch] = useState('');
+  const [trafficSortField, setTrafficSortField] = useState<'name' | 'download' | 'upload' | 'total'>('download');
   const [trafficSortDir, setTrafficSortDir] = useState<'asc' | 'desc'>('desc');
   const [onlineSortField, setOnlineSortField] = useState<'email' | 'node' | 'traffic'>('email');
   const [onlineSortDir, setOnlineSortDir] = useState<'asc' | 'desc'>('asc');
@@ -86,7 +88,7 @@ export const TrafficStats: React.FC = () => {
   const trafficAbortRef = useRef<AbortController | null>(null);
   const onlineAbortRef = useRef<AbortController | null>(null);
   const onlineTotalsAbortRef = useRef<AbortController | null>(null);
-  const chartAccent = stylePreset === '3' ? '#fafafa' : colors.accent;
+  const chartAccent = stylePreset === '3' ? '#fafafa' : 'var(--accent)';
 
   useEffect(() => {
     const cached = readStaleCache<TrafficStatsCache>(TRAFFIC_STATS_CACHE_KEY, TRAFFIC_STATS_CACHE_MAX_AGE_MS);
@@ -278,7 +280,13 @@ export const TrafficStats: React.FC = () => {
   const trafficSortFactor = trafficSortDir === 'asc' ? 1 : -1;
   const onlineSortFactor = onlineSortDir === 'asc' ? 1 : -1;
 
-  const sortedTraffic = [...trafficData]
+  const filteredTrafficData = trafficData
+    .filter(d => !filterNodeName || d.node_name === filterNodeName)
+    .filter(d => !trafficSearch.trim() || (d.email || d.node_name || '').toLowerCase().includes(trafficSearch.trim().toLowerCase()));
+
+  const trafficNodeNames = Array.from(new Set(trafficData.map(d => d.node_name).filter(Boolean)));
+
+  const sortedTraffic = [...filteredTrafficData]
     .sort((a, b) => {
       const aName = a.email || a.node_name || '';
       const bName = b.email || b.node_name || '';
@@ -297,6 +305,11 @@ export const TrafficStats: React.FC = () => {
         if (byNode !== 0) return byNode;
         return a.total - b.total;
       }
+      if (trafficSortField === 'upload') {
+        const byUpload = a.upload - b.upload;
+        if (byUpload !== 0) return byUpload * trafficSortFactor;
+        return (a.total - b.total) * trafficSortFactor;
+      }
       const byTotal = a.total - b.total;
       if (byTotal !== 0) return byTotal * trafficSortFactor;
       if (byName !== 0) return byName;
@@ -305,7 +318,11 @@ export const TrafficStats: React.FC = () => {
     })
     .slice(0, topN);
 
-  const sortedOnlineClients = [...onlineClients].sort((a, b) => {
+  const filteredOnlineClients = trafficSearch.trim()
+    ? onlineClients.filter(c => c.email.toLowerCase().includes(trafficSearch.trim().toLowerCase()) || (c.node_name || '').toLowerCase().includes(trafficSearch.trim().toLowerCase()))
+    : onlineClients;
+
+  const sortedOnlineClients = [...filteredOnlineClients].sort((a, b) => {
     const aTraffic = onlineTrafficTotals[normalizeEmailKey(a.email)] || 0;
     const bTraffic = onlineTrafficTotals[normalizeEmailKey(b.email)] || 0;
     const byEmail = compareText(a.email, b.email);
@@ -327,7 +344,7 @@ export const TrafficStats: React.FC = () => {
     return byNode;
   });
 
-  const applyTrafficSortFromHeader = (field: 'name' | 'download' | 'total') => {
+  const applyTrafficSortFromHeader = (field: 'name' | 'download' | 'upload' | 'total') => {
     if (trafficSortField === field) {
       setTrafficSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
       return;
@@ -345,7 +362,7 @@ export const TrafficStats: React.FC = () => {
     setOnlineSortDir(field === 'traffic' ? 'desc' : 'asc');
   };
 
-  const trafficSortIndicator = (field: 'name' | 'download' | 'total') =>
+  const trafficSortIndicator = (field: 'name' | 'download' | 'upload' | 'total') =>
     trafficSortField === field ? (trafficSortDir === 'asc' ? ' ▲' : ' ▼') : '';
 
   const onlineSortIndicator = (field: 'email' | 'node' | 'traffic') =>
@@ -382,7 +399,7 @@ export const TrafficStats: React.FC = () => {
       legend: {
         position: 'top' as const,
         labels: {
-          color: colors.text.primary,
+          color: 'var(--text-primary)',
           font: {
             size: 12,
             weight: 600 as const,
@@ -395,21 +412,11 @@ export const TrafficStats: React.FC = () => {
         display: false,
       },
       tooltip: {
-        backgroundColor:
-          theme === 'light'
-            ? 'rgba(255, 255, 255, 0.98)'
-            : stylePreset === '3'
-            ? 'rgba(8, 8, 8, 0.96)'
-            : 'rgba(8, 17, 32, 0.96)',
-        borderColor:
-          theme === 'light'
-            ? 'rgba(148, 163, 184, 0.5)'
-            : stylePreset === '3'
-            ? 'rgba(255, 255, 255, 0.18)'
-            : 'rgba(125, 211, 252, 0.45)',
+        backgroundColor: 'rgba(8, 8, 8, 0.96)',
+        borderColor: 'rgba(255, 255, 255, 0.18)',
         borderWidth: 1,
-        titleColor: theme === 'light' ? '#0f172a' : stylePreset === '3' ? '#fafafa' : '#e2e8f0',
-        bodyColor: theme === 'light' ? '#334155' : stylePreset === '3' ? '#d4d4d8' : '#bae6fd',
+        titleColor: '#fafafa',
+        bodyColor: '#d4d4d8',
         displayColors: false,
         padding: 10,
         cornerRadius: 10,
@@ -422,26 +429,30 @@ export const TrafficStats: React.FC = () => {
     scales: {
       x: {
         ticks: {
-          color: colors.text.secondary,
+          color: 'var(--text-secondary)',
           font: {
             size: 10,
             weight: 600 as const,
           }
         },
         grid: {
-          color: colors.border + '55'
+          color: 'var(--border-color)' + '55'
         }
       },
       y: {
+        display: true,
         ticks: {
-          color: colors.text.secondary,
-          font: {
-            weight: 600 as const,
-          }
+          color: 'var(--text-secondary)',
+          font: { size: 10, weight: 600 as const },
+          maxTicksLimit: 6,
+          callback: (value: any) => {
+            const bytes = Number(value);
+            if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(1) + ' GB';
+            if (bytes >= 1048576) return (bytes / 1048576).toFixed(0) + ' MB';
+            return bytes + ' B';
+          },
         },
-        grid: {
-          color: colors.border + '55'
-        }
+        grid: { color: 'var(--border-color)' + '55' },
       }
     }
   };
@@ -452,13 +463,9 @@ export const TrafficStats: React.FC = () => {
 
   return (
     <div className="traffic-stats">
-      <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0" style={{ color: colors.accent }}>{t('traffic.title')}</h5>
-        </div>
-
+      <div className="card p-3 mb-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
         {error && (
-          <div className="alert alert-danger" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+          <div className="alert alert-danger mb-3">
             {error}
           </div>
         )}
@@ -467,8 +474,8 @@ export const TrafficStats: React.FC = () => {
           <div className="panel-block">
             <div className="panel-block__header">
               <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>{t('common.actions')}</h6>
-                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>{t('common.actions')}</h6>
+                <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
                   {t('traffic.refreshHint')}
                 </p>
               </div>
@@ -476,7 +483,7 @@ export const TrafficStats: React.FC = () => {
             <div className="panel-inline-actions">
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
                 onClick={() => {
                   loadTrafficStats(groupBy, period);
                   loadOnlineClients();
@@ -486,13 +493,71 @@ export const TrafficStats: React.FC = () => {
               >
                 {loading ? t('messages.loadingData') : t('common.refresh')}
               </button>
+              <input
+                type="text"
+                className="form-control form-control-sm"
+                placeholder="Search email or node…"
+                value={trafficSearch}
+                onChange={e => setTrafficSearch(e.target.value)}
+                style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)', width: '160px', fontSize: '0.75rem' }}
+              />
+              {trafficNodeNames.length > 1 && (
+                <select
+                  className="form-select form-select-sm"
+                  value={filterNodeName}
+                  onChange={e => setFilterNodeName(e.target.value)}
+                  style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)', width: 'auto', fontSize: '0.75rem' }}
+                >
+                  <option value="">All nodes</option>
+                  {trafficNodeNames.map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              )}
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
+                title="Clear local cache and force full reload"
+                onClick={() => {
+                  try { localStorage.removeItem(TRAFFIC_STATS_CACHE_KEY); } catch {}
+                  setTrafficData([]);
+                  loadTrafficStats(groupBy, period);
+                  loadOnlineClients();
+                }}
+              >
+                ✕ Clear Cache
+              </button>
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                title="Export traffic data as CSV"
+                disabled={trafficData.length === 0}
+                onClick={() => {
+                  const rows = trafficData.map(d => [
+                    d.email || d.node_name || '',
+                    d.node_name || '',
+                    d.protocol || '',
+                    (d.upload / 1073741824).toFixed(3),
+                    (d.download / 1073741824).toFixed(3),
+                    (d.total / 1073741824).toFixed(3),
+                  ].map(v => `"${String(v).replace(/"/g, '""')}"`).join(','));
+                  const csv = ['name,node,protocol,upload_gb,download_gb,total_gb', ...rows].join('\n');
+                  const blob = new Blob([csv], { type: 'text/csv' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `traffic_${groupBy}_${period}_${new Date().toISOString().slice(0,10)}.csv`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                }}
+              >
+                ⬇ CSV
+              </button>
             </div>
           </div>
           <div className="panel-block">
             <div className="panel-block__header">
               <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>{t('traffic.groupBy')}</h6>
-                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>{t('traffic.groupBy')}</h6>
+                <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
                   {t('traffic.groupHint')}
                 </p>
               </div>
@@ -510,15 +575,15 @@ export const TrafficStats: React.FC = () => {
                   setGroupBy(nextGroupBy);
                   loadTrafficStats(nextGroupBy, period);
                 }}
-                colors={colors}
+                
               />
             </div>
           </div>
           <div className="panel-block">
             <div className="panel-block__header">
               <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>{t('traffic.period')}</h6>
-                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>{t('traffic.period')}</h6>
+                <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
                   {t('traffic.periodHint')}
                 </p>
               </div>
@@ -539,18 +604,18 @@ export const TrafficStats: React.FC = () => {
                   loadTrafficStats(groupBy, nextPeriod);
                   loadOnlineTrafficTotals(nextPeriod);
                 }}
-                colors={colors}
+                
               />
               {periodNote && (
-                <small style={{ color: colors.text.secondary }}>{periodNote}</small>
+                <small style={{ color: 'var(--text-secondary)' }}>{periodNote}</small>
               )}
             </div>
           </div>
           <div className="panel-block">
             <div className="panel-block__header">
               <div>
-                <h6 className="panel-block__title" style={{ color: colors.text.primary }}>{t('traffic.range')}</h6>
-                <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+                <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>{t('traffic.range')}</h6>
+                <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
                   {t('traffic.rangeHint')}
                 </p>
               </div>
@@ -565,9 +630,9 @@ export const TrafficStats: React.FC = () => {
                 ]}
                 value={topN}
                 onChange={(value) => setTopN(value)}
-                colors={colors}
+                
               />
-              <small style={{ color: colors.text.secondary }}>
+              <small style={{ color: 'var(--text-secondary)' }}>
                 {t('traffic.sortHint')}
               </small>
             </div>
@@ -576,38 +641,33 @@ export const TrafficStats: React.FC = () => {
       </div>
 
       {/* Stats Summary */}
-      <div className="row mb-3">
-          <div className="col-md-4">
-            <div className="card kpi-card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="small" style={{ color: colors.text.secondary }}>{t('traffic.download')}</div>
-              <h4 style={{ color: colors.accent }}>{formatBytes(totalDownload)}</h4>
-            </div>
-          </div>
-          <div className="col-md-4">
-            <div className="card kpi-card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="small" style={{ color: colors.text.secondary }}>{t('traffic.total')}</div>
-              <h4 style={{ color: colors.info }}>{formatBytes(totalTraffic)}</h4>
-            </div>
-          </div>
-          <div className="col-md-4">
-            <div className="card kpi-card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="small" style={{ color: colors.text.secondary }}>{t('traffic.onlineClients')}</div>
-              <h4 style={{ color: colors.warning }}>{onlineClients.length}</h4>
-            </div>
-          </div>
+      <div className="d-flex gap-3 mb-3 flex-wrap">
+        <article className="app-shell-stat app-shell-stat--accent flex-fill">
+          <span className="app-shell-stat__label">{t('traffic.download')}</span>
+          <span className="app-shell-stat__value">{formatBytes(totalDownload)}</span>
+        </article>
+        <article className="app-shell-stat app-shell-stat--info flex-fill">
+          <span className="app-shell-stat__label">{t('traffic.total')}</span>
+          <span className="app-shell-stat__value">{formatBytes(totalTraffic)}</span>
+        </article>
+        <article className="app-shell-stat app-shell-stat--warning flex-fill">
+          <span className="app-shell-stat__label">{t('traffic.onlineClients')}</span>
+          <span className="app-shell-stat__value" style={{ color: 'var(--warning)' }}>{onlineClients.length}</span>
+        </article>
       </div>
 
       {/* Charts */}
       <div className="row mb-3">
         <div className="col-12">
-          <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-            <h6 className="mb-3" style={{ color: colors.text.primary }}>
+          <div className="card p-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+            <h6 className="mb-3" style={{ color: 'var(--text-primary)' }}>
               {t('traffic.topBy', { count: topN, entity: topByEntity })}
             </h6>
             <div style={{ height: '400px' }}>
               {loading ? (
-                <div className="d-flex justify-content-center align-items-center h-100">
-                  <div className="spinner-border"></div>
+                <div className="d-flex flex-column justify-content-center align-items-center h-100 gap-2">
+                  <div className="spinner-border spinner-accent" style={{ width: '1.8rem', height: '1.8rem', borderWidth: '0.15em' }} />
+                  <span style={{ color: 'var(--text-tertiary)', fontSize: '0.78rem' }}>{t('messages.loadingData')}</span>
                 </div>
               ) : (
                 <Bar data={topClientsData} options={chartOptions} />
@@ -618,34 +678,39 @@ export const TrafficStats: React.FC = () => {
       </div>
 
       {/* Online Clients */}
-      <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+      <div className="card p-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
         <div className="d-flex justify-content-between align-items-center mb-3 gap-2">
-          <h6 className="mb-0" style={{ color: colors.text.primary }}>{t('traffic.onlineClients')} ({onlineClients.length})</h6>
-          <div className="small" style={{ color: colors.text.secondary }}>
+          <h6 className="mb-0" style={{ color: 'var(--text-primary)' }}>{t('traffic.onlineClients')} ({onlineClients.length})</h6>
+          <div className="small" style={{ color: 'var(--text-secondary)' }}>
             {onlineLoading ? t('traffic.loadingOnline') : t('traffic.sortHint')}
           </div>
         </div>
+        {onlineLoading && <div className="table-loading-bar mb-1" />}
         {onlineLoading && onlineClients.length === 0 ? (
-          <div className="text-center py-3"><div className="spinner-border spinner-border-sm"></div></div>
+          <div className="text-center py-4">
+            <div className="spinner-border spinner-border-sm spinner-accent" style={{ width: '1.2rem', height: '1.2rem', borderWidth: '0.14em' }} />
+          </div>
         ) : onlineClients.length === 0 ? (
-          <p className="text-center py-3" style={{ color: colors.text.secondary }}>{t('traffic.noClientsOnline')}</p>
+          <div className="text-center py-4" style={{ color: 'var(--text-tertiary)', fontSize: '0.85rem' }}>
+            {t('traffic.noClientsOnline')}
+          </div>
         ) : (
           <div className="table-responsive">
-            <table className="table table-sm table-hover" style={{ color: colors.text.primary }}>
+            <table className="table table-sm table-hover" style={{ color: 'var(--text-primary)' }}>
               <thead>
-                <tr style={{ borderColor: colors.border }}>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyOnlineSortFromHeader('email')}>
+                <tr style={{ borderColor: 'var(--border-color)' }}>
+                  <th style={{ color: 'var(--text-secondary)' }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyOnlineSortFromHeader('email')}>
                       Email{onlineSortIndicator('email')}
                     </button>
                   </th>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyOnlineSortFromHeader('node')}>
+                  <th style={{ color: 'var(--text-secondary)' }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyOnlineSortFromHeader('node')}>
                       {t('traffic.node')}{onlineSortIndicator('node')}
                     </button>
                   </th>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyOnlineSortFromHeader('traffic')}>
+                  <th style={{ color: 'var(--text-secondary)' }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyOnlineSortFromHeader('traffic')}>
                       {t('traffic.total')}{onlineSortIndicator('traffic')}
                     </button>
                   </th>
@@ -653,17 +718,17 @@ export const TrafficStats: React.FC = () => {
               </thead>
               <tbody>
                 {sortedOnlineClients.map((client) => (
-                  <tr key={`${client.node_name}:${client.email}`} style={{ borderColor: colors.border }}>
+                  <tr key={`${client.node_name}:${client.email}`} style={{ borderColor: 'var(--border-color)' }}>
                     <td>
-                      <span style={{ color: colors.success }}>● </span>
-                      <strong style={{ color: colors.text.primary }}>{client.email}</strong>
+                      <span style={{ color: 'var(--success)' }}>● </span>
+                      <strong style={{ color: 'var(--text-primary)' }}>{client.email}</strong>
                     </td>
                     <td>
-                      <span className="badge" style={{ backgroundColor: colors.bg.tertiary, color: colors.text.primary }}>
+                      <span className="badge" style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
                         {client.node_name}
                       </span>
                     </td>
-                    <td style={{ color: colors.text.secondary }}>
+                    <td style={{ color: 'var(--text-secondary)' }}>
                       {formatBytes(onlineTrafficTotals[normalizeEmailKey(client.email)] || 0)}
                     </td>
                   </tr>
@@ -674,33 +739,64 @@ export const TrafficStats: React.FC = () => {
         )}
       </div>
 
+      {/* Per-node traffic summary */}
+      {groupBy === 'client' && trafficNodeNames.length > 1 && (
+        <div className="card p-3 mt-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+          <div className="small mb-2" style={{ color: 'var(--text-secondary)' }}>Traffic by node</div>
+          <div className="d-flex flex-wrap gap-2">
+            {trafficNodeNames.map(nodeName => {
+              const nodeTotal = trafficData.filter(d => d.node_name === nodeName).reduce((s, d) => s + d.total, 0);
+              const allTotal = trafficData.reduce((s, d) => s + d.total, 0);
+              const pct = allTotal > 0 ? (nodeTotal / allTotal * 100).toFixed(0) : '0';
+              return (
+                <div key={nodeName} className="d-flex align-items-center gap-2">
+                  <span
+                    className="badge"
+                    style={{ backgroundColor: filterNodeName === nodeName ? 'var(--warning)' : 'var(--bg-tertiary)', color: filterNodeName === nodeName ? '#000' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.72rem' }}
+                    onClick={() => setFilterNodeName(prev => prev === nodeName ? '' : (nodeName ?? ''))}
+                  >
+                    {nodeName}
+                  </span>
+                  <span style={{ color: 'var(--text-primary)', fontSize: '0.78rem' }}>{formatBytes(nodeTotal)}</span>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>({pct}%)</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Top Traffic Table */}
-      <div className="card p-3 mt-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <h6 className="mb-3" style={{ color: colors.text.primary }}>
+      <div className="card p-3 mt-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+        <h6 className="mb-3" style={{ color: 'var(--text-primary)' }}>
           {t('traffic.topUsage', { count: topN })}
         </h6>
         {loading ? (
           <div className="text-center py-3"><div className="spinner-border spinner-border-sm"></div></div>
         ) : sortedTraffic.length === 0 ? (
-          <p className="text-center py-3" style={{ color: colors.text.secondary }}>{t('messages.noDataAvailable')}</p>
+          <p className="text-center py-3" style={{ color: 'var(--text-secondary)' }}>{t('messages.noDataAvailable')}</p>
         ) : (
           <div className="table-responsive">
-            <table className="table table-sm table-hover" style={{ color: colors.text.primary }}>
+            <table className="table table-sm table-hover" style={{ color: 'var(--text-primary)' }}>
               <thead>
-                <tr style={{ borderColor: colors.border }}>
-                  <th style={{ color: colors.text.secondary }}>#</th>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyTrafficSortFromHeader('name')}>
+                <tr style={{ borderColor: 'var(--border-color)' }}>
+                  <th style={{ color: 'var(--text-secondary)' }}>#</th>
+                  <th style={{ color: 'var(--text-secondary)' }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyTrafficSortFromHeader('name')}>
                       {groupBy === 'client' ? t('clients.email') : groupBy === 'inbound' ? t('nav.inbounds') : t('traffic.node')}{trafficSortIndicator('name')}
                     </button>
                   </th>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyTrafficSortFromHeader('download')}>
-                      {t('traffic.download')}{trafficSortIndicator('download')}
+                  <th style={{ color: 'var(--text-secondary)' }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyTrafficSortFromHeader('upload')}>
+                      ↑{trafficSortIndicator('upload')}
+                    </button>
+                    {' / '}
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyTrafficSortFromHeader('download')}>
+                      ↓{trafficSortIndicator('download')}
                     </button>
                   </th>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyTrafficSortFromHeader('total')}>
+                  <th style={{ color: 'var(--text-secondary)' }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyTrafficSortFromHeader('total')}>
                       {t('traffic.total')}{trafficSortIndicator('total')}
                     </button>
                   </th>
@@ -708,25 +804,62 @@ export const TrafficStats: React.FC = () => {
               </thead>
               <tbody>
                 {sortedTraffic.map((item, idx) => (
-                  <tr key={idx} style={{ borderColor: colors.border }}>
-                    <td style={{ color: colors.text.secondary }}>{idx + 1}</td>
+                  <tr key={idx} style={{ borderColor: 'var(--border-color)' }}>
+                    <td style={{ color: 'var(--text-secondary)' }}>{idx + 1}</td>
                     <td>
-                      <strong style={{ color: colors.text.primary }}>
+                      <strong
+                        style={{ color: item.email && onNavigateToClient ? 'var(--accent)' : 'var(--text-primary)', cursor: item.email && onNavigateToClient ? 'pointer' : 'default' }}
+                        title={item.email && onNavigateToClient ? `Filter clients by: ${item.email}` : undefined}
+                        onClick={() => item.email && onNavigateToClient && onNavigateToClient(item.email)}
+                      >
                         {item.email || item.node_name || t('traffic.unknown')}
                       </strong>
+                      {item.node_name && groupBy === 'client' && (
+                        <span
+                          className="badge ms-1"
+                          style={{ backgroundColor: filterNodeName === item.node_name ? 'var(--warning)' : 'var(--bg-tertiary)', color: filterNodeName === item.node_name ? '#000' : 'var(--text-secondary)', cursor: 'pointer', fontSize: '0.65rem' }}
+                          title={filterNodeName === item.node_name ? 'Click to clear node filter' : `Filter by ${item.node_name}`}
+                          onClick={() => setFilterNodeName(prev => prev === item.node_name ? '' : (item.node_name || ''))}
+                        >
+                          {item.node_name}
+                        </span>
+                      )}
                       {item.protocol && (
-                        <span className="badge ms-2" style={{ backgroundColor: colors.accent }}>
+                        <span className="badge ms-1" style={{ backgroundColor: 'var(--accent)', fontSize: '0.65rem' }}>
                           {item.protocol.toUpperCase()}
                         </span>
                       )}
                     </td>
-                    <td style={{ color: colors.accent }}>{formatBytes(item.download)}</td>
+                    <td style={{ color: 'var(--info)' }}><span style={{ fontSize: '0.8rem' }}>{formatBytes(item.upload)}</span></td>
+                    <td style={{ color: 'var(--accent)' }}>{formatBytes(item.download)}</td>
                     <td>
-                      <strong style={{ color: colors.info }}>{formatBytes(item.total)}</strong>
+                      <strong style={{ color: 'var(--info)' }}>{formatBytes(item.total)}</strong>
+                      {filteredTrafficData.length > 0 && (() => {
+                        const totalAll = filteredTrafficData.reduce((s, d) => s + d.total, 0);
+                        const pct = totalAll > 0 ? (item.total / totalAll * 100).toFixed(1) : '0';
+                        return <span className="ms-1 small" style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>{pct}%</span>;
+                      })()}
                     </td>
                   </tr>
                 ))}
               </tbody>
+              {sortedTraffic.length > 0 && (() => {
+                const totalUp = filteredTrafficData.reduce((s, d) => s + d.upload, 0);
+                const totalDl = filteredTrafficData.reduce((s, d) => s + d.download, 0);
+                const totalAll = filteredTrafficData.reduce((s, d) => s + d.total, 0);
+                return (
+                  <tfoot>
+                    <tr style={{ borderTop: '2px solid var(--border-color)', fontWeight: 600 }}>
+                      <td colSpan={2} style={{ color: 'var(--text-secondary)', paddingTop: '6px', fontSize: '0.8rem' }}>
+                        Σ {filteredTrafficData.length} {(filterNodeName || trafficSearch) ? '(filtered)' : ''}
+                      </td>
+                      <td style={{ color: 'var(--info)', fontSize: '0.8rem', paddingTop: '6px' }}>{formatBytes(totalUp)}</td>
+                      <td style={{ color: 'var(--warning)', fontSize: '0.8rem', paddingTop: '6px' }}>{formatBytes(totalDl)}</td>
+                      <td style={{ color: 'var(--text-primary)', fontSize: '0.8rem', paddingTop: '6px' }}>{formatBytes(totalAll)}</td>
+                    </tr>
+                  </tfoot>
+                );
+              })()}
             </table>
           </div>
         )}

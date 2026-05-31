@@ -132,13 +132,14 @@ def init_db(db_path: str) -> None:
     Args:
         db_path: Absolute path to the SQLite database file.
     """
-    with sqlite3.connect(db_path) as conn:
+    with _open(db_path) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         for stmt in _SCHEMA_STATEMENTS:
             conn.execute(stmt)
         conn.commit()
 
     # Run optional migrations (ignore errors for existing columns etc.)
-    with sqlite3.connect(db_path) as conn:
+    with _open(db_path) as conn:
         for stmt in _MIGRATIONS:
             try:
                 conn.execute(stmt)
@@ -147,6 +148,13 @@ def init_db(db_path: str) -> None:
                 pass  # Column already exists or other benign error
 
     logger.debug("Database initialized at %s", db_path)
+
+
+def _open(db_path: str) -> sqlite3.Connection:
+    """Raw connection with per-session performance settings."""
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
 
 
 @contextmanager
@@ -162,7 +170,7 @@ def get_connection(db_path: str) -> Generator[sqlite3.Connection, None, None]:
     Yields:
         An open connection that is committed and closed on exit.
     """
-    conn = sqlite3.connect(db_path)
+    conn = _open(db_path)
     conn.row_factory = sqlite3.Row
     try:
         yield conn

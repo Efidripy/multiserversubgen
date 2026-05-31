@@ -305,6 +305,29 @@ class TestThreeXUIMonitor:
         assert result["available"] is True
         assert len(result["inbounds"]) == 1
 
+    def test_get_inbounds_normalizes_reality_security(self):
+        monitor = self._build_monitor()
+        inbounds = [
+            {
+                "id": 1,
+                "remark": "reality",
+                "protocol": "vless",
+                "streamSettings": json.dumps({"security": "reality", "network": "tcp"}),
+                "settings": json.dumps({"clients": []}),
+            }
+        ]
+        body = {"success": True, "obj": inbounds}
+        with patch.object(monitor, '_get_session') as mock_gs:
+            sess = MagicMock()
+            mock_gs.return_value = (sess, "https://1.2.3.4:443")
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)):
+                result = monitor.get_inbounds(self._node())
+
+        inbound = result["inbounds"][0]
+        assert inbound["streamSettings"]["security"] == "reality"
+        assert inbound["security"] == "reality"
+        assert inbound["is_reality"] is True
+
     def test_get_traffic_aggregates_inbounds(self):
         monitor = self._build_monitor()
         inbounds = [
@@ -364,3 +387,225 @@ class TestThreeXUIMonitor:
 
         assert result["available"] is True
         assert result["upload"] == 0
+
+
+# ---------------------------------------------------------------------------
+# New ClientManager methods (Round 16 fix)
+# ---------------------------------------------------------------------------
+
+class TestClientManagerNewMethods:
+    """Tests for IP tracking, groups, and attach/detach methods."""
+
+    def _make_manager(self):
+        from client_manager import ClientManager
+        return ClientManager(decrypt_func=lambda x: x)
+
+    def _node(self):
+        return {"name": "test", "ip": "1.2.3.4", "port": "443",
+                "scheme": "https", "base_path": "", "user": "admin",
+                "password": "pass", "read_only": False}
+
+    def test_get_client_ips_success(self):
+        mgr = self._make_manager()
+        body = {"success": True, "obj": "1.2.3.4\n5.6.7.8\n"}
+        with patch.object(mgr, '_get_session') as mock_gs:
+            mock_gs.return_value = (MagicMock(), "https://1.2.3.4:443")
+            with patch("client_manager.xui_request", return_value=_make_response(200, body)):
+                result = mgr.get_client_ips(self._node(), "user@test.com")
+        assert result["ips"] == ["1.2.3.4", "5.6.7.8"]
+
+    def test_get_client_ips_login_failure(self):
+        mgr = self._make_manager()
+        with patch.object(mgr, '_get_session', return_value=(None, None)):
+            result = mgr.get_client_ips(self._node(), "user@test.com")
+        assert result == {"ips": []}
+
+    def test_clear_client_ips_success(self):
+        mgr = self._make_manager()
+        body = {"success": True}
+        with patch.object(mgr, '_get_session') as mock_gs:
+            mock_gs.return_value = (MagicMock(), "https://1.2.3.4:443")
+            with patch("client_manager.xui_request", return_value=_make_response(200, body)):
+                result = mgr.clear_client_ips(self._node(), "user@test.com")
+        assert result is True
+
+    def test_get_last_online_success(self):
+        mgr = self._make_manager()
+        body = {"success": True, "obj": {"user@test.com": "2026-01-01T12:00:00"}}
+        with patch.object(mgr, '_get_session') as mock_gs:
+            mock_gs.return_value = (MagicMock(), "https://1.2.3.4:443")
+            with patch("client_manager.xui_request", return_value=_make_response(200, body)):
+                result = mgr.get_last_online(self._node(), ["user@test.com"])
+        assert result["data"] == {"user@test.com": "2026-01-01T12:00:00"}
+
+    def test_get_client_groups_success(self):
+        mgr = self._make_manager()
+        body = {"success": True, "obj": ["group1", "group2"]}
+        with patch.object(mgr, '_get_session') as mock_gs:
+            mock_gs.return_value = (MagicMock(), "https://1.2.3.4:443")
+            with patch("client_manager.xui_request", return_value=_make_response(200, body)):
+                result = mgr.get_client_groups(self._node())
+        assert result == {"groups": ["group1", "group2"]}
+
+    def test_attach_client_read_only_node(self):
+        mgr = self._make_manager()
+        node = {**self._node(), "read_only": True}
+        result = mgr.attach_client(node, "user@test.com", [1, 2])
+        assert result is False
+
+    def test_bulk_reset_traffic_read_only(self):
+        mgr = self._make_manager()
+        node = {**self._node(), "read_only": True}
+        result = mgr.bulk_reset_traffic([node], ["user@test.com"])
+        assert result["successful"] == 0
+
+    def test_get_sub_links_login_failure(self):
+        mgr = self._make_manager()
+        with patch.object(mgr, '_get_session', return_value=(None, None)):
+            result = mgr.get_sub_links(self._node(), "abc123")
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# New ServerMonitor methods (Rounds 2, 5)
+# ---------------------------------------------------------------------------
+
+class TestServerMonitorNewMethods:
+    """Tests for stop_xray, generate_mldsa65, get_panel_update_info, get_xray_observatory."""
+
+    def _build_monitor(self):
+        from server_monitor import ServerMonitor
+        return ServerMonitor(decrypt_func=lambda x: x)
+
+    def _node(self):
+        return {"name": "n1", "ip": "1.2.3.4", "port": 443,
+                "base_path": "", "user": "admin", "password": "pass"}
+
+    def test_stop_xray_success(self):
+        monitor = self._build_monitor()
+        body = {"success": True}
+        with patch.object(monitor, '_get_session') as mock_get_session:
+            sess = MagicMock()
+            mock_get_session.return_value = (sess, "https://1.2.3.4:443")
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)):
+                result = monitor.stop_xray(self._node())
+        assert result is True
+
+    def test_stop_xray_login_failure(self):
+        monitor = self._build_monitor()
+        with patch.object(monitor, '_get_session') as mock_get_session:
+            mock_get_session.return_value = (None, None)
+            result = monitor.stop_xray(self._node())
+        assert result is False
+
+    def test_generate_mldsa65_success(self):
+        monitor = self._build_monitor()
+        body = {"success": True, "obj": {"privateKey": "priv", "publicKey": "pub"}}
+        with patch.object(monitor, '_get_session') as mock_get_session:
+            sess = MagicMock()
+            mock_get_session.return_value = (sess, "https://1.2.3.4:443")
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)):
+                result = monitor.generate_mldsa65(self._node())
+        assert result.get("privateKey") == "priv"
+
+    def test_generate_mldsa65_login_failure(self):
+        monitor = self._build_monitor()
+        with patch.object(monitor, '_get_session') as mock_get_session:
+            mock_get_session.return_value = (None, None)
+            result = monitor.generate_mldsa65(self._node())
+        assert "error" in result
+
+    def test_get_panel_update_info_success(self):
+        monitor = self._build_monitor()
+        obj = {"currentVersion": "2.3.7", "latestVersion": "2.4.0", "isUpdatable": True}
+        body = {"success": True, "obj": obj}
+        with patch.object(monitor, '_get_session') as mock_get_session:
+            sess = MagicMock()
+            mock_get_session.return_value = (sess, "https://1.2.3.4:443")
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)):
+                result = monitor.get_panel_update_info(self._node())
+        # Returns {"node": ..., "update_info": obj}
+        assert result.get("update_info", {}).get("currentVersion") == "2.3.7"
+        assert "error" not in result
+
+    def test_get_xray_observatory_success(self):
+        monitor = self._build_monitor()
+        obj = {"status": [{"OutboundTag": "proxy", "Alive": True, "Delay": 120}]}
+        body = {"success": True, "obj": obj}
+        with patch.object(monitor, '_get_session') as mock_get_session:
+            sess = MagicMock()
+            mock_get_session.return_value = (sess, "https://1.2.3.4:443")
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)):
+                result = monitor.get_xray_observatory(self._node())
+        # Returns {"node": ..., "observatory": obj}
+        assert result.get("observatory", {}).get("status") is not None
+        assert "error" not in result
+
+    def test_get_xray_metrics_http_error(self):
+        monitor = self._build_monitor()
+        with patch.object(monitor, '_get_session') as mock_get_session:
+            sess = MagicMock()
+            mock_get_session.return_value = (sess, "https://1.2.3.4:443")
+            with patch("server_monitor.xui_request", return_value=_make_response(500, {})):
+                result = monitor.get_xray_metrics(self._node())
+        assert "error" in result
+
+
+# ---------------------------------------------------------------------------
+# InboundManager unit tests
+# ---------------------------------------------------------------------------
+
+class TestInboundManagerMethods:
+    """Unit tests for InboundManager read-only guards and key methods."""
+
+    def _make_manager(self):
+        from inbound_manager import InboundManager
+        return InboundManager(decrypt_func=lambda x: x)
+
+    def _node(self, read_only=False):
+        return {"name": "n1", "ip": "1.2.3.4", "port": "443",
+                "scheme": "https", "base_path": "", "user": "admin",
+                "password": "pass", "read_only": read_only}
+
+    def test_add_inbound_read_only_returns_false(self):
+        result = self._make_manager().add_inbound(self._node(read_only=True), {"protocol": "vless"})
+        assert result is False
+
+    def test_delete_inbound_read_only_returns_false(self):
+        result = self._make_manager().delete_inbound(self._node(read_only=True), 1)
+        assert result is False
+
+    def test_reset_inbound_traffic_read_only_returns_false(self):
+        result = self._make_manager().reset_inbound_traffic(self._node(read_only=True), 1)
+        assert result is False
+
+    def test_set_inbound_enable_read_only_returns_false(self):
+        result = self._make_manager().set_inbound_enable(self._node(read_only=True), 1, True)
+        assert result is False
+
+    def test_update_inbound_read_only_returns_false(self):
+        result = self._make_manager().update_inbound(self._node(read_only=True), 1, {"remark": "x"})
+        assert result is False
+
+    def test_del_all_inbound_clients_read_only_returns_error(self):
+        result = self._make_manager().del_all_inbound_clients(self._node(read_only=True), 1)
+        assert "error" in result
+
+    def test_reset_inbound_traffic_login_failure(self):
+        # InboundManager creates its own session; if login_panel returns False, method returns False
+        mgr = self._make_manager()
+        with patch("inbound_manager.login_panel", return_value=False):
+            result = mgr.reset_inbound_traffic(self._node(), 42)
+        assert result is False
+
+    def test_set_inbound_enable_login_failure(self):
+        mgr = self._make_manager()
+        with patch("inbound_manager.login_panel", return_value=False):
+            result = mgr.set_inbound_enable(self._node(), 1, False)
+        assert result is False
+
+    def test_get_all_inbounds_empty_on_error(self):
+        mgr = self._make_manager()
+        with patch("inbound_manager.login_panel", return_value=False):
+            result = mgr.get_all_inbounds([self._node()])
+        assert result == []

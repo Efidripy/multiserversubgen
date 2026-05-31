@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { useToast } from './Toast';
 import api from '../api';
-import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
 import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
@@ -24,8 +24,11 @@ interface SubscriptionGroup {
 }
 
 export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) => {
-  const { colors } = useTheme();
+  const { toast } = useToast();
   const [emails, setEmails] = useState<string[]>([]);
+  const [qrUrl, setQrUrl] = useState('');
+  const [showQr, setShowQr] = useState(false);
+  const [emailSearch, setEmailSearch] = useState('');
   const [stats, setStats] = useState<Record<string, Stats>>({});
   const [nodes, setNodes] = useState<Node[]>([]);
   const [loading, setLoading] = useState(false);
@@ -120,7 +123,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      alert('Copied!');
+      toast('Copied!', 'info');
     } catch {
       const el = document.createElement('textarea');
       el.value = text;
@@ -142,13 +145,17 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   };
 
   if (loading && emails.length === 0) {
-    return <div className="text-center py-5" style={{ color: colors.text.secondary }}>Loading...</div>;
+    return <div className="text-center py-5" style={{ color: 'var(--text-secondary)' }}>Loading...</div>;
   }
 
   const compareText = (a: string, b: string) =>
     a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 
-  const sortedEmails = [...emails].sort((a, b) => {
+  const filteredEmails = emailSearch.trim()
+    ? emails.filter(e => e.toLowerCase().includes(emailSearch.trim().toLowerCase()))
+    : emails;
+
+  const sortedEmails = [...filteredEmails].sort((a, b) => {
     const factor = individualSortDir === 'asc' ? 1 : -1;
     const byEmail = compareText(a, b);
     const byDownloads = (stats[a]?.count || 0) - (stats[b]?.count || 0);
@@ -214,7 +221,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
             <div className="panel-inline-actions">
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
                 onClick={loadEmails}
                 disabled={loading}
               >
@@ -223,12 +230,35 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                   Refresh Emails
                 </span>
               </button>
+              <input
+                type="text"
+                className="form-control form-control-sm"
+                placeholder="Search emails…"
+                value={emailSearch}
+                onChange={e => setEmailSearch(e.target.value)}
+                style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)', width: '180px' }}
+              />
+              <button
+                className="btn btn-sm"
+                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                title="Copy all subscription links to clipboard"
+                onClick={async () => {
+                  const allLinks = filteredEmails.map(email => buildSubscriptionUrl(email));
+                  await copyToClipboard(allLinks.join('\n'));
+                }}
+                disabled={filteredEmails.length === 0}
+              >
+                <span className="d-inline-flex align-items-center gap-1">
+                  <UIIcon name="copy" size={14} />
+                  Copy All Links ({filteredEmails.length})
+                </span>
+              </button>
               <button
                 className="btn btn-sm"
                 style={{
-                  backgroundColor: viewMode === 'individual' ? colors.accent : colors.bg.tertiary,
-                  borderColor: colors.border,
-                  color: viewMode === 'individual' ? colors.accentText : colors.text.primary
+                  backgroundColor: viewMode === 'individual' ? 'var(--accent)' : 'var(--bg-tertiary)',
+                  borderColor: 'var(--border-color)',
+                  color: viewMode === 'individual' ? '#000f14' : 'var(--text-primary)'
                 }}
                 onClick={() => setViewMode('individual')}
               >
@@ -240,9 +270,9 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
               <button
                 className="btn btn-sm"
                 style={{
-                  backgroundColor: viewMode === 'grouped' ? colors.accent : colors.bg.tertiary,
-                  borderColor: colors.border,
-                  color: viewMode === 'grouped' ? colors.accentText : colors.text.primary
+                  backgroundColor: viewMode === 'grouped' ? 'var(--accent)' : 'var(--bg-tertiary)',
+                  borderColor: 'var(--border-color)',
+                  color: viewMode === 'grouped' ? '#000f14' : 'var(--text-primary)'
                 }}
                 onClick={() => setViewMode('grouped')}
               >
@@ -255,28 +285,28 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
           </div>
 
           {error && (
-            <div className="alert mb-2" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+            <div className="alert mb-2" style={{ backgroundColor: 'color-mix(in srgb, var(--danger) 14%, transparent)', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
               {error}
             </div>
           )}
           {successMessage && (
-            <div className="alert mb-2" style={{ backgroundColor: colors.success + '22', borderColor: colors.success, color: colors.success }}>
+            <div className="alert mb-2" style={{ backgroundColor: 'color-mix(in srgb, var(--success) 14%, transparent)', borderColor: 'var(--success)', color: 'var(--success)' }}>
               {successMessage}
             </div>
           )}
 
           <div className="row g-2 mb-2">
             <div className="col-12">
-              <label className="form-label small" style={{ color: colors.text.secondary }}>Node Filter</label>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>Node Filter</label>
               <div className="panel-inline-actions">
                 {nodes.map((node) => (
                   <button
                     key={node.id}
                     className="btn btn-sm"
                     style={{
-                      backgroundColor: selectedNodes.includes(node.name) ? colors.accent : colors.bg.tertiary,
-                      borderColor: colors.border,
-                      color: selectedNodes.includes(node.name) ? colors.accentText : colors.text.primary
+                      backgroundColor: selectedNodes.includes(node.name) ? 'var(--accent)' : 'var(--bg-tertiary)',
+                      borderColor: 'var(--border-color)',
+                      color: selectedNodes.includes(node.name) ? '#000f14' : 'var(--text-primary)'
                     }}
                     onClick={() => toggleNodeSelection(node.name)}
                   >
@@ -289,7 +319,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                 {selectedNodes.length > 0 && (
                   <button
                     className="btn btn-sm"
-                    style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
+                    style={{ backgroundColor: 'var(--warning)', borderColor: 'var(--warning)', color: 'var(--text-primary)' }}
                     onClick={() => setSelectedNodes([])}
                   >
                     <span className="d-inline-flex align-items-center gap-1">
@@ -303,7 +333,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
           </div>
 
           {(filterProtocol || selectedNodes.length > 0 || deliveryTransport !== 'all' || deliveryFormat !== 'base64') && (
-            <div className="alert mt-2 mb-0" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.text.primary }}>
+            <div className="alert mt-2 mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--info) 14%, transparent)', borderColor: 'var(--info)', color: 'var(--text-primary)' }}>
               <small>
                 <strong>Active filters:</strong>
                 {filterProtocol && ` Protocol: ${filterProtocol.toUpperCase()}`}
@@ -324,7 +354,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
           </div>
           <div className="panel-block__stack">
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>Subscription profile</label>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>Subscription profile</label>
               <ChoiceChips
                 options={[
                   { value: '', label: 'All' },
@@ -334,11 +364,11 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                 ]}
                 value={filterProtocol}
                 onChange={(value) => setFilterProtocol(value)}
-                colors={colors}
+                
               />
             </div>
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>Transport hint</label>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>Transport hint</label>
               <ChoiceChips
                 options={[
                   { value: 'all', label: 'All' },
@@ -347,11 +377,11 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                 ]}
                 value={deliveryTransport}
                 onChange={(value) => setDeliveryTransport(value)}
-                colors={colors}
+                
               />
             </div>
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>Output format</label>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>Output format</label>
               <ChoiceChips
                 options={[
                   { value: 'base64', label: 'Base64' },
@@ -360,7 +390,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                 ]}
                 value={deliveryFormat}
                 onChange={(value) => setDeliveryFormat(value)}
-                colors={colors}
+                
               />
             </div>
           </div>
@@ -369,7 +399,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
 
       <section className="panel-block">
         <div className="d-flex justify-content-between align-items-center mb-3 gap-2">
-          <h6 className="mb-0" style={{ color: colors.text.primary }}>
+          <h6 className="mb-0" style={{ color: 'var(--text-primary)' }}>
             {viewMode === 'individual' ? `Individual Subscriptions (${emails.length})` : `Grouped Subscriptions (${groups.length} groups)`}
           </h6>
           {viewMode === 'grouped' ? (
@@ -381,7 +411,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                 ]}
                 value={groupSortField}
                 onChange={(value) => setGroupSortField(value)}
-                colors={colors}
+                
               />
               <ChoiceChips
                 options={[
@@ -390,52 +420,52 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                 ]}
                 value={groupSortDir}
                 onChange={(value) => setGroupSortDir(value)}
-                colors={colors}
+                
               />
             </div>
           ) : (
-            <div className="small" style={{ color: colors.text.secondary }}>Click table headers to sort</div>
+            <div className="small" style={{ color: 'var(--text-secondary)' }}>Click table headers to sort</div>
           )}
         </div>
 
         {emails.length === 0 ? (
-          <p className="text-center py-3 mb-0" style={{ color: colors.text.secondary }}>No users found. Add panel nodes first.</p>
+          <p className="text-center py-3 mb-0" style={{ color: 'var(--text-secondary)' }}>No users found. Add panel nodes first.</p>
         ) : viewMode === 'individual' ? (
           <div className="table-responsive table-shell">
-            <table className="table table-hover small mb-0" style={{ color: colors.text.primary }}>
+            <table className="table table-hover small mb-0" style={{ color: 'var(--text-primary)' }}>
               <thead>
-                <tr style={{ borderColor: colors.border }}>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('email')}>
+                <tr style={{ borderColor: 'var(--border-color)' }}>
+                  <th style={{ color: 'var(--text-secondary)' }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyIndividualSortFromHeader('email')}>
                       Email{individualSortIndicator('email')}
                     </button>
                   </th>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('downloads')}>
+                  <th style={{ color: 'var(--text-secondary)' }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyIndividualSortFromHeader('downloads')}>
                       Downloads{individualSortIndicator('downloads')}
                     </button>
                   </th>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('last')}>
+                  <th style={{ color: 'var(--text-secondary)' }}>
+                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyIndividualSortFromHeader('last')}>
                       Last seen{individualSortIndicator('last')}
                     </button>
                   </th>
-                  <th style={{ color: colors.text.secondary }}>Link</th>
+                  <th style={{ color: 'var(--text-secondary)' }}>Link</th>
                 </tr>
               </thead>
               <tbody>
                 {sortedEmails.map((email) => (
-                  <tr key={email} style={{ borderColor: colors.border }}>
+                  <tr key={email} style={{ borderColor: 'var(--border-color)' }}>
                     <td className="align-middle">
-                      <strong style={{ color: colors.text.primary }}>{email}</strong>
+                      <strong style={{ color: 'var(--text-primary)' }}>{email}</strong>
                     </td>
                     <td className="align-middle">
-                      <span className="badge" style={{ backgroundColor: colors.info }}>
+                      <span className="badge" style={{ backgroundColor: 'var(--info)' }}>
                         {stats[email]?.count || 0}
                       </span>
                     </td>
                     <td className="align-middle">
-                      <small style={{ color: colors.text.secondary }}>{stats[email]?.last || '--'}</small>
+                      <small style={{ color: 'var(--text-secondary)' }}>{stats[email]?.last || '--'}</small>
                     </td>
                     <td className="align-middle">
                       <div className="input-group input-group-sm">
@@ -445,14 +475,22 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                           className="form-control form-control-sm"
                           readOnly
                           value={buildSubscriptionUrl(email)}
-                          style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                          style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                         />
                         <button
                           className="btn"
-                          style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                          style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
                           onClick={() => copyToClipboard(buildSubscriptionUrl(email))}
                         >
                           Copy
+                        </button>
+                        <button
+                          className="btn"
+                          style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
+                          title="Show QR code"
+                          onClick={() => { setQrUrl(buildSubscriptionUrl(email)); setShowQr(true); }}
+                        >
+                          ▦
                         </button>
                       </div>
                     </td>
@@ -468,20 +506,25 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                 <div className="panel-block h-100">
                   <div className="d-flex justify-content-between align-items-center mb-2">
                     <div>
-                      <h6 className="mb-0" style={{ color: colors.accent }}>
+                      <h6 className="mb-0" style={{ color: 'var(--accent)' }}>
                         <span className="d-inline-flex align-items-center gap-1">
                           <UIIcon name="folder" size={13} />
                           {group.identifier}
                         </span>
                       </h6>
-                      <small style={{ color: colors.text.secondary }}>{group.count} clients</small>
+                      <small style={{ color: 'var(--text-secondary)' }}>
+                        {group.count} client{group.count !== 1 ? 's' : ''}
+                        {group.emails && group.emails.length > 0 && group.emails.length !== group.count && (
+                          <span style={{ color: 'var(--text-secondary)' }}> · {group.emails.length} emails</span>
+                        )}
+                      </small>
                     </div>
-                    <span className="badge" style={{ backgroundColor: colors.accent }}>{group.count}</span>
+                    <span className="badge" style={{ backgroundColor: 'var(--accent)' }}>{group.count}</span>
                   </div>
 
                   <div className="mb-2" style={{ maxHeight: '120px', overflowY: 'auto' }}>
                     {group.emails.map((email, i) => (
-                      <div key={i} className="small" style={{ color: colors.text.secondary }}>
+                      <div key={i} className="small" style={{ color: 'var(--text-secondary)' }}>
                         • {email}
                       </div>
                     ))}
@@ -493,14 +536,25 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                       className="form-control form-control-sm"
                       readOnly
                       value={buildSubscriptionUrl(group.identifier, true)}
-                      style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                      style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                     />
                     <button
                       className="btn"
-                      style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                      style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
                       onClick={() => copyToClipboard(buildSubscriptionUrl(group.identifier, true))}
                     >
                       Copy
+                    </button>
+                    <button
+                      className="btn"
+                      style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
+                      title="Copy all individual subscription links for this group"
+                      onClick={async () => {
+                        const links = group.emails.map(e => buildSubscriptionUrl(e)).join('\n');
+                        await copyToClipboard(links);
+                      }}
+                    >
+                      All links
                     </button>
                   </div>
                 </div>
@@ -508,7 +562,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
             ))}
             {groups.length === 0 && (
               <div className="col-12">
-                <p className="text-center py-3 mb-0" style={{ color: colors.text.secondary }}>
+                <p className="text-center py-3 mb-0" style={{ color: 'var(--text-secondary)' }}>
                   No groups found. Groups require at least two clients with similar identifiers.
                 </p>
               </div>
@@ -516,6 +570,34 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
           </div>
         )}
       </section>
+
+      {/* QR Code Modal */}
+      {showQr && qrUrl && (
+        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={e => { if (e.target === e.currentTarget) setShowQr(false); }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+              <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
+                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>▦ Subscription QR Code</h6>
+                <button type="button" className="btn-close btn-close-white" onClick={() => setShowQr(false)} />
+              </div>
+              <div className="modal-body d-flex flex-column align-items-center gap-3">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(qrUrl)}`}
+                  alt="Subscription QR"
+                  width={280} height={280}
+                  style={{ border: '2px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff' }}
+                />
+                <div className="d-flex gap-2 w-100">
+                  <input readOnly className="form-control form-control-sm" value={qrUrl}
+                    style={{ fontFamily: 'monospace', fontSize: '11px', backgroundColor: 'var(--bg-primary)', color: 'var(--text-secondary)', borderColor: 'var(--border-color)' }} />
+                  <button className="btn btn-sm" style={{ backgroundColor: 'var(--accent)', color: '#000f14', whiteSpace: 'nowrap' }}
+                    onClick={() => copyToClipboard(qrUrl)}>Copy</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

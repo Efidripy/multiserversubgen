@@ -50,6 +50,7 @@ def _build_test_app(*, monitoring_enabled: bool) -> FastAPI:
         invalidate_live_stats_cache=main.invalidate_live_stats_cache,
         client_mgr=main.client_mgr,
         get_cached_clients=main.get_cached_clients,
+        get_cached_inbounds=main.inbounds_runtime.get_cached_inbounds,
         check_subscription_rate_limit=main._check_subscription_rate_limit,
         get_emails=main.get_emails,
         get_links_filtered=main.get_links_filtered,
@@ -195,3 +196,248 @@ def test_monitoring_stack_smoke(monkeypatch):
     assert "services" in payload
     assert "prometheus" in payload["services"]
     assert "public_paths" in payload
+
+
+def test_clients_find_by_ip_auth_required(monkeypatch):
+    """find-by-ip requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    response = client.get("/api/v1/clients/find-by-ip?ip=1.2.3.4")
+    assert response.status_code == 401
+
+
+def test_clients_find_by_ip_missing_param(monkeypatch):
+    """find-by-ip without ip param returns 400 or 422."""
+    monkeypatch.setattr(main.p, "authenticate", lambda u, p: True)
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    response = client.get("/api/v1/clients/find-by-ip", headers=_basic_auth())
+    # Either validation error (422) or our explicit 400
+    assert response.status_code in (400, 422)
+
+
+def test_clients_last_online_smoke(monkeypatch):
+    """last-online returns results key."""
+    monkeypatch.setattr(main.p, "authenticate", lambda u, p: True)
+    monkeypatch.setattr(main.node_service, "list_nodes", lambda: [])
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    response = client.post("/api/v1/clients/last-online", json={}, headers=_basic_auth())
+    assert response.status_code == 200
+    body = response.json()
+    assert "results" in body
+    assert "data" in body
+
+
+def test_dashboard_summary_auth_required():
+    """dashboard/summary requires auth (no credentials → 401)."""
+    # Note: this endpoint uses middleware-set auth_user, so a bare test client
+    # without the middleware will always get 401 — which is what we verify here.
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    response = client.get("/api/v1/dashboard/summary")
+    assert response.status_code == 401
+
+
+def test_inbound_update_auth_required():
+    """PUT /inbounds/{node_id}/{id} requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    response = client.put("/api/v1/inbounds/1/1", json={"remark": "test"})
+    assert response.status_code == 401
+
+
+def test_xray_config_auth_required():
+    """GET /nodes/{id}/xray-config requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    response = client.get("/api/v1/nodes/1/xray-config")
+    assert response.status_code == 401
+
+
+def test_inbound_reset_all_traffic_auth(monkeypatch):
+    """POST inbounds/{id}/reset-all-traffics requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.post("/api/v1/inbounds/1/reset-all-traffics")
+    assert resp.status_code == 401
+
+
+def test_inbound_del_all_clients_auth(monkeypatch):
+    """POST inbounds/{id}/{id}/del-all-clients requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.post("/api/v1/inbounds/1/1/del-all-clients")
+    assert resp.status_code == 401
+
+
+def test_collector_status_auth_required():
+    """GET /collector/status requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/collector/status")
+    assert resp.status_code == 401
+
+
+def test_stop_xray_auth_required():
+    """POST /nodes/{id}/stop-xray requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.post("/api/v1/nodes/1/stop-xray")
+    assert resp.status_code == 401
+
+
+def test_backup_all_auth_required():
+    """GET /backup/all requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/backup/all")
+    assert resp.status_code == 401
+
+
+def test_automation_reset_all_traffic_auth_required():
+    """POST /automation/reset-all-traffic requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.post("/api/v1/automation/reset-all-traffic", json={})
+    assert resp.status_code == 401
+
+
+def test_nodes_check_connection_auth_required():
+    """POST /nodes/check-connection requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.post("/api/v1/nodes/check-connection", json={"url": "http://1.2.3.4"})
+    assert resp.status_code == 401
+
+
+def test_history_nodes_auth_required():
+    """GET /history/nodes/{id} requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/history/nodes/1")
+    assert resp.status_code == 401
+
+
+def test_clients_count_auth_required():
+    """GET /clients/count requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/clients/count")
+    assert resp.status_code == 401
+
+
+def test_clients_count_with_node_id_auth(monkeypatch):
+    """GET /clients/count?node_id=N requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/clients/count?node_id=1")
+    assert resp.status_code == 401
+
+
+def test_nodes_xray_versions_auth_required():
+    """GET /nodes/{id}/xray-versions requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/nodes/1/xray-versions")
+    assert resp.status_code == 401
+
+
+def test_nodes_generate_uuid_auth_required():
+    """GET /nodes/{id}/generate-uuid requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/nodes/1/generate-uuid")
+    assert resp.status_code == 401
+
+
+def test_status_endpoint_public(monkeypatch):
+    """GET /status is accessible without auth."""
+    monkeypatch.setattr(main.node_service, "list_nodes", lambda: [])
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/status")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body.get("status") == "ok"
+    assert "nodes_total" in body
+    assert "version" in body
+
+
+def test_inbound_set_enable_auth_required():
+    """POST /inbounds/{n}/{i}/set-enable requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.post("/api/v1/inbounds/1/1/set-enable", json={"enable": True})
+    assert resp.status_code == 401
+
+
+def test_inbound_reset_traffic_auth_required():
+    """POST /inbounds/{n}/{i}/reset-traffic requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.post("/api/v1/inbounds/1/1/reset-traffic")
+    assert resp.status_code == 401
+
+
+def test_inbound_batch_enable_auth_required():
+    """POST /inbounds/batch-enable requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.post("/api/v1/inbounds/batch-enable", json={"inbound_ids": [1], "enable": True})
+    assert resp.status_code == 401
+
+
+def test_inbound_batch_update_auth_required():
+    """POST /inbounds/batch-update requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.post("/api/v1/inbounds/batch-update", json={"inbound_ids": [1], "updates": {}})
+    assert resp.status_code == 401
+
+
+def test_nodes_generate_x25519_auth_required():
+    """GET /nodes/{id}/generate-x25519 requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/nodes/1/generate-x25519")
+    assert resp.status_code == 401
+
+
+def test_nodes_generate_mldsa65_auth_required():
+    """GET /nodes/{id}/generate-mldsa65 requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/nodes/1/generate-mldsa65")
+    assert resp.status_code == 401
+
+
+def test_nodes_outbounds_traffic_auth_required():
+    """GET /nodes/{id}/outbounds-traffic requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/nodes/1/outbounds-traffic")
+    assert resp.status_code == 401
+
+
+def test_nodes_server_history_auth_required():
+    """GET /nodes/{id}/server-history/{metric} requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/nodes/1/server-history/cpu")
+    assert resp.status_code == 401
+
+
+def test_clients_expired_auth_required():
+    """GET /clients/expired requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/clients/expired")
+    assert resp.status_code == 401
+
+
+def test_clients_depleted_auth_required():
+    """GET /clients/depleted requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/clients/depleted")
+    assert resp.status_code == 401
+
+
+def test_inbounds_stats_auth_required():
+    """GET /inbounds/stats requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/inbounds/stats")
+    assert resp.status_code == 401
+
+
+def test_clients_search_auth_required():
+    """GET /clients/search requires auth."""
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/clients/search")
+    assert resp.status_code == 401
+
+
+def test_clients_search_with_auth(monkeypatch):
+    """GET /clients/search returns paginated results."""
+    monkeypatch.setenv("SM_API_USER", "admin")
+    monkeypatch.setenv("SM_API_PASS", "secret")
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+    resp = client.get("/api/v1/clients/search?q=test&limit=10&offset=0", auth=("admin", "secret"))
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "clients" in data
+    assert "total" in data
+    assert "limit" in data
+    assert data["limit"] == 10

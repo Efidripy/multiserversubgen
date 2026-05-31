@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import api from '../api';
-import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
 import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
@@ -28,7 +27,6 @@ const FLOW_OPTIONS = [
 ];
 
 export const AddClientMultiServer: React.FC = () => {
-  const { colors } = useTheme();
   const [email, setEmail] = useState('');
   const [flow, setFlow] = useState('');
   const [inboundId, setInboundId] = useState('1');
@@ -113,8 +111,8 @@ export const AddClientMultiServer: React.FC = () => {
   };
 
   return (
-    <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-      <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: colors.accent }}>
+    <div className="card p-3 mb-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+      <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: 'var(--accent)' }}>
         <UIIcon name="servers" size={15} />
         Add Client to Multiple Servers
       </h6>
@@ -122,7 +120,7 @@ export const AddClientMultiServer: React.FC = () => {
       {error && (
         <div
           className="alert mb-3"
-          style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}
+          style={{ backgroundColor: 'color-mix(in srgb, var(--danger) 14%, transparent)', borderColor: 'var(--danger)', color: 'var(--danger)' }}
         >
           {error}
         </div>
@@ -132,8 +130,8 @@ export const AddClientMultiServer: React.FC = () => {
         <div className="panel-block panel-block--wide">
           <div className="panel-block__header">
             <div>
-              <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Client Profile</h6>
-              <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+              <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>Client Profile</h6>
+              <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
                 Basic client settings in one place.
               </p>
             </div>
@@ -141,7 +139,7 @@ export const AddClientMultiServer: React.FC = () => {
 
           <div className="panel-field-grid">
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
                 Email
               </label>
               <input
@@ -150,11 +148,11 @@ export const AddClientMultiServer: React.FC = () => {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="user@example.com"
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
                 Inbound ID
               </label>
               <input
@@ -163,11 +161,11 @@ export const AddClientMultiServer: React.FC = () => {
                 value={inboundId}
                 onChange={(e) => setInboundId(e.target.value)}
                 min={1}
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
                 Total GB (0 = inf)
               </label>
               <input
@@ -176,11 +174,11 @@ export const AddClientMultiServer: React.FC = () => {
                 value={totalGB}
                 onChange={(e) => setTotalGB(e.target.value)}
                 min={0}
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
                 Expiry Date
               </label>
               <input
@@ -188,25 +186,25 @@ export const AddClientMultiServer: React.FC = () => {
                 className="form-control form-control-sm"
                 value={expiryTime}
                 onChange={(e) => setExpiryTime(e.target.value)}
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
               />
             </div>
           </div>
 
           <div className="panel-grid panel-grid--compact mt-3">
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
                 Flow
               </label>
               <ChoiceChips
                 options={FLOW_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
                 value={flow}
                 onChange={(value) => setFlow(value)}
-                colors={colors}
+                
               />
             </div>
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
                 Status
               </label>
               <ChoiceChips
@@ -216,7 +214,7 @@ export const AddClientMultiServer: React.FC = () => {
                 ]}
                 value={enable}
                 onChange={(value) => setEnable(value)}
-                colors={colors}
+                
               />
             </div>
           </div>
@@ -225,22 +223,22 @@ export const AddClientMultiServer: React.FC = () => {
         <div className="panel-block panel-block--wide">
           <div className="panel-block__header">
             <div>
-              <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Target Servers</h6>
-              <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
+              <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>Target Servers</h6>
+              <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
                 Select one, many or all servers for this client.
               </p>
             </div>
             <div className="panel-inline-actions">
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 onClick={handleSelectAll}
               >
                 All
               </button>
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 onClick={handleSelectNone}
               >
                 None
@@ -248,7 +246,7 @@ export const AddClientMultiServer: React.FC = () => {
             </div>
           </div>
 
-          <div className="small mb-2" style={{ color: colors.text.secondary }}>
+          <div className="small mb-2" style={{ color: 'var(--text-secondary)' }}>
             {selectedNodeIds.size}/{nodes.length} selected
           </div>
           <div className="panel-selection-grid">
@@ -261,9 +259,9 @@ export const AddClientMultiServer: React.FC = () => {
                   className="btn btn-sm text-start"
                   onClick={() => toggleNode(node.id)}
                   style={{
-                    backgroundColor: active ? colors.accent : colors.bg.tertiary,
-                    borderColor: active ? colors.accent : colors.border,
-                    color: active ? colors.accentText : colors.text.primary,
+                    backgroundColor: active ? 'var(--accent)' : 'var(--bg-tertiary)',
+                    borderColor: active ? 'var(--accent)' : 'var(--border-color)',
+                    color: active ? '#000f14' : 'var(--text-primary)',
                     justifyContent: 'flex-start',
                   }}
                 >
@@ -275,7 +273,7 @@ export const AddClientMultiServer: React.FC = () => {
               );
             })}
             {nodes.length === 0 && (
-              <span className="small" style={{ color: colors.text.secondary }}>No servers configured</span>
+              <span className="small" style={{ color: 'var(--text-secondary)' }}>No servers configured</span>
             )}
           </div>
         </div>
@@ -284,7 +282,7 @@ export const AddClientMultiServer: React.FC = () => {
       <div className="panel-inline-actions">
         <button
           className="btn btn-sm"
-          style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+          style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
           onClick={handleSubmit}
           disabled={loading || selectedNodeIds.size === 0}
         >
@@ -300,10 +298,10 @@ export const AddClientMultiServer: React.FC = () => {
           <div className="modal-dialog modal-lg">
             <div
               className="modal-content"
-              style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}
+              style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}
             >
-              <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>
+              <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
+                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>
                   Add Client Results
                 </h6>
                 <button
@@ -314,54 +312,54 @@ export const AddClientMultiServer: React.FC = () => {
               </div>
               <div className="modal-body">
                 <div className="d-flex gap-3 mb-3">
-                  <span className="badge fs-6" style={{ backgroundColor: colors.bg.tertiary, color: colors.text.primary }}>
+                  <span className="badge fs-6" style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
                     Total: {result.summary.total}
                   </span>
-                  <span className="badge fs-6" style={{ backgroundColor: colors.success }}>
+                  <span className="badge fs-6" style={{ backgroundColor: 'var(--success)' }}>
                     <span className="d-inline-flex align-items-center gap-1"><UIIcon name="check" size={12} />{result.summary.successful}</span>
                   </span>
-                  <span className="badge fs-6" style={{ backgroundColor: colors.danger }}>
+                  <span className="badge fs-6" style={{ backgroundColor: 'var(--danger)' }}>
                     <span className="d-inline-flex align-items-center gap-1"><UIIcon name="x" size={12} />{result.summary.failed}</span>
                   </span>
                 </div>
 
                 <div className="table-responsive">
-                  <table className="table table-sm" style={{ color: colors.text.primary }}>
+                  <table className="table table-sm" style={{ color: 'var(--text-primary)' }}>
                     <thead>
-                      <tr style={{ borderColor: colors.border }}>
-                        <th style={{ color: colors.text.secondary }}>Server</th>
-                        <th style={{ color: colors.text.secondary }}>Status</th>
-                        <th style={{ color: colors.text.secondary }}>Details</th>
+                      <tr style={{ borderColor: 'var(--border-color)' }}>
+                        <th style={{ color: 'var(--text-secondary)' }}>Server</th>
+                        <th style={{ color: 'var(--text-secondary)' }}>Status</th>
+                        <th style={{ color: 'var(--text-secondary)' }}>Details</th>
                       </tr>
                     </thead>
                     <tbody>
                       {result.results.map((item, index) => (
-                        <tr key={index} style={{ borderColor: colors.border }}>
+                        <tr key={index} style={{ borderColor: 'var(--border-color)' }}>
                           <td>{item.node}</td>
                           <td>
                             {item.success ? (
-                              <span className="d-inline-flex align-items-center gap-1" style={{ color: colors.success }}>
+                              <span className="d-inline-flex align-items-center gap-1" style={{ color: 'var(--success)' }}>
                                 <UIIcon name="check" size={13} />
                                 Success
                               </span>
                             ) : (
-                              <span className="d-inline-flex align-items-center gap-1" style={{ color: colors.danger }}>
+                              <span className="d-inline-flex align-items-center gap-1" style={{ color: 'var(--danger)' }}>
                                 <UIIcon name="x" size={13} />
                                 Failed
                               </span>
                             )}
                           </td>
-                          <td>{item.error && <small style={{ color: colors.danger }}>{item.error}</small>}</td>
+                          <td>{item.error && <small style={{ color: 'var(--danger)' }}>{item.error}</small>}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               </div>
-              <div className="modal-footer" style={{ borderColor: colors.border }}>
+              <div className="modal-footer" style={{ borderColor: 'var(--border-color)' }}>
                 <button
                   className="btn btn-sm"
-                  style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                  style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
                   onClick={() => setShowResultModal(false)}
                 >
                   Close

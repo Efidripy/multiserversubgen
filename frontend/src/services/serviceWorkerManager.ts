@@ -20,10 +20,13 @@ class ServiceWorkerManager {
       return;
     }
 
-    const workerPath = options.workerPath || '/sw.js';
+    const baseUrl = import.meta.env.BASE_URL || '/';
+    const workerPath = options.workerPath || `${baseUrl.replace(/\/?$/, '/')}sw.js`;
 
     try {
-      this.registration = await navigator.serviceWorker.register(workerPath);
+      this.registration = await navigator.serviceWorker.register(workerPath, {
+        scope: baseUrl,
+      });
 
       // Check for updates periodically
       setInterval(() => {

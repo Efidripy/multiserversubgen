@@ -2,6 +2,7 @@ import base64
 import datetime
 import io
 import sqlite3
+from services.db_bootstrap import connect
 import time
 import zipfile
 from typing import Dict
@@ -30,6 +31,17 @@ def build_operations_router(
             node_id_set = {int(node_id) for node_id in node_ids}
             return [node for node in nodes if int(node.get("id")) in node_id_set]
         return nodes
+
+    @router.get("/api/v1/status")
+    async def app_status(request: Request):
+        """Public health + summary endpoint (no auth required)."""
+        nodes = _load_nodes()
+        return {
+            "status": "ok",
+            "version": "3.1",
+            "nodes_total": len(nodes),
+            "timestamp": int(__import__("time").time()),
+        }
 
     @router.post("/api/v1/automation/reset-all-traffic")
     async def reset_all_traffic(request: Request, data: Dict):
@@ -195,7 +207,7 @@ def build_operations_router(
 
         get_node_or_404(node_id)
         ts_from = int(time.time()) - since_sec
-        with sqlite3.connect(db_path) as conn:
+        with connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """

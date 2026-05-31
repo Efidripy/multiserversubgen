@@ -44,6 +44,14 @@ fi
 
 resource_guard_run_heavy npx --no-install tsc
 resource_guard_run_heavy env VITE_BASE="$VITE_BASE" VITE_GRAFANA_PATH="$VITE_GRAFANA_PATH" npx --no-install vite build --outDir "$TMP_BUILD_DIR" --emptyOutDir
+
+# Stamp sw.js with a unique cache version so each deploy evicts stale SW caches.
+# Prevents the white-screen bug where a cached sw.js serves old asset hashes
+# that no longer exist on the server after a deploy.
+CACHE_VER="$(date +%Y%m%d%H%M%S)-$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || echo 'local')"
+if [[ -f "$TMP_BUILD_DIR/sw.js" ]]; then
+  sed -i "s/__CACHE_VER__/${CACHE_VER}/g" "$TMP_BUILD_DIR/sw.js"
+fi
 popd >/dev/null
 
 PUBLIC_DOMAIN='' PUBLIC_SCHEME='' bash "$SCRIPT_DIR/scripts/deploy/verify-frontend-release.sh" "$TMP_BUILD_DIR" "$WEB_PATH"

@@ -27,6 +27,7 @@ export const useWebSocket = ({
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const isMountedRef = useRef(true);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelsRef = useRef<string[]>(channels);
   const onMessageRef = useRef<typeof onMessage>(onMessage);
@@ -167,12 +168,12 @@ export const useWebSocket = ({
         }
 
         // Attempt to reconnect
-        if (enabled) {
+        if (enabled && isMountedRef.current) {
           reconnectAttemptsRef.current += 1;
           const backoff = Math.min(30000, reconnectInterval * (2 ** Math.min(reconnectAttemptsRef.current, 5)));
           const jitter = Math.floor(Math.random() * 500);
           reconnectTimeoutRef.current = setTimeout(() => {
-            connect();
+            if (isMountedRef.current) connect();
           }, backoff + jitter);
         }
       };
@@ -221,11 +222,13 @@ export const useWebSocket = ({
   }, [isConnected, safeSend]);
 
   useEffect(() => {
+    isMountedRef.current = true;
     if (enabled) {
       connect();
     }
 
     return () => {
+      isMountedRef.current = false;
       disconnect();
     };
   }, [enabled, connect, disconnect]);

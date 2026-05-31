@@ -22,5 +22,16 @@ export default defineConfig({
   build: {
     outDir: '../backend/build',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom'],
+          'vendor-i18n': ['i18next', 'react-i18next'],
+          'vendor-charts': ['chart.js', 'react-chartjs-2'],
+          'vendor-axios': ['axios'],
+        },
+      },
+    },
   },
 });

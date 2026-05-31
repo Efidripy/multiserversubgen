@@ -126,6 +126,14 @@ class AppSettings:
     collector_base_interval_sec: int
     collector_max_interval_sec: int
     collector_max_parallel: int
+    collector_warming_interval_1_sec: int
+    collector_warming_interval_2_sec: int
+    collector_warming_interval_3_sec: int
+    collector_active_interval_sec: int
+    collector_idle_interval_sec: int
+    collector_ultra_idle_interval_sec: int
+    collector_idle_after_sec: int
+    collector_ultra_idle_after_sec: int
     node_history_enabled: bool
     node_history_min_interval_sec: int
     node_history_retention_days: int
@@ -180,6 +188,14 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         collector_base_interval_sec=int(os.getenv("COLLECTOR_BASE_INTERVAL_SEC", "5")),
         collector_max_interval_sec=int(os.getenv("COLLECTOR_MAX_INTERVAL_SEC", "86400")),
         collector_max_parallel=int(os.getenv("COLLECTOR_MAX_PARALLEL", "4")),
+        collector_warming_interval_1_sec=int(os.getenv("COLLECTOR_WARMING_INTERVAL_1_SEC", "30")),
+        collector_warming_interval_2_sec=int(os.getenv("COLLECTOR_WARMING_INTERVAL_2_SEC", "60")),
+        collector_warming_interval_3_sec=int(os.getenv("COLLECTOR_WARMING_INTERVAL_3_SEC", "120")),
+        collector_active_interval_sec=int(os.getenv("COLLECTOR_ACTIVE_INTERVAL_SEC", "120")),
+        collector_idle_interval_sec=int(os.getenv("COLLECTOR_IDLE_INTERVAL_SEC", "3600")),
+        collector_ultra_idle_interval_sec=int(os.getenv("COLLECTOR_ULTRA_IDLE_INTERVAL_SEC", "86400")),
+        collector_idle_after_sec=int(os.getenv("COLLECTOR_IDLE_AFTER_SEC", "900")),
+        collector_ultra_idle_after_sec=int(os.getenv("COLLECTOR_ULTRA_IDLE_AFTER_SEC", "86400")),
         node_history_enabled=_env_bool("NODE_HISTORY_ENABLED", "true"),
         node_history_min_interval_sec=int(os.getenv("NODE_HISTORY_MIN_INTERVAL_SEC", "30")),
         node_history_retention_days=int(os.getenv("NODE_HISTORY_RETENTION_DAYS", "30")),

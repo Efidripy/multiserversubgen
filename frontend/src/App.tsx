@@ -9,6 +9,8 @@ import { ClientManager } from './components/ClientManager';
 import { TrafficStats } from './components/TrafficStats';
 import { BackupManager } from './components/BackupManager';
 import { MonitoringDashboard } from './components/MonitoringDashboard';
+import { DashboardSummary } from './components/DashboardSummary';
+import { ToastProvider } from './components/Toast';
 import { Sidebar, SidebarNavItem } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
 import { useWebSocket } from './hooks/useWebSocket';
@@ -112,7 +114,7 @@ const formatBytes = (bytes: number) => {
 const formatPercent = (value: number) => `${Number.isFinite(value) ? value.toFixed(value >= 10 ? 0 : 1) : '0'}%`;
 
 export const App: React.FC = () => {
-  const { themeMode, cycleThemeMode, colors } = useTheme();
+  const { colors } = useTheme();
   const { t } = useTranslation();
 
   const [user, setUser] = useState('');
@@ -222,6 +224,27 @@ export const App: React.FC = () => {
     return unsubscribe;
   }, []);
 
+  // Global keyboard shortcuts for tab navigation
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!user || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.altKey) {
+        const keyMap: Record<string, TabType> = {
+          '1': 'dashboard', '2': 'inbounds', '3': 'clients',
+          '4': 'traffic', '5': 'monitoring', '6': 'backup', '7': 'subscriptions',
+        };
+        const tab = keyMap[e.key];
+        if (tab && tab in TAB_META) {
+          e.preventDefault();
+          setActiveTab(tab);
+          setMountedTabs(prev => prev.includes(tab) ? prev : [...prev, tab]);
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [user]);
+
   useEffect(() => {
     const bootstrap = async () => {
       const remembered = loadRememberedUsername();
@@ -318,7 +341,8 @@ export const App: React.FC = () => {
           }
           case 'inbounds': {
             const res = await api.get('/v1/inbounds', { auth });
-            const inbounds = Array.isArray(res.data) ? res.data : [];
+            const inbounds = Array.isArray(res.data?.inbounds) ? res.data.inbounds
+              : Array.isArray(res.data) ? res.data : [];
             const enabled = inbounds.filter((item: any) => item.enable).length;
             const protocols = new Set(inbounds.map((item: any) => item.protocol).filter(Boolean)).size;
             const nodesCovered = new Set(inbounds.map((item: any) => item.node_name).filter(Boolean)).size;
@@ -608,8 +632,9 @@ export const App: React.FC = () => {
   if (!authBootstrapDone) {
     return (
       <div className="login-wrapper min-vh-100 d-flex align-items-center justify-content-center" style={{ backgroundColor: colors.bg.primary }}>
-        <div className="card p-4 text-center" style={{ maxWidth: '400px', width: '100%', backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-          <div style={{ color: colors.text.primary }}>{t('app.loading')}</div>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+          <div className="spinner-border" style={{ color: colors.accent, width: '1.8rem', height: '1.8rem', borderWidth: '0.15em' }} />
+          <span style={{ color: colors.text.tertiary, fontSize: '0.8rem' }}>{t('app.loading')}</span>
         </div>
       </div>
     );
@@ -618,66 +643,126 @@ export const App: React.FC = () => {
   if (!isAuthenticated) {
     return (
       <div className="login-wrapper min-vh-100 d-flex align-items-center justify-content-center" style={{ backgroundColor: colors.bg.primary }}>
-        <div className="card p-4" style={{ maxWidth: '400px', width: '100%', backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-          <div className="d-flex justify-content-between align-items-center mb-4">
-            <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
-              <UIIcon name="logo" size={18} />
+        <div style={{
+          width: '100%',
+          maxWidth: '380px',
+          padding: '0 16px',
+          animation: 'appFadeIn 0.3s ease both',
+        }}>
+          {/* Brand header */}
+          <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '52px',
+              height: '52px',
+              borderRadius: '14px',
+              background: `linear-gradient(135deg, ${colors.accent}33, ${colors.accent}18)`,
+              border: `1px solid ${colors.accent}44`,
+              marginBottom: '14px',
+              color: colors.accent,
+            }}>
+              <UIIcon name="logo" size={24} />
+            </div>
+            <h4 style={{ margin: 0, fontWeight: 700, color: colors.text.primary, fontSize: '1.15rem' }}>
               {t('app.title')}
-            </h5>
-            <button
-              className="btn btn-sm btn-outline-secondary"
-              onClick={cycleThemeMode}
-              title={t('app.themeToggleTitle')}
-            >
-              {themeMode === '1' ? <UIIcon name="sun" size={16} /> : <UIIcon name="moon" size={16} />}
-            </button>
+            </h4>
+            <p style={{ margin: '6px 0 0', fontSize: '0.78rem', color: colors.text.tertiary }}>
+              Multi-server VPN panel manager
+            </p>
           </div>
-          <form onSubmit={(e) => { e.preventDefault(); handleLogin(); }}>
-            <div className="mb-3">
-              <label className="form-label" style={{ color: colors.text.secondary }}>{t('auth.username')}</label>
-              <input
-                type="text"
-                className="form-control"
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                value={user}
-                onChange={(e) => setUser(e.target.value)}
-                required
-                autoFocus
-                autoComplete="username"
-              />
-            </div>
-            <div className="mb-3">
-              <label className="form-label" style={{ color: colors.text.secondary }}>{t('auth.password')}</label>
-              <input
-                type="password"
-                className="form-control"
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="current-password"
-              />
-            </div>
-            {mfaEnabled && (
+
+          {/* Login card */}
+          <div style={{
+            background: colors.bg.secondary,
+            border: `1px solid ${colors.border}`,
+            borderRadius: '16px',
+            padding: '24px',
+            boxShadow: `0 8px 32px rgba(0,0,0,0.18), 0 1px 0 rgba(255,255,255,0.04)`,
+          }}>
+            <form onSubmit={(e) => { e.preventDefault(); handleLogin(); }}>
               <div className="mb-3">
-                <label className="form-label" style={{ color: colors.text.secondary }}>{t('auth.totpCode')}</label>
+                <label className="form-label" style={{ color: colors.text.secondary, fontSize: '0.8rem', fontWeight: 600, marginBottom: '6px' }}>
+                  {t('auth.username')}
+                </label>
                 <input
                   type="text"
                   className="form-control"
                   style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                  value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  value={user}
+                  onChange={(e) => setUser(e.target.value)}
                   required
-                  inputMode="numeric"
-                  placeholder="123456"
+                  autoFocus
+                  autoComplete="username"
                 />
               </div>
-            )}
-            {authError && <div className="alert alert-danger" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>{authError}</div>}
-            <button type="submit" className="btn w-100" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}>
-              {t('auth.signIn')}
-            </button>
-          </form>
+              <div className="mb-3">
+                <label className="form-label" style={{ color: colors.text.secondary, fontSize: '0.8rem', fontWeight: 600, marginBottom: '6px' }}>
+                  {t('auth.password')}
+                </label>
+                <input
+                  type="password"
+                  className="form-control"
+                  style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                />
+              </div>
+              {mfaEnabled && (
+                <div className="mb-3">
+                  <label className="form-label" style={{ color: colors.text.secondary, fontSize: '0.8rem', fontWeight: 600, marginBottom: '6px' }}>
+                    {t('auth.totpCode')}
+                  </label>
+                  <input
+                    type="text"
+                    className="form-control text-tabular"
+                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, letterSpacing: '0.2em' }}
+                    value={totpCode}
+                    onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                    required
+                    inputMode="numeric"
+                    placeholder="000000"
+                  />
+                </div>
+              )}
+              {authError && (
+                <div style={{
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: `1px solid ${colors.danger}44`,
+                  borderLeft: `3px solid ${colors.danger}`,
+                  background: `${colors.danger}12`,
+                  color: colors.danger,
+                  fontSize: '0.8rem',
+                  marginBottom: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                }}>
+                  <span>✕</span>
+                  <span>{authError}</span>
+                </div>
+              )}
+              <button
+                type="submit"
+                className="btn w-100"
+                style={{
+                  backgroundColor: colors.accent,
+                  borderColor: colors.accent,
+                  color: colors.accentText,
+                  fontWeight: 700,
+                  fontSize: '0.85rem',
+                  padding: '0.54rem 1rem',
+                  marginTop: '4px',
+                }}
+              >
+                {t('auth.signIn')}
+              </button>
+            </form>
+          </div>
         </div>
       </div>
     );
@@ -710,6 +795,13 @@ export const App: React.FC = () => {
       case 'dashboard':
         return (
           <div className="d-grid gap-3">
+            <DashboardSummary onNavigate={(tab) => {
+              const t = tab as TabType;
+              if (t in TAB_META) {
+                setActiveTab(t);
+                setMountedTabs(prev => prev.includes(t) ? prev : [...prev, t]);
+              }
+            }} />
             <NodeManager onReload={() => setKey((prev) => prev + 1)} showFleet={false} />
             <div className="dashboard-main-grid">
               <div className="dashboard-main-grid__status">
@@ -722,11 +814,27 @@ export const App: React.FC = () => {
           </div>
         );
       case 'inbounds':
-        return <InboundManager onReload={() => setKey((prev) => prev + 1)} />;
+        return <InboundManager
+          onReload={() => setKey((prev) => prev + 1)}
+          onNavigateToClients={(inboundId, inboundRemark) => {
+            try { sessionStorage.setItem('sm_nav_inbound_filter', JSON.stringify({ id: inboundId, remark: inboundRemark })); } catch {}
+            setActiveTab('clients');
+            setMountedTabs(prev => prev.includes('clients') ? prev : [...prev, 'clients']);
+          }}
+          onAddClientToInbound={(inboundId, _nodeName) => {
+            try { sessionStorage.setItem('sm_nav_add_to_inbound', String(inboundId)); } catch {}
+            setActiveTab('clients');
+            setMountedTabs(prev => prev.includes('clients') ? prev : [...prev, 'clients']);
+          }}
+        />;
       case 'clients':
         return <ClientManager />;
       case 'traffic':
-        return <TrafficStats />;
+        return <TrafficStats onNavigateToClient={(email) => {
+          try { sessionStorage.setItem('sm_nav_client_search', email); } catch {}
+          setActiveTab('clients');
+          setMountedTabs(prev => prev.includes('clients') ? prev : [...prev, 'clients']);
+        }} />;
       case 'monitoring':
         return monitoringEnabled ? <MonitoringDashboard /> : null;
       case 'backup':
@@ -787,7 +895,7 @@ export const App: React.FC = () => {
           <div className="d-flex align-items-center gap-2">
             {browserNotifySupported && browserNotifyPermission !== 'granted' && (
               <button
-                className="btn btn-sm"
+                className="btn btn-sm topbar-push-btn"
                 style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
                 onClick={requestBrowserNotifications}
               >
@@ -816,7 +924,7 @@ export const App: React.FC = () => {
 
         {notificationPanelOpen && (
           <div
-            className="card"
+            className="card notif-panel"
             style={{
               position: 'absolute',
               top: '56px',
@@ -912,3 +1020,11 @@ export const App: React.FC = () => {
     </div>
   );
 };
+
+const AppWithToast: React.FC = () => (
+  <ToastProvider>
+    <App />
+  </ToastProvider>
+);
+
+export default AppWithToast;

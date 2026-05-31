@@ -6,8 +6,9 @@ from unittest.mock import patch
 
 import pytest
 
+import tempfile
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-os.environ.setdefault("PROJECT_DIR", "/tmp")
+os.environ.setdefault("PROJECT_DIR", tempfile.mkdtemp())
 import main
 from services import subscription_links as subscription_links_service
 
@@ -109,3 +110,44 @@ class TestVlessFlowParameter:
             links = main.get_links_filtered(_nodes(), "user@example.com")
         assert len(links) == 1
         assert "flow" not in links[0]
+
+    def test_reality_nested_fingerprint_is_used(self):
+        inbound = _make_inbound("reality")
+        stream_settings = json.loads(inbound["streamSettings"])
+        stream_settings["realitySettings"].pop("fingerprint", None)
+        stream_settings["realitySettings"]["settings"]["fingerprint"] = "qq"
+        inbound["streamSettings"] = json.dumps(stream_settings)
+
+        with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
+            links = main.get_links_filtered(_nodes(), "user@example.com")
+
+        assert len(links) == 1
+        assert "&fp=qq&" in links[0]
+
+    @pytest.mark.parametrize(
+        "fingerprint",
+        [
+            "chrome",
+            "firefox",
+            "qq",
+            "safari",
+            "ios",
+            "android",
+            "esdge",
+            "360",
+            "random",
+            "randomized",
+        ],
+    )
+    def test_reality_nested_fingerprint_values_are_preserved(self, fingerprint):
+        inbound = _make_inbound("reality")
+        stream_settings = json.loads(inbound["streamSettings"])
+        stream_settings["realitySettings"].pop("fingerprint", None)
+        stream_settings["realitySettings"]["settings"]["fingerprint"] = fingerprint
+        inbound["streamSettings"] = json.dumps(stream_settings)
+
+        with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
+            links = main.get_links_filtered(_nodes(), "user@example.com")
+
+        assert len(links) == 1
+        assert f"&fp={fingerprint}&" in links[0]

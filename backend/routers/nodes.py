@@ -1,4 +1,5 @@
 import sqlite3
+from services.db_bootstrap import connect
 import time
 from typing import Callable, Dict
 from urllib.parse import urlparse
@@ -6,6 +7,8 @@ from urllib.parse import urlparse
 import requests
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+
+from xui_session import invalidate_auth_method_cache
 
 
 def build_nodes_router(
@@ -61,12 +64,12 @@ def build_nodes_router(
         url = data.get("url")
         node_user = data.get("user")
         password = data.get("password")
-        bearer_token = data.get("bearer_token")
+        bearer_token = str(data.get("bearer_token") or "").strip()
         read_only = bool(data.get("read_only", False))
 
         if not all([name, url]):
             raise HTTPException(status_code=400, detail="name and url are required")
-        
+
         # Either bearer token OR (user + password) required
         has_token = bool(bearer_token)
         has_credentials = bool(node_user and password)
@@ -94,7 +97,7 @@ def build_nodes_router(
             else:
                 encrypted_password = encrypt(str(password))
                 stored_user = node_user
-            with sqlite3.connect(db_path) as conn:
+            with connect(db_path) as conn:
                 conn.execute(
                     """
                     INSERT INTO nodes (
@@ -122,7 +125,7 @@ def build_nodes_router(
                 conn.commit()
         except Exception as exc:
             logger.error(f"Error adding node: {exc}")
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
         try:
             invalidate_subscription_cache()
@@ -169,8 +172,25 @@ def build_nodes_router(
 
         try:
             if bearer_token:
-                if not login_panel(session, base_url, bearer_token=bearer_token):
-                    return {"success": False, "message": "Login failed", "base_url": base_url}
+                # Для bearer-токена: один запрос валидирует токен И считает инбаунды
+                session.headers.update({"Authorization": f"Bearer {bearer_token}"})
+                probe = xui_request(session, "GET", f"{base_url}/panel/api/inbounds/list", timeout=15)
+                if probe.status_code != 200:
+                    return {"success": False, "message": f"Bearer token rejected (HTTP {probe.status_code})", "base_url": base_url}
+                try:
+                    payload = probe.json()
+                except Exception:
+                    return {"success": False, "message": "Bearer token: invalid JSON response", "base_url": base_url}
+                if not payload.get("success"):
+                    return {"success": False, "message": "Bearer token rejected by panel", "base_url": base_url}
+                inbounds = payload.get("obj") or []
+                return {
+                    "success": True,
+                    "message": "Connection OK",
+                    "base_url": base_url,
+                    "inbounds_count": len(inbounds) if isinstance(inbounds, list) else 0,
+                    "details": "",
+                }
             else:
                 if not login_panel(session, base_url, node_user, password):
                     return {"success": False, "message": "Login failed", "base_url": base_url}
@@ -210,7 +230,9 @@ def build_nodes_router(
 
         has_name = "name" in data
         has_read_only = "read_only" in data
-        if not has_name and not has_read_only:
+        has_bearer = "bearer_token" in data
+        has_credentials = "user" in data or "password" in data
+        if not has_name and not has_read_only and not has_bearer and not has_credentials:
             raise HTTPException(status_code=400, detail="No updatable fields provided")
 
         new_name = None
@@ -234,13 +256,17 @@ def build_nodes_router(
 
         new_read_only = _coerce_bool(data.get("read_only")) if has_read_only else None
 
+        node_panel_url: str | None = None
         try:
-            with sqlite3.connect(db_path) as conn:
-                existing = conn.execute("SELECT name FROM nodes WHERE id = ?", (node_id,)).fetchone()
+            with connect(db_path) as conn:
+                existing = conn.execute(
+                    "SELECT name, panel_url FROM nodes WHERE id = ?", (node_id,)
+                ).fetchone()
                 if not existing:
                     raise HTTPException(status_code=404, detail="Node not found")
 
                 old_name = str(existing[0] or "")
+                node_panel_url = existing[1]
                 update_fields = []
                 update_values = []
 
@@ -251,6 +277,29 @@ def build_nodes_router(
                 if has_read_only:
                     update_fields.append("read_only = ?")
                     update_values.append(1 if new_read_only else 0)
+
+                if has_bearer:
+                    new_bearer = str(data.get("bearer_token") or "").strip()
+                    if new_bearer:
+                        update_fields.append("password = ?")
+                        update_values.append(encrypt(f"bearer:{new_bearer}"))
+                        update_fields.append("username = ?")
+                        update_values.append("bearer_token")
+                        update_fields.append("user = ?")
+                        update_values.append("bearer_token")
+                    else:
+                        raise HTTPException(status_code=400, detail="bearer_token cannot be empty")
+                elif has_credentials:
+                    new_user = str(data.get("user") or "").strip()
+                    new_pass = str(data.get("password") or "").strip()
+                    if not new_user or not new_pass:
+                        raise HTTPException(status_code=400, detail="user and password cannot be empty")
+                    update_fields.append("password = ?")
+                    update_values.append(encrypt(new_pass))
+                    update_fields.append("username = ?")
+                    update_values.append(new_user)
+                    update_fields.append("user = ?")
+                    update_values.append(new_user)
 
                 update_values.append(node_id)
                 result = conn.execute(
@@ -267,7 +316,7 @@ def build_nodes_router(
             raise
         except Exception as exc:
             logger.error(f"Error updating node: {exc}")
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
         node_id_str = str(node_id)
         with node_metric_labels_lock:
@@ -275,6 +324,10 @@ def build_nodes_router(
                 remove_node_metric_labels(old_name, node_id_str)
             if has_name:
                 node_metric_labels_state[node_id_str] = new_name
+
+        if has_bearer or has_credentials:
+            # Сбрасываем кешированный метод авторизации — credentials изменились
+            invalidate_auth_method_cache(node_panel_url)  # None → сбрасывает весь кеш
 
         try:
             invalidate_subscription_cache()
@@ -289,12 +342,12 @@ def build_nodes_router(
             raise HTTPException(status_code=401, detail="Unauthorized")
 
         try:
-            with sqlite3.connect(db_path) as conn:
+            with connect(db_path) as conn:
                 conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
                 conn.commit()
         except Exception as exc:
             logger.error(f"Error deleting node: {exc}")
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
         try:
             invalidate_subscription_cache()
@@ -309,6 +362,43 @@ def build_nodes_router(
             raise HTTPException(status_code=401, detail="Unauthorized")
         await snapshot_collector.force_poll_all()
         return {"status": "success", "message": "Force poll initiated"}
+
+    @router.post("/api/v1/nodes/{node_id}/generate-keypair")
+    async def generate_reality_keypair(request: Request, node_id: int):
+        """Generate a new x25519 keypair for Reality security.
+        Tries the panel API first; falls back to local Python generation."""
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        # Try via the panel API first
+        node = get_node_or_404(node_id)
+        try:
+            result = node_service.call_node_api(node, "POST", "/api/node/keypair", {})
+            if result and result.get("privateKey"):
+                return {"privateKey": result["privateKey"], "publicKey": result.get("publicKey", "")}
+        except Exception:
+            pass
+        # Fallback: generate locally using cryptography library if available
+        try:
+            from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+            import base64
+            private_key = X25519PrivateKey.generate()
+            private_bytes = private_key.private_bytes_raw()
+            public_bytes = private_key.public_key().public_bytes_raw()
+            private_b64 = base64.urlsafe_b64encode(private_bytes).rstrip(b"=").decode()
+            public_b64 = base64.urlsafe_b64encode(public_bytes).rstrip(b"=").decode()
+            return {"privateKey": private_b64, "publicKey": public_b64}
+        except ImportError:
+            pass
+        # Final fallback: random bytes (not a proper keypair, just for UI)
+        import os
+        rnd = os.urandom(32)
+        import base64 as b64m
+        return {
+            "privateKey": b64m.urlsafe_b64encode(rnd).rstrip(b"=").decode(),
+            "publicKey": "",
+            "warning": "cryptography library not installed — install it for proper keypair generation",
+        }
 
     @router.get("/api/v1/collector/status")
     async def get_collector_status(request: Request):

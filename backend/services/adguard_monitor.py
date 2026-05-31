@@ -173,8 +173,11 @@ class AdGuardMonitor:
     @staticmethod
     def _extract_query_fields(item: Dict) -> Tuple[str, str, bool]:
         # Works for multiple AGH querylog formats.
+        question = item.get("question") or {}
+        question_name = question.get("name") if isinstance(question, dict) else ""
         domain = (
-            item.get("question_host")
+            question_name
+            or item.get("question_host")
             or item.get("domain")
             or item.get("host")
             or item.get("QH")
@@ -187,11 +190,27 @@ class AdGuardMonitor:
             or item.get("ip")
             or ""
         )
+        reason_raw = str(item.get("reason") or "")
+        reason = reason_raw.lower()
+        status = str(item.get("status") or "").lower()
+        # AGH often returns reasons like "NotFiltered..." for allowed queries.
+        # We should only treat clearly blocked/filtered reasons as blocked.
+        reason_blocked = (
+            reason.startswith("filtered")
+            or reason.startswith("blocked")
+            or reason.startswith("safe")
+            or reason.startswith("parental")
+            or reason.startswith("rewrite")
+            or "deny" in reason
+            or "refus" in reason
+        ) and not reason.startswith("notfiltered")
+
         blocked = bool(
             item.get("blocked")
             or item.get("is_filtered")
-            or item.get("Result") in ("Filtered", "Blocked", "filtered", "blocked")
-            or item.get("reason") in ("filtered", "blocked")
+            or str(item.get("Result") or "").lower() in ("filtered", "blocked")
+            or reason_blocked
+            or status in ("refused", "nxdomain")
         )
         return str(domain), str(client), blocked
 

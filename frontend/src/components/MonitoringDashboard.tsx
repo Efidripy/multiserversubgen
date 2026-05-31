@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { useTheme } from '../contexts/ThemeContext';
 import api from '../api';
 import { getAuth } from '../auth';
-import { useTheme } from '../contexts/ThemeContext';
 import { ChoiceChips } from './ChoiceChips';
 import { registerPollingTask } from '../services/pollingScheduler';
 import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
@@ -274,31 +274,37 @@ function smoothSeries(values: Array<number | null>, mode: TrafficSmoothing): Arr
   });
 }
 
-function buildTrafficUsageSeries(points: Array<HistoryPoint | null>): Array<number | null> {
+function buildTrafficConsumptionSeries(points: Array<HistoryPoint | null>): Array<number | null> {
+  let baseTotal: number | null = null;
   let prevTotal: number | null = null;
+  let accumulated = 0;
   return points.map((point) => {
     if (!point) return null;
     const curTotal = Number(point.traffic_total || 0);
-    if (prevTotal === null) {
+    if (baseTotal === null) {
+      baseTotal = curTotal;
       prevTotal = curTotal;
       return 0;
     }
-    let delta = curTotal - prevTotal;
-    // If node counter has reset, treat current total as usage since reset.
+    const prev = prevTotal ?? curTotal;
+    let delta = curTotal - prev;
+    // If node counter has reset, treat current total as new-cycle usage.
     if (delta < 0) {
       delta = curTotal;
     }
     prevTotal = curTotal;
-    return Math.max(0, delta);
+    accumulated += Math.max(0, delta);
+    return accumulated;
   });
 }
 
-function buildBucketTrafficUsageSeries(
+function buildBucketTrafficConsumptionSeries(
   perNode: Array<{ nodeId: number; nodeName: string; points: Array<HistoryPoint | null>; bucketsRaw: Map<number, HistoryPoint[]> }>,
   buckets: number[]
 ): Array<number | null> {
+  let cumulative = 0;
   return buckets.map((bucketTs) => {
-    let totalUsage = 0;
+    let intervalUsage = 0;
     for (const nodeData of perNode) {
       const pointsInBucket = nodeData.bucketsRaw.get(bucketTs) || [];
       if (pointsInBucket.length === 0) continue;
@@ -312,13 +318,14 @@ function buildBucketTrafficUsageSeries(
       const firstTotal = Number(first?.traffic_total || 0);
       
       let delta = lastTotal - firstTotal;
-      // Handle counter reset: if delta is negative, treat last total as the usage
+      // Handle counter reset: if delta is negative, treat last total as new-cycle usage.
       if (delta < 0) {
         delta = lastTotal;
       }
-      totalUsage += Math.max(0, delta);
+      intervalUsage += Math.max(0, delta);
     }
-    return totalUsage;
+    cumulative += intervalUsage;
+    return cumulative;
   });
 }
 
@@ -376,7 +383,7 @@ function formatTickLabel(tsSec: number, rangeSec: number): string {
 }
 
 export const MonitoringDashboard: React.FC = () => {
-  const { colors, stylePreset, theme } = useTheme();
+  const { stylePreset } = useTheme();
 
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [selectedScope, setSelectedScope] = useState<string>('all'); // "all" | node id as string
@@ -401,6 +408,9 @@ export const MonitoringDashboard: React.FC = () => {
   const [stackStatus, setStackStatus] = useState<StackStatusResponse | null>(null);
   const [adguardLoading, setAdguardLoading] = useState(false);
   const [adguardError, setAdguardError] = useState('');
+  const [blockedSourceFilter, setBlockedSourceFilter] = useState<string>('all');
+  const [blockedSearch, setBlockedSearch] = useState('');
+  const [blockedShowCount, setBlockedShowCount] = useState<number>(25);
   const realtimeRefreshRef = useRef(0);
   const [adguardForm, setAdguardForm] = useState({
     name: '',
@@ -785,7 +795,7 @@ export const MonitoringDashboard: React.FC = () => {
   const convertBytes = (bytes: number) => (trafficUnit === 'GB' ? bytesToGb(bytes) : bytesToMb(bytes));
   const toTrafficUnit = (value: number | null) => (value === null ? null : Number(convertBytes(value).toFixed(2)));
   const smoothTrafficSeries = (series: Array<number | null>) => smoothSeries(series, trafficSmoothing);
-  const trafficUnitPerIntervalLabel = `${trafficUnitLabel}/interval`;
+  const trafficConsumptionLabel = `${trafficUnitLabel}`;
   const trafficModeLabel = effectiveTrafficMode === 'live' ? 'Live' : 'History';
   const trafficSourceLabel = effectiveTrafficSource === 'nodes' ? 'Nodes' : effectiveTrafficSource === 'people' ? 'People' : 'Inbounds';
   const trafficSmoothingLabel = trafficSmoothing === 'raw' ? 'raw' : trafficSmoothing === 'sma3' ? 'SMA-3' : 'SMA-5';
@@ -820,8 +830,8 @@ export const MonitoringDashboard: React.FC = () => {
           {
             label: 'CPU %',
             data: effectiveHistory.map((p) => Number((p.cpu || 0).toFixed(2))),
-            borderColor: colors.warning,
-            backgroundColor: colors.warning + '33',
+            borderColor: 'var(--warning)',
+            backgroundColor: 'color-mix(in srgb, var(--warning) 20%, transparent)',
             borderWidth: 2.2,
             tension: 0.25,
             pointRadius: 0,
@@ -851,8 +861,8 @@ export const MonitoringDashboard: React.FC = () => {
           {
             label: 'Online clients',
             data: effectiveHistory.map((p) => Number(p.online_clients || 0)),
-            borderColor: colors.accent,
-            backgroundColor: colors.accent + '33',
+            borderColor: 'var(--accent)',
+            backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
             borderWidth: 2.2,
             tension: 0.25,
             pointRadius: 0,
@@ -870,12 +880,12 @@ export const MonitoringDashboard: React.FC = () => {
             {
               label: 'All servers usage',
               data: smoothTrafficSeries(
-                buildBucketTrafficUsageSeries(trafficHistorySeries.perNode, trafficHistorySeries.buckets).map((bytes) =>
+                buildBucketTrafficConsumptionSeries(trafficHistorySeries.perNode, trafficHistorySeries.buckets).map((bytes) =>
                   toTrafficUnit(Number(bytes || 0))
                 )
               ),
-              borderColor: colors.info,
-              backgroundColor: colors.info + '44',
+              borderColor: 'var(--info)',
+              backgroundColor: 'color-mix(in srgb, var(--info) 27%, transparent)',
               borderWidth: 2.8,
               pointRadius: 0,
               pointHoverRadius: 4,
@@ -884,7 +894,7 @@ export const MonitoringDashboard: React.FC = () => {
             },
             ...trafficHistorySeries.perNode.map((node, idx) => {
               const c = chartPalette[idx % chartPalette.length];
-              const usageSeries = buildTrafficUsageSeries(node.points);
+              const usageSeries = buildTrafficConsumptionSeries(node.points);
               const convertedSeries = usageSeries.map((bytes) => toTrafficUnit(bytes));
               return {
                 label: node.nodeName,
@@ -906,10 +916,10 @@ export const MonitoringDashboard: React.FC = () => {
         labels,
         datasets: [
           {
-            label: `Traffic usage (${trafficUnitPerIntervalLabel})`,
-            data: smoothTrafficSeries(buildTrafficUsageSeries(effectiveHistory).map((bytes) => toTrafficUnit(Number(bytes || 0)))),
-            borderColor: colors.info,
-            backgroundColor: colors.info + '33',
+            label: `Traffic consumption (${trafficConsumptionLabel})`,
+            data: smoothTrafficSeries(buildTrafficConsumptionSeries(effectiveHistory).map((bytes) => toTrafficUnit(Number(bytes || 0)))),
+            borderColor: 'var(--info)',
+            backgroundColor: 'color-mix(in srgb, var(--info) 20%, transparent)',
             borderWidth: 2.2,
             pointRadius: 0,
             pointHoverRadius: 3,
@@ -930,10 +940,10 @@ export const MonitoringDashboard: React.FC = () => {
         labels: liveTrafficLabels,
         datasets: [
           {
-            label: `People usage (${trafficUnitPerIntervalLabel})`,
+            label: `People usage (${trafficConsumptionLabel})`,
             data: smoothTrafficSeries(usage.map((v) => toTrafficUnit(v))),
-            borderColor: colors.success,
-            backgroundColor: colors.success + '33',
+            borderColor: 'var(--success)',
+            backgroundColor: 'color-mix(in srgb, var(--success) 20%, transparent)',
             borderWidth: 2.3,
             pointRadius: 0,
             pointHoverRadius: 3,
@@ -949,10 +959,10 @@ export const MonitoringDashboard: React.FC = () => {
         labels: liveTrafficLabels,
         datasets: [
           {
-            label: `Inbound usage (${trafficUnitPerIntervalLabel})`,
+            label: `Inbound usage (${trafficConsumptionLabel})`,
             data: smoothTrafficSeries(usage.map((v) => toTrafficUnit(v))),
-            borderColor: colors.warning,
-            backgroundColor: colors.warning + '33',
+            borderColor: 'var(--warning)',
+            backgroundColor: 'color-mix(in srgb, var(--warning) 20%, transparent)',
             borderWidth: 2.3,
             pointRadius: 0,
             pointHoverRadius: 3,
@@ -990,10 +1000,10 @@ export const MonitoringDashboard: React.FC = () => {
         labels: liveTrafficLabels,
         datasets: [
           {
-            label: `All servers live usage (${trafficUnitPerIntervalLabel})`,
+            label: `All servers live usage (${trafficConsumptionLabel})`,
             data: smoothTrafficSeries(totalUsage.map((v) => toTrafficUnit(v))),
-            borderColor: colors.info,
-            backgroundColor: colors.info + '44',
+            borderColor: 'var(--info)',
+            backgroundColor: 'color-mix(in srgb, var(--info) 27%, transparent)',
             borderWidth: 2.8,
             pointRadius: 0,
             pointHoverRadius: 4,
@@ -1012,10 +1022,10 @@ export const MonitoringDashboard: React.FC = () => {
       labels: liveTrafficLabels,
       datasets: [
         {
-          label: `${selectedNodeName} live usage (${trafficUnitPerIntervalLabel})`,
+          label: `${selectedNodeName} live usage (${trafficConsumptionLabel})`,
           data: smoothTrafficSeries(selectedUsage.map((v) => toTrafficUnit(v))),
-          borderColor: colors.info,
-          backgroundColor: colors.info + '33',
+          borderColor: 'var(--info)',
+          backgroundColor: 'color-mix(in srgb, var(--info) 20%, transparent)',
           borderWidth: 2.4,
           pointRadius: 0,
           pointHoverRadius: 3,
@@ -1035,14 +1045,11 @@ export const MonitoringDashboard: React.FC = () => {
     liveTrafficWindow,
     liveTrafficLabels,
     selectedNodeName,
-    trafficUnitPerIntervalLabel,
+    trafficConsumptionLabel,
     chartPalette,
     nodes,
     trafficLineShape,
     trafficSmoothing,
-    colors.info,
-    colors.success,
-    colors.warning,
   ]);
 
   const chartOptions = {
@@ -1051,7 +1058,7 @@ export const MonitoringDashboard: React.FC = () => {
     plugins: {
       legend: {
         labels: {
-          color: colors.text.primary,
+          color: 'var(--text-primary)',
           usePointStyle: true,
           pointStyle: 'circle' as const,
           font: {
@@ -1061,21 +1068,11 @@ export const MonitoringDashboard: React.FC = () => {
         },
       },
       tooltip: {
-        backgroundColor:
-          theme === 'light'
-            ? 'rgba(255, 255, 255, 0.98)'
-            : stylePreset === '3'
-            ? 'rgba(8, 8, 8, 0.96)'
-            : 'rgba(8, 17, 32, 0.96)',
-        borderColor:
-          theme === 'light'
-            ? 'rgba(148, 163, 184, 0.5)'
-            : stylePreset === '3'
-            ? 'rgba(255, 255, 255, 0.18)'
-            : 'rgba(125, 211, 252, 0.45)',
+        backgroundColor: 'rgba(8, 8, 8, 0.96)',
+        borderColor: 'rgba(255, 255, 255, 0.18)',
         borderWidth: 1,
-        titleColor: theme === 'light' ? '#0f172a' : stylePreset === '3' ? '#fafafa' : '#e2e8f0',
-        bodyColor: theme === 'light' ? '#334155' : stylePreset === '3' ? '#d4d4d8' : '#bae6fd',
+        titleColor: '#fafafa',
+        bodyColor: '#d4d4d8',
         padding: 10,
         cornerRadius: 10,
         displayColors: true,
@@ -1093,28 +1090,28 @@ export const MonitoringDashboard: React.FC = () => {
       point: {
         hoverRadius: 4,
         hoverBorderWidth: 1.5,
-        hoverBorderColor: theme === 'light' ? '#1d4ed8' : stylePreset === '3' ? '#ffffff' : '#e0f2fe',
+        hoverBorderColor: '#ffffff',
       },
     },
     scales: {
       x: {
         ticks: {
-          color: colors.text.secondary,
+          color: 'var(--text-secondary)',
           maxTicksLimit: 10,
           font: {
             weight: 600 as const,
           },
         },
-        grid: { color: colors.border + '55' },
+        grid: { color: 'var(--border-color)' + '55' },
       },
       y: {
         ticks: {
-          color: colors.text.secondary,
+          color: 'var(--text-secondary)',
           font: {
             weight: 600 as const,
           },
         },
-        grid: { color: colors.border + '55' },
+        grid: { color: 'var(--border-color)' + '55' },
       },
     },
   };
@@ -1129,7 +1126,7 @@ export const MonitoringDashboard: React.FC = () => {
           label: (context: any) => {
             const datasetLabel = context?.dataset?.label || '';
             const y = Number(context?.parsed?.y || 0);
-            return `${datasetLabel}: ${y.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${trafficUnitPerIntervalLabel}`;
+            return `${datasetLabel}: ${y.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${trafficConsumptionLabel}`;
           },
           title: (items: any[]) => {
             const base = items?.[0]?.label || '';
@@ -1144,7 +1141,7 @@ export const MonitoringDashboard: React.FC = () => {
         ...chartOptions.scales.y,
         ticks: {
           ...chartOptions.scales.y.ticks,
-          callback: (value: any) => `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${trafficUnitPerIntervalLabel}`,
+          callback: (value: any) => `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${trafficConsumptionLabel}`,
         },
       },
     },
@@ -1152,16 +1149,20 @@ export const MonitoringDashboard: React.FC = () => {
 
   const topBlockedDomains = useMemo(() => {
     const agg = new Map<string, number>();
-    (adguardOverview?.sources || []).forEach((s) => {
+    (adguardOverview?.sources || [])
+      .filter((s) => blockedSourceFilter === 'all' || String(s.source_id) === blockedSourceFilter)
+      .forEach((s) => {
       (s.top_blocked_domains || []).forEach((it) => {
         agg.set(it.name, (agg.get(it.name) || 0) + Number(it.count || 0));
       });
-    });
+      });
+    const needle = blockedSearch.trim().toLowerCase();
     return Array.from(agg.entries())
+      .filter(([name]) => !needle || name.toLowerCase().includes(needle))
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
+      .slice(0, blockedShowCount)
       .map(([name, count]) => ({ name, count }));
-  }, [adguardOverview]);
+  }, [adguardOverview, blockedSourceFilter, blockedSearch, blockedShowCount]);
 
   const topClients = useMemo(() => {
     const agg = new Map<string, number>();
@@ -1258,9 +1259,9 @@ export const MonitoringDashboard: React.FC = () => {
   }, [adguardHistory, adguardTrendLabels]);
 
   return (
-    <div className="monitoring-panel panel-block" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+    <div className="monitoring-panel panel-block" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
       <div className="monitoring-panel__header mb-3">
-        <h4 className="mb-0" style={{ color: colors.text.primary }}>
+        <h4 className="mb-0" style={{ color: 'var(--text-primary)' }}>
           Monitoring
         </h4>
         <a
@@ -1268,21 +1269,21 @@ export const MonitoringDashboard: React.FC = () => {
           href={grafanaUrl}
           target="_blank"
           rel="noreferrer"
-          style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+          style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
         >
           Открыть Grafana
         </a>
       </div>
 
       {error && (
-        <div className="alert mb-3" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+        <div className="alert mb-3" style={{ backgroundColor: 'color-mix(in srgb, var(--danger) 14%, transparent)', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
           {error}
         </div>
       )}
 
       <div className="row g-2 mb-3">
         <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
+          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
             Сервер
           </label>
           <ChoiceChips
@@ -1292,22 +1293,22 @@ export const MonitoringDashboard: React.FC = () => {
             ]}
             value={selectedScope}
             onChange={(value) => setSelectedScope(value)}
-            colors={colors}
+            
           />
         </div>
         <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
+          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
             Диапазон
           </label>
           <ChoiceChips
             options={RANGE_OPTIONS.map((range) => ({ value: range.value, label: range.label }))}
             value={rangeSec}
             onChange={(value) => setRangeSec(value)}
-            colors={colors}
+            
           />
         </div>
         <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
+          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
             Трафик
           </label>
           <ChoiceChips
@@ -1317,13 +1318,13 @@ export const MonitoringDashboard: React.FC = () => {
             ]}
             value={trafficUnit}
             onChange={(value) => setTrafficUnit(value as 'MB' | 'GB')}
-            colors={colors}
+            
           />
         </div>
         <div className="col-md-3 d-flex align-items-end">
           <button
             className="btn btn-sm w-100"
-            style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+            style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
             onClick={() => {
               loadHistory(selectedScope, rangeSec);
               loadLatestSnapshot();
@@ -1341,7 +1342,7 @@ export const MonitoringDashboard: React.FC = () => {
 
       <div className="row g-2 mb-3">
         <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
+          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
             Режим трафика
           </label>
           <ChoiceChips
@@ -1351,11 +1352,11 @@ export const MonitoringDashboard: React.FC = () => {
             ]}
             value={trafficMode}
             onChange={(value) => setTrafficMode(value as TrafficMode)}
-            colors={colors}
+            
           />
         </div>
         <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
+          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
             Источник
           </label>
           <ChoiceChips
@@ -1366,22 +1367,22 @@ export const MonitoringDashboard: React.FC = () => {
             ]}
             value={trafficSource}
             onChange={(value) => setTrafficSource(value as TrafficSource)}
-            colors={colors}
+            
           />
         </div>
         <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
+          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
             Шаг
           </label>
           <ChoiceChips
             options={TRAFFIC_STEP_OPTIONS.map((step) => ({ value: step.value, label: step.label }))}
             value={trafficStepSec}
             onChange={(value) => setTrafficStepSec(Number(value))}
-            colors={colors}
+            
           />
         </div>
         <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
+          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
             Стиль
           </label>
           <ChoiceChips
@@ -1392,11 +1393,11 @@ export const MonitoringDashboard: React.FC = () => {
             ]}
             value={trafficVisualStyle}
             onChange={(value) => setTrafficVisualStyle(value as TrafficVisualStyle)}
-            colors={colors}
+            
           />
         </div>
         <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
+          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
             Сглаживание
           </label>
           <ChoiceChips
@@ -1407,34 +1408,34 @@ export const MonitoringDashboard: React.FC = () => {
             ]}
             value={trafficSmoothing}
             onChange={(value) => setTrafficSmoothing(value as TrafficSmoothing)}
-            colors={colors}
+            
           />
         </div>
       </div>
 
       <div className="row g-2 mb-3">
         <div className="col-md-3">
-          <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>Collector</div>
-            <strong style={{ color: depsHealth?.collector_running ? colors.success : colors.danger }}>
+          <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
+            <div className="small" style={{ color: 'var(--text-secondary)' }}>Collector</div>
+            <strong style={{ color: depsHealth?.collector_running ? 'var(--success)' : 'var(--danger)' }}>
               {depsHealth?.collector_running ? 'running' : 'stopped'}
             </strong>
           </div>
         </div>
         <div className="col-md-3">
-          <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>Redis</div>
-            <strong style={{ color: depsHealth?.redis?.ok ? colors.success : colors.warning }}>
+          <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
+            <div className="small" style={{ color: 'var(--text-secondary)' }}>Redis</div>
+            <strong style={{ color: depsHealth?.redis?.ok ? 'var(--success)' : 'var(--warning)' }}>
               {depsHealth?.redis?.enabled ? (depsHealth?.redis?.ok ? 'ok' : 'degraded') : 'disabled'}
             </strong>
           </div>
         </div>
         <div className="col-md-3">
-          <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>
+          <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
+            <div className="small" style={{ color: 'var(--text-secondary)' }}>
               {isAllScope ? 'Nodes online' : 'Node status'}
             </div>
-            <strong style={{ color: isAllScope ? colors.success : latestForSelected?.available ? colors.success : colors.danger }}>
+            <strong style={{ color: isAllScope ? 'var(--success)' : latestForSelected?.available ? 'var(--success)' : 'var(--danger)' }}>
               {isAllScope
                 ? `${allNodesStatus.online}/${allNodesStatus.total}`
                 : latestForSelected?.available
@@ -1444,11 +1445,11 @@ export const MonitoringDashboard: React.FC = () => {
           </div>
         </div>
         <div className="col-md-3">
-          <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>
+          <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
+            <div className="small" style={{ color: 'var(--text-secondary)' }}>
               {isAllScope ? 'Online clients (all)' : 'Current online clients'}
             </div>
-            <strong style={{ color: colors.accent }}>
+            <strong style={{ color: 'var(--accent)' }}>
               {isAllScope ? allNodesStatus.onlineClients : latestForSelected?.online_clients ?? 0}
             </strong>
           </div>
@@ -1458,39 +1459,39 @@ export const MonitoringDashboard: React.FC = () => {
       <div className="row g-3">
         {trafficSource !== 'nodes' && (
           <div className="col-12">
-            <div className="alert mb-0" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.info }}>
+            <div className="alert mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--info) 14%, transparent)', borderColor: 'var(--info)', color: 'var(--info)' }}>
               Источник «Люди/Инбаунды» работает в live-режиме (исторические серии per-client/per-inbound сейчас не хранятся).
             </div>
           </div>
         )}
         {!isAllScope && trafficSource !== 'nodes' && (
           <div className="col-12">
-            <div className="alert mb-0" style={{ backgroundColor: colors.warning + '22', borderColor: colors.warning, color: colors.warning }}>
+            <div className="alert mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--warning) 14%, transparent)', borderColor: 'var(--warning)', color: 'var(--warning)' }}>
               Для отдельного сервера включён fallback на source=Nodes (агрегация «Люди» корректна только для scope=All servers).
             </div>
           </div>
         )}
         {liveTrafficError && (
           <div className="col-12">
-            <div className="alert mb-0" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+            <div className="alert mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--danger) 14%, transparent)', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
               {liveTrafficError}
             </div>
           </div>
         )}
         {showingLiveSnapshotFallback && (
           <div className="col-12">
-            <div className="alert mb-0" style={{ backgroundColor: colors.warning + '22', borderColor: colors.warning, color: colors.warning }}>
+            <div className="alert mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--warning) 14%, transparent)', borderColor: 'var(--warning)', color: 'var(--warning)' }}>
               История пока пустая — отображается текущий live snapshot.
             </div>
           </div>
         )}
         <div className="col-12" style={{ order: 100 }}>
-          <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
+          <div className="card p-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
             <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-              <h6 className="mb-0" style={{ color: colors.text.primary }}>AdGuard DNS Monitoring</h6>
+              <h6 className="mb-0" style={{ color: 'var(--text-primary)' }}>AdGuard DNS Monitoring</h6>
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.info, borderColor: colors.info, color: colors.infoText }}
+                style={{ backgroundColor: 'var(--info)', borderColor: 'var(--info)', color: '#ffffff' }}
                 onClick={collectAdguardNow}
                 disabled={adguardLoading}
               >
@@ -1499,79 +1500,79 @@ export const MonitoringDashboard: React.FC = () => {
             </div>
 
             {adguardError && (
-              <div className="alert mb-3" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+              <div className="alert mb-3" style={{ backgroundColor: 'color-mix(in srgb, var(--danger) 14%, transparent)', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
                 {adguardError}
               </div>
             )}
 
             <div className="row g-2 mb-3">
               <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Sources</div>
-                  <strong style={{ color: colors.text.primary }}>{adguardOverview?.summary?.sources_online || 0}/{adguardOverview?.summary?.sources_total || 0}</strong>
+                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Sources</div>
+                  <strong style={{ color: 'var(--text-primary)' }}>{adguardOverview?.summary?.sources_online || 0}/{adguardOverview?.summary?.sources_total || 0}</strong>
                 </div>
               </div>
               <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Queries</div>
-                  <strong style={{ color: stylePreset === '3' ? colors.text.primary : colors.accent }}>{Math.round(adguardOverview?.summary?.queries_total || 0).toLocaleString()}</strong>
+                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Queries</div>
+                  <strong style={{ color: stylePreset === '3' ? 'var(--text-primary)' : 'var(--accent)' }}>{Math.round(adguardOverview?.summary?.queries_total || 0).toLocaleString()}</strong>
                 </div>
               </div>
               <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Block rate</div>
-                  <strong style={{ color: colors.warning }}>{(adguardOverview?.summary?.blocked_rate || 0).toFixed(2)}%</strong>
+                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Block rate</div>
+                  <strong style={{ color: 'var(--warning)' }}>{(adguardOverview?.summary?.blocked_rate || 0).toFixed(2)}%</strong>
                 </div>
               </div>
               <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Latency</div>
-                  <strong style={{ color: colors.success }}>{(adguardOverview?.summary?.avg_latency_ms || 0).toFixed(1)} ms</strong>
+                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Latency</div>
+                  <strong style={{ color: 'var(--success)' }}>{(adguardOverview?.summary?.avg_latency_ms || 0).toFixed(1)} ms</strong>
                 </div>
               </div>
               <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Cache hit</div>
-                  <strong style={{ color: stylePreset === '3' ? colors.text.primary : colors.info }}>{(adguardOverview?.summary?.cache_hit_ratio || 0).toFixed(2)}%</strong>
+                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Cache hit</div>
+                  <strong style={{ color: stylePreset === '3' ? 'var(--text-primary)' : 'var(--info)' }}>{(adguardOverview?.summary?.cache_hit_ratio || 0).toFixed(2)}%</strong>
                 </div>
               </div>
               <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Upstream errors</div>
-                  <strong style={{ color: colors.danger }}>{Math.round(adguardOverview?.summary?.upstream_errors || 0).toLocaleString()}</strong>
+                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Upstream errors</div>
+                  <strong style={{ color: 'var(--danger)' }}>{Math.round(adguardOverview?.summary?.upstream_errors || 0).toLocaleString()}</strong>
                 </div>
               </div>
             </div>
 
             <div className="row g-2 mb-3">
               <div className="col-md-3">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Prometheus</div>
-                  <strong style={{ color: stackStatus?.services?.prometheus?.ok ? colors.success : colors.warning }}>
+                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Prometheus</div>
+                  <strong style={{ color: stackStatus?.services?.prometheus?.ok ? 'var(--success)' : 'var(--warning)' }}>
                     {stackStatus?.services?.prometheus?.ok ? 'online' : 'offline'}
                   </strong>
                 </div>
               </div>
               <div className="col-md-3">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Loki</div>
-                  <strong style={{ color: stackStatus?.services?.loki?.ok ? colors.success : colors.warning }}>
+                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Loki</div>
+                  <strong style={{ color: stackStatus?.services?.loki?.ok ? 'var(--success)' : 'var(--warning)' }}>
                     {stackStatus?.services?.loki?.ok ? 'online' : 'offline'}
                   </strong>
                 </div>
               </div>
               <div className="col-md-3">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Grafana</div>
-                  <strong style={{ color: stackStatus?.services?.grafana?.ok ? colors.success : colors.warning }}>
+                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Grafana</div>
+                  <strong style={{ color: stackStatus?.services?.grafana?.ok ? 'var(--success)' : 'var(--warning)' }}>
                     {stackStatus?.services?.grafana?.ok ? 'online' : 'offline'}
                   </strong>
                 </div>
               </div>
               <div className="col-md-3">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Prom up</div>
-                  <strong style={{ color: colors.text.primary }}>
+                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Prom up</div>
+                  <strong style={{ color: 'var(--text-primary)' }}>
                     {Math.round(Number(stackStatus?.prometheus_metrics?.up_sum || 0))}
                   </strong>
                 </div>
@@ -1581,10 +1582,10 @@ export const MonitoringDashboard: React.FC = () => {
             {!!(adguardHistory?.series || []).length && (
               <div className="row g-3 mb-3">
                 <div className="col-12">
-                  <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                  <div className="card p-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
                     <div className="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
-                      <h6 className="mb-0" style={{ color: colors.text.primary }}>AdGuard Queries/sec (per source)</h6>
-                      <small style={{ color: colors.text.secondary }}>
+                      <h6 className="mb-0" style={{ color: 'var(--text-primary)' }}>AdGuard Queries/sec (per source)</h6>
+                      <small style={{ color: 'var(--text-secondary)' }}>
                         Δqueries: {Math.round(adguardHistory?.summary?.queries_delta || 0).toLocaleString()} | QPS: {(adguardHistory?.summary?.queries_per_sec || 0).toFixed(3)}
                       </small>
                     </div>
@@ -1594,16 +1595,16 @@ export const MonitoringDashboard: React.FC = () => {
                   </div>
                 </div>
                 <div className="col-md-6">
-                  <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                    <h6 className="mb-2" style={{ color: colors.text.primary }}>AdGuard Block rate %</h6>
+                  <div className="card p-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+                    <h6 className="mb-2" style={{ color: 'var(--text-primary)' }}>AdGuard Block rate %</h6>
                     <div style={{ height: 220 }}>
                       <Line data={adguardBlockRateData} options={chartOptions} />
                     </div>
                   </div>
                 </div>
                 <div className="col-md-6">
-                  <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                    <h6 className="mb-2" style={{ color: colors.text.primary }}>AdGuard Latency ms</h6>
+                  <div className="card p-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+                    <h6 className="mb-2" style={{ color: 'var(--text-primary)' }}>AdGuard Latency ms</h6>
                     <div style={{ height: 220 }}>
                       <Line data={adguardLatencyData} options={chartOptions} />
                     </div>
@@ -1613,7 +1614,7 @@ export const MonitoringDashboard: React.FC = () => {
             )}
 
             <div className="table-responsive mb-3">
-              <table className="table table-sm align-middle mb-0" style={{ color: colors.text.primary }}>
+              <table className="table table-sm align-middle mb-0" style={{ color: 'var(--text-primary)' }}>
                 <thead>
                   <tr>
                     <th>Source</th>
@@ -1630,7 +1631,7 @@ export const MonitoringDashboard: React.FC = () => {
                   {(adguardOverview?.sources || []).map((s) => (
                     <tr key={s.source_id}>
                       <td>{s.source_name}</td>
-                      <td style={{ color: s.available ? colors.success : colors.danger }}>{s.available ? 'online' : 'offline'}</td>
+                      <td style={{ color: s.available ? 'var(--success)' : 'var(--danger)' }}>{s.available ? 'online' : 'offline'}</td>
                       <td>{Math.round(s.queries_total || 0).toLocaleString()}</td>
                       <td>{Math.round(s.blocked_total || 0).toLocaleString()}</td>
                       <td>{(s.blocked_rate || 0).toFixed(2)}%</td>
@@ -1641,7 +1642,7 @@ export const MonitoringDashboard: React.FC = () => {
                   ))}
                   {!(adguardOverview?.sources || []).length && (
                     <tr>
-                      <td colSpan={8} style={{ color: colors.text.secondary }}>Нет данных AdGuard. Добавьте источник ниже и нажмите «Собрать сейчас».</td>
+                      <td colSpan={8} style={{ color: 'var(--text-secondary)' }}>Нет данных AdGuard. Добавьте источник ниже и нажмите «Собрать сейчас».</td>
                     </tr>
                   )}
                 </tbody>
@@ -1650,32 +1651,65 @@ export const MonitoringDashboard: React.FC = () => {
 
             <div className="row g-3 mb-2">
               <div className="col-md-6">
-                <h6 style={{ color: colors.text.primary }}>Top blocked domains</h6>
+                <h6 style={{ color: 'var(--text-primary)' }}>Top blocked domains</h6>
+                <div className="d-flex gap-2 mb-2">
+                  <select
+                    className="form-select form-select-sm"
+                    style={{ maxWidth: 180, backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                    value={blockedSourceFilter}
+                    onChange={(e) => setBlockedSourceFilter(e.target.value)}
+                  >
+                    <option value="all">All sources</option>
+                    {(adguardOverview?.sources || []).map((s) => (
+                      <option key={s.source_id} value={String(s.source_id)}>{s.source_name}</option>
+                    ))}
+                  </select>
+                  <input
+                    className="form-control form-control-sm"
+                    placeholder="Search domain…"
+                    value={blockedSearch}
+                    onChange={(e) => setBlockedSearch(e.target.value)}
+                    style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                  />
+                  <select
+                    className="form-select form-select-sm"
+                    style={{ maxWidth: 110, backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                    value={String(blockedShowCount)}
+                    onChange={(e) => setBlockedShowCount(Number(e.target.value))}
+                  >
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </div>
+                <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: 8 }}>
                 <ul className="list-group">
                   {topBlockedDomains.map((it) => (
-                    <li key={it.name} className="list-group-item d-flex justify-content-between" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}>
+                    <li key={it.name} className="list-group-item d-flex justify-content-between" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}>
                       <span>{it.name}</span>
                       <strong>{it.count}</strong>
                     </li>
                   ))}
                   {!topBlockedDomains.length && (
-                    <li className="list-group-item" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.secondary }}>
+                    <li className="list-group-item" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}>
                       Пока нет данных
                     </li>
                   )}
                 </ul>
+                </div>
               </div>
               <div className="col-md-6">
-                <h6 style={{ color: colors.text.primary }}>Top clients</h6>
+                <h6 style={{ color: 'var(--text-primary)' }}>Top clients</h6>
                 <ul className="list-group">
                   {topClients.map((it) => (
-                    <li key={it.name} className="list-group-item d-flex justify-content-between" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}>
+                    <li key={it.name} className="list-group-item d-flex justify-content-between" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}>
                       <span>{it.name}</span>
                       <strong>{it.count}</strong>
                     </li>
                   ))}
                   {!topClients.length && (
-                    <li className="list-group-item" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.secondary }}>
+                    <li className="list-group-item" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}>
                       Пока нет данных
                     </li>
                   )}
@@ -1683,8 +1717,8 @@ export const MonitoringDashboard: React.FC = () => {
               </div>
             </div>
 
-            <hr style={{ borderColor: colors.border }} />
-            <h6 className="mb-2" style={{ color: colors.text.primary }}>Добавить источник AdGuard</h6>
+            <hr style={{ borderColor: 'var(--border-color)' }} />
+            <h6 className="mb-2" style={{ color: 'var(--text-primary)' }}>Добавить источник AdGuard</h6>
             <div className="row g-2">
               <div className="col-md-2">
                 <input
@@ -1692,7 +1726,7 @@ export const MonitoringDashboard: React.FC = () => {
                   placeholder="Name"
                   value={adguardForm.name}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, name: e.target.value }))}
-                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
+                  style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 />
               </div>
               <div className="col-md-3">
@@ -1701,7 +1735,7 @@ export const MonitoringDashboard: React.FC = () => {
                   placeholder="Admin URL"
                   value={adguardForm.admin_url}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, admin_url: e.target.value }))}
-                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
+                  style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 />
               </div>
               <div className="col-md-2">
@@ -1710,7 +1744,7 @@ export const MonitoringDashboard: React.FC = () => {
                   placeholder="DNS URL (optional)"
                   value={adguardForm.dns_url}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, dns_url: e.target.value }))}
-                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
+                  style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 />
               </div>
               <div className="col-md-2">
@@ -1719,7 +1753,7 @@ export const MonitoringDashboard: React.FC = () => {
                   placeholder="Username"
                   value={adguardForm.username}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, username: e.target.value }))}
-                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
+                  style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 />
               </div>
               <div className="col-md-2">
@@ -1729,13 +1763,13 @@ export const MonitoringDashboard: React.FC = () => {
                   placeholder="Password"
                   value={adguardForm.password}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, password: e.target.value }))}
-                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
+                  style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 />
               </div>
               <div className="col-md-1 d-grid">
                 <button
                   className="btn btn-sm"
-                  style={{ backgroundColor: colors.success, borderColor: colors.success, color: colors.successText }}
+                  style={{ backgroundColor: 'var(--success)', borderColor: 'var(--success)', color: '#ffffff' }}
                   onClick={async () => {
                     try {
                       await api.post('/v1/adguard/sources', adguardForm, { auth: getAuth() });
@@ -1759,7 +1793,7 @@ export const MonitoringDashboard: React.FC = () => {
               </div>
             </div>
             {!!adguardSources.length && (
-              <div className="small mt-2" style={{ color: colors.text.secondary }}>
+              <div className="small mt-2" style={{ color: 'var(--text-secondary)' }}>
                 Sources configured: {adguardSources.map((s) => s.name).join(', ')}
               </div>
             )}
@@ -1767,25 +1801,25 @@ export const MonitoringDashboard: React.FC = () => {
         </div>
 
         <div className="col-12" style={{ order: 10 }}>
-          <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <h6 style={{ color: colors.text.primary }}>CPU ({selectedNodeName})</h6>
+          <div className="card p-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
+            <h6 style={{ color: 'var(--text-primary)' }}>CPU ({selectedNodeName})</h6>
             <div style={{ height: 260 }}>
               <Line data={cpuData} options={chartOptions} />
             </div>
           </div>
         </div>
         <div className="col-12" style={{ order: 20 }}>
-          <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <h6 style={{ color: colors.text.primary }}>Online clients ({selectedNodeName})</h6>
+          <div className="card p-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
+            <h6 style={{ color: 'var(--text-primary)' }}>Online clients ({selectedNodeName})</h6>
             <div style={{ height: 260 }}>
               <Line data={onlineData} options={chartOptions} />
             </div>
           </div>
         </div>
         <div className="col-12" style={{ order: 30 }}>
-          <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <h6 style={{ color: colors.text.primary }}>
-              Traffic usage {trafficUnitPerIntervalLabel} ({selectedNodeName}) • {trafficModeLabel} • {trafficSourceLabel} • step {effectiveTrafficStepSec}s • {trafficSmoothingLabel}
+          <div className="card p-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
+            <h6 style={{ color: 'var(--text-primary)' }}>
+              Traffic consumption {trafficConsumptionLabel} ({selectedNodeName}) • {trafficModeLabel} • {trafficSourceLabel} • step {effectiveTrafficStepSec}s • {trafficSmoothingLabel}
             </h6>
             <div style={{ height: 260 }}>
               {renderTrafficAsBars ? (

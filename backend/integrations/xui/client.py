@@ -53,10 +53,10 @@ class XUIClient:
         self.base_path = base_path.strip("/")
         self.verify_tls = verify_tls
         self._decrypt = decrypt_func
-        self._session_cookie: Optional[str] = None
+        self._session: Optional[Any] = None  # requests.Session
 
     @property
-    def password(self) -> str:
+    def _plain_password(self) -> str:
         if self._decrypt:
             try:
                 return self._decrypt(self._password)
@@ -65,22 +65,29 @@ class XUIClient:
         return self._password
 
     def login(self) -> bool:
-        """Authenticate with the panel and cache the session cookie.
+        """Authenticate with the panel and cache the session.
+
+        Supports both bearer-token nodes (password starts with ``bearer:``)
+        and regular username/password nodes.
 
         Returns:
             ``True`` on success, ``False`` otherwise.
         """
+        import requests as _requests
+        from xui_session import login_panel  # type: ignore[import-untyped]
+
+        session = _requests.Session()
+        session.verify = self.verify_tls
         try:
-            from xui_session import login_panel  # type: ignore[import-untyped]
-            cookie = login_panel(
-                self.url,
-                self.username,
-                self.password,
-                base_path=self.base_path,
-                verify=self.verify_tls,
-            )
-            self._session_cookie = cookie
-            return bool(cookie)
+            raw = self._plain_password
+            if raw.startswith("bearer:"):
+                bearer = raw[len("bearer:"):]
+                ok = login_panel(session, self.url, "", "", bearer_token=bearer)
+            else:
+                ok = login_panel(session, self.url, self.username, raw)
+            if ok:
+                self._session = session
+            return ok
         except Exception as exc:
             logger.warning("XUIClient.login failed: %s", exc)
             return False
@@ -95,7 +102,7 @@ class XUIClient:
     ) -> Any:
         """Make an authenticated request to the panel.
 
-        Automatically logs in if no session cookie is cached.
+        Automatically logs in if no active session is cached.
 
         Args:
             method: HTTP method (``"GET"``, ``"POST"``, etc.).
@@ -109,37 +116,21 @@ class XUIClient:
         Raises:
             RuntimeError: If the request fails after login.
         """
-        if not self._session_cookie:
+        from xui_session import xui_request  # type: ignore[import-untyped]
+
+        if not self._session:
             self.login()
 
+        url = f"{self.url}/{path.lstrip('/')}"
         try:
-            from xui_session import xui_request  # type: ignore[import-untyped]
-            return xui_request(
-                self.url,
-                self._session_cookie,
-                method,
-                path,
-                json=json,
-                params=params,
-                base_path=self.base_path,
-                verify=self.verify_tls,
-            )
+            return xui_request(self._session, method, url, json=json, params=params)
         except Exception as exc:
-            # Session may have expired – try once more after re-login
+            # Session may have expired — try once more after re-login
             logger.debug("XUIClient.request: retrying after session error: %s", exc)
-            self._session_cookie = None
-            self.login()
-            from xui_session import xui_request  # type: ignore[import-untyped]
-            return xui_request(
-                self.url,
-                self._session_cookie,
-                method,
-                path,
-                json=json,
-                params=params,
-                base_path=self.base_path,
-                verify=self.verify_tls,
-            )
+            self._session = None
+            if not self.login():
+                raise RuntimeError(f"XUIClient: re-authentication failed for {self.url}") from exc
+            return xui_request(self._session, method, url, json=json, params=params)
 
     @classmethod
     def from_node(
@@ -160,11 +151,13 @@ class XUIClient:
         Returns:
             A configured :class:`XUIClient` instance.
         """
-        url = f"http://{node['ip']}:{node['port']}"
+        # Берём схему из сохранённого panel_url, иначе https по умолчанию
+        scheme = node.get("scheme") or "https"
+        url = f"{scheme}://{node['ip']}:{node['port']}"
         return cls(
             url=url,
-            username=node["user"],
-            password=node["password"],
+            username=node.get("user", ""),
+            password=node.get("password", ""),
             base_path=node.get("base_path", ""),
             verify_tls=verify_tls,
             decrypt_func=decrypt_func,

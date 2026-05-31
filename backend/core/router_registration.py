@@ -9,6 +9,7 @@ from routers.nodes import build_nodes_router
 from routers.observability import build_observability_router
 from routers.operations import build_operations_router
 from routers.realtime import build_realtime_router
+from routers.server_ops import build_server_ops_router
 from routers.subscriptions import build_subscriptions_router
 
 
@@ -44,6 +45,7 @@ def register_app_routers(
     invalidate_live_stats_cache,
     client_mgr,
     get_cached_clients,
+    get_cached_inbounds,
     check_subscription_rate_limit,
     get_emails,
     get_links_filtered,
@@ -121,6 +123,7 @@ def register_app_routers(
         build_inbounds_router(
             check_auth=check_auth,
             inbound_mgr=inbound_mgr,
+            get_cached_inbounds=get_cached_inbounds,
             node_service=node_service,
             get_node_or_404=get_node_or_404,
             invalidate_subscription_cache=invalidate_subscription_cache,
@@ -185,6 +188,14 @@ def register_app_routers(
             db_path=db_path,
             node_service=node_service,
             client_mgr=client_mgr,
+            server_monitor=server_monitor,
+            get_node_or_404=get_node_or_404,
+        )
+    )
+    app.include_router(
+        build_server_ops_router(
+            check_auth=check_auth,
+            xui_monitor=xui_monitor,
             server_monitor=server_monitor,
             get_node_or_404=get_node_or_404,
         )

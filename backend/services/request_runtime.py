@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import time
 from collections import deque
 from threading import Lock
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Set, Tuple
 
 from fastapi import Request
+
+
+# Максимальный размер auth_cache чтобы избежать DoS через memory exhaustion
+_AUTH_CACHE_MAX_SIZE = 4096
+
+# Окно для TOTP replay-защиты (секунды) — чуть больше окна valid_window=1 (90с)
+_TOTP_REPLAY_WINDOW_SEC = 120
 
 
 class RequestRuntime:
@@ -41,38 +49,52 @@ class RequestRuntime:
         self.sub_rate_limit_count = sub_rate_limit_count
         self.sub_rate_limit_window_sec = sub_rate_limit_window_sec
         self.logger = logger or logging.getLogger(__name__)
+        # TOTP replay cache: {username → set of (ts_bucket, code)}
+        self._totp_used: Dict[str, Set[str]] = {}
+        self._totp_used_lock = Lock()
+
+    @staticmethod
+    def _cache_key(auth_header: str) -> str:
+        return hashlib.sha256(auth_header.encode(), usedforsecurity=False).hexdigest()
 
     def check_basic_auth_header(self, auth_header: Optional[str]) -> Optional[str]:
         if not auth_header:
             return None
 
+        cache_key = self._cache_key(auth_header)
         now = time.time()
         with self.auth_cache_lock:
-            cached = self.auth_cache.get(auth_header)
+            cached = self.auth_cache.get(cache_key)
             if cached:
                 ts, cached_user = cached
                 ttl = self.auth_cache_ttl_sec if cached_user else self.auth_cache_negative_ttl_sec
                 if now - ts < ttl:
                     return cached_user or None
-                self.auth_cache.pop(auth_header, None)
+                self.auth_cache.pop(cache_key, None)
+
+        def _set_cache(value: str) -> None:
+            with self.auth_cache_lock:
+                if len(self.auth_cache) >= _AUTH_CACHE_MAX_SIZE:
+                    try:
+                        self.auth_cache.pop(next(iter(self.auth_cache)))
+                    except StopIteration:
+                        pass
+                self.auth_cache[cache_key] = (now, value)
 
         try:
             scheme, credentials = auth_header.split()
             if scheme.lower() != "basic":
-                with self.auth_cache_lock:
-                    self.auth_cache[auth_header] = (now, "")
+                _set_cache("")
                 return None
             decoded = base64.b64decode(credentials).decode("utf-8")
             username, password = decoded.split(":", 1)
             if self.pam_client.authenticate(username, password):
-                with self.auth_cache_lock:
-                    self.auth_cache[auth_header] = (now, username)
+                _set_cache(username)
                 return username
         except Exception as exc:
             self.logger.warning("Auth error: %s", exc)
 
-        with self.auth_cache_lock:
-            self.auth_cache[auth_header] = (now, "")
+        _set_cache("")
         return None
 
     def verify_totp_code(self, username: str, totp_code: Optional[str]) -> bool:
@@ -83,12 +105,29 @@ class RequestRuntime:
         secret = self.mfa_totp_users.get(username)
         if not secret:
             return False
+        code = totp_code.strip()
         try:
             import pyotp  # type: ignore[import-untyped]
-
-            return bool(pyotp.TOTP(secret).verify(totp_code.strip(), valid_window=1))
+            if not pyotp.TOTP(secret).verify(code, valid_window=1):
+                return False
         except Exception:
             return False
+
+        # Replay protection: reject code that was already used within the window
+        now = time.time()
+        bucket = str(int(now // 30))  # 30-second TOTP window
+        replay_key = f"{bucket}:{code}"
+        with self._totp_used_lock:
+            used = self._totp_used.get(username, set())
+            if replay_key in used:
+                return False
+            # Purge old buckets (keep only last _TOTP_REPLAY_WINDOW_SEC / 30 buckets)
+            max_buckets = (_TOTP_REPLAY_WINDOW_SEC // 30) + 1
+            current_bucket_int = int(now // 30)
+            used = {k for k in used if int(k.split(":", 1)[0]) >= current_bucket_int - max_buckets}
+            used.add(replay_key)
+            self._totp_used[username] = used
+        return True
 
     @staticmethod
     def extract_basic_auth_username(auth_header: Optional[str]) -> Optional[str]:
@@ -103,12 +142,22 @@ class RequestRuntime:
 
     @staticmethod
     def get_client_ip(request: Request) -> str:
-        forwarded_for = request.headers.get("X-Forwarded-For", "")
-        if forwarded_for:
-            return forwarded_for.split(",")[0].strip()
-        if request.client:
-            return request.client.host
-        return "unknown"
+        """Получить реальный IP клиента.
+
+        X-Forwarded-For доверяем только когда запрос пришёл с loopback/private-адреса
+        (т.е. через реальный reverse proxy на том же хосте или в той же сети).
+        Если запрос пришёл напрямую из интернета — не доверяем заголовку.
+        """
+        direct_ip = request.client.host if request.client else ""
+        # Доверяем X-Forwarded-For только от loopback или private-адресов
+        _trusted_prefixes = ("127.", "::1", "10.", "172.16.", "172.17.", "172.18.",
+                             "172.19.", "172.2", "172.3", "192.168.")
+        is_from_proxy = any(direct_ip.startswith(p) for p in _trusted_prefixes)
+        if is_from_proxy:
+            forwarded_for = request.headers.get("X-Forwarded-For", "")
+            if forwarded_for:
+                return forwarded_for.split(",")[0].strip()
+        return direct_ip or "unknown"
 
     def check_subscription_rate_limit(self, request: Request, resource_key: str) -> Tuple[bool, int]:
         now = time.time()

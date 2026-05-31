@@ -78,10 +78,16 @@ def build_live_data_router(
             key=lambda x: x["total"],
             reverse=True,
         )[:5]
+        online_by_node: dict = {}
+        for item in online:
+            node_name = item.get("node") or item.get("node_name") or ""
+            if node_name:
+                online_by_node[node_name] = online_by_node.get(node_name, 0) + 1
         return {
             "nodes_total": len(nodes),
             "clients_total": len(traffic),
             "online_clients_total": len(online),
+            "online_by_node": online_by_node,
             "traffic": {
                 "upload": total_upload,
                 "download": total_download,

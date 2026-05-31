@@ -23,6 +23,23 @@ interface SidebarProps {
   onMobileClose: () => void;
 }
 
+const NAV_GROUPS: Record<string, string | null> = {
+  dashboard:     null,
+  inbounds:      'nav.groupData',
+  clients:       null,
+  traffic:       null,
+  monitoring:    'nav.groupSystem',
+  backup:        null,
+  subscriptions: 'nav.groupSettings',
+};
+
+function getNavGroupLabel(id: string, prevId?: string): string | null {
+  const labelKey = NAV_GROUPS[id] ?? null;
+  if (!labelKey) return null;
+  const prevLabelKey = prevId ? (NAV_GROUPS[prevId] ?? null) : null;
+  return labelKey !== prevLabelKey ? labelKey : null;
+}
+
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   setActiveTab,
@@ -32,12 +49,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen,
   onMobileClose,
 }) => {
-  const { colors, themeMode, stylePreset, setThemeMode } = useTheme();
+  const { colors } = useTheme();
   const { t, i18n } = useTranslation();
   const currentLang = (i18n.resolvedLanguage || i18n.language || 'en').toLowerCase();
   const asciiVariants = useMemo(() => MSM_ASCII_VARIANTS, []);
   const [asciiIndex, setAsciiIndex] = useState(() => Math.floor(Math.random() * asciiVariants.length));
-  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
 
   const handleNav = (tab: TabType) => {
     setActiveTab(tab);
@@ -62,7 +78,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       <aside
-        className={`sidebar${mobileOpen ? ' sidebar--open' : ''}${stylePreset === '3' ? ' sidebar--preset-3' : ''}`}
+        className={`sidebar${mobileOpen ? ' sidebar--open' : ''}`}
         style={{ backgroundColor: colors.bg.secondary, borderRight: `1px solid ${colors.border}` }}
       >
         <div className="sidebar__logo" style={{ borderBottom: `1px solid ${colors.border}` }}>
@@ -73,23 +89,25 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <nav className="sidebar__nav" role="navigation" aria-label={t('sidebar.navAria')}>
-          {items.map(item => (
-            <button
-              key={item.id}
-              className={`sidebar__nav-item${activeTab === item.id ? ' sidebar__nav-item--active' : ''}`}
-              onClick={() => handleNav(item.id)}
-              style={{
-                color: activeTab === item.id ? colors.accent : colors.text.secondary,
-                backgroundColor: activeTab === item.id ? colors.accent + '18' : 'transparent',
-                borderLeft: activeTab === item.id
-                  ? `3px solid ${colors.accent}`
-                  : '3px solid transparent',
-              }}
-            >
-              <span className="sidebar__nav-icon"><UIIcon name={item.icon} size={17} /></span>
-              <span>{t(item.labelKey)}</span>
-            </button>
-          ))}
+          {items.map((item, idx) => {
+            const prev = items[idx - 1];
+            const groupLabel = getNavGroupLabel(item.id, prev?.id);
+            return (
+              <React.Fragment key={item.id}>
+                {groupLabel && (
+                  <div className="sidebar__nav-group-label">{t(groupLabel)}</div>
+                )}
+                <button
+                  className={`sidebar__nav-item${activeTab === item.id ? ' sidebar__nav-item--active' : ''}`}
+                  onClick={() => handleNav(item.id)}
+                  aria-current={activeTab === item.id ? 'page' : undefined}
+                >
+                  <span className="sidebar__nav-icon"><UIIcon name={item.icon} size={16} /></span>
+                  <span>{t(item.labelKey)}</span>
+                </button>
+              </React.Fragment>
+            );
+          })}
         </nav>
 
         <div className="sidebar__spacer" />
@@ -116,68 +134,74 @@ export const Sidebar: React.FC<SidebarProps> = ({
               ]}
               value={currentLang.startsWith('ru') ? 'ru' : 'en'}
               onChange={(value) => i18n.changeLanguage(value)}
-              colors={colors}
             />
           </div>
 
-          <div className="mt-2">
-            <label className="form-label small mb-1" style={{ color: colors.text.secondary }}>
-              {t('sidebar.themeLabel')}
-            </label>
-            <div style={{ position: 'relative' }}>
-              <button
-                className="sidebar__footer-btn w-100"
-                onClick={() => setThemeMenuOpen((prev) => !prev)}
-                title={t('sidebar.themeChoose')}
-                style={{
-                  backgroundColor: colors.bg.tertiary,
-                  border: `1px solid ${colors.border}`,
-                  color: colors.text.primary,
-                }}
-              >
-                <span className="d-inline-flex align-items-center gap-2">
-                  <UIIcon name={themeMode === '1' ? 'sun' : 'moon'} size={14} />
-                  {t('sidebar.themeCurrent', { mode: themeMode })}
-                </span>
-              </button>
-
-              {themeMenuOpen && (
-                <div
-                  className="mt-2 p-2 rounded"
-                  style={{
-                    border: `1px solid ${colors.border}`,
-                    backgroundColor: colors.bg.secondary,
-                    display: 'grid',
-                    gap: 6,
-                  }}
-                >
-                  {([
-                    { value: '1', label: t('sidebar.theme1') },
-                    { value: '2', label: t('sidebar.theme2') },
-                    { value: '3', label: t('sidebar.theme3') },
-                  ] as const).map((mode) => (
-                    <button
-                      key={mode.value}
-                      className="btn btn-sm"
-                      onClick={() => {
-                        setThemeMode(mode.value);
-                        setThemeMenuOpen(false);
-                      }}
-                      style={{
-                        backgroundColor: themeMode === mode.value ? colors.accent : colors.bg.tertiary,
-                        borderColor: themeMode === mode.value ? colors.accent : colors.border,
-                        color: themeMode === mode.value ? colors.accentText : colors.text.primary,
-                      }}
-                    >
-                      {mode.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
 
           <div className="sidebar__footer-actions mt-2">
+            <button
+              className="sidebar__footer-btn"
+              style={{
+                backgroundColor: colors.bg.tertiary,
+                border: `1px solid ${colors.border}`,
+                color: colors.text.secondary,
+                width: '100%',
+                marginBottom: '4px',
+              }}
+              title="Keyboard shortcuts"
+              onClick={() => {
+                const shortcuts = [
+                  'Tab navigation:',
+                  '  Alt+1 → Dashboard',
+                  '  Alt+2 → Inbounds',
+                  '  Alt+3 → Clients',
+                  '  Alt+4 → Traffic',
+                  '  Alt+5 → Monitoring',
+                  '  Alt+6 → Backup',
+                  '  Alt+7 → Subscriptions',
+                  '',
+                  'In Clients tab:',
+                  '  Ctrl+/ → focus search',
+                  '  Click stats chips → quick filter',
+                  '  Click node/protocol badges → filter',
+                  '  Click ▸ email → expand row details',
+                  '  Click ∞ limit cell → set GB limit',
+                  '  Click expiry date → set new date',
+                  '',
+                  'In Inbounds tab:',
+                  '  Click protocol badge → filter',
+                  '  Click security badge → filter',
+                  '  Click node name badge → filter',
+                  '  Click client count badge → go to clients',
+                  '  Click + button → add client to inbound',
+                  '',
+                  'Dashboard:',
+                  '  Click stat tiles → go to relevant tab',
+                  '  Click top client email → filter clients',
+                ].join('\n');
+                alert(shortcuts);
+              }}
+            >
+              ⌨ Shortcuts
+            </button>
+            <a
+              href="/api/docs"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="sidebar__footer-btn"
+              style={{
+                backgroundColor: colors.bg.tertiary,
+                border: `1px solid ${colors.border}`,
+                color: colors.text.secondary,
+                display: 'block',
+                textDecoration: 'none',
+                textAlign: 'center',
+                marginBottom: '4px',
+              }}
+              title="Open FastAPI interactive documentation"
+            >
+              📖 API Docs
+            </a>
             <button
               className="sidebar__footer-btn sidebar__logout"
               onClick={onLogout}

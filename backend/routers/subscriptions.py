@@ -2,6 +2,7 @@ import base64
 import datetime
 import json
 import sqlite3
+from services.db_bootstrap import connect
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
@@ -46,7 +47,7 @@ def build_subscriptions_router(
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
 
-        with sqlite3.connect(db_path) as conn:
+        with connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             _ensure_stats_table(conn)
             emails = get_emails(node_service.list_nodes())
@@ -68,7 +69,7 @@ def build_subscriptions_router(
             )
 
         no_cache_headers = _no_cache_headers()
-        with sqlite3.connect(db_path) as conn:
+        with connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             _ensure_stats_table(conn)
             all_nodes = node_service.list_nodes()
@@ -79,7 +80,7 @@ def build_subscriptions_router(
             links = get_links_filtered(all_nodes, email, protocol)
             if links:
                 now = datetime.datetime.now().strftime("%d.%m %H:%M")
-                with sqlite3.connect(db_path) as db:
+                with connect(db_path) as db:
                     db.execute(
                         "INSERT INTO stats (email, count, last_download) VALUES (?, 1, ?) "
                         "ON CONFLICT(email) DO UPDATE SET count=count+1, last_download=?",
@@ -109,7 +110,7 @@ def build_subscriptions_router(
             )
 
         no_cache_headers = _no_cache_headers()
-        with sqlite3.connect(db_path) as conn:
+        with connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             _ensure_stats_table(conn)
             all_nodes = node_service.list_nodes()
@@ -151,7 +152,7 @@ def build_subscriptions_router(
 
             if all_links:
                 now = datetime.datetime.now().strftime("%d.%m %H:%M")
-                with sqlite3.connect(db_path) as db:
+                with connect(db_path) as db:
                     for matched_email in matching_emails:
                         db.execute(
                             "INSERT INTO stats (email, count, last_download) VALUES (?, 1, ?) "
@@ -172,7 +173,7 @@ def build_subscriptions_router(
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
 
-        with sqlite3.connect(db_path) as conn:
+        with connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             groups = [
                 dict(row)
@@ -198,7 +199,7 @@ def build_subscriptions_router(
             raise HTTPException(status_code=400, detail="name and identifier required")
 
         try:
-            with sqlite3.connect(db_path) as conn:
+            with connect(db_path) as conn:
                 conn.execute(
                     """
                     INSERT INTO subscription_groups
@@ -219,7 +220,7 @@ def build_subscriptions_router(
             return {"status": "success", "identifier": identifier}
         except Exception as exc:
             logger.error(f"Error creating subscription group: {exc}")
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.put("/api/v1/subscription-groups/{group_id}")
     async def update_subscription_group(request: Request, group_id: int, data: Dict):
@@ -253,7 +254,7 @@ def build_subscriptions_router(
         updates.append("updated_at = CURRENT_TIMESTAMP")
         params.append(group_id)
         try:
-            with sqlite3.connect(db_path) as conn:
+            with connect(db_path) as conn:
                 conn.execute(
                     f"UPDATE subscription_groups SET {', '.join(updates)} WHERE id = ?",
                     params,
@@ -263,7 +264,7 @@ def build_subscriptions_router(
             return {"status": "success"}
         except Exception as exc:
             logger.error(f"Error updating subscription group: {exc}")
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.delete("/api/v1/subscription-groups/{group_id}")
     async def delete_subscription_group(request: Request, group_id: int):
@@ -272,13 +273,13 @@ def build_subscriptions_router(
             raise HTTPException(status_code=401, detail="Unauthorized")
 
         try:
-            with sqlite3.connect(db_path) as conn:
+            with connect(db_path) as conn:
                 conn.execute("DELETE FROM subscription_groups WHERE id = ?", (group_id,))
                 conn.commit()
             invalidate_subscription_cache()
             return {"status": "success"}
         except Exception as exc:
             logger.error(f"Error deleting subscription group: {exc}")
-            raise HTTPException(status_code=500, detail=str(exc))
+            raise HTTPException(status_code=500, detail="Internal server error")
 
     return router

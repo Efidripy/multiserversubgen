@@ -31,6 +31,14 @@ class SnapshotCollector:
         max_interval_sec: int = 86400,
         min_interval_sec: int = 3,
         max_parallel_polls: int = 8,
+        warming_interval_1_sec: int = 30,
+        warming_interval_2_sec: int = 60,
+        warming_interval_3_sec: int = 120,
+        active_interval_sec: int = 120,
+        idle_interval_sec: int = 3600,
+        ultra_idle_interval_sec: int = 86400,
+        idle_after_sec: int = 900,
+        ultra_idle_after_sec: int = 86400,
     ):
         self.fetch_nodes = fetch_nodes
         self.xui_monitor = xui_monitor
@@ -39,6 +47,14 @@ class SnapshotCollector:
         self.max_interval_sec = max(self.base_interval_sec, max_interval_sec)
         self.min_interval_sec = max(1, min_interval_sec)
         self.max_parallel_polls = max(1, max_parallel_polls)
+        self.warming_interval_1_sec = max(3, warming_interval_1_sec)
+        self.warming_interval_2_sec = max(self.warming_interval_1_sec, warming_interval_2_sec)
+        self.warming_interval_3_sec = max(self.warming_interval_2_sec, warming_interval_3_sec)
+        self.active_interval_sec = max(3, active_interval_sec)
+        self.idle_interval_sec = max(self.active_interval_sec, idle_interval_sec)
+        self.ultra_idle_interval_sec = max(self.idle_interval_sec, ultra_idle_interval_sec)
+        self.idle_after_sec = max(60, idle_after_sec)
+        self.ultra_idle_after_sec = max(self.idle_after_sec, ultra_idle_after_sec)
         self.on_snapshot = on_snapshot
 
         self._task: Optional[asyncio.Task] = None
@@ -96,24 +112,24 @@ class SnapshotCollector:
         time_in_mode = now - self._mode_started_at
 
         if self._mode == CollectorMode.ULTRA_IDLE:
-            return 86400.0
+            return float(self.ultra_idle_interval_sec)
 
         elif self._mode == CollectorMode.IDLE:
-            return 3600.0
+            return float(self.idle_interval_sec)
 
         elif self._mode == CollectorMode.WARMING:
             if time_in_mode < 120:
-                return 5.0
+                return float(self.warming_interval_1_sec)
             elif time_in_mode < 300:
-                return 10.0
+                return float(self.warming_interval_2_sec)
             elif time_in_mode < 600:
-                return 20.0
+                return float(self.warming_interval_3_sec)
             else:
                 self._switch_mode(CollectorMode.ACTIVE)
-                return 30.0
+                return float(self.active_interval_sec)
 
         elif self._mode == CollectorMode.ACTIVE:
-            return 30.0
+            return float(self.active_interval_sec)
 
         return float(self.base_interval_sec)
 
@@ -128,9 +144,9 @@ class SnapshotCollector:
             if self._mode in (CollectorMode.IDLE, CollectorMode.ULTRA_IDLE):
                 self._switch_mode(CollectorMode.WARMING)
         else:
-            if time_since_last_activity > 86400 and self._mode != CollectorMode.ULTRA_IDLE:
+            if time_since_last_activity > self.ultra_idle_after_sec and self._mode != CollectorMode.ULTRA_IDLE:
                 self._switch_mode(CollectorMode.ULTRA_IDLE)
-            elif time_since_last_activity > 600 and self._mode not in (CollectorMode.IDLE, CollectorMode.ULTRA_IDLE):
+            elif time_since_last_activity > self.idle_after_sec and self._mode not in (CollectorMode.IDLE, CollectorMode.ULTRA_IDLE):
                 self._switch_mode(CollectorMode.IDLE)
 
     async def start(self):
