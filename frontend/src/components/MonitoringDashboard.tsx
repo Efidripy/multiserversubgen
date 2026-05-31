@@ -1057,12 +1057,18 @@ export const MonitoringDashboard: React.FC = () => {
     maintainAspectRatio: false,
     plugins: {
       legend: {
+        position: 'bottom' as const,
+        align: 'start' as const,
+        maxHeight: 84,
         labels: {
           color: 'var(--text-primary)',
           usePointStyle: true,
           pointStyle: 'circle' as const,
+          boxWidth: 10,
+          boxHeight: 10,
+          padding: 12,
           font: {
-            size: 12,
+            size: 11,
             weight: 600 as const,
           },
         },

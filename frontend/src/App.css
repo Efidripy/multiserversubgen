@@ -1268,6 +1268,14 @@ select option:checked {
   align-items: start;
 }
 
+.dashboard-main-grid__fleet .panel-block {
+  overflow: visible;
+}
+
+.dashboard-main-grid__fleet .table-responsive {
+  max-height: none;
+}
+
 .client-manager {
   display: grid;
   grid-template-columns: minmax(280px, 0.6fr) minmax(0, 1.4fr);
@@ -2088,7 +2096,7 @@ body.style-preset-3 .monitoring-panel__header {
 @media (min-width: 1920px) {
   .app-content {
     padding: 24px 40px;
-    max-width: 1800px;
+    max-width: 100%;
     margin-left: auto;
     margin-right: auto;
   }
@@ -2107,7 +2115,7 @@ body.style-preset-3 .monitoring-panel__header {
   body.style-preset-3 .app-main { margin-left: 296px; }
   .app-content {
     padding: 28px 48px;
-    max-width: 2200px;
+    max-width: 100%;
   }
   .server-grid {
     grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
@@ -2132,7 +2140,7 @@ body.style-preset-3 .monitoring-panel__header {
   body.style-preset-3 .app-main { margin-left: 380px; }
   .app-content {
     padding: 32px 60px;
-    max-width: 3200px;
+    max-width: 100%;
   }
   .server-grid {
     grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
@@ -2204,6 +2212,10 @@ body.theme-light input:-webkit-autofill:active {
 
 /* Prevent any container from leaking horizontally */
 .app-content { overflow-x: hidden; }
+
+.monitoring-panel canvas {
+  min-width: 0;
+}
 
 /* Tables always scroll horizontally before breaking layout */
 .table-responsive,

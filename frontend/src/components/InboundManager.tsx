@@ -780,41 +780,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
           </div>
         )}
 
-        <div className="panel-grid mb-3">
-          <div className="panel-block">
-            <div className="panel-block__header">
-              <div>
-                <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>{t('common.actions')}</h6>
-                <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
-                  {t('inbounds.actionsHint')}
-                </p>
-              </div>
-            </div>
-            <div className="panel-inline-actions">
-              <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--success)', borderColor: 'var(--success)', color: '#ffffff' }}
-                onClick={() => setShowAddModal(true)}
-              >
-                <span className="d-inline-flex align-items-center gap-1">
-                  <UIIcon name="plus" size={14} />
-                  Add Inbound
-                </span>
-              </button>
-              <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
-                onClick={() => { void loadInbounds(); }}
-                disabled={loading}
-              >
-                <span className="d-inline-flex align-items-center gap-1">
-                  <UIIcon name="refresh" size={14} />
-                  {t('common.refresh')}
-                </span>
-              </button>
-            </div>
-          </div>
-
+        <div className="mb-3">
           <div className="panel-block panel-block--wide">
             <div className="panel-block__header">
               <div>
@@ -899,7 +865,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
         <div className="card p-2 mb-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
           <div className="row g-2 align-items-end">
-            <div className="col-lg-3 col-md-6">
+            <div className="col-lg-4 col-md-6">
               <div className="small" style={{ color: 'var(--text-secondary)' }}>
                 {t('inbounds.selectedCount', { count: selectedKeys.size })}
               </div>
@@ -918,6 +884,34 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                   disabled={selectedKeys.size === 0}
                 >
                   {t('common.cancel')}
+                </button>
+              </div>
+            </div>
+
+            <div className="col-lg-4 col-md-6">
+              <div className="small fw-semibold" style={{ color: 'var(--text-primary)' }}>{t('common.actions')}</div>
+              <div className="small mb-1" style={{ color: 'var(--text-secondary)' }}>{t('inbounds.actionsHint')}</div>
+              <div className="panel-inline-actions">
+                <button
+                  className="btn btn-sm"
+                  style={{ backgroundColor: 'var(--success)', borderColor: 'var(--success)', color: '#ffffff' }}
+                  onClick={() => setShowAddModal(true)}
+                >
+                  <span className="d-inline-flex align-items-center gap-1">
+                    <UIIcon name="plus" size={14} />
+                    Add Inbound
+                  </span>
+                </button>
+                <button
+                  className="btn btn-sm"
+                  style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
+                  onClick={() => { void loadInbounds(); }}
+                  disabled={loading}
+                >
+                  <span className="d-inline-flex align-items-center gap-1">
+                    <UIIcon name="refresh" size={14} />
+                    {t('common.refresh')}
+                  </span>
                 </button>
               </div>
             </div>

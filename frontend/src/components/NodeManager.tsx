@@ -465,6 +465,14 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
           {success && <div className="alert alert-success mb-3">{success}</div>}
 
           {showForm && (
+            <div className="modal fade show d-block" tabIndex={-1} role="dialog" style={{ backgroundColor: 'rgba(2, 6, 23, 0.66)' }}>
+              <div className="modal-dialog modal-lg modal-dialog-scrollable" role="document">
+                <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+                  <div className="modal-header" style={{ borderColor: colors.border }}>
+                    <h6 className="modal-title" style={{ color: colors.text.primary }}>{t('nodes.intakeTitle')}</h6>
+                    <button type="button" className="btn-close" onClick={() => setShowForm(false)} aria-label="Close" />
+                  </div>
+                  <div className="modal-body">
             <div className="panel-block__stack">
               <div>
                 <label className="form-label small" style={{ color: colors.text.secondary }}>{t('nodes.addMode')}</label>
@@ -645,6 +653,10 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                   )}
                 </div>
               )}
+            </div>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
         </section>

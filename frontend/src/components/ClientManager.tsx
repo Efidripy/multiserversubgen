@@ -1229,8 +1229,7 @@ export const ClientManager: React.FC = () => {
   const protocols = Array.from(new Set(clients.map(c => c.protocol)));
   
   return (
-    <div className={`client-manager${showAddForm ? '' : ' client-manager--no-form'}`}>
-      {showAddForm && <AddClientMultiServer />}
+    <div className="client-manager client-manager--no-form">
       <div className="card p-3 mb-3">
 
 
@@ -2635,6 +2634,27 @@ export const ClientManager: React.FC = () => {
                 >
                   {loading ? t('nodes.adding') : t('clients.addClients')}
                 </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Client Modal */}
+      {showAddForm && (
+        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }}>
+          <div className="modal-dialog modal-xl modal-dialog-scrollable">
+            <div className="modal-content" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+              <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
+                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>{t('common.add')}</h6>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setShowAddForm(false)}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <AddClientMultiServer />
               </div>
             </div>
           </div>
