@@ -67,3 +67,15 @@ class NodeService:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
             return self._normalize_node(dict(row)) if row else None
+
+    def update_node(self, node_id: int, updates: Dict) -> Optional[Dict]:
+        allowed = {"api_version", "panel_version", "name", "ip", "port", "user",
+                   "password", "base_path", "read_only", "enabled"}
+        fields = {k: v for k, v in updates.items() if k in allowed}
+        if not fields:
+            return self.get_node(node_id)
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        params = list(fields.values()) + [node_id]
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(f"UPDATE nodes SET {set_clause} WHERE id = ?", params)
+        return self.get_node(node_id)

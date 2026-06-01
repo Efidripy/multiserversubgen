@@ -16,6 +16,8 @@ interface Node {
   scheme?: string;
   base_path?: string;
   read_only?: boolean;
+  api_version?: string;
+  panel_version?: string;
 }
 
 interface BatchPreviewRow {
@@ -773,7 +775,6 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                   <th className="col-hide-mobile">{t('nodes.address')}</th>
                   <th>{t('common.status')}</th>
                   <th style={{ width: '1px', whiteSpace: 'nowrap' }}>{t('nodes.access')}</th>
-                  <th style={{ width: '1px', whiteSpace: 'nowrap' }}>{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -782,83 +783,86 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                   const dotColor = status === true ? colors.success : status === false ? colors.danger : colors.text.secondary;
                   const statusLabel = status === true ? t('nodes.online') : status === false ? t('nodes.offline') : t('nodes.checking');
                   const tags = nodeTags[node.id] || [];
+                  const _bp = (node.base_path || '').replace(/^\/|\/$/g, '');
+                  const panelUrl = `${node.scheme || 'http'}://${node.ip}:${node.port}${_bp ? '/' + _bp + '/' : '/'}`;
                   return (
-                    <tr key={node.id}>
-                      <td>
-                        <input type="checkbox" checked={selectedNodeIds.has(node.id)}
-                          onChange={e => setSelectedNodeIds(prev => { const n = new Set(prev); e.target.checked ? n.add(node.id) : n.delete(node.id); return n; })} />
-                      </td>
-                      <td>
-                        <div className="d-flex align-items-start flex-column gap-1">
-                          <span className="d-inline-flex align-items-center gap-2">
-                            <span className="node-card__dot" style={{ backgroundColor: dotColor }} />
-                            <strong>{node.name}</strong>
-                          </span>
-                          {tags.length > 0 && (
-                            <div className="d-flex gap-1 flex-wrap">
-                              {tags.map(tag => (
-                                <span key={tag} className="badge" style={{ backgroundColor: colors.accent + '22', color: colors.accent, fontSize: '0.62rem', cursor: 'pointer' }}
-                                  onClick={() => setFilterTag(prev => prev === tag ? '' : tag)}>{tag}</span>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                      <td className="col-hide-mobile">
-                        {/* Address line */}
-                        <div className="mono-inline">
-                          {node.scheme && (
-                            <span className="badge me-1" style={{ backgroundColor: node.scheme === 'https' ? colors.success + '33' : colors.warning + '33', color: node.scheme === 'https' ? colors.success : colors.warning, fontSize: '0.65rem' }}>
-                              {node.scheme}
+                    <React.Fragment key={node.id}>
+                      <tr>
+                        <td>
+                          <input type="checkbox" checked={selectedNodeIds.has(node.id)}
+                            onChange={e => setSelectedNodeIds(prev => { const n = new Set(prev); e.target.checked ? n.add(node.id) : n.delete(node.id); return n; })} />
+                        </td>
+                        <td>
+                          <div className="d-flex align-items-start flex-column gap-1">
+                            <span className="d-inline-flex align-items-center gap-2">
+                              <span className="node-card__dot" style={{ backgroundColor: dotColor }} />
+                              <strong>{node.name}</strong>
+                              {node.api_version && (
+                                <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: 4, background: node.api_version === 'v3' ? '#0d6efd22' : '#6c757d22', color: node.api_version === 'v3' ? '#6ea8fe' : '#adb5bd', fontWeight: 600, letterSpacing: '0.03em' }}>
+                                  {node.api_version}
+                                </span>
+                              )}
                             </span>
-                          )}
-                          {node.ip}:{node.port}
-                        </div>
-                        {/* Meta line: version · ping · clients · inbounds */}
-                        {(nodeVersions[node.id] || nodePing[node.id] || nodeClientCounts[node.id] || nodeInboundCounts[node.id]) && (
-                          <div className="d-flex flex-wrap gap-2 align-items-center" style={{ marginTop: '3px', fontSize: '0.67rem', color: colors.text.tertiary, lineHeight: 1.3 }}>
-                            {nodeVersions[node.id] && (
-                              <span style={{ fontFamily: 'monospace', opacity: 0.75 }}>{nodeVersions[node.id]}</span>
+                            {tags.length > 0 && (
+                              <div className="d-flex gap-1 flex-wrap">
+                                {tags.map(tag => (
+                                  <span key={tag} className="badge" style={{ backgroundColor: colors.accent + '22', color: colors.accent, fontSize: '0.62rem', cursor: 'pointer' }}
+                                    onClick={() => setFilterTag(prev => prev === tag ? '' : tag)}>{tag}</span>
+                                ))}
+                              </div>
                             )}
-                            {nodePing[node.id] && (
-                              <span style={{ color: nodePing[node.id] < 500 ? colors.success : nodePing[node.id] < 2000 ? colors.warning : colors.danger }}>
-                                {nodePing[node.id]}ms
+                          </div>
+                        </td>
+                        <td className="col-hide-mobile">
+                          <div className="mono-inline">
+                            {node.scheme && (
+                              <span className="badge me-1" style={{ backgroundColor: node.scheme === 'https' ? colors.success + '33' : colors.warning + '33', color: node.scheme === 'https' ? colors.success : colors.warning, fontSize: '0.65rem' }}>
+                                {node.scheme}
                               </span>
                             )}
-                            {nodeClientCounts[node.id] ? (
-                              <span><UIIcon name="clients" size={10} /> {nodeClientCounts[node.id]}</span>
-                            ) : null}
-                            {nodeInboundCounts[node.id] ? (
-                              <span><UIIcon name="inbounds" size={10} /> {nodeInboundCounts[node.id]}</span>
-                            ) : null}
+                            {node.ip}:{node.port}
                           </div>
-                        )}
-                      </td>
-                      <td>
-                        <span style={{ color: status === true ? colors.success : status === false ? colors.danger : colors.text.secondary }}>
-                          {statusLabel}
-                        </span>
-                      </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        <button
-                          className={`btn btn-sm ${Boolean(node.read_only) ? 'btn-ghost-warning' : 'btn-ghost-success'}`}
-                          onClick={() => handleToggleReadOnly(node)}
-                          disabled={loading || Boolean(readOnlyUpdating[node.id])}
-                          title={Boolean(node.read_only) ? t('nodes.switchWrite') : t('nodes.switchReadOnly')}
-                        >
-                          {readOnlyUpdating[node.id]
-                            ? '...'
-                            : Boolean(node.read_only)
-                            ? 'RO'
-                            : 'RW'}
-                        </button>
-                      </td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        <div className="panel-inline-actions">
-                          {(node.url || node.ip) && (() => {
-                            const _bp = (node.base_path || '').replace(/^\/|\/$/g, '');
-                            const panelUrl = `${node.scheme || 'http'}://${node.ip}:${node.port}${_bp ? '/' + _bp + '/' : '/'}`;
-                            return (
+                          {(nodeVersions[node.id] || nodePing[node.id] || nodeClientCounts[node.id] || nodeInboundCounts[node.id]) && (
+                            <div className="d-flex flex-wrap gap-2 align-items-center" style={{ marginTop: '3px', fontSize: '0.67rem', color: colors.text.tertiary, lineHeight: 1.3 }}>
+                              {nodeVersions[node.id] && (
+                                <span style={{ fontFamily: 'monospace', opacity: 0.75 }}>{nodeVersions[node.id]}</span>
+                              )}
+                              {nodePing[node.id] && (
+                                <span style={{ color: nodePing[node.id] < 500 ? colors.success : nodePing[node.id] < 2000 ? colors.warning : colors.danger }}>
+                                  {nodePing[node.id]}ms
+                                </span>
+                              )}
+                              {nodeClientCounts[node.id] ? (
+                                <span><UIIcon name="clients" size={10} /> {nodeClientCounts[node.id]}</span>
+                              ) : null}
+                              {nodeInboundCounts[node.id] ? (
+                                <span><UIIcon name="inbounds" size={10} /> {nodeInboundCounts[node.id]}</span>
+                              ) : null}
+                            </div>
+                          )}
+                        </td>
+                        <td>
+                          <span style={{ color: status === true ? colors.success : status === false ? colors.danger : colors.text.secondary }}>
+                            {statusLabel}
+                          </span>
+                        </td>
+                        <td style={{ whiteSpace: 'nowrap' }}>
+                          <button
+                            className={`btn btn-sm ${Boolean(node.read_only) ? 'btn-ghost-warning' : 'btn-ghost-success'}`}
+                            onClick={() => handleToggleReadOnly(node)}
+                            disabled={loading || Boolean(readOnlyUpdating[node.id])}
+                            title={Boolean(node.read_only) ? t('nodes.switchWrite') : t('nodes.switchReadOnly')}
+                          >
+                            {readOnlyUpdating[node.id] ? '...' : Boolean(node.read_only) ? 'RO' : 'RW'}
+                          </button>
+                        </td>
+                      </tr>
+                      {/* Action buttons row */}
+                      <tr style={{ borderTop: 'none' }}>
+                        <td style={{ paddingTop: 0, paddingBottom: '6px', borderTop: 'none' }} />
+                        <td colSpan={4} style={{ paddingTop: 0, paddingBottom: '6px', borderTop: 'none' }}>
+                          <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end' }}>
+                            {(node.url || node.ip) && (
                               <>
                                 <a
                                   className="btn btn-sm"
@@ -879,65 +883,65 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                                   📋
                                 </button>
                               </>
-                            );
-                          })()}
-                          <button
-                            className="btn btn-sm"
-                            style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
-                            title={t('nodes.testThisConnectionTitle')}
-                            onClick={async () => {
-                              const nodeUrl = node.url || `${(node as any).scheme || 'http'}://${node.ip}:${node.port}`;
-                              const t0 = Date.now();
-                              setNodeStatuses(prev => ({ ...prev, [node.id]: null }));
-                              try {
-                                const res = await api.post('/v1/nodes/check-connection', { url: nodeUrl }, { auth: getAuth() });
-                                const ping = Date.now() - t0;
-                                const ok = res.data?.success === true;
-                                setNodeStatuses(prev => ({ ...prev, [node.id]: ok }));
-                                if (ok) setNodePing(prev => ({ ...prev, [node.id]: ping }));
-                                toast(`${node.name}: ${ok ? t('nodes.onlineWithPing', { ping }) : t('nodes.offline')}`, ok ? 'success' : 'error');
-                              } catch {
-                                setNodeStatuses(prev => ({ ...prev, [node.id]: false }));
-                                toast(t('nodes.nodeConnectionFailed', { node: node.name }), 'error');
-                              }
-                            }}
-                          >
-                            ⟳
-                          </button>
-                          <button
-                            className="btn btn-sm"
-                            style={{ backgroundColor: tags.length > 0 ? colors.accent + '33' : colors.bg.tertiary, borderColor: tags.length > 0 ? colors.accent + '88' : colors.border, color: tags.length > 0 ? colors.accent : colors.text.secondary }}
-                            title={tags.length > 0 ? t('nodes.tagsTitle', { tags: tags.join(', ') }) : t('nodes.addTagsTitle')}
-                            onClick={() => {
-                              const current = tags.join(', ');
-                              const input = window.prompt(`Tags for "${node.name}" (comma-separated):`, current);
-                              if (input !== null) {
-                                const newTags = input.split(',').map(t => t.trim()).filter(Boolean);
-                                saveNodeTags(node.id, newTags);
-                              }
-                            }}
-                          >
-                            🏷
-                          </button>
-                          <button
-                            className="btn btn-sm"
-                            style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
-                            onClick={() => handleEditClick(node)}
-                            aria-label={t('common.edit')}
-                          >
-                            <UIIcon name="edit" size={14} />
-                          </button>
-                          <button
-                            className="btn btn-sm"
-                            style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: colors.dangerText }}
-                            onClick={() => handleDelete(node.id)}
-                            aria-label={t('common.delete')}
-                          >
-                            <UIIcon name="x" size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
+                            )}
+                            <button
+                              className="btn btn-sm"
+                              style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
+                              title={t('nodes.testThisConnectionTitle')}
+                              onClick={async () => {
+                                const nodeUrl = node.url || `${(node as any).scheme || 'http'}://${node.ip}:${node.port}`;
+                                const t0 = Date.now();
+                                setNodeStatuses(prev => ({ ...prev, [node.id]: null }));
+                                try {
+                                  const res = await api.post('/v1/nodes/check-connection', { url: nodeUrl }, { auth: getAuth() });
+                                  const ping = Date.now() - t0;
+                                  const ok = res.data?.success === true;
+                                  setNodeStatuses(prev => ({ ...prev, [node.id]: ok }));
+                                  if (ok) setNodePing(prev => ({ ...prev, [node.id]: ping }));
+                                  toast(`${node.name}: ${ok ? t('nodes.onlineWithPing', { ping }) : t('nodes.offline')}`, ok ? 'success' : 'error');
+                                } catch {
+                                  setNodeStatuses(prev => ({ ...prev, [node.id]: false }));
+                                  toast(t('nodes.nodeConnectionFailed', { node: node.name }), 'error');
+                                }
+                              }}
+                            >
+                              ⟳
+                            </button>
+                            <button
+                              className="btn btn-sm"
+                              style={{ backgroundColor: tags.length > 0 ? colors.accent + '33' : colors.bg.tertiary, borderColor: tags.length > 0 ? colors.accent + '88' : colors.border, color: tags.length > 0 ? colors.accent : colors.text.secondary }}
+                              title={tags.length > 0 ? t('nodes.tagsTitle', { tags: tags.join(', ') }) : t('nodes.addTagsTitle')}
+                              onClick={() => {
+                                const current = tags.join(', ');
+                                const input = window.prompt(`Tags for "${node.name}" (comma-separated):`, current);
+                                if (input !== null) {
+                                  const newTags = input.split(',').map(t => t.trim()).filter(Boolean);
+                                  saveNodeTags(node.id, newTags);
+                                }
+                              }}
+                            >
+                              🏷
+                            </button>
+                            <button
+                              className="btn btn-sm"
+                              style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                              onClick={() => handleEditClick(node)}
+                              aria-label={t('common.edit')}
+                            >
+                              <UIIcon name="edit" size={14} />
+                            </button>
+                            <button
+                              className="btn btn-sm"
+                              style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: colors.dangerText }}
+                              onClick={() => handleDelete(node.id)}
+                              aria-label={t('common.delete')}
+                            >
+                              <UIIcon name="x" size={14} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    </React.Fragment>
                   );
                 })}
               </tbody>

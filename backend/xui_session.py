@@ -53,6 +53,35 @@ def invalidate_node_api_version(base_url: str | None = None) -> None:
             _NODE_API_VERSION.pop(base_url, None)
 
 
+def seed_node_api_versions(nodes: list) -> None:
+    """Seed the in-memory API version cache from DB node records on startup.
+
+    Call this once after node_service is available so every operation knows
+    the correct API version immediately without probing.
+    """
+    seeded = 0
+    with _NODE_API_VERSION_LOCK:
+        for node in nodes:
+            api_version = (node.get("api_version") or "").strip()
+            if not api_version:
+                continue
+            # Build base_url the same way client_manager does:
+            # scheme://ip:port/base_path
+            scheme = node.get("scheme") or "https"
+            ip = node.get("ip") or node.get("panel_url") or ""
+            port = str(node.get("port") or "443")
+            base_path = (node.get("base_path") or "").strip("/")
+            if ip:
+                base_url = f"{scheme}://{ip}:{port}"
+                if base_path:
+                    base_url = f"{base_url}/{base_path}"
+                if base_url not in _NODE_API_VERSION:
+                    _NODE_API_VERSION[base_url] = api_version
+                    seeded += 1
+    if seeded:
+        logger.info("Seeded API version cache: %d nodes", seeded)
+
+
 def _env_int(name: str, default: int) -> int:
     raw = os.getenv(name, str(default)).strip()
     try:
@@ -445,7 +474,9 @@ def _try_csrf_login(
         except ValueError:
             pass
 
-        logger.info("CSRF login succeeded at %s", url)
+        # Persist CSRF token on session so all subsequent POST/PUT/DELETE carry it
+        session.headers.update({"X-CSRF-Token": csrf_token})
+        logger.info("CSRF login succeeded at %s (CSRF token pinned to session)", url)
         return {"ok": True, "status_code": int(resp.status_code), "reason": "ok", "error": "", "login_url": url}
 
     logger.debug("CSRF token obtained but login failed at all paths, falling back to legacy")

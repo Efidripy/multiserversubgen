@@ -51,6 +51,18 @@ class ClientManager:
     @staticmethod
     def _is_read_only(node: Dict) -> bool:
         return bool(node.get("read_only"))
+
+    @staticmethod
+    def _xui_success(res) -> bool:
+        if res.status_code != 200:
+            return False
+        try:
+            data = res.json()
+            if isinstance(data, dict) and "success" in data:
+                return bool(data.get("success"))
+        except Exception:
+            pass
+        return True
     
     def _get_session(self, node: Dict) -> tuple:
         """Создать авторизованную сессию для узла
@@ -369,6 +381,16 @@ class ClientManager:
                 "settings": json.dumps({"clients": [client_config]})
             }
             res = xui_request(s, "POST", f"{base_url}/panel/api/inbounds/addClient", json=payload)
+
+            # 404 on v2 endpoint → node is actually v3, retry with v3 API and update cache
+            if res.status_code == 404:
+                logger.info("add_client: v2 /addClient 404, upgrading node=%r to v3", node["name"])
+                result = self._add_client_v3(s, base_url, email=email, inbound_ids=[inbound_id], config=client_config)
+                if result is not None:
+                    set_node_api_version(base_url, "v3")
+                    logger.info("add_client v3 upgrade END node=%r email=%r result=%s", node["name"], email, result)
+                    return result
+
             ok = self._xui_success(res)
             logger.info("add_client v2 END node=%r email=%r result=%s http_status=%s", node["name"], email, ok, res.status_code)
             return ok

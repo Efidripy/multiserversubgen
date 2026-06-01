@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { activityLog } from '../services/activityLog';
 import { useToast } from './Toast';
 import { useTranslation } from 'react-i18next';
 import { Line } from 'react-chartjs-2';
@@ -238,6 +239,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const loadServersStatus = async () => {
+    activityLog.debug('ServerStatus', 'Loading all servers status...');
     setLoading(true);
     setError('');
 
@@ -366,6 +368,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleRestartCore = async (nodeName: string) => {
+    activityLog.info('ServerStatus', `Restart Xray: ${nodeName}`);
     if (!window.confirm(t('serverStatus.confirmRestart'))) return;
 
     const nodeId = nodeIds[nodeName];
@@ -392,6 +395,7 @@ export const ServerStatus: React.FC = () => {
   void _loadServerLogsLegacy;
 
   const handleViewLogs = async (nodeName: string) => {
+    activityLog.info('ServerStatus', `View logs: ${nodeName}`);
     const nodeId = nodeIds[nodeName];
     if (!nodeId) { toast(t('serverStatus.nodeIdMissing'), 'warning'); return; }
     setLogsNodeId(nodeId);
@@ -420,6 +424,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleOpenKeyGen = (nodeId: number) => {
+    activityLog.info('ServerStatus', 'Key generator opened', { nodeId });
     setKeyGenNodeId(nodeId);
     setKeyGenResult({});
     setShowKeyGen(true);
@@ -437,6 +442,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleOpenVersions = async (nodeId: number, nodeName: string) => {
+    activityLog.info('ServerStatus', `Xray versions: ${nodeName}`, { nodeId });
     setVersionNodeId(nodeId);
     setVersionNodeName(nodeName);
     setShowVersionModal(true);
@@ -459,6 +465,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleOpenOutbounds = async (nodeId: number, nodeName: string) => {
+    activityLog.info('ServerStatus', `Outbound traffic: ${nodeName}`, { nodeId });
     setOutboundsNodeName(nodeName);
     setShowOutboundsModal(true);
     setOutboundsLoading(true);
@@ -470,6 +477,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleStopXray = async (nodeId: number) => {
+    activityLog.info('ServerStatus', 'Stop Xray', { nodeId });
     if (!window.confirm(t('serverStatus.confirmStopXray'))) return;
     try {
       const res = await api.post(`/v1/nodes/${nodeId}/stop-xray`, {}, { auth: getAuth() });
@@ -479,6 +487,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleUpdatePanel = async (nodeId: number) => {
+    activityLog.info('ServerStatus', 'Update panel', { nodeId });
     if (!window.confirm(t('serverStatus.confirmUpdatePanel'))) return;
     try {
       const res = await api.post(`/v1/nodes/${nodeId}/update-panel`, {}, { auth: getAuth() });
@@ -490,6 +499,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleOpenMetrics = async (nodeId: number, nodeName: string) => {
+    activityLog.info('ServerStatus', `Xray metrics: ${nodeName}`, { nodeId });
     setMetricsNodeName(nodeName);
     setShowMetricsModal(true);
     setMetricsLoading(true);
@@ -502,6 +512,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleOpenApiTokens = async (nodeId: number, nodeName: string) => {
+    activityLog.info('ServerStatus', `API tokens: ${nodeName}`, { nodeId });
     setApiTokensNodeId(nodeId);
     setApiTokensNodeName(nodeName);
     setShowApiTokensModal(true);
@@ -542,6 +553,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleOpenUpdateInfo = async (nodeId: number, nodeName: string) => {
+    activityLog.info('ServerStatus', `Panel update info: ${nodeName}`, { nodeId });
     setUpdateInfoNodeName(nodeName);
     setShowUpdateInfoModal(true);
     setUpdateInfoLoading(true);
@@ -554,6 +566,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleOpenObservatory = async (nodeId: number, nodeName: string) => {
+    activityLog.info('ServerStatus', `Observatory: ${nodeName}`, { nodeId });
     setObservatoryNodeName(nodeName);
     setShowObservatoryModal(true);
     setObservatoryLoading(true);
@@ -566,6 +579,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleOpenXrayConfig = async (nodeId: number, nodeName: string) => {
+    activityLog.info('ServerStatus', `Xray config: ${nodeName}`, { nodeId });
     setXrayConfigNodeName(nodeName);
     setShowXrayConfig(true);
     setXrayConfigLoading(true);
@@ -588,6 +602,7 @@ export const ServerStatus: React.FC = () => {
   };
 
   const handleOpenHistory = async (nodeId: number, nodeName: string) => {
+    activityLog.info('ServerStatus', `Server history: ${nodeName}`, { nodeId });
     setHistoryNodeId(nodeId);
     setHistoryNodeName(nodeName);
     setShowHistoryModal(true);
@@ -1523,3 +1538,6 @@ export const ServerStatus: React.FC = () => {
     </section>
   );
 };
+
+
+

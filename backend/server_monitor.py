@@ -181,6 +181,7 @@ class ThreeXUIMonitor:
                             "upload": obj.get("netTraffic", {}).get("sent", 0),
                             "download": obj.get("netTraffic", {}).get("recv", 0),
                         },
+                        "panel_version": obj.get("panelVersion", ""),
                     }
             logger.warning(
                 f"ThreeXUIMonitor: server status for {node['name']} returned {res.status_code}"

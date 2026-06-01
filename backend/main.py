@@ -35,7 +35,7 @@ from shared.http_config import get_requests_verify_value
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from crypto import encrypt, decrypt
-from xui_session import login_panel, xui_request
+from xui_session import login_panel, xui_request, seed_node_api_versions
 from websocket_manager import manager as ws_manager, handle_websocket_message
 import services.subscription_links as subscription_links_service
 
@@ -207,7 +207,10 @@ bundle = build_app_runtime_bundle(
     adguard_latest=adguard_latest,
     adguard_latest_lock=adguard_latest_lock,
     ws_manager=ws_manager,
-    on_snapshot=lambda snapshot: _record_node_snapshot(snapshot),
+    on_snapshot=lambda snapshot: (
+        _record_node_snapshot(snapshot),
+        _persist_node_version(snapshot),
+    ),
 )
 inbound_mgr = bundle.inbound_mgr
 client_mgr = bundle.client_mgr
@@ -246,6 +249,20 @@ HTTP_REQUEST_LATENCY = metrics.http_request_latency
 )
 
 bootstrap_db(DB_PATH)
+seed_node_api_versions(node_service.list_nodes())
+
+
+def _persist_node_version(snapshot: dict) -> None:
+    node_id = snapshot.get("node_id")
+    api_version = snapshot.get("api_version") or ""
+    panel_version = snapshot.get("panel_version") or ""
+    if not node_id or not api_version or not snapshot.get("available"):
+        return
+    node = node_service.get_node(node_id)
+    if node and (node.get("api_version") != api_version or node.get("panel_version") != panel_version):
+        node_service.update_node(node_id, {"api_version": api_version, "panel_version": panel_version})
+        logger.info("Node %s version updated: api=%s panel=%s", node.get("name"), api_version, panel_version)
+
 
 collect_adguard_once = adguard_runtime.collect_once
 adguard_collector_loop = adguard_runtime.collector_loop

@@ -145,6 +145,12 @@ class NodesService:
         if "read_only" in updates:
             fields.append("read_only")
             params.append(1 if bool(updates["read_only"]) else 0)
+        if "api_version" in updates:
+            fields.append("api_version")
+            params.append(updates["api_version"])
+        if "panel_version" in updates:
+            fields.append("panel_version")
+            params.append(updates["panel_version"])
 
         if not fields:
             return self.get_node(node_id)

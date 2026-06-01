@@ -159,14 +159,17 @@ export const wsManager = new WebSocketManager();
  */
 export function useWebSocketSubscription<T>(event: string, onMessage: (data: T) => void) {
   const [isConnected, setIsConnected] = React.useState(wsManager.isConnected());
+  const onMessageRef = React.useRef(onMessage);
+  onMessageRef.current = onMessage;
 
   React.useEffect(() => {
-    // Ensure WebSocket is connected
     wsManager.connect().catch(() => {
       console.warn('[WebSocket] Failed to connect');
     });
 
-    const unsubscribe = wsManager.subscribe(event, onMessage);
+    // Stable wrapper so effect only re-runs when `event` changes, not when the callback changes
+    const stableHandler = (data: T) => onMessageRef.current(data);
+    const unsubscribe = wsManager.subscribe(event, stableHandler);
 
     const checkConnection = setInterval(() => {
       setIsConnected(wsManager.isConnected());
@@ -176,7 +179,7 @@ export function useWebSocketSubscription<T>(event: string, onMessage: (data: T) 
       unsubscribe();
       clearInterval(checkConnection);
     };
-  }, [event, onMessage]);
+  }, [event]); // stable: onMessage read via ref
 
   return isConnected;
 }

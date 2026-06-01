@@ -69,6 +69,8 @@ def init_db(db_path: str) -> None:
                 ("port", "ALTER TABLE nodes ADD COLUMN port TEXT DEFAULT '443'"),
                 ("base_path", "ALTER TABLE nodes ADD COLUMN base_path TEXT DEFAULT ''"),
                 ("scheme", "ALTER TABLE nodes ADD COLUMN scheme TEXT DEFAULT 'https'"),
+                ("api_version", "ALTER TABLE nodes ADD COLUMN api_version TEXT DEFAULT NULL"),
+                ("panel_version", "ALTER TABLE nodes ADD COLUMN panel_version TEXT DEFAULT NULL"),
             ]
             for col_name, stmt in migrations:
                 if col_name not in node_columns:

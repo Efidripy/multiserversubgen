@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { activityLog } from './services/activityLog';
+import { ActivityLogPanel } from './components/ActivityLogPanel';
 import { useTranslation } from 'react-i18next';
 import api, { API_BASE } from './api';
 import { NodeManager } from './components/NodeManager';
@@ -151,6 +153,7 @@ export const App: React.FC = () => {
   const [unreadCount, setUnreadCount] = useState(0);
   const [browserNotifySupported, setBrowserNotifySupported] = useState(false);
   const [browserNotifyPermission, setBrowserNotifyPermission] = useState<'default' | 'granted' | 'denied'>('default');
+  const [logPanelOpen, setLogPanelOpen] = useState(false);
 
   const lastNotifyRef = useRef<Record<string, number>>({});
   const updateHeaderSummary = (summary: HeaderSummary) => {
@@ -549,6 +552,14 @@ export const App: React.FC = () => {
     channels: ['inbounds', 'snapshot_delta'],
     enabled: isAuthenticated,
     onMessage: (msg) => {
+      if (msg.type === 'snapshot_delta') {
+        const node = msg.data?.data?.node || msg.data?.node || '';
+        const changes = msg.data?.data?.changes || msg.data?.changes || {};
+        const keys = Object.keys(changes);
+        if (keys.length > 0) {
+          activityLog.debug('WebSocket', `snapshot_delta: ${node}`, { changes: keys });
+        }
+      }
       if (msg.type === 'inbound_update') {
         const action = msg.data?.action || 'update';
         const successful = msg.data?.result?.successful ?? 0;
@@ -919,6 +930,15 @@ export const App: React.FC = () => {
                 </span>
               )}
             </button>
+
+            <button
+              className="btn btn-sm"
+              style={{ backgroundColor: logPanelOpen ? '#1f6feb' : colors.bg.tertiary, borderColor: logPanelOpen ? '#1f6feb' : colors.border, color: logPanelOpen ? '#fff' : colors.text.primary, fontFamily: 'monospace', fontSize: '0.72rem' }}
+              onClick={() => setLogPanelOpen(v => !v)}
+              title="Activity Log"
+            >
+              LOG
+            </button>
           </div>
         </header>
 
@@ -1017,6 +1037,8 @@ export const App: React.FC = () => {
           </div>
         </main>
       </div>
+
+      <ActivityLogPanel open={logPanelOpen} onClose={() => setLogPanelOpen(false)} />
     </div>
   );
 };
@@ -1028,3 +1050,5 @@ const AppWithToast: React.FC = () => (
 );
 
 export default AppWithToast;
+
+

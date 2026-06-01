@@ -9,6 +9,18 @@ from enum import Enum
 logger = logging.getLogger("sub_manager")
 
 
+def _detect_api_version(panel_version: str) -> str:
+    """Return 'v3' if panelVersion >= 3.x, else 'v2'.
+    v2 panels don't return panelVersion at all, so absence means v2."""
+    if not panel_version:
+        return "v2"
+    try:
+        major = int(panel_version.split(".")[0])
+        return "v3" if major >= 3 else "v2"
+    except (ValueError, IndexError):
+        return "v2"
+
+
 class CollectorMode(Enum):
     """Collector operating modes."""
     ULTRA_IDLE = "ultra_idle"     # No activity for 24h → poll once a day
@@ -288,6 +300,9 @@ class SnapshotCollector:
             traffic_items = traffic.get("traffic", []) if isinstance(traffic, dict) else []
             total_traffic = sum((item.get("total", 0) or 0) for item in traffic_items if isinstance(item, dict))
 
+            panel_version = status.get("panel_version", "") if isinstance(status, dict) else ""
+            api_version = _detect_api_version(panel_version)
+
             return {
                 "name": name,
                 "node_id": node.get("id"),
@@ -300,6 +315,8 @@ class SnapshotCollector:
                 "online_clients": len((online.get("online_clients") or []) if isinstance(online, dict) else []),
                 "traffic_total": total_traffic,
                 "timestamp": time.time(),
+                "panel_version": panel_version,
+                "api_version": api_version,
             }
         except Exception as exc:
             logger.warning(f"Collector failed for node {name}: {exc}")

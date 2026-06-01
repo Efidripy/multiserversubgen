@@ -1,4 +1,5 @@
 import axios, { InternalAxiosRequestConfig } from 'axios';
+import { activityLog } from './services/activityLog';
 import { cacheService } from './services/cacheService';
 import { getAuth } from './auth';
 import { requestActivityStore } from './services/requestActivity';
@@ -130,6 +131,12 @@ const api = axios.create({ baseURL: API_BASE });
  */
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   requestActivityStore.increment();
+  const _method = config.method?.toUpperCase() ?? 'GET';
+  const _url = config.url ?? '';
+  // Skip auth/verify noise at debug level
+  if (!_url.includes('/auth/verify') && !_url.includes('/auth/mfa')) {
+    activityLog.debug('API', `→ ${_method} ${_url}`);
+  }
   const auth = getAuth();
   if (auth.totpCode) {
     config.headers = config.headers ?? {};
@@ -152,6 +159,12 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 }, (error) => {
   requestActivityStore.decrement();
+  const errUrl = error.config?.url ?? '';
+  const errStatus = error.response?.status ?? 0;
+  const errMethod = error.config?.method?.toUpperCase() ?? '';
+  if (!errUrl.includes('/auth/')) {
+    activityLog.error('API', `✕ ${errMethod} ${errUrl} ${errStatus}`, { msg: error.response?.data?.detail ?? error.message });
+  }
   return Promise.reject(error);
 });
 
@@ -163,6 +176,13 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
  */
 api.interceptors.response.use((response) => {
   requestActivityStore.decrement();
+  const _rMethod = response.config.method?.toUpperCase() ?? '';
+  const _rUrl = response.config.url ?? '';
+  const _status = response.status;
+  if (!_rUrl.includes('/auth/verify') && !_rUrl.includes('/auth/mfa')) {
+    const level = _status >= 400 ? 'error' : _rMethod !== 'GET' ? 'info' : 'debug';
+    activityLog[level]('API', `← ${_rMethod} ${_rUrl} ${_status}`);
+  }
   const method = response.config.method?.toLowerCase();
   const url = response.config.url ?? '';
 
@@ -179,8 +199,17 @@ api.interceptors.response.use((response) => {
   return response;
 }, (error) => {
   requestActivityStore.decrement();
+  const errUrl = error.config?.url ?? '';
+  const errStatus = error.response?.status ?? 0;
+  const errMethod = error.config?.method?.toUpperCase() ?? '';
+  if (!errUrl.includes('/auth/')) {
+    activityLog.error('API', `✕ ${errMethod} ${errUrl} ${errStatus}`, { msg: error.response?.data?.detail ?? error.message });
+  }
   return Promise.reject(error);
 });
 
 export default api;
+
+
+
 
