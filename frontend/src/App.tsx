@@ -11,9 +11,10 @@ import { ClientManager } from './components/ClientManager';
 import { TrafficStats } from './components/TrafficStats';
 import { BackupManager } from './components/BackupManager';
 import { MonitoringDashboard } from './components/MonitoringDashboard';
-import { DashboardSummary } from './components/DashboardSummary';
+import { DashboardV4 } from './components/Dashboard.v4';
 import { ToastProvider } from './components/Toast';
-import { Sidebar, SidebarNavItem } from './components/Sidebar';
+import { SidebarNavItem } from './components/Sidebar';
+import { SidebarV4 } from './components/Sidebar.v4';
 import { useTheme } from './contexts/ThemeContext';
 import { useWebSocket } from './hooks/useWebSocket';
 import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials } from './auth';
@@ -117,7 +118,7 @@ const formatPercent = (value: number) => `${Number.isFinite(value) ? value.toFix
 
 export const App: React.FC = () => {
   const { colors } = useTheme();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const [user, setUser] = useState('');
   const [password, setPassword] = useState('');
@@ -806,7 +807,7 @@ export const App: React.FC = () => {
       case 'dashboard':
         return (
           <div className="d-grid gap-3">
-            <DashboardSummary onNavigate={(tab) => {
+            <DashboardV4 onNavigate={(tab) => {
               const t = tab as TabType;
               if (t in TAB_META) {
                 setActiveTab(t);
@@ -873,7 +874,7 @@ export const App: React.FC = () => {
         fontFamily: 'var(--font-sans)',
       }}
     >
-      <Sidebar
+      <SidebarV4
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         items={sidebarItems}
@@ -882,6 +883,8 @@ export const App: React.FC = () => {
         onOpenLog={() => setLogPanelOpen(v => !v)}
         mobileOpen={mobileSidebarOpen}
         onMobileClose={() => setMobileSidebarOpen(false)}
+        currentLang={(i18n.resolvedLanguage || i18n.language || 'en').toLowerCase().startsWith('ru') ? 'ru' : 'en'}
+        onLanguageChange={(lang) => i18n.changeLanguage(lang)}
       />
 
       <div className="app-main" style={{ position: 'relative' }}>
