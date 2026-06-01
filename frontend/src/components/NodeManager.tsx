@@ -18,6 +18,9 @@ interface Node {
   read_only?: boolean;
   api_version?: string;
   panel_version?: string;
+  user?: string;
+  password?: string;
+  bearer_token?: string;
 }
 
 interface BatchPreviewRow {
@@ -684,8 +687,11 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
               const { user, password } = getAuth();
               const results = await Promise.allSettled(nodes.map(async node => {
                 const nodeUrl = node.url || `${(node as any).scheme || 'http'}://${node.ip}:${node.port}`;
+                const connPayload: Record<string, string> = { url: nodeUrl };
+                if (node.bearer_token) connPayload.bearer_token = node.bearer_token;
+                else { connPayload.user = node.user ?? ''; connPayload.password = node.password ?? ''; }
                 try {
-                  const res = await api.post('/v1/nodes/check-connection', { url: nodeUrl }, { auth: { username: user, password } });
+                  const res = await api.post('/v1/nodes/check-connection', connPayload, { auth: { username: user, password } });
                   return { id: node.id, ok: res.data?.success === true };
                 } catch { return { id: node.id, ok: false }; }
               }));
@@ -890,10 +896,13 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                               title={t('nodes.testThisConnectionTitle')}
                               onClick={async () => {
                                 const nodeUrl = node.url || `${(node as any).scheme || 'http'}://${node.ip}:${node.port}`;
+                                const singlePayload: Record<string, string> = { url: nodeUrl };
+                                if (node.bearer_token) singlePayload.bearer_token = node.bearer_token;
+                                else { singlePayload.user = node.user ?? ''; singlePayload.password = node.password ?? ''; }
                                 const t0 = Date.now();
                                 setNodeStatuses(prev => ({ ...prev, [node.id]: null }));
                                 try {
-                                  const res = await api.post('/v1/nodes/check-connection', { url: nodeUrl }, { auth: getAuth() });
+                                  const res = await api.post('/v1/nodes/check-connection', singlePayload, { auth: getAuth() });
                                   const ping = Date.now() - t0;
                                   const ok = res.data?.success === true;
                                   setNodeStatuses(prev => ({ ...prev, [node.id]: ok }));

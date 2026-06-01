@@ -19,6 +19,7 @@ interface SidebarProps {
   items: SidebarNavItem[];
   user: string;
   onLogout: () => void;
+  onOpenLog: () => void;
   mobileOpen: boolean;
   onMobileClose: () => void;
 }
@@ -46,6 +47,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   items,
   user,
   onLogout,
+  onOpenLog,
   mobileOpen,
   onMobileClose,
 }) => {
@@ -183,6 +185,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
               }}
             >
               ⌨ {t('sidebar.shortcuts')}
+            </button>
+            <button
+              className="sidebar__footer-btn"
+              onClick={onOpenLog}
+              style={{
+                backgroundColor: colors.bg.tertiary,
+                border: `1px solid ${colors.border}`,
+                color: colors.text.secondary,
+                marginBottom: '4px',
+              }}
+              title="Activity Log"
+            >
+              📋 {t('sidebar.activityLog', 'Activity Log')}
             </button>
             <a
               href="/api/docs"

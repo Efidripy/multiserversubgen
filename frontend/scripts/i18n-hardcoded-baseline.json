@@ -1,10 +1,11 @@
 {
-  "generatedAt": "2026-06-01T18:50:23.309Z",
-  "count": 4,
+  "generatedAt": "2026-06-01T19:47:21.293Z",
+  "count": 5,
   "ids": [
     "src/App.tsx:attr-string:Activity Log",
-    "src/components/ActivityLogPanel.tsx:jsx-text:Activity Log v2",
+    "src/components/ActivityLogPanel.tsx:jsx-text:Activity Log",
     "src/components/ActivityLogPanel.tsx:jsx-text:No entries",
+    "src/components/ActivityLogPanel.tsx:attr-string:Drag to resize",
     "src/components/ActivityLogPanel.tsx:attr-string:Copy to clipboard"
   ]
 }

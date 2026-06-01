@@ -879,6 +879,7 @@ export const App: React.FC = () => {
         items={sidebarItems}
         user={user}
         onLogout={handleLogout}
+        onOpenLog={() => setLogPanelOpen(v => !v)}
         mobileOpen={mobileSidebarOpen}
         onMobileClose={() => setMobileSidebarOpen(false)}
       />
