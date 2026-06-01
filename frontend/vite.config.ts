@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 const base = process.env.VITE_BASE ?? '/';
 const backendTarget = process.env.VITE_BACKEND_TARGET ?? 'http://localhost:666';
@@ -9,7 +10,7 @@ const apiPrefix = base.replace(/\/$/, '') + '/api';
 
 export default defineConfig({
   base,
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     proxy: {
       [apiPrefix]: {

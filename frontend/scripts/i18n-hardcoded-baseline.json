@@ -1,11 +1,24 @@
 {
-  "generatedAt": "2026-06-01T19:47:21.293Z",
-  "count": 5,
+  "generatedAt": "2026-06-01T23:26:42.669Z",
+  "count": 18,
   "ids": [
     "src/App.tsx:attr-string:Activity Log",
     "src/components/ActivityLogPanel.tsx:jsx-text:Activity Log",
     "src/components/ActivityLogPanel.tsx:jsx-text:No entries",
     "src/components/ActivityLogPanel.tsx:attr-string:Drag to resize",
-    "src/components/ActivityLogPanel.tsx:attr-string:Copy to clipboard"
+    "src/components/ActivityLogPanel.tsx:attr-string:Copy to clipboard",
+    "src/components/ui-system/alert.tsx:jsx-text:& VariantProps",
+    "src/components/ui-system/carousel.tsx:jsx-text:Previous slide",
+    "src/components/ui-system/carousel.tsx:jsx-text:Next slide",
+    "src/components/ui-system/command.tsx:attr-string:Command Palette",
+    "src/components/ui-system/form.tsx:jsx-text:= FieldPath",
+    "src/components/ui-system/form.tsx:jsx-text:= FieldPath",
+    "src/components/ui-system/pagination.tsx:jsx-text:More pages",
+    "src/components/ui-system/pagination.tsx:attr-string:Go to previous page",
+    "src/components/ui-system/pagination.tsx:attr-string:Go to next page",
+    "src/components/ui-system/sidebar.tsx:jsx-text:Displays the mobile sidebar.",
+    "src/components/ui-system/sidebar.tsx:jsx-text:Toggle Sidebar",
+    "src/components/ui-system/sidebar.tsx:attr-string:Toggle Sidebar",
+    "src/components/ui-system/sidebar.tsx:attr-string:Toggle Sidebar"
   ]
 }

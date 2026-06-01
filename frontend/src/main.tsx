@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import 'bootstrap/dist/css/bootstrap.min.css';
+import './default_shadcn_theme.css';
 import './App.css';
 import './styles/theme-dark.css';
 import './styles/theme-light.css';
