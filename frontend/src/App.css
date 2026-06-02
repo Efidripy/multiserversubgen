@@ -2136,58 +2136,55 @@ body.style-preset-4 .traffic-stats select:focus {
   box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.1);
 }
 
-/* ── Slice 8: KPI card per-type icon colors ───────────────── */
+/* ── Slice 8: KPI card icon badges — gradient squares (Figma exact) ── */
 
+body.style-preset-4 .kpi-card .icon-badge {
+  border: none !important;
+  color: #ffffff !important;
+  border-radius: 10px !important;
+}
 body.style-preset-4 .kpi-card--node .icon-badge {
-  background: rgba(59, 130, 246, 0.15) !important;
-  border-color: rgba(59, 130, 246, 0.32) !important;
-  color: #93c5fd !important;
+  background: linear-gradient(135deg, rgba(34,211,238,0.85), rgba(96,165,250,0.85)) !important;
+  box-shadow: 0 4px 14px rgba(34,211,238,0.28);
 }
 body.style-preset-4 .kpi-card--client .icon-badge {
-  background: rgba(168, 85, 247, 0.15) !important;
-  border-color: rgba(168, 85, 247, 0.32) !important;
-  color: #c4b5fd !important;
+  background: linear-gradient(135deg, rgba(192,132,252,0.85), rgba(129,140,248,0.85)) !important;
+  box-shadow: 0 4px 14px rgba(168,85,247,0.28);
 }
 body.style-preset-4 .kpi-card--online .icon-badge {
-  background: rgba(34, 197, 94, 0.15) !important;
-  border-color: rgba(34, 197, 94, 0.32) !important;
-  color: #86efac !important;
+  background: linear-gradient(135deg, rgba(74,222,128,0.85), rgba(52,211,153,0.85)) !important;
+  box-shadow: 0 4px 14px rgba(74,222,128,0.28);
 }
 body.style-preset-4 .kpi-card--upload .icon-badge {
-  background: rgba(245, 158, 11, 0.15) !important;
-  border-color: rgba(245, 158, 11, 0.32) !important;
-  color: #fcd34d !important;
+  background: linear-gradient(135deg, rgba(250,204,21,0.85), rgba(251,191,36,0.85)) !important;
+  box-shadow: 0 4px 14px rgba(250,204,21,0.22);
 }
 body.style-preset-4 .kpi-card--download .icon-badge {
-  background: rgba(236, 72, 153, 0.15) !important;
-  border-color: rgba(236, 72, 153, 0.32) !important;
-  color: #f9a8d4 !important;
+  background: linear-gradient(135deg, rgba(248,113,113,0.85), rgba(244,114,182,0.85)) !important;
+  box-shadow: 0 4px 14px rgba(248,113,113,0.22);
 }
 body.style-preset-4 .kpi-card--total .icon-badge {
-  background: rgba(148, 163, 184, 0.10) !important;
-  border-color: rgba(148, 163, 184, 0.22) !important;
-  color: #94a3b8 !important;
+  background: linear-gradient(135deg, rgba(156,163,175,0.75), rgba(148,163,184,0.75)) !important;
+  box-shadow: none;
 }
 
-/* ── Slice 8: Server card metric bar colors ───────────────── */
+/* ── Slice 8: Server metric bars — Figma exact ────────────── */
+/* CPU/RAM: dynamic color via getStatusColor inline (green→amber→red)  */
+/* Disk: always green gradient                                          */
 
-body.style-preset-4 .server-card__metric--cpu .progress-bar {
-  background: #22d3ee !important;
-  box-shadow: 0 0 6px rgba(34, 211, 238, 0.4);
-}
-body.style-preset-4 .server-card__metric--ram .progress-bar {
-  background: #f59e0b !important;
-  box-shadow: 0 0 6px rgba(245, 158, 11, 0.35);
-}
 body.style-preset-4 .server-card__metric--disk .progress-bar {
-  background: #4ade80 !important;
-  box-shadow: 0 0 6px rgba(74, 222, 128, 0.35);
+  background: linear-gradient(90deg, rgba(74,222,128,0.9), rgba(52,211,153,0.9)) !important;
+  box-shadow: 0 0 6px rgba(74,222,128,0.3);
 }
 
-/* progress track dark for preset-4 */
+/* progress track dark */
 body.style-preset-4 .server-card__progress {
   background: rgba(30, 41, 59, 0.9) !important;
-  height: 5px !important;
+  height: 6px !important;
+  border-radius: 999px !important;
+}
+body.style-preset-4 .server-card__progress .progress-bar {
+  border-radius: 999px !important;
 }
 
 /* ── Slice 8: Registered Fleet icon action buttons ────────── */
