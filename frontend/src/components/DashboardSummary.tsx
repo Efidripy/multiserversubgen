@@ -109,11 +109,11 @@ export const DashboardSummary: React.FC<{ onNavigate?: (tab: string) => void }> 
   ];
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div className="dashboard-summary">
       {/* Section header */}
-      <div className="d-flex align-items-center justify-content-between">
+      <div className="dashboard-summary__header d-flex align-items-center justify-content-between">
         <h2 className="section-title mb-0">{t('dashboardSummary.fleetOverview')}</h2>
-        <div className="d-flex align-items-center gap-2">
+        <div className="dashboard-summary__tools d-flex align-items-center gap-2">
           {loading && (
             <div className="spinner-border spinner-border-sm spinner-accent" style={{ width: '12px', height: '12px', borderWidth: '0.14em' }} />
           )}
@@ -156,7 +156,7 @@ export const DashboardSummary: React.FC<{ onNavigate?: (tab: string) => void }> 
 
       {/* Per-node online breakdown */}
       {summary.online_by_node && Object.keys(summary.online_by_node).length > 1 && (
-        <div className="d-flex flex-wrap gap-1">
+        <div className="dashboard-summary__chips d-flex flex-wrap gap-1">
           {Object.entries(summary.online_by_node).sort((a, b) => b[1] - a[1]).map(([node, count]) => (
             <span key={node} className="chip is-clickable" style={{ fontSize: '0.7rem' }}
               onClick={() => onNavigate?.('clients')}>
@@ -168,16 +168,16 @@ export const DashboardSummary: React.FC<{ onNavigate?: (tab: string) => void }> 
 
       {/* Top clients */}
       {summary.top_clients.length > 0 && (
-        <div>
+        <div className="dashboard-summary__top-traffic">
           <div className="section-title--sm mb-2" style={{ fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: colors.text.tertiary }}>
             {t('dashboardSummary.topByTraffic')}
           </div>
-          <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
+          <div className="dashboard-summary__traffic-card card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
             <div className="d-flex flex-column gap-2">
               {summary.top_clients.map((c, i) => {
                 const pct = summary.traffic.total > 0 ? (c.total / summary.traffic.total) * 100 : 0;
                 return (
-                  <div key={c.email} className="d-flex align-items-center gap-2">
+                  <div key={c.email} className="dashboard-summary__traffic-row d-flex align-items-center gap-2">
                     <span style={{ color: colors.text.tertiary, fontSize: '0.68rem', minWidth: '16px', fontVariantNumeric: 'tabular-nums', textAlign: 'right' }}>
                       {i + 1}.
                     </span>

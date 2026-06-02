@@ -1196,6 +1196,10 @@ echo ""
 echo "🔄 Создание резервной копии..."
 mkdir -p "$BACKUP_DIR"
 cp -r "$PROJECT_DIR"/*.py "$BACKUP_DIR/" 2>/dev/null
+if [ -f "$PROJECT_DIR/.encryption_key" ]; then
+    cp "$PROJECT_DIR/.encryption_key" "$BACKUP_DIR/.encryption_key"
+    chmod 600 "$BACKUP_DIR/.encryption_key" 2>/dev/null || true
+fi
 for pkg in core modules integrations routers services shared; do
     if [ -d "$PROJECT_DIR/$pkg" ]; then
         cp -r "$PROJECT_DIR/$pkg" "$BACKUP_DIR/"

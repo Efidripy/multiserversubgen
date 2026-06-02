@@ -12,6 +12,7 @@ import { TrafficStats } from './components/TrafficStats';
 import { BackupManager } from './components/BackupManager';
 import { MonitoringDashboard } from './components/MonitoringDashboard';
 import { DashboardSummary } from './components/DashboardSummary';
+import { RegisteredFleetPanel } from './components/RegisteredFleetPanel';
 import { ToastProvider } from './components/Toast';
 import { Sidebar, SidebarNavItem } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
@@ -154,6 +155,7 @@ export const App: React.FC = () => {
   const [browserNotifySupported, setBrowserNotifySupported] = useState(false);
   const [browserNotifyPermission, setBrowserNotifyPermission] = useState<'default' | 'granted' | 'denied'>('default');
   const [logPanelOpen, setLogPanelOpen] = useState(false);
+  const [registeredFleetCollapsed, setRegisteredFleetCollapsed] = useState(true);
 
   const lastNotifyRef = useRef<Record<string, number>>({});
   const updateHeaderSummary = (summary: HeaderSummary) => {
@@ -219,6 +221,13 @@ export const App: React.FC = () => {
       setActiveTab('dashboard');
     }
   }, [monitoringEnabled, activeTab]);
+
+  useEffect(() => {
+    document.body.classList.add('style-preset-4');
+    return () => {
+      document.body.classList.remove('style-preset-4');
+    };
+  }, []);
 
   useEffect(() => {
     const unsubscribe = requestActivityStore.subscribe((pending) => {
@@ -805,7 +814,7 @@ export const App: React.FC = () => {
     switch (tab) {
       case 'dashboard':
         return (
-          <div className="d-grid gap-3">
+          <div className={`dashboard-command-grid${registeredFleetCollapsed ? ' is-fleet-collapsed' : ''}`}>
             <DashboardSummary onNavigate={(tab) => {
               const t = tab as TabType;
               if (t in TAB_META) {
@@ -814,14 +823,15 @@ export const App: React.FC = () => {
               }
             }} />
             <NodeManager onReload={() => setKey((prev) => prev + 1)} showFleet={false} />
-            <div className="dashboard-main-grid">
-              <div className="dashboard-main-grid__status">
-                <ServerStatus />
-              </div>
-              <div className="dashboard-main-grid__fleet">
-                <NodeManager onReload={() => setKey((prev) => prev + 1)} showIntake={false} />
-              </div>
-            </div>
+            <ServerStatus />
+            <RegisteredFleetPanel
+              collapsed={registeredFleetCollapsed}
+              setCollapsed={setRegisteredFleetCollapsed}
+              onOpenNodes={() => {
+                setActiveTab('dashboard');
+                setRegisteredFleetCollapsed(true);
+              }}
+            />
           </div>
         );
       case 'inbounds':
@@ -884,19 +894,15 @@ export const App: React.FC = () => {
       />
 
       <div className="app-main" style={{ position: 'relative' }}>
-        <header
-          className="app-topbar"
-          style={{ backgroundColor: colors.bg.secondary, borderBottom: `1px solid ${colors.border}` }}
-        >
+        <header className="app-topbar">
           <button
             className="app-topbar__menu-btn"
             onClick={() => setMobileSidebarOpen(true)}
             aria-label={t('main.openMenu')}
-            style={{ color: colors.text.primary, backgroundColor: colors.bg.tertiary, border: `1px solid ${colors.border}` }}
           >
             <UIIcon name="menu" size={16} />
           </button>
-          <h1 className="app-topbar__title" style={{ color: colors.text.primary }}>
+          <h1 className="app-topbar__title">
             <span className="d-inline-flex align-items-center gap-2">
               <UIIcon name={tabMeta[activeTab].icon} size={16} />
               {tabMeta[activeTab].label}
@@ -906,8 +912,7 @@ export const App: React.FC = () => {
           <div className="d-flex align-items-center gap-2">
             {browserNotifySupported && browserNotifyPermission !== 'granted' && (
               <button
-                className="btn btn-sm topbar-push-btn"
-                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                className="btn btn-sm topbar-push-btn app-topbar__action"
                 onClick={requestBrowserNotifications}
               >
                 {t('push.enableBrowser')}
@@ -915,8 +920,7 @@ export const App: React.FC = () => {
             )}
 
             <button
-              className="btn btn-sm position-relative"
-              style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+              className="btn btn-sm position-relative app-topbar__action app-topbar__icon-action"
               onClick={() => setNotificationPanelOpen((v) => !v)}
               title={t('push.title')}
             >
@@ -932,8 +936,7 @@ export const App: React.FC = () => {
             </button>
 
             <button
-              className="btn btn-sm"
-              style={{ backgroundColor: logPanelOpen ? '#1f6feb' : colors.bg.tertiary, borderColor: logPanelOpen ? '#1f6feb' : colors.border, color: logPanelOpen ? '#fff' : colors.text.primary, fontFamily: 'monospace', fontSize: '0.72rem' }}
+              className={`btn btn-sm app-topbar__action app-topbar__log${logPanelOpen ? ' is-active' : ''}`}
               onClick={() => setLogPanelOpen(v => !v)}
               title="Activity Log"
             >
@@ -1050,5 +1053,3 @@ const AppWithToast: React.FC = () => (
 );
 
 export default AppWithToast;
-
-

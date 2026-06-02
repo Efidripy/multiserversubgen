@@ -68,7 +68,7 @@ const SERVER_STATUS_CACHE_KEY = 'sub_manager_server_status_cache_v1';
 export const ServerStatus: React.FC = () => {
   const { colors, stylePreset } = useTheme();
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [servers, setServers] = useState<ServerStatus[]>([]);
   const [nodeIds, setNodeIds] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
@@ -156,6 +156,30 @@ export const ServerStatus: React.FC = () => {
     if (reason === 'timeout') return t('serverStatus.timeout');
     if (reason.startsWith('http_')) return reason.replace('_', ' ').toUpperCase();
     return server.error || t('serverStatus.connectionFailed');
+  };
+
+  const formatOfflineDetail = (server: ServerStatus) => {
+    const message = formatStatusReason(server);
+    if (/decrypt|encryption key|corrupt/i.test(message)) {
+      return t('serverStatus.decryptErrorDetail', { message });
+    }
+    return message;
+  };
+
+  const formatLastSeen = (timestamp?: string) => {
+    if (!timestamp) return t('serverStatus.lastSeenUnknown');
+    const value = new Date(timestamp).getTime();
+    if (Number.isNaN(value)) return t('serverStatus.lastSeenUnknown');
+    const diffSeconds = Math.round((value - Date.now()) / 1000);
+    const absSeconds = Math.abs(diffSeconds);
+    const units: Array<[Intl.RelativeTimeFormatUnit, number]> = [
+      ['day', 86400],
+      ['hour', 3600],
+      ['minute', 60],
+    ];
+    const [unit, secondsPerUnit] = units.find(([, seconds]) => absSeconds >= seconds) || ['second', 1];
+    const rtf = new Intl.RelativeTimeFormat(i18n.language || undefined, { numeric: 'auto' });
+    return t('serverStatus.lastSeenAt', { time: rtf.format(Math.round(diffSeconds / secondsPerUnit), unit) });
   };
 
   useEffect(() => {
@@ -820,7 +844,7 @@ export const ServerStatus: React.FC = () => {
           return 0;
         }).map((server, idx) => (
           <div
-            className="server-card"
+            className={`server-card ${server.available ? 'server-card--online' : 'server-card--offline'}`}
             key={idx}
             style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, boxShadow: isMinimalPreset ? 'none' : undefined }}
           >
@@ -856,6 +880,11 @@ export const ServerStatus: React.FC = () => {
                 <span className={`chip ${server.available ? 'is-success' : 'is-danger'}`} style={{ fontSize: '0.65rem', padding: '1px 7px' }}>
                   {server.available ? t('nodes.online') : t('nodes.offline')}
                 </span>
+                {!server.available && (
+                  <span className="chip is-danger server-card__no-connection-chip" style={{ fontSize: '0.65rem', padding: '1px 7px' }}>
+                    {t('serverStatus.noConnection')}
+                  </span>
+                )}
                 {server.nodeId && onlineCountByNode[server.nodeId] !== undefined && onlineCountByNode[server.nodeId] > 0 && (
                   <span className="chip is-accent" style={{ fontSize: '0.65rem', padding: '1px 7px' }}
                     title={t('serverStatus.onlineClientsOnNode')}>
@@ -874,12 +903,73 @@ export const ServerStatus: React.FC = () => {
             </div>
 
             {!server.available && (
-              <p className="server-card__error small" style={{ color: colors.warning }}>
-                <span className="d-inline-flex align-items-center gap-1">
-                  <UIIcon name="warning" size={13} />
+              <div className="server-card__offline-metrics">
+                <div className="server-card__metric">
+                  <div className="server-card__metric-row">
+                    <span className="small">{t('serverStatus.cpu')}</span>
+                    <span className="small server-card__offline-zero">0%</span>
+                  </div>
+                  <div className="progress server-card__progress server-card__progress--offline">
+                    <div className="progress-bar" style={{ width: '0%' }} />
+                  </div>
+                </div>
+                <div className="server-card__metric">
+                  <div className="server-card__metric-row">
+                    <span className="small">{t('serverStatus.ram')}</span>
+                    <span className="small server-card__offline-zero">0% <span>0 MB / -</span></span>
+                  </div>
+                  <div className="progress server-card__progress server-card__progress--offline">
+                    <div className="progress-bar" style={{ width: '0%' }} />
+                  </div>
+                </div>
+                <div className="server-card__metric">
+                  <div className="server-card__metric-row">
+                    <span className="small">{t('serverStatus.disk')}</span>
+                    <span className="small server-card__offline-zero">0% <span>0 MB / -</span></span>
+                  </div>
+                  <div className="progress server-card__progress server-card__progress--offline">
+                    <div className="progress-bar" style={{ width: '0%' }} />
+                  </div>
+                </div>
+                <div className="server-card__offline-details">
+                  <span>{t('serverStatus.network')}: -</span>
+                  <span>-</span>
+                  <span>LA: - / - / -</span>
+                  <span>Swap: -</span>
+                  <span className="server-card__offline-dash">-</span>
+                  <span>{formatLastSeen(server.timestamp)}</span>
+                </div>
+              </div>
+            )}
+
+            {!server.available && (
+              <div className="server-card__offline-state">
+                <div
+                  className="server-card__offline-title"
+                  data-error={formatOfflineDetail(server)}
+                >
+                  <UIIcon name="warning" size={15} />
+                  <span>{t('serverStatus.connectionLost')}</span>
+                </div>
+                <p className="server-card__offline-message">
                   {formatStatusReason(server)}
-                </span>
-              </p>
+                </p>
+                <div className="server-card__offline-footer">
+                  <span className="server-card__offline-meta">
+                    {formatLastSeen(server.timestamp)}
+                  </span>
+                  {server.nodeId && (
+                    <button
+                      className="server-card__retry-btn"
+                      type="button"
+                      disabled={Boolean(server.loadingDetails)}
+                      onClick={() => refreshSingleNode(server.nodeId!, server.node)}
+                    >
+                      {server.loadingDetails ? t('common.loading') : t('serverStatus.retryConnection')}
+                    </button>
+                  )}
+                </div>
+              </div>
             )}
 
             {server.available && server.loadingDetails && (
@@ -1538,6 +1628,3 @@ export const ServerStatus: React.FC = () => {
     </section>
   );
 };
-
-
-

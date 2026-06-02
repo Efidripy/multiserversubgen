@@ -20,6 +20,22 @@
     "groupSystem": "System",
     "groupSettings": "Settings"
   },
+  "registeredFleet": {
+    "title": "Registered Fleet",
+    "open": "Open registered fleet",
+    "collapse": "Collapse registered fleet",
+    "online": "Online",
+    "checking": "Checking",
+    "offline": "Offline",
+    "testAll": "Test All",
+    "testing": "Testing",
+    "hint": "Live node list from this VM. Use Node Manager for editing and intake.",
+    "status": {
+      "online": "online",
+      "offline": "offline",
+      "checking": "checking"
+    }
+  },
   "common": {
     "add": "Add",
     "edit": "Edit",
@@ -777,7 +793,13 @@
     "copyFleetSummaryTitle": "Copy fleet status summary to clipboard",
     "statusOnline": "Online",
     "statusOffline": "Offline",
-    "clientsLabel": "Clients"
+    "clientsLabel": "Clients",
+    "connectionLost": "Connection Lost",
+    "lastSeenAt": "Last seen: {{time}}",
+    "lastSeenUnknown": "Last seen: unknown",
+    "retryConnection": "Retry Connection",
+    "noConnection": "No connection",
+    "decryptErrorDetail": "{{message}}. Stored node credentials could not be decrypted. The encryption key may have changed, or the saved value is damaged. Re-save the node credentials/settings and retry the connection."
   },
   "dashboardSummary": {
     "fleetOverview": "Fleet Overview",
