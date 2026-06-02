@@ -9,6 +9,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
 import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler);
 
@@ -65,7 +66,12 @@ interface SnapshotNode {
 
 const SERVER_STATUS_CACHE_KEY = 'sub_manager_server_status_cache_v1';
 
-export const ServerStatus: React.FC = () => {
+interface ServerStatusProps {
+  onToggleFleet?: () => void;
+  fleetCollapsed?: boolean;
+}
+
+export const ServerStatus: React.FC<ServerStatusProps> = ({ onToggleFleet, fleetCollapsed = true }) => {
   const { colors, stylePreset } = useTheme();
   const { toast } = useToast();
   const { t, i18n } = useTranslation();
@@ -500,17 +506,7 @@ export const ServerStatus: React.FC = () => {
     finally { setOutboundsLoading(false); }
   };
 
-  const handleStopXray = async (nodeId: number) => {
-    activityLog.info('ServerStatus', 'Stop Xray', { nodeId });
-    if (!window.confirm(t('serverStatus.confirmStopXray'))) return;
-    try {
-      const res = await api.post(`/v1/nodes/${nodeId}/stop-xray`, {}, { auth: getAuth() });
-      if (res.data?.success) { toast(t('serverStatus.xrayStopped'), 'success'); setTimeout(loadServersStatus, 2000); }
-      else toast(t('common.failed'), 'error');
-    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
-  };
-
-  const handleUpdatePanel = async (nodeId: number) => {
+const handleUpdatePanel = async (nodeId: number) => {
     activityLog.info('ServerStatus', 'Update panel', { nodeId });
     if (!window.confirm(t('serverStatus.confirmUpdatePanel'))) return;
     try {
@@ -675,119 +671,106 @@ export const ServerStatus: React.FC = () => {
   };
   const isMinimalPreset = stylePreset === '3';
 
+  const onlineServers = servers.filter(s => s.available);
+  const withSystem = onlineServers.filter(s => s.system);
+  const avgCpu = withSystem.length > 0 ? withSystem.reduce((s, srv) => s + (srv.system!.cpu || 0), 0) / withSystem.length : 0;
+  const totalRam = withSystem.reduce((s, srv) => s + (srv.system!.mem?.total || 0), 0);
+  const usedRam = withSystem.reduce((s, srv) => s + (srv.system!.mem?.current || 0), 0);
+  const totalOnlineClients = Object.values(onlineCountByNode).reduce((s, n) => s + n, 0);
+  const errServers = servers.filter(s => !s.available && s.error);
+
   return (
     <section className="panel-block server-status">
-      <div className="panel-block__header mb-3">
-        <h4 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
-          {t('serverStatus.title')}
+      {/* ── Header row 1: title + controls ── */}
+      <div className="ss-header">
+        <div className="ss-header__left">
+          <h4 className="ss-header__title">{t('serverStatus.title')}</h4>
           {servers.length > 0 && (
-            <span className="small" style={{ color: colors.text.secondary, fontWeight: 400, fontSize: '0.8rem' }}>
-              {t('serverStatus.onlineCount', { online: servers.filter(s => s.available).length, total: servers.length })}
+            <span className="ss-header__count">
+              {servers.filter(s => s.available).length}/{servers.length} online
             </span>
           )}
           {collectorStatus && (
-            <span className="badge" title={t('serverStatus.collectorTitle', { mode: collectorStatus.mode, ws: collectorStatus.ws })}
-              style={{ backgroundColor: collectorStatus.running ? colors.success : colors.warning, fontSize: '0.65rem', fontWeight: 400 }}>
-              {collectorStatus.running ? t('serverStatus.collectorRunningMode', { mode: collectorStatus.mode }) : t('serverStatus.collectorStopped')}
+            <span
+              className={`ss-header__badge ss-header__badge--${collectorStatus.running ? 'active' : 'warn'}`}
+              title={t('serverStatus.collectorTitle', { mode: collectorStatus.mode, ws: collectorStatus.ws })}
+            >
+              ● {collectorStatus.running ? collectorStatus.mode : t('serverStatus.collectorStopped')}
             </span>
           )}
-        </h4>
-        <div className="d-flex align-items-center gap-2">
-          <div className="form-check form-check-inline mb-0">
-            <input
-              className="form-check-input"
-              type="checkbox"
-              id="autoRefresh"
-              checked={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.checked)}
-            />
-            <label className="form-check-label small" style={{ color: colors.text.secondary }} htmlFor="autoRefresh">
-              {t('serverStatus.autoRefresh')}
-            </label>
-          </div>
+        </div>
+        <div className="ss-header__right">
+          <label className="ss-header__chk">
+            <input type="checkbox" checked={autoRefresh} onChange={e => setAutoRefresh(e.target.checked)} />
+            {t('serverStatus.autoRefresh')}
+          </label>
           <select
-            className="form-select form-select-sm"
+            className="ss-header__select"
             value={refreshInterval}
             onChange={e => setRefreshInterval(Number(e.target.value))}
-            style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.secondary, width: 'auto', fontSize: '0.75rem', padding: '2px 20px 2px 6px' }}
           >
             {[10, 15, 30, 60, 120, 300].map(s => (
               <option key={s} value={s}>{s}s</option>
             ))}
           </select>
-          <button
-            className="btn btn-sm"
-            style={{
-              backgroundColor: colors.accent,
-              borderColor: colors.accent,
-              color: colors.accentText
-            }}
-            onClick={forceRefresh}
-            disabled={loading}
-            title={t('common.refresh')}
-          >
+          <button className="ss-header__btn-refresh" onClick={forceRefresh} disabled={loading} title={t('common.refresh')}>
             <UIIcon name="refresh" size={14} />
           </button>
+          {onToggleFleet && (
+            <button className="ss-header__btn-fleet" onClick={onToggleFleet}
+              title={fleetCollapsed ? 'Show Registered Fleet' : 'Hide Registered Fleet'}>
+              {fleetCollapsed ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+            </button>
+          )}
         </div>
       </div>
 
-      {error && (
-        <div className="alert alert-danger">
-          {error}
-        </div>
-      )}
+      {error && <div className="alert alert-danger">{error}</div>}
 
+      {/* ── Row 2: Sort tabs ── */}
       {servers.length > 1 && (
-        <div className="d-flex gap-2 mb-2 align-items-center flex-wrap">
-          <span className="small" style={{ color: colors.text.secondary }}>{t('common.sort')}:</span>
+        <div className="ss-sort">
+          <span className="ss-sort__label">{t('common.sort')}:</span>
           {(['name', 'cpu', 'status', 'clients'] as const).map(s => (
-            <button key={s}
-              className={`seg-tab seg-tab--xs${cardSort === s ? ' seg-tab--active' : ''}`}
-              onClick={() => setCardSort(s)}>
-              {s}
-            </button>
+            <button key={s} className={`ss-sort__tab${cardSort === s ? ' ss-sort__tab--active' : ''}`}
+              onClick={() => setCardSort(s)}>{s}</button>
           ))}
         </div>
       )}
 
+      {/* ── Row 3: Batch operations ── */}
       {servers.filter(s => s.available && s.nodeId).length > 1 && (
-        <div className="d-flex gap-2 mb-3 flex-wrap">
-          <button className="btn btn-sm btn-ghost-warning"
+        <div className="ss-batch">
+          <button className="ss-batch__btn ss-batch__btn--warn"
             title={t('serverStatus.restartAllTitle')}
             onClick={async () => {
               const online = servers.filter(s => s.available && s.nodeId);
               if (!window.confirm(t('serverStatus.confirmRestartAll', { count: online.length }))) return;
               let ok = 0; let fail = 0;
               for (const s of online) {
-                try {
-                  await api.post(`/v1/servers/${s.nodeId}/restart-xray`, {}, { auth: getAuth() });
-                  ok++;
-                } catch { fail++; }
+                try { await api.post(`/v1/servers/${s.nodeId}/restart-xray`, {}, { auth: getAuth() }); ok++; }
+                catch { fail++; }
               }
               toast(t('serverStatus.restartAllResult', { ok, fail }), ok > 0 ? 'success' : 'error');
               setTimeout(loadServersStatus, 5000);
-            }}
-          >
+            }}>
             ⟳ {t('serverStatus.restartAllXray')}
           </button>
-          <button className="btn btn-sm btn-ghost-accent"
+          <button className="ss-batch__btn ss-batch__btn--accent"
             title={t('serverStatus.updateAllGeofilesTitle')}
             onClick={async () => {
               const online = servers.filter(s => s.available && s.nodeId);
               if (!window.confirm(t('serverStatus.confirmUpdateGeofileAll', { count: online.length }))) return;
               let ok = 0;
               for (const s of online) {
-                try {
-                  await api.post(`/v1/nodes/${s.nodeId}/update-geofile`, {}, { auth: getAuth() });
-                  ok++;
-                } catch { /* continue */ }
+                try { await api.post(`/v1/nodes/${s.nodeId}/update-geofile`, {}, { auth: getAuth() }); ok++; }
+                catch { /* continue */ }
               }
               toast(t('serverStatus.geofileUpdatedAll', { count: ok }), 'success');
-            }}
-          >
+            }}>
             🌍 {t('serverStatus.updateAllGeofiles')}
           </button>
-          <button className="btn btn-sm btn-ghost-accent"
+          <button className="ss-batch__btn ss-batch__btn--accent"
             title={t('serverStatus.copyFleetSummaryTitle')}
             onClick={() => {
               const lines: string[] = [`${t('serverStatus.fleetStatus')} — ${new Date().toLocaleString()}`, ''];
@@ -797,43 +780,49 @@ export const ServerStatus: React.FC = () => {
                 const ram = s.system?.mem ? `RAM: ${((s.system.mem.current / s.system.mem.total) * 100).toFixed(0)}%` : '';
                 const clients = onlineCountByNode[s.nodeId ?? 0] !== undefined ? `${t('serverStatus.clientsLabel')}: ${onlineCountByNode[s.nodeId ?? 0]}` : '';
                 const latency = s.nodeId && latencyByNode[s.nodeId] !== undefined ? `Ping: ${latencyByNode[s.nodeId]}ms` : '';
-                const parts = [status, cpu, ram, clients, latency].filter(Boolean).join(' | ');
-                lines.push(`${s.node}: ${parts}`);
+                lines.push(`${s.node}: ${[status, cpu, ram, clients, latency].filter(Boolean).join(' | ')}`);
               }
               navigator.clipboard.writeText(lines.join('\n'))
                 .then(() => toast(t('serverStatus.fleetSummaryCopied'), 'success'))
                 .catch(() => toast(t('serverStatus.clipboardUnavailable'), 'error'));
-            }}
-          >
+            }}>
             📋 {t('serverStatus.copySummary')}
           </button>
         </div>
       )}
 
-      {servers.length > 1 && (() => {
-        const onlineServers = servers.filter(s => s.available);
-        const withSystem = onlineServers.filter(s => s.system);
-        const avgCpu = withSystem.length > 0 ? withSystem.reduce((s, srv) => s + (srv.system!.cpu || 0), 0) / withSystem.length : 0;
-        const maxCpuNode = withSystem.length > 0 ? withSystem.reduce((a, b) => ((a.system?.cpu ?? 0) > (b.system?.cpu ?? 0) ? a : b)) : null;
-        const totalOnlineClients = Object.values(onlineCountByNode).reduce((s, n) => s + n, 0);
-        const totalRam = withSystem.reduce((s, srv) => s + (srv.system!.mem?.total || 0), 0);
-        const usedRam = withSystem.reduce((s, srv) => s + (srv.system!.mem?.current || 0), 0);
-        return (
-          <div className="d-flex flex-wrap gap-2 mb-2">
-            {[
-              { label: t('serverStatus.online'), value: `${onlineServers.length}/${servers.length}`, color: onlineServers.length === servers.length ? colors.success : onlineServers.length === 0 ? colors.danger : colors.warning },
-              { label: t('serverStatus.avgCpu'), value: withSystem.length > 0 ? `${avgCpu.toFixed(1)}%` : '—', color: getStatusColor(avgCpu) },
-              ...(totalRam > 0 ? [{ label: t('serverStatus.fleetRam'), value: `${(usedRam / 1073741824).toFixed(1)}/${(totalRam / 1073741824).toFixed(1)} GB`, color: getStatusColor((usedRam / totalRam) * 100) }] : []),
-              ...(maxCpuNode && (maxCpuNode.system?.cpu ?? 0) > 80 ? [{ label: t('serverStatus.hot'), value: `${maxCpuNode.node} ${(maxCpuNode.system!.cpu).toFixed(0)}%`, color: colors.danger }] : []),
-              { label: t('serverStatus.onlineClients'), value: totalOnlineClients > 0 ? String(totalOnlineClients) : '—', color: colors.accent },
-            ].map(stat => (
-              <span key={stat.label} className="badge px-2 py-1" style={{ backgroundColor: colors.bg.tertiary, color: stat.color, fontWeight: 400, fontSize: '0.78rem' }}>
-                {stat.label}: <strong>{stat.value}</strong>
-              </span>
-            ))}
-          </div>
-        );
-      })()}
+      {/* ── Row 4: Fleet stats chips ── */}
+      {servers.length > 1 && (
+        <div className="ss-stats">
+          <span className="ss-stats__chip ss-stats__chip--green">
+            {t('serverStatus.online')}: <strong>{onlineServers.length}/{servers.length}</strong>
+          </span>
+          {errServers.length > 0 && (
+            <span className="ss-stats__chip ss-stats__chip--yellow">
+              Errors: <strong>{errServers.length}</strong>
+            </span>
+          )}
+          {servers.length - onlineServers.length - errServers.length > 0 && (
+            <span className="ss-stats__chip ss-stats__chip--red">
+              Offline: <strong>{servers.length - onlineServers.length - errServers.length}</strong>
+            </span>
+          )}
+          {withSystem.length > 0 && (
+            <span className="ss-stats__chip ss-stats__chip--green">
+              {t('serverStatus.avgCpu')}: <strong>{avgCpu.toFixed(1)}%</strong>
+            </span>
+          )}
+          {totalRam > 0 && (
+            <span className="ss-stats__chip ss-stats__chip--green">
+              {t('serverStatus.fleetRam')}: <strong>{(usedRam / 1073741824).toFixed(1)}/{(totalRam / 1073741824).toFixed(1)} GB</strong>
+            </span>
+          )}
+          <span className="ss-stats__chip ss-stats__chip--dim">
+            {t('serverStatus.onlineClients')}: <strong>{totalOnlineClients > 0 ? totalOnlineClients : '—'}</strong>
+          </span>
+        </div>
+      )}
+
 
       <div className="server-grid">
         {[...servers].sort((a, b) => {
@@ -848,54 +837,50 @@ export const ServerStatus: React.FC = () => {
             key={idx}
             style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, boxShadow: isMinimalPreset ? 'none' : undefined }}
           >
-            {/* Card header */}
-            <div className="server-card__header">
-              <div className="server-card__name" style={{ color: colors.text.primary }}>
-                <span
-                  className={`status-dot ${server.available ? 'is-online' : 'is-offline'}`}
-                />
-                {server.node}
+            {/* Header: Name left, Status + Latency right — Figma layout */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', gap: '8px' }}>
+              {/* Left: Status dot + Server name */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, flex: 1 }}>
+                <span className={`status-dot ${server.available ? 'is-online' : 'is-offline'}`} />
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{
+                    color: colors.text.primary,
+                    fontWeight: 700,
+                    fontSize: '0.875rem',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    {server.node}
+                  </div>
+                </div>
                 {server.nodeId && updateAvailableNodes.has(server.nodeId) && (
-                  <span className="chip is-warning is-clickable ms-1"
+                  <span className="chip is-warning is-clickable"
+                    style={{ fontSize: '0.65rem', padding: '2px 6px', flexShrink: 0 }}
                     title={t('serverStatus.panelUpdateAvailableTitle')}
                     onClick={() => server.nodeId && handleOpenUpdateInfo(server.nodeId, server.node)}>
                     ⬆ {t('serverStatus.updateShort')}
                   </span>
                 )}
-                {server.nodeId && (
-                  <button
-                    className="btn btn-sm p-0 ms-1"
-                    style={{ background: 'none', border: 'none', color: colors.text.tertiary, fontSize: '0.75rem' }}
-                    title={t('serverStatus.refreshThisNode')}
-                    disabled={Boolean(server.loadingDetails)}
-                    onClick={() => refreshSingleNode(server.nodeId!, server.node)}
-                  >
-                    {server.loadingDetails ? (
-                      <span className="spinner-border spinner-border-sm spinner-accent" style={{ width: '10px', height: '10px', borderWidth: '0.12em' }} />
-                    ) : '↺'}
-                  </button>
-                )}
               </div>
-              <div className="d-flex align-items-center gap-1">
-                <span className={`chip ${server.available ? 'is-success' : 'is-danger'}`} style={{ fontSize: '0.65rem', padding: '1px 7px' }}>
+
+              {/* Right: Status badge + Latency */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                <span className={`chip ${server.available ? 'is-success' : 'is-danger'}`} style={{
+                  fontSize: '0.65rem',
+                  padding: '2px 8px',
+                  fontWeight: 500
+                }}>
                   {server.available ? t('nodes.online') : t('nodes.offline')}
                 </span>
-                {!server.available && (
-                  <span className="chip is-danger server-card__no-connection-chip" style={{ fontSize: '0.65rem', padding: '1px 7px' }}>
-                    {t('serverStatus.noConnection')}
-                  </span>
-                )}
-                {server.nodeId && onlineCountByNode[server.nodeId] !== undefined && onlineCountByNode[server.nodeId] > 0 && (
-                  <span className="chip is-accent" style={{ fontSize: '0.65rem', padding: '1px 7px' }}
-                    title={t('serverStatus.onlineClientsOnNode')}>
-                    👤 {onlineCountByNode[server.nodeId]}
-                  </span>
-                )}
                 {server.nodeId && latencyByNode[server.nodeId] !== undefined && (
-                  <span
-                    className={`latency-badge ${latencyByNode[server.nodeId] < 100 ? 'is-fast' : latencyByNode[server.nodeId] < 300 ? 'is-ok' : 'is-slow'}`}
-                    title={t('serverStatus.panelApiLatency')}
-                  >
+                  <span style={{
+                    fontSize: '0.7rem',
+                    fontWeight: 500,
+                    color: latencyByNode[server.nodeId] > 500 ? colors.danger : colors.text.secondary,
+                    minWidth: '45px',
+                    textAlign: 'right'
+                  }}>
                     {latencyByNode[server.nodeId]}ms
                   </span>
                 )}
@@ -1030,124 +1015,194 @@ export const ServerStatus: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Footer row */}
-                <div className="server-card__footer-row">
-                  {server.network && (
-                    <span className="small" style={{ color: colors.text.secondary }} title={t('serverStatus.networkSinceReboot')}>
-                      ↑{formatBytes(server.network.upload)} ↓{formatBytes(server.network.download)}
-                    </span>
-                  )}
-                  <span className="small" style={{ color: colors.text.secondary }}>
+                {/* Footer info — Two lines with disk, LA, swap, time (Figma layout) */}
+                <div style={{
+                  marginTop: '8px',
+                  paddingTop: '8px',
+                  borderTop: `1px solid ${colors.border}`,
+                  fontSize: '0.7rem',
+                  color: colors.text.secondary,
+                  lineHeight: '1.5'
+                }}>
+                  {/* Line 1: Disk + Load Average + Swap */}
+                  <div style={{ marginBottom: '4px' }}>
+                    {server.system.disk.total > 0 && (
+                      <span>{formatBytes(server.system.disk.current)} / {formatBytes(server.system.disk.total)} GB</span>
+                    )}
+                    {server.system.loads && server.system.loads.length > 0 && (
+                      <span style={{ marginLeft: '16px' }}>
+                        LA: {server.system.loads.slice(0,3).map(l => l.toFixed(2)).join(' / ')}
+                      </span>
+                    )}
+                    {server.system.swap && server.system.swap.total > 0 && (
+                      <span style={{ marginLeft: '16px' }}>
+                        Swap: {formatBytes(server.system.swap.current)}/{formatBytes(server.system.swap.total)}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Line 2: Uptime + Time */}
+                  <div>
                     <span className="d-inline-flex align-items-center gap-1">
-                      <UIIcon name="clock" size={13} />
+                      <UIIcon name="clock" size={12} />
                       {formatUptime(server.system.uptime)}
                     </span>
-                  </span>
-                  {server.system.loads && server.system.loads.length > 0 && (
-                    <span className="small" title={t('serverStatus.loadAveragesTitle')} style={{ color: colors.text.secondary }}>
-                      LA: {server.system.loads.slice(0,3).map(l => l.toFixed(2)).join(' / ')}
-                    </span>
-                  )}
-                  {server.system.swap && server.system.swap.total > 0 && (
-                    <span className="small" title={t('serverStatus.swapUsage')} style={{ color: colors.text.secondary }}>
-                      Swap: {formatBytes(server.system.swap.current)}/{formatBytes(server.system.swap.total)}
-                    </span>
-                  )}
-                  {server.nodeId && latencyByNode[server.nodeId] && (
-                    <span className="small" title={t('serverStatus.apiResponseTime')}
-                      style={{ color: latencyByNode[server.nodeId] > 2000 ? colors.warning : latencyByNode[server.nodeId] > 5000 ? colors.danger : colors.text.secondary }}>
-                      {latencyByNode[server.nodeId]}ms
-                    </span>
-                  )}
-                  {server.timestamp && (
-                    <span className="small" style={{ color: colors.text.secondary }}>
-                      {new Date(server.timestamp).toLocaleTimeString()}
-                    </span>
-                  )}
+                    {server.timestamp && (
+                      <span style={{ marginLeft: '16px', float: 'right' }}>
+                        {new Date(server.timestamp).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
                 </div>
 
-                {/* Core service + restart */}
+                {/* Core service info + actions — Figma layout */}
                 {server.xray && (
-                  <div className="server-card__xray" style={{ borderTop: `1px solid ${colors.border}` }}>
-                    <span className="small" style={{ color: colors.text.secondary }}>
-                      {t('serverStatus.coreLabel')} {server.xray.version}{server.xray.uptime > 0 ? ` (${t('serverStatus.upFor', { uptime: formatUptime(server.xray.uptime) })})` : ''}
-                      {server.xray.running ? (
-                        <span className="badge ms-1 d-inline-flex align-items-center justify-content-center" style={{ backgroundColor: colors.success }}>
-                          <UIIcon name="statusOn" size={12} />
+                  <div style={{ borderTop: `1px solid ${colors.border}`, paddingTop: '8px', marginTop: '8px' }}>
+                    {/* Core info: version + status | Main action buttons */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      {/* Left: Core version + check icon */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontSize: '0.75rem', color: colors.text.secondary, fontWeight: 500 }}>
+                          Core {server.xray.version}
                         </span>
-                      ) : (
-                        <span className="badge ms-1 d-inline-flex align-items-center justify-content-center" style={{ backgroundColor: colors.danger }}>
-                          <UIIcon name="statusOff" size={12} />
-                        </span>
-                      )}
-                    </span>
-                    <button
-                      className="xray-icon-btn xray-icon-btn--warning"
-                      onClick={() => handleRestartCore(server.node)}
-                      disabled={!server.xray.running}
-                      title={t('serverStatus.restart')}
-                      aria-label={t('serverStatus.restartXray')}
-                    >
-                      <UIIcon name="refresh" size={13} />
-                    </button>
+                        {server.xray.running ? (
+                          <div style={{
+                            width: '16px',
+                            height: '16px',
+                            borderRadius: '50%',
+                            backgroundColor: colors.success,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0
+                          }}>
+                            <span style={{ fontSize: '10px', color: 'white' }}>✓</span>
+                          </div>
+                        ) : (
+                          <div style={{
+                            width: '16px',
+                            height: '16px',
+                            borderRadius: '50%',
+                            backgroundColor: colors.danger,
+                            flexShrink: 0
+                          }} />
+                        )}
+                      </div>
+
+                      {/* Right: Main action buttons (Restart, Stop, Logs) */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <button
+                          className="xray-icon-btn xray-icon-btn--warning"
+                          onClick={() => handleRestartCore(server.node)}
+                          disabled={!server.xray.running}
+                          title={t('serverStatus.restart')}
+                          style={{
+                            width: '28px',
+                            height: '28px',
+                            padding: '0',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '12px'
+                          }}
+                        >
+                          ⟳
+                        </button>
+                        {server.nodeId && (
+                          <button
+                            className="xray-icon-btn xray-icon-btn--danger"
+                            disabled={!server.xray.running}
+                            title={t('serverStatus.stopXray')}
+                            onClick={async () => {
+                              if (!window.confirm(t('serverStatus.confirmStopXrayNode', { node: server.node }))) return;
+                              try {
+                                await api.post(`/v1/nodes/${server.nodeId}/stop-xray`, {}, { auth: getAuth() });
+                                toast(t('serverStatus.xrayStoppedNode', { node: server.node }), 'warning');
+                                setTimeout(() => refreshSingleNode(server.nodeId!), 2000);
+                              } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
+                            }}
+                            style={{
+                              width: '28px',
+                              height: '28px',
+                              padding: '0',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '12px'
+                            }}
+                          >
+                            ■
+                          </button>
+                        )}
+                        <button
+                          className="xray-icon-btn xray-icon-btn--accent"
+                          onClick={() => handleViewLogs(server.node)}
+                          title={t('serverStatus.logs')}
+                          style={{
+                            width: '28px',
+                            height: '28px',
+                            padding: '0',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            fontSize: '11px'
+                          }}
+                        >
+                          Logs
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Action buttons grid — 2 rows of icons */}
                     {server.nodeId && (
-                      <button
-                        className="xray-icon-btn xray-icon-btn--danger"
-                        disabled={!server.xray.running}
-                              title={t('serverStatus.stopXray')}
-                              aria-label={t('serverStatus.stopXray')}
-                              onClick={async () => {
-                                if (!window.confirm(t('serverStatus.confirmStopXrayNode', { node: server.node }))) return;
-                                try {
-                                  await api.post(`/v1/nodes/${server.nodeId}/stop-xray`, {}, { auth: getAuth() });
-                                  toast(t('serverStatus.xrayStoppedNode', { node: server.node }), 'warning');
-                                  setTimeout(() => refreshSingleNode(server.nodeId!), 2000);
-                                } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
-                              }}
-                            >■</button>
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(6, 1fr)',
+                        gap: '4px'
+                      }}>
+                        <button className="xray-icon-btn xray-icon-btn--danger" title={t('serverStatus.resetAllTraffics')}
+                          onClick={async () => { if (!window.confirm(t('serverStatus.confirmResetAllTraffics'))) return; try { await api.post(`/v1/inbounds/${server.nodeId}/reset-all-traffics`, {}, { auth: getAuth() }); } catch (e) { console.error(e); } }}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '12px' }}>↺</button>
+                        <button className="xray-icon-btn" title={t('serverStatus.keyGenerator')}
+                          onClick={() => handleOpenKeyGen(server.nodeId!)}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '14px' }}>🔑</button>
+                        <button className="xray-icon-btn" title={t('serverStatus.xrayVersionsTitle')}
+                          onClick={() => handleOpenVersions(server.nodeId!, server.node)}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '14px' }}>📦</button>
+                        <button className="xray-icon-btn" title={t('serverStatus.outboundTraffic')}
+                          onClick={() => handleOpenOutbounds(server.nodeId!, server.node)}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '14px' }}>📊</button>
+                        <button className="xray-icon-btn" title={t('serverStatus.updateGeofiles')}
+                          onClick={() => handleUpdateGeofile(server.nodeId!)}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '14px' }}>🌍</button>
+                        <button className="xray-icon-btn" title={t('serverStatus.backupToTelegram')}
+                          onClick={() => handleBackupTelegram(server.nodeId!)}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '14px' }}>📤</button>
+                        <button className="xray-icon-btn" title={t('serverStatus.updatePanel')}
+                          onClick={() => handleUpdatePanel(server.nodeId!)}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '12px' }}>⬆</button>
+                        <button className="xray-icon-btn" title={t('serverStatus.xrayMetricsTitle')}
+                          onClick={() => handleOpenMetrics(server.nodeId!, server.node)}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '14px' }}>📈</button>
+                        <button className="xray-icon-btn" title={t('serverStatus.apiTokensTitle')}
+                          onClick={() => handleOpenApiTokens(server.nodeId!, server.node)}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '14px' }}>🔐</button>
+                        <button className="xray-icon-btn" title={t('serverStatus.panelUpdateInfo')}
+                          onClick={() => handleOpenUpdateInfo(server.nodeId!, server.node)}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '12px' }}>ℹ</button>
+                        <button className="xray-icon-btn" title={t('serverStatus.xrayObservatory')}
+                          onClick={() => handleOpenObservatory(server.nodeId!, server.node)}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '14px' }}>🔭</button>
+                        <button className="xray-icon-btn" title={t('serverStatus.serverHistoryChart')}
+                          onClick={() => handleOpenHistory(server.nodeId!, server.node)}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '14px' }}>📉</button>
+                        <button className="xray-icon-btn" title={t('serverStatus.viewXrayConfig')}
+                          onClick={() => handleOpenXrayConfig(server.nodeId!, server.node)}
+                          style={{ width: '28px', height: '28px', padding: '0', fontSize: '12px' }}>⚙</button>
+                      </div>
                     )}
-                    <button
-                      className="xray-icon-btn xray-icon-btn--accent"
-                      onClick={() => handleViewLogs(server.node)}
-                      title={t('serverStatus.logs')}
-                      aria-label={t('serverStatus.viewLogs')}
-                    >
-                      {t('serverStatus.logs')}
-                    </button>
-                    {server.nodeId && (
-                      <>
-                        <button className="xray-icon-btn xray-icon-btn--danger" aria-label={t('serverStatus.resetAllTraffics')}
-                          onClick={async () => { if (!window.confirm(t('serverStatus.confirmResetAllTraffics'))) return; try { await api.post(`/v1/inbounds/${server.nodeId}/reset-all-traffics`, {}, { auth: getAuth() }); } catch (e) { console.error(e); } }} title={t('serverStatus.resetAllTraffics')}>↺</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.keyGenerator')}
-                          onClick={() => handleOpenKeyGen(server.nodeId!)} title={t('serverStatus.keyGenerator')}>🔑</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.xrayVersionsTitle')}
-                          onClick={() => handleOpenVersions(server.nodeId!, server.node)} title={t('serverStatus.xrayVersionsTitle')}>📦</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.outboundTraffic')}
-                          onClick={() => handleOpenOutbounds(server.nodeId!, server.node)} title={t('serverStatus.outboundTraffic')}>📊</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.updateGeofiles')}
-                          onClick={() => handleUpdateGeofile(server.nodeId!)} title={t('serverStatus.updateGeofiles')}>🌍</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.backupToTelegram')}
-                          onClick={() => handleBackupTelegram(server.nodeId!)} title={t('serverStatus.backupToTelegram')}>📤</button>
-                        <button className="xray-icon-btn xray-icon-btn--danger" aria-label={t('serverStatus.stopXray')}
-                          onClick={() => handleStopXray(server.nodeId!)} title={t('serverStatus.stopXray')}>⏹</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.updatePanel')}
-                          onClick={() => handleUpdatePanel(server.nodeId!)} title={t('serverStatus.updatePanel')}>⬆</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.xrayMetricsTitle')}
-                          onClick={() => handleOpenMetrics(server.nodeId!, server.node)} title={t('serverStatus.xrayMetricsTitle')}>📈</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.apiTokensTitle')}
-                          onClick={() => handleOpenApiTokens(server.nodeId!, server.node)} title={t('serverStatus.apiTokensTitle')}>🔐</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.panelUpdateInfo')}
-                          onClick={() => handleOpenUpdateInfo(server.nodeId!, server.node)} title={t('serverStatus.panelUpdateInfo')}>ℹ</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.xrayObservatory')}
-                          onClick={() => handleOpenObservatory(server.nodeId!, server.node)} title={t('serverStatus.xrayObservatory')}>🔭</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.serverHistoryChart')}
-                          onClick={() => handleOpenHistory(server.nodeId!, server.node)} title={t('serverStatus.serverHistoryChart')}>📉</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.viewXrayConfig')}
-                          onClick={() => handleOpenXrayConfig(server.nodeId!, server.node)} title={t('serverStatus.viewXrayConfig')}>⚙</button>
-                      </>
-                    )}
-                </div>
-              )}
+                  </div>
+                )}
               </div>
             )}
           </div>
