@@ -64,48 +64,12 @@ export const DashboardSummary: React.FC<{ onNavigate?: (tab: string) => void }> 
   if (!summary) return null;
 
   const kpiCards = [
-    {
-      label: t('nodes.title'),
-      value: String(summary.nodes_total),
-      icon: 'servers' as const,
-      badge: 'accent',
-      tab: 'monitoring',
-    },
-    {
-      label: t('clients.title'),
-      value: String(summary.clients_total),
-      icon: 'clients' as const,
-      badge: 'info',
-      tab: 'clients',
-    },
-    {
-      label: t('traffic.onlineClients'),
-      value: String(summary.online_clients_total),
-      icon: 'statusOn' as const,
-      badge: 'success',
-      tab: 'clients',
-    },
-    {
-      label: t('traffic.upload'),
-      value: formatBytes(summary.traffic.upload),
-      icon: 'upload' as const,
-      badge: 'warning',
-      tab: 'traffic',
-    },
-    {
-      label: t('traffic.download'),
-      value: formatBytes(summary.traffic.download),
-      icon: 'download' as const,
-      badge: 'danger',
-      tab: 'traffic',
-    },
-    {
-      label: t('traffic.totalTraffic'),
-      value: formatBytes(summary.traffic.total),
-      icon: 'traffic' as const,
-      badge: 'neutral',
-      tab: 'traffic',
-    },
+    { label: t('nodes.title'), value: String(summary.nodes_total), icon: 'servers' as const, badge: 'accent', colorKey: 'node', tab: 'monitoring' },
+    { label: t('clients.title'), value: String(summary.clients_total), icon: 'clients' as const, badge: 'info', colorKey: 'client', tab: 'clients' },
+    { label: t('traffic.onlineClients'), value: String(summary.online_clients_total), icon: 'statusOn' as const, badge: 'success', colorKey: 'online', tab: 'clients' },
+    { label: t('traffic.upload'), value: formatBytes(summary.traffic.upload), icon: 'upload' as const, badge: 'warning', colorKey: 'upload', tab: 'traffic' },
+    { label: t('traffic.download'), value: formatBytes(summary.traffic.download), icon: 'download' as const, badge: 'danger', colorKey: 'download', tab: 'traffic' },
+    { label: t('traffic.totalTraffic'), value: formatBytes(summary.traffic.total), icon: 'traffic' as const, badge: 'neutral', colorKey: 'total', tab: 'traffic' },
   ];
 
   return (
@@ -139,7 +103,7 @@ export const DashboardSummary: React.FC<{ onNavigate?: (tab: string) => void }> 
         {kpiCards.map(card => (
           <div
             key={card.label}
-            className={`kpi-card${onNavigate ? ' is-clickable' : ''}`}
+            className={`kpi-card kpi-card--${card.colorKey}${onNavigate ? ' is-clickable' : ''}`}
             onClick={() => onNavigate?.(card.tab)}
             title={onNavigate ? t('dashboardSummary.goToTab', { tab: card.tab }) : undefined}
           >

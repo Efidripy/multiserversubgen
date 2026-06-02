@@ -984,7 +984,7 @@ export const ServerStatus: React.FC = () => {
             {server.available && server.system && (
               <div className="server-card__metrics">
                 {/* CPU */}
-                <div className="server-card__metric">
+                <div className="server-card__metric server-card__metric--cpu">
                   <div className="server-card__metric-row">
                     <span className="small" style={{ color: colors.text.secondary }}>{t('serverStatus.cpu')}</span>
                     <span className="small" style={{ color: getStatusColor(server.system.cpu) }}>
@@ -996,7 +996,7 @@ export const ServerStatus: React.FC = () => {
                   </div>
                 </div>
                 {/* Memory */}
-                <div className="server-card__metric">
+                <div className="server-card__metric server-card__metric--ram">
                   <div className="server-card__metric-row">
                     <span className="small" style={{ color: colors.text.secondary }}>{t('serverStatus.ram')}</span>
                     <span className="small" style={{ color: getStatusColor(server.system.mem.percent) }}>
@@ -1013,7 +1013,7 @@ export const ServerStatus: React.FC = () => {
                   </div>
                 </div>
                 {/* Disk */}
-                <div className="server-card__metric">
+                <div className="server-card__metric server-card__metric--disk">
                   <div className="server-card__metric-row">
                     <span className="small" style={{ color: colors.text.secondary }}>{t('serverStatus.disk')}</span>
                     <span className="small" style={{ color: getStatusColor(server.system.disk.percent) }}>
