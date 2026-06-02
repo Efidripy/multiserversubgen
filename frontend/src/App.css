@@ -2067,6 +2067,75 @@ body.style-preset-4 .server-card__retry-btn:disabled {
   opacity: 0.65;
 }
 
+/* ── Slice 7: TrafficStats style-preset-4 ─────────────────── */
+
+body.style-preset-4 .traffic-stats .card {
+  background: var(--command-surface) !important;
+  border: 1px solid rgba(34, 211, 238, 0.15) !important;
+  border-radius: 8px !important;
+}
+
+body.style-preset-4 .traffic-stats .table {
+  color: #cbd5e1 !important;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+}
+
+body.style-preset-4 .traffic-stats .table thead th {
+  background: var(--command-surface-2) !important;
+  color: rgba(148, 163, 184, 0.7) !important;
+  border-color: rgba(34, 211, 238, 0.12) !important;
+  font-size: 0.68rem;
+  letter-spacing: 0.1em;
+  padding: 8px 10px;
+}
+
+body.style-preset-4 .traffic-stats .table tbody tr {
+  border-color: rgba(34, 211, 238, 0.08) !important;
+}
+
+body.style-preset-4 .traffic-stats .table-hover tbody tr:hover {
+  background: rgba(34, 211, 238, 0.05) !important;
+}
+
+body.style-preset-4 .traffic-stats h6 {
+  color: var(--command-cyan) !important;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+body.style-preset-4 .traffic-stats .btn {
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  border-radius: 5px !important;
+}
+
+body.style-preset-4 .traffic-stats .badge {
+  font-family: var(--font-mono);
+  font-size: 0.64rem;
+  border-radius: 4px;
+}
+
+body.style-preset-4 .traffic-stats input[type="text"],
+body.style-preset-4 .traffic-stats select {
+  background: var(--command-bg) !important;
+  border: 1px solid rgba(34, 211, 238, 0.22) !important;
+  border-radius: 5px;
+  color: #cbd5e1 !important;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+}
+
+body.style-preset-4 .traffic-stats input[type="text"]:focus,
+body.style-preset-4 .traffic-stats select:focus {
+  outline: none;
+  border-color: rgba(34, 211, 238, 0.45) !important;
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.1);
+}
+
 .btn {
   border-radius: var(--r-lg) !important;
   font-family: var(--font-sans) !important;

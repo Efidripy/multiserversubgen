@@ -88,7 +88,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   const trafficAbortRef = useRef<AbortController | null>(null);
   const onlineAbortRef = useRef<AbortController | null>(null);
   const onlineTotalsAbortRef = useRef<AbortController | null>(null);
-  const chartAccent = stylePreset === '3' ? '#fafafa' : 'var(--accent)';
+  const chartAccent = stylePreset === '3' ? '#fafafa' : stylePreset === '4' ? '#22d3ee' : 'var(--accent)';
 
   useEffect(() => {
     const cached = readStaleCache<TrafficStatsCache>(TRAFFIC_STATS_CACHE_KEY, TRAFFIC_STATS_CACHE_MAX_AGE_MS);
