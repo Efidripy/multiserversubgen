@@ -252,12 +252,12 @@ export function DashboardSummary({
           })}
         </div>
 
-        <div className="flex flex-wrap items-center content-start gap-2 mb-4">
+        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10 gap-2 mb-4">
           {onlineByNode.map(([node, count]) => (
             <button
               type="button"
               key={node}
-              className="min-h-[24px] px-2.5 py-1 bg-[#0f1420] rounded-sm text-[11px] leading-none font-mono text-gray-300 hover:bg-[#111827] hover:text-cyan-300 transition-colors duration-200"
+              className="min-h-[24px] w-full px-2 py-1 bg-[#0f1420] rounded-sm text-[11px] leading-none font-mono text-gray-300 hover:bg-[#111827] hover:text-cyan-300 transition-colors duration-200 whitespace-nowrap text-center"
               onClick={() => onNavigate?.('clients')}
             >
               {node}: <strong className="text-white">{count}</strong>
@@ -283,7 +283,7 @@ export function DashboardSummary({
                       onNavigate?.('clients');
                     }}
                   >
-                    <span className="grid h-5 w-full max-w-[280px] grid-cols-[18px_78px_82px_54px] sm:grid-cols-[20px_82px_86px_56px] items-center gap-2">
+                    <span className="grid h-5 w-full max-w-[360px] grid-cols-[18px_minmax(72px,86px)_minmax(90px,1fr)_minmax(5.5rem,5.5rem)] sm:grid-cols-[20px_minmax(82px,96px)_minmax(110px,1fr)_minmax(6rem,6rem)] items-center gap-2">
                       <span className="text-xs text-gray-500 font-mono text-right">{index + 1}.</span>
                       <span className="text-sm text-cyan-300 font-mono truncate" title={client.email}>
                         {client.email}
@@ -291,7 +291,7 @@ export function DashboardSummary({
                       <span className="h-1.5 bg-[#1b2638] rounded-full overflow-hidden">
                         <span className={`block h-full rounded-full bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-400 ${getWidthClass(percent)}`} />
                       </span>
-                      <span className="text-sm text-gray-400 font-mono text-right">{formatBytes(client.total)}</span>
+                      <span className="text-sm text-gray-400 font-mono text-right whitespace-nowrap tabular-nums">{formatBytes(client.total)}</span>
                     </span>
                   </button>
                 );

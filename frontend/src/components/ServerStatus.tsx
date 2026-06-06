@@ -288,13 +288,13 @@ export function ServerStatus({
             </div>
           </div>
 
-          <div className="server-status__control-row flex flex-col xl:flex-row xl:items-center xl:justify-between gap-2 mb-2">
-            <div className="flex items-center gap-2 min-h-7">
-              <span className="text-[10px] text-gray-400 font-mono">Sort:</span>
+          <div className="server-status__control-row grid grid-cols-1 gap-2 mb-2 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+            <div className="flex w-full items-center gap-1.5 min-h-7 overflow-x-auto scrollbar-none">
+              <span className="text-[10px] text-gray-400 font-mono flex-shrink-0">Sort:</span>
               {(['name', 'cpu', 'status', 'clients'] as const).map((sort) => (
                 <button
                   key={sort}
-                  className={`h-7 px-2.5 rounded text-[10px] font-mono transition-colors duration-200 ${
+                  className={`h-7 px-2.5 rounded text-[10px] font-mono transition-colors duration-200 flex-shrink-0 ${
                     cardSort === sort ? 'bg-cyan-500/20 text-cyan-300' : 'text-gray-400 hover:bg-cyan-400/5 hover:text-cyan-300'
                   }`}
                   onClick={() => setCardSort(sort)}
@@ -304,13 +304,13 @@ export function ServerStatus({
                 </button>
               ))}
             </div>
-            <div className="flex items-center gap-2 flex-wrap min-h-7">
-              <label className="flex items-center gap-1.5 text-[10px] text-gray-400 font-mono">
-                <input type="checkbox" className="w-3 h-3" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
-                {t('serverStatus.autoRefresh')}
+            <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-2 min-h-7 xl:flex xl:justify-end">
+              <label className="flex min-w-0 items-center gap-1.5 text-[10px] text-gray-400 font-mono">
+                <input type="checkbox" className="w-3 h-3 flex-shrink-0" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
+                <span className="truncate">{t('serverStatus.autoRefresh')}</span>
               </label>
               <select
-                className="h-7 bg-[#0a0e1a] rounded px-2 text-[10px] text-gray-400 font-mono"
+                className="h-7 bg-[#0a0e1a] rounded px-2 text-[10px] text-gray-400 font-mono flex-shrink-0"
                 value={refreshInterval}
                 onChange={(event) => setRefreshInterval(Number(event.target.value))}
                 aria-label={t('serverStatus.autoRefresh')}
@@ -320,7 +320,7 @@ export function ServerStatus({
                 ))}
               </select>
               <button
-                className="w-7 h-7 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white rounded flex items-center justify-center disabled:opacity-50"
+                className="w-7 h-7 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white rounded flex items-center justify-center disabled:opacity-50 flex-shrink-0"
                 onClick={async () => {
                   try {
                     await refreshNodesNow();
@@ -337,7 +337,7 @@ export function ServerStatus({
               {onToggleFleet && (
                 <button
                   onClick={onToggleFleet}
-                  className="w-7 h-7 bg-[#0a0e1a] rounded flex items-center justify-center"
+                  className="w-7 h-7 bg-[#0a0e1a] rounded flex items-center justify-center flex-shrink-0"
                   title={t('nodes.registeredFleet')}
                   aria-label={t('nodes.registeredFleet')}
                   type="button"
@@ -348,25 +348,25 @@ export function ServerStatus({
             </div>
           </div>
 
-          <div className="flex gap-1.5 mb-2 flex-wrap">
-            <button className="h-6 px-3 bg-[#0a0e1a] text-amber-300/80 border border-amber-400/25 rounded-md text-[10px] font-mono hover:bg-amber-400/5 hover:border-amber-300/40 transition-colors duration-200" type="button">
+          <div className="grid grid-cols-1 sm:grid-cols-3 xl:flex gap-1.5 mb-2">
+            <button className="h-6 px-3 bg-[#0a0e1a] text-amber-300/80 border border-amber-400/25 rounded-md text-[10px] font-mono hover:bg-amber-400/5 hover:border-amber-300/40 transition-colors duration-200 whitespace-nowrap" type="button">
               {t('serverStatus.restartAllXray')}
             </button>
-            <button className="h-6 px-3 bg-[#0a0e1a] text-cyan-300/80 border border-cyan-300/25 rounded-md text-[10px] font-mono hover:bg-cyan-400/5 hover:border-cyan-300/40 transition-colors duration-200" type="button">
+            <button className="h-6 px-3 bg-[#0a0e1a] text-cyan-300/80 border border-cyan-300/25 rounded-md text-[10px] font-mono hover:bg-cyan-400/5 hover:border-cyan-300/40 transition-colors duration-200 whitespace-nowrap" type="button">
               {t('serverStatus.updateAllGeofiles')}
             </button>
-            <button className="h-6 px-3 bg-[#0a0e1a] text-cyan-300/75 border border-cyan-300/20 rounded-md text-[10px] font-mono hover:bg-cyan-400/5 hover:border-cyan-300/35 transition-colors duration-200" type="button">
+            <button className="h-6 px-3 bg-[#0a0e1a] text-cyan-300/75 border border-cyan-300/20 rounded-md text-[10px] font-mono hover:bg-cyan-400/5 hover:border-cyan-300/35 transition-colors duration-200 whitespace-nowrap" type="button">
               {t('serverStatus.copySummary')}
             </button>
           </div>
 
-          <div className="flex flex-wrap gap-1.5">
-            <span className="px-2 py-0.5 bg-[#0a0e1a] text-green-400 rounded text-[10px] font-mono">Online: <strong>{fleetSummary?.online ?? online}/{fleetSummary?.total ?? servers.length}</strong></span>
-            <span className="px-2 py-0.5 bg-[#0a0e1a] text-yellow-400 rounded text-[10px] font-mono">Errors: <strong>{fleetSummary?.checking ?? 2}</strong></span>
-            <span className="px-2 py-0.5 bg-[#0a0e1a] text-red-400 rounded text-[10px] font-mono">Offline: <strong>{fleetSummary?.offline ?? offline}</strong></span>
-            <span className="px-2 py-0.5 bg-[#0a0e1a] text-green-400 rounded text-[10px] font-mono">{t('serverStatus.avgCpu')}: <strong>{avgCpu.toFixed(1)}%</strong></span>
-            <span className="px-2 py-0.5 bg-[#0a0e1a] text-green-400 rounded text-[10px] font-mono">{t('serverStatus.fleetRam')}: <strong>{'10.4/19.2 GB'}</strong></span>
-            <span className="px-2 py-0.5 bg-[#0a0e1a] text-gray-300 rounded text-[10px] font-mono">{t('serverStatus.onlineClients')}: <strong>-</strong></span>
+          <div className="server-status__stat-grid grid grid-cols-2 sm:grid-cols-3 xl:flex xl:flex-wrap gap-1.5">
+            <span className="h-6 px-2 bg-[#0a0e1a] text-green-400 rounded text-[10px] font-mono flex items-center justify-center whitespace-nowrap">Online: <strong>{fleetSummary?.online ?? online}/{fleetSummary?.total ?? servers.length}</strong></span>
+            <span className="h-6 px-2 bg-[#0a0e1a] text-yellow-400 rounded text-[10px] font-mono flex items-center justify-center whitespace-nowrap">Errors: <strong>{fleetSummary?.checking ?? 2}</strong></span>
+            <span className="h-6 px-2 bg-[#0a0e1a] text-red-400 rounded text-[10px] font-mono flex items-center justify-center whitespace-nowrap">Offline: <strong>{fleetSummary?.offline ?? offline}</strong></span>
+            <span className="h-6 px-2 bg-[#0a0e1a] text-green-400 rounded text-[10px] font-mono flex items-center justify-center whitespace-nowrap">{t('serverStatus.avgCpu')}: <strong>{avgCpu.toFixed(1)}%</strong></span>
+            <span className="h-6 px-2 bg-[#0a0e1a] text-green-400 rounded text-[10px] font-mono flex items-center justify-center whitespace-nowrap">{t('serverStatus.fleetRam')}: <strong>{'10.4/19.2 GB'}</strong></span>
+            <span className="h-6 px-2 bg-[#0a0e1a] text-gray-300 rounded text-[10px] font-mono flex items-center justify-center whitespace-nowrap">{t('serverStatus.onlineClients')}: <strong>-</strong></span>
           </div>
         </div>
 

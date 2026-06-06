@@ -807,8 +807,8 @@ export const App: React.FC = () => {
     switch (tab) {
       case 'dashboard':
         return (
-          <div className={`dashboard-command-grid dashboard-shell p-6 min-h-screen transition-all duration-300 ease-in-out ${registeredFleetCollapsed ? 'pr-6' : 'xl:pr-[429px] pr-6'}`}>
-            <div className="dashboard-command-grid__main min-w-0">
+          <div className="dashboard-command-grid dashboard-shell min-w-0 overflow-hidden p-6 min-h-screen transition-all duration-300 ease-in-out xl:grid xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start xl:gap-6">
+            <div className="dashboard-command-grid__main min-w-0 overflow-hidden">
               <DashboardSummary onNavigate={(tab) => {
                 const t = tab as TabType;
                 if (t in TAB_META) {

@@ -134,9 +134,9 @@ export function RegisteredFleetPanel({
       )}
 
       <aside
-        className={`fixed right-0 top-0 bottom-[25px] w-[420px] max-w-[calc(100vw-24px)] transition-transform duration-300 pt-20 ${
-          collapsed ? 'translate-x-full xl:translate-x-[calc(100%-2rem)]' : 'translate-x-0'
-        } xl:z-20 z-40`}
+        className={`fixed right-0 top-0 bottom-[25px] w-[420px] max-w-[calc(100vw-24px)] transition-[width,transform] duration-300 pt-20 ${
+          collapsed ? 'translate-x-full xl:translate-x-0 xl:w-8' : 'translate-x-0 xl:w-[420px]'
+        } xl:sticky xl:top-6 xl:right-auto xl:bottom-auto xl:h-[calc(100vh-7rem)] xl:max-w-none xl:pt-0 xl:z-20 z-40`}
       >
         <div className="bg-[#0f1420] h-full flex flex-col relative overflow-clip">
           <button
