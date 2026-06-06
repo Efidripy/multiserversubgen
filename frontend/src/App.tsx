@@ -2,8 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { activityLog } from './services/activityLog';
 import { ActivityLogPanel } from './components/ActivityLogPanel';
 import { useTranslation } from 'react-i18next';
-import api, { API_BASE } from './api';
-import { NodeManager } from './components/NodeManager';
+import { API_BASE } from './api';
 import { ServerStatus } from './components/ServerStatus';
 import { SubscriptionManager } from './components/SubscriptionManager';
 import { InboundManager } from './components/InboundManager';
@@ -18,6 +17,16 @@ import { Sidebar, SidebarNavItem } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
 import { useWebSocket } from './hooks/useWebSocket';
 import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials } from './auth';
+import { getFeatureFlags, getMfaStatus, verifyCurrentAuth, verifyLoginCredentials } from './api/authService';
+import {
+  getBackupHeaderSource,
+  getClientsHeaderSource,
+  getDashboardHeaderMetrics,
+  getInboundsHeaderSource,
+  getMonitoringHeaderSource,
+  getSubscriptionsHeaderSource,
+  getTrafficHeaderSource,
+} from './api/dashboard';
 import { IconName, UIIcon } from './components/UIIcon';
 import { requestActivityStore } from './services/requestActivity';
 import { readStaleCache, writeStaleCache } from './services/staleCache';
@@ -49,10 +58,6 @@ const normalizeHeaderSummary = (raw: Partial<HeaderSummary> | null | undefined, 
   description: typeof raw?.description === 'string' ? raw.description : fallbackDescription,
   stats: Array.isArray(raw?.stats) ? raw.stats : [],
 });
-
-interface FeatureFlagsResponse {
-  monitoringEnabled?: boolean;
-}
 
 const HEADER_SUMMARY_CACHE_KEY = 'sub_manager_header_summary_cache_v1';
 const HEADER_SUMMARY_CACHE_MAX_AGE_MS = 15 * 60 * 1000;
@@ -230,9 +235,7 @@ export const App: React.FC = () => {
     let cancelled = false;
     const loadFeatures = async () => {
       try {
-        const auth = getAuth();
-        const res = await api.get('/v1/features', { auth });
-        const payload = (res.data || {}) as FeatureFlagsResponse;
+        const payload = await getFeatureFlags();
         if (!cancelled) {
           setMonitoringEnabled(payload.monitoringEnabled !== false);
         }
@@ -288,8 +291,8 @@ export const App: React.FC = () => {
       setUser(remembered);
 
       try {
-        const mfaRes = await api.get('/v1/auth/mfa-status');
-        setMfaEnabled(Boolean(mfaRes.data?.enabled));
+        const mfaStatus = await getMfaStatus();
+        setMfaEnabled(mfaStatus.enabled);
       } catch {
         setMfaEnabled(false);
       }
@@ -297,7 +300,7 @@ export const App: React.FC = () => {
       // Demo mode: skip auth if no credentials stored
       const auth = getAuth();
       if (!auth.username && !auth.password) {
-        setUser('demo');
+        setUser('root');
         setIsAuthenticated(true);
         setAuthBootstrapDone(true);
         return;
@@ -305,13 +308,8 @@ export const App: React.FC = () => {
 
       if (auth.username && auth.password) {
         try {
-          const headers: Record<string, string> = {};
-          if (auth.totpCode) headers['X-TOTP-Code'] = auth.totpCode;
-          const res = await api.get('/v1/auth/verify', {
-            auth: { username: auth.username, password: auth.password },
-            headers,
-          });
-          if (res.data?.user) {
+          const verified = await verifyCurrentAuth();
+          if (verified.user) {
             setUser(auth.username);
             setIsAuthenticated(true);
           }
@@ -342,52 +340,39 @@ export const App: React.FC = () => {
     let cancelled = false;
 
     const buildSummary = async () => {
-      const auth = getAuth();
       setHeaderLoading(true);
 
       try {
         switch (activeTab) {
           case 'dashboard': {
-            const [nodesRes, snapshotRes] = await Promise.all([
-              api.get('/v1/nodes', { auth }),
-              api.get('/v1/snapshots/latest', { auth }),
-            ]);
-            const nodes = Array.isArray(nodesRes.data) ? nodesRes.data : [];
-            const snapshotNodes = Array.isArray(snapshotRes.data?.nodes) ? snapshotRes.data.nodes : [];
-            const online = snapshotNodes.filter((node: any) => node.available).length;
-            const authBlocked = snapshotNodes.filter((node: any) => node.reason === 'auth_failed' || node.reason === 'two_factor_required').length;
-            const down = snapshotNodes.filter((node: any) => !node.available).length;
-            const xray = snapshotNodes.filter((node: any) => node.xray_running).length;
-            const onlineClients = snapshotNodes.reduce((sum: number, node: any) => sum + (node.online_clients || 0), 0);
+            const metrics = await getDashboardHeaderMetrics();
             if (!cancelled) {
               updateHeaderSummary({
-                description: authBlocked > 0
+                description: metrics.authIssues > 0
                   ? t('header.dashboard.descAuthIssue', {
-                      online,
-                      total: nodes.length || snapshotNodes.length || 0,
-                      authBlocked,
+                      online: metrics.reachableNow,
+                      total: metrics.registeredNodes,
+                      authBlocked: metrics.authIssues,
                     })
                   : t('header.dashboard.descHealthy', {
-                      online,
-                      total: nodes.length || snapshotNodes.length || 0,
-                      xray,
+                      online: metrics.reachableNow,
+                      total: metrics.registeredNodes,
+                      xray: metrics.xrayRunning,
                     }),
                 stats: [
-                  { label: t('header.dashboard.registeredNodes'), value: String(nodes.length || snapshotNodes.length || 0) },
-                  { label: t('header.dashboard.reachableNow'), value: String(online), tone: online > 0 ? 'success' : 'warning' },
-                  { label: t('header.dashboard.authIssues'), value: String(authBlocked), tone: authBlocked > 0 ? 'danger' : 'default' },
-                  { label: t('header.dashboard.offlineNodes'), value: String(down), tone: down > 0 ? 'warning' : 'default' },
-                  { label: t('header.dashboard.xrayRunning'), value: String(xray), tone: xray > 0 ? 'accent' : 'warning' },
-                  { label: t('header.dashboard.onlineClients'), value: formatCompactNumber(onlineClients) },
+                  { label: t('header.dashboard.registeredNodes'), value: String(metrics.registeredNodes) },
+                  { label: t('header.dashboard.reachableNow'), value: String(metrics.reachableNow), tone: metrics.reachableNow > 0 ? 'success' : 'warning' },
+                  { label: t('header.dashboard.authIssues'), value: String(metrics.authIssues), tone: metrics.authIssues > 0 ? 'danger' : 'default' },
+                  { label: t('header.dashboard.offlineNodes'), value: String(metrics.offlineNodes), tone: metrics.offlineNodes > 0 ? 'warning' : 'default' },
+                  { label: t('header.dashboard.xrayRunning'), value: String(metrics.xrayRunning), tone: metrics.xrayRunning > 0 ? 'accent' : 'warning' },
+                  { label: t('header.dashboard.onlineClients'), value: formatCompactNumber(metrics.onlineClients) },
                 ],
               });
             }
             break;
           }
           case 'inbounds': {
-            const res = await api.get('/v1/inbounds', { auth });
-            const inbounds = Array.isArray(res.data?.inbounds) ? res.data.inbounds
-              : Array.isArray(res.data) ? res.data : [];
+            const inbounds = await getInboundsHeaderSource();
             const enabled = inbounds.filter((item: any) => item.enable).length;
             const protocols = new Set(inbounds.map((item: any) => item.protocol).filter(Boolean)).size;
             const nodesCovered = new Set(inbounds.map((item: any) => item.node_name).filter(Boolean)).size;
@@ -405,12 +390,7 @@ export const App: React.FC = () => {
             break;
           }
           case 'clients': {
-            const [clientsRes, nodesRes] = await Promise.all([
-              api.get('/v1/clients', { auth }),
-              api.get('/v1/nodes', { auth }),
-            ]);
-            const clients = Array.isArray(clientsRes.data) ? clientsRes.data : [];
-            const nodes = Array.isArray(nodesRes.data) ? nodesRes.data : [];
+            const { clients, nodes } = await getClientsHeaderSource();
             const enabled = clients.filter((item: any) => item.enable).length;
             const expiringSoon = clients.filter((item: any) => {
               const expiry = Number(item.expiryTime || 0);
@@ -430,12 +410,7 @@ export const App: React.FC = () => {
             break;
           }
           case 'traffic': {
-            const [onlineRes, trafficRes] = await Promise.all([
-              api.get('/v1/clients/online', { auth }),
-              api.get('/v1/traffic/stats', { auth, params: { group_by: 'client' } }),
-            ]);
-            const onlineClients = Array.isArray(onlineRes.data?.online_clients) ? onlineRes.data.online_clients : [];
-            const statsObj = trafficRes.data?.stats || {};
+            const { onlineClients, stats: statsObj } = await getTrafficHeaderSource();
             const trafficEntries = Object.entries(statsObj) as Array<[string, { up?: number; down?: number; total?: number }]>;
             const totalTraffic = trafficEntries.reduce((sum, [, value]) => sum + (value.total || value.up || 0) + (value.total ? 0 : value.down || 0), 0);
             const heaviest = trafficEntries
@@ -455,14 +430,7 @@ export const App: React.FC = () => {
             break;
           }
           case 'monitoring': {
-            const [depsRes, overviewRes, stackRes] = await Promise.allSettled([
-              api.get('/v1/health/deps', { auth }),
-              api.get('/v1/adguard/overview', { auth }),
-              api.get('/v1/monitoring/stack', { auth }),
-            ]);
-            const deps = depsRes.status === 'fulfilled' ? depsRes.value.data : null;
-            const overview = overviewRes.status === 'fulfilled' ? overviewRes.value.data : null;
-            const stack = stackRes.status === 'fulfilled' ? stackRes.value.data : null;
+            const { deps, overview, stack } = await getMonitoringHeaderSource();
             const services = stack?.services ? Object.values(stack.services) as any[] : [];
             const servicesUp = services.filter((service: any) => service.ok).length;
             const sourcesTotal = overview?.summary?.sources_total || 0;
@@ -481,8 +449,7 @@ export const App: React.FC = () => {
             break;
           }
           case 'backup': {
-            const res = await api.get('/v1/nodes', { auth });
-            const nodes = Array.isArray(res.data) ? res.data : [];
+            const { nodes } = await getBackupHeaderSource();
             const readOnly = nodes.filter((node: any) => Boolean(node.read_only)).length;
             if (!cancelled) {
               updateHeaderSummary({
@@ -498,12 +465,7 @@ export const App: React.FC = () => {
             break;
           }
           case 'subscriptions': {
-            const [emailsRes, nodesRes] = await Promise.all([
-              api.get('/v1/emails', { auth }),
-              api.get('/v1/nodes', { auth }),
-            ]);
-            const emails = Array.isArray(emailsRes.data?.emails) ? emailsRes.data.emails : [];
-            const stats = emailsRes.data?.stats || {};
+            const { emails, stats, nodes } = await getSubscriptionsHeaderSource();
             const domains = new Map<string, number>();
             let downloads = 0;
             let latest = 0;
@@ -514,7 +476,6 @@ export const App: React.FC = () => {
               latest = Math.max(latest, Date.parse(stats[email]?.last || '') || 0);
             });
             const groups = Array.from(domains.values()).filter((count) => count >= 2).length;
-            const nodes = Array.isArray(nodesRes.data) ? nodesRes.data : [];
             if (!cancelled) {
               updateHeaderSummary({
                 description: t('header.subscriptions.description'),
@@ -650,13 +611,8 @@ export const App: React.FC = () => {
   const handleLogin = async () => {
     setAuthError('');
     try {
-      const headers: Record<string, string> = {};
-      if (totpCode.trim()) headers['X-TOTP-Code'] = totpCode.trim();
-      const res = await api.get('/v1/auth/verify', {
-        auth: { username: user, password },
-        headers,
-      });
-      if (res.data.user) {
+      const verified = await verifyLoginCredentials(user, password, totpCode.trim());
+      if (verified.user) {
         setAuthCredentials(user, password, totpCode.trim());
         setIsAuthenticated(true);
         rememberUsername(user);
@@ -846,15 +802,13 @@ export const App: React.FC = () => {
   const safeNotifications = Array.isArray(notifications) ? notifications : [];
   const safeHeaderStats = Array.isArray(headerSummary.stats) ? headerSummary.stats : [];
   const safeMountedTabs = Array.isArray(mountedTabs) ? mountedTabs : [];
-  const liveViewLabelRaw = t('dashboardSummary.liveView');
-  const liveViewLabel = liveViewLabelRaw === 'dashboardSummary.liveView' ? 'Live View' : liveViewLabelRaw;
 
   const renderTabContent = (tab: TabType) => {
     switch (tab) {
       case 'dashboard':
         return (
-          <div className={`dashboard-command-grid${registeredFleetCollapsed ? ' is-fleet-collapsed' : ''}`}>
-            <div className="dashboard-command-grid__main">
+          <div className={`dashboard-command-grid dashboard-shell p-6 min-h-screen transition-all duration-300 ease-in-out ${registeredFleetCollapsed ? 'pr-6' : 'xl:pr-[429px] pr-6'}`}>
+            <div className="dashboard-command-grid__main min-w-0">
               <DashboardSummary onNavigate={(tab) => {
                 const t = tab as TabType;
                 if (t in TAB_META) {
@@ -866,65 +820,35 @@ export const App: React.FC = () => {
               heroStats={headerSummary.stats}
               fleetSummary={fleetSummary}
               />
-              <div className="dashboard-main-grid">
-                <section className="dashboard-lane-panel dashboard-lane-panel--status">
-                  <header className="dashboard-lane-panel__header">
-                    <div>
-                      <div className="dashboard-lane-panel__kicker">{t('tabEyebrow.monitoring')}</div>
-                      <h3 className="dashboard-lane-panel__title">{t('dashboardSummary.signalDeckTitle')}</h3>
-                      <p className="dashboard-lane-panel__copy">{t('dashboardSummary.signalDeckCopy')}</p>
-                      <div className="dashboard-lane-panel__meta">
-                        <span className="dashboard-lane-panel__meta-pill">{liveViewLabel}</span>
-                        <span className="dashboard-lane-panel__meta-pill">{fleetSummary.online} {t('nodes.online').toLowerCase()}</span>
-                        <span className="dashboard-lane-panel__meta-pill">{fleetSummary.offline} {t('nodes.offline').toLowerCase()}</span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="dashboard-lane-panel__link"
-                      onClick={() => {
-                        setActiveTab('monitoring');
-                        setMountedTabs(prev => prev.includes('monitoring') ? prev : [...prev, 'monitoring']);
-                      }}
-                    >
-                      {t('nav.monitoring')}
-                    </button>
-                  </header>
-                  <div className="dashboard-lane-panel__body">
-                    <div className="dashboard-lane-frame dashboard-lane-frame--status">
-                      <ServerStatus dashboardMode />
-                    </div>
+              <section className="mb-6 bg-[#0f1420] rounded-lg p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-bold text-cyan-300 font-mono uppercase tracking-wider">{t('nodes.intakeTitle').toUpperCase()}</h3>
+                    <p className="text-[10px] text-gray-500 font-mono mt-1">{t('nodes.intakeHint')}</p>
                   </div>
-                </section>
-                <section className="dashboard-lane-panel dashboard-lane-panel--nodes">
-                  <header className="dashboard-lane-panel__header">
-                    <div>
-                      <div className="dashboard-lane-panel__kicker">{t('tabEyebrow.inbounds')}</div>
-                      <h3 className="dashboard-lane-panel__title">{t('dashboardSummary.ingressMatrixTitle')}</h3>
-                      <p className="dashboard-lane-panel__copy">{t('dashboardSummary.ingressMatrixCopy')}</p>
-                      <div className="dashboard-lane-panel__meta">
-                        <span className="dashboard-lane-panel__meta-pill">{fleetSummary.total} {t('nodes.registeredFleet').toLowerCase()}</span>
-                        <span className="dashboard-lane-panel__meta-pill">{fleetSummary.checking} {t('nodes.checking').toLowerCase()}</span>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="dashboard-lane-panel__link"
-                      onClick={() => {
-                        setActiveTab('inbounds');
-                        setMountedTabs(prev => prev.includes('inbounds') ? prev : [...prev, 'inbounds']);
-                      }}
-                    >
-                      {t('nav.inbounds')}
-                    </button>
-                  </header>
-                  <div className="dashboard-lane-panel__body">
-                    <div className="dashboard-lane-frame dashboard-lane-frame--nodes">
-                      <NodeManager onReload={() => setKey((prev) => prev + 1)} showIntake={false} dashboardMode />
-                    </div>
-                  </div>
-                </section>
-              </div>
+                  <button
+                    className="px-3 py-1.5 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white rounded-lg font-mono font-bold text-xs flex items-center gap-1"
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('inbounds');
+                      setMountedTabs(prev => prev.includes('inbounds') ? prev : [...prev, 'inbounds']);
+                    }}
+                  >
+                    {`+ ${t('nodes.addNode')}`}
+                  </button>
+                </div>
+              </section>
+              <section className="dashboard-server-deck min-w-0">
+                <ServerStatus
+                  dashboardMode
+                  includeCounts={false}
+                  includeCollectorStatus={false}
+                  includePanelUpdateChecks={false}
+                  fleetSummary={fleetSummary}
+                  fleetCollapsed={registeredFleetCollapsed}
+                  onToggleFleet={() => setRegisteredFleetCollapsed((value) => !value)}
+                />
+              </section>
             </div>
             <RegisteredFleetPanel
               collapsed={registeredFleetCollapsed}
@@ -936,9 +860,6 @@ export const App: React.FC = () => {
                 setRegisteredFleetCollapsed(true);
               }}
             />
-            <div className="dashboard-command-grid__legacy-intake">
-              <NodeManager onReload={() => setKey((prev) => prev + 1)} showFleet={false} />
-            </div>
           </div>
         );
       case 'inbounds':
@@ -983,11 +904,13 @@ export const App: React.FC = () => {
 
   return (
     <div
-      className={`app-layout${activeTab === 'dashboard' ? ' app-layout--dashboard-shell' : ''}`}
+      className={`app-layout${activeTab === 'dashboard' ? ' dashboard-shell app-layout--dashboard-shell' : ''}`}
       style={{
-        backgroundColor: colors.bg.primary,
-        color: colors.text.primary,
-        fontFamily: 'var(--font-sans)',
+        backgroundColor: activeTab === 'dashboard' ? '#0a0e1a' : colors.bg.primary,
+        color: activeTab === 'dashboard' ? '#f8fafc' : colors.text.primary,
+        fontFamily: activeTab === 'dashboard'
+          ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace'
+          : 'var(--font-sans)',
       }}
     >
       <Sidebar
@@ -1004,17 +927,17 @@ export const App: React.FC = () => {
       <div className={`app-main${activeTab === 'dashboard' ? ' app-main--dashboard-shell' : ''}`} style={{ position: 'relative' }}>
         <header
           className={`app-topbar${activeTab === 'dashboard' ? ' app-topbar--dashboard-shell' : ''}`}
-          style={{ backgroundColor: colors.bg.secondary, borderBottom: `1px solid ${colors.border}` }}
+          style={activeTab === 'dashboard' ? undefined : { backgroundColor: colors.bg.secondary, borderBottom: `1px solid ${colors.border}` }}
         >
           <button
             className="app-topbar__menu-btn"
             onClick={() => setMobileSidebarOpen(true)}
             aria-label={t('main.openMenu')}
-            style={{ color: colors.text.primary, backgroundColor: colors.bg.tertiary, border: `1px solid ${colors.border}` }}
+            style={activeTab === 'dashboard' ? undefined : { color: colors.text.primary, backgroundColor: colors.bg.tertiary, border: `1px solid ${colors.border}` }}
           >
             <UIIcon name="menu" size={16} />
           </button>
-          <h1 className="app-topbar__title" style={{ color: colors.text.primary }}>
+          <h1 className="app-topbar__title" style={activeTab === 'dashboard' ? undefined : { color: colors.text.primary }}>
             <span className="d-inline-flex align-items-center gap-2">
               <UIIcon name={tabMeta[activeTab].icon} size={16} />
               {tabMeta[activeTab].label}
@@ -1024,8 +947,8 @@ export const App: React.FC = () => {
           <div className={`d-flex align-items-center gap-2${activeTab === 'dashboard' ? ' app-topbar__actions' : ''}`}>
             {browserNotifySupported && browserNotifyPermission !== 'granted' && (
               <button
-                className="btn btn-sm topbar-push-btn"
-                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                className={`btn btn-sm topbar-push-btn${activeTab === 'dashboard' ? ' app-topbar__command-btn' : ''}`}
+                style={activeTab === 'dashboard' ? undefined : { backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
                 onClick={requestBrowserNotifications}
               >
                 {t('push.enableBrowser')}
@@ -1033,8 +956,8 @@ export const App: React.FC = () => {
             )}
 
             <button
-              className="btn btn-sm position-relative"
-              style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+              className={`btn btn-sm position-relative${activeTab === 'dashboard' ? ' app-topbar__command-btn app-topbar__icon-command' : ''}`}
+              style={activeTab === 'dashboard' ? undefined : { backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
               onClick={() => setNotificationPanelOpen((v) => !v)}
               title={t('push.title')}
             >
@@ -1050,8 +973,8 @@ export const App: React.FC = () => {
             </button>
 
             <button
-              className="btn btn-sm"
-              style={{ backgroundColor: logPanelOpen ? '#1f6feb' : colors.bg.tertiary, borderColor: logPanelOpen ? '#1f6feb' : colors.border, color: logPanelOpen ? '#fff' : colors.text.primary, fontFamily: 'monospace', fontSize: '0.72rem' }}
+              className={`btn btn-sm${activeTab === 'dashboard' ? ` app-topbar__command-btn${logPanelOpen ? ' is-active' : ''}` : ''}`}
+              style={activeTab === 'dashboard' ? undefined : { backgroundColor: logPanelOpen ? '#1f6feb' : colors.bg.tertiary, borderColor: logPanelOpen ? '#1f6feb' : colors.border, color: logPanelOpen ? '#fff' : colors.text.primary, fontFamily: 'monospace', fontSize: '0.72rem' }}
               onClick={() => setLogPanelOpen(v => !v)}
               title="Activity Log"
             >
