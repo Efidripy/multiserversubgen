@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { getAuth } from '../auth';
+import { UIIcon } from './UIIcon';
 
 interface NodeRecord {
   id: number;
@@ -21,19 +22,28 @@ interface FleetNode extends NodeRecord {
   error?: string;
 }
 
+interface FleetSummary {
+  total: number;
+  online: number;
+  offline: number;
+  checking: number;
+  loading: boolean;
+}
+
 interface RegisteredFleetPanelProps {
   collapsed: boolean;
   setCollapsed: (value: boolean) => void;
   onOpenNodes?: () => void;
+  onSummaryChange?: (summary: FleetSummary) => void;
 }
 
-const statusLabel = (node: FleetNode) => {
+const getStatusLabel = (node: FleetNode) => {
   if (node.available === true) return 'online';
   if (node.available === false) return 'offline';
   return 'checking';
 };
 
-const nodeAddress = (node: NodeRecord) => {
+const getNodeAddress = (node: NodeRecord) => {
   if (node.url) return node.url.replace(/^https?:\/\//, '');
   const scheme = node.scheme || 'https';
   const host = node.ip || node.name;
@@ -45,13 +55,16 @@ export const RegisteredFleetPanel: React.FC<RegisteredFleetPanelProps> = ({
   collapsed,
   setCollapsed,
   onOpenNodes,
+  onSummaryChange,
 }) => {
   const { t } = useTranslation();
   const [nodes, setNodes] = useState<FleetNode[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
 
   const load = async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const auth = getAuth();
       const res = await api.get('/v1/nodes', { auth });
@@ -90,6 +103,9 @@ export const RegisteredFleetPanel: React.FC<RegisteredFleetPanelProps> = ({
           error: check?.error,
         };
       }));
+    } catch (error: any) {
+      setNodes([]);
+      setLoadError(error?.response?.data?.detail || error?.message || t('error'));
     } finally {
       setLoading(false);
     }
@@ -106,65 +122,123 @@ export const RegisteredFleetPanel: React.FC<RegisteredFleetPanelProps> = ({
     return { online, offline, checking };
   }, [nodes]);
 
+  useEffect(() => {
+    onSummaryChange?.({
+      total: nodes.length,
+      online: counts.online,
+      offline: counts.offline,
+      checking: counts.checking,
+      loading,
+    });
+  }, [counts.checking, counts.offline, counts.online, loading, nodes.length, onSummaryChange]);
+
   return (
     <>
       {collapsed && (
         <button
           className="registered-fleet-tab"
           onClick={() => setCollapsed(false)}
-          title={t('registeredFleet.open')}
-          aria-label={t('registeredFleet.open')}
+          title={t('nodes.registeredFleet')}
+          aria-label={t('nodes.registeredFleet')}
           type="button"
-        />
+        >
+          {t('nodes.registeredFleet')}
+        </button>
       )}
 
       <aside className={`registered-fleet${collapsed ? ' is-collapsed' : ''}`}>
         <button
           className="registered-fleet__rail"
           onClick={() => setCollapsed(true)}
-          title={t('registeredFleet.collapse')}
-          aria-label={t('registeredFleet.collapse')}
+          title={t('common.close')}
+          aria-label={t('common.close')}
           type="button"
-        />
+        >
+          {collapsed ? '>' : '<'}
+        </button>
 
         <div className="registered-fleet__inner">
           <header className="registered-fleet__header">
-            <div>
-              <h2>{t('registeredFleet.title')}</h2>
+            <div className="registered-fleet__header-copy">
+              <div className="registered-fleet__kicker">{t('dashboardSummary.fleetControl')}</div>
+              <div className="registered-fleet__title-row">
+                <span className="registered-fleet__title-icon">
+                  <UIIcon name="servers" size={14} />
+                </span>
+                <h2>{t('nodes.registeredFleet')}</h2>
+                <span className="registered-fleet__total-pill">{nodes.length}</span>
+              </div>
               <div className="registered-fleet__counts">
-                <span className="is-online">{t('registeredFleet.online')}: <strong>{counts.online}</strong></span>
-                <span className="is-checking">{t('registeredFleet.checking')}: <strong>{counts.checking}</strong></span>
-                <span className="is-offline">{t('registeredFleet.offline')}: <strong>{counts.offline}</strong></span>
+                <span className="is-online">{t('nodes.online')}: <strong>{counts.online}</strong></span>
+                <span className="is-checking">{t('nodes.checking')}: <strong>{counts.checking}</strong></span>
+                <span className="is-offline">{t('nodes.offline')}: <strong>{counts.offline}</strong></span>
+              </div>
+              <div className="registered-fleet__state-row">
+                <span className={`registered-fleet__state-pill${loading ? ' is-loading' : loadError ? ' is-error' : ' is-ready'}`}>
+                  {loading ? t('nodes.statusSyncing') : loadError ? t('error') : t('dashboardSummary.liveView')}
+                </span>
               </div>
             </div>
             <button className="registered-fleet__test" onClick={load} disabled={loading} type="button">
-              {loading ? t('registeredFleet.testing') : t('registeredFleet.testAll')}
+              {loading ? t('nodes.statusSyncing') : t('common.refresh')}
             </button>
           </header>
 
-          <p className="registered-fleet__hint">{t('registeredFleet.hint')}</p>
+          <p className="registered-fleet__hint">{t('nodes.fleetHint')}</p>
 
           <div className="registered-fleet__list">
+            {loadError && (
+              <div className="registered-fleet__empty-state registered-fleet__empty-state--error">
+                <strong>{t('error')}</strong>
+                <span>{loadError}</span>
+                {onOpenNodes && (
+                  <button
+                    type="button"
+                    className="registered-fleet__empty-action"
+                    onClick={onOpenNodes}
+                  >
+                    {t('nav.inbounds')}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {!loadError && !loading && nodes.length === 0 && (
+              <div className="registered-fleet__empty-state">
+                <strong>{t('common.noDataAvailable')}</strong>
+                <span>{t('nodes.fleetHint')}</span>
+                {onOpenNodes && (
+                  <button
+                    type="button"
+                    className="registered-fleet__empty-action"
+                    onClick={onOpenNodes}
+                  >
+                    {t('nodes.addNode')}
+                  </button>
+                )}
+              </div>
+            )}
+
             {nodes.map((node) => {
-              const status = statusLabel(node);
+              const status = getStatusLabel(node);
               return (
-                <article key={node.id} className="registered-fleet__card">
+                <article key={node.id} className={`registered-fleet__card${node.error ? ' has-error' : ''}`}>
                   <div className="registered-fleet__main">
                     <span className={`registered-fleet__dot is-${status}`} />
                     <div className="registered-fleet__title">
                       <strong>{node.name}</strong>
-                      <span>{node.api_version || node.panel_version || 'v?'}</span>
+                      <span className="registered-fleet__version">{node.api_version || node.panel_version || 'v?'}</span>
                     </div>
                   </div>
 
                   <div className="registered-fleet__meta">
                     <span className="registered-fleet__scheme">{node.scheme || 'https'}</span>
-                    <span className="registered-fleet__address">{nodeAddress(node)}</span>
+                    <span className="registered-fleet__address">{getNodeAddress(node)}</span>
                   </div>
 
                   <div className="registered-fleet__status-row">
+                    <strong className={`is-${status}`}>{t(`nodes.${status}`)}</strong>
                     <span>{node.latency ? `${node.latency}ms` : '-'}</span>
-                    <strong className={`is-${status}`}>{t(`registeredFleet.status.${status}`)}</strong>
                     <span className={node.read_only ? 'is-ro' : 'is-rw'}>{node.read_only ? 'RO' : 'RW'}</span>
                   </div>
 
@@ -172,13 +246,7 @@ export const RegisteredFleetPanel: React.FC<RegisteredFleetPanelProps> = ({
 
                   <div className="registered-fleet__actions">
                     <button type="button" className="registered-fleet__action-btn" onClick={onOpenNodes} title={t('common.edit')} aria-label={t('common.edit')}>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                    </button>
-                    <button type="button" className="registered-fleet__action-btn" onClick={load} title={t('common.refresh')} aria-label={t('common.refresh')} disabled={loading}>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-                    </button>
-                    <button type="button" className="registered-fleet__action-btn" onClick={() => window.open(node.url || `${node.scheme || 'https'}://${node.ip || node.name}${node.port ? ':'+node.port : ''}`, '_blank')} title={t('registeredFleet.openPanel')} aria-label={t('registeredFleet.openPanel')}>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+                      <UIIcon name="edit" size={12} />
                     </button>
                   </div>
                 </article>

@@ -18,6 +18,9 @@ interface Node {
   read_only?: boolean;
   api_version?: string;
   panel_version?: string;
+  user?: string;
+  password?: string;
+  bearer_token?: string;
 }
 
 interface BatchPreviewRow {
@@ -41,10 +44,11 @@ let sharedNodeSnapshot: NodeSnapshotPayload | null = null;
 let sharedNodeSnapshotTs = 0;
 let sharedNodeSnapshotInFlight: Promise<NodeSnapshotPayload> | null = null;
 
-export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean; showFleet?: boolean }> = ({
+export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean; showFleet?: boolean; dashboardMode?: boolean }> = ({
   onReload,
   showIntake = true,
   showFleet = true,
+  dashboardMode = false,
 }) => {
   const { colors } = useTheme();
   const { toast } = useToast();
@@ -211,6 +215,8 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
   useEffect(() => {
     loadNodes();
   }, []);
+
+  const filteredNodes = nodes.filter(n => !filterTag || (nodeTags[n.id] || []).includes(filterTag));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -665,8 +671,8 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
       )}
 
       {showFleet && (
-      <section className="panel-block h-100">
-        <div className="panel-block__header">
+      <section className={`panel-block h-100${dashboardMode ? ' node-manager--dashboard' : ''}`}>
+        {!dashboardMode && <div className="panel-block__header">
           <div>
             <h6 className="panel-block__title">{t('nodes.registeredFleet')}</h6>
             <p className="panel-block__hint">
@@ -674,7 +680,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
               {statusLoading ? ` ${t('nodes.statusSyncing')}` : ''}
             </p>
           </div>
-          <button
+          {!dashboardMode && <button
             className="btn btn-sm"
             style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
             title={t('nodes.testAllConnectionsTitle')}
@@ -684,8 +690,11 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
               const { user, password } = getAuth();
               const results = await Promise.allSettled(nodes.map(async node => {
                 const nodeUrl = node.url || `${(node as any).scheme || 'http'}://${node.ip}:${node.port}`;
+                const connPayload: Record<string, string> = { url: nodeUrl };
+                if (node.bearer_token) connPayload.bearer_token = node.bearer_token;
+                else { connPayload.user = node.user ?? ''; connPayload.password = node.password ?? ''; }
                 try {
-                  const res = await api.post('/v1/nodes/check-connection', { url: nodeUrl }, { auth: { username: user, password } });
+                  const res = await api.post('/v1/nodes/check-connection', connPayload, { auth: { username: user, password } });
                   return { id: node.id, ok: res.data?.success === true };
                 } catch { return { id: node.id, ok: false }; }
               }));
@@ -701,10 +710,10 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
             }}
           >
             ⟳ {t('nodes.testAll')}
-          </button>
-        </div>
+          </button>}
+        </div>}
 
-        {selectedNodeIds.size > 0 && (
+        {selectedNodeIds.size > 0 && !dashboardMode && (
           <div className="d-flex gap-2 mb-2 align-items-center p-2 rounded" style={{ backgroundColor: colors.bg.tertiary, border: `1px solid ${colors.border}` }}>
             <span className="small" style={{ color: colors.text.secondary }}>{t('nodes.selectedInline', { count: selectedNodeIds.size })}</span>
             <button className="btn btn-sm btn-ghost-info"
@@ -752,7 +761,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
 
         {nodes.length > 0 ? (
           <>
-          {allTags.length > 0 && (
+          {allTags.length > 0 && !dashboardMode && (
             <div className="d-flex gap-1 flex-wrap mb-2 align-items-center">
               <span className="small" style={{ color: colors.text.secondary }}>{t('nodes.tagFilter')}</span>
               <button className="btn btn-sm" style={{ fontSize: '0.72rem', padding: '1px 7px', backgroundColor: !filterTag ? colors.accent : colors.bg.tertiary, borderColor: !filterTag ? colors.accent : colors.border, color: !filterTag ? colors.accentText : colors.text.secondary }}
@@ -763,18 +772,64 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
               ))}
             </div>
           )}
+          {dashboardMode ? (
+            <div className="node-manager__fleet-list">
+              {filteredNodes.map((node) => {
+                const status = nodeStatuses[node.id];
+                const statusKey = status === true ? 'online' : status === false ? 'offline' : 'checking';
+                const statusLabel = t(`nodes.${statusKey}`);
+                return (
+                  <article key={node.id} className="registered-fleet__card node-manager__fleet-card">
+                    <div className="registered-fleet__main">
+                      <span className={`registered-fleet__dot is-${statusKey}`} />
+                      <div className="registered-fleet__title">
+                        <strong>{node.name}</strong>
+                        <span className="registered-fleet__version">{node.api_version || node.panel_version || 'v?'}</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="registered-fleet__action-btn node-manager__fleet-edit"
+                        onClick={() => handleEditClick(node)}
+                        title={t('common.edit')}
+                        aria-label={t('common.edit')}
+                      >
+                        <UIIcon name="edit" size={12} />
+                      </button>
+                    </div>
+
+                    <div className="registered-fleet__meta">
+                      <span className="registered-fleet__scheme">{node.scheme || 'https'}</span>
+                      <span className="registered-fleet__address">{node.ip}:{node.port}</span>
+                    </div>
+
+                    <div className="registered-fleet__status-row node-manager__fleet-status-row">
+                      <strong className={`is-${statusKey}`}>{statusLabel}</strong>
+                      <span>
+                        {nodePing[node.id] ? `LAT ${nodePing[node.id]}ms` : 'LAT -'}
+                      </span>
+                      <span className={node.read_only ? 'is-ro' : 'is-rw'}>{node.read_only ? 'RO' : 'RW'}</span>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
           <div className="table-responsive table-shell">
-            <table className="table table-sm align-middle mb-0" style={{ color: colors.text.primary }}>
+            <table className={`table table-sm align-middle mb-0${dashboardMode ? ' node-manager__table--dashboard' : ''}`} style={{ color: colors.text.primary }}>
               <thead>
                 <tr>
-                  <th style={{ width: '32px' }}>
-                    <input type="checkbox" onChange={e => setSelectedNodeIds(e.target.checked ? new Set(nodes.map(n => n.id)) : new Set())}
-                      checked={selectedNodeIds.size === nodes.length && nodes.length > 0} />
-                  </th>
+                  {!dashboardMode && (
+                    <th style={{ width: '32px' }}>
+                      <input type="checkbox" onChange={e => setSelectedNodeIds(e.target.checked ? new Set(nodes.map(n => n.id)) : new Set())}
+                        checked={selectedNodeIds.size === nodes.length && nodes.length > 0} />
+                    </th>
+                  )}
                   <th>{t('common.name')}</th>
-                  <th className="col-hide-mobile">{t('nodes.address')}</th>
-                  <th>{t('common.status')}</th>
-                  <th style={{ width: '1px', whiteSpace: 'nowrap' }}>{t('nodes.access')}</th>
+                  {!dashboardMode && <th className="col-hide-mobile">{t('nodes.address')}</th>}
+                  {!dashboardMode && <th>{t('common.status')}</th>}
+                  {!dashboardMode && (
+                    <th style={{ width: '1px', whiteSpace: 'nowrap' }}>{t('nodes.access')}</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -788,22 +843,46 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                   return (
                     <React.Fragment key={node.id}>
                       <tr>
+                        {!dashboardMode && (
+                          <td>
+                            <input type="checkbox" checked={selectedNodeIds.has(node.id)}
+                              onChange={e => setSelectedNodeIds(prev => { const n = new Set(prev); e.target.checked ? n.add(node.id) : n.delete(node.id); return n; })} />
+                          </td>
+                        )}
                         <td>
-                          <input type="checkbox" checked={selectedNodeIds.has(node.id)}
-                            onChange={e => setSelectedNodeIds(prev => { const n = new Set(prev); e.target.checked ? n.add(node.id) : n.delete(node.id); return n; })} />
-                        </td>
-                        <td>
-                          <div className="d-flex align-items-start flex-column gap-1">
-                            <span className="d-inline-flex align-items-center gap-2">
+                          <div className={`d-flex align-items-start flex-column gap-1${dashboardMode ? ' node-manager__name-cell node-manager__entry-shell' : ''}`}>
+                            <span className={`d-inline-flex align-items-center gap-2${dashboardMode ? ' node-manager__entry-head' : ''}`}>
                               <span className="node-card__dot" style={{ backgroundColor: dotColor }} />
                               <strong>{node.name}</strong>
-                              {node.api_version && (
+                              {dashboardMode && (
+                                <span
+                                  className={`badge node-manager__access-badge${Boolean(node.read_only) ? ' is-ro' : ' is-rw'}`}
+                                  style={{
+                                    fontSize: '0.6rem',
+                                    letterSpacing: '0.08em',
+                                  }}
+                                >
+                                  {Boolean(node.read_only) ? 'RO' : 'RW'}
+                                </span>
+                              )}
+                              {dashboardMode && (
+                                <button
+                                  className="btn btn-sm node-manager__entry-edit"
+                                  style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                                  onClick={() => handleEditClick(node)}
+                                  aria-label={t('common.edit')}
+                                  title={t('common.edit')}
+                                >
+                                  <UIIcon name="edit" size={13} />
+                                </button>
+                              )}
+                              {node.api_version && !dashboardMode && (
                                 <span style={{ fontSize: '0.6rem', padding: '1px 5px', borderRadius: 4, background: node.api_version === 'v3' ? '#0d6efd22' : '#6c757d22', color: node.api_version === 'v3' ? '#6ea8fe' : '#adb5bd', fontWeight: 600, letterSpacing: '0.03em' }}>
                                   {node.api_version}
                                 </span>
                               )}
                             </span>
-                            {tags.length > 0 && (
+                            {tags.length > 0 && !dashboardMode && (
                               <div className="d-flex gap-1 flex-wrap">
                                 {tags.map(tag => (
                                   <span key={tag} className="badge" style={{ backgroundColor: colors.accent + '22', color: colors.accent, fontSize: '0.62rem', cursor: 'pointer' }}
@@ -811,58 +890,93 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                                 ))}
                               </div>
                             )}
+                            {dashboardMode && (
+                              <>
+                                <div className="node-manager__address-cell node-manager__address-cell--dashboard">
+                                  <div className="mono-inline node-manager__address-line">
+                                    {node.scheme && (
+                                      <span className="badge node-manager__scheme-badge" style={{ backgroundColor: node.scheme === 'https' ? colors.success + '33' : colors.warning + '33', color: node.scheme === 'https' ? colors.success : colors.warning, fontSize: '0.65rem' }}>
+                                        {node.scheme}
+                                      </span>
+                                    )}
+                                    {node.ip}:{node.port}
+                                  </div>
+                                </div>
+                                {(nodePing[node.id] || status !== undefined) && (
+                                  <div className="d-flex flex-wrap gap-2 align-items-center node-manager__meta-line" style={{ marginTop: '3px', fontSize: '0.67rem', color: colors.text.tertiary, lineHeight: 1.3 }}>
+                                    {nodePing[node.id] && (
+                                      <span style={{ color: nodePing[node.id] < 500 ? colors.success : nodePing[node.id] < 2000 ? colors.warning : colors.danger }}>
+                                        LAT {nodePing[node.id]}ms
+                                      </span>
+                                    )}
+                                    <span className={`node-manager__meta-status is-${status === true ? 'online' : status === false ? 'offline' : 'checking'}`}>
+                                      {statusLabel}
+                                    </span>
+                                  </div>
+                                )}
+                              </>
+                            )}
                           </div>
                         </td>
-                        <td className="col-hide-mobile">
-                          <div className="mono-inline">
+                        {!dashboardMode && <td className="col-hide-mobile">
+                          <div className={`mono-inline${dashboardMode ? ' node-manager__address-line' : ''}`}>
                             {node.scheme && (
-                              <span className="badge me-1" style={{ backgroundColor: node.scheme === 'https' ? colors.success + '33' : colors.warning + '33', color: node.scheme === 'https' ? colors.success : colors.warning, fontSize: '0.65rem' }}>
+                              <span className={`badge me-1${dashboardMode ? ' node-manager__scheme-badge' : ''}`} style={{ backgroundColor: node.scheme === 'https' ? colors.success + '33' : colors.warning + '33', color: node.scheme === 'https' ? colors.success : colors.warning, fontSize: '0.65rem' }}>
                                 {node.scheme}
                               </span>
                             )}
                             {node.ip}:{node.port}
                           </div>
                           {(nodeVersions[node.id] || nodePing[node.id] || nodeClientCounts[node.id] || nodeInboundCounts[node.id]) && (
-                            <div className="d-flex flex-wrap gap-2 align-items-center" style={{ marginTop: '3px', fontSize: '0.67rem', color: colors.text.tertiary, lineHeight: 1.3 }}>
-                              {nodeVersions[node.id] && (
+                            <div className={`d-flex flex-wrap gap-2 align-items-center${dashboardMode ? ' node-manager__meta-line' : ''}`} style={{ marginTop: '3px', fontSize: '0.67rem', color: colors.text.tertiary, lineHeight: 1.3 }}>
+                              {!dashboardMode && nodeVersions[node.id] && (
                                 <span style={{ fontFamily: 'monospace', opacity: 0.75 }}>{nodeVersions[node.id]}</span>
                               )}
                               {nodePing[node.id] && (
                                 <span style={{ color: nodePing[node.id] < 500 ? colors.success : nodePing[node.id] < 2000 ? colors.warning : colors.danger }}>
-                                  {nodePing[node.id]}ms
+                                  LAT {nodePing[node.id]}ms
                                 </span>
                               )}
-                              {nodeClientCounts[node.id] ? (
+                              {dashboardMode && (
+                                <span className={`node-manager__meta-status is-${status === true ? 'online' : status === false ? 'offline' : 'checking'}`}>
+                                  {statusLabel}
+                                </span>
+                              )}
+                              {!dashboardMode && nodeClientCounts[node.id] ? (
                                 <span><UIIcon name="clients" size={10} /> {nodeClientCounts[node.id]}</span>
                               ) : null}
-                              {nodeInboundCounts[node.id] ? (
+                              {!dashboardMode && nodeInboundCounts[node.id] ? (
                                 <span><UIIcon name="inbounds" size={10} /> {nodeInboundCounts[node.id]}</span>
                               ) : null}
                             </div>
                           )}
-                        </td>
-                        <td>
-                          <span style={{ color: status === true ? colors.success : status === false ? colors.danger : colors.text.secondary }}>
-                            {statusLabel}
-                          </span>
-                        </td>
-                        <td style={{ whiteSpace: 'nowrap' }}>
-                          <button
-                            className={`btn btn-sm ${Boolean(node.read_only) ? 'btn-ghost-warning' : 'btn-ghost-success'}`}
-                            onClick={() => handleToggleReadOnly(node)}
-                            disabled={loading || Boolean(readOnlyUpdating[node.id])}
-                            title={Boolean(node.read_only) ? t('nodes.switchWrite') : t('nodes.switchReadOnly')}
-                          >
-                            {readOnlyUpdating[node.id] ? '...' : Boolean(node.read_only) ? 'RO' : 'RW'}
-                          </button>
-                        </td>
+                        </td>}
+                        {!dashboardMode && (
+                          <td>
+                            <span className={dashboardMode ? 'node-manager__status-pill node-manager__status-pill--dashboard-hidden' : ''} style={{ color: status === true ? colors.success : status === false ? colors.danger : colors.text.secondary }}>
+                              {statusLabel}
+                            </span>
+                          </td>
+                        )}
+                        {!dashboardMode && (
+                          <td style={{ whiteSpace: 'nowrap' }}>
+                            <button
+                              className={`btn btn-sm ${Boolean(node.read_only) ? 'btn-ghost-warning' : 'btn-ghost-success'}`}
+                              onClick={() => handleToggleReadOnly(node)}
+                              disabled={loading || Boolean(readOnlyUpdating[node.id])}
+                              title={Boolean(node.read_only) ? t('nodes.switchWrite') : t('nodes.switchReadOnly')}
+                            >
+                              {readOnlyUpdating[node.id] ? '...' : Boolean(node.read_only) ? 'RO' : 'RW'}
+                            </button>
+                          </td>
+                        )}
                       </tr>
                       {/* Action buttons row */}
-                      <tr style={{ borderTop: 'none' }}>
-                        <td style={{ paddingTop: 0, paddingBottom: '6px', borderTop: 'none' }} />
+                      {!dashboardMode && <tr style={{ borderTop: 'none' }}>
+                        {!dashboardMode && <td style={{ paddingTop: 0, paddingBottom: '6px', borderTop: 'none' }} />}
                         <td colSpan={4} style={{ paddingTop: 0, paddingBottom: '6px', borderTop: 'none' }}>
-                          <div style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end' }}>
-                            {(node.url || node.ip) && (
+                          <div className="node-manager__actions" style={{ display: 'flex', flexDirection: 'row', flexWrap: 'wrap', gap: '4px', justifyContent: 'flex-end' }}>
+                            {(node.url || node.ip) && !dashboardMode && (
                               <>
                                 <a
                                   className="btn btn-sm"
@@ -884,16 +998,19 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                                 </button>
                               </>
                             )}
-                            <button
+                            {!dashboardMode && <button
                               className="btn btn-sm"
                               style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
                               title={t('nodes.testThisConnectionTitle')}
                               onClick={async () => {
                                 const nodeUrl = node.url || `${(node as any).scheme || 'http'}://${node.ip}:${node.port}`;
+                                const singlePayload: Record<string, string> = { url: nodeUrl };
+                                if (node.bearer_token) singlePayload.bearer_token = node.bearer_token;
+                                else { singlePayload.user = node.user ?? ''; singlePayload.password = node.password ?? ''; }
                                 const t0 = Date.now();
                                 setNodeStatuses(prev => ({ ...prev, [node.id]: null }));
                                 try {
-                                  const res = await api.post('/v1/nodes/check-connection', { url: nodeUrl }, { auth: getAuth() });
+                                  const res = await api.post('/v1/nodes/check-connection', singlePayload, { auth: getAuth() });
                                   const ping = Date.now() - t0;
                                   const ok = res.data?.success === true;
                                   setNodeStatuses(prev => ({ ...prev, [node.id]: ok }));
@@ -906,8 +1023,8 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                               }}
                             >
                               ⟳
-                            </button>
-                            <button
+                            </button>}
+                            {!dashboardMode && <button
                               className="btn btn-sm"
                               style={{ backgroundColor: tags.length > 0 ? colors.accent + '33' : colors.bg.tertiary, borderColor: tags.length > 0 ? colors.accent + '88' : colors.border, color: tags.length > 0 ? colors.accent : colors.text.secondary }}
                               title={tags.length > 0 ? t('nodes.tagsTitle', { tags: tags.join(', ') }) : t('nodes.addTagsTitle')}
@@ -921,7 +1038,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                               }}
                             >
                               🏷
-                            </button>
+                            </button>}
                             <button
                               className="btn btn-sm"
                               style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
@@ -930,30 +1047,31 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                             >
                               <UIIcon name="edit" size={14} />
                             </button>
-                            <button
+                            {!dashboardMode && <button
                               className="btn btn-sm"
                               style={{ backgroundColor: colors.danger, borderColor: colors.danger, color: colors.dangerText }}
                               onClick={() => handleDelete(node.id)}
                               aria-label={t('common.delete')}
                             >
                               <UIIcon name="x" size={14} />
-                            </button>
+                            </button>}
                           </div>
                         </td>
-                      </tr>
+                      </tr>}
                     </React.Fragment>
                   );
                 })}
               </tbody>
             </table>
           </div>
+          )}
           </>
         ) : (
           <EmptyState
             icon="⬡"
-            title={t('nodes.noNodesYet')}
-            hint="Add your first 3x-ui panel node to start managing clients."
-            action={{ label: '+ Add Node', onClick: () => setShowForm(true) }}
+            title={dashboardMode ? t('nodes.noNodesYet') : t('nodes.noNodesYet')}
+            hint={dashboardMode ? t('dashboardSummary.ingressEmptyCopy') : t('nodes.addFirstNodeHint')}
+            action={{ label: dashboardMode ? t('nodes.addNode') : `+ ${t('nodes.addNode')}`, onClick: () => setShowForm(true) }}
           />
         )}
       </section>

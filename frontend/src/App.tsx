@@ -45,6 +45,11 @@ interface HeaderSummary {
   stats: HeaderStat[];
 }
 
+const normalizeHeaderSummary = (raw: Partial<HeaderSummary> | null | undefined, fallbackDescription: string): HeaderSummary => ({
+  description: typeof raw?.description === 'string' ? raw.description : fallbackDescription,
+  stats: Array.isArray(raw?.stats) ? raw.stats : [],
+});
+
 interface FeatureFlagsResponse {
   monitoringEnabled?: boolean;
 }
@@ -52,6 +57,7 @@ interface FeatureFlagsResponse {
 const HEADER_SUMMARY_CACHE_KEY = 'sub_manager_header_summary_cache_v1';
 const HEADER_SUMMARY_CACHE_MAX_AGE_MS = 15 * 60 * 1000;
 const ACTIVE_TAB_CACHE_KEY = 'sub_manager_active_tab_v1';
+const FLEET_RAIL_COLLAPSED_KEY = 'sub_manager_fleet_rail_collapsed_v1';
 
 const TAB_META: Record<TabType, { icon: IconName; labelKey: string; eyebrowKey: string; descriptionKey: string }> = {
   dashboard: {
@@ -155,16 +161,44 @@ export const App: React.FC = () => {
   const [browserNotifySupported, setBrowserNotifySupported] = useState(false);
   const [browserNotifyPermission, setBrowserNotifyPermission] = useState<'default' | 'granted' | 'denied'>('default');
   const [logPanelOpen, setLogPanelOpen] = useState(false);
-  const [registeredFleetCollapsed, setRegisteredFleetCollapsed] = useState(true);
+  const [registeredFleetCollapsed, setRegisteredFleetCollapsed] = useState(() => {
+    try {
+      const raw = localStorage.getItem(FLEET_RAIL_COLLAPSED_KEY);
+      if (raw === 'true') return true;
+      if (raw === 'false') return false;
+    } catch {
+      // Ignore localStorage read failures.
+    }
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 1400;
+    }
+    return false;
+  });
+  const [fleetSummary, setFleetSummary] = useState({
+    total: 0,
+    online: 0,
+    offline: 0,
+    checking: 0,
+    loading: true,
+  });
 
   const lastNotifyRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FLEET_RAIL_COLLAPSED_KEY, String(registeredFleetCollapsed));
+    } catch {
+      // Ignore localStorage write failures.
+    }
+  }, [registeredFleetCollapsed]);
   const updateHeaderSummary = (summary: HeaderSummary) => {
-    setHeaderSummary(summary);
+    const normalized = normalizeHeaderSummary(summary, t(TAB_META[activeTab].descriptionKey));
+    setHeaderSummary(normalized);
     const parsed = readStaleCache<Partial<Record<TabType, HeaderSummary>>>(
       HEADER_SUMMARY_CACHE_KEY,
       Number.MAX_SAFE_INTEGER,
     ).data || {};
-    parsed[activeTab] = summary;
+    parsed[activeTab] = normalized;
     writeStaleCache(HEADER_SUMMARY_CACHE_KEY, parsed);
   };
 
@@ -174,9 +208,7 @@ export const App: React.FC = () => {
       HEADER_SUMMARY_CACHE_MAX_AGE_MS,
     ).data;
     const cached = cachedStore?.[activeTab];
-    if (cached?.description && Array.isArray(cached.stats)) {
-      setHeaderSummary(cached);
-    }
+    setHeaderSummary(normalizeHeaderSummary(cached, t(TAB_META[activeTab].descriptionKey)));
   }, [activeTab]);
 
   useEffect(() => {
@@ -223,13 +255,6 @@ export const App: React.FC = () => {
   }, [monitoringEnabled, activeTab]);
 
   useEffect(() => {
-    document.body.classList.add('style-preset-4');
-    return () => {
-      document.body.classList.remove('style-preset-4');
-    };
-  }, []);
-
-  useEffect(() => {
     const unsubscribe = requestActivityStore.subscribe((pending) => {
       setPendingRequests(pending);
     });
@@ -269,7 +294,15 @@ export const App: React.FC = () => {
         setMfaEnabled(false);
       }
 
+      // Demo mode: skip auth if no credentials stored
       const auth = getAuth();
+      if (!auth.username && !auth.password) {
+        setUser('demo');
+        setIsAuthenticated(true);
+        setAuthBootstrapDone(true);
+        return;
+      }
+
       if (auth.username && auth.password) {
         try {
           const headers: Record<string, string> = {};
@@ -809,29 +842,103 @@ export const App: React.FC = () => {
     icon: TAB_META[tabId].icon,
     labelKey: TAB_META[tabId].labelKey,
   }));
+  const safeSidebarItems = Array.isArray(sidebarItems) ? sidebarItems : [];
+  const safeNotifications = Array.isArray(notifications) ? notifications : [];
+  const safeHeaderStats = Array.isArray(headerSummary.stats) ? headerSummary.stats : [];
+  const safeMountedTabs = Array.isArray(mountedTabs) ? mountedTabs : [];
+  const liveViewLabelRaw = t('dashboardSummary.liveView');
+  const liveViewLabel = liveViewLabelRaw === 'dashboardSummary.liveView' ? 'Live View' : liveViewLabelRaw;
 
   const renderTabContent = (tab: TabType) => {
     switch (tab) {
       case 'dashboard':
         return (
           <div className={`dashboard-command-grid${registeredFleetCollapsed ? ' is-fleet-collapsed' : ''}`}>
-            <DashboardSummary onNavigate={(tab) => {
-              const t = tab as TabType;
-              if (t in TAB_META) {
-                setActiveTab(t);
-                setMountedTabs(prev => prev.includes(t) ? prev : [...prev, t]);
-              }
-            }} />
-            <NodeManager onReload={() => setKey((prev) => prev + 1)} showFleet={false} />
-            <ServerStatus />
+            <div className="dashboard-command-grid__main">
+              <DashboardSummary onNavigate={(tab) => {
+                const t = tab as TabType;
+                if (t in TAB_META) {
+                  setActiveTab(t);
+                  setMountedTabs(prev => prev.includes(t) ? prev : [...prev, t]);
+                }
+              }}
+              heroDescription={headerSummary.description}
+              heroStats={headerSummary.stats}
+              fleetSummary={fleetSummary}
+              />
+              <div className="dashboard-main-grid">
+                <section className="dashboard-lane-panel dashboard-lane-panel--status">
+                  <header className="dashboard-lane-panel__header">
+                    <div>
+                      <div className="dashboard-lane-panel__kicker">{t('tabEyebrow.monitoring')}</div>
+                      <h3 className="dashboard-lane-panel__title">{t('dashboardSummary.signalDeckTitle')}</h3>
+                      <p className="dashboard-lane-panel__copy">{t('dashboardSummary.signalDeckCopy')}</p>
+                      <div className="dashboard-lane-panel__meta">
+                        <span className="dashboard-lane-panel__meta-pill">{liveViewLabel}</span>
+                        <span className="dashboard-lane-panel__meta-pill">{fleetSummary.online} {t('nodes.online').toLowerCase()}</span>
+                        <span className="dashboard-lane-panel__meta-pill">{fleetSummary.offline} {t('nodes.offline').toLowerCase()}</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="dashboard-lane-panel__link"
+                      onClick={() => {
+                        setActiveTab('monitoring');
+                        setMountedTabs(prev => prev.includes('monitoring') ? prev : [...prev, 'monitoring']);
+                      }}
+                    >
+                      {t('nav.monitoring')}
+                    </button>
+                  </header>
+                  <div className="dashboard-lane-panel__body">
+                    <div className="dashboard-lane-frame dashboard-lane-frame--status">
+                      <ServerStatus dashboardMode />
+                    </div>
+                  </div>
+                </section>
+                <section className="dashboard-lane-panel dashboard-lane-panel--nodes">
+                  <header className="dashboard-lane-panel__header">
+                    <div>
+                      <div className="dashboard-lane-panel__kicker">{t('tabEyebrow.inbounds')}</div>
+                      <h3 className="dashboard-lane-panel__title">{t('dashboardSummary.ingressMatrixTitle')}</h3>
+                      <p className="dashboard-lane-panel__copy">{t('dashboardSummary.ingressMatrixCopy')}</p>
+                      <div className="dashboard-lane-panel__meta">
+                        <span className="dashboard-lane-panel__meta-pill">{fleetSummary.total} {t('nodes.registeredFleet').toLowerCase()}</span>
+                        <span className="dashboard-lane-panel__meta-pill">{fleetSummary.checking} {t('nodes.checking').toLowerCase()}</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="dashboard-lane-panel__link"
+                      onClick={() => {
+                        setActiveTab('inbounds');
+                        setMountedTabs(prev => prev.includes('inbounds') ? prev : [...prev, 'inbounds']);
+                      }}
+                    >
+                      {t('nav.inbounds')}
+                    </button>
+                  </header>
+                  <div className="dashboard-lane-panel__body">
+                    <div className="dashboard-lane-frame dashboard-lane-frame--nodes">
+                      <NodeManager onReload={() => setKey((prev) => prev + 1)} showIntake={false} dashboardMode />
+                    </div>
+                  </div>
+                </section>
+              </div>
+            </div>
             <RegisteredFleetPanel
               collapsed={registeredFleetCollapsed}
               setCollapsed={setRegisteredFleetCollapsed}
+              onSummaryChange={setFleetSummary}
               onOpenNodes={() => {
-                setActiveTab('dashboard');
+                setActiveTab('inbounds');
+                setMountedTabs(prev => prev.includes('inbounds') ? prev : [...prev, 'inbounds']);
                 setRegisteredFleetCollapsed(true);
               }}
             />
+            <div className="dashboard-command-grid__legacy-intake">
+              <NodeManager onReload={() => setKey((prev) => prev + 1)} showFleet={false} />
+            </div>
           </div>
         );
       case 'inbounds':
@@ -876,7 +983,7 @@ export const App: React.FC = () => {
 
   return (
     <div
-      className="app-layout"
+      className={`app-layout${activeTab === 'dashboard' ? ' app-layout--dashboard-shell' : ''}`}
       style={{
         backgroundColor: colors.bg.primary,
         color: colors.text.primary,
@@ -886,33 +993,39 @@ export const App: React.FC = () => {
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        items={sidebarItems}
+        items={safeSidebarItems}
         user={user}
         onLogout={handleLogout}
+        onOpenLog={() => setLogPanelOpen(v => !v)}
         mobileOpen={mobileSidebarOpen}
         onMobileClose={() => setMobileSidebarOpen(false)}
       />
 
-      <div className="app-main" style={{ position: 'relative' }}>
-        <header className="app-topbar">
+      <div className={`app-main${activeTab === 'dashboard' ? ' app-main--dashboard-shell' : ''}`} style={{ position: 'relative' }}>
+        <header
+          className={`app-topbar${activeTab === 'dashboard' ? ' app-topbar--dashboard-shell' : ''}`}
+          style={{ backgroundColor: colors.bg.secondary, borderBottom: `1px solid ${colors.border}` }}
+        >
           <button
             className="app-topbar__menu-btn"
             onClick={() => setMobileSidebarOpen(true)}
             aria-label={t('main.openMenu')}
+            style={{ color: colors.text.primary, backgroundColor: colors.bg.tertiary, border: `1px solid ${colors.border}` }}
           >
             <UIIcon name="menu" size={16} />
           </button>
-          <h1 className="app-topbar__title">
+          <h1 className="app-topbar__title" style={{ color: colors.text.primary }}>
             <span className="d-inline-flex align-items-center gap-2">
               <UIIcon name={tabMeta[activeTab].icon} size={16} />
               {tabMeta[activeTab].label}
             </span>
           </h1>
 
-          <div className="d-flex align-items-center gap-2">
+          <div className={`d-flex align-items-center gap-2${activeTab === 'dashboard' ? ' app-topbar__actions' : ''}`}>
             {browserNotifySupported && browserNotifyPermission !== 'granted' && (
               <button
-                className="btn btn-sm topbar-push-btn app-topbar__action"
+                className="btn btn-sm topbar-push-btn"
+                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
                 onClick={requestBrowserNotifications}
               >
                 {t('push.enableBrowser')}
@@ -920,7 +1033,8 @@ export const App: React.FC = () => {
             )}
 
             <button
-              className="btn btn-sm position-relative app-topbar__action app-topbar__icon-action"
+              className="btn btn-sm position-relative"
+              style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
               onClick={() => setNotificationPanelOpen((v) => !v)}
               title={t('push.title')}
             >
@@ -936,12 +1050,30 @@ export const App: React.FC = () => {
             </button>
 
             <button
-              className={`btn btn-sm app-topbar__action app-topbar__log${logPanelOpen ? ' is-active' : ''}`}
+              className="btn btn-sm"
+              style={{ backgroundColor: logPanelOpen ? '#1f6feb' : colors.bg.tertiary, borderColor: logPanelOpen ? '#1f6feb' : colors.border, color: logPanelOpen ? '#fff' : colors.text.primary, fontFamily: 'monospace', fontSize: '0.72rem' }}
               onClick={() => setLogPanelOpen(v => !v)}
               title="Activity Log"
             >
               LOG
             </button>
+
+            {activeTab === 'dashboard' && (
+              <button
+                className={`app-topbar__fleet-pill${registeredFleetCollapsed ? '' : ' is-open'}`}
+                type="button"
+                onClick={() => setRegisteredFleetCollapsed((value) => !value)}
+                title={t('nodes.registeredFleet')}
+              >
+                <span className="app-topbar__fleet-kicker">{t('nodes.registeredFleet')}</span>
+                <span className="app-topbar__fleet-meta">
+                  {fleetSummary.loading
+                    ? t('nodes.statusSyncing')
+                    : `${fleetSummary.online}/${fleetSummary.total} ${t('nodes.online')}`}
+                </span>
+                <span className="app-topbar__fleet-count">{fleetSummary.total}</span>
+              </button>
+            )}
           </div>
         </header>
 
@@ -974,7 +1106,7 @@ export const App: React.FC = () => {
               {notifications.length === 0 && (
                 <div className="small" style={{ color: colors.text.secondary }}>{t('push.empty')}</div>
               )}
-              {notifications.map((item) => (
+              {safeNotifications.map((item) => (
                 <div
                   key={item.id}
                   className="p-2 mb-2 rounded"
@@ -993,42 +1125,44 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        <main className="app-content">
-          <section className="app-shell-header">
-            <div className="app-shell-header__hero card p-4">
-              <div className="app-shell-header__main">
-                <div className="app-shell-header__intro">
-                  <div className="app-shell-header__eyebrow">{tabMeta[activeTab].eyebrow}</div>
-                  <h1 className="app-shell-header__title">
-                    <span className="d-inline-flex align-items-center gap-2">
-                      <UIIcon name={tabMeta[activeTab].icon} size={18} />
-                      {tabMeta[activeTab].label}
-                    </span>
-                  </h1>
-                  <p className="app-shell-header__copy">{headerSummary.description}</p>
-                  {(headerLoading || pendingRequests > 0) && <div className="app-shell-header__live-note">{t('header.updating')}</div>}
-                </div>
+        <main className={`app-content${activeTab === 'dashboard' ? ' app-content--dashboard-shell' : ''}`}>
+          {activeTab !== 'dashboard' && (
+            <section className="app-shell-header">
+              <div className="app-shell-header__hero card p-4">
+                <div className="app-shell-header__main">
+                  <div className="app-shell-header__intro">
+                    <div className="app-shell-header__eyebrow">{tabMeta[activeTab].eyebrow}</div>
+                    <h1 className="app-shell-header__title">
+                      <span className="d-inline-flex align-items-center gap-2">
+                        <UIIcon name={tabMeta[activeTab].icon} size={18} />
+                        {tabMeta[activeTab].label}
+                      </span>
+                    </h1>
+                    <p className="app-shell-header__copy">{headerSummary.description}</p>
+                    {(headerLoading || pendingRequests > 0) && <div className="app-shell-header__live-note">{t('header.updating')}</div>}
+                  </div>
 
-                <div className="app-shell-header__stats">
-                  {headerSummary.stats.map((stat) => (
-                    <article key={stat.label} className={`app-shell-stat app-shell-stat--${stat.tone || 'default'}`}>
-                      <span className="app-shell-stat__label">{stat.label}</span>
-                      <span className="app-shell-stat__value">{stat.value}</span>
-                    </article>
-                  ))}
-                  {headerLoading && headerSummary.stats.length === 0 && (
-                    <article className="app-shell-stat app-shell-stat--default">
-                      <span className="app-shell-stat__label">{t('header.sync')}</span>
-                      <span className="app-shell-stat__value">{t('app.loading')}</span>
-                    </article>
-                  )}
+                  <div className="app-shell-header__stats">
+                    {safeHeaderStats.map((stat) => (
+                      <article key={stat.label} className={`app-shell-stat app-shell-stat--${stat.tone || 'default'}`}>
+                        <span className="app-shell-stat__label">{stat.label}</span>
+                        <span className="app-shell-stat__value">{stat.value}</span>
+                      </article>
+                    ))}
+                    {headerLoading && safeHeaderStats.length === 0 && (
+                      <article className="app-shell-stat app-shell-stat--default">
+                        <span className="app-shell-stat__label">{t('header.sync')}</span>
+                        <span className="app-shell-stat__value">{t('app.loading')}</span>
+                      </article>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          </section>
+            </section>
+          )}
 
           <div className="tab-panel">
-            {mountedTabs.map((tabId) => (
+            {safeMountedTabs.map((tabId) => (
               <section
                 key={tabId}
                 style={{ display: activeTab === tabId ? 'block' : 'none' }}

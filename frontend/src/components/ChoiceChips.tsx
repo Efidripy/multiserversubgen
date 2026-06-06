@@ -30,9 +30,11 @@ export function ChoiceChips<T extends ChoiceValue>({
   size = 'sm',
   className = '',
 }: ChoiceChipsProps<T>) {
+  const safeOptions = Array.isArray(options) ? options : [];
+
   return (
     <div className={`d-flex flex-wrap gap-1 ${className}`.trim()} role="group">
-      {options.map((option) => {
+      {safeOptions.map((option) => {
         const active = option.value === value;
         return (
           <button
