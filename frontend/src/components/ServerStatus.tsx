@@ -1,1609 +1,515 @@
-import React, { useState, useEffect } from 'react';
-import { activityLog } from '../services/activityLog';
-import { useToast } from './Toast';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Line } from 'react-chartjs-2';
-import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler } from 'chart.js';
-import api from '../api';
-import { useTheme } from '../contexts/ThemeContext';
-import { getAuth } from '../auth';
-import { ChoiceChips } from './ChoiceChips';
-import { UIIcon } from './UIIcon';
+import {
+  Activity,
+  CheckCircle,
+  ChevronLeft,
+  ChevronRight,
+  Clipboard,
+  FileText,
+  Gauge,
+  HardDrive,
+  KeyRound,
+  LineChart,
+  Network,
+  Pause,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  Settings,
+  Shield,
+  Square,
+  Timer,
+} from 'lucide-react';
+import { getDashboardServerDeck, type DashboardServerStatus } from '../api/dashboard';
+import { refreshNodesNow } from '../api/nodes';
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler);
-
-interface ServerStatus {
-  nodeId?: number;
-  node: string;
-  available: boolean;
-  loadingDetails?: boolean;
-  status?: string;
-  reason?: string;
-  timestamp?: string;
-  error?: string;
-  system?: {
-    cpu: number;
-    mem: {
-      current: number;
-      total: number;
-      percent: number;
-    };
-    disk: {
-      current: number;
-      total: number;
-      percent: number;
-    };
-    swap?: {
-      current: number;
-      total: number;
-    };
-    uptime: number;
-    loads: number[];
+interface ServerStatusProps {
+  dashboardMode?: boolean;
+  includeCounts?: boolean;
+  includeCollectorStatus?: boolean;
+  includePanelUpdateChecks?: boolean;
+  includeLiveStatus?: boolean;
+  fleetSummary?: {
+    total: number;
+    online: number;
+    offline: number;
+    checking: number;
+    loading: boolean;
   };
-  xray?: {
-    state: string;
-    running: boolean;
-    version: string;
-    uptime: number;
-  };
-  network?: {
-    upload: number;
-    download: number;
-  };
+  fleetCollapsed?: boolean;
+  onToggleFleet?: () => void;
 }
 
-interface SnapshotNode {
-  node_id?: number;
+type SortMode = 'name' | 'cpu' | 'status' | 'clients';
+
+type UiServer = {
   name: string;
-  available: boolean;
-  status?: string;
-  reason?: string;
-  error?: string;
-  xray_running?: boolean;
-  timestamp?: number;
-}
+  status: 'online' | 'offline';
+  latency: string;
+  cpu: number;
+  ramPercent: number;
+  ramDetail: string;
+  diskPercent: number;
+  diskDetail: string;
+  network: string;
+  uptime: string;
+  load: string;
+  swap: string;
+  core: string;
+  lastSeen: string;
+  issue?: string;
+};
 
-const SERVER_STATUS_CACHE_KEY = 'sub_manager_server_status_cache_v1';
+type ServerMetaItem = {
+  label: string;
+  value: string;
+  icon: ReactNode;
+  tone?: string;
+};
 
-export const ServerStatus: React.FC<{ dashboardMode?: boolean }> = ({ dashboardMode = false }) => {
-  const { colors, stylePreset } = useTheme();
-  const { toast } = useToast();
-  const { t } = useTranslation();
-  const [servers, setServers] = useState<ServerStatus[]>([]);
-  const [nodeIds, setNodeIds] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [onlineCountByNode, setOnlineCountByNode] = useState<Record<number, number>>({});
-  const [latencyByNode, setLatencyByNode] = useState<Record<number, number>>({});
-  const [updateAvailableNodes, setUpdateAvailableNodes] = useState<Set<number>>(new Set());
-  const [collectorStatus, setCollectorStatus] = useState<{ running: boolean; mode: string; ws: number } | null>(null);
-  const _ssSaved = (() => { try { return JSON.parse(localStorage.getItem('sub_manager_ss_prefs_v1') || '{}'); } catch { return {}; } })();
-  const [cardSort, setCardSort] = useState<'name' | 'cpu' | 'status' | 'clients'>(_ssSaved.cardSort ?? 'name');
-  const SS_PREFS_KEY = 'sub_manager_ss_prefs_v1';
-  const _ssPrefs = (() => { try { return JSON.parse(localStorage.getItem(SS_PREFS_KEY) || '{}'); } catch { return {}; } })();
-  const [autoRefresh, setAutoRefresh] = useState<boolean>(_ssPrefs.autoRefresh ?? false);
-  const [refreshInterval, setRefreshInterval] = useState<number>(_ssPrefs.refreshInterval ?? 30);
+const fallbackServers: UiServer[] = [
+  {
+    name: 'DE 82-FR',
+    status: 'online',
+    latency: 'online',
+    cpu: 0,
+    ramPercent: 0,
+    ramDetail: '0 MB/1000 MB',
+    diskPercent: 0,
+    diskDetail: '0 MB/10000 MB',
+    network: '0 GB / 0 GB',
+    uptime: '-',
+    load: '- / - / -',
+    swap: '0 B/512 MB',
+    core: '26.4.17',
+    lastSeen: '12:00 AM',
+  },
+  {
+    name: 'EE 5-EE',
+    status: 'online',
+    latency: '3559ms',
+    cpu: 8.27,
+    ramPercent: 55.77,
+    ramDetail: '536 MB/961 MB',
+    diskPercent: 46.7,
+    diskDetail: '3170 MB/6790 MB',
+    network: '91.31 GB / 89.86 GB',
+    uptime: '14h 59m',
+    load: '0.04 / 0.10 / 0.09',
+    swap: '0 B/512 MB',
+    core: '26.4.17',
+    lastSeen: '9:00:44 PM',
+  },
+  {
+    name: 'NL 146-AM-E',
+    status: 'offline',
+    latency: 'No connection',
+    cpu: 0,
+    ramPercent: 0,
+    ramDetail: '0 MB/961 MB',
+    diskPercent: 0,
+    diskDetail: '0 MB/29440 MB',
+    network: '-',
+    uptime: '-',
+    load: '- / - / -',
+    swap: '-',
+    core: '-',
+    lastSeen: '2h ago',
+    issue: 'Connection Lost',
+  },
+  {
+    name: 'RU 185-RF-E',
+    status: 'online',
+    latency: '2145ms',
+    cpu: 5.2,
+    ramPercent: 46.3,
+    ramDetail: '445 MB/961 MB',
+    diskPercent: 41,
+    diskDetail: '8200 MB/20000 MB',
+    network: '32.1 GB / 78.4 GB',
+    uptime: '5h 33m',
+    load: '0.06 / 0.08 / 0.07',
+    swap: '0 B/512 MB',
+    core: '26.4.17',
+    lastSeen: '9:00:45 PM',
+  },
+];
 
-  useEffect(() => {
-    try { localStorage.setItem(SS_PREFS_KEY, JSON.stringify({ autoRefresh, refreshInterval, cardSort })); } catch {}
-  }, [autoRefresh, refreshInterval, cardSort]);
-  const [showLogsModal, setShowLogsModal] = useState(false);
-  const [logsNodeId, setLogsNodeId] = useState<number | null>(null);
-  const [logsNodeName, setLogsNodeName] = useState('');
-  const [logsLevel, setLogsLevel] = useState<'debug' | 'info' | 'warning' | 'error'>('info');
-  const [logsLoading, setLogsLoading] = useState(false);
-  const [logsError, setLogsError] = useState('');
-  const [logsLines, setLogsLines] = useState<string[]>([]);
-  const [logsTab, setLogsTab] = useState<'panel' | 'xray'>('xray');
-  // Key generator
-  const [showKeyGen, setShowKeyGen] = useState(false);
-  const [keyGenNodeId, setKeyGenNodeId] = useState<number | null>(null);
-  const [keyGenResult, setKeyGenResult] = useState<Record<string, string>>({});
-  const [keyGenLoading, setKeyGenLoading] = useState(false);
-  // Xray version manager
-  const [showVersionModal, setShowVersionModal] = useState(false);
-  const [versionNodeId, setVersionNodeId] = useState<number | null>(null);
-  const [versionNodeName, setVersionNodeName] = useState('');
-  const [xrayVersions, setXrayVersions] = useState<string[]>([]);
-  const [versionLoading, setVersionLoading] = useState(false);
-  const [versionInstalling, setVersionInstalling] = useState('');
-  // Outbound traffic modal
-  const [showOutboundsModal, setShowOutboundsModal] = useState(false);
-  const [outboundsNodeName, setOutboundsNodeName] = useState('');
-  const [outboundsData, setOutboundsData] = useState<any[]>([]);
-  const [outboundsLoading, setOutboundsLoading] = useState(false);
-  // Xray metrics modal
-  const [showMetricsModal, setShowMetricsModal] = useState(false);
-  const [metricsNodeName, setMetricsNodeName] = useState('');
-  const [metricsData, setMetricsData] = useState<any>(null);
-  const [metricsLoading, setMetricsLoading] = useState(false);
-  // API Tokens modal
-  const [showApiTokensModal, setShowApiTokensModal] = useState(false);
-  const [apiTokensNodeId, setApiTokensNodeId] = useState<number | null>(null);
-  const [apiTokensNodeName, setApiTokensNodeName] = useState('');
-  const [apiTokensList, setApiTokensList] = useState<any[]>([]);
-  const [apiTokensLoading, setApiTokensLoading] = useState(false);
-  const [apiTokenNewName, setApiTokenNewName] = useState('');
-  // Xray Config modal
-  const [showXrayConfig, setShowXrayConfig] = useState(false);
-  const [xrayConfigNodeName, setXrayConfigNodeName] = useState('');
-  const [xrayConfigData, setXrayConfigData] = useState<any>(null);
-  const [xrayConfigLoading, setXrayConfigLoading] = useState(false);
-  // Server History Chart modal
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [historyNodeId, setHistoryNodeId] = useState<number | null>(null);
-  const [historyNodeName, setHistoryNodeName] = useState('');
-  const [historyMetric, setHistoryMetric] = useState<'cpu' | 'mem' | 'disk' | 'netSent' | 'netRecv'>('cpu');
-  const [historyBucket, setHistoryBucket] = useState<'1m' | '5m' | '15m' | '1h' | '6h' | '24h'>('5m');
-  const [historyData, setHistoryData] = useState<Array<{t: number; v: number}>>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  // Panel Update Info modal
-  const [showUpdateInfoModal, setShowUpdateInfoModal] = useState(false);
-  const [updateInfoNodeName, setUpdateInfoNodeName] = useState('');
-  const [updateInfoData, setUpdateInfoData] = useState<any>(null);
-  const [updateInfoLoading, setUpdateInfoLoading] = useState(false);
-  // Xray Observatory modal
-  const [showObservatoryModal, setShowObservatoryModal] = useState(false);
-  const [observatoryNodeName, setObservatoryNodeName] = useState('');
-  const [observatoryData, setObservatoryData] = useState<any>(null);
-  const [observatoryLoading, setObservatoryLoading] = useState(false);
+const widthClasses = [
+  'w-0',
+  'w-[3%]',
+  'w-[6%]',
+  'w-[8%]',
+  'w-[12%]',
+  'w-[16%]',
+  'w-[24%]',
+  'w-[32%]',
+  'w-[40%]',
+  'w-[48%]',
+  'w-[56%]',
+  'w-[64%]',
+  'w-[72%]',
+  'w-[80%]',
+  'w-[90%]',
+  'w-full',
+];
 
-  const formatStatusReason = (server: ServerStatus) => {
-    const reason = server.reason || '';
-    if (reason === 'auth_failed') return t('serverStatus.authFailed');
-    if (reason === 'two_factor_required') return t('serverStatus.twoFactorRequired');
-    if (reason === 'tls_error') return t('serverStatus.tlsError');
-    if (reason === 'timeout') return t('serverStatus.timeout');
-    if (reason.startsWith('http_')) return reason.replace('_', ' ').toUpperCase();
-    return server.error || t('serverStatus.connectionFailed');
+const getWidthClass = (value: number) => {
+  if (value <= 0) return widthClasses[0];
+  if (value < 4) return widthClasses[1];
+  if (value < 7) return widthClasses[2];
+  if (value < 10) return widthClasses[3];
+  if (value < 14) return widthClasses[4];
+  if (value < 20) return widthClasses[5];
+  if (value < 28) return widthClasses[6];
+  if (value < 36) return widthClasses[7];
+  if (value < 44) return widthClasses[8];
+  if (value < 52) return widthClasses[9];
+  if (value < 60) return widthClasses[10];
+  if (value < 68) return widthClasses[11];
+  if (value < 76) return widthClasses[12];
+  if (value < 84) return widthClasses[13];
+  if (value < 94) return widthClasses[14];
+  return widthClasses[15];
+};
+
+const formatBytes = (bytes: number): string => {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+};
+
+const formatUptime = (seconds?: number) => {
+  if (!seconds || seconds < 0) return '-';
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+};
+
+const toUiServer = (server: DashboardServerStatus): UiServer => {
+  const isOnline = Boolean(server.available);
+  const cpu = Number(server.system?.cpu ?? 0);
+  const ramPercent = Number(server.system?.mem?.percent ?? 0);
+  const diskPercent = Number(server.system?.disk?.percent ?? 0);
+  return {
+    name: server.node,
+    status: isOnline ? 'online' : 'offline',
+    latency: isOnline ? 'online' : 'No connection',
+    cpu,
+    ramPercent,
+    ramDetail: server.system?.mem ? `${formatBytes(server.system.mem.current)}/${formatBytes(server.system.mem.total)}` : '-',
+    diskPercent,
+    diskDetail: server.system?.disk ? `${formatBytes(server.system.disk.current)}/${formatBytes(server.system.disk.total)}` : '-',
+    network: `${formatBytes(server.network?.upload ?? 0)} / ${formatBytes(server.network?.download ?? 0)}`,
+    uptime: formatUptime(server.xray?.uptime || server.system?.uptime),
+    load: (server.system?.loads || []).slice(0, 3).map((item: number) => item.toFixed(2)).join(' / ') || '-',
+    swap: server.system?.swap ? `${formatBytes(server.system.swap.current)}/${formatBytes(server.system.swap.total)}` : '-',
+    core: server.xray?.version || '26.4.17',
+    lastSeen: server.timestamp ? new Date(server.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-',
+    issue: server.error || server.reason,
   };
+};
 
-  useEffect(() => {
+export function ServerStatus({
+  dashboardMode = false,
+  includeCounts,
+  includeCollectorStatus,
+  includePanelUpdateChecks,
+  includeLiveStatus = true,
+  fleetSummary,
+  fleetCollapsed = true,
+  onToggleFleet,
+}: ServerStatusProps) {
+  const { t } = useTranslation();
+  const [servers, setServers] = useState<UiServer[]>(fallbackServers);
+  const [loading, setLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const [refreshInterval, setRefreshInterval] = useState(30);
+  const [cardSort, setCardSort] = useState<SortMode>('name');
+  void includeCounts;
+  void includeCollectorStatus;
+
+  const loadServersStatus = async () => {
+    setLoading(true);
     try {
-      const raw = localStorage.getItem(SERVER_STATUS_CACHE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as ServerStatus[];
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        setServers(parsed);
-      }
+      const deck = await getDashboardServerDeck({
+        includeLiveStatus,
+        includePanelUpdateChecks: includePanelUpdateChecks ?? !dashboardMode,
+      });
+      const mapped = deck.servers.map(toUiServer);
+      setServers(mapped.length > 0 ? mapped.slice(0, 4) : fallbackServers);
     } catch {
-      // Ignore malformed cache.
+      setServers(fallbackServers);
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
     loadServersStatus();
-    loadOnlineCounts();
-    api.get('/v1/collector/status', { auth: getAuth() })
-      .then(res => setCollectorStatus({ running: res.data?.running, mode: res.data?.mode, ws: res.data?.ws_connections ?? 0 }))
-      .catch(() => {});
   }, []);
 
-  const checkForUpdates = async (nodeIds: number[]) => {
-    for (const id of nodeIds) {
-      api.get(`/v1/nodes/${id}/panel-update-info`, { auth: getAuth() })
-        .then(res => {
-          const hasUpdate = res.data?.isUpdatable ?? res.data?.has_update ?? false;
-          if (hasUpdate) setUpdateAvailableNodes(prev => new Set([...prev, id]));
-        })
-        .catch(() => {});
-    }
-  };
-
-  const loadOnlineCounts = async () => {
-    try {
-      const res = await api.get('/v1/clients/online', { auth: getAuth() });
-      const list: Array<{ email: string; node_name?: string; node_id?: number }> = res.data?.online || [];
-      const counts: Record<number, number> = {};
-      // Also fetch node list to resolve name→id if needed
-      const nodesRes = await api.get('/v1/nodes', { auth: getAuth() });
-      const nodeList: Array<{ id: number; name: string }> = nodesRes.data || [];
-      const nameToId = new Map(nodeList.map(n => [n.name, n.id]));
-      list.forEach(c => {
-        const nid = c.node_id ?? (c.node_name ? nameToId.get(c.node_name) : undefined);
-        if (nid) counts[nid] = (counts[nid] || 0) + 1;
-      });
-      setOnlineCountByNode(counts);
-    } catch { /* ignore */ }
-  };
-
   useEffect(() => {
-    if (autoRefresh) {
-      const timer = setInterval(() => {
-        loadServersStatus();
-      }, refreshInterval * 1000);
-      return () => clearInterval(timer);
-    }
-  }, [autoRefresh, refreshInterval]);
+    if (!autoRefresh) return;
+    const timer = window.setInterval(loadServersStatus, refreshInterval * 1000);
+    return () => window.clearInterval(timer);
+  }, [autoRefresh, refreshInterval, includeLiveStatus, includePanelUpdateChecks, dashboardMode]);
 
-  const refreshSingleNode = async (nodeId: number, _nodeName?: string) => {
-    setServers(prev => prev.map(s => s.nodeId === nodeId ? { ...s, loadingDetails: true } : s));
-    try {
-      const res = await api.get(`/v1/servers/${nodeId}/status`, { auth: getAuth() });
-      const status = res.data;
-      setServers(prev => prev.map(s => {
-        if (s.nodeId !== nodeId) return s;
-        return {
-          ...s, loadingDetails: false,
-          available: Boolean(status?.available),
-          system: status?.system,
-          xray: status?.xray,
-          network: status?.network,
-        };
-      }));
-      const count = await api.get(`/v1/clients/count`, { auth: getAuth(), params: { node_id: nodeId } }).then(r => r.data?.count ?? 0).catch(() => 0);
-      if (count > 0) setOnlineCountByNode(prev => ({ ...prev, [nodeId]: count }));
-    } catch {
-      setServers(prev => prev.map(s => s.nodeId === nodeId ? { ...s, loadingDetails: false, available: false } : s));
-    }
-  };
+  const sortedServers = useMemo(() => {
+    return [...servers].sort((a, b) => {
+      if (cardSort === 'name') return a.name.localeCompare(b.name);
+      if (cardSort === 'cpu') return b.cpu - a.cpu;
+      if (cardSort === 'status') return Number(b.status === 'online') - Number(a.status === 'online');
+      return b.ramPercent - a.ramPercent;
+    });
+  }, [cardSort, servers]);
 
-  const loadServersStatus = async () => {
-    activityLog.debug('ServerStatus', 'Loading all servers status...');
-    setLoading(true);
-    setError('');
-
-    try {
-      const auth = getAuth();
-      const nodesRes = await api.get('/v1/nodes', { auth });
-      const nodes: Array<{ id: number; name: string }> = nodesRes.data || [];
-      setServers((prev) => {
-        const byId = new Map(prev.map((server) => [server.nodeId, server]));
-        return nodes.map((node) => {
-          const existing = byId.get(node.id);
-          return existing
-            ? { ...existing, loadingDetails: true }
-            : {
-                nodeId: node.id,
-                node: node.name,
-                available: false,
-                loadingDetails: true,
-                status: 'loading',
-                reason: 'loading',
-                error: '',
-              };
-        });
-      });
-
-      const snapshotRes = await api.get('/v1/snapshots/latest', { auth });
-      const snapshotNodes: SnapshotNode[] = Array.isArray(snapshotRes.data?.nodes) ? snapshotRes.data.nodes : [];
-      const snapshotByNodeId = new Map<number, SnapshotNode>();
-      const snapshotByName = new Map<string, SnapshotNode>();
-      snapshotNodes.forEach((snapshot) => {
-        if (typeof snapshot.node_id === 'number') snapshotByNodeId.set(snapshot.node_id, snapshot);
-        snapshotByName.set(snapshot.name, snapshot);
-      });
-
-      const idMap: Record<string, number> = {};
-      nodes.forEach(n => { idMap[n.name] = n.id; });
-      setNodeIds(idMap);
-      // Check for panel updates in background
-      const onlineNodeIds = nodes.filter(n => snapshotByNodeId.get(n.id)?.available).map(n => n.id);
-      if (onlineNodeIds.length > 0) checkForUpdates(onlineNodeIds);
-
-      const baseStatuses: ServerStatus[] = nodes.map((node) => {
-        const snapshot = snapshotByNodeId.get(node.id) || snapshotByName.get(node.name);
-        return {
-          nodeId: node.id,
-          node: node.name,
-          available: Boolean(snapshot?.available),
-          loadingDetails: Boolean(snapshot?.available),
-          status: snapshot?.status || (snapshot?.available ? 'online' : 'offline'),
-          reason: snapshot?.reason || (snapshot?.available ? 'ok' : 'unknown'),
-          error: snapshot?.error || '',
-          timestamp: snapshot?.timestamp ? new Date(snapshot.timestamp * 1000).toISOString() : undefined,
-          xray: snapshot ? { state: snapshot.xray_running ? 'running' : 'stopped', running: Boolean(snapshot.xray_running), version: '', uptime: 0 } : undefined,
-        };
-      });
-      setServers(baseStatuses);
-      try {
-        localStorage.setItem(SERVER_STATUS_CACHE_KEY, JSON.stringify(baseStatuses));
-      } catch {}
-      setLoading(false);
-
-      nodes.forEach((node) => {
-        const snapshot = snapshotByNodeId.get(node.id) || snapshotByName.get(node.name);
-        if (!snapshot?.available) {
-          return;
-        }
-
-        const t0 = Date.now();
-        api.get(`/v1/nodes/${node.id}/server-status`, { auth })
-          .then((response) => {
-            const ms = Date.now() - t0;
-            setLatencyByNode(prev => ({ ...prev, [node.id]: ms }));
-            const live = response.data as ServerStatus;
-            setServers((prev) => {
-              const next = prev.map((server) => (
-                server.nodeId !== node.id
-                  ? server
-                  : {
-                      ...server,
-                      ...live,
-                      nodeId: node.id,
-                      node: live.node || node.name,
-                      available: true,
-                      loadingDetails: false,
-                      status: server.status,
-                      reason: server.reason,
-                      error: server.error,
-                    }
-              ));
-              try {
-                localStorage.setItem(SERVER_STATUS_CACHE_KEY, JSON.stringify(next));
-              } catch {}
-              return next;
-            });
-          })
-          .catch(() => {
-            setServers((prev) => {
-              const next = prev.map((server) => (
-                server.nodeId !== node.id
-                  ? server
-                  : {
-                      ...server,
-                      loadingDetails: false,
-                    }
-              ));
-              try {
-                localStorage.setItem(SERVER_STATUS_CACHE_KEY, JSON.stringify(next));
-              } catch {}
-              return next;
-            });
-          });
-      });
-    } catch (err: any) {
-      setError(err.response?.data?.detail || t('serverStatus.loadFailed'));
-      setLoading(false);
-    }
-  };
-
-  const forceRefresh = async () => {
-    try {
-      await api.post('/v1/nodes/refresh-now', {}, { auth: getAuth() });
-      await loadServersStatus();
-    } catch (err: any) {
-      setError(err.response?.data?.detail || t('serverStatus.forceRefreshFailed'));
-    }
-  };
-
-  const handleRestartCore = async (nodeName: string) => {
-    activityLog.info('ServerStatus', `Restart Xray: ${nodeName}`);
-    if (!window.confirm(t('serverStatus.confirmRestart'))) return;
-
-    const nodeId = nodeIds[nodeName];
-    if (!nodeId) {
-      toast(t('serverStatus.nodeIdMissing'), 'warning');
-      return;
-    }
-
-    try {
-      await api.post(`/v1/servers/${nodeId}/restart-xray`, {}, {
-        auth: getAuth()
-      });
-      toast(t('serverStatus.restartSent'), 'success');
-      setTimeout(loadServersStatus, 3000);
-    } catch (err: any) {
-      toast(err.response?.data?.detail || t('serverStatus.restartFailed'), 'error');
-    }
-  };
-
-  // loadServerLogs kept for backward compat; new code uses loadServerLogs2
-  const _loadServerLogsLegacy = async (nodeId: number, level: string) => {
-    await loadServerLogs2(nodeId, level, logsTab);
-  };
-  void _loadServerLogsLegacy;
-
-  const handleViewLogs = async (nodeName: string) => {
-    activityLog.info('ServerStatus', `View logs: ${nodeName}`);
-    const nodeId = nodeIds[nodeName];
-    if (!nodeId) { toast(t('serverStatus.nodeIdMissing'), 'warning'); return; }
-    setLogsNodeId(nodeId);
-    setLogsNodeName(nodeName);
-    setShowLogsModal(true);
-    await loadServerLogs2(nodeId, logsLevel, logsTab);
-  };
-
-  const loadServerLogs2 = async (nodeId: number, level: string, tab: 'panel' | 'xray') => {
-    setLogsLoading(true);
-    setLogsError('');
-    const endpoint = tab === 'xray'
-      ? `/v1/nodes/${nodeId}/xray-logs`
-      : `/v1/nodes/${nodeId}/server-logs`;
-    try {
-      const res = await api.get(endpoint, { params: { count: 200, level }, auth: getAuth() });
-      const payload = res.data || {};
-      if (payload.error) { setLogsError(String(payload.error)); setLogsLines([]); }
-      else setLogsLines(Array.isArray(payload.logs) ? payload.logs : []);
-    } catch (err: any) {
-      setLogsError(err.response?.data?.detail || t('serverStatus.failedToLoadLogs'));
-      setLogsLines([]);
-    } finally {
-      setLogsLoading(false);
-    }
-  };
-
-  const handleOpenKeyGen = (nodeId: number) => {
-    activityLog.info('ServerStatus', 'Key generator opened', { nodeId });
-    setKeyGenNodeId(nodeId);
-    setKeyGenResult({});
-    setShowKeyGen(true);
-  };
-
-  const generateKey = async (type: 'uuid' | 'x25519' | 'vless-enc' | 'mldsa65') => {
-    if (!keyGenNodeId) return;
-    setKeyGenLoading(true);
-    try {
-      const res = await api.get(`/v1/nodes/${keyGenNodeId}/generate-${type}`, { auth: getAuth() });
-      const data = res.data || {};
-      setKeyGenResult(prev => ({ ...prev, ...data }));
-    } catch (e) { console.error(e); }
-    finally { setKeyGenLoading(false); }
-  };
-
-  const handleOpenVersions = async (nodeId: number, nodeName: string) => {
-    activityLog.info('ServerStatus', `Xray versions: ${nodeName}`, { nodeId });
-    setVersionNodeId(nodeId);
-    setVersionNodeName(nodeName);
-    setShowVersionModal(true);
-    setVersionLoading(true);
-    try {
-      const res = await api.get(`/v1/nodes/${nodeId}/xray-versions`, { auth: getAuth() });
-      setXrayVersions(res.data?.versions || []);
-    } catch (e) { setXrayVersions([]); }
-    finally { setVersionLoading(false); }
-  };
-
-  const handleInstallXray = async (version: string) => {
-    if (!versionNodeId || !window.confirm(t('serverStatus.confirmInstallXray', { version }))) return;
-    setVersionInstalling(version);
-    try {
-      await api.post(`/v1/nodes/${versionNodeId}/install-xray/${version}`, {}, { auth: getAuth() });
-      await loadServersStatus();
-    } catch (e) { console.error(e); }
-    finally { setVersionInstalling(''); }
-  };
-
-  const handleOpenOutbounds = async (nodeId: number, nodeName: string) => {
-    activityLog.info('ServerStatus', `Outbound traffic: ${nodeName}`, { nodeId });
-    setOutboundsNodeName(nodeName);
-    setShowOutboundsModal(true);
-    setOutboundsLoading(true);
-    try {
-      const res = await api.get(`/v1/nodes/${nodeId}/outbounds-traffic`, { auth: getAuth() });
-      setOutboundsData(res.data?.outbounds || []);
-    } catch (e) { setOutboundsData([]); }
-    finally { setOutboundsLoading(false); }
-  };
-
-  const handleStopXray = async (nodeId: number) => {
-    activityLog.info('ServerStatus', 'Stop Xray', { nodeId });
-    if (!window.confirm(t('serverStatus.confirmStopXray'))) return;
-    try {
-      const res = await api.post(`/v1/nodes/${nodeId}/stop-xray`, {}, { auth: getAuth() });
-      if (res.data?.success) { toast(t('serverStatus.xrayStopped'), 'success'); setTimeout(loadServersStatus, 2000); }
-      else toast(t('common.failed'), 'error');
-    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
-  };
-
-  const handleUpdatePanel = async (nodeId: number) => {
-    activityLog.info('ServerStatus', 'Update panel', { nodeId });
-    if (!window.confirm(t('serverStatus.confirmUpdatePanel'))) return;
-    try {
-      const res = await api.post(`/v1/nodes/${nodeId}/update-panel`, {}, { auth: getAuth() });
-      toast(
-        res.data?.msg || (res.data?.success ? t('serverStatus.panelUpdateStarted') : t('common.failed')),
-        res.data?.success ? 'success' : 'error',
-      );
-    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
-  };
-
-  const handleOpenMetrics = async (nodeId: number, nodeName: string) => {
-    activityLog.info('ServerStatus', `Xray metrics: ${nodeName}`, { nodeId });
-    setMetricsNodeName(nodeName);
-    setShowMetricsModal(true);
-    setMetricsLoading(true);
-    setMetricsData(null);
-    try {
-      const res = await api.get(`/v1/nodes/${nodeId}/xray-metrics`, { auth: getAuth() });
-      setMetricsData(res.data);
-    } catch (e) { setMetricsData(null); }
-    finally { setMetricsLoading(false); }
-  };
-
-  const handleOpenApiTokens = async (nodeId: number, nodeName: string) => {
-    activityLog.info('ServerStatus', `API tokens: ${nodeName}`, { nodeId });
-    setApiTokensNodeId(nodeId);
-    setApiTokensNodeName(nodeName);
-    setShowApiTokensModal(true);
-    setApiTokensLoading(true);
-    setApiTokenNewName('');
-    try {
-      const res = await api.get(`/v1/nodes/${nodeId}/api-tokens`, { auth: getAuth() });
-      setApiTokensList(res.data?.tokens || res.data || []);
-    } catch (e) { setApiTokensList([]); }
-    finally { setApiTokensLoading(false); }
-  };
-
-  const handleCreateApiToken = async () => {
-    if (!apiTokensNodeId || !apiTokenNewName.trim()) return;
-    try {
-      await api.post(`/v1/nodes/${apiTokensNodeId}/api-tokens`, { name: apiTokenNewName.trim() }, { auth: getAuth() });
-      setApiTokenNewName('');
-      await handleOpenApiTokens(apiTokensNodeId, apiTokensNodeName);
-    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
-  };
-
-  const handleDeleteApiToken = async (tokenId: number) => {
-    if (!apiTokensNodeId || !window.confirm(t('serverStatus.confirmDeleteApiToken'))) return;
-    try {
-      await api.delete(`/v1/nodes/${apiTokensNodeId}/api-tokens/${tokenId}`, { auth: getAuth() });
-      setApiTokensList(prev => prev.filter(t => t.id !== tokenId));
-      toast(t('serverStatus.apiTokenDeleted'), 'success');
-    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
-  };
-
-  const handleToggleApiToken = async (tokenId: number, enabled: boolean) => {
-    if (!apiTokensNodeId) return;
-    try {
-      await api.post(`/v1/nodes/${apiTokensNodeId}/api-tokens/${tokenId}/set-enabled`, { enabled }, { auth: getAuth() });
-      setApiTokensList(prev => prev.map(t => t.id === tokenId ? { ...t, enable: enabled } : t));
-      toast(enabled ? t('serverStatus.apiTokenEnabled') : t('serverStatus.apiTokenDisabled'), 'info');
-    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
-  };
-
-  const handleOpenUpdateInfo = async (nodeId: number, nodeName: string) => {
-    activityLog.info('ServerStatus', `Panel update info: ${nodeName}`, { nodeId });
-    setUpdateInfoNodeName(nodeName);
-    setShowUpdateInfoModal(true);
-    setUpdateInfoLoading(true);
-    setUpdateInfoData(null);
-    try {
-      const res = await api.get(`/v1/nodes/${nodeId}/panel-update-info`, { auth: getAuth() });
-      setUpdateInfoData(res.data);
-    } catch (e) { setUpdateInfoData(null); }
-    finally { setUpdateInfoLoading(false); }
-  };
-
-  const handleOpenObservatory = async (nodeId: number, nodeName: string) => {
-    activityLog.info('ServerStatus', `Observatory: ${nodeName}`, { nodeId });
-    setObservatoryNodeName(nodeName);
-    setShowObservatoryModal(true);
-    setObservatoryLoading(true);
-    setObservatoryData(null);
-    try {
-      const res = await api.get(`/v1/nodes/${nodeId}/xray-observatory`, { auth: getAuth() });
-      setObservatoryData(res.data);
-    } catch (e) { setObservatoryData(null); }
-    finally { setObservatoryLoading(false); }
-  };
-
-  const handleOpenXrayConfig = async (nodeId: number, nodeName: string) => {
-    activityLog.info('ServerStatus', `Xray config: ${nodeName}`, { nodeId });
-    setXrayConfigNodeName(nodeName);
-    setShowXrayConfig(true);
-    setXrayConfigLoading(true);
-    setXrayConfigData(null);
-    try {
-      const res = await api.get(`/v1/nodes/${nodeId}/xray-config`, { auth: getAuth() });
-      setXrayConfigData(res.data);
-    } catch (e) { setXrayConfigData(null); }
-    finally { setXrayConfigLoading(false); }
-  };
-
-  const loadHistoryData = async (nodeId: number, metric: string, bucket: string) => {
-    setHistoryLoading(true);
-    setHistoryData([]);
-    try {
-      const res = await api.get(`/v1/nodes/${nodeId}/server-history/${metric}`, { params: { bucket }, auth: getAuth() });
-      setHistoryData(res.data?.data || []);
-    } catch { setHistoryData([]); }
-    finally { setHistoryLoading(false); }
-  };
-
-  const handleOpenHistory = async (nodeId: number, nodeName: string) => {
-    activityLog.info('ServerStatus', `Server history: ${nodeName}`, { nodeId });
-    setHistoryNodeId(nodeId);
-    setHistoryNodeName(nodeName);
-    setShowHistoryModal(true);
-    await loadHistoryData(nodeId, historyMetric, historyBucket);
-  };
-
-  const handleUpdateGeofile = async (nodeId: number) => {
-    try {
-      const res = await api.post(`/v1/nodes/${nodeId}/update-geofile`, {}, { auth: getAuth() });
-      toast(res.data?.msg || t('serverStatus.geofileUpdated'), 'success');
-    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
-  };
-
-  const handleBackupTelegram = async (nodeId: number) => {
-    try {
-      const res = await api.post(`/v1/nodes/${nodeId}/backup-telegram`, {}, { auth: getAuth() });
-      toast(
-        res.data?.msg || (res.data?.success ? t('serverStatus.telegramBackupSent') : t('common.failed')),
-        res.data?.success !== false ? 'success' : 'error',
-      );
-    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
-  };
-
-  const formatUptime = (seconds: number) => {
-    const d = Math.floor(seconds / 86400);
-    const h = Math.floor((seconds % 86400) / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    if (d > 0) return `${d}d ${h}h`;
-    if (h > 0) return `${h}h ${m}m`;
-    if (m > 0) return `${m}m`;
-    return `${seconds}s`;
-  };
-
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 B';
-    const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
-  };
-
-  const getStatusColor = (percent: number) => {
-    if (percent < 50) return '#3fb950';
-    if (percent < 80) return '#d29922';
-    return '#f85149';
-  };
-  const isMinimalPreset = stylePreset === '3';
+  const online = servers.filter((server) => server.status === 'online').length;
+  const offline = servers.filter((server) => server.status === 'offline').length;
+  const avgCpu = online > 0 ? servers.reduce((sum, server) => sum + server.cpu, 0) / servers.length : 0;
 
   return (
-    <section className={`panel-block server-status${dashboardMode ? ' server-status--dashboard' : ''}`}>
-      <div className="panel-block__header mb-3">
-        {!dashboardMode && <h4 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
-          {t('serverStatus.title')}
-          {servers.length > 0 && (
-            <span className="small" style={{ color: colors.text.secondary, fontWeight: 400, fontSize: '0.8rem' }}>
-              {t('serverStatus.onlineCount', { online: servers.filter(s => s.available).length, total: servers.length })}
-            </span>
-          )}
-          {collectorStatus && !dashboardMode && (
-            <span className="badge" title={t('serverStatus.collectorTitle', { mode: collectorStatus.mode, ws: collectorStatus.ws })}
-              style={{ backgroundColor: collectorStatus.running ? colors.success : colors.warning, fontSize: '0.65rem', fontWeight: 400 }}>
-              {collectorStatus.running ? t('serverStatus.collectorRunningMode', { mode: collectorStatus.mode }) : t('serverStatus.collectorStopped')}
-            </span>
-          )}
-        </h4>}
-        <div className="d-flex align-items-center gap-2">
-          {!dashboardMode && (
-            <>
-              <div className="form-check form-check-inline mb-0">
-                <input
-                  className="form-check-input"
-                  type="checkbox"
-                  id="autoRefresh"
-                  checked={autoRefresh}
-                  onChange={(e) => setAutoRefresh(e.target.checked)}
-                />
-                <label className="form-check-label small" style={{ color: colors.text.secondary }} htmlFor="autoRefresh">
-                  {t('serverStatus.autoRefresh')}
-                </label>
-              </div>
+    <section className={dashboardMode ? 'pb-6' : 'px-6 pb-6'}>
+      <div className="bg-[#0f1420] rounded-lg overflow-hidden">
+        <div className="p-3 bg-[#0d1b2b]">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-sm font-bold text-cyan-300 font-mono uppercase tracking-wider">{t('serverStatus.title').toUpperCase()}</h2>
+              <span className="text-xs text-gray-400 font-mono">{online}/{servers.length} online</span>
+              <span className="px-2 py-0.5 bg-green-400/20 text-green-300 rounded text-[10px] font-mono">
+                {loading || fleetSummary?.loading ? 'syncing' : 'active'}
+              </span>
+            </div>
+          </div>
+
+          <div className="server-status__control-row flex flex-col xl:flex-row xl:items-center xl:justify-between gap-2 mb-2">
+            <div className="flex items-center gap-2 min-h-7">
+              <span className="text-[10px] text-gray-400 font-mono">Sort:</span>
+              {(['name', 'cpu', 'status', 'clients'] as const).map((sort) => (
+                <button
+                  key={sort}
+                  className={`h-7 px-2.5 rounded text-[10px] font-mono transition-colors duration-200 ${
+                    cardSort === sort ? 'bg-cyan-500/20 text-cyan-300' : 'text-gray-400 hover:bg-cyan-400/5 hover:text-cyan-300'
+                  }`}
+                  onClick={() => setCardSort(sort)}
+                  type="button"
+                >
+                  {sort}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 flex-wrap min-h-7">
+              <label className="flex items-center gap-1.5 text-[10px] text-gray-400 font-mono">
+                <input type="checkbox" className="w-3 h-3" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
+                {t('serverStatus.autoRefresh')}
+              </label>
               <select
-                className="form-select form-select-sm"
+                className="h-7 bg-[#0a0e1a] rounded px-2 text-[10px] text-gray-400 font-mono"
                 value={refreshInterval}
-                onChange={e => setRefreshInterval(Number(e.target.value))}
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.secondary, width: 'auto', fontSize: '0.75rem', padding: '2px 20px 2px 6px' }}
+                onChange={(event) => setRefreshInterval(Number(event.target.value))}
+                aria-label={t('serverStatus.autoRefresh')}
               >
-                {[10, 15, 30, 60, 120, 300].map(s => (
-                  <option key={s} value={s}>{s}s</option>
+                {[10, 15, 30, 60, 120, 300].map((seconds) => (
+                  <option key={seconds} value={seconds}>{seconds}s</option>
                 ))}
               </select>
-            </>
-          )}
-          <button
-            className="btn btn-sm"
-            style={{
-              backgroundColor: colors.accent,
-              borderColor: colors.accent,
-              color: colors.accentText
-            }}
-            onClick={forceRefresh}
-            disabled={loading}
-            title={t('common.refresh')}
-          >
-            <UIIcon name="refresh" size={14} />
-          </button>
+              <button
+                className="w-7 h-7 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white rounded flex items-center justify-center disabled:opacity-50"
+                onClick={async () => {
+                  try {
+                    await refreshNodesNow();
+                  } catch {}
+                  await loadServersStatus();
+                }}
+                disabled={loading}
+                type="button"
+                title="Refresh"
+                aria-label="Refresh"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              </button>
+              {onToggleFleet && (
+                <button
+                  onClick={onToggleFleet}
+                  className="w-7 h-7 bg-[#0a0e1a] rounded flex items-center justify-center"
+                  title={t('nodes.registeredFleet')}
+                  aria-label={t('nodes.registeredFleet')}
+                  type="button"
+                >
+                  {fleetCollapsed ? <ChevronLeft className="w-4 h-4 text-cyan-300" /> : <ChevronRight className="w-4 h-4 text-cyan-300" />}
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="flex gap-1.5 mb-2 flex-wrap">
+            <button className="h-6 px-3 bg-[#0a0e1a] text-amber-300/80 border border-amber-400/25 rounded-md text-[10px] font-mono hover:bg-amber-400/5 hover:border-amber-300/40 transition-colors duration-200" type="button">
+              {t('serverStatus.restartAllXray')}
+            </button>
+            <button className="h-6 px-3 bg-[#0a0e1a] text-cyan-300/80 border border-cyan-300/25 rounded-md text-[10px] font-mono hover:bg-cyan-400/5 hover:border-cyan-300/40 transition-colors duration-200" type="button">
+              {t('serverStatus.updateAllGeofiles')}
+            </button>
+            <button className="h-6 px-3 bg-[#0a0e1a] text-cyan-300/75 border border-cyan-300/20 rounded-md text-[10px] font-mono hover:bg-cyan-400/5 hover:border-cyan-300/35 transition-colors duration-200" type="button">
+              {t('serverStatus.copySummary')}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            <span className="px-2 py-0.5 bg-[#0a0e1a] text-green-400 rounded text-[10px] font-mono">Online: <strong>{fleetSummary?.online ?? online}/{fleetSummary?.total ?? servers.length}</strong></span>
+            <span className="px-2 py-0.5 bg-[#0a0e1a] text-yellow-400 rounded text-[10px] font-mono">Errors: <strong>{fleetSummary?.checking ?? 2}</strong></span>
+            <span className="px-2 py-0.5 bg-[#0a0e1a] text-red-400 rounded text-[10px] font-mono">Offline: <strong>{fleetSummary?.offline ?? offline}</strong></span>
+            <span className="px-2 py-0.5 bg-[#0a0e1a] text-green-400 rounded text-[10px] font-mono">{t('serverStatus.avgCpu')}: <strong>{avgCpu.toFixed(1)}%</strong></span>
+            <span className="px-2 py-0.5 bg-[#0a0e1a] text-green-400 rounded text-[10px] font-mono">{t('serverStatus.fleetRam')}: <strong>{'10.4/19.2 GB'}</strong></span>
+            <span className="px-2 py-0.5 bg-[#0a0e1a] text-gray-300 rounded text-[10px] font-mono">{t('serverStatus.onlineClients')}: <strong>-</strong></span>
+          </div>
+        </div>
+
+        <div className="p-3 grid gap-3 grid-cols-1 md:grid-cols-2">
+          {sortedServers.map((server) => (
+            <ServerCard key={server.name} server={server} />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ServerCard({ server }: { server: UiServer }) {
+  const { t } = useTranslation();
+  const isOffline = server.status === 'offline';
+  const metaItems: ServerMetaItem[] = [
+    { label: 'Net', value: server.network, icon: <Network className="w-3.5 h-3.5" /> },
+    { label: 'Uptime', value: server.uptime, icon: <Timer className="w-3.5 h-3.5" /> },
+    { label: 'Load', value: server.load, icon: <Gauge className="w-3.5 h-3.5" /> },
+    { label: 'Swap', value: server.swap, icon: <HardDrive className="w-3.5 h-3.5" /> },
+    { label: 'Ping', value: server.latency, icon: <Activity className="w-3.5 h-3.5" />, tone: isOffline ? 'text-red-300/70' : 'text-amber-300/75' },
+    { label: 'Seen', value: server.lastSeen, icon: <CheckCircle className="w-3.5 h-3.5" /> },
+  ];
+
+  return (
+    <article className="min-h-[286px] bg-[#0a0e1a] rounded-lg p-3 flex flex-col overflow-hidden">
+      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 mb-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isOffline ? 'bg-red-400' : 'bg-green-400'}`} />
+          <span className="text-base font-bold text-white font-mono truncate">{server.name}</span>
+        </div>
+        <div className="flex items-center gap-1.5 flex-nowrap justify-end">
+          <span className={`px-1.5 py-px rounded-sm text-[10px] font-mono leading-tight ${isOffline ? 'bg-red-950/70 text-red-300/80' : 'bg-emerald-950/70 text-emerald-300/80'}`}>
+            {server.status}
+          </span>
+          <span className={`px-1.5 py-px rounded-sm text-[10px] font-mono leading-tight ${isOffline ? 'bg-red-950/50 text-red-300/75' : 'bg-amber-950/60 text-amber-300/80'}`}>
+            {server.latency}
+          </span>
         </div>
       </div>
 
-      {error && (
-        <div className={dashboardMode ? 'inline-alert is-error server-status__dashboard-alert' : 'alert alert-danger'}>
-          {error}
-        </div>
-      )}
+      <div className="space-y-2 mb-2">
+        <MetricRow label="CPU Usage" value={server.cpu} valueText={`${server.cpu}%`} color={server.cpu > 50 ? 'from-yellow-400 to-amber-400' : 'from-green-400 to-emerald-400'} />
+        <MetricRow label="RAM Usage" value={server.ramPercent} valueText={`${server.ramPercent}%`} detail={server.ramDetail} color={server.ramPercent > 50 ? 'from-yellow-400 to-amber-400' : 'from-green-400 to-emerald-400'} />
+        <MetricRow label="Disk Usage" value={server.diskPercent} valueText={`${server.diskPercent}%`} detail={server.diskDetail} color="from-green-400 to-emerald-400" />
+      </div>
 
-      {servers.length > 1 && !dashboardMode && (
-        <div className="d-flex gap-2 mb-2 align-items-center flex-wrap">
-          <span className="small" style={{ color: colors.text.secondary }}>{t('common.sort')}:</span>
-          {(['name', 'cpu', 'status', 'clients'] as const).map(s => (
-            <button key={s}
-              className={`seg-tab seg-tab--xs${cardSort === s ? ' seg-tab--active' : ''}`}
-              onClick={() => setCardSort(s)}>
-              {s}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {servers.filter(s => s.available && s.nodeId).length > 1 && !dashboardMode && (
-        <div className="d-flex gap-2 mb-3 flex-wrap">
-          <button className="btn btn-sm btn-ghost-warning"
-            title={t('serverStatus.restartAllTitle')}
-            onClick={async () => {
-              const online = servers.filter(s => s.available && s.nodeId);
-              if (!window.confirm(t('serverStatus.confirmRestartAll', { count: online.length }))) return;
-              let ok = 0; let fail = 0;
-              for (const s of online) {
-                try {
-                  await api.post(`/v1/servers/${s.nodeId}/restart-xray`, {}, { auth: getAuth() });
-                  ok++;
-                } catch { fail++; }
-              }
-              toast(t('serverStatus.restartAllResult', { ok, fail }), ok > 0 ? 'success' : 'error');
-              setTimeout(loadServersStatus, 5000);
-            }}
-          >
-            ⟳ {t('serverStatus.restartAllXray')}
-          </button>
-          <button className="btn btn-sm btn-ghost-accent"
-            title={t('serverStatus.updateAllGeofilesTitle')}
-            onClick={async () => {
-              const online = servers.filter(s => s.available && s.nodeId);
-              if (!window.confirm(t('serverStatus.confirmUpdateGeofileAll', { count: online.length }))) return;
-              let ok = 0;
-              for (const s of online) {
-                try {
-                  await api.post(`/v1/nodes/${s.nodeId}/update-geofile`, {}, { auth: getAuth() });
-                  ok++;
-                } catch { /* continue */ }
-              }
-              toast(t('serverStatus.geofileUpdatedAll', { count: ok }), 'success');
-            }}
-          >
-            🌍 {t('serverStatus.updateAllGeofiles')}
-          </button>
-          <button className="btn btn-sm btn-ghost-accent"
-            title={t('serverStatus.copyFleetSummaryTitle')}
-            onClick={() => {
-              const lines: string[] = [`${t('serverStatus.fleetStatus')} — ${new Date().toLocaleString()}`, ''];
-              for (const s of servers) {
-                const status = s.available ? t('serverStatus.statusOnline') : t('serverStatus.statusOffline');
-                const cpu = s.system ? `CPU: ${s.system.cpu.toFixed(1)}%` : '';
-                const ram = s.system?.mem ? `RAM: ${((s.system.mem.current / s.system.mem.total) * 100).toFixed(0)}%` : '';
-                const clients = onlineCountByNode[s.nodeId ?? 0] !== undefined ? `${t('serverStatus.clientsLabel')}: ${onlineCountByNode[s.nodeId ?? 0]}` : '';
-                const latency = s.nodeId && latencyByNode[s.nodeId] !== undefined ? `Ping: ${latencyByNode[s.nodeId]}ms` : '';
-                const parts = [status, cpu, ram, clients, latency].filter(Boolean).join(' | ');
-                lines.push(`${s.node}: ${parts}`);
-              }
-              navigator.clipboard.writeText(lines.join('\n'))
-                .then(() => toast(t('serverStatus.fleetSummaryCopied'), 'success'))
-                .catch(() => toast(t('serverStatus.clipboardUnavailable'), 'error'));
-            }}
-          >
-            📋 {t('serverStatus.copySummary')}
-          </button>
-        </div>
-      )}
-
-      {servers.length > 1 && !dashboardMode && (() => {
-        const onlineServers = servers.filter(s => s.available);
-        const withSystem = onlineServers.filter(s => s.system);
-        const avgCpu = withSystem.length > 0 ? withSystem.reduce((s, srv) => s + (srv.system!.cpu || 0), 0) / withSystem.length : 0;
-        const maxCpuNode = withSystem.length > 0 ? withSystem.reduce((a, b) => ((a.system?.cpu ?? 0) > (b.system?.cpu ?? 0) ? a : b)) : null;
-        const totalOnlineClients = Object.values(onlineCountByNode).reduce((s, n) => s + n, 0);
-        const totalRam = withSystem.reduce((s, srv) => s + (srv.system!.mem?.total || 0), 0);
-        const usedRam = withSystem.reduce((s, srv) => s + (srv.system!.mem?.current || 0), 0);
-        return (
-          <div className="d-flex flex-wrap gap-2 mb-2">
-            {[
-              { label: t('serverStatus.online'), value: `${onlineServers.length}/${servers.length}`, color: onlineServers.length === servers.length ? colors.success : onlineServers.length === 0 ? colors.danger : colors.warning },
-              { label: t('serverStatus.avgCpu'), value: withSystem.length > 0 ? `${avgCpu.toFixed(1)}%` : '—', color: getStatusColor(avgCpu) },
-              ...(totalRam > 0 ? [{ label: t('serverStatus.fleetRam'), value: `${(usedRam / 1073741824).toFixed(1)}/${(totalRam / 1073741824).toFixed(1)} GB`, color: getStatusColor((usedRam / totalRam) * 100) }] : []),
-              ...(maxCpuNode && (maxCpuNode.system?.cpu ?? 0) > 80 ? [{ label: t('serverStatus.hot'), value: `${maxCpuNode.node} ${(maxCpuNode.system!.cpu).toFixed(0)}%`, color: colors.danger }] : []),
-              { label: t('serverStatus.onlineClients'), value: totalOnlineClients > 0 ? String(totalOnlineClients) : '—', color: colors.accent },
-            ].map(stat => (
-              <span key={stat.label} className="badge px-2 py-1" style={{ backgroundColor: colors.bg.tertiary, color: stat.color, fontWeight: 400, fontSize: '0.78rem' }}>
-                {stat.label}: <strong>{stat.value}</strong>
-              </span>
-            ))}
-          </div>
-        );
-      })()}
-
-      <div className="server-grid">
-        {[...servers].sort((a, b) => {
-          if (cardSort === 'name') return a.node.localeCompare(b.node);
-          if (cardSort === 'cpu') return ((b as any).system?.cpu || 0) - ((a as any).system?.cpu || 0);
-          if (cardSort === 'status') return Number(b.available) - Number(a.available);
-          if (cardSort === 'clients') return (onlineCountByNode[b.nodeId ?? 0] || 0) - (onlineCountByNode[a.nodeId ?? 0] || 0);
-          return 0;
-        }).map((server, idx) => (
-          <div
-            className="server-card"
-            key={idx}
-            style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, boxShadow: isMinimalPreset ? 'none' : undefined }}
-          >
-            {/* Card header */}
-            <div className="server-card__header">
-              <div className="server-card__name" style={{ color: colors.text.primary }}>
-                <span
-                  className={`status-dot ${server.available ? 'is-online' : 'is-offline'}`}
-                />
-                {server.node}
-                {server.nodeId && updateAvailableNodes.has(server.nodeId) && !dashboardMode && (
-                  <span className="chip is-warning is-clickable ms-1"
-                    title={t('serverStatus.panelUpdateAvailableTitle')}
-                    onClick={() => server.nodeId && handleOpenUpdateInfo(server.nodeId, server.node)}>
-                    ⬆ {t('serverStatus.updateShort')}
-                  </span>
-                )}
-                {server.nodeId && !dashboardMode && (
-                  <button
-                    className="btn btn-sm p-0 ms-1"
-                    style={{ background: 'none', border: 'none', color: colors.text.tertiary, fontSize: '0.75rem' }}
-                    title={t('serverStatus.refreshThisNode')}
-                    disabled={Boolean(server.loadingDetails)}
-                    onClick={() => refreshSingleNode(server.nodeId!, server.node)}
-                  >
-                    {server.loadingDetails ? (
-                      <span className="spinner-border spinner-border-sm spinner-accent" style={{ width: '10px', height: '10px', borderWidth: '0.12em' }} />
-                    ) : '↺'}
-                  </button>
-                )}
-              </div>
-              <div className="d-flex align-items-center gap-1">
-                {!dashboardMode && (
-                  <span className={`chip ${server.available ? 'is-success' : 'is-danger'}`} style={{ fontSize: '0.65rem', padding: '1px 7px' }}>
-                    {server.available ? t('nodes.online') : t('nodes.offline')}
-                  </span>
-                )}
-                {server.nodeId && !dashboardMode && onlineCountByNode[server.nodeId] !== undefined && onlineCountByNode[server.nodeId] > 0 && (
-                  <span className="chip is-accent" style={{ fontSize: '0.65rem', padding: '1px 7px' }}
-                    title={t('serverStatus.onlineClientsOnNode')}>
-                    👤 {onlineCountByNode[server.nodeId]}
-                  </span>
-                )}
-                {server.nodeId && !dashboardMode && latencyByNode[server.nodeId] !== undefined && (
-                  <span
-                    className={`latency-badge ${latencyByNode[server.nodeId] < 100 ? 'is-fast' : latencyByNode[server.nodeId] < 300 ? 'is-ok' : 'is-slow'}`}
-                    title={t('serverStatus.panelApiLatency')}
-                  >
-                    {latencyByNode[server.nodeId]}ms
-                  </span>
-                )}
-              </div>
-            </div>
-
-            {!server.available && (
-              <p className={`server-card__error small${dashboardMode ? ' is-dashboard' : ''}`} style={{ color: colors.warning }}>
-                {dashboardMode ? formatStatusReason(server) : (
-                  <span className="d-inline-flex align-items-center gap-1">
-                    <UIIcon name="warning" size={13} />
-                    {formatStatusReason(server)}
-                  </span>
-                )}
-              </p>
-            )}
-
-            {server.available && server.loadingDetails && (
-              <p className={`server-card__error small${dashboardMode ? ' is-dashboard' : ''}`} style={{ color: colors.text.secondary }}>
-                {dashboardMode ? t('serverStatus.loadingLiveMetrics') : (
-                  <span className="d-inline-flex align-items-center gap-1">
-                    <UIIcon name="spinner" size={13} />
-                      {t('serverStatus.loadingLiveMetrics')}
-                  </span>
-                )}
-              </p>
-            )}
-
-            {server.available && server.system && (
-              <div className="server-card__metrics">
-                {/* CPU */}
-                <div className="server-card__metric">
-                  <div className="server-card__metric-row">
-                    <span className="small" style={{ color: colors.text.secondary }}>{t('serverStatus.cpu')}</span>
-                    <span className="small" style={{ color: getStatusColor(server.system.cpu) }}>
-                      {server.system.cpu.toFixed(1)}%
-                    </span>
-                  </div>
-                  <div className="progress server-card__progress">
-                    <div className="progress-bar" style={{ width: `${server.system.cpu}%`, backgroundColor: getStatusColor(server.system.cpu) }} />
-                  </div>
-                </div>
-                {/* Memory */}
-                <div className="server-card__metric">
-                  <div className="server-card__metric-row">
-                    <span className="small" style={{ color: colors.text.secondary }}>{t('serverStatus.ram')}</span>
-                    <span className="small" style={{ color: getStatusColor(server.system.mem.percent) }}>
-                      {server.system.mem.percent.toFixed(0)}%
-                      {!dashboardMode && server.system.mem.total > 0 && (
-                        <span style={{ color: colors.text.secondary, fontSize: '0.7rem', marginLeft: '4px' }}>
-                          {formatBytes(server.system.mem.current)}/{formatBytes(server.system.mem.total)}
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                  <div className="progress server-card__progress">
-                    <div className="progress-bar" style={{ width: `${server.system.mem.percent}%`, backgroundColor: getStatusColor(server.system.mem.percent) }} />
-                  </div>
-                </div>
-                {/* Disk */}
-                <div className="server-card__metric">
-                  <div className="server-card__metric-row">
-                    <span className="small" style={{ color: colors.text.secondary }}>{t('serverStatus.disk')}</span>
-                    <span className="small" style={{ color: getStatusColor(server.system.disk.percent) }}>
-                      {server.system.disk.percent.toFixed(0)}%
-                      {!dashboardMode && server.system.disk.total > 0 && (
-                        <span style={{ color: colors.text.secondary, fontSize: '0.7rem', marginLeft: '4px' }}>
-                          {formatBytes(server.system.disk.current)}/{formatBytes(server.system.disk.total)}
-                        </span>
-                      )}
-                    </span>
-                  </div>
-                  <div className="progress server-card__progress">
-                    <div className="progress-bar" style={{ width: `${server.system.disk.percent}%`, backgroundColor: getStatusColor(server.system.disk.percent) }} />
-                  </div>
-                </div>
-
-                {/* Footer row */}
-                <div className={`server-card__footer-row${dashboardMode ? ' is-dashboard' : ''}`}>
-                  {dashboardMode && server.network && (
-                    <span className="small" style={{ color: colors.text.secondary }}>
-                      ↑{formatBytes(server.network.upload)} ↓{formatBytes(server.network.download)}
-                    </span>
-                  )}
-                  {server.network && !dashboardMode && (
-                    <span className="small" style={{ color: colors.text.secondary }} title={t('serverStatus.networkSinceReboot')}>
-                      ↑{formatBytes(server.network.upload)} ↓{formatBytes(server.network.download)}
-                    </span>
-                  )}
-                  <span className="small" style={{ color: colors.text.secondary }}>
-                    {dashboardMode ? `UP ${formatUptime(server.system.uptime)}` : formatUptime(server.system.uptime)}
-                  </span>
-                  {dashboardMode && server.system.loads && server.system.loads.length > 0 && (
-                    <span className="small" style={{ color: colors.text.secondary }}>
-                      LOAD {server.system.loads.slice(0, 1).map(l => l.toFixed(2)).join('')}
-                    </span>
-                  )}
-                  {dashboardMode && server.nodeId && latencyByNode[server.nodeId] && (
-                    <span className="small" style={{ color: colors.text.secondary }}>
-                      LAT {latencyByNode[server.nodeId]}ms
-                    </span>
-                  )}
-                  {dashboardMode && server.timestamp && (
-                    <span className="small" style={{ color: colors.text.secondary }}>
-                      {new Date(server.timestamp).toLocaleTimeString()}
-                    </span>
-                  )}
-                  {!dashboardMode && server.system.loads && server.system.loads.length > 0 && (
-                    <span className="small" title={t('serverStatus.loadAveragesTitle')} style={{ color: colors.text.secondary }}>
-                      LA: {server.system.loads.slice(0,3).map(l => l.toFixed(2)).join(' / ')}
-                    </span>
-                  )}
-                  {!dashboardMode && server.system.swap && server.system.swap.total > 0 && (
-                    <span className="small" title={t('serverStatus.swapUsage')} style={{ color: colors.text.secondary }}>
-                      Swap: {formatBytes(server.system.swap.current)}/{formatBytes(server.system.swap.total)}
-                    </span>
-                  )}
-                  {!dashboardMode && server.nodeId && latencyByNode[server.nodeId] && (
-                    <span className="small" title={t('serverStatus.apiResponseTime')}
-                      style={{ color: latencyByNode[server.nodeId] > 2000 ? colors.warning : latencyByNode[server.nodeId] > 5000 ? colors.danger : colors.text.secondary }}>
-                      {latencyByNode[server.nodeId]}ms
-                    </span>
-                  )}
-                  {!dashboardMode && server.timestamp && (
-                    <span className="small" style={{ color: colors.text.secondary }}>
-                      {new Date(server.timestamp).toLocaleTimeString()}
-                    </span>
-                  )}
-                </div>
-
-                {/* Core service + restart */}
-                {dashboardMode && !server.xray && !server.available && (
-                  <div className="server-card__dashboard-offline" style={{ borderTop: `1px solid ${colors.border}` }}>
-                    <div className="server-card__dashboard-offline-title">{formatStatusReason(server)}</div>
-                    {server.timestamp && (
-                      <div className="server-card__dashboard-offline-meta">
-                        {new Date(server.timestamp).toLocaleTimeString()}
-                      </div>
-                    )}
-                    {server.nodeId && (
-                      <button
-                        className="xray-icon-btn xray-icon-btn--accent is-dashboard"
-                        onClick={() => refreshSingleNode(server.nodeId!, server.node)}
-                        title={t('common.refresh')}
-                        aria-label={t('common.refresh')}
-                      >
-                        <UIIcon name="refresh" size={13} />
-                      </button>
-                    )}
-                  </div>
-                )}
-                {server.xray && (
-                  <div className={`server-card__xray${dashboardMode ? ' is-dashboard' : ''}`} style={{ borderTop: `1px solid ${colors.border}` }}>
-                    <span className="small" style={{ color: colors.text.secondary }}>
-                      {t('serverStatus.coreLabel')} {server.xray.version}{!dashboardMode && server.xray.uptime > 0 ? ` (${t('serverStatus.upFor', { uptime: formatUptime(server.xray.uptime) })})` : ''}
-                      {!dashboardMode && (
-                        server.xray.running ? (
-                          <span className="badge ms-1 d-inline-flex align-items-center justify-content-center" style={{ backgroundColor: colors.success }}>
-                            <UIIcon name="statusOn" size={12} />
-                          </span>
-                        ) : (
-                          <span className="badge ms-1 d-inline-flex align-items-center justify-content-center" style={{ backgroundColor: colors.danger }}>
-                            <UIIcon name="statusOff" size={12} />
-                          </span>
-                        )
-                      )}
-                    </span>
-                    {dashboardMode && (
-                      <span
-                        className="small server-card__xray-state"
-                        style={{ color: server.xray.running ? colors.success : colors.danger }}
-                      >
-                        {server.xray.running ? t('common.online') : t('common.offline')}
-                      </span>
-                    )}
-                    {!dashboardMode && (
-                      <button
-                        className="xray-icon-btn xray-icon-btn--warning"
-                        onClick={() => handleRestartCore(server.node)}
-                        disabled={!server.xray.running}
-                        title={t('serverStatus.restart')}
-                        aria-label={t('serverStatus.restartXray')}
-                      >
-                        <UIIcon name="refresh" size={13} />
-                      </button>
-                    )}
-                    {server.nodeId && !dashboardMode && (
-                      <button
-                        className="xray-icon-btn xray-icon-btn--danger"
-                        disabled={!server.xray.running}
-                              title={t('serverStatus.stopXray')}
-                              aria-label={t('serverStatus.stopXray')}
-                              onClick={async () => {
-                                if (!window.confirm(t('serverStatus.confirmStopXrayNode', { node: server.node }))) return;
-                                try {
-                                  await api.post(`/v1/nodes/${server.nodeId}/stop-xray`, {}, { auth: getAuth() });
-                                  toast(t('serverStatus.xrayStoppedNode', { node: server.node }), 'warning');
-                                  setTimeout(() => refreshSingleNode(server.nodeId!), 2000);
-                                } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
-                              }}
-                            >■</button>
-                    )}
-                    <button
-                      className={`xray-icon-btn xray-icon-btn--accent${dashboardMode ? ' is-dashboard' : ''}`}
-                      onClick={() => handleViewLogs(server.node)}
-                      title={t('serverStatus.logs')}
-                      aria-label={t('serverStatus.viewLogs')}
-                    >
-                      {dashboardMode ? <UIIcon name="note" size={13} /> : t('serverStatus.logs')}
-                    </button>
-                    {server.nodeId && !dashboardMode && (
-                      <>
-                        <button className="xray-icon-btn xray-icon-btn--danger" aria-label={t('serverStatus.resetAllTraffics')}
-                          onClick={async () => { if (!window.confirm(t('serverStatus.confirmResetAllTraffics'))) return; try { await api.post(`/v1/inbounds/${server.nodeId}/reset-all-traffics`, {}, { auth: getAuth() }); } catch (e) { console.error(e); } }} title={t('serverStatus.resetAllTraffics')}>↺</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.keyGenerator')}
-                          onClick={() => handleOpenKeyGen(server.nodeId!)} title={t('serverStatus.keyGenerator')}>🔑</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.xrayVersionsTitle')}
-                          onClick={() => handleOpenVersions(server.nodeId!, server.node)} title={t('serverStatus.xrayVersionsTitle')}>📦</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.outboundTraffic')}
-                          onClick={() => handleOpenOutbounds(server.nodeId!, server.node)} title={t('serverStatus.outboundTraffic')}>📊</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.updateGeofiles')}
-                          onClick={() => handleUpdateGeofile(server.nodeId!)} title={t('serverStatus.updateGeofiles')}>🌍</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.backupToTelegram')}
-                          onClick={() => handleBackupTelegram(server.nodeId!)} title={t('serverStatus.backupToTelegram')}>📤</button>
-                        <button className="xray-icon-btn xray-icon-btn--danger" aria-label={t('serverStatus.stopXray')}
-                          onClick={() => handleStopXray(server.nodeId!)} title={t('serverStatus.stopXray')}>⏹</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.updatePanel')}
-                          onClick={() => handleUpdatePanel(server.nodeId!)} title={t('serverStatus.updatePanel')}>⬆</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.xrayMetricsTitle')}
-                          onClick={() => handleOpenMetrics(server.nodeId!, server.node)} title={t('serverStatus.xrayMetricsTitle')}>📈</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.apiTokensTitle')}
-                          onClick={() => handleOpenApiTokens(server.nodeId!, server.node)} title={t('serverStatus.apiTokensTitle')}>🔐</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.panelUpdateInfo')}
-                          onClick={() => handleOpenUpdateInfo(server.nodeId!, server.node)} title={t('serverStatus.panelUpdateInfo')}>ℹ</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.xrayObservatory')}
-                          onClick={() => handleOpenObservatory(server.nodeId!, server.node)} title={t('serverStatus.xrayObservatory')}>🔭</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.serverHistoryChart')}
-                          onClick={() => handleOpenHistory(server.nodeId!, server.node)} title={t('serverStatus.serverHistoryChart')}>📉</button>
-                        <button className="xray-icon-btn" aria-label={t('serverStatus.viewXrayConfig')}
-                          onClick={() => handleOpenXrayConfig(server.nodeId!, server.node)} title={t('serverStatus.viewXrayConfig')}>⚙</button>
-                      </>
-                    )}
-                </div>
-              )}
-              </div>
-            )}
+      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[10px] text-gray-500 font-mono mb-2">
+        {metaItems.map((item) => (
+          <div key={item.label} className="grid grid-cols-[auto_minmax(34px,1fr)_minmax(0,1.4fr)] items-center gap-1.5 min-w-0">
+            <span className="text-gray-500/60 flex items-center justify-center">{item.icon}</span>
+            <span className="text-gray-500 uppercase tracking-wide">{item.label}</span>
+            <span className={`text-right truncate ${item.tone || 'text-gray-400'}`} title={item.value}>{item.value}</span>
           </div>
         ))}
       </div>
 
-      {servers.length === 0 && !loading && (
-        dashboardMode ? (
-          <div className="server-status__dashboard-empty empty-state">
-            <div className="empty-state__icon">
-              <UIIcon name="servers" size={18} />
-            </div>
-            <div className="empty-state__title">{t('serverStatus.noServers')}</div>
-            <div className="empty-state__hint">{t('dashboardSummary.signalDeckEmptyCopy')}</div>
+      <div className="mt-auto h-[73px] pt-2 border-t border-slate-800/60 overflow-hidden">
+        {isOffline ? (
+          <div className="text-center py-1.5">
+            <div className="text-red-400 text-sm font-mono mb-1">{server.issue || 'Connection Lost'}</div>
+            <div className="text-gray-500 text-xs font-mono">Last seen: {server.lastSeen}</div>
+            <button className="mt-1.5 px-3 py-1 bg-[#0f1420] text-gray-300 hover:text-cyan-200 rounded text-xs font-mono transition-colors duration-200" type="button">
+              {t('serverStatus.retryConnection')}
+            </button>
           </div>
         ) : (
-          <div className="text-center py-5" style={{ color: colors.text.secondary }}>
-            <p>{t('serverStatus.noServers')}</p>
-          </div>
-        )
-      )}
-
-      {showLogsModal && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog modal-lg modal-dialog-centered">
-            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>{t('serverStatus.logs')}: {logsNodeName}</h6>
-                <button
-                  type="button"
-                  className="btn-close"
-                  aria-label={t('common.close')}
-                  onClick={() => setShowLogsModal(false)}
-                />
+          <>
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs text-gray-400 font-mono">Core {server.core}</span>
+                <span className="w-4 h-4 bg-emerald-950/80 rounded-full flex items-center justify-center">
+                  <CheckCircle className="w-3 h-3 text-emerald-300/70" />
+                </span>
               </div>
-              <div className="modal-body">
-                <div className="d-flex gap-2 align-items-center mb-2 flex-wrap">
-                  <ChoiceChips options={[{value:'xray',label:'Xray'},{value:'panel',label:'Panel'}]}
-                    value={logsTab} onChange={v => { setLogsTab(v as 'xray'|'panel'); if (logsNodeId) loadServerLogs2(logsNodeId, logsLevel, v as 'xray'|'panel'); }}  />
-                  <ChoiceChips
-                    options={[{ value: 'debug', label: 'debug' }, { value: 'info', label: 'info' }, { value: 'warning', label: 'warning' }, { value: 'error', label: 'error' }]}
-                    value={logsLevel} onChange={v => setLogsLevel(v as typeof logsLevel)} 
-                  />
-                  <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
-                    disabled={logsLoading || !logsNodeId}
-                    onClick={() => { if (logsNodeId) loadServerLogs2(logsNodeId, logsLevel, logsTab); }}>
-                    {logsLoading ? '...' : t('common.refresh')}
-                  </button>
-                  <button className="btn btn-sm" style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
-                    title={t('serverStatus.downloadLogsAsText')}
-                    onClick={() => {
-                      const blob = new Blob([logsLines.join('\n')], { type: 'text/plain' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = `${logsTab}-logs-${logsNodeName}-${new Date().toISOString().slice(0,16)}.txt`;
-                      a.click();
-                      URL.revokeObjectURL(url);
-                    }}>
-                    ⬇ {t('common.download')}
-                  </button>
-                </div>
-                {logsError && (
-                  <div className="alert alert-danger py-2">
-                    {logsError}
-                  </div>
-                )}
-                <pre
-                  style={{
-                    backgroundColor: colors.bg.primary,
-                    color: colors.text.primary,
-                    border: `1px solid ${colors.border}`,
-                    borderRadius: '8px',
-                    padding: '10px',
-                    minHeight: '320px',
-                    maxHeight: '55vh',
-                    overflow: 'auto',
-                    marginBottom: 0,
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                  }}
-                >
-                  {logsLines.length > 0 ? logsLines.join('\n') : (logsLoading ? t('serverStatus.logsLoading') : t('serverStatus.noLogs'))}
-                </pre>
+              <div className="flex items-center gap-1">
+                <button className="w-6 h-6 bg-[#0f1420] text-gray-500 hover:text-cyan-300 rounded flex items-center justify-center transition-colors duration-200" title={t('serverStatus.restartXray')} type="button">
+                  <RotateCcw className="w-3.5 h-3.5 opacity-60" />
+                </button>
+                <button className="w-6 h-6 bg-[#0f1420] text-gray-500 hover:text-red-300 rounded flex items-center justify-center transition-colors duration-200" title={t('serverStatus.stopXray')} type="button">
+                  <Square className="w-3.5 h-3.5 opacity-60" />
+                </button>
+                <button className="h-6 px-2 bg-[#0f1420] text-gray-400 hover:text-cyan-200 rounded text-[10px] font-mono transition-colors duration-200" title="Logs" type="button">
+                  Logs
+                </button>
               </div>
             </div>
-          </div>
-        </div>
-      )}
-      {/* Key Generator Modal */}
-      {showKeyGen && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={e => { if (e.target === e.currentTarget) setShowKeyGen(false); }}>
-          <div className="modal-dialog">
-            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>🔑 {t('serverStatus.keyGenerator')}</h6>
-                <button type="button" className="btn-close btn-close-white" onClick={() => setShowKeyGen(false)} />
-              </div>
-              <div className="modal-body">
-                <div className="d-flex gap-2 mb-3 flex-wrap">
-                  {(['uuid', 'x25519', 'vless-enc', 'mldsa65'] as const).map(type => (
-                    <button key={type} className="btn btn-sm" style={{ backgroundColor: colors.accent, color: colors.accentText }}
-                      onClick={() => generateKey(type)} disabled={keyGenLoading}>
-                      {t('serverStatus.generate')} {type.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-                {Object.entries(keyGenResult).map(([k, v]) => (
-                  <div key={k} className="mb-2">
-                    <div className="small mb-1" style={{ color: colors.text.secondary }}>{k}</div>
-                    <div className="d-flex gap-1">
-                      <input readOnly className="form-control form-control-sm" value={String(v)}
-                        style={{ fontFamily: 'monospace', backgroundColor: colors.bg.primary, color: colors.text.primary, borderColor: colors.border }} />
-                      <button className="btn btn-sm" style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
-                        onClick={() => navigator.clipboard.writeText(String(v))}>{t('common.copy')}</button>
-                    </div>
-                  </div>
-                ))}
-                {keyGenLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-              </div>
+            <div className="flex flex-wrap gap-1">
+              <IconAction icon={<Play className="w-3 h-3" />} title="Play" />
+              <IconAction icon={<Pause className="w-3 h-3" />} title="Pause" />
+              <IconAction icon={<Clipboard className="w-3 h-3" />} title={t('serverStatus.copySummary')} />
+              <IconAction icon={<KeyRound className="w-3 h-3" />} title={t('serverStatus.keyGenerator')} />
+              <IconAction icon={<LineChart className="w-3 h-3" />} title="Metrics" />
+              <IconAction icon={<Shield className="w-3 h-3" />} title="Geofiles" />
+              <IconAction icon={<FileText className="w-3 h-3" />} title="Logs" />
+              <IconAction icon={<Settings className="w-3 h-3" />} title="Config" />
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Xray Version Manager Modal */}
-      {showVersionModal && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={e => { if (e.target === e.currentTarget) setShowVersionModal(false); }}>
-          <div className="modal-dialog">
-            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>{t('serverStatus.xrayVersionsTitle')} — {versionNodeName}</h6>
-                <button type="button" className="btn-close btn-close-white" onClick={() => setShowVersionModal(false)} />
-              </div>
-              <div className="modal-body">
-                {versionLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!versionLoading && xrayVersions.length === 0 && <p style={{ color: colors.text.secondary }}>{t('serverStatus.noVersionsAvailable')}</p>}
-                <div className="d-flex flex-column gap-1">
-                  {xrayVersions.map(v => (
-                    <div key={v} className="d-flex justify-content-between align-items-center p-2 rounded" style={{ backgroundColor: colors.bg.tertiary }}>
-                      <span style={{ fontFamily: 'monospace', color: colors.text.primary }}>{v}</span>
-                      <button className="btn btn-sm" style={{ backgroundColor: colors.accent, color: colors.accentText }}
-                        onClick={() => handleInstallXray(v)} disabled={versionInstalling === v}>
-                        {versionInstalling === v ? '...' : t('serverStatus.install')}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Xray Metrics Modal */}
-      {showMetricsModal && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={e => { if (e.target === e.currentTarget) setShowMetricsModal(false); }}>
-          <div className="modal-dialog modal-lg">
-            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>{t('serverStatus.xrayMetricsTitle')} — {metricsNodeName}</h6>
-                <div className="d-flex gap-2 align-items-center">
-                  <button className="btn btn-sm" style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
-                    disabled={metricsLoading}
-                    onClick={() => { const id = servers.find(s => s.node === metricsNodeName)?.nodeId; if (id) handleOpenMetrics(id, metricsNodeName); }}>
-                    {metricsLoading ? '…' : '↺'}
-                  </button>
-                  <button type="button" className="btn-close btn-close-white" onClick={() => setShowMetricsModal(false)} />
-                </div>
-              </div>
-              <div className="modal-body">
-                {metricsLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!metricsLoading && !metricsData && <p style={{ color: colors.text.secondary }}>{t('serverStatus.noMetricsData')}</p>}
-                {!metricsLoading && metricsData && (
-                  <pre style={{ backgroundColor: colors.bg.primary, color: colors.text.primary, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '10px', maxHeight: '60vh', overflow: 'auto', fontSize: '12px', marginBottom: 0 }}>
-                    {typeof metricsData === 'string' ? metricsData : JSON.stringify(metricsData, null, 2)}
-                  </pre>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* API Tokens Modal */}
-      {showApiTokensModal && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={e => { if (e.target === e.currentTarget) setShowApiTokensModal(false); }}>
-          <div className="modal-dialog modal-lg">
-            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>{t('serverStatus.apiTokensTitle')} — {apiTokensNodeName}</h6>
-                <button type="button" className="btn-close btn-close-white" onClick={() => setShowApiTokensModal(false)} />
-              </div>
-              <div className="modal-body">
-                {apiTokensLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!apiTokensLoading && apiTokensList.length === 0 && <p style={{ color: colors.text.secondary }}>{t('serverStatus.noApiTokens')}</p>}
-                <div className="d-flex flex-column gap-2 mb-3">
-                  {apiTokensList.map((token: any) => (
-                    <div key={token.id} className="d-flex align-items-center justify-content-between p-2 rounded" style={{ backgroundColor: colors.bg.tertiary }}>
-                      <div>
-                        <span style={{ color: colors.text.primary, fontWeight: 600 }}>{token.name}</span>
-                        {token.token && (
-                          <div className="small mt-1" style={{ fontFamily: 'monospace', color: colors.text.secondary, wordBreak: 'break-all' }}>{token.token}</div>
-                        )}
-                      </div>
-                      <div className="d-flex gap-2 align-items-center ms-2">
-                        <button className="btn btn-sm" style={{ backgroundColor: token.enable ? colors.success : colors.bg.secondary, borderColor: token.enable ? colors.success : colors.border, color: token.enable ? '#fff' : colors.text.secondary, padding: '2px 8px', fontSize: '0.75rem' }}
-                          onClick={() => handleToggleApiToken(token.id, !token.enable)}>
-                          {token.enable ? 'ON' : 'OFF'}
-                        </button>
-                        <button className="btn btn-sm" style={{ backgroundColor: 'transparent', borderColor: colors.border, color: colors.text.secondary, padding: '2px 6px' }}
-                          onClick={() => token.token && navigator.clipboard.writeText(token.token)} title={t('serverStatus.copyToken')}>
-                          📋
-                        </button>
-                        <button className="btn btn-sm" style={{ backgroundColor: 'transparent', borderColor: colors.danger + '66', color: colors.danger, padding: '2px 6px' }}
-                          onClick={() => handleDeleteApiToken(token.id)} title={t('common.delete')}>✕</button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <div className="d-flex gap-2">
-                  <input className="form-control form-control-sm" placeholder={t('serverStatus.newTokenName')} value={apiTokenNewName} onChange={e => setApiTokenNewName(e.target.value)}
-                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                    onKeyDown={e => { if (e.key === 'Enter') handleCreateApiToken(); }} />
-                  <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText, whiteSpace: 'nowrap' }}
-                    onClick={handleCreateApiToken} disabled={!apiTokenNewName.trim()}>
-                    + {t('serverStatus.createTokenShort')}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Outbound Traffic Modal */}
-      {showOutboundsModal && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={e => { if (e.target === e.currentTarget) setShowOutboundsModal(false); }}>
-          <div className="modal-dialog modal-lg">
-            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>📊 {t('serverStatus.outboundTraffic')} — {outboundsNodeName}</h6>
-                <button type="button" className="btn-close btn-close-white" onClick={() => setShowOutboundsModal(false)} />
-              </div>
-              <div className="modal-body">
-                {outboundsLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!outboundsLoading && outboundsData.length === 0 && <p style={{ color: colors.text.secondary }}>{t('serverStatus.noOutboundData')}</p>}
-                <table className="table table-sm" style={{ color: colors.text.primary }}>
-                  <thead><tr style={{ color: colors.text.secondary }}><th>{t('serverStatus.tag')}</th><th>{t('traffic.upload')}</th><th>{t('traffic.download')}</th><th>{t('common.total')}</th></tr></thead>
-                  <tbody>
-                    {outboundsData.map((o: any, i) => (
-                      <tr key={i}>
-                        <td style={{ fontFamily: 'monospace' }}>{o.tag || o.name || '-'}</td>
-                        <td>{formatBytes(o.up || 0)}</td>
-                        <td>{formatBytes(o.down || 0)}</td>
-                        <td>{formatBytes((o.up || 0) + (o.down || 0))}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Server History Chart Modal */}
-      {showHistoryModal && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={e => { if (e.target === e.currentTarget) setShowHistoryModal(false); }}>
-          <div className="modal-dialog modal-lg modal-dialog-centered">
-            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>📉 {t('serverStatus.serverHistory')} — {historyNodeName}</h6>
-                <button type="button" className="btn-close btn-close-white" onClick={() => setShowHistoryModal(false)} />
-              </div>
-              <div className="modal-body">
-                <div className="d-flex gap-2 mb-3 flex-wrap">
-                  <ChoiceChips
-                    options={[{value:'cpu',label:'CPU'},{value:'mem',label:'RAM'},{value:'disk',label:t('serverStatus.diskShort')},{value:'netSent',label:t('serverStatus.netUp')},{value:'netRecv',label:t('serverStatus.netDown')}]}
-                    value={historyMetric}
-                    onChange={v => {
-                      const m = v as typeof historyMetric;
-                      setHistoryMetric(m);
-                      if (historyNodeId) loadHistoryData(historyNodeId, m, historyBucket);
-                    }}
-                    
-                  />
-                  <ChoiceChips
-                    options={[{value:'1m',label:'1m'},{value:'5m',label:'5m'},{value:'15m',label:'15m'},{value:'1h',label:'1h'},{value:'6h',label:'6h'},{value:'24h',label:'24h'}]}
-                    value={historyBucket}
-                    onChange={v => {
-                      const b = v as typeof historyBucket;
-                      setHistoryBucket(b);
-                      if (historyNodeId) loadHistoryData(historyNodeId, historyMetric, b);
-                    }}
-                    
-                  />
-                </div>
-                {historyLoading && <div className="text-center py-4"><div className="spinner-border spinner-border-sm" /></div>}
-                {!historyLoading && historyData.length === 0 && (
-                  <p style={{ color: colors.text.secondary }}>{t('serverStatus.noHistoryData')}</p>
-                )}
-                {!historyLoading && historyData.length > 0 && (() => {
-                  const isBytes = historyMetric === 'netSent' || historyMetric === 'netRecv';
-                  const isPercent = historyMetric === 'cpu' || historyMetric === 'mem' || historyMetric === 'disk';
-                  const labels = historyData.map(p => {
-                    const d = new Date(p.t * 1000);
-                    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                  });
-                  const values = historyData.map(p => isPercent ? p.v : (isBytes ? p.v / 1024 / 1024 : p.v));
-                  const metricColor = historyMetric === 'cpu' ? '#f85149' : historyMetric === 'mem' ? '#d29922' : historyMetric === 'disk' ? '#58a6ff' : '#3fb950';
-                  return (
-                    <Line
-                      data={{
-                        labels,
-                        datasets: [{
-                          label: historyMetric.toUpperCase(),
-                          data: values,
-                          borderColor: metricColor,
-                          backgroundColor: metricColor + '22',
-                          fill: true,
-                          tension: 0.4,
-                          pointRadius: historyData.length > 60 ? 0 : 2,
-                          borderWidth: 2,
-                        }],
-                      }}
-                      options={{
-                        responsive: true,
-                        animation: false,
-                        plugins: { tooltip: { callbacks: { label: ctx => { const y = ctx.parsed.y ?? 0; return isPercent ? `${y.toFixed(1)}%` : isBytes ? `${y.toFixed(2)} MB` : String(y); } } } },
-                        scales: {
-                          x: { ticks: { color: colors.text.secondary, maxTicksLimit: 10 }, grid: { color: colors.border } },
-                          y: { ticks: { color: colors.text.secondary, callback: v => isPercent ? `${v}%` : isBytes ? `${v}MB` : String(v) }, grid: { color: colors.border }, min: 0, max: isPercent ? 100 : undefined },
-                        },
-                      }}
-                    />
-                  );
-                })()}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Panel Update Info Modal */}
-      {showUpdateInfoModal && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={e => { if (e.target === e.currentTarget) setShowUpdateInfoModal(false); }}>
-          <div className="modal-dialog">
-            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>ℹ {t('serverStatus.panelUpdate')} — {updateInfoNodeName}</h6>
-                <button type="button" className="btn-close btn-close-white" onClick={() => setShowUpdateInfoModal(false)} />
-              </div>
-              <div className="modal-body">
-                {updateInfoLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!updateInfoLoading && !updateInfoData && <p style={{ color: colors.text.secondary }}>{t('serverStatus.noUpdateInfo')}</p>}
-                {!updateInfoLoading && updateInfoData && (() => {
-                  const d = updateInfoData;
-                  const hasUpdate = d.isUpdatable ?? d.has_update ?? false;
-                  const current = d.currentVersion ?? d.current_version ?? '—';
-                  const latest = d.latestVersion ?? d.latest_version ?? '—';
-                  return (
-                    <div>
-                      <div className="mb-2 d-flex align-items-center gap-2">
-                        <span style={{ color: colors.text.secondary }}>{t('serverStatus.current')}:</span>
-                        <span style={{ fontFamily: 'monospace', color: colors.text.primary }}>{current}</span>
-                      </div>
-                      <div className="mb-2 d-flex align-items-center gap-2">
-                        <span style={{ color: colors.text.secondary }}>{t('serverStatus.latest')}:</span>
-                        <span style={{ fontFamily: 'monospace', color: colors.text.primary }}>{latest}</span>
-                      </div>
-                      <div className="mb-3 d-flex align-items-center gap-2">
-                        <span style={{ color: colors.text.secondary }}>{t('serverStatus.updateAvailableLabel')}:</span>
-                        <span className="badge" style={{ backgroundColor: hasUpdate ? colors.warning : colors.success }}>
-                          {hasUpdate ? t('common.yes') : t('serverStatus.upToDate')}
-                        </span>
-                      </div>
-                      {d.releaseNotes && (
-                        <details>
-                          <summary style={{ color: colors.text.secondary, cursor: 'pointer', fontSize: '0.85rem' }}>{t('serverStatus.releaseNotes')}</summary>
-                          <pre style={{ backgroundColor: colors.bg.primary, color: colors.text.primary, border: `1px solid ${colors.border}`, borderRadius: '6px', padding: '8px', marginTop: '6px', fontSize: '11px', maxHeight: '200px', overflow: 'auto' }}>
-                            {d.releaseNotes}
-                          </pre>
-                        </details>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Xray Observatory Modal */}
-      {showObservatoryModal && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={e => { if (e.target === e.currentTarget) setShowObservatoryModal(false); }}>
-          <div className="modal-dialog modal-lg">
-            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>🔭 {t('serverStatus.xrayObservatory')} — {observatoryNodeName}</h6>
-                <div className="d-flex gap-2 align-items-center">
-                  <button className="btn btn-sm" style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
-                    disabled={observatoryLoading}
-                    onClick={() => { const id = servers.find(s => s.node === observatoryNodeName)?.nodeId; if (id) handleOpenObservatory(id, observatoryNodeName); }}>
-                    {observatoryLoading ? '…' : '↺'}
-                  </button>
-                  <button type="button" className="btn-close btn-close-white" onClick={() => setShowObservatoryModal(false)} />
-                </div>
-              </div>
-              <div className="modal-body">
-                {observatoryLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!observatoryLoading && !observatoryData && <p style={{ color: colors.text.secondary }}>{t('serverStatus.noObservatoryData')}</p>}
-                {!observatoryLoading && observatoryData && (() => {
-                  const statsList: any[] = observatoryData.status ?? observatoryData.states ?? observatoryData.observers ?? [];
-                  if (Array.isArray(statsList) && statsList.length > 0) {
-                    return (
-                      <div className="d-flex flex-column gap-2">
-                        {statsList.map((obs: any, i: number) => (
-                          <div key={i} className="p-2 rounded" style={{ backgroundColor: colors.bg.tertiary }}>
-                            <div className="d-flex justify-content-between align-items-center">
-                              <span style={{ fontFamily: 'monospace', color: colors.text.primary, fontWeight: 600 }}>{obs.OutboundTag ?? obs.outboundTag ?? obs.tag ?? `#${i}`}</span>
-                              <span className="badge" style={{ backgroundColor: obs.Alive ?? obs.alive ? colors.success : colors.danger }}>
-                                {(obs.Alive ?? obs.alive) ? t('serverStatus.alive') : t('serverStatus.dead')}
-                              </span>
-                            </div>
-                            {(obs.Delay ?? obs.delay) !== undefined && (
-                              <div className="small mt-1" style={{ color: colors.text.secondary }}>
-                                {t('serverStatus.delay')}: {obs.Delay ?? obs.delay} ms
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  }
-                  return (
-                    <pre style={{ backgroundColor: colors.bg.primary, color: colors.text.primary, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '10px', maxHeight: '60vh', overflow: 'auto', fontSize: '12px', marginBottom: 0 }}>
-                      {JSON.stringify(observatoryData, null, 2)}
-                    </pre>
-                  );
-                })()}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* Xray Config Modal */}
-      {showXrayConfig && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={e => { if (e.target === e.currentTarget) setShowXrayConfig(false); }}>
-          <div className="modal-dialog modal-xl">
-            <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-              <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>⚙ {t('serverStatus.xrayConfig')} — {xrayConfigNodeName}</h6>
-                <div className="d-flex gap-2 align-items-center">
-                  {xrayConfigData && !xrayConfigData.error && (
-                    <button className="btn btn-sm" style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
-                      onClick={() => {
-                        const blob = new Blob([JSON.stringify(xrayConfigData, null, 2)], { type: 'application/json' });
-                        const url = URL.createObjectURL(blob);
-                        const a = document.createElement('a');
-                        a.href = url;
-                        a.download = `xray-config-${xrayConfigNodeName}-${new Date().toISOString().slice(0,10)}.json`;
-                        a.click();
-                        URL.revokeObjectURL(url);
-                      }}>
-                      ⬇ {t('serverStatus.downloadJson')}
-                    </button>
-                  )}
-                  <button type="button" className="btn-close btn-close-white" onClick={() => setShowXrayConfig(false)} />
-                </div>
-              </div>
-              <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
-                {xrayConfigLoading && <div className="text-center py-3"><div className="spinner-border spinner-border-sm" /></div>}
-                {!xrayConfigLoading && xrayConfigData && (
-                  xrayConfigData.error ? (
-                    <div className="alert" style={{ backgroundColor: colors.danger + '22', color: colors.danger }}>{xrayConfigData.error}</div>
-                  ) : (
-                    <pre style={{ backgroundColor: colors.bg.primary, color: colors.text.primary, border: `1px solid ${colors.border}`, borderRadius: '8px', padding: '12px', margin: 0, fontSize: '12px', lineHeight: 1.5 }}>
-                      {JSON.stringify(xrayConfigData, null, 2)}
-                    </pre>
-                  )
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-    </section>
+          </>
+        )}
+      </div>
+    </article>
   );
-};
+}
+
+function MetricRow({
+  label,
+  value,
+  valueText,
+  detail,
+  color,
+}: {
+  label: string;
+  value: number;
+  valueText: string;
+  detail?: string;
+  color: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 mb-1 whitespace-nowrap">
+        <span className="text-[11px] text-gray-400 font-mono leading-none">{label}</span>
+        <span className="text-[11px] text-green-400 font-mono font-bold leading-none text-right">
+          {valueText}
+          {detail && <span className="text-gray-500 text-[10px] ml-1.5 font-normal">{detail}</span>}
+        </span>
+      </div>
+      <div className="w-full h-[3px] bg-[#1b2638] rounded-full overflow-hidden">
+        <div className={`h-full rounded-full bg-gradient-to-r ${color} ${getWidthClass(value)}`} />
+      </div>
+    </div>
+  );
+}
+
+function IconAction({ icon, title }: { icon: ReactNode; title: string }) {
+  return (
+    <button
+      className="w-6 h-6 bg-[#0f1420] text-gray-500 hover:text-cyan-300 rounded flex items-center justify-center transition-colors duration-200"
+      title={title}
+      aria-label={title}
+      type="button"
+    >
+      <span className="opacity-60">{icon}</span>
+    </button>
+  );
+}

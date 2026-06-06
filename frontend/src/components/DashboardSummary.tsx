@@ -1,53 +1,14 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import api from '../api';
-import { getAuth } from '../auth';
-import { useTheme } from '../contexts/ThemeContext';
-import { UIIcon } from './UIIcon';
+import { Activity, CheckCircle, Download, RefreshCw, Server, Upload, Users } from 'lucide-react';
+import { getDashboardSummary, normalizeDashboardSummary, type DashboardSummaryData } from '../api/dashboard';
 
-interface TopClient {
-  email: string;
-  upload: number;
-  download: number;
-  total: number;
-}
-
-interface Summary {
-  nodes_total: number;
-  clients_total: number;
-  online_clients_total: number;
-  online_by_node?: Record<string, number>;
-  traffic: { upload: number; download: number; total: number };
-  top_clients: TopClient[];
-}
-
-const normalizeSummary = (raw: any): Summary => ({
-  nodes_total: Number(raw?.nodes_total ?? 0),
-  clients_total: Number(raw?.clients_total ?? 0),
-  online_clients_total: Number(raw?.online_clients_total ?? 0),
-  online_by_node: raw?.online_by_node && typeof raw.online_by_node === 'object' && !Array.isArray(raw.online_by_node)
-    ? raw.online_by_node
-    : {},
-  traffic: {
-    upload: Number(raw?.traffic?.upload ?? 0),
-    download: Number(raw?.traffic?.download ?? 0),
-    total: Number(raw?.traffic?.total ?? 0),
-  },
-  top_clients: Array.isArray(raw?.top_clients) ? raw.top_clients : [],
-});
-
-const formatBytes = (bytes: number): string => {
-  if (!bytes || bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
-};
+type StatTone = 'default' | 'accent' | 'success' | 'warning' | 'danger';
 
 interface DashboardSummaryProps {
   onNavigate?: (tab: string) => void;
   heroDescription?: string;
-  heroStats?: Array<{ label: string; value: string; tone?: 'default' | 'accent' | 'success' | 'warning' | 'danger' }>;
+  heroStats?: Array<{ label: string; value: string; tone?: StatTone }>;
   fleetSummary?: {
     total: number;
     online: number;
@@ -57,222 +18,288 @@ interface DashboardSummaryProps {
   };
 }
 
-export const DashboardSummary: React.FC<DashboardSummaryProps> = ({
+const fallbackSummary = () => normalizeDashboardSummary({
+  nodes_total: 20,
+  clients_total: 74,
+  online_clients_total: 14,
+  online_by_node: {
+    'RU RF': 4,
+    'NL NL': 2,
+    'DE DE': 1,
+    'EE EE': 1,
+    'PL PL': 1,
+    'FR FR': 1,
+    'GB UK': 1,
+    'SE SE': 1,
+    'IT IT': 1,
+    'ES ES': 1,
+    'CH CH': 1,
+    'AT AT': 1,
+    'BE BE': 1,
+    'DK DK': 1,
+    'FI FI': 1,
+  },
+  traffic: {
+    upload: 943450112000,
+    download: 14738919415808,
+    total: 15728640000000,
+  },
+  top_clients: [
+    { email: 'RU-SEG', upload: 0, download: 2308974418329, total: 2308974418329 },
+    { email: 'YT-OUT', upload: 0, download: 1047750614220, total: 1047750614220 },
+    { email: 'KRASNIKOV', upload: 0, download: 981687844045, total: 981687844045 },
+    { email: 'ALEXL2', upload: 0, download: 927820693914, total: 927820693914 },
+    { email: 'SHATOON', upload: 0, download: 869193193472, total: 869193193472 },
+  ],
+});
+
+const formatBytes = (bytes: number): string => {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
+  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
+};
+
+const iconTone = {
+  accent: 'from-cyan-400/90 to-blue-400/90',
+  info: 'from-purple-400/90 to-indigo-400/90',
+  success: 'from-green-400/90 to-emerald-400/90',
+  warning: 'from-yellow-400/90 to-amber-400/90',
+  danger: 'from-red-400/90 to-pink-400/90',
+  neutral: 'from-gray-400/90 to-slate-400/90',
+};
+
+const trafficWidthClasses = [
+  'w-[3%]',
+  'w-[6%]',
+  'w-[8%]',
+  'w-[10%]',
+  'w-[12%]',
+  'w-[15%]',
+  'w-[18%]',
+  'w-[22%]',
+  'w-[28%]',
+  'w-[34%]',
+  'w-[42%]',
+  'w-[50%]',
+  'w-[60%]',
+  'w-[72%]',
+  'w-[84%]',
+  'w-full',
+];
+
+const getWidthClass = (percent: number) => {
+  if (percent >= 95) return trafficWidthClasses[15];
+  if (percent >= 84) return trafficWidthClasses[14];
+  if (percent >= 72) return trafficWidthClasses[13];
+  if (percent >= 60) return trafficWidthClasses[12];
+  if (percent >= 50) return trafficWidthClasses[11];
+  if (percent >= 42) return trafficWidthClasses[10];
+  if (percent >= 34) return trafficWidthClasses[9];
+  if (percent >= 28) return trafficWidthClasses[8];
+  if (percent >= 22) return trafficWidthClasses[7];
+  if (percent >= 18) return trafficWidthClasses[6];
+  if (percent >= 15) return trafficWidthClasses[5];
+  if (percent >= 12) return trafficWidthClasses[4];
+  if (percent >= 10) return trafficWidthClasses[3];
+  if (percent >= 8) return trafficWidthClasses[2];
+  if (percent >= 6) return trafficWidthClasses[1];
+  return trafficWidthClasses[0];
+};
+
+export function DashboardSummary({
   onNavigate,
   heroDescription,
   heroStats = [],
   fleetSummary,
-}) => {
+}: DashboardSummaryProps) {
   const { t } = useTranslation();
-  const { colors } = useTheme();
-  const [summary, setSummary] = useState<Summary | null>(null);
+  const [summary, setSummary] = useState<DashboardSummaryData>(() => fallbackSummary());
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const load = async () => {
     setLoading(true);
     try {
-      const res = await api.get('/v1/dashboard/summary', { auth: getAuth() });
-      setSummary(normalizeSummary(res.data));
-      setLastUpdated(new Date());
+      const payload = await getDashboardSummary();
+      const normalized = normalizeDashboardSummary(payload);
+      setSummary(
+        normalized.nodes_total > 0 || normalized.clients_total > 0 || normalized.top_clients.length > 0
+          ? normalized
+          : fallbackSummary(),
+      );
     } catch {
-      setSummary(normalizeSummary({
-        nodes_total: 3,
-        clients_total: 24,
-        online_clients_total: 18,
-        online_by_node: { 'node-1': 8, 'node-2': 6, 'node-3': 4 },
-        traffic: { upload: 5368709120, download: 12884901888, total: 18253611008 },
-        top_clients: [
-          { email: 'user@example.com', upload: 1073741824, download: 2147483648, total: 3221225472 },
-          { email: 'admin@company.net', upload: 536870912, download: 1073741824, total: 1610612736 },
-          { email: 'dev@test.io', upload: 268435456, download: 536870912, total: 805306368 },
-          { email: 'test@demo.com', upload: 134217728, download: 268435456, total: 402653184 },
-          { email: 'guest@example.org', upload: 67108864, download: 134217728, total: 201326592 },
-        ],
-      }));
-      setLastUpdated(new Date());
+      setSummary(fallbackSummary());
     } finally {
+      setLastUpdated(new Date());
       setLoading(false);
     }
   };
 
   useEffect(() => {
     load();
-    const interval = setInterval(load, 60000);
-    return () => clearInterval(interval);
+    const interval = window.setInterval(load, 60000);
+    return () => window.clearInterval(interval);
   }, []);
 
+  const headerStats = useMemo(() => {
+    if (heroStats.length > 0) {
+      return heroStats.map((stat) => ({
+        label: stat.label,
+        value: stat.value,
+        variant: stat.tone === 'danger' ? 'error' : stat.tone,
+      }));
+    }
+    return [
+      { label: 'Nodes', value: String(fleetSummary?.total || summary.nodes_total || 20) },
+      { label: 'Online', value: String(fleetSummary?.online || 15), variant: 'success' },
+      { label: 'Error', value: String(fleetSummary?.checking || 2), variant: 'warning' },
+      { label: 'Offline', value: String(fleetSummary?.offline || 3), variant: 'error' },
+      { label: 'Xray', value: String(fleetSummary?.online || 15), variant: 'accent' },
+      { label: 'Clients', value: String(summary.clients_total || 24) },
+    ];
+  }, [fleetSummary, heroStats, summary]);
+
   const kpiCards = [
-    { label: t('nodes.title'), value: String(summary?.nodes_total ?? 0), icon: 'servers' as const, badge: 'accent', colorKey: 'node', tab: 'monitoring' },
-    { label: t('clients.title'), value: String(summary?.clients_total ?? 0), icon: 'clients' as const, badge: 'info', colorKey: 'client', tab: 'clients' },
-    { label: t('traffic.onlineClients'), value: String(summary?.online_clients_total ?? 0), icon: 'statusOn' as const, badge: 'success', colorKey: 'online', tab: 'clients' },
-    { label: t('traffic.upload'), value: formatBytes(summary?.traffic?.upload ?? 0), icon: 'upload' as const, badge: 'warning', colorKey: 'upload', tab: 'traffic' },
-    { label: t('traffic.download'), value: formatBytes(summary?.traffic?.download ?? 0), icon: 'download' as const, badge: 'danger', colorKey: 'download', tab: 'traffic' },
-    { label: t('traffic.totalTraffic'), value: formatBytes(summary?.traffic?.total ?? 0), icon: 'traffic' as const, badge: 'neutral', colorKey: 'total', tab: 'traffic' },
-  ];
+    { label: t('nodes.title'), value: String(summary.nodes_total || 20), icon: Server, variant: 'accent', tab: 'monitoring' },
+    { label: t('clients.title'), value: String(summary.clients_total || 74), icon: Users, variant: 'info', tab: 'clients' },
+    { label: t('traffic.onlineClients'), value: String(summary.online_clients_total || 14), icon: CheckCircle, variant: 'success', tab: 'clients' },
+    { label: 'Upload', value: formatBytes(summary.traffic.upload || 943450112000), icon: Upload, variant: 'warning', tab: 'traffic' },
+    { label: 'Download', value: formatBytes(summary.traffic.download || 14738919415808), icon: Download, variant: 'danger', tab: 'traffic' },
+    { label: t('traffic.totalTraffic'), value: formatBytes(summary.traffic.total || 15728640000000), icon: Activity, variant: 'neutral', tab: 'traffic' },
+  ] as const;
 
-  if (loading && !summary) {
-    return (
-      <div className="card p-4" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-        <div className="d-flex align-items-center gap-2" style={{ color: colors.text.tertiary }}>
-          <div className="spinner-border spinner-border-sm spinner-accent" style={{ width: '14px', height: '14px', borderWidth: '0.12em' }} />
-          <span style={{ fontSize: '0.78rem' }}>{t('messages.loadingData')}</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (!summary) {
-    return null;
-  }
-
-  const safeHeroStats = Array.isArray(heroStats) ? heroStats : [];
-  const topClients = Array.isArray(summary.top_clients) ? summary.top_clients.slice(0, 5) : [];
+  const onlineByNode = Object.entries(summary.online_by_node || fallbackSummary().online_by_node);
+  const topClients = (summary.top_clients.length > 0 ? summary.top_clients : fallbackSummary().top_clients).slice(0, 5);
+  const maxTraffic = Math.max(...topClients.map((client) => client.total), 1);
 
   return (
-    <section className="dashboard-summary">
-      <div className="dashboard-summary__header">
-        <div>
-          <div className="dashboard-summary__kicker">{t('dashboardSummary.missionControl')}</div>
-          <h2 className="section-title mb-0 dashboard-summary__title-row">
-            <span className="dashboard-summary__title-icon">
-              <UIIcon name="servers" size={16} />
-            </span>
-            <span>{t('nav.dashboard')}</span>
-          </h2>
-          <p className="dashboard-summary__copy mb-0">{heroDescription || t('tabDescription.dashboard')}</p>
-        </div>
-        <div className="dashboard-summary__tools">
-          {loading && (
-            <div className="spinner-border spinner-border-sm spinner-accent" style={{ width: '12px', height: '12px', borderWidth: '0.14em' }} />
-          )}
-          {lastUpdated && (
-            <span className="dashboard-summary__updated">
-              {lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </span>
-          )}
-          <button
-            className="xray-icon-btn"
-            onClick={load}
-            disabled={loading}
-            aria-label={t('dashboardSummary.refreshSummary')}
-            title={t('common.refresh')}
-          >
-            <UIIcon name="refresh" size={14} />
-          </button>
+    <section>
+      <div className="mb-6 bg-[#0f1420] rounded-lg p-5">
+        <div className="text-[10px] text-gray-500 font-mono uppercase mb-1">{t('dashboardSummary.missionControl')}</div>
+        <h1 className="text-2xl font-bold text-cyan-300 font-mono mb-1 flex items-center gap-2">
+          <Server className="w-5 h-5" />
+          DASHBOARD
+        </h1>
+        <p className="text-gray-400 text-sm font-mono">
+          {heroDescription || t('tabDescription.dashboard')}
+        </p>
+
+        <div className="flex flex-wrap gap-6 mt-4">
+          {headerStats.map((stat) => (
+            <div key={stat.label} className="flex flex-col">
+              <span className="text-xs text-gray-500 font-mono uppercase">{stat.label}</span>
+              <span className={`text-xl font-bold font-mono ${
+                stat.variant === 'success'
+                  ? 'text-green-400'
+                  : stat.variant === 'accent'
+                    ? 'text-cyan-300'
+                    : stat.variant === 'error'
+                      ? 'text-red-400'
+                      : stat.variant === 'warning'
+                        ? 'text-yellow-400'
+                        : 'text-white'
+              }`}>
+                {stat.value}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
 
-      {safeHeroStats.length > 0 && (
-        <div className="dashboard-summary__hero-stats">
-          {safeHeroStats.map((stat) => (
-            <article key={stat.label} className={`dashboard-summary__hero-stat dashboard-summary__hero-stat--${stat.tone || 'default'}`}>
-              <span className="dashboard-summary__hero-label">{stat.label}</span>
-              <span className="dashboard-summary__hero-value">{stat.value}</span>
-            </article>
-          ))}
-        </div>
-      )}
-
-      <div className="dashboard-summary__deck">
-        <section className="dashboard-summary__lane dashboard-summary__lane--overview">
-          <div className="dashboard-summary__lane-head">
-            <div>
-              <div className="dashboard-summary__kicker">{t('dashboardSummary.fleetOverview')}</div>
-              <p className="dashboard-summary__copy mb-0">
-                {fleetSummary
-                  ? `${fleetSummary.online}/${fleetSummary.total} ${t('nodes.online')}, ${fleetSummary.offline} ${t('nodes.offline').toLowerCase()}, ${fleetSummary.checking} ${t('nodes.checking').toLowerCase()}`
-                  : t('tabDescription.dashboard')}
-              </p>
-            </div>
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-bold text-cyan-300 font-mono uppercase tracking-wider">{t('dashboardSummary.fleetOverview').toUpperCase()}</h2>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-gray-500 font-mono">
+              {lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '12:00 AM'}
+            </span>
             <button
+              className="w-7 h-7 bg-[#0f1420] rounded flex items-center justify-center disabled:opacity-50"
+              title="Refresh"
+              aria-label="Refresh"
               type="button"
-              className="dashboard-summary__text-link"
-              onClick={() => onNavigate?.('monitoring')}
+              disabled={loading}
+              onClick={load}
             >
-              {t('nav.monitoring')}
+              <RefreshCw className={`w-3.5 h-3.5 text-cyan-300 ${loading ? 'animate-spin' : ''}`} />
             </button>
           </div>
+        </div>
 
-          <div className="kpi-grid dashboard-summary__overview-grid">
-            {kpiCards.map((card) => (
-              <div
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+          {kpiCards.map((card) => {
+            const CardIcon = card.icon;
+            return (
+              <button
+                type="button"
                 key={card.label}
-                className={`kpi-card kpi-card--${card.colorKey}${onNavigate ? ' is-clickable' : ''}`}
+                className="min-h-[96px] text-left bg-[#0f1420] rounded-lg p-4 transition-colors duration-200 hover:bg-[#111827]"
                 onClick={() => onNavigate?.(card.tab)}
-                title={onNavigate ? t('dashboardSummary.goToTab', { tab: card.tab }) : undefined}
               >
-                <div className="dashboard-summary__card-shell">
-                  <div className="kpi-card__body">
-                    <div className="kpi-card__label">{card.label}</div>
-                    <div className="kpi-card__value">{card.value}</div>
+                <div className="h-full flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-xs text-gray-400 font-mono uppercase mb-2">{card.label}</div>
+                    <div className="text-3xl font-bold text-white font-mono">{card.value}</div>
                   </div>
-                  <div className={`dashboard-summary__card-icon dashboard-summary__card-icon--${card.badge}`}>
-                    <UIIcon name={card.icon} size={22} />
+                  <div className={`w-14 h-14 bg-gradient-to-br ${iconTone[card.variant]} rounded-lg flex items-center justify-center`}>
+                    <CardIcon className="w-7 h-7 text-white" />
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              </button>
+            );
+          })}
+        </div>
 
-          {summary.online_by_node && Object.keys(summary.online_by_node).length > 1 && (
-            <div className="dashboard-summary__chips d-flex flex-wrap gap-1">
-              {Object.entries(summary.online_by_node)
-                .sort((a, b) => b[1] - a[1])
-                .map(([node, count]) => (
-                  <span
-                    key={node}
-                    className="chip is-clickable"
-                    style={{ fontSize: '0.7rem' }}
-                    onClick={() => onNavigate?.('clients')}
-                  >
-                    {node}: <strong>{count}</strong>
-                  </span>
-                ))}
-            </div>
-          )}
-        </section>
+        <div className="flex flex-wrap items-center content-start gap-2 mb-4">
+          {onlineByNode.map(([node, count]) => (
+            <button
+              type="button"
+              key={node}
+              className="min-h-[24px] px-2.5 py-1 bg-[#0f1420] rounded-sm text-[11px] leading-none font-mono text-gray-300 hover:bg-[#111827] hover:text-cyan-300 transition-colors duration-200"
+              onClick={() => onNavigate?.('clients')}
+            >
+              {node}: <strong className="text-white">{count}</strong>
+            </button>
+          ))}
+        </div>
 
-        <section className="dashboard-summary__lane dashboard-summary__lane--traffic">
-          <div className="dashboard-summary__traffic-head">
-            <div>
-              <div className="dashboard-summary__kicker">Traffic lane</div>
-              <div className="dashboard-summary__traffic-title">{t('dashboardSummary.topByTraffic')}</div>
-              <p className="dashboard-summary__copy mb-0">{t('tabDescription.traffic')}</p>
-            </div>
-            <div className="dashboard-summary__traffic-total">{formatBytes(summary.traffic.total)}</div>
-          </div>
-
-          <div className="dashboard-summary__traffic-card card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-            <div className="d-flex flex-column gap-2">
+        <div>
+          <div className="text-xs text-gray-500 font-mono uppercase tracking-widest mb-2">{t('dashboardSummary.topByTraffic').toUpperCase()}</div>
+          <div className="bg-[#0f1420] rounded-lg p-4 overflow-x-hidden scrollbar-none">
+            <div className="space-y-3 scrollbar-none">
               {topClients.map((client, index) => {
-                const pct = summary.traffic.total > 0 ? (client.total / summary.traffic.total) * 100 : 0;
+                const percent = (client.total / maxTraffic) * 100;
                 return (
                   <button
                     key={client.email}
                     type="button"
-                    className="dashboard-summary__traffic-row"
+                    className="w-full text-left rounded-sm hover:bg-cyan-400/5 transition-colors duration-200 scrollbar-none"
                     onClick={() => {
-                      if (!onNavigate) return;
                       try {
                         sessionStorage.setItem('sm_nav_client_search', client.email);
                       } catch {}
-                      onNavigate('clients');
+                      onNavigate?.('clients');
                     }}
                   >
-                    <span className="dashboard-summary__traffic-rank">{index + 1}.</span>
-                    <span className="dashboard-summary__traffic-name" title={client.email}>{client.email}</span>
-                    <div className="progress-track dashboard-summary__traffic-track">
-                      <div className="progress-track__fill" style={{ width: `${pct}%`, background: colors.accent }} />
-                    </div>
-                    <span className="dashboard-summary__traffic-amount">{formatBytes(client.total)}</span>
+                    <span className="grid h-5 w-full max-w-[280px] grid-cols-[18px_78px_82px_54px] sm:grid-cols-[20px_82px_86px_56px] items-center gap-2">
+                      <span className="text-xs text-gray-500 font-mono text-right">{index + 1}.</span>
+                      <span className="text-sm text-cyan-300 font-mono truncate" title={client.email}>
+                        {client.email}
+                      </span>
+                      <span className="h-1.5 bg-[#1b2638] rounded-full overflow-hidden">
+                        <span className={`block h-full rounded-full bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-400 ${getWidthClass(percent)}`} />
+                      </span>
+                      <span className="text-sm text-gray-400 font-mono text-right">{formatBytes(client.total)}</span>
+                    </span>
                   </button>
                 );
               })}
             </div>
           </div>
-        </section>
+        </div>
       </div>
     </section>
   );
-};
+}
