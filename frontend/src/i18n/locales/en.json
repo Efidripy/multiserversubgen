@@ -825,7 +825,7 @@
   "language": {
     "title": "Language",
     "en": "English",
-    "ru": "Ð ÑƒÑÑÐºÐ¸Ð¹"
+    "ru": "Русский"
   },
   "sidebar": {
     "themeLabel": "Theme",
@@ -839,7 +839,8 @@
     "keyboardShortcutsTitle": "Keyboard shortcuts",
     "shortcuts": "Shortcuts",
     "apiDocsTitle": "Open FastAPI interactive documentation",
-    "apiDocs": "API Docs"
+    "apiDocs": "API Docs",
+    "backToSelector": "Home"
   },
   "auth": {
     "username": "Username",

@@ -1,27 +1,22 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import api from '../api';
+import { downloadNodeBackup } from '../api/backup';
+import {
+  checkNodeConnection,
+  createNode,
+  deleteNode,
+  getNodeDashboardOverview,
+  getNodePanelUpdateInfo,
+  updateNode,
+  type NodeRecord,
+} from '../api/nodes';
+import { restartXray } from '../api/serverOps';
 import { useTheme } from '../contexts/ThemeContext';
-import { getAuth } from '../auth';
 import { UIIcon } from './UIIcon';
 import { useToast } from './Toast';
 import EmptyState from './EmptyState';
 
-interface Node {
-  id: number;
-  name: string;
-  ip: string;
-  port: string;
-  url?: string;
-  scheme?: string;
-  base_path?: string;
-  read_only?: boolean;
-  api_version?: string;
-  panel_version?: string;
-  user?: string;
-  password?: string;
-  bearer_token?: string;
-}
+type Node = NodeRecord;
 
 interface BatchPreviewRow {
   name: string;
@@ -38,17 +33,45 @@ const NODE_SNAPSHOT_TTL_MS = 20_000;
 type NodeSnapshotPayload = {
   nodes: Node[];
   statuses: Record<number, boolean | null>;
+  clientCounts: Record<number, number>;
+  inboundCounts: Record<number, number>;
+  countsIncluded: boolean;
 };
 
 let sharedNodeSnapshot: NodeSnapshotPayload | null = null;
 let sharedNodeSnapshotTs = 0;
 let sharedNodeSnapshotInFlight: Promise<NodeSnapshotPayload> | null = null;
+let sharedNodeSnapshotInFlightIncludesCounts = false;
 
-export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean; showFleet?: boolean; dashboardMode?: boolean }> = ({
+const getNodeDisplayAddress = (node: Node): string => {
+  if (node.url) {
+    try {
+      return new URL(node.url).host;
+    } catch {
+      return node.url.replace(/^https?:\/\//, '');
+    }
+  }
+  const host = node.ip || node.name;
+  const port = node.port ? `:${node.port}` : '';
+  return `${host}${port}`;
+};
+
+const getNodePanelUrl = (node: Node): string => {
+  if (node.url) return node.url;
+  const scheme = node.scheme || 'http';
+  const host = node.ip || node.name;
+  const port = node.port ? `:${node.port}` : '';
+  const basePath = (node.base_path || '').replace(/^\/|\/$/g, '');
+  return `${scheme}://${host}${port}${basePath ? `/${basePath}/` : '/'}`;
+};
+
+export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean; showIntakeStrip?: boolean; showFleet?: boolean; dashboardMode?: boolean; includeCounts?: boolean }> = ({
   onReload,
   showIntake = true,
+  showIntakeStrip = false,
   showFleet = true,
   dashboardMode = false,
+  includeCounts,
 }) => {
   const { colors } = useTheme();
   const { toast } = useToast();
@@ -102,6 +125,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
   const [showEditModal, setShowEditModal] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(false);
   const [readOnlyUpdating, setReadOnlyUpdating] = useState<Record<number, boolean>>({});
+  const showIntakeController = showIntake || showIntakeStrip;
 
   const invalidateSharedSnapshot = () => {
     sharedNodeSnapshot = null;
@@ -130,41 +154,45 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
   }, []);
 
   const loadNodes = async () => {
+    if (!showFleet) {
+      setStatusLoading(false);
+      return;
+    }
+
     try {
       const now = Date.now();
-      if (sharedNodeSnapshot && now - sharedNodeSnapshotTs < NODE_SNAPSHOT_TTL_MS) {
+      const shouldIncludeCounts = includeCounts ?? !dashboardMode;
+      if (
+        sharedNodeSnapshot &&
+        now - sharedNodeSnapshotTs < NODE_SNAPSHOT_TTL_MS &&
+        (!shouldIncludeCounts || sharedNodeSnapshot.countsIncluded)
+      ) {
         setNodes(sharedNodeSnapshot.nodes);
         setNodeStatuses(sharedNodeSnapshot.statuses);
+        setNodeClientCounts(sharedNodeSnapshot.clientCounts);
+        setNodeInboundCounts(sharedNodeSnapshot.inboundCounts);
         setStatusLoading(false);
         return;
       }
 
-      if (!sharedNodeSnapshotInFlight) {
+      if (!sharedNodeSnapshotInFlight || (shouldIncludeCounts && !sharedNodeSnapshotInFlightIncludesCounts)) {
+        sharedNodeSnapshotInFlightIncludesCounts = shouldIncludeCounts;
         sharedNodeSnapshotInFlight = (async () => {
-          const { user, password: pwd } = getAuth();
-          const auth = { username: user, password: pwd };
-          const nodesRes = await api.get('/v1/nodes', { auth });
-          const nodeList = Array.isArray(nodesRes.data) ? nodesRes.data : [];
-          const statuses: Record<number, boolean | null> = {};
-
-          await Promise.all(
-            nodeList.map(async (node) => {
-              try {
-                const response = await api.get(`/v1/nodes/${node.id}/server-status`, { auth });
-                statuses[node.id] = Boolean(response.data?.available);
-              } catch {
-                statuses[node.id] = false;
-              }
-            }),
-          );
-
-          const payload: NodeSnapshotPayload = { nodes: nodeList, statuses };
+          const overview = await getNodeDashboardOverview({ includeCounts: shouldIncludeCounts });
+          const nodeList = overview.nodes;
+          const payload: NodeSnapshotPayload = {
+            nodes: nodeList,
+            statuses: overview.statuses,
+            clientCounts: overview.clientCounts,
+            inboundCounts: overview.inboundCounts,
+            countsIncluded: shouldIncludeCounts,
+          };
           sharedNodeSnapshot = payload;
           sharedNodeSnapshotTs = Date.now();
 
           try {
             localStorage.setItem(NODE_LIST_CACHE_KEY, JSON.stringify(nodeList));
-            localStorage.setItem(NODE_STATUS_CACHE_KEY, JSON.stringify(statuses));
+            localStorage.setItem(NODE_STATUS_CACHE_KEY, JSON.stringify(overview.statuses));
           } catch {
             // Ignore cache failures.
           }
@@ -172,6 +200,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
           return payload;
         })().finally(() => {
           sharedNodeSnapshotInFlight = null;
+          sharedNodeSnapshotInFlightIncludesCounts = false;
         });
       }
 
@@ -179,29 +208,19 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
       const payload = await sharedNodeSnapshotInFlight;
       setNodes(payload.nodes);
       setNodeStatuses(payload.statuses);
+      setNodeClientCounts(payload.clientCounts);
+      setNodeInboundCounts(payload.inboundCounts);
       setStatusLoading(false);
 
-      // Fetch versions, ping, and client counts in background for online nodes
+      // Fetch visible version/latency enrichment in the background.
       payload.nodes.forEach((node: { id: number; name: string }) => {
         if (payload.statuses[node.id] !== true) return;
         const t0 = Date.now();
-        api.get(`/v1/nodes/${node.id}/panel-update-info`, { auth: getAuth() })
+        getNodePanelUpdateInfo(node.id)
           .then(res => {
             setNodePing(prev => ({ ...prev, [node.id]: Date.now() - t0 }));
-            const ver = res.data?.currentVersion ?? res.data?.current_version;
+            const ver = res?.currentVersion ?? res?.current_version;
             if (ver) setNodeVersions(prev => ({ ...prev, [node.id]: ver }));
-          })
-          .catch(() => {});
-        api.get('/v1/clients', { auth: getAuth(), params: { node_id: node.id } })
-          .then(res => {
-            const count = (res.data?.clients ?? res.data ?? []).length;
-            if (count > 0) setNodeClientCounts(prev => ({ ...prev, [node.id]: count }));
-          })
-          .catch(() => {});
-        api.get(`/v1/nodes/${node.id}/inbounds`, { auth: getAuth() })
-          .then(res => {
-            const count = (res.data?.inbounds ?? res.data ?? []).length;
-            if (count > 0) setNodeInboundCounts(prev => ({ ...prev, [node.id]: count }));
           })
           .catch(() => {});
       });
@@ -213,7 +232,9 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
   };
 
   useEffect(() => {
-    loadNodes();
+    if (showFleet) {
+      loadNodes();
+    }
   }, []);
 
   const filteredNodes = nodes.filter(n => !filterTag || (nodeTags[n.id] || []).includes(filterTag));
@@ -253,8 +274,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
         payload.password = formData.password;
       }
 
-      const { user: u, password: p } = getAuth();
-      await api.post('/v1/nodes', payload, { auth: { username: u, password: p } });
+      await createNode(payload);
       setFormData({ name: '', url: '', user: '', password: '', bearer_token: '' });
       setSuccess(t('nodes.addSuccess'));
       invalidateSharedSnapshot();
@@ -297,10 +317,8 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     setError('');
     setSuccess('');
     try {
-      const { user: bu, password: bp } = getAuth();
-      const batchAuth = { username: bu, password: bp };
       const results = await Promise.allSettled(
-        batchPreview.map((row) => api.post('/v1/nodes', row, { auth: batchAuth }))
+        batchPreview.map((row) => createNode(row))
       );
       const succeeded = results.filter((result) => result.status === 'fulfilled').length;
       const failed = results.length - succeeded;
@@ -338,8 +356,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     setError('');
     setSuccess('');
     try {
-      const { user: du, password: dp } = getAuth();
-      await api.delete(`/v1/nodes/${id}`, { auth: { username: du, password: dp } });
+      await deleteNode(id);
       invalidateSharedSnapshot();
       loadNodes();
       onReload();
@@ -356,12 +373,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     setError('');
     setSuccess('');
     try {
-      const { user: ru, password: rp } = getAuth();
-      await api.put(
-        `/v1/nodes/${node.id}`,
-        { read_only: nextReadOnly },
-        { auth: { username: ru, password: rp } },
-      );
+      await updateNode(node.id, { read_only: nextReadOnly });
       setNodes((prev) =>
         prev.map((n) => (n.id === node.id ? { ...n, read_only: nextReadOnly } : n))
       );
@@ -391,8 +403,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     setLoading(true);
     setError('');
     try {
-      const { user: eu, password: ep } = getAuth();
-      await api.put(`/v1/nodes/${editingNode.id}`, { name: trimmed }, { auth: { username: eu, password: ep } });
+      await updateNode(editingNode.id, { name: trimmed });
       setShowEditModal(false);
       setEditingNode(null);
       invalidateSharedSnapshot();
@@ -432,9 +443,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
         checkData.password = formData.password;
       }
       
-      const { user: cu, password: cp } = getAuth();
-      const res = await api.post('/v1/nodes/check-connection', checkData, { auth: { username: cu, password: cp } });
-      const payload = res.data || {};
+      const payload = await checkNodeConnection(checkData);
       if (payload.success) {
         const count = Number.isFinite(payload.inbounds_count) ? payload.inbounds_count : null;
         setSuccess(count !== null ? t('nodes.connectionOkWithInbounds', { count }) : t('nodes.connectionOk'));
@@ -449,17 +458,17 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
   };
 
   return (
-    <div className="node-manager">
-      {showIntake && (
-      <section className="panel-block mb-4">
+    <div className={`node-manager${dashboardMode ? ' node-manager--dashboard-root' : ''}${showIntakeStrip ? ' node-manager--intake-strip-mode' : ''}`}>
+      {showIntakeController && (
+      <section className={`panel-block mb-4${showIntakeStrip ? ' node-intake-strip' : ''}`}>
           <div className="panel-block__header">
             <div>
               <h6 className="panel-block__title">{t('nodes.intakeTitle')}</h6>
               <p className="panel-block__hint">{t('nodes.intakeHint')}</p>
             </div>
             <button
-              className="btn btn-sm"
-              style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+              className={showIntakeStrip ? 'node-intake-strip__action' : 'btn btn-sm'}
+              style={showIntakeStrip ? undefined : { backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
               onClick={() => { setShowForm(!showForm); setSuccess(''); setError(''); }}
             >
               <span className="d-inline-flex align-items-center gap-1">
@@ -687,15 +696,14 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
             disabled={statusLoading || nodes.length === 0}
             onClick={async () => {
               setStatusLoading(true);
-              const { user, password } = getAuth();
               const results = await Promise.allSettled(nodes.map(async node => {
-                const nodeUrl = node.url || `${(node as any).scheme || 'http'}://${node.ip}:${node.port}`;
+                const nodeUrl = getNodePanelUrl(node);
                 const connPayload: Record<string, string> = { url: nodeUrl };
                 if (node.bearer_token) connPayload.bearer_token = node.bearer_token;
                 else { connPayload.user = node.user ?? ''; connPayload.password = node.password ?? ''; }
                 try {
-                  const res = await api.post('/v1/nodes/check-connection', connPayload, { auth: { username: user, password } });
-                  return { id: node.id, ok: res.data?.success === true };
+                  const payload = await checkNodeConnection(connPayload);
+                  return { id: node.id, ok: payload?.success === true };
                 } catch { return { id: node.id, ok: false }; }
               }));
               const newStatuses: Record<number, boolean | null> = { ...nodeStatuses };
@@ -713,6 +721,12 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
           </button>}
         </div>}
 
+        {error && !showIntake && (
+          <div className="alert alert-danger mb-3" role="alert">
+            {error}
+          </div>
+        )}
+
         {selectedNodeIds.size > 0 && !dashboardMode && (
           <div className="d-flex gap-2 mb-2 align-items-center p-2 rounded" style={{ backgroundColor: colors.bg.tertiary, border: `1px solid ${colors.border}` }}>
             <span className="small" style={{ color: colors.text.secondary }}>{t('nodes.selectedInline', { count: selectedNodeIds.size })}</span>
@@ -720,12 +734,11 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
               title={t('nodes.downloadSelectedBackupsTitle')}
               onClick={async () => {
                 if (!window.confirm(t('nodes.confirmDownloadSelectedBackups', { count: selectedNodeIds.size }))) return;
-                const auth = getAuth();
                 let ok = 0, fail = 0;
                 for (const id of selectedNodeIds) {
                   try {
-                    const res = await api.get(`/v1/backup/node/${id}`, { auth, responseType: 'blob' });
-                    const url = URL.createObjectURL(res.data);
+                    const blob = await downloadNodeBackup(id);
+                    const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
                     a.download = `backup_node${id}_${new Date().toISOString().slice(0,10)}.db`;
@@ -742,10 +755,9 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
               title={t('nodes.restartSelectedXrayTitle')}
               onClick={async () => {
                 if (!window.confirm(t('nodes.confirmRestartSelectedXray', { count: selectedNodeIds.size }))) return;
-                const { user, password } = getAuth();
                 let ok = 0, fail = 0;
                 for (const id of selectedNodeIds) {
-                  try { await api.post(`/v1/servers/${id}/restart-xray`, {}, { auth: { username: user, password } }); ok++; }
+                  try { await restartXray(id); ok++; }
                   catch { fail++; }
                 }
                 toast(t('nodes.restartSelectedResult', { ok, fail }), ok > 0 ? 'success' : 'error');
@@ -799,7 +811,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
 
                     <div className="registered-fleet__meta">
                       <span className="registered-fleet__scheme">{node.scheme || 'https'}</span>
-                      <span className="registered-fleet__address">{node.ip}:{node.port}</span>
+                      <span className="registered-fleet__address">{getNodeDisplayAddress(node)}</span>
                     </div>
 
                     <div className="registered-fleet__status-row node-manager__fleet-status-row">
@@ -838,8 +850,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                   const dotColor = status === true ? colors.success : status === false ? colors.danger : colors.text.secondary;
                   const statusLabel = status === true ? t('nodes.online') : status === false ? t('nodes.offline') : t('nodes.checking');
                   const tags = nodeTags[node.id] || [];
-                  const _bp = (node.base_path || '').replace(/^\/|\/$/g, '');
-                  const panelUrl = `${node.scheme || 'http'}://${node.ip}:${node.port}${_bp ? '/' + _bp + '/' : '/'}`;
+                  const panelUrl = getNodePanelUrl(node);
                   return (
                     <React.Fragment key={node.id}>
                       <tr>
@@ -899,7 +910,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                                         {node.scheme}
                                       </span>
                                     )}
-                                    {node.ip}:{node.port}
+                                    {getNodeDisplayAddress(node)}
                                   </div>
                                 </div>
                                 {(nodePing[node.id] || status !== undefined) && (
@@ -925,7 +936,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                                 {node.scheme}
                               </span>
                             )}
-                            {node.ip}:{node.port}
+                            {getNodeDisplayAddress(node)}
                           </div>
                           {(nodeVersions[node.id] || nodePing[node.id] || nodeClientCounts[node.id] || nodeInboundCounts[node.id]) && (
                             <div className={`d-flex flex-wrap gap-2 align-items-center${dashboardMode ? ' node-manager__meta-line' : ''}`} style={{ marginTop: '3px', fontSize: '0.67rem', color: colors.text.tertiary, lineHeight: 1.3 }}>
@@ -1003,16 +1014,16 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                               style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary }}
                               title={t('nodes.testThisConnectionTitle')}
                               onClick={async () => {
-                                const nodeUrl = node.url || `${(node as any).scheme || 'http'}://${node.ip}:${node.port}`;
+                                const nodeUrl = getNodePanelUrl(node);
                                 const singlePayload: Record<string, string> = { url: nodeUrl };
                                 if (node.bearer_token) singlePayload.bearer_token = node.bearer_token;
                                 else { singlePayload.user = node.user ?? ''; singlePayload.password = node.password ?? ''; }
                                 const t0 = Date.now();
                                 setNodeStatuses(prev => ({ ...prev, [node.id]: null }));
                                 try {
-                                  const res = await api.post('/v1/nodes/check-connection', singlePayload, { auth: getAuth() });
+                                  const payload = await checkNodeConnection(singlePayload);
                                   const ping = Date.now() - t0;
-                                  const ok = res.data?.success === true;
+                                  const ok = payload?.success === true;
                                   setNodeStatuses(prev => ({ ...prev, [node.id]: ok }));
                                   if (ok) setNodePing(prev => ({ ...prev, [node.id]: ping }));
                                   toast(`${node.name}: ${ok ? t('nodes.onlineWithPing', { ping }) : t('nodes.offline')}`, ok ? 'success' : 'error');

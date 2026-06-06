@@ -1,0 +1,9 @@
+{
+  "phase": "sidebar_footer_state_perfection",
+  "status": "success",
+  "collapsed_footer_hidden_extra_items": true,
+  "back_to_selector_not_lost": true,
+  "language_switcher_parity_matched": true,
+  "mobile_drawer_footer_isolated": true,
+  "frontend_build_status": "passed"
+}

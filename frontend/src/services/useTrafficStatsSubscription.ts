@@ -72,7 +72,7 @@ export function useTrafficStatsSubscription({
       .filter((c, idx, arr) => Boolean(c) && arr.indexOf(c) === idx)
       .sort()
       .join(',');
-  }, [channels.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [channels.join(',')]);
 
   const normalizedChannels = useMemo(
     () => channelsKey.split(',').filter(Boolean),
