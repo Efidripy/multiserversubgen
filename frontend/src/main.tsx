@@ -1,9 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import 'bootstrap/dist/css/bootstrap.min.css';
 import './App.css';
-import './styles/theme-dark.css';
-import './styles/theme-light.css';
 import './i18n/config';
 import i18next from 'i18next';
 import { App } from './App';

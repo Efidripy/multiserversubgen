@@ -36,18 +36,18 @@ export const useTheme = () => {
 
 const COLORS: ThemeContextType['colors'] = {
   bg: {
-    primary:   '#000000',
-    secondary: '#0a0a0a',
-    tertiary:  '#111111',
+    primary:   '#0a0e1a',
+    secondary: '#0f1420',
+    tertiary:  '#111827',
   },
   text: {
     primary:   '#f0f0f0',
     secondary: '#a0a0a0',
     tertiary:  '#666666',
   },
-  border:      '#222222',
-  accent:      '#e0e0e0',
-  accentText:  '#000000',
+  border:      'transparent',
+  accent:      '#22d3ee',
+  accentText:  '#06111f',
   success:     '#4ade80',
   successText: '#000000',
   warning:     '#facc15',
