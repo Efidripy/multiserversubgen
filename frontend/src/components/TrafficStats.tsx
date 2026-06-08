@@ -56,6 +56,21 @@ interface OnlineClient {
   node_name: string;
 }
 
+type TrafficStatsValue = {
+  up?: number;
+  down?: number;
+  upload?: number;
+  download?: number;
+  bytes_sent?: number;
+  bytes_recv?: number;
+  sent?: number;
+  recv?: number;
+  traffic_up_bytes?: number;
+  traffic_down_bytes?: number;
+  total?: number;
+  traffic_total_bytes?: number;
+};
+
 const normalizeEmailKey = (email: string): string => email.trim().toLowerCase();
 const TRAFFIC_STATS_CACHE_KEY = 'sub_manager_traffic_stats_cache_v1';
 const TRAFFIC_STATS_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
@@ -67,6 +82,21 @@ type TrafficStatsCache = {
 };
 
 const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
+const toFiniteNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const normalizeTrafficValue = (raw: TrafficStatsValue) => {
+  const upload = toFiniteNumber(raw.up ?? raw.upload ?? raw.bytes_sent ?? raw.sent ?? raw.traffic_up_bytes);
+  const download = toFiniteNumber(raw.down ?? raw.download ?? raw.bytes_recv ?? raw.recv ?? raw.traffic_down_bytes);
+  const total = toFiniteNumber(raw.total ?? raw.traffic_total_bytes);
+  return {
+    upload,
+    download,
+    total: total > 0 ? total : upload + download,
+  };
+};
 
 export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => void }> = ({ onNavigateToClient }) => {
   const { t } = useTranslation();
@@ -135,15 +165,14 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
         params: { group_by: nextGroupBy, period: nextPeriod, limit },
         signal: controller.signal,
       });
-      const statsObj: Record<string, { up: number; down: number; total: number }> = res.data?.stats || {};
+      const statsObj: Record<string, TrafficStatsValue> = res.data?.stats || {};
       const parsed: TrafficData[] = Object.entries(statsObj).map(([key, s]) => {
+        const traffic = normalizeTrafficValue(s);
         if (nextGroupBy === 'node') {
           return {
             email: key,
             node_name: key,
-            upload: s.up || 0,
-            download: s.down || 0,
-            total: (s.total || 0) === 0 ? (s.up || 0) + (s.down || 0) : (s.total || 0),
+            ...traffic,
           };
         }
         if (nextGroupBy === 'inbound') {
@@ -153,16 +182,12 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
           return {
             email: inboundName || key,
             node_name: nodeName || undefined,
-            upload: s.up || 0,
-            download: s.down || 0,
-            total: (s.total || 0) === 0 ? (s.up || 0) + (s.down || 0) : (s.total || 0),
+            ...traffic,
           };
         }
         return {
           email: key,
-          upload: s.up || 0,
-          download: s.down || 0,
-          total: (s.total || 0) === 0 ? (s.up || 0) + (s.down || 0) : (s.total || 0),
+          ...traffic,
         };
       });
 
@@ -226,12 +251,12 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
         params: { group_by: 'client', period: nextPeriod, limit: 1000 },
         signal: controller.signal,
       });
-      const statsObj: Record<string, { up: number; down: number; total: number }> = res.data?.stats || {};
+      const statsObj: Record<string, TrafficStatsValue> = res.data?.stats || {};
       const totals: Record<string, number> = {};
       Object.entries(statsObj).forEach(([email, s]) => {
         const key = normalizeEmailKey(email);
         if (!key) return;
-        const value = (s.total || 0) === 0 ? (s.up || 0) + (s.down || 0) : (s.total || 0);
+        const value = normalizeTrafficValue(s).total;
         totals[key] = (totals[key] || 0) + value;
       });
       setOnlineTrafficTotals(totals);
@@ -273,9 +298,11 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   });
 
   const formatBytes = (bytes: number) => {
-    if (bytes === 0) return '0 GB';
-    const gb = bytes / 1073741824;
-    return gb.toFixed(2) + ' GB';
+    const value = Math.max(0, Number(bytes) || 0);
+    if (value === 0) return '0 GB';
+    const tb = value / 1099511627776;
+    if (tb >= 1) return `${tb.toFixed(2)} TB`;
+    return `${(value / 1073741824).toFixed(2)} GB`;
   };
 
   const compareText = (a: string, b: string) =>
@@ -383,8 +410,8 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     labels: sortedTraffic.map(d => d.email || d.node_name || t('traffic.unknown')),
     datasets: [
       {
-        label: t('traffic.downloadGbLabel'),
-        data: sortedTraffic.map(d => (d.download / 1073741824).toFixed(2)),
+        label: t('traffic.download'),
+        data: sortedTraffic.map(d => d.download),
         backgroundColor: chartAccent + 'CC',
         borderColor: chartAccent,
         borderWidth: 1.2,
@@ -423,6 +450,12 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
         displayColors: false,
         padding: 10,
         cornerRadius: 10,
+        callbacks: {
+          label: (context: any) => {
+            const datasetLabel = context?.dataset?.label || '';
+            return `${datasetLabel}: ${formatBytes(Number(context?.parsed?.y || 0))}`;
+          },
+        },
       },
     },
     interaction: {
@@ -485,6 +518,26 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     { label: t('traffic.total'), value: formatBytes(totalTraffic), color: 'text-indigo-200', bar: 'from-indigo-400 to-cyan-300' },
   ];
 
+  const isColdLoading = loading && trafficData.length === 0;
+  const renderChartSkeleton = () => (
+    <div className="relative h-full min-w-0 overflow-hidden rounded-lg bg-[#0a0e1a] p-4">
+      <div className="absolute inset-x-4 top-10 h-px bg-cyan-500/10" />
+      <div className="absolute inset-x-4 top-1/3 h-px bg-cyan-500/10" />
+      <div className="absolute inset-x-4 top-2/3 h-px bg-cyan-500/10" />
+      <div className="absolute inset-x-4 bottom-10 h-px bg-cyan-500/10" />
+      <div className="flex h-full items-end gap-3 pt-10">
+        {[44, 72, 58, 86, 34, 64, 76, 48].map((height, idx) => (
+          <div key={idx} className="flex min-w-0 flex-1 items-end">
+            <div
+              className="w-full animate-pulse rounded-t-md bg-cyan-300/20"
+              style={{ height: `${height}%`, animationDelay: `${idx * 90}ms` }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   const renderNodeChips = (item: TrafficData) => (
     <div className="mt-2 flex min-w-0 flex-wrap gap-1">
       {item.node_name && groupBy === 'client' && (
@@ -512,7 +565,11 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
               <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500">{metric.label}</div>
-                  <div className={cn('mt-4 text-2xl font-medium leading-none', metricClass, metric.color)}>{metric.value}</div>
+                  {isColdLoading ? (
+                    <div className="mt-4 h-7 w-28 animate-pulse rounded-md bg-cyan-300/10" />
+                  ) : (
+                    <div className={cn('mt-4 text-2xl font-medium leading-none', metricClass, metric.color)}>{metric.value}</div>
+                  )}
                 </div>
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-[#0a0e1a] text-cyan-300"><UIIcon name="traffic" size={16} /></div>
               </div>
@@ -561,14 +618,14 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
           </div>
           <div className={cn(panelClass, 'lg:col-span-2')}>
             <div className="mb-4 flex min-w-0 items-center justify-between gap-3"><h6 className={titleClass}>{t('traffic.topBy', { count: topN, entity: topByEntity })}</h6><span className={cn(metricClass, 'text-right text-xs text-slate-500')}>{formatBytes(totalTraffic)}</span></div>
-            <div className="h-[320px] min-w-0 lg:h-[400px]">{loading ? <div className="flex h-full flex-col items-center justify-center gap-2 text-xs text-slate-500"><UIIcon name="spinner" size={18} className="animate-spin text-cyan-300" /><span className="whitespace-nowrap">{t('messages.loadingData')}</span></div> : <Bar data={topClientsData} options={chartOptions} />}</div>
+            <div className="h-[320px] min-w-0 lg:h-[400px]">{loading ? renderChartSkeleton() : <Bar data={topClientsData} options={chartOptions} />}</div>
           </div>
         </section>
 
         <section className={panelClass}>
           <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><h6 className={titleClass}>{t('traffic.onlineClients')} ({onlineClients.length})</h6><div className="text-xs text-slate-500">{onlineLoading ? t('traffic.loadingOnline') : t('traffic.sortHint')}</div></div>
           {onlineLoading && <div className="mb-4 h-1 overflow-hidden rounded-full bg-[#0a0e1a]"><div className="h-full w-1/2 animate-pulse rounded-full bg-cyan-300" /></div>}
-          {onlineLoading && onlineClients.length === 0 ? <div className="flex items-center justify-center py-10"><UIIcon name="spinner" size={18} className="animate-spin text-cyan-300" /></div> : onlineClients.length === 0 ? <div className="flex justify-center py-10 text-sm text-slate-500">{t('traffic.noClientsOnline')}</div> : <>
+          {onlineLoading && onlineClients.length === 0 ? <div className="grid gap-2 py-2">{Array.from({ length: 4 }).map((_, idx) => <div key={idx} className="h-12 animate-pulse rounded-lg border border-cyan-500/10 bg-[#0a0e1a]" style={{ animationDelay: `${idx * 90}ms` }} />)}</div> : onlineClients.length === 0 ? <div className="flex justify-center py-10 text-sm text-slate-500">{t('traffic.noClientsOnline')}</div> : <>
             <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 lg:block"><table className="w-full table-fixed border-collapse text-sm"><thead><tr className="border-b border-cyan-500/20 bg-cyan-500/5"><th className="px-4 py-3 text-left"><button type="button" className={headerButtonClass} onClick={() => applyOnlineSortFromHeader('email')}>Email{onlineSortIndicator('email')}</button></th><th className="w-48 px-4 py-3 text-left"><button type="button" className={headerButtonClass} onClick={() => applyOnlineSortFromHeader('node')}>{t('traffic.node')}{onlineSortIndicator('node')}</button></th><th className="w-40 px-4 py-3 text-right"><button type="button" className={cn(headerButtonClass, 'justify-end')} onClick={() => applyOnlineSortFromHeader('traffic')}>{t('traffic.total')}{onlineSortIndicator('traffic')}</button></th></tr></thead><tbody>{sortedOnlineClients.map(client => <tr key={`${client.node_name}:${client.email}`} className="border-b border-cyan-500/10 hover:bg-cyan-400/5"><td className="min-w-0 px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="h-2 w-2 shrink-0 rounded-full bg-emerald-300" /><strong className="truncate text-slate-100" title={client.email}>{client.email}</strong></div></td><td className="px-4 py-3"><span className="inline-flex max-w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-2 py-1 text-xs font-medium text-slate-300"><span className="truncate">{client.node_name}</span></span></td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-slate-300')}>{formatBytes(onlineTrafficTotals[normalizeEmailKey(client.email)] || 0)}</span></td></tr>)}</tbody></table></div>
             <div className="grid min-w-0 grid-cols-1 gap-2 lg:hidden">{sortedOnlineClients.map(client => <article key={`${client.node_name}:${client.email}`} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-3"><div className="flex min-w-0 items-start justify-between gap-3"><div className="min-w-0"><div className="flex min-w-0 items-center gap-2"><span className="h-2 w-2 shrink-0 rounded-full bg-emerald-300" /><strong className="truncate text-sm text-slate-100" title={client.email}>{client.email}</strong></div><div className="mt-2 inline-flex max-w-full rounded-md border border-cyan-500/20 px-2 py-1 text-xs text-slate-400"><span className="truncate">{client.node_name}</span></div></div><span className={cn(valueClass, 'text-right text-cyan-200')}>{formatBytes(onlineTrafficTotals[normalizeEmailKey(client.email)] || 0)}</span></div></article>)}</div>
           </>}
@@ -578,7 +635,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
 
         <section className={panelClass}>
           <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><h6 className={titleClass}>{t('traffic.topUsage', { count: topN })}</h6><span className="whitespace-nowrap font-mono text-xs text-slate-500">{filteredTrafficData.length} rows</span></div>
-          {loading ? <div className="flex items-center justify-center py-10"><UIIcon name="spinner" size={18} className="animate-spin text-cyan-300" /></div> : sortedTraffic.length === 0 ? <p className="flex justify-center py-10 text-sm text-slate-500">{t('messages.noDataAvailable')}</p> : <>
+          {loading ? <div className="grid gap-2 py-2">{Array.from({ length: 5 }).map((_, idx) => <div key={idx} className="h-14 animate-pulse rounded-lg border border-cyan-500/10 bg-[#0a0e1a]" style={{ animationDelay: `${idx * 80}ms` }} />)}</div> : sortedTraffic.length === 0 ? <p className="flex justify-center py-10 text-sm text-slate-500">{t('messages.noDataAvailable')}</p> : <>
             <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 lg:block"><table className="w-full table-fixed border-collapse text-sm"><thead><tr className="border-b border-cyan-500/20 bg-cyan-500/5"><th className="w-14 px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-500">#</th><th className="px-4 py-3 text-left"><button type="button" className={headerButtonClass} onClick={() => applyTrafficSortFromHeader('name')}>{groupBy === 'client' ? t('clients.email') : groupBy === 'inbound' ? t('nav.inbounds') : t('traffic.node')}{trafficSortIndicator('name')}</button></th><th className="w-36 px-4 py-3 text-right"><button type="button" className={cn(headerButtonClass, 'justify-end')} onClick={() => applyTrafficSortFromHeader('upload')}>Up{trafficSortIndicator('upload')}</button></th><th className="w-36 px-4 py-3 text-right"><button type="button" className={cn(headerButtonClass, 'justify-end')} onClick={() => applyTrafficSortFromHeader('download')}>Down{trafficSortIndicator('download')}</button></th><th className="w-44 px-4 py-3 text-right"><button type="button" className={cn(headerButtonClass, 'justify-end')} onClick={() => applyTrafficSortFromHeader('total')}>{t('traffic.total')}{trafficSortIndicator('total')}</button></th></tr></thead><tbody>{sortedTraffic.map((item, idx) => { const pct = filteredTotalTraffic > 0 ? (item.total / filteredTotalTraffic * 100).toFixed(1) : '0'; return <tr key={idx} className="border-b border-cyan-500/10 hover:bg-cyan-400/5"><td className="px-4 py-3 font-mono text-xs text-slate-500">{idx + 1}</td><td className="min-w-0 px-4 py-3"><button type="button" className={cn('block max-w-full truncate text-left font-medium', item.email && onNavigateToClient ? 'text-cyan-300 hover:text-cyan-200' : 'cursor-default text-slate-100')} title={item.email && onNavigateToClient ? `Filter clients by: ${item.email}` : undefined} onClick={() => item.email && onNavigateToClient && onNavigateToClient(item.email)}>{item.email || item.node_name || t('traffic.unknown')}</button>{renderNodeChips(item)}</td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-cyan-300')}>{formatBytes(item.upload)}</span></td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-emerald-300')}>{formatBytes(item.download)}</span></td><td className="px-4 py-3 text-right"><strong className={cn(valueClass, 'ml-auto text-indigo-200')}>{formatBytes(item.total)}</strong><div className="mt-2 flex items-center justify-end gap-2"><div className="h-1.5 w-20 overflow-hidden rounded-full bg-[#0a0e1a]"><div className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-cyan-300" style={{ width: `${pct}%` }} /></div><span className="whitespace-nowrap font-mono text-[11px] text-slate-500">{pct}%</span></div></td></tr>; })}</tbody><tfoot><tr className="border-t border-cyan-500/20 bg-cyan-500/5"><td colSpan={2} className="px-4 py-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-500">Total {filteredTrafficData.length} {(filterNodeName || trafficSearch) ? '(filtered)' : ''}</td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-cyan-300')}>{formatBytes(filteredTotalUpload)}</span></td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-emerald-300')}>{formatBytes(filteredTotalDownload)}</span></td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-indigo-200')}>{formatBytes(filteredTotalTraffic)}</span></td></tr></tfoot></table></div>
             <div className="grid min-w-0 grid-cols-1 gap-2 lg:hidden">{sortedTraffic.map((item, idx) => { const pct = filteredTotalTraffic > 0 ? (item.total / filteredTotalTraffic * 100).toFixed(1) : '0'; return <article key={idx} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-3"><div className="flex min-w-0 items-start justify-between gap-3"><div className="min-w-0"><div className="mb-2 font-mono text-xs text-slate-500">#{idx + 1}</div><button type="button" className={cn('block max-w-full truncate text-left text-sm font-medium', item.email && onNavigateToClient ? 'text-cyan-300' : 'cursor-default text-slate-100')} title={item.email && onNavigateToClient ? `Filter clients by: ${item.email}` : undefined} onClick={() => item.email && onNavigateToClient && onNavigateToClient(item.email)}>{item.email || item.node_name || t('traffic.unknown')}</button>{renderNodeChips(item)}</div><span className={cn(valueClass, 'text-right text-indigo-200')}>{formatBytes(item.total)}</span></div><div className="mt-4 grid grid-cols-2 gap-2"><div className="min-w-0 rounded-md bg-[#0f1420] px-3 py-2"><div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">Up</div><span className={cn(valueClass, 'mt-1 text-cyan-300')}>{formatBytes(item.upload)}</span></div><div className="min-w-0 rounded-md bg-[#0f1420] px-3 py-2"><div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">Down</div><span className={cn(valueClass, 'mt-1 text-emerald-300')}>{formatBytes(item.download)}</span></div></div><div className="mt-3 flex items-center gap-2"><div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[#0a0e1a]"><div className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-cyan-300" style={{ width: `${pct}%` }} /></div><span className="min-w-[3rem] whitespace-nowrap text-right font-mono text-xs text-slate-500">{pct}%</span></div></article>; })}</div>
           </>}

@@ -1,21 +1,8 @@
 import api from './client';
 import { getAuth } from '../auth';
+import type { NodeFlag, NodeRecord, NodeSourceType } from './types';
 
-export interface NodeRecord {
-  id: number;
-  name: string;
-  ip?: string;
-  port?: string;
-  url?: string;
-  scheme?: string;
-  base_path?: string;
-  read_only?: boolean;
-  api_version?: string;
-  panel_version?: string;
-  user?: string;
-  password?: string;
-  bearer_token?: string;
-}
+export type { NodeFlag, NodeRecord, NodeSourceType } from './types';
 
 export interface FleetNode extends NodeRecord {
   available: boolean | null;
@@ -40,6 +27,19 @@ const toOptionalString = (value: unknown): string | undefined => {
   return undefined;
 };
 
+const toNodeFlag = (value: unknown, fallback: NodeFlag): NodeFlag => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+};
+
 const toFiniteId = (value: unknown): number | null => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -60,17 +60,22 @@ const normalizeNodeRecord = (raw: unknown): NodeRecord | null => {
   const record = raw as Record<string, unknown>;
   const id = toFiniteId(record.id);
   if (id === null) return null;
+  const panelUrl = toOptionalString(record.panel_url) || toOptionalString(record.url) || '';
 
   return {
     id,
     name: toOptionalString(record.name) || `node-${id}`,
+    panel_url: panelUrl,
+    source_type: (toOptionalString(record.source_type) || 'xui') as NodeSourceType,
+    verify_tls: toNodeFlag(record.verify_tls, true),
+    enabled: toNodeFlag(record.enabled, true),
     ip: toOptionalString(record.ip),
     port: toOptionalString(record.port),
-    url: toOptionalString(record.url),
+    url: panelUrl || toOptionalString(record.url),
     scheme: toOptionalString(record.scheme),
     base_path: toOptionalString(record.base_path),
-    read_only: record.read_only == null ? undefined : Boolean(record.read_only),
-    api_version: toOptionalString(record.api_version),
+    read_only: toNodeFlag(record.read_only, false),
+    api_version: toOptionalString(record.api_version) || '',
     panel_version: toOptionalString(record.panel_version),
     user: toOptionalString(record.user),
     password: toOptionalString(record.password),

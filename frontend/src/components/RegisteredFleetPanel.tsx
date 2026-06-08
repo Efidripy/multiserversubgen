@@ -20,11 +20,11 @@ interface RegisteredFleetPanelProps {
 
 type UiFleetNode = {
   id: number;
-  flag: string;
-  code: string;
+  name: string;
   version: string;
   address: string;
   latency: string;
+  sourceType: string;
   status: 'online' | 'offline' | 'error';
   access: 'RW' | 'RO';
   error?: string;
@@ -33,40 +33,38 @@ type UiFleetNode = {
 const fleetActionButtonClass =
   'flex h-5 w-5 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0a0e1a] text-gray-500 transition-colors hover:border-cyan-400/30 hover:text-cyan-300';
 
-const fallbackFleetNodes: UiFleetNode[] = [
-  { id: 1, flag: 'DE', code: '82-FR', version: 'v3', address: 'https://son.kleva.ru:443', latency: '11ms', status: 'online', access: 'RW' },
-  { id: 2, flag: 'EE', code: '5-EE', version: 'v3', address: 'https://ebola.kleva.ru:443', latency: '11ms', status: 'online', access: 'RW' },
-  { id: 3, flag: 'NL', code: '146-AM-E', version: 'v3', address: 'https://mans-cov.kleva.ru:443', latency: '-', status: 'offline', access: 'RW', error: 'Connection timeout' },
-  { id: 4, flag: 'RU', code: '185-AM', version: 'v3', address: 'https://hiin1.kleva.ru:443', latency: '12ms', status: 'online', access: 'RW' },
-  { id: 5, flag: 'PL', code: '91-PL', version: 'v3', address: 'https://nipax.kleva.ru:443', latency: '12ms', status: 'online', access: 'RW' },
-  { id: 6, flag: 'RU', code: '185-RF-E', version: 'v3', address: 'https://cholera.kleva.ru:443', latency: '12ms', status: 'online', access: 'RW' },
-  { id: 7, flag: 'RU', code: '45-RF', version: 'v3', address: 'https://first.kleva.ru:443', latency: '-', status: 'error', access: 'RW', error: 'Auth failed' },
-  { id: 8, flag: 'RU', code: '88-RF', version: 'v3', address: 'https://anaemia.kleva.ru:443', latency: '11ms', status: 'online', access: 'RW' },
-  { id: 9, flag: 'RU', code: '94-RF', version: 'v3', address: 'https://dev.kleva.ru:443', latency: '12ms', status: 'online', access: 'RW' },
-  { id: 10, flag: 'RU', code: '94-RF-2', version: 'v3', address: 'https://ftu.kleva.ru:443', latency: '12ms', status: 'online', access: 'RW' },
-  { id: 11, flag: 'FR', code: '35-FR', version: 'v3', address: 'https://paris.kleva.ru:443', latency: '13ms', status: 'online', access: 'RW' },
-  { id: 12, flag: 'GB', code: '127-UK', version: 'v3', address: 'https://london.kleva.ru:443', latency: '-', status: 'offline', access: 'RW', error: 'No connection' },
-  { id: 13, flag: 'SE', code: '52-SE', version: 'v3', address: 'https://stockholm.kleva.ru:443', latency: '12ms', status: 'online', access: 'RW' },
-  { id: 14, flag: 'IT', code: '89-IT', version: 'v3', address: 'https://rome.kleva.ru:443', latency: '15ms', status: 'online', access: 'RW' },
-  { id: 15, flag: 'ES', code: '43-ES', version: 'v3', address: 'https://madrid.kleva.ru:443', latency: '-', status: 'error', access: 'RO', error: 'SSL error' },
-  { id: 16, flag: 'CH', code: '78-CH', version: 'v3', address: 'https://zurich.kleva.ru:443', latency: '11ms', status: 'online', access: 'RW' },
-  { id: 17, flag: 'AT', code: '33-AT', version: 'v3', address: 'https://vienna.kleva.ru:443', latency: '13ms', status: 'online', access: 'RW' },
-  { id: 18, flag: 'BE', code: '65-BE', version: 'v3', address: 'https://brussels.kleva.ru:443', latency: '12ms', status: 'online', access: 'RW' },
-  { id: 19, flag: 'DK', code: '29-DK', version: 'v3', address: 'https://copenhagen.kleva.ru:443', latency: '-', status: 'offline', access: 'RW', error: 'Host unreachable' },
-  { id: 20, flag: 'FI', code: '41-FI', version: 'v3', address: 'https://helsinki.kleva.ru:443', latency: '14ms', status: 'online', access: 'RW' },
-];
+const isReadOnly = (value: unknown) => value === true || Number(value) === 1;
+
+const cleanPanelUrl = (rawAddress: string) => {
+  const normalized = rawAddress.startsWith('http') ? rawAddress : `https://${rawAddress}`;
+  try {
+    const url = new URL(normalized);
+    url.username = '';
+    url.password = '';
+    url.search = '';
+    url.hash = '';
+    const path = url.pathname === '/' ? '' : url.pathname.replace(/\/$/, '');
+    return `${url.protocol}//${url.host}${path}`;
+  } catch {
+    return normalized.replace(/\/\/[^:@/]+:[^@/]+@/, '//');
+  }
+};
+
+const skeletonLine = (className: string) => (
+  <span className={`block animate-pulse rounded bg-[#182133] ${className}`} />
+);
 
 const toUiNode = (node: FleetNode, index: number): UiFleetNode => {
-  const rawAddress = node.url || `${node.scheme || 'https'}://${node.ip || node.name}${node.port ? `:${node.port}` : ''}`;
+  const rawAddress = node.panel_url || node.url || `${node.scheme || 'https'}://${node.ip || node.name}${node.port ? `:${node.port}` : ''}`;
   return {
     id: node.id || index + 1,
-    flag: (node.name || 'NA').slice(0, 2).toUpperCase(),
-    code: node.name || `NODE-${index + 1}`,
-    version: node.api_version || node.panel_version || 'v3',
-    address: rawAddress.startsWith('http') ? rawAddress : `https://${rawAddress}`,
+    name: node.name || `NODE-${index + 1}`,
+    version: node.panel_version || node.api_version || 'v3',
+    address: cleanPanelUrl(rawAddress),
+    sourceType: node.source_type || 'xui',
     latency: node.latency ? `${node.latency}ms` : '-',
     status: node.available === true ? 'online' : node.available === false ? 'offline' : 'error',
-    access: node.read_only ? 'RO' : 'RW',
+    access: isReadOnly(node.read_only) ? 'RO' : 'RW',
     error: node.error,
   };
 };
@@ -78,23 +76,30 @@ export function RegisteredFleetPanel({
   onSummaryChange,
 }: RegisteredFleetPanelProps) {
   const { t } = useTranslation();
-  const [nodes, setNodes] = useState<UiFleetNode[]>(fallbackFleetNodes);
-  const [loading, setLoading] = useState(false);
+  const [nodes, setNodes] = useState<UiFleetNode[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
+    setError(null);
     try {
       const payload = await getRegisteredFleetOverview();
-      setNodes(payload.length > 0 ? payload.map(toUiNode) : fallbackFleetNodes);
-    } catch {
-      setNodes(fallbackFleetNodes);
+      setNodes(payload.map(toUiNode));
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || err?.message || 'Unable to load registered servers');
+      setNodes((current) => current);
     } finally {
+      setLoaded(true);
       setLoading(false);
     }
   };
 
   useEffect(() => {
     load();
+    const interval = window.setInterval(load, 30000);
+    return () => window.clearInterval(interval);
   }, []);
 
   const counts = useMemo(() => {
@@ -113,6 +118,8 @@ export function RegisteredFleetPanel({
       loading,
     });
   }, [counts.checking, counts.offline, counts.online, loading, nodes.length, onSummaryChange]);
+
+  const initialLoading = loading && !loaded;
 
   return (
     <>
@@ -176,9 +183,9 @@ export function RegisteredFleetPanel({
                 <div>
                   <h2 className="font-mono text-sm font-medium uppercase tracking-[0.14em] text-cyan-300">{t('nodes.registeredFleet')}</h2>
                   <div className="mt-1 flex flex-wrap gap-3">
-                    <span className="font-mono text-[10px] font-light text-green-400">Online: <strong className="font-medium">{counts.online}</strong></span>
-                    <span className="font-mono text-[10px] font-light text-yellow-400">Error: <strong className="font-medium">{counts.checking}</strong></span>
-                    <span className="font-mono text-[10px] font-light text-red-400">Offline: <strong className="font-medium">{counts.offline}</strong></span>
+                    <span className="font-mono text-[10px] font-light text-green-400">Online: <strong className="font-medium tabular-nums">{counts.online}</strong></span>
+                    <span className="font-mono text-[10px] font-light text-yellow-400">Error: <strong className="font-medium tabular-nums">{counts.checking}</strong></span>
+                    <span className="font-mono text-[10px] font-light text-red-400">Offline: <strong className="font-medium tabular-nums">{counts.offline}</strong></span>
                   </div>
                 </div>
                   <button
@@ -191,31 +198,60 @@ export function RegisteredFleetPanel({
                 </button>
               </div>
               <p className="font-mono text-xs font-light leading-5 text-gray-400">{t('nodes.fleetHint')}</p>
+              {error && (
+                <div className="mt-2 rounded-md border border-red-400/20 bg-red-950/20 px-2.5 py-2 font-mono text-[11px] font-light text-red-200/80">
+                  {error}
+                </div>
+              )}
             </div>
 
             <div id="fleet-scroll-container" className="flex-1 min-h-0 overflow-y-scroll overflow-x-hidden scrollbar-none">
               <div className="space-y-1 py-1.5">
-                {nodes.map((node) => (
+                {initialLoading ? Array.from({ length: 8 }, (_, index) => (
+                  <article key={index} className="rounded-lg border border-cyan-500/15 bg-[#0a0e1a] px-2.5 py-1.5">
+                    <div className="mb-1 flex items-center gap-1.5">
+                      {skeletonLine('h-2.5 w-2.5 rounded-full')}
+                      {skeletonLine('h-4 w-28')}
+                      {skeletonLine('h-3 w-8')}
+                    </div>
+                    <div className="space-y-1 pl-4">
+                      {skeletonLine('h-3 w-full')}
+                      {skeletonLine('h-3 w-3/4')}
+                    </div>
+                    <div className="mt-2 flex items-center gap-1.5">
+                      {Array.from({ length: 5 }, (_, actionIndex) => (
+                        <span key={actionIndex} className="h-5 w-5 animate-pulse rounded-md border border-cyan-500/20 bg-[#182133]" />
+                      ))}
+                    </div>
+                  </article>
+                )) : nodes.length === 0 && !error ? (
+                  <div className="rounded-lg border border-cyan-500/15 bg-[#0a0e1a] px-3 py-4 text-center font-mono text-[11px] font-light text-gray-400">
+                    {t('nodes.noRegisteredServersFound', { defaultValue: 'No registered servers found' })}
+                  </div>
+                ) : nodes.map((node) => (
                   <article key={node.id} className="rounded-lg border border-cyan-500/15 bg-[#0a0e1a] px-2.5 py-1.5 transition-colors duration-200 hover:border-cyan-300/30 hover:bg-[#0b101b]">
                     <div className="mb-0.5">
                       <div className="flex items-center gap-1.5 mb-1">
                         <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
                           node.status === 'online' ? 'bg-green-400' : node.status === 'error' ? 'bg-yellow-400' : 'bg-red-400'
                         }`} />
-                        <span className="text-sm font-medium text-white">{node.flag} {node.code}</span>
-                        <span className="text-xs font-light text-gray-500">{node.version}</span>
+                        <span className="min-w-0 truncate text-sm font-medium text-white" title={node.name}>{node.name}</span>
+                        <span className="flex-shrink-0 text-xs font-light text-gray-500">{node.version}</span>
                       </div>
 
                       <div className="text-[11px] space-y-0.5 pl-4 min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="flex-shrink-0 font-mono text-green-400">https</span>
+                          <span className="flex-shrink-0 font-mono text-green-400">{node.address.startsWith('http://') ? 'http' : 'https'}</span>
                           <span className="min-w-0 truncate font-mono font-light text-cyan-100" title={node.address}>{node.address.replace(/^https?:\/\//, '')}</span>
                         </div>
                         <div className="flex items-center gap-2 text-gray-400">
-                          <span className="text-gray-500">{node.latency}</span>
+                          <span className="font-mono tabular-nums text-gray-500">{node.latency}</span>
                           <span className={`font-medium ${
                             node.status === 'online' ? 'text-green-400' : node.status === 'error' ? 'text-yellow-400' : 'text-red-400'
                           }`}>{node.status}</span>
+                          <span className="rounded border border-cyan-300/25 bg-cyan-400/10 px-2 py-0.5 font-mono text-[10px] font-medium uppercase text-cyan-300">
+                            {node.sourceType}
+                          </span>
                           <span className={`rounded border px-2 py-0.5 text-[10px] font-medium ${
                             node.access === 'RW' ? 'border-cyan-300/25 bg-cyan-400/10 text-cyan-300' : 'border-yellow-300/25 bg-yellow-400/10 text-yellow-300'
                           }`}>

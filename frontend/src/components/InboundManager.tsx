@@ -3,6 +3,8 @@ import { useToast } from './Toast';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { getAuth } from '../auth';
+import { getInboundsHeaderSource } from '../api/dashboard';
+import { listNodes } from '../api/nodes';
 import { UIIcon } from './UIIcon';
 import { InboundEditModal } from './InboundEditModal';
 import { readStaleCache, writeStaleCache } from '../services/staleCache';
@@ -177,6 +179,9 @@ const drawerBodyClass = 'min-w-0 flex-1 overflow-y-auto p-5';
 const drawerFooterClass = 'flex flex-wrap justify-end gap-2 border-t border-cyan-300/20 px-5 py-4';
 const drawerTitleClass = 'min-w-0 truncate text-sm font-medium uppercase tracking-[0.16em] text-cyan-300';
 const drawerSubtitleClass = 'mt-1 min-w-0 truncate text-xs font-light text-slate-500';
+const tableSkeletonLineClass = 'block animate-pulse rounded bg-[#182133]';
+const tableStateChipClass = 'inline-flex min-w-0 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0f1420] px-3 py-2 font-mono text-[11px] font-light uppercase tracking-[0.14em] text-slate-400';
+const tableErrorClass = 'mb-4 min-w-0 overflow-hidden rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 py-2 font-mono text-[11px] font-light text-rose-200/90 shadow-[inset_0_1px_0_rgba(251,113,133,0.08)]';
 
 const segmentButtonClass = (active: boolean) =>
   cn(
@@ -190,6 +195,59 @@ const nodeCheckClass = (active: boolean) =>
     'inline-flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors',
     active ? 'bg-cyan-400/15 text-cyan-200' : 'bg-[#0a0e1a] text-slate-400 hover:bg-[#0f1420] hover:text-slate-100',
   );
+
+const InboundTableSkeleton = () => (
+  <div className="min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a]">
+    <div className="grid min-w-0 grid-cols-1 gap-3 p-3 lg:hidden">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <div key={index} className="min-h-[128px] animate-pulse rounded-lg bg-[#0f1420] p-3 ring-1 ring-cyan-500/10">
+          <div className="grid grid-cols-[20px_minmax(0,1fr)_68px] items-start gap-3">
+            <span className={`${tableSkeletonLineClass} h-4 w-4`} />
+            <div className="min-w-0 space-y-2">
+              <span className={`${tableSkeletonLineClass} h-4 w-3/4`} />
+              <span className={`${tableSkeletonLineClass} h-3 w-20`} />
+            </div>
+            <span className={`${tableSkeletonLineClass} h-7 w-full`} />
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {Array.from({ length: 4 }).map((__, chipIndex) => (
+              <span key={chipIndex} className={`${tableSkeletonLineClass} h-7 w-full`} />
+            ))}
+          </div>
+          <div className="mt-3 grid grid-cols-4 gap-2 sm:grid-cols-8">
+            {Array.from({ length: 8 }).map((__, actionIndex) => (
+              <span key={actionIndex} className={`${tableSkeletonLineClass} h-8 w-8`} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+    <div className="hidden min-w-0 overflow-x-auto lg:block">
+      <table className="w-full min-w-[1040px] table-fixed border-collapse text-left text-xs">
+        <thead className="bg-[#0f1420]">
+          <tr className="border-b border-cyan-500/20">
+            {['w-10', 'w-[15%]', 'w-[24%]', 'w-[10%]', 'w-[9%]', 'w-[10%]', 'w-[11%]', 'w-[8%]', 'w-[13%]'].map((width, index) => (
+              <th key={index} className={`${width} px-3 py-3`}>
+                <span className={`${tableSkeletonLineClass} h-3 w-16`} />
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-900">
+          {Array.from({ length: 8 }).map((_, rowIndex) => (
+            <tr key={rowIndex}>
+              {Array.from({ length: 9 }).map((__, cellIndex) => (
+                <td key={cellIndex} className="px-3 py-3">
+                  <span className={`${tableSkeletonLineClass} h-4 ${cellIndex === 2 ? 'w-full' : 'w-16'}`} />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </div>
+);
 
 export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavigateToClients, onAddClientToInbound }) => {
   const { toast } = useToast();
@@ -390,7 +448,18 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     });
 
     setFilteredInbounds(sorted);
-  }, [inbounds, filterProtocol, filterSecurity, filterNode, sortField, sortDirection]);
+  }, [
+    inbounds,
+    filterProtocol,
+    filterSecurity,
+    filterNode,
+    filterEmptyOnly,
+    filterEnabledStatus,
+    filterDuplicatesOnly,
+    searchTerm,
+    sortField,
+    sortDirection,
+  ]);
 
   const loadInbounds = async (silent = false) => {
     if (!silent) setPageLoading(true);
@@ -401,14 +470,13 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
     try {
       // Single parallel fetch â€” backend returns from cache (30s fresh / 300s stale).
-      const [nodesRes, inboundsRes] = await Promise.all([
-        api.get('/v1/nodes', { auth: getAuth() }),
-        api.get('/v1/inbounds', { auth: getAuth() }),
+      const [nodes, rawInbounds] = await Promise.all([
+        listNodes(),
+        getInboundsHeaderSource(),
       ]);
 
       if (requestIdRef.current !== requestId) return;
 
-      const nodes: NodeInfo[] = nodesRes.data || [];
       const nameMap: Record<string, number> = {};
       nodes.forEach((n) => { nameMap[n.name] = n.id; });
 
@@ -418,7 +486,6 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         setAddTargetNodeIds(new Set(nodes.map((n) => n.id)));
       }
 
-      const rawInbounds: any[] = inboundsRes.data?.inbounds || [];
       const normalized: Inbound[] = rawInbounds.map((ib: any) => {
         const streamSettings = parseMaybeJsonObject(ib.streamSettings);
         const settings = parseMaybeJsonObject(ib.settings);
@@ -813,11 +880,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
           )}
         </div>
 
-        {error && (
-          <div className="mb-4 min-w-0 overflow-hidden rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-300 ring-1 ring-rose-400/25">
-            {error}
-          </div>
-        )}
+        {error && <div className={tableErrorClass}>{error}</div>}
 
         <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
           <div className="mb-3 flex min-w-0 flex-col gap-1">
@@ -1143,39 +1206,16 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
             <div className="h-full w-1/3 animate-pulse rounded-full bg-cyan-300" />
           </div>
         )}
-        {pageLoading && filteredInbounds.length === 0 && (
-          <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-1">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} className="min-h-[64px] animate-pulse rounded-lg bg-[#0a0e1a] p-3">
-                <div className="grid grid-cols-[28px_minmax(0,1fr)_5rem] items-center gap-3">
-                  <div className="h-4 w-4 rounded bg-[#0f1420]" />
-                  <div className="min-w-0 space-y-2">
-                    <div className="h-3 w-2/3 rounded bg-[#0f1420]" />
-                    <div className="h-2 w-1/2 rounded bg-[#0a0e1a]" />
-                  </div>
-                  <div className="h-6 rounded bg-[#0f1420]" />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
+        {pageLoading && filteredInbounds.length === 0 && <InboundTableSkeleton />}
 
         {!pageLoading && filteredInbounds.length === 0 && inbounds.length === 0 && (
-          <div className="mb-3 flex min-w-0 flex-col items-center justify-center overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-10 text-center">
-            <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[#0f1420] text-cyan-300">
-              <UIIcon name="inbounds" size={18} />
-            </div>
-            <div className="text-sm font-medium uppercase tracking-[0.14em] text-slate-100">{t('inbounds.emptyTitle')}</div>
-            <div className="mt-2 max-w-md text-xs font-light leading-relaxed text-slate-500">{t('inbounds.emptyHint')}</div>
+          <div className="mb-3 flex min-w-0 items-center justify-center overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-10 text-center">
+            <span className={tableStateChipClass}>{t('common.noRecordsFound')}</span>
           </div>
         )}
         {!pageLoading && filteredInbounds.length === 0 && inbounds.length > 0 && (
-          <div className="mb-3 flex min-w-0 flex-col items-center justify-center overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-10 text-center">
-            <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[#0f1420] text-slate-400">
-              <UIIcon name="clear" size={18} />
-            </div>
-            <div className="text-sm font-medium uppercase tracking-[0.14em] text-slate-100">{t('inbounds.noMatchesTitle')}</div>
-            <div className="mt-2 max-w-md text-xs font-light leading-relaxed text-slate-500">{t('inbounds.noMatchesHint')}</div>
+          <div className="mb-3 flex min-w-0 items-center justify-center overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-10 text-center">
+            <span className={tableStateChipClass}>{t('common.noRecordsFound')}</span>
           </div>
         )}
 
@@ -1249,7 +1289,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                       >
                         {ib.remark || <span className="text-slate-600">-</span>}
                       </button>
-                      <div className="mt-1 truncate text-[11px] text-slate-500">#{ib.id}</div>
+                      <div className="mt-1 truncate font-mono text-[11px] tabular-nums whitespace-nowrap text-slate-500">#{ib.id}</div>
                     </div>
                     <button
                       type="button"
@@ -1367,7 +1407,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                           } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                         }}><span className="block truncate">{ib.remark || <span className="text-slate-600">-</span>}</span></td>
                         <td className="px-3 py-3 align-middle"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} title={filterProtocol === ib.protocol ? t('inbounds.clearProtocolFilter') : t('inbounds.filterByProtocolName', { protocol: ib.protocol })} onClick={() => setFilterProtocol(prev => prev === ib.protocol ? '' : ib.protocol)}>{ib.protocol.toUpperCase()}</button></td>
-                        <td className="px-3 py-3 align-middle"><button type="button" className={cn('inline-flex items-center gap-1 text-xs tabular-nums whitespace-nowrap', isDuplicatePort(ib) ? 'font-bold text-amber-300' : 'text-slate-300')} title={isDuplicatePort(ib) ? t('inbounds.duplicatePortTitle', { port: ib.port, node: ib.node_name }) : t('inbounds.copyPortNumber')} onClick={() => navigator.clipboard.writeText(String(ib.port))}>{ib.port}{isDuplicatePort(ib) && <UIIcon name="warning" size={12} />}</button></td>
+                        <td className="px-3 py-3 align-middle"><button type="button" className={cn('inline-flex items-center gap-1 font-mono text-xs tabular-nums whitespace-nowrap', isDuplicatePort(ib) ? 'font-bold text-amber-300' : 'text-slate-300')} title={isDuplicatePort(ib) ? t('inbounds.duplicatePortTitle', { port: ib.port, node: ib.node_name }) : t('inbounds.copyPortNumber')} onClick={() => navigator.clipboard.writeText(String(ib.port))}>{ib.port}{isDuplicatePort(ib) && <UIIcon name="warning" size={12} />}</button></td>
                         <td className="px-3 py-3 align-middle">
                           {ib.is_reality && <button type="button" className={cn(badgeBaseClass, filterSecurity === 'reality' ? 'bg-amber-400 text-[#06111f]' : 'bg-emerald-400/15 text-emerald-300')} onClick={() => setFilterSecurity(prev => prev === 'reality' ? '' : 'reality')} title={t('inbounds.filterByReality')}>{t('inbounds.reality')}</button>}
                           {!ib.is_reality && ib.security && <button type="button" className={cn(badgeBaseClass, filterSecurity === ib.security ? 'bg-amber-400 text-[#06111f]' : 'bg-sky-400/15 text-sky-300')} onClick={() => setFilterSecurity(prev => prev === (ib.security ?? '') ? '' : (ib.security ?? ''))} title={t('inbounds.filterBySecurityName', { security: ib.security })}>{ib.security}</button>}
@@ -1663,5 +1703,3 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     </div>
   );
 };
-
-

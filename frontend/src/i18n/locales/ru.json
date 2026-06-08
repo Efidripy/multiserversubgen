@@ -76,7 +76,8 @@
     "enable": "Включить",
     "disable": "Отключить",
     "clear": "Очистить",
-    "update": "Обновить"
+    "update": "Обновить",
+    "noRecordsFound": "No records found"
   },
   "clients": {
     "title": "Ð£Ð¿Ñ€Ð°Ð²Ð»ÐµÐ½Ð¸Ðµ ÐºÐ»Ð¸ÐµÐ½Ñ‚Ð°Ð¼Ð¸",

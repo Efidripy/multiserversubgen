@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Activity, CheckCircle, Download, RefreshCw, Server, Upload, Users } from 'lucide-react';
 import { getDashboardSummary, normalizeDashboardSummary, type DashboardSummaryData } from '../api/dashboard';
+import { listNodes, type NodeRecord } from '../api/nodes';
 
 type StatTone = 'default' | 'accent' | 'success' | 'warning' | 'danger';
 
@@ -17,39 +18,13 @@ interface DashboardSummaryProps {
   };
 }
 
-const fallbackSummary = () => normalizeDashboardSummary({
-  nodes_total: 20,
-  clients_total: 74,
-  online_clients_total: 14,
-  online_by_node: {
-    'RU RF': 4,
-    'NL NL': 2,
-    'DE DE': 1,
-    'EE EE': 1,
-    'PL PL': 1,
-    'FR FR': 1,
-    'GB UK': 1,
-    'SE SE': 1,
-    'IT IT': 1,
-    'ES ES': 1,
-    'CH CH': 1,
-    'AT AT': 1,
-    'BE BE': 1,
-    'DK DK': 1,
-    'FI FI': 1,
-  },
-  traffic: {
-    upload: 943450112000,
-    download: 14738919415808,
-    total: 15728640000000,
-  },
-  top_clients: [
-    { email: 'RU-SEG', upload: 0, download: 2308974418329, total: 2308974418329 },
-    { email: 'YT-OUT', upload: 0, download: 1047750614220, total: 1047750614220 },
-    { email: 'KRASNIKOV', upload: 0, download: 981687844045, total: 981687844045 },
-    { email: 'ALEXL2', upload: 0, download: 927820693914, total: 927820693914 },
-    { email: 'SHATOON', upload: 0, download: 869193193472, total: 869193193472 },
-  ],
+const emptySummary = () => normalizeDashboardSummary({
+  nodes_total: 0,
+  clients_total: 0,
+  online_clients_total: 0,
+  online_by_node: {},
+  traffic: { upload: 0, download: 0, total: 0 },
+  top_clients: [],
 });
 
 const formatBytes = (bytes: number): string => {
@@ -107,28 +82,49 @@ const getWidthClass = (percent: number) => {
   return trafficWidthClasses[0];
 };
 
+const isEnabledNode = (node: NodeRecord) => node.enabled === true || Number(node.enabled) === 1;
+
+const skeletonLine = (className: string) => (
+  <span className={`block animate-pulse rounded bg-[#0f1420] ${className}`} />
+);
+
 export function DashboardSummary({
   onNavigate,
   heroStats = [],
   fleetSummary,
 }: DashboardSummaryProps) {
   const { t } = useTranslation();
-  const [summary, setSummary] = useState<DashboardSummaryData>(() => fallbackSummary());
+  const [summary, setSummary] = useState<DashboardSummaryData>(() => emptySummary());
+  const [nodes, setNodes] = useState<NodeRecord[]>([]);
   const [loading, setLoading] = useState(false);
+  const [nodesError, setNodesError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   const load = async () => {
     setLoading(true);
+    setNodesError(null);
     try {
-      const payload = await getDashboardSummary();
-      const normalized = normalizeDashboardSummary(payload);
-      setSummary(
-        normalized.nodes_total > 0 || normalized.clients_total > 0 || normalized.top_clients.length > 0
-          ? normalized
-          : fallbackSummary(),
-      );
+      const [summaryResult, nodesResult] = await Promise.allSettled([
+        getDashboardSummary(),
+        listNodes(),
+      ]);
+
+      if (summaryResult.status === 'fulfilled') {
+        setSummary(normalizeDashboardSummary(summaryResult.value));
+      } else {
+        setSummary(emptySummary());
+      }
+
+      if (nodesResult.status === 'fulfilled') {
+        setNodes(nodesResult.value);
+      } else {
+        setNodes([]);
+        setNodesError('Unable to load registered servers');
+      }
     } catch {
-      setSummary(fallbackSummary());
+      setSummary(emptySummary());
+      setNodes([]);
+      setNodesError('Unable to load registered servers');
     } finally {
       setLastUpdated(new Date());
       setLoading(false);
@@ -141,35 +137,37 @@ export function DashboardSummary({
     return () => window.clearInterval(interval);
   }, []);
 
+  const isInitialLoading = loading && lastUpdated === null;
+  const totalNodes = nodes.length;
+  const activeNodes = nodes.filter(isEnabledNode).length;
+  const disabledNodes = Math.max(totalNodes - activeNodes, 0);
+  const onlineNodes = fleetSummary && !fleetSummary.loading && fleetSummary.total === totalNodes
+    ? fleetSummary.online
+    : activeNodes;
+
   const headerStats = useMemo(() => {
-    if (heroStats.length > 0) {
-      return heroStats.map((stat) => ({
-        label: stat.label,
-        value: stat.value,
-        variant: stat.tone === 'danger' ? 'error' : stat.tone,
-      }));
-    }
+    void heroStats;
     return [
-      { label: 'Nodes', value: String(fleetSummary?.total || summary.nodes_total || 20) },
-      { label: 'Online', value: String(fleetSummary?.online || 15), variant: 'success' },
-      { label: 'Error', value: String(fleetSummary?.checking || 2), variant: 'warning' },
-      { label: 'Offline', value: String(fleetSummary?.offline || 3), variant: 'error' },
-      { label: 'Xray', value: String(fleetSummary?.online || 15), variant: 'accent' },
-      { label: 'Clients', value: String(summary.clients_total || 24) },
+      { label: t('dashboardSummary.totalNodes', { defaultValue: 'Total Nodes' }), value: String(totalNodes) },
+      { label: 'Active', value: String(activeNodes), variant: activeNodes > 0 ? 'success' : 'warning' },
+      { label: 'Online', value: String(onlineNodes), variant: onlineNodes > 0 ? 'success' : 'warning' },
+      { label: 'Disabled', value: String(disabledNodes), variant: disabledNodes > 0 ? 'warning' : 'default' },
+      { label: 'Errors', value: String(fleetSummary?.checking ?? 0), variant: (fleetSummary?.checking ?? 0) > 0 ? 'warning' : 'default' },
+      { label: 'Clients', value: String(summary.clients_total) },
     ];
-  }, [fleetSummary, heroStats, summary]);
+  }, [activeNodes, disabledNodes, fleetSummary?.checking, heroStats, onlineNodes, summary.clients_total, t, totalNodes]);
 
   const kpiCards = [
-    { label: t('nodes.title'), value: String(summary.nodes_total || 20), icon: Server, variant: 'accent', tab: 'monitoring' },
-    { label: t('clients.title'), value: String(summary.clients_total || 74), icon: Users, variant: 'info', tab: 'clients' },
-    { label: t('traffic.onlineClients'), value: String(summary.online_clients_total || 14), icon: CheckCircle, variant: 'success', tab: 'clients' },
-    { label: 'Upload', value: formatBytes(summary.traffic.upload || 943450112000), icon: Upload, variant: 'warning', tab: 'traffic' },
-    { label: 'Download', value: formatBytes(summary.traffic.download || 14738919415808), icon: Download, variant: 'danger', tab: 'traffic' },
-    { label: t('traffic.totalTraffic'), value: formatBytes(summary.traffic.total || 15728640000000), icon: Activity, variant: 'neutral', tab: 'traffic' },
+    { label: t('nodes.title'), value: String(totalNodes), icon: Server, variant: 'accent', tab: 'monitoring' },
+    { label: t('clients.title'), value: String(summary.clients_total), icon: Users, variant: 'info', tab: 'clients' },
+    { label: 'Active Nodes', value: String(activeNodes), icon: CheckCircle, variant: 'success', tab: 'monitoring' },
+    { label: 'Upload', value: formatBytes(summary.traffic.upload), icon: Upload, variant: 'warning', tab: 'traffic' },
+    { label: 'Download', value: formatBytes(summary.traffic.download), icon: Download, variant: 'danger', tab: 'traffic' },
+    { label: t('traffic.totalTraffic'), value: formatBytes(summary.traffic.total), icon: Activity, variant: 'neutral', tab: 'traffic' },
   ] as const;
 
-  const onlineByNode = Object.entries(summary.online_by_node || fallbackSummary().online_by_node);
-  const topClients = (summary.top_clients.length > 0 ? summary.top_clients : fallbackSummary().top_clients).slice(0, 5);
+  const onlineByNode = Object.entries(summary.online_by_node);
+  const topClients = summary.top_clients.slice(0, 5);
   const maxTraffic = Math.max(...topClients.map((client) => client.total), 1);
 
   return (
@@ -179,10 +177,15 @@ export function DashboardSummary({
       </h2>
       <div className="mb-6 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-5 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)] backdrop-blur-sm">
         <div className="mt-4 flex flex-wrap gap-x-7 gap-y-4">
-          {headerStats.map((stat) => (
+          {isInitialLoading ? Array.from({ length: 6 }, (_, index) => (
+            <div key={index} className="flex min-w-[72px] flex-col gap-2">
+              {skeletonLine('h-2.5 w-16 bg-[#182133]')}
+              {skeletonLine('h-6 w-12 bg-[#182133]')}
+            </div>
+          )) : headerStats.map((stat) => (
             <div key={stat.label} className="flex flex-col">
               <span className="font-mono text-[10px] font-light uppercase tracking-wider text-gray-500">{stat.label}</span>
-              <span className={`font-mono text-xl font-bold leading-tight ${
+              <span className={`font-mono text-xl font-bold leading-tight tabular-nums ${
                 stat.variant === 'success'
                   ? 'text-green-400'
                   : stat.variant === 'accent'
@@ -198,6 +201,16 @@ export function DashboardSummary({
             </div>
           ))}
         </div>
+        {nodesError && (
+          <div className="mt-4 rounded-md border border-red-400/20 bg-red-950/20 px-3 py-2 font-mono text-[11px] font-light text-red-200/80">
+            {nodesError}
+          </div>
+        )}
+        {!isInitialLoading && !nodesError && totalNodes === 0 && (
+          <div className="mt-4 rounded-md border border-cyan-500/15 bg-[#0a0e1a] px-3 py-2 font-mono text-[11px] font-light text-gray-400">
+            {t('nodes.noRegisteredServersFound', { defaultValue: 'No registered servers found' })}
+          </div>
+        )}
       </div>
 
       <div className="mb-6">
@@ -221,7 +234,17 @@ export function DashboardSummary({
         </div>
 
         <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {kpiCards.map((card) => {
+          {isInitialLoading ? Array.from({ length: 6 }, (_, index) => (
+            <div key={index} className="min-h-[96px] rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)]">
+              <div className="flex h-full items-center justify-between gap-4">
+                <div className="w-full">
+                  {skeletonLine('mb-3 h-3 w-24 bg-[#182133]')}
+                  {skeletonLine('h-8 w-20 bg-[#182133]')}
+                </div>
+                {skeletonLine('h-14 w-14 flex-shrink-0 bg-[#182133]')}
+              </div>
+            </div>
+          )) : kpiCards.map((card) => {
             const CardIcon = card.icon;
             return (
               <button
@@ -233,7 +256,7 @@ export function DashboardSummary({
                 <div className="flex h-full items-center justify-between gap-4">
                   <div>
                     <div className="mb-2 font-mono text-xs font-light uppercase tracking-[0.12em] text-gray-400">{card.label}</div>
-                    <div className="font-mono text-3xl font-bold leading-none text-white">{card.value}</div>
+                    <div className="font-mono text-3xl font-bold leading-none tabular-nums text-white">{card.value}</div>
                   </div>
                   <div className={`flex h-14 w-14 items-center justify-center rounded-lg border border-white/10 bg-gradient-to-br ${iconTone[card.variant]}`}>
                     <CardIcon className="h-7 w-7 text-white" />
@@ -245,7 +268,11 @@ export function DashboardSummary({
         </div>
 
         <div className="mb-4 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10">
-          {onlineByNode.map(([node, count]) => (
+          {isInitialLoading ? Array.from({ length: 10 }, (_, index) => (
+            <div key={index} className="min-h-[24px] rounded-full border border-cyan-500/20 bg-[#0f1420] px-3 py-1">
+              {skeletonLine('mx-auto h-3 w-12 bg-[#182133]')}
+            </div>
+          )) : onlineByNode.map(([node, count]) => (
             <button
               type="button"
               key={node}
@@ -261,7 +288,18 @@ export function DashboardSummary({
           <div className="mb-2 font-mono text-xs font-medium uppercase tracking-widest text-gray-500">{t('dashboardSummary.topByTraffic').toUpperCase()}</div>
           <div className="scrollbar-none overflow-x-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)]">
             <div className="space-y-3 scrollbar-none">
-              {topClients.map((client, index) => {
+              {isInitialLoading ? Array.from({ length: 5 }, (_, index) => (
+                <div key={index} className="grid h-5 w-full max-w-[360px] grid-cols-[18px_minmax(72px,86px)_minmax(90px,1fr)_minmax(5.5rem,5.5rem)] items-center gap-2 sm:grid-cols-[20px_minmax(82px,96px)_minmax(110px,1fr)_minmax(6rem,6rem)]">
+                  {skeletonLine('h-3 w-4 bg-[#182133]')}
+                  {skeletonLine('h-3 w-16 bg-[#182133]')}
+                  {skeletonLine('h-1.5 w-full bg-[#182133]')}
+                  {skeletonLine('h-3 w-16 bg-[#182133]')}
+                </div>
+              )) : topClients.length === 0 ? (
+                <div className="rounded-md border border-cyan-500/15 bg-[#0a0e1a] px-3 py-2 font-mono text-[11px] font-light text-gray-400">
+                  {t('dashboardSummary.noTrafficRecordsFound', { defaultValue: 'No traffic records found' })}
+                </div>
+              ) : topClients.map((client, index) => {
                 const percent = (client.total / maxTraffic) * 100;
                 return (
                   <button

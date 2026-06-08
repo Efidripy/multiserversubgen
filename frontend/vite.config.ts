@@ -2,7 +2,7 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 
-const base = process.env.VITE_BASE ?? '/';
+const base = process.env.VITE_BASE ?? '/mssg/';
 const backendTarget = process.env.VITE_BACKEND_TARGET ?? 'http://localhost:666';
 // In dev, proxy both the canonical subpath (e.g. /my-panel/api/) and the bare /api/
 // so developers can run `VITE_BASE=/my-panel/ vite` without a real nginx in front.

@@ -76,7 +76,8 @@
     "enable": "Enable",
     "disable": "Disable",
     "clear": "Clear",
-    "update": "Update"
+    "update": "Update",
+    "noRecordsFound": "No records found"
   },
   "clients": {
     "title": "Client Manager",

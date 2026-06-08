@@ -9,17 +9,22 @@ import { requestActivityStore } from '../services/requestActivity';
  *
  * Resolution order (first defined wins):
  *   1. VITE_API_BASE_URL env var  – explicit override, useful for CDN / split deployments
- *   2. Derived from BASE_URL       – BASE_URL is set to VITE_BASE at build time
- *                                    (e.g. "/my-panel/"), so the API lives at "/my-panel/api"
+ *   2. Derived from BASE_URL       – BASE_URL is set to Vite `base` at build time
+ *                                    (e.g. "/mssg/"), so the API lives at "/mssg/api"
  *
  * Examples:
  *   VITE_BASE=/          → API_BASE = "/api"
- *   VITE_BASE=/my-panel/   → API_BASE = "/my-panel/api"
+ *   VITE_BASE=/mssg/     → API_BASE = "/mssg/api"
  *   VITE_API_BASE_URL=https://api.example.com → API_BASE = "https://api.example.com"
  */
+const normalizeApiBase = (baseUrl: string): string => {
+  const trimmed = baseUrl.replace(/\/$/, '');
+  return `${trimmed}/api`;
+};
+
 export const API_BASE: string =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  import.meta.env.BASE_URL.replace(/\/$/, '') + '/api';
+  (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') ??
+  normalizeApiBase(import.meta.env.BASE_URL);
 
 /**
  * Per-route cache TTLs in milliseconds.
@@ -122,7 +127,10 @@ function invalidateForMutation(url: string): void {
 }
 
 /** Pre-configured axios instance – use this instead of raw axios for all API calls. */
-const api = axios.create({ baseURL: API_BASE });
+const api = axios.create({
+  baseURL: API_BASE,
+  withCredentials: true,
+});
 
 /**
  * Request interceptor — for GET requests, check the in-memory cache first.
@@ -141,6 +149,9 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   if (auth.totpCode) {
     config.headers = config.headers ?? {};
     config.headers['X-TOTP-Code'] = auth.totpCode;
+  }
+  if (!config.auth && auth.username && auth.password) {
+    config.auth = { username: auth.username, password: auth.password };
   }
 
   if (config.method?.toLowerCase() === 'get') {

@@ -193,6 +193,49 @@ interface StackStatusResponse {
   prometheus_metrics: Record<string, number | null>;
 }
 
+interface ResourceMetric {
+  current?: number;
+  total?: number;
+  percent?: number;
+}
+
+interface ServerResourceStatus {
+  node: string;
+  available: boolean;
+  timestamp?: string;
+  error?: string;
+  reason?: string;
+  system?: {
+    cpu?: number;
+    mem?: ResourceMetric;
+    disk?: ResourceMetric;
+    swap?: ResourceMetric;
+    uptime?: number;
+    loads?: number[];
+  };
+  xray?: {
+    running?: boolean;
+    uptime?: number;
+    version?: string;
+  };
+  network?: {
+    upload?: number;
+    download?: number;
+  };
+}
+
+interface ServerStatusResponse {
+  servers?: ServerResourceStatus[];
+  count?: number;
+}
+
+interface CollectorStatus {
+  mode?: string;
+  running?: boolean;
+  ws_connections?: number;
+  timestamp?: number;
+}
+
 const RANGE_OPTIONS = [
   { value: 3600, label: '1h' },
   { value: 6 * 3600, label: '6h' },
@@ -241,6 +284,31 @@ const bytesToMb = (bytes: number) => bytes / (1024 * 1024);
 const bytesToGb = (bytes: number) => bytes / (1024 * 1024 * 1024);
 const CHART_PALETTE = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#e11d48', '#84cc16', '#f97316', '#14b8a6'];
 const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
+const toFiniteNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const clampPercent = (value: unknown): number => Math.max(0, Math.min(100, Math.round(toFiniteNumber(value))));
+
+const formatBytes = (bytes: number): string => {
+  const value = Math.max(0, Number(bytes) || 0);
+  if (value === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+};
+
+const formatUptime = (seconds?: number): string => {
+  const value = Math.max(0, Number(seconds) || 0);
+  if (value === 0) return '-';
+  const days = Math.floor(value / 86400);
+  const hours = Math.floor((value % 86400) / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+};
 
 function getBucketSec(rangeSec: number, preferredStepSec?: number): number {
   if (preferredStepSec && preferredStepSec > 0) return preferredStepSec;
@@ -416,8 +484,12 @@ export const MonitoringDashboard: React.FC = () => {
   const [adguardOverview, setAdguardOverview] = useState<AdGuardOverview | null>(null);
   const [adguardHistory, setAdguardHistory] = useState<AdGuardHistoryResponse | null>(null);
   const [stackStatus, setStackStatus] = useState<StackStatusResponse | null>(null);
+  const [serverStatuses, setServerStatuses] = useState<ServerResourceStatus[]>([]);
+  const [collectorStatus, setCollectorStatus] = useState<CollectorStatus | null>(null);
   const [adguardLoading, setAdguardLoading] = useState(false);
   const [adguardError, setAdguardError] = useState('');
+  const [resourceLoading, setResourceLoading] = useState(false);
+  const [resourceError, setResourceError] = useState('');
   const [blockedSourceFilter, setBlockedSourceFilter] = useState<string>('all');
   const [blockedSearch, setBlockedSearch] = useState('');
   const [blockedShowCount, setBlockedShowCount] = useState<number>(25);
@@ -576,6 +648,33 @@ export const MonitoringDashboard: React.FC = () => {
     }
   };
 
+  const loadServerStatuses = async () => {
+    try {
+      setResourceLoading(true);
+      const res = await api.get('/v1/servers/status', { auth: getAuth() });
+      const payload = res.data as ServerStatusResponse;
+      const parsed = Array.isArray(payload?.servers) ? payload.servers : [];
+      setServerStatuses(parsed);
+      setResourceError('');
+      return parsed;
+    } catch (err: any) {
+      setServerStatuses([]);
+      setResourceError(err?.response?.data?.detail || t('serverStatus.loadFailed'));
+      return [];
+    } finally {
+      setResourceLoading(false);
+    }
+  };
+
+  const loadCollectorStatus = async () => {
+    try {
+      const res = await api.get('/v1/collector/status', { auth: getAuth() });
+      setCollectorStatus(res.data as CollectorStatus);
+    } catch {
+      setCollectorStatus(null);
+    }
+  };
+
 
   const collectAdguardNow = async () => {
     try {
@@ -600,6 +699,8 @@ export const MonitoringDashboard: React.FC = () => {
     loadAdguardOverview().catch(() => undefined);
     loadAdguardHistory().catch(() => undefined);
     loadStackStatus().catch(() => undefined);
+    loadServerStatuses().catch(() => undefined);
+    loadCollectorStatus().catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -699,6 +800,8 @@ export const MonitoringDashboard: React.FC = () => {
       loadLatestSnapshot();
       loadDepsHealth();
       loadStackStatus();
+      loadServerStatuses();
+      loadCollectorStatus();
     },
     [selectedScope, rangeSec],
   );
@@ -715,6 +818,8 @@ export const MonitoringDashboard: React.FC = () => {
       loadAdguardOverview();
       loadAdguardHistory();
       loadStackStatus();
+      loadServerStatuses();
+      loadCollectorStatus();
     },
   });
 
@@ -731,6 +836,51 @@ export const MonitoringDashboard: React.FC = () => {
     const onlineClients = latestSnapshotNodes.reduce((sum, n) => sum + Number(n.online_clients || 0), 0);
     return { total, online, onlineClients };
   }, [latestSnapshotNodes]);
+
+  const selectedServerStatus = useMemo(
+    () =>
+      isAllScope
+        ? null
+        : serverStatuses.find((status) => status.node === selectedNodeName) || null,
+    [isAllScope, serverStatuses, selectedNodeName],
+  );
+
+  const activeServerStatuses = useMemo(
+    () => serverStatuses.filter((status) => status.available && status.system),
+    [serverStatuses],
+  );
+
+  const resourceSource = useMemo(
+    () => (isAllScope ? activeServerStatuses : selectedServerStatus ? [selectedServerStatus] : []),
+    [activeServerStatuses, isAllScope, selectedServerStatus],
+  );
+
+  const resourceSummary = useMemo(() => {
+    if (!resourceSource.length) return null;
+    const count = resourceSource.length;
+    const cpuValues = resourceSource.map((status) => Number(status.system?.cpu || 0));
+    const memCurrent = resourceSource.reduce((sum, status) => sum + Number(status.system?.mem?.current || 0), 0);
+    const memTotal = resourceSource.reduce((sum, status) => sum + Number(status.system?.mem?.total || 0), 0);
+    const diskCurrent = resourceSource.reduce((sum, status) => sum + Number(status.system?.disk?.current || 0), 0);
+    const diskTotal = resourceSource.reduce((sum, status) => sum + Number(status.system?.disk?.total || 0), 0);
+    const uptimeValues = resourceSource.map((status) => Number(status.system?.uptime || status.xray?.uptime || 0));
+    const cpuAvg = cpuValues.reduce((sum, value) => sum + value, 0) / count;
+    const memPercent = memTotal > 0 ? (memCurrent / memTotal) * 100 : 0;
+    const diskPercent = diskTotal > 0 ? (diskCurrent / diskTotal) * 100 : 0;
+    const uptimeAvg = uptimeValues.reduce((sum, value) => sum + value, 0) / count;
+    return {
+      count,
+      cpuAvg,
+      memCurrent,
+      memTotal,
+      memPercent,
+      diskCurrent,
+      diskTotal,
+      diskPercent,
+      uptimeAvg,
+      uptimeMax: uptimeValues.reduce((max, value) => Math.max(max, value), 0),
+    };
+  }, [resourceSource]);
 
   const selectedLiveSnapshotPoint = useMemo(() => {
     if (isAllScope) return null;
@@ -1287,6 +1437,24 @@ export const MonitoringDashboard: React.FC = () => {
   const metricValueClass = 'font-mono tabular-nums whitespace-nowrap text-sm font-medium text-slate-100';
   const compactMetricClass = 'font-mono tabular-nums whitespace-nowrap text-xs font-medium text-slate-100';
   const chartCardClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4';
+  const renderChartSkeleton = () => (
+    <div className="relative h-full min-w-0 overflow-hidden rounded-lg bg-[#0a0e1a] p-4">
+      <div className="absolute inset-x-4 top-10 h-px bg-cyan-500/10" />
+      <div className="absolute inset-x-4 top-1/3 h-px bg-cyan-500/10" />
+      <div className="absolute inset-x-4 top-2/3 h-px bg-cyan-500/10" />
+      <div className="absolute inset-x-4 bottom-8 h-px bg-cyan-500/10" />
+      <div className="flex h-full items-end gap-3 pt-12">
+        {[38, 56, 44, 70, 62, 82, 52, 66].map((height, idx) => (
+          <div key={idx} className="flex min-w-0 flex-1 items-end">
+            <div
+              className="w-full animate-pulse rounded-t-md bg-cyan-300/20"
+              style={{ height: `${height}%`, animationDelay: `${idx * 85}ms` }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
   const toneClass = (ok: boolean) => (ok ? 'text-emerald-300' : 'text-rose-300');
   const gaugeTone = (value: number) =>
     value >= 85
@@ -1297,9 +1465,9 @@ export const MonitoringDashboard: React.FC = () => {
   const usageCards = [
     {
       label: 'Collector',
-      value: depsHealth?.collector_running ? 'running' : 'stopped',
-      percent: depsHealth?.collector_running ? 100 : 0,
-      helper: depsHealth?.collector_running ? 'polling active' : 'polling idle',
+      value: collectorStatus?.running ? t('serverStatus.running') : t('serverStatus.stopped'),
+      percent: collectorStatus?.running ? 100 : 0,
+      helper: `${collectorStatus?.mode || 'unknown'} | WS ${collectorStatus?.ws_connections ?? 0}`,
     },
     {
       label: 'Redis',
@@ -1328,6 +1496,39 @@ export const MonitoringDashboard: React.FC = () => {
       value: String(isAllScope ? allNodesStatus.onlineClients : latestForSelected?.online_clients ?? 0),
       percent: Math.min(100, (isAllScope ? allNodesStatus.onlineClients : latestForSelected?.online_clients ?? 0) * 5),
       helper: isAllScope ? 'active sessions' : 'node sessions',
+    },
+  ];
+  const resourceScopeHelper = isAllScope
+    ? `${resourceSummary?.count || 0}/${serverStatuses.length || nodes.length} ${t('serverStatus.online').toLowerCase()}`
+    : selectedNodeName;
+  const resourceCards = [
+    {
+      label: t('serverStatus.cpu'),
+      value: resourceSummary ? `${resourceSummary.cpuAvg.toFixed(1)}%` : '-',
+      percent: clampPercent(resourceSummary?.cpuAvg),
+      helper: resourceScopeHelper,
+      detail: '',
+    },
+    {
+      label: t('serverStatus.ram'),
+      value: resourceSummary ? `${resourceSummary.memPercent.toFixed(1)}%` : '-',
+      percent: clampPercent(resourceSummary?.memPercent),
+      helper: resourceSummary ? `${formatBytes(resourceSummary.memCurrent)} / ${formatBytes(resourceSummary.memTotal)}` : resourceScopeHelper,
+      detail: resourceScopeHelper,
+    },
+    {
+      label: t('serverStatus.disk'),
+      value: resourceSummary ? `${resourceSummary.diskPercent.toFixed(1)}%` : '-',
+      percent: clampPercent(resourceSummary?.diskPercent),
+      helper: resourceSummary ? `${formatBytes(resourceSummary.diskCurrent)} / ${formatBytes(resourceSummary.diskTotal)}` : resourceScopeHelper,
+      detail: resourceScopeHelper,
+    },
+    {
+      label: 'Uptime',
+      value: formatUptime(isAllScope ? resourceSummary?.uptimeMax : resourceSummary?.uptimeAvg),
+      percent: resourceSummary?.uptimeMax || resourceSummary?.uptimeAvg ? 100 : 0,
+      helper: isAllScope ? 'max uptime' : selectedNodeName,
+      detail: resourceScopeHelper,
     },
   ];
   const stackCards = [
@@ -1421,10 +1622,12 @@ export const MonitoringDashboard: React.FC = () => {
                 loadAdguardOverview();
                 loadAdguardHistory();
                 loadStackStatus();
+                loadServerStatuses();
+                loadCollectorStatus();
               }}
-              disabled={loadingHistory}
+              disabled={loadingHistory || resourceLoading}
             >
-              {loadingHistory ? t('header.updating') : t('common.refresh')}
+              {loadingHistory || resourceLoading ? t('header.updating') : t('common.refresh')}
             </button>
           </div>
         </div>
@@ -1530,6 +1733,45 @@ export const MonitoringDashboard: React.FC = () => {
               </div>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#0a0e1a]">
                 <div className={cn('h-full rounded-full bg-gradient-to-r', tone.fill)} style={{ width: `${card.percent}%` }} />
+              </div>
+            </article>
+          );
+        })}
+      </section>
+
+      {resourceError && (
+        <div className="mb-4 rounded-lg border border-rose-500/45 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+          {resourceError}
+        </div>
+      )}
+
+      <section className="mb-6 grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-4">
+        {resourceCards.map((card) => {
+          const tone = gaugeTone(card.percent);
+          const isSkeleton = resourceLoading && !resourceSummary;
+          return (
+            <article key={card.label} className={chartCardClass}>
+              <div className="flex items-center justify-between gap-3">
+                <span className={sectionTitleClass}>{card.label}</span>
+                <span className={cn('font-mono tabular-nums whitespace-nowrap text-xs font-medium', tone.text)}>
+                  {isSkeleton ? '...' : `${card.percent}%`}
+                </span>
+              </div>
+              <div className="mt-3 flex items-baseline justify-between gap-3">
+                {isSkeleton ? (
+                  <div className="h-6 w-24 animate-pulse rounded-md bg-cyan-300/10" />
+                ) : (
+                  <strong className={metricValueClass}>{card.value}</strong>
+                )}
+                <span className="truncate text-right text-[11px] text-slate-500">
+                  {isSkeleton ? t('serverStatus.loadingLiveMetrics') : card.helper}
+                </span>
+              </div>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#0a0e1a]">
+                <div
+                  className={cn('h-full rounded-full bg-gradient-to-r', tone.fill, isSkeleton && 'animate-pulse')}
+                  style={{ width: isSkeleton ? '72%' : `${card.percent}%` }}
+                />
               </div>
             </article>
           );
@@ -1833,13 +2075,13 @@ export const MonitoringDashboard: React.FC = () => {
         <section className={chartCardClass}>
             <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">CPU <span className="font-mono tabular-nums whitespace-nowrap text-slate-500">({selectedNodeName})</span></h6>
             <div style={{ height: 260 }}>
-              <Line data={cpuData} options={chartOptions} />
+              {loadingHistory && !(isAllScope ? allScopeLabels.length : labels.length) ? renderChartSkeleton() : <Line data={cpuData} options={chartOptions} />}
             </div>
         </section>
         <section className={chartCardClass}>
             <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.onlineClientsChart', { node: selectedNodeName })}</h6>
             <div style={{ height: 260 }}>
-              <Line data={onlineData} options={chartOptions} />
+              {loadingHistory && !(isAllScope ? allScopeLabels.length : labels.length) ? renderChartSkeleton() : <Line data={onlineData} options={chartOptions} />}
             </div>
         </section>
         <section className={chartCardClass}>
@@ -1847,7 +2089,9 @@ export const MonitoringDashboard: React.FC = () => {
               {t('monitoringDashboard.trafficConsumptionTitle', { label: trafficConsumptionLabel, node: selectedNodeName, mode: trafficModeLabel, source: trafficSourceLabel, step: effectiveTrafficStepSec, smoothing: trafficSmoothingLabel })}
             </h6>
             <div style={{ height: 260 }}>
-              {renderTrafficAsBars ? (
+              {loadingHistory && !trafficData.labels.length ? (
+                renderChartSkeleton()
+              ) : renderTrafficAsBars ? (
                 <Bar data={trafficData} options={trafficChartOptions as any} />
               ) : (
                 <Line data={trafficData} options={trafficChartOptions} />
