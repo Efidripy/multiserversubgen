@@ -21,6 +21,24 @@ export interface NodeDashboardOverviewOptions {
   includeCounts?: boolean;
 }
 
+export type NodesChangedAction = 'create' | 'update' | 'delete';
+
+export interface NodesChangedDetail {
+  action: NodesChangedAction;
+  nodeId?: number;
+}
+
+export const NODES_CHANGED_EVENT = 'sub-manager:nodes-changed';
+
+export const dispatchNodesChanged = (detail: NodesChangedDetail) => {
+  if (typeof window === 'undefined') return;
+  window.dispatchEvent(new CustomEvent<NodesChangedDetail>(NODES_CHANGED_EVENT, { detail }));
+};
+
+interface NodeMutationOptions {
+  emitChange?: boolean;
+}
+
 const toOptionalString = (value: unknown): string | undefined => {
   if (typeof value === 'string' && value.length > 0) return value;
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
@@ -204,18 +222,26 @@ export async function getNodeDashboardOverview(
   return { nodes, statuses, clientCounts, inboundCounts };
 }
 
-export async function createNode(payload: unknown): Promise<any> {
+export async function createNode(payload: unknown, options: NodeMutationOptions = {}): Promise<any> {
   const res = await api.post('/v1/nodes', payload, { auth: getAuth() });
+  if (options.emitChange !== false) {
+    dispatchNodesChanged({
+      action: 'create',
+      nodeId: toFiniteId(res.data?.id ?? res.data?.node?.id) ?? undefined,
+    });
+  }
   return res.data;
 }
 
 export async function updateNode(nodeId: number, payload: unknown): Promise<any> {
   const res = await api.put(`/v1/nodes/${nodeId}`, payload, { auth: getAuth() });
+  dispatchNodesChanged({ action: 'update', nodeId });
   return res.data;
 }
 
 export async function deleteNode(nodeId: number): Promise<any> {
   const res = await api.delete(`/v1/nodes/${nodeId}`, { auth: getAuth() });
+  dispatchNodesChanged({ action: 'delete', nodeId });
   return res.data;
 }
 

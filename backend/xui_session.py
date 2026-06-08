@@ -100,13 +100,54 @@ def _env_float(name: str, default: float) -> float:
 
 VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
 
-XUI_HTTP_TIMEOUT_SEC = max(1.0, _env_float("XUI_HTTP_TIMEOUT_SEC", 12.0))
-XUI_HTTP_RETRIES = max(0, _env_int("XUI_HTTP_RETRIES", 2))
+XUI_MAX_CONNECT_TIMEOUT_SEC = 3.0
+XUI_MAX_READ_TIMEOUT_SEC = 4.0
+XUI_CONNECT_TIMEOUT_SEC = min(
+    XUI_MAX_CONNECT_TIMEOUT_SEC,
+    max(0.1, _env_float("XUI_CONNECT_TIMEOUT_SEC", XUI_MAX_CONNECT_TIMEOUT_SEC)),
+)
+XUI_READ_TIMEOUT_SEC = min(
+    XUI_MAX_READ_TIMEOUT_SEC,
+    max(
+        0.1,
+        _env_float(
+            "XUI_READ_TIMEOUT_SEC",
+            _env_float("XUI_HTTP_TIMEOUT_SEC", XUI_MAX_READ_TIMEOUT_SEC),
+        ),
+    ),
+)
+XUI_HTTP_TIMEOUT_SEC = XUI_READ_TIMEOUT_SEC
+XUI_HTTP_RETRIES = max(0, _env_int("XUI_HTTP_RETRIES", 0))
 XUI_HTTP_RETRY_BACKOFF_SEC = max(0.0, _env_float("XUI_HTTP_RETRY_BACKOFF_SEC", 0.35))
 XUI_HTTP_RETRY_STATUSES = {429, 500, 502, 503, 504}
-XUI_FAST_TIMEOUT_SEC = max(1.0, _env_float("XUI_FAST_TIMEOUT_SEC", 5.0))
+XUI_FAST_TIMEOUT_SEC = min(XUI_READ_TIMEOUT_SEC, max(1.0, _env_float("XUI_FAST_TIMEOUT_SEC", XUI_READ_TIMEOUT_SEC)))
 XUI_FAST_RETRIES = max(0, _env_int("XUI_FAST_RETRIES", 0))
 XUI_SESSION_TTL_SEC = max(30, _env_int("XUI_SESSION_TTL_SEC", 900))
+
+
+def bounded_xui_timeout(timeout: float | tuple | list | None = None) -> tuple[float, float]:
+    """Return a requests timeout tuple capped to the XUI hard SLA."""
+    connect_timeout = XUI_CONNECT_TIMEOUT_SEC
+    read_timeout = XUI_READ_TIMEOUT_SEC
+
+    if isinstance(timeout, (tuple, list)):
+        if timeout:
+            try:
+                connect_timeout = min(connect_timeout, max(0.1, float(timeout[0])))
+            except Exception:
+                pass
+        if len(timeout) > 1:
+            try:
+                read_timeout = min(read_timeout, max(0.1, float(timeout[1])))
+            except Exception:
+                pass
+    elif timeout is not None:
+        try:
+            read_timeout = min(read_timeout, max(0.1, float(timeout)))
+        except Exception:
+            pass
+
+    return (connect_timeout, read_timeout)
 
 
 def make_node_key(ip: str, port: int | str, base_path: str = "") -> str:
@@ -272,7 +313,7 @@ def xui_request(
     **kwargs,
 ) -> requests.Response:
     """Выполнить HTTP-запрос к node panel c ретраями и backoff."""
-    actual_timeout = XUI_HTTP_TIMEOUT_SEC if timeout is None else float(timeout)
+    actual_timeout = bounded_xui_timeout(timeout)
     retry_budget = XUI_HTTP_RETRIES if retries is None else max(0, int(retries))
     attempts = retry_budget + 1
     last_exc: Exception | None = None
@@ -614,4 +655,3 @@ def login_panel_detailed(
         }
 
     return _do_credential_login(session, base_url, username, password, timeout, retries)
-

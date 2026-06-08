@@ -99,6 +99,7 @@ def register_app_routers(
             get_cached_online_clients=get_cached_online_clients,
             list_nodes=list_nodes,
             xui_monitor=xui_monitor,
+            get_latest_snapshot=snapshot_collector.latest_snapshot,
         )
     )
     app.include_router(

@@ -235,6 +235,104 @@ def test_dashboard_summary_auth_required():
     assert response.status_code == 401
 
 
+def test_dashboard_summary_uses_snapshot_cache_without_xui_fetch(monkeypatch):
+    nodes = [
+        {"id": 1, "name": "alpha"},
+        {"id": 2, "name": "beta"},
+    ]
+    monkeypatch.setattr(main.node_service, "list_nodes", lambda: nodes)
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("traffic fetch must not run")),
+    )
+    monkeypatch.setattr(
+        main,
+        "get_cached_online_clients",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("online fetch must not run")),
+    )
+    main.snapshot_collector._latest = {
+        "timestamp": 1234567890.0,
+        "nodes": {
+            "alpha": {
+                "name": "alpha",
+                "node_id": 1,
+                "available": True,
+                "online_clients": 3,
+                "traffic_total": 1000,
+            },
+            "beta": {
+                "name": "beta",
+                "node_id": 2,
+                "available": False,
+                "online_clients": 0,
+                "traffic_total": 0,
+            },
+        },
+    }
+    app = _build_test_app(monitoring_enabled=False)
+
+    @app.middleware("http")
+    async def _inject_auth_user(request, call_next):
+        request.state.auth_user = "admin"
+        return await call_next(request)
+
+    client = TestClient(app)
+    response = client.get("/api/v1/dashboard/summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["nodes_total"] == 2
+    assert payload["nodes_online"] == 1
+    assert payload["online_clients_total"] == 3
+    assert payload["traffic"]["total"] == 1000
+    assert payload["cache"]["source"] == "snapshot_collector"
+
+
+def test_node_server_status_uses_snapshot_cache_without_xui_fetch(monkeypatch):
+    node = {"id": 1, "name": "alpha"}
+    monkeypatch.setattr(main.node_service, "get_node", lambda node_id: node if node_id == 1 else None)
+    monkeypatch.setattr(
+        main.xui_monitor,
+        "get_server_status",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("xui fetch must not run")),
+    )
+    main.snapshot_collector._latest = {
+        "timestamp": 1234567890.0,
+        "nodes": {
+            "alpha": {
+                "name": "alpha",
+                "node_id": 1,
+                "available": True,
+                "poll_ms": 42.0,
+                "server_status": {
+                    "node": "alpha",
+                    "available": True,
+                    "system": {"cpu": 11},
+                    "xray": {"running": True},
+                    "network": {"upload": 1, "download": 2},
+                },
+            },
+        },
+    }
+    app = _build_test_app(monitoring_enabled=False)
+
+    @app.middleware("http")
+    async def _inject_auth_user(request, call_next):
+        request.state.auth_user = "admin"
+        return await call_next(request)
+
+    client = TestClient(app)
+    response = client.get("/api/v1/nodes/1/server-status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["cached"] is True
+    assert payload["poll_ms"] == 42.0
+    assert payload["system"]["cpu"] == 11
+
+
 def test_inbound_update_auth_required():
     """PUT /inbounds/{node_id}/{id} requires auth."""
     client = TestClient(_build_test_app(monitoring_enabled=False))

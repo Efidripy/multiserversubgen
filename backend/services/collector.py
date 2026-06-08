@@ -51,6 +51,8 @@ class SnapshotCollector:
         ultra_idle_interval_sec: int = 86400,
         idle_after_sec: int = 900,
         ultra_idle_after_sec: int = 86400,
+        poll_interval_ceiling_sec: int = 60,
+        degraded_backoff_sec: int = 300,
     ):
         self.fetch_nodes = fetch_nodes
         self.xui_monitor = xui_monitor
@@ -67,6 +69,8 @@ class SnapshotCollector:
         self.ultra_idle_interval_sec = max(self.idle_interval_sec, ultra_idle_interval_sec)
         self.idle_after_sec = max(60, idle_after_sec)
         self.ultra_idle_after_sec = max(self.idle_after_sec, ultra_idle_after_sec)
+        self.poll_interval_ceiling_sec = max(30, min(60, poll_interval_ceiling_sec))
+        self.degraded_backoff_sec = max(180, min(300, degraded_backoff_sec))
         self.on_snapshot = on_snapshot
 
         self._task: Optional[asyncio.Task] = None
@@ -209,8 +213,11 @@ class SnapshotCollector:
                             "failures": 0,
                             "stable_cycles": 0,
                             "last_hash": "",
+                            "circuit_until": 0.0,
                         },
                     )
+                    if not force_poll and float(state.get("circuit_until", 0.0)) > now:
+                        continue
                     if now >= state["next_poll"] or force_poll:
                         tasks.append(self._poll_node(node, key, sem))
 
@@ -225,7 +232,7 @@ class SnapshotCollector:
                 logger.error(f"Collector loop error: {exc}")
 
             # Adaptive sleep: longer in idle modes; force_poll_event provides early wake-up.
-            sleep_time = min(3600.0, self._get_current_interval() / 10)
+            sleep_time = min(10.0, self.poll_interval_ceiling_sec / 10, self._get_current_interval() / 10)
             try:
                 await asyncio.wait_for(self._force_poll_event.wait(), timeout=sleep_time)
             except asyncio.TimeoutError:
@@ -249,17 +256,30 @@ class SnapshotCollector:
 
                 state["last_hash"] = curr_hash
                 state["failures"] = 0
+                state["circuit_until"] = 0.0
 
                 # Adaptive interval per node based on current mode and stability.
                 current_interval = self._get_current_interval()
                 stable_boost = min(4, 1 + state["stable_cycles"] // 3)
-                interval = min(self.max_interval_sec, max(self.min_interval_sec, current_interval * stable_boost))
+                interval = min(
+                    self.max_interval_sec,
+                    self.poll_interval_ceiling_sec,
+                    max(self.min_interval_sec, current_interval * stable_boost),
+                )
                 state["interval"] = float(interval)
             else:
                 state["failures"] += 1
-                current_interval = self._get_current_interval()
-                backoff = current_interval * (2 ** min(state["failures"], 4))
-                state["interval"] = float(min(self.max_interval_sec, backoff))
+                if self._is_timeout_snapshot(snapshot):
+                    circuit_until = time.time() + self.degraded_backoff_sec
+                    state["interval"] = float(self.degraded_backoff_sec)
+                    state["circuit_until"] = circuit_until
+                    snapshot["circuit_open_until"] = circuit_until
+                    snapshot["reason"] = "timeout"
+                    snapshot["status"] = "offline"
+                else:
+                    current_interval = min(self._get_current_interval(), self.poll_interval_ceiling_sec)
+                    backoff = current_interval * (2 ** min(state["failures"], 4))
+                    state["interval"] = float(min(self.max_interval_sec, backoff))
                 state["stable_cycles"] = 0
 
             state["next_poll"] = time.time() + state["interval"]
@@ -287,6 +307,7 @@ class SnapshotCollector:
                     "status": status.get("status", "offline"),
                     "reason": status.get("reason", "unavailable"),
                     "error": status.get("error", "Failed to connect"),
+                    "server_status": status,
                     "xray_running": False,
                     "cpu": 0,
                     "online_clients": 0,
@@ -317,6 +338,7 @@ class SnapshotCollector:
                 "timestamp": time.time(),
                 "panel_version": panel_version,
                 "api_version": api_version,
+                "server_status": status,
             }
         except Exception as exc:
             logger.warning(f"Collector failed for node {name}: {exc}")
@@ -327,12 +349,25 @@ class SnapshotCollector:
                 "status": "offline",
                 "reason": "collector_exception",
                 "error": str(exc),
+                "server_status": {
+                    "node": name,
+                    "available": False,
+                    "status": "offline",
+                    "reason": "collector_exception",
+                    "error": str(exc),
+                },
                 "xray_running": False,
                 "cpu": 0,
                 "online_clients": 0,
                 "traffic_total": 0,
                 "timestamp": time.time(),
             }
+
+    @staticmethod
+    def _is_timeout_snapshot(snapshot: Dict) -> bool:
+        reason = str(snapshot.get("reason") or "").lower()
+        error = str(snapshot.get("error") or "").lower()
+        return "timeout" in reason or "timed out" in error or "read timed out" in error
 
     async def _broadcast_delta(self, key: str, snapshot: Dict):
         previous = self._latest["nodes"].get(key)

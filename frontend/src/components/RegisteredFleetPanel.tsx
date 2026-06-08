@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, Edit3, Pause, Play, RefreshCw, Trash2 } from 'lucide-react';
-import { getRegisteredFleetOverview, type FleetNode } from '../api/nodes';
+import { deleteNode, getRegisteredFleetOverview, NODES_CHANGED_EVENT, type FleetNode } from '../api/nodes';
+import { useToast } from './Toast';
 
 interface FleetSummary {
   total: number;
@@ -32,6 +33,9 @@ type UiFleetNode = {
 
 const fleetActionButtonClass =
   'flex h-5 w-5 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0a0e1a] text-gray-500 transition-colors hover:border-cyan-400/30 hover:text-cyan-300';
+
+const fleetDeleteButtonClass =
+  'flex h-5 w-5 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0a0e1a] text-slate-500 transition-colors hover:border-red-400/30 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50';
 
 const isReadOnly = (value: unknown) => value === true || Number(value) === 1;
 
@@ -76,12 +80,14 @@ export function RegisteredFleetPanel({
   onSummaryChange,
 }: RegisteredFleetPanelProps) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const [nodes, setNodes] = useState<UiFleetNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletingNodeId, setDeletingNodeId] = useState<number | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
@@ -94,13 +100,40 @@ export function RegisteredFleetPanel({
       setLoaded(true);
       setLoading(false);
     }
+  }, []);
+
+  const handleDelete = async (node: UiFleetNode) => {
+    if (deletingNodeId !== null) return;
+    if (!window.confirm(t('nodes.confirmDelete'))) return;
+
+    setDeletingNodeId(node.id);
+    setError(null);
+    try {
+      await deleteNode(node.id);
+      setNodes((current) => current.filter((item) => item.id !== node.id));
+      await load();
+    } catch (err: any) {
+      const message = err?.response?.data?.detail || err?.message || t('nodes.deleteFailed');
+      setError(message);
+      toast(message, 'error');
+    } finally {
+      setDeletingNodeId(null);
+    }
   };
 
   useEffect(() => {
     load();
     const interval = window.setInterval(load, 30000);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [load]);
+
+  useEffect(() => {
+    const handleNodesChanged = () => {
+      void load();
+    };
+    window.addEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
+    return () => window.removeEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
+  }, [load]);
 
   const counts = useMemo(() => {
     const online = nodes.filter((node) => node.status === 'online').length;
@@ -228,8 +261,10 @@ export function RegisteredFleetPanel({
                   <div className="rounded-lg border border-cyan-500/15 bg-[#0a0e1a] px-3 py-4 text-center font-mono text-[11px] font-light text-gray-400">
                     {t('nodes.noRegisteredServersFound', { defaultValue: 'No registered servers found' })}
                   </div>
-                ) : nodes.map((node) => (
-                  <article key={node.id} className="rounded-lg border border-cyan-500/15 bg-[#0a0e1a] px-2.5 py-1.5 transition-colors duration-200 hover:border-cyan-300/30 hover:bg-[#0b101b]">
+                ) : nodes.map((node) => {
+                  const isDeleting = deletingNodeId === node.id;
+                  return (
+                    <article key={node.id} className={`rounded-lg border border-cyan-500/15 bg-[#0a0e1a] px-2.5 py-1.5 transition-all duration-200 hover:border-cyan-300/30 hover:bg-[#0b101b] ${isDeleting ? 'opacity-50' : ''}`}>
                     <div className="mb-0.5">
                       <div className="flex items-center gap-1.5 mb-1">
                         <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
@@ -277,12 +312,20 @@ export function RegisteredFleetPanel({
                       <button className={fleetActionButtonClass} type="button" title="Edit" onClick={onOpenNodes}>
                         <Edit3 className="w-3.5 h-3.5 opacity-60" />
                       </button>
-                      <button className={`${fleetActionButtonClass} hover:border-red-300/30 hover:text-red-300`} type="button" title="Delete" disabled>
-                        <Trash2 className="w-3.5 h-3.5 opacity-60" />
+                      <button
+                        className={fleetDeleteButtonClass}
+                        type="button"
+                        title={t('common.delete')}
+                        aria-label={t('common.delete')}
+                        disabled={deletingNodeId !== null}
+                        onClick={() => handleDelete(node)}
+                      >
+                        <Trash2 className={`w-3.5 h-3.5 opacity-60 ${isDeleting ? 'animate-pulse' : ''}`} />
                       </button>
                     </div>
-                  </article>
-                ))}
+                    </article>
+                  );
+                })}
               </div>
             </div>
           </div>

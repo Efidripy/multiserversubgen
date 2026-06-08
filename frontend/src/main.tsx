@@ -97,15 +97,20 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   devLog('[Init] Starting performance monitoring...');
   performanceMonitor.startMeasure('app-initial-load');
 
-  // Service Worker registration
-  devLog('[Init] Registering Service Worker...');
-  await swManager.register({
-    onReady: () => devLog('[SW] Ready for offline support'),
-    onUpdate: () => devLog('[SW] Update available!'),
-    onOffline: () => devLog('[SW] Offline mode activated'),
-  }).catch((err) => {
-    console.warn('[SW] Registration failed (non-critical):', err);
-  });
+  if (import.meta.env.VITE_ENABLE_SERVICE_WORKER === 'true') {
+    devLog('[Init] Registering Service Worker...');
+    await swManager.register({
+      onReady: () => devLog('[SW] Ready for offline support'),
+      onUpdate: () => devLog('[SW] Update available!'),
+      onOffline: () => devLog('[SW] Offline mode activated'),
+    }).catch((err) => {
+      devLog('[SW] Registration failed (non-critical):', err);
+    });
+  } else {
+    await swManager.unregister().catch((err) => {
+      devLog('[SW] Unregister skipped:', err);
+    });
+  }
 
   // IndexedDB initialization
   devLog('[Init] Initializing IndexedDB...');

@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from xui_session import (
     XUI_FAST_RETRIES,
     XUI_FAST_TIMEOUT_SEC,
-    XUI_HTTP_TIMEOUT_SEC,
+    bounded_xui_timeout,
     extract_node_auth,
     get_authenticated_session,
     invalidate_session_cache,
@@ -525,7 +525,7 @@ class ServerMonitor:
             res = requests.get(
                 f"{base_url}/",
                 verify=_requests_verify_value(),
-                timeout=XUI_HTTP_TIMEOUT_SEC,
+                timeout=bounded_xui_timeout(),
             )
             
             latency = (time.time() - start_time) * 1000  # в миллисекундах

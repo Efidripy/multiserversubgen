@@ -4,6 +4,8 @@ import { cacheService } from '../services/cacheService';
 import { getAuth } from '../auth';
 import { requestActivityStore } from '../services/requestActivity';
 
+export const AUTH_REQUIRED_EVENT = 'sub-manager:auth-required';
+
 /**
  * API base URL used by all frontend requests.
  *
@@ -173,6 +175,11 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const errUrl = error.config?.url ?? '';
   const errStatus = error.response?.status ?? 0;
   const errMethod = error.config?.method?.toUpperCase() ?? '';
+  if (errStatus === 401 && !errUrl.includes('/auth/verify') && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT, {
+      detail: { url: errUrl, method: errMethod },
+    }));
+  }
   if (!errUrl.includes('/auth/')) {
     activityLog.error('API', `✕ ${errMethod} ${errUrl} ${errStatus}`, { msg: error.response?.data?.detail ?? error.message });
   }

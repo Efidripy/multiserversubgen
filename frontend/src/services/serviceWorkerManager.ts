@@ -68,6 +68,12 @@ class ServiceWorkerManager {
     if (this.registration) {
       await this.registration.unregister();
       this.registration = null;
+      return;
+    }
+
+    if ('serviceWorker' in navigator && navigator.serviceWorker.getRegistrations) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
     }
   }
 

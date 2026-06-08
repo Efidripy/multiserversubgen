@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Activity, CheckCircle, Download, RefreshCw, Server, Upload, Users } from 'lucide-react';
 import { getDashboardSummary, normalizeDashboardSummary, type DashboardSummaryData } from '../api/dashboard';
-import { listNodes, type NodeRecord } from '../api/nodes';
+import { listNodes, NODES_CHANGED_EVENT, type NodeRecord } from '../api/nodes';
 
 type StatTone = 'default' | 'accent' | 'success' | 'warning' | 'danger';
 
@@ -100,7 +100,7 @@ export function DashboardSummary({
   const [nodesError, setNodesError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setNodesError(null);
     try {
@@ -129,13 +129,21 @@ export function DashboardSummary({
       setLastUpdated(new Date());
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     load();
     const interval = window.setInterval(load, 60000);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [load]);
+
+  useEffect(() => {
+    const handleNodesChanged = () => {
+      void load();
+    };
+    window.addEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
+    return () => window.removeEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
+  }, [load]);
 
   const isInitialLoading = loading && lastUpdated === null;
   const totalNodes = nodes.length;

@@ -68,74 +68,6 @@ type ServerMetaItem = {
   tone?: string;
 };
 
-const fallbackServers: UiServer[] = [
-  {
-    name: 'DE 82-FR',
-    status: 'online',
-    latency: 'online',
-    cpu: 0,
-    ramPercent: 0,
-    ramDetail: '0 MB/1000 MB',
-    diskPercent: 0,
-    diskDetail: '0 MB/10000 MB',
-    network: '0 GB / 0 GB',
-    uptime: '-',
-    load: '- / - / -',
-    swap: '0 B/512 MB',
-    core: '26.4.17',
-    lastSeen: '12:00 AM',
-  },
-  {
-    name: 'EE 5-EE',
-    status: 'online',
-    latency: '3559ms',
-    cpu: 8.27,
-    ramPercent: 55.77,
-    ramDetail: '536 MB/961 MB',
-    diskPercent: 46.7,
-    diskDetail: '3170 MB/6790 MB',
-    network: '91.31 GB / 89.86 GB',
-    uptime: '14h 59m',
-    load: '0.04 / 0.10 / 0.09',
-    swap: '0 B/512 MB',
-    core: '26.4.17',
-    lastSeen: '9:00:44 PM',
-  },
-  {
-    name: 'NL 146-AM-E',
-    status: 'offline',
-    latency: 'No connection',
-    cpu: 0,
-    ramPercent: 0,
-    ramDetail: '0 MB/961 MB',
-    diskPercent: 0,
-    diskDetail: '0 MB/29440 MB',
-    network: '-',
-    uptime: '-',
-    load: '- / - / -',
-    swap: '-',
-    core: '-',
-    lastSeen: '2h ago',
-    issue: 'Connection Lost',
-  },
-  {
-    name: 'RU 185-RF-E',
-    status: 'online',
-    latency: '2145ms',
-    cpu: 5.2,
-    ramPercent: 46.3,
-    ramDetail: '445 MB/961 MB',
-    diskPercent: 41,
-    diskDetail: '8200 MB/20000 MB',
-    network: '32.1 GB / 78.4 GB',
-    uptime: '5h 33m',
-    load: '0.06 / 0.08 / 0.07',
-    swap: '0 B/512 MB',
-    core: '26.4.17',
-    lastSeen: '9:00:45 PM',
-  },
-];
-
 const widthClasses = [
   'w-0',
   'w-[3%]',
@@ -227,8 +159,9 @@ export function ServerStatus({
   onToggleFleet,
 }: ServerStatusProps) {
   const { t } = useTranslation();
-  const [servers, setServers] = useState<UiServer[]>(fallbackServers);
+  const [servers, setServers] = useState<UiServer[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(30);
   const [cardSort, setCardSort] = useState<SortMode>('name');
@@ -237,18 +170,27 @@ export function ServerStatus({
 
   const loadServersStatus = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const deck = await getDashboardServerDeck({
         includeLiveStatus,
         includePanelUpdateChecks: includePanelUpdateChecks ?? !dashboardMode,
       });
       const mapped = deck.servers.map(toUiServer);
-      setServers(mapped.length > 0 ? mapped.slice(0, 4) : fallbackServers);
+      setServers(mapped);
     } catch {
-      setServers(fallbackServers);
+      setServers([]);
+      setLoadError(t('serverStatus.loadFailed'));
     } finally {
       setLoading(false);
     }
+  };
+
+  const refreshDeck = async () => {
+    try {
+      await refreshNodesNow();
+    } catch {}
+    await loadServersStatus();
   };
 
   useEffect(() => {
@@ -321,12 +263,7 @@ export function ServerStatus({
               </select>
               <button
                 className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white disabled:opacity-50"
-                onClick={async () => {
-                  try {
-                    await refreshNodesNow();
-                  } catch {}
-                  await loadServersStatus();
-                }}
+                onClick={refreshDeck}
                 disabled={loading}
                 type="button"
                 title="Refresh"
@@ -370,10 +307,38 @@ export function ServerStatus({
           </div>
         </div>
 
-        <div className="p-3 grid gap-3 grid-cols-1 md:grid-cols-2">
-          {sortedServers.map((server) => (
-            <ServerCard key={server.name} server={server} />
-          ))}
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3 p-3">
+          {sortedServers.length > 0 ? (
+            sortedServers.map((server) => (
+              <ServerCard key={server.name} server={server} />
+            ))
+          ) : (
+            <div className="col-span-full flex min-h-[286px] items-center justify-center rounded-lg border border-dashed border-cyan-500/15 bg-[#0a0e1a]/70 px-4 py-10 text-center shadow-[inset_0_1px_0_rgba(103,232,249,0.03)]">
+              <div className="max-w-md">
+                <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full border border-cyan-400/20 bg-cyan-500/10 text-cyan-300">
+                  {loading ? <RefreshCw className="h-5 w-5 animate-spin" /> : <Network className="h-5 w-5" />}
+                </div>
+                <div className="font-mono text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">
+                  {loading ? t('serverStatus.loadingLiveMetrics') : t('common.noRecordsFound')}
+                </div>
+                <p className="mt-2 text-sm font-light leading-6 text-gray-400">
+                  {loading
+                    ? t('dashboardSummary.signalDeckCopy')
+                    : loadError || t('serverStatus.noServers', { defaultValue: 'No active servers registered' })}
+                </p>
+                {!loading && (
+                  <button
+                    className="mt-4 inline-flex h-8 items-center gap-1.5 rounded border border-cyan-300/25 bg-[#0f1420] px-3 font-mono text-xs font-light text-cyan-200 transition-colors duration-200 hover:border-cyan-300/40 hover:text-cyan-100"
+                    onClick={refreshDeck}
+                    type="button"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    <span>{t('common.refresh')}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </section>

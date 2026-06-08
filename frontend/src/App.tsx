@@ -6,6 +6,7 @@ import { API_BASE } from './api';
 import { ServerStatus } from './components/ServerStatus';
 import { SubscriptionManager } from './components/SubscriptionManager';
 import { InboundManager } from './components/InboundManager';
+import { NodeManager } from './components/NodeManager';
 import { ClientManager } from './components/ClientManager';
 import { TrafficStats } from './components/TrafficStats';
 import { BackupManager } from './components/BackupManager';
@@ -17,7 +18,7 @@ import { Sidebar, SidebarNavItem } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
 import { useWebSocket } from './hooks/useWebSocket';
 import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials } from './auth';
-import { getFeatureFlags, getMfaStatus, verifyCurrentAuth, verifyLoginCredentials } from './api/authService';
+import { getMfaStatus, verifyCurrentAuth, verifyLoginCredentials } from './api/authService';
 import {
   getBackupHeaderSource,
   getClientsHeaderSource,
@@ -30,6 +31,7 @@ import {
 import { IconName, UIIcon } from './components/UIIcon';
 import { requestActivityStore } from './services/requestActivity';
 import { readStaleCache, writeStaleCache } from './services/staleCache';
+import { AUTH_REQUIRED_EVENT } from './api/client';
 
 type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 type NoticeLevel = 'info' | 'success' | 'warning' | 'danger';
@@ -158,7 +160,7 @@ export const App: React.FC = () => {
   });
   const [headerLoading, setHeaderLoading] = useState(false);
   const [pendingRequests, setPendingRequests] = useState(0);
-  const [monitoringEnabled, setMonitoringEnabled] = useState(true);
+  const [nodeIntakeOpenSignal, setNodeIntakeOpenSignal] = useState(0);
 
   const [notifications, setNotifications] = useState<UiNotification[]>([]);
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
@@ -229,35 +231,6 @@ export const App: React.FC = () => {
   }, [activeTab]);
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      return;
-    }
-    let cancelled = false;
-    const loadFeatures = async () => {
-      try {
-        const payload = await getFeatureFlags();
-        if (!cancelled) {
-          setMonitoringEnabled(payload.monitoringEnabled !== false);
-        }
-      } catch {
-        if (!cancelled) {
-          setMonitoringEnabled(true);
-        }
-      }
-    };
-    loadFeatures();
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    if (!monitoringEnabled && activeTab === 'monitoring') {
-      setActiveTab('dashboard');
-    }
-  }, [monitoringEnabled, activeTab]);
-
-  useEffect(() => {
     const unsubscribe = requestActivityStore.subscribe((pending) => {
       setPendingRequests(pending);
     });
@@ -297,15 +270,7 @@ export const App: React.FC = () => {
         setMfaEnabled(false);
       }
 
-      // Demo mode: skip auth if no credentials stored
       const auth = getAuth();
-      if (!auth.username && !auth.password) {
-        setUser('root');
-        setIsAuthenticated(true);
-        setAuthBootstrapDone(true);
-        return;
-      }
-
       if (auth.username && auth.password) {
         try {
           const verified = await verifyCurrentAuth();
@@ -327,6 +292,18 @@ export const App: React.FC = () => {
       setBrowserNotifyPermission(Notification.permission);
     }
   }, []);
+
+  useEffect(() => {
+    const handleAuthRequired = () => {
+      clearAuthCredentials();
+      setIsAuthenticated(false);
+      setPassword('');
+      setAuthError(t('auth.failed'));
+    };
+
+    window.addEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
+    return () => window.removeEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
+  }, [t]);
 
   useEffect(() => {
     if (notificationPanelOpen) {
@@ -777,9 +754,7 @@ export const App: React.FC = () => {
     ])
   ) as Record<TabType, { icon: IconName; labelKey: string; label: string; eyebrowKey: string; descriptionKey: string; eyebrow: string; description: string }>;
 
-  const visibleTabs: TabType[] = (monitoringEnabled
-    ? ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring', 'backup', 'subscriptions']
-    : ['dashboard', 'inbounds', 'clients', 'traffic', 'backup', 'subscriptions']);
+  const visibleTabs: TabType[] = ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring', 'backup', 'subscriptions'];
 
   const sidebarItems: SidebarNavItem[] = visibleTabs.map((tabId) => ({
     id: tabId,
@@ -815,15 +790,18 @@ export const App: React.FC = () => {
                   <button
                     className="flex items-center gap-1 rounded-md border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 px-3 py-1.5 text-xs font-medium tracking-wide text-white shadow-[0_10px_24px_rgba(34,211,238,0.16)]"
                     type="button"
-                    onClick={() => {
-                      setActiveTab('inbounds');
-                      setMountedTabs(prev => prev.includes('inbounds') ? prev : [...prev, 'inbounds']);
-                    }}
+                    onClick={() => setNodeIntakeOpenSignal((value) => value + 1)}
                   >
                     {`+ ${t('nodes.addNode')}`}
                   </button>
                 </div>
               </section>
+              <NodeManager
+                onReload={() => setKey((prev) => prev + 1)}
+                showIntake={false}
+                showFleet={false}
+                openIntakeSignal={nodeIntakeOpenSignal}
+              />
               <section className="dashboard-server-deck min-w-0">
                 <ServerStatus
                   dashboardMode
@@ -841,8 +819,7 @@ export const App: React.FC = () => {
               setCollapsed={setRegisteredFleetCollapsed}
               onSummaryChange={setFleetSummary}
               onOpenNodes={() => {
-                setActiveTab('inbounds');
-                setMountedTabs(prev => prev.includes('inbounds') ? prev : [...prev, 'inbounds']);
+                setNodeIntakeOpenSignal((value) => value + 1);
                 setRegisteredFleetCollapsed(true);
               }}
             />
@@ -871,7 +848,7 @@ export const App: React.FC = () => {
           setMountedTabs(prev => prev.includes('clients') ? prev : [...prev, 'clients']);
         }} />;
       case 'monitoring':
-        return monitoringEnabled ? <MonitoringDashboard /> : null;
+        return <MonitoringDashboard />;
       case 'backup':
         return <BackupManager />;
       case 'subscriptions':

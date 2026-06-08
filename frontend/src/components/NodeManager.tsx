@@ -5,6 +5,7 @@ import {
   checkNodeConnection,
   createNode,
   deleteNode,
+  dispatchNodesChanged,
   getNodeDashboardOverview,
   getNodePanelUpdateInfo,
   updateNode,
@@ -24,6 +25,16 @@ interface BatchPreviewRow {
   user?: string;
   password?: string;
   bearer_token?: string;
+}
+
+interface NodeManagerProps {
+  onReload: () => void;
+  showIntake?: boolean;
+  showIntakeStrip?: boolean;
+  showFleet?: boolean;
+  dashboardMode?: boolean;
+  includeCounts?: boolean;
+  openIntakeSignal?: number;
 }
 
 const NODE_STATUS_CACHE_KEY = 'sub_manager_node_status_cache_v1';
@@ -65,13 +76,36 @@ const getNodePanelUrl = (node: Node): string => {
   return `${scheme}://${host}${port}${basePath ? `/${basePath}/` : '/'}`;
 };
 
-export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean; showIntakeStrip?: boolean; showFleet?: boolean; dashboardMode?: boolean; includeCounts?: boolean }> = ({
+const emptyFormData = () => ({ name: '', url: '', port: '', user: '', password: '', bearer_token: '' });
+
+const buildPanelUrl = (rawUrl: string, rawPort: string): string | null => {
+  const trimmedUrl = rawUrl.trim();
+  if (!trimmedUrl) return null;
+  const withScheme = /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
+
+  try {
+    const url = new URL(withScheme);
+    const trimmedPort = rawPort.trim();
+    if (trimmedPort) {
+      url.port = trimmedPort;
+    }
+    url.search = '';
+    url.hash = '';
+    const path = url.pathname === '/' ? '' : url.pathname.replace(/\/$/, '');
+    return `${url.protocol}//${url.host}${path}`;
+  } catch {
+    return null;
+  }
+};
+
+export const NodeManager: React.FC<NodeManagerProps> = ({
   onReload,
   showIntake = true,
   showIntakeStrip = false,
   showFleet = true,
   dashboardMode = false,
   includeCounts,
+  openIntakeSignal,
 }) => {
   const { colors } = useTheme();
   const { toast } = useToast();
@@ -100,7 +134,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [addMode, setAddMode] = useState<'form' | 'batch'>('form');
-  const [formData, setFormData] = useState({ name: '', url: '', user: '', password: '', bearer_token: '' });
+  const [formData, setFormData] = useState(emptyFormData);
   const [batchText, setBatchText] = useState('');
   const [batchPreview, setBatchPreview] = useState<BatchPreviewRow[]>([]);
   const [batchAdded, setBatchAdded] = useState(false);
@@ -120,6 +154,20 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     if (successTimerRef.current) clearTimeout(successTimerRef.current);
     if (msg) successTimerRef.current = setTimeout(() => setSuccessRaw(''), 5000);
   }, []);
+
+  const resetIntake = useCallback(() => {
+    setFormData(emptyFormData());
+    setBatchText('');
+    setBatchPreview([]);
+    setBatchAdded(false);
+    setAddMode('form');
+  }, []);
+
+  const closeIntakeAndNotify = useCallback(() => {
+    setShowForm(false);
+    window.setTimeout(() => dispatchNodesChanged({ action: 'create' }), 0);
+  }, []);
+
   const [editingNode, setEditingNode] = useState<Node | null>(null);
   const [editingName, setEditingName] = useState('');
   const [showEditModal, setShowEditModal] = useState(false);
@@ -131,6 +179,14 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     sharedNodeSnapshot = null;
     sharedNodeSnapshotTs = 0;
   };
+
+  useEffect(() => {
+    if (openIntakeSignal === undefined || openIntakeSignal <= 0) return;
+    resetIntake();
+    setSuccess('');
+    setError('');
+    setShowForm(true);
+  }, [openIntakeSignal, resetIntake, setError, setSuccess]);
 
   useEffect(() => {
     try {
@@ -245,8 +301,8 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     setError('');
     setSuccess('');
 
-    const urlVal = formData.url.trim();
-    if (urlVal && !/^https?:\/\//i.test(urlVal)) {
+    const panelUrl = buildPanelUrl(formData.url, formData.port);
+    if (!panelUrl) {
       setError(t('nodes.fillConnectionFields'));
       setLoading(false);
       return;
@@ -263,20 +319,22 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
 
     try {
       const payload: { name: string; url: string; bearer_token?: string; user?: string; password?: string } = {
-        name: formData.name,
-        url: formData.url,
+        name: formData.name.trim(),
+        url: panelUrl,
       };
       
       if (hasToken) {
-        payload.bearer_token = formData.bearer_token;
+        payload.bearer_token = formData.bearer_token.trim();
       } else {
-        payload.user = formData.user;
+        payload.user = formData.user.trim();
         payload.password = formData.password;
       }
 
-      await createNode(payload);
-      setFormData({ name: '', url: '', user: '', password: '', bearer_token: '' });
+      await createNode(payload, { emitChange: false });
+      resetIntake();
+      closeIntakeAndNotify();
       setSuccess(t('nodes.addSuccess'));
+      toast(t('nodes.addSuccess'), 'success');
       invalidateSharedSnapshot();
       loadNodes();
       onReload();
@@ -318,21 +376,27 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     setSuccess('');
     try {
       const results = await Promise.allSettled(
-        batchPreview.map((row) => createNode(row))
+        batchPreview.map((row) => createNode(row, { emitChange: false }))
       );
       const succeeded = results.filter((result) => result.status === 'fulfilled').length;
       const failed = results.length - succeeded;
-      setBatchText('');
-      setBatchPreview([]);
-      setBatchAdded(true);
       if (failed > 0) {
         setSuccess(t('nodes.batchAdded', { count: succeeded }));
         setError(t('nodes.batchFailed', { count: failed }));
       } else {
+        resetIntake();
+        closeIntakeAndNotify();
         setSuccess(t('nodes.batchAdded', { count: succeeded }));
+        toast(t('nodes.batchAdded', { count: succeeded }), 'success');
       }
-      loadNodes();
-      onReload();
+      if (succeeded > 0) {
+        if (failed > 0) {
+          dispatchNodesChanged({ action: 'create' });
+        }
+        invalidateSharedSnapshot();
+        loadNodes();
+        onReload();
+      }
     } catch (err: any) {
       setError(err.response?.data?.detail || t('nodes.batchAddFailed'));
     } finally {
@@ -342,7 +406,7 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
 
   const handleModeSwitch = (mode: 'form' | 'batch') => {
     setAddMode(mode);
-    setFormData({ name: '', url: '', user: '', password: '', bearer_token: '' });
+    setFormData(emptyFormData());
     setBatchText('');
     setBatchPreview([]);
     setBatchAdded(false);
@@ -423,7 +487,8 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
     const hasToken = formData.bearer_token.trim();
     const hasCredentials = formData.user.trim() && formData.password.trim();
     
-    if (!formData.url.trim()) {
+    const panelUrl = buildPanelUrl(formData.url, formData.port);
+    if (!panelUrl) {
       setError(t('nodes.fillConnectionFields'));
       return;
     }
@@ -435,11 +500,11 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
 
     setCheckingConnection(true);
     try {
-      const checkData: { url: string; bearer_token?: string; user?: string; password?: string } = { url: formData.url };
+      const checkData: { url: string; bearer_token?: string; user?: string; password?: string } = { url: panelUrl };
       if (hasToken) {
-        checkData.bearer_token = formData.bearer_token;
+        checkData.bearer_token = formData.bearer_token.trim();
       } else {
-        checkData.user = formData.user;
+        checkData.user = formData.user.trim();
         checkData.password = formData.password;
       }
       
@@ -459,8 +524,10 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
 
   return (
     <div className={`node-manager${dashboardMode ? ' node-manager--dashboard-root' : ''}${showIntakeStrip ? ' node-manager--intake-strip-mode' : ''}`}>
-      {showIntakeController && (
-      <section className={`panel-block mb-4${showIntakeStrip ? ' node-intake-strip' : ''}`}>
+      {(showIntakeController || showForm) && (
+      <section className={showIntakeController ? `panel-block mb-4${showIntakeStrip ? ' node-intake-strip' : ''}` : undefined}>
+          {showIntakeController && (
+          <>
           <div className="panel-block__header">
             <div>
               <h6 className="panel-block__title">{t('nodes.intakeTitle')}</h6>
@@ -480,6 +547,8 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
 
           {error && <div className="alert alert-danger mb-3">{error}</div>}
           {success && <div className="alert alert-success mb-3">{success}</div>}
+          </>
+          )}
 
           {showForm && (
             <div className="modal fade show d-block" tabIndex={-1} role="dialog" style={{ backgroundColor: 'rgba(2, 6, 23, 0.66)' }}>
@@ -528,11 +597,21 @@ export const NodeManager: React.FC<{ onReload: () => void; showIntake?: boolean;
                       type="text"
                       name="url"
                       className="form-control"
-                      placeholder="https://server:443/path/"
+                      placeholder={t('nodes.nodeUrlPlaceholder')}
                       value={formData.url}
                       onChange={(e) => setFormData({ ...formData, url: e.target.value })}
                       style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
                       required
+                    />
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      name="port"
+                      className="form-control"
+                      placeholder={t('inbounds.port')}
+                      value={formData.port}
+                      onChange={(e) => setFormData({ ...formData, port: e.target.value })}
+                      style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
                     />
                     <input
                       type="text"
