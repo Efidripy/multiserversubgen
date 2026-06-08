@@ -82,19 +82,19 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
           padding: '1px 6px', borderRadius: 4, border: '1px solid #30363d',
           background: autoScroll ? '#1f6feb' : '#21262d', color: '#e6edf3', cursor: 'pointer', fontSize: '0.68rem',
           flexShrink: 0,
-        }} title="Auto-scroll">â†“</button>
+        }} title="Auto-scroll">v</button>
         <button onClick={copy} style={{
           padding: '1px 6px', borderRadius: 4, border: '1px solid #30363d',
           background: '#21262d', color: '#e6edf3', cursor: 'pointer', fontSize: '0.68rem', flexShrink: 0,
-        }} title="Copy to clipboard">ðŸ“‹</button>
+        }} title="Copy to clipboard">CP</button>
         <button onClick={() => activityLog.clear()} style={{
           padding: '1px 6px', borderRadius: 4, border: '1px solid #30363d',
           background: '#21262d', color: '#f87171', cursor: 'pointer', fontSize: '0.68rem', flexShrink: 0,
-        }} title="Clear">âœ•</button>
+        }} title="Clear">X</button>
         <button onClick={onClose} style={{
           padding: '1px 6px', borderRadius: 4, border: 'none',
           background: 'transparent', color: '#6c757d', cursor: 'pointer', fontSize: '0.85rem', flexShrink: 0,
-        }}>âœ•</button>
+        }}>X</button>
       </div>
 
       {/* Count */}

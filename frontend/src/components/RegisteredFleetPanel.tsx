@@ -30,6 +30,9 @@ type UiFleetNode = {
   error?: string;
 };
 
+const fleetActionButtonClass =
+  'flex h-5 w-5 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0a0e1a] text-gray-500 transition-colors hover:border-cyan-400/30 hover:text-cyan-300';
+
 const fallbackFleetNodes: UiFleetNode[] = [
   { id: 1, flag: 'DE', code: '82-FR', version: 'v3', address: 'https://son.kleva.ru:443', latency: '11ms', status: 'online', access: 'RW' },
   { id: 2, flag: 'EE', code: '5-EE', version: 'v3', address: 'https://ebola.kleva.ru:443', latency: '11ms', status: 'online', access: 'RW' },
@@ -124,9 +127,10 @@ export function RegisteredFleetPanel({
       {collapsed && (
         <button
           onClick={() => setCollapsed(false)}
-          className="xl:hidden fixed right-0 top-24 bottom-[25px] w-8 bg-[#0a0e1a] hover:bg-[#0f1420] transition-all group z-20 flex items-center justify-center rounded-l-lg"
+          className="fixed right-2 top-[72px] z-30 flex h-12 w-8 items-center justify-center rounded-lg border border-cyan-500/20 bg-[#0f1420] shadow-[0_18px_42px_rgba(0,0,0,0.36),inset_0_1px_0_rgba(103,232,249,0.06)] transition-all hover:border-cyan-300/40 hover:bg-[#111827] xl:hidden group"
           title={t('nodes.registeredFleet')}
           aria-label={t('nodes.registeredFleet')}
+          aria-expanded="false"
           type="button"
         >
           <ChevronLeft className="w-4 h-4 text-cyan-300/70 group-hover:text-cyan-300" />
@@ -134,16 +138,25 @@ export function RegisteredFleetPanel({
       )}
 
       <aside
-        className={`fixed right-0 top-0 bottom-[25px] w-[420px] max-w-[calc(100vw-24px)] transition-[width,transform] duration-300 pt-20 ${
-          collapsed ? 'translate-x-full xl:translate-x-0 xl:w-8' : 'translate-x-0 xl:w-[420px]'
-        } xl:sticky xl:top-6 xl:right-auto xl:bottom-auto xl:h-[calc(100vh-7rem)] xl:max-w-none xl:pt-0 xl:z-20 z-40`}
+        className={`fleet-panel fixed bottom-0 right-0 top-16 z-40 w-[calc(100vw-1rem)] max-w-[420px] transition-[width,transform] duration-300 ${
+          collapsed
+            ? 'pointer-events-none translate-x-full xl:pointer-events-auto xl:bottom-[25px] xl:top-24 xl:w-8 xl:translate-x-0 xl:pt-0'
+            : 'translate-x-0 xl:bottom-[25px] xl:top-0 xl:w-[420px] xl:pt-24'
+        }`}
       >
-        <div className="bg-[#0f1420] h-full flex flex-col relative overflow-clip">
+        <div
+          className={`relative flex h-full min-w-0 flex-col overflow-hidden rounded-l-lg border border-r-0 border-cyan-500/20 shadow-[0_18px_50px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(103,232,249,0.06)] ${
+            collapsed ? 'bg-[#0a0e1a]' : 'bg-[#0f1420]'
+          }`}
+        >
           <button
             onClick={() => setCollapsed(!collapsed)}
-            className={`absolute left-0 top-0 bottom-0 ${collapsed ? 'w-8' : 'w-6'} bg-[#0a0e1a] hover:bg-[#111827] transition-colors group z-10 flex items-center justify-center`}
+            className={`absolute inset-y-0 left-0 z-10 flex w-8 items-center justify-center rounded-l-lg bg-[#0a0e1a] transition-colors hover:bg-[#111827] group ${
+              collapsed ? 'right-0 w-full' : 'border-r border-cyan-500/20'
+            }`}
             title={collapsed ? t('nodes.registeredFleet') : t('common.close')}
             aria-label={collapsed ? t('nodes.registeredFleet') : t('common.close')}
+            aria-expanded={!collapsed}
             type="button"
           >
             {collapsed ? (
@@ -153,54 +166,58 @@ export function RegisteredFleetPanel({
             )}
           </button>
 
-          <div className="flex-1 flex flex-col pl-[28px] pr-3 pb-3 pt-3 min-h-0">
-            <div className="py-3 px-3 bg-[#0d1b2b] flex-shrink-0">
-              <div className="flex items-center justify-between gap-3 mb-2">
+          <div
+            className={`flex min-h-0 flex-1 flex-col pb-3 pr-3 pt-3 transition-opacity duration-200 ${
+              collapsed ? 'pointer-events-none pl-0 opacity-0 xl:hidden' : 'pl-10 opacity-100'
+            }`}
+          >
+            <div className="flex-shrink-0 rounded-lg border border-cyan-500/20 bg-[#0d1b2b] px-3 py-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
                 <div>
-                  <h2 className="text-sm font-bold text-cyan-300 font-mono uppercase">{t('nodes.registeredFleet')}</h2>
-                  <div className="flex flex-wrap gap-3 mt-1">
-                    <span className="text-[10px] text-green-400 font-mono">Online: <strong>{counts.online}</strong></span>
-                    <span className="text-[10px] text-yellow-400 font-mono">Error: <strong>{counts.checking}</strong></span>
-                    <span className="text-[10px] text-red-400 font-mono">Offline: <strong>{counts.offline}</strong></span>
+                  <h2 className="font-mono text-sm font-medium uppercase tracking-[0.14em] text-cyan-300">{t('nodes.registeredFleet')}</h2>
+                  <div className="mt-1 flex flex-wrap gap-3">
+                    <span className="font-mono text-[10px] font-light text-green-400">Online: <strong className="font-medium">{counts.online}</strong></span>
+                    <span className="font-mono text-[10px] font-light text-yellow-400">Error: <strong className="font-medium">{counts.checking}</strong></span>
+                    <span className="font-mono text-[10px] font-light text-red-400">Offline: <strong className="font-medium">{counts.offline}</strong></span>
                   </div>
                 </div>
-                <button
-                  className="px-3 py-1.5 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white rounded font-mono font-bold text-xs disabled:opacity-50"
-                  onClick={load}
-                  disabled={loading}
-                  type="button"
-                >
+                  <button
+                    className="rounded-md border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 px-3 py-1.5 font-mono text-xs font-medium tracking-wide text-white disabled:opacity-50"
+                    onClick={load}
+                    disabled={loading}
+                    type="button"
+                  >
                   {t('nodes.testAll')}
                 </button>
               </div>
-              <p className="text-xs text-gray-400 font-mono">{t('nodes.fleetHint')}</p>
+              <p className="font-mono text-xs font-light leading-5 text-gray-400">{t('nodes.fleetHint')}</p>
             </div>
 
             <div id="fleet-scroll-container" className="flex-1 min-h-0 overflow-y-scroll overflow-x-hidden scrollbar-none">
               <div className="space-y-1 py-1.5">
                 {nodes.map((node) => (
-                  <article key={node.id} className="bg-[#0a0e1a] rounded-lg px-2.5 py-1 transition-colors duration-200 hover:bg-[#0b101b]">
+                  <article key={node.id} className="rounded-lg border border-cyan-500/15 bg-[#0a0e1a] px-2.5 py-1.5 transition-colors duration-200 hover:border-cyan-300/30 hover:bg-[#0b101b]">
                     <div className="mb-0.5">
                       <div className="flex items-center gap-1.5 mb-1">
                         <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${
                           node.status === 'online' ? 'bg-green-400' : node.status === 'error' ? 'bg-yellow-400' : 'bg-red-400'
                         }`} />
-                        <span className="font-bold text-white text-sm">{node.flag} {node.code}</span>
-                        <span className="text-gray-500 text-xs">{node.version}</span>
+                        <span className="text-sm font-medium text-white">{node.flag} {node.code}</span>
+                        <span className="text-xs font-light text-gray-500">{node.version}</span>
                       </div>
 
                       <div className="text-[11px] space-y-0.5 pl-4 min-w-0">
                         <div className="flex items-center gap-1.5 min-w-0">
-                          <span className="text-green-400 font-mono flex-shrink-0">https</span>
-                          <span className="text-cyan-100 font-mono truncate min-w-0" title={node.address}>{node.address.replace(/^https?:\/\//, '')}</span>
+                          <span className="flex-shrink-0 font-mono text-green-400">https</span>
+                          <span className="min-w-0 truncate font-mono font-light text-cyan-100" title={node.address}>{node.address.replace(/^https?:\/\//, '')}</span>
                         </div>
                         <div className="flex items-center gap-2 text-gray-400">
                           <span className="text-gray-500">{node.latency}</span>
-                          <span className={`font-bold ${
+                          <span className={`font-medium ${
                             node.status === 'online' ? 'text-green-400' : node.status === 'error' ? 'text-yellow-400' : 'text-red-400'
                           }`}>{node.status}</span>
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            node.access === 'RW' ? 'bg-cyan-400/20 text-cyan-300' : 'bg-yellow-400/20 text-yellow-300'
+                          <span className={`rounded border px-2 py-0.5 text-[10px] font-medium ${
+                            node.access === 'RW' ? 'border-cyan-300/25 bg-cyan-400/10 text-cyan-300' : 'border-yellow-300/25 bg-yellow-400/10 text-yellow-300'
                           }`}>
                             {node.access}
                           </span>
@@ -212,19 +229,19 @@ export function RegisteredFleetPanel({
                     </div>
 
                     <div className="flex items-center justify-start gap-1.5 pt-1">
-                      <button className="w-5 h-5 bg-[#0f1420] rounded text-gray-500 hover:text-cyan-300 flex items-center justify-center" type="button" title="Play">
+                      <button className={fleetActionButtonClass} type="button" title="Play">
                         <Play className="w-3.5 h-3.5 opacity-60" />
                       </button>
-                      <button className="w-5 h-5 bg-[#0f1420] rounded text-gray-500 hover:text-cyan-300 flex items-center justify-center" type="button" title="Pause">
+                      <button className={fleetActionButtonClass} type="button" title="Pause">
                         <Pause className="w-3.5 h-3.5 opacity-60" />
                       </button>
-                      <button className="w-5 h-5 bg-[#0f1420] rounded text-gray-500 hover:text-cyan-300 flex items-center justify-center" type="button" title="Refresh" onClick={load}>
+                      <button className={fleetActionButtonClass} type="button" title="Refresh" onClick={load}>
                         <RefreshCw className="w-3.5 h-3.5 opacity-60" />
                       </button>
-                      <button className="w-5 h-5 bg-[#0f1420] rounded text-gray-500 hover:text-cyan-300 flex items-center justify-center" type="button" title="Edit" onClick={onOpenNodes}>
+                      <button className={fleetActionButtonClass} type="button" title="Edit" onClick={onOpenNodes}>
                         <Edit3 className="w-3.5 h-3.5 opacity-60" />
                       </button>
-                      <button className="w-5 h-5 bg-[#0f1420] rounded text-gray-500 hover:text-red-300 flex items-center justify-center" type="button" title="Delete" disabled>
+                      <button className={`${fleetActionButtonClass} hover:border-red-300/30 hover:text-red-300`} type="button" title="Delete" disabled>
                         <Trash2 className="w-3.5 h-3.5 opacity-60" />
                       </button>
                     </div>

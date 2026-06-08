@@ -104,10 +104,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
       )}
 
       <aside
-        className={`sidebar${mobileOpen ? ' sidebar--open' : ''}${effectiveCollapsed ? ' sidebar--collapsed' : ''}${activeTab === 'dashboard' ? ' sidebar--dashboard-shell' : ''}`}
-        style={{ backgroundColor: colors.bg.secondary, borderRight: `1px solid ${colors.border}` }}
+        className={`sidebar${mobileOpen ? ' sidebar--open' : ''}${effectiveCollapsed ? ' sidebar--collapsed' : ''}`}
       >
-        <div className={`sidebar__logo${activeTab === 'dashboard' ? ' sidebar__logo--dashboard-shell' : ''}`} style={{ borderBottom: `1px solid ${colors.border}` }}>
+        <div className="sidebar__logo">
           <div className="sidebar__brand-lockup" aria-label={t('sidebar.logoAria')}>
             <span className="sidebar__version-badge">v3.1</span>
           </div>
@@ -147,7 +146,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="sidebar__spacer" />
 
-        <div className={`sidebar__footer${activeTab === 'dashboard' ? ' sidebar__footer--dashboard-shell' : ''}`} style={{ borderTop: `1px solid ${colors.border}` }}>
+        <div className="sidebar__footer">
           {renderExpandedFooter && (
             <div className="sidebar__footer-expanded">
               <div className="sidebar__user" style={{ color: colors.text.secondary }}>

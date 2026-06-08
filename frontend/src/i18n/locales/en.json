@@ -251,7 +251,7 @@
     "copyEmail": "Copy email",
     "renewAddDaysTitle": "Renew: add days to expiry",
     "copySubscriptionUrl": "Copy subscription URL",
-    "batchEmailsPlaceholder": "user1@example.com`nuser2@example.com`nuser3@example.com",
+    "batchEmailsPlaceholder": "user1@example.com\nuser2@example.com\nuser3@example.com",
     "localNotePrompt": "Client note (stored locally):",
     "ipPlaceholder": "e.g. 1.2.3.4",
     "copyUuid": "Copy UUID",
@@ -813,7 +813,7 @@
     "signalDeckTitle": "Server Status",
     "signalDeckCopy": "Review live node health and core state in one compact signal lane.",
     "signalDeckEmptyCopy": "Add your first panel node to start collecting live node health and core state in the signal lane.",
-    "ingressMatrixTitle": "Ingress Matrix",
+    "ingressMatrixTitle": "Ingress",
     "ingressMatrixCopy": "Track registered panel nodes, access mode and ingress exposure without opening the full manager.",
     "ingressEmptyCopy": "Add your first panel node to start managing fleet access and client operations."
   },
@@ -972,21 +972,21 @@
   },
   "tabEyebrow": {
     "dashboard": "Mission Control",
-    "inbounds": "Ingress Matrix",
-    "clients": "Client Directory",
-    "traffic": "Usage Telemetry",
-    "monitoring": "Signal Deck",
-    "backup": "Recovery Operations",
-    "subscriptions": "Link Delivery"
+    "inbounds": "Inbounds",
+    "clients": "Clients",
+    "traffic": "Traffic",
+    "monitoring": "Monitoring",
+    "backup": "Backup",
+    "subscriptions": "Delivery"
   },
   "tabDescription": {
     "dashboard": "Local command overview for nodes, xray state and key operational checks.",
-    "inbounds": "Inspect ports, remarks and protocol exposure without leaving the main control surface.",
-    "clients": "Search, sort and manage client records across connected local panels.",
-    "traffic": "Watch active sessions, heavy users and current transfer distribution in one place.",
-    "monitoring": "Review stack health, historical charts and AdGuard metrics in a unified view.",
-    "backup": "Operate backups and restores from grouped blocks without a scattered workflow.",
-    "subscriptions": "Build filtered subscription output and copy delivery links from one layout."
+    "inbounds": "",
+    "clients": "",
+    "traffic": "",
+    "monitoring": "",
+    "backup": "",
+    "subscriptions": ""
   },
   "header": {
     "updating": "Updating data in background...",
@@ -1026,13 +1026,13 @@
       "heaviestClient": "Heaviest client"
     },
     "monitoring": {
-      "description": "Monitoring summary includes stack probes and AdGuard collection status.",
-      "stackProbes": "Stack probes",
-      "adguardSources": "AdGuard sources",
-      "blockedRate": "Blocked rate",
+      "description": "",
+      "stackProbes": "Stack",
+      "adguardSources": "Sources",
+      "blockedRate": "Blocked",
       "collector": "Collector",
       "collectorRunning": "Running",
-      "collectorIdle": "Idle"
+      "collectorIdle": "Waiting"
     },
     "backup": {
       "description": "Recovery summary shows fleet coverage and writable targets.",

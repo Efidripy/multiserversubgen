@@ -640,10 +640,10 @@ export const App: React.FC = () => {
 
   if (!authBootstrapDone) {
     return (
-      <div className="login-wrapper min-vh-100 d-flex align-items-center justify-content-center" style={{ backgroundColor: colors.bg.primary }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-          <div className="spinner-border" style={{ color: colors.accent, width: '1.8rem', height: '1.8rem', borderWidth: '0.15em' }} />
-          <span style={{ color: colors.text.tertiary, fontSize: '0.8rem' }}>{t('app.loading')}</span>
+      <div className="login-wrapper flex min-h-screen items-center justify-center bg-[#0a0e1a]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-7 w-7 animate-spin rounded-full border-2 border-cyan-500/20 border-t-cyan-300" />
+          <span className="text-xs text-slate-500">{t('app.loading')}</span>
         </div>
       </div>
     );
@@ -651,7 +651,7 @@ export const App: React.FC = () => {
 
   if (!isAuthenticated) {
     return (
-      <div className="login-wrapper min-vh-100 d-flex align-items-center justify-content-center" style={{ backgroundColor: colors.bg.primary }}>
+      <div className="login-wrapper flex min-h-screen items-center justify-center bg-[#0a0e1a]">
         <div style={{
           width: '100%',
           maxWidth: '380px',
@@ -684,21 +684,20 @@ export const App: React.FC = () => {
 
           {/* Login card */}
           <div style={{
-            background: colors.bg.secondary,
-            border: `1px solid ${colors.border}`,
+            background: '#0f1420',
+            border: '1px solid rgba(34, 211, 238, 0.20)',
             borderRadius: '16px',
             padding: '24px',
             boxShadow: `0 8px 32px rgba(0,0,0,0.18), 0 1px 0 rgba(255,255,255,0.04)`,
           }}>
             <form onSubmit={(e) => { e.preventDefault(); handleLogin(); }}>
               <div className="mb-3">
-                <label className="form-label" style={{ color: colors.text.secondary, fontSize: '0.8rem', fontWeight: 600, marginBottom: '6px' }}>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-400">
                   {t('auth.username')}
                 </label>
                 <input
                   type="text"
-                  className="form-control"
-                  style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                  className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
                   value={user}
                   onChange={(e) => setUser(e.target.value)}
                   required
@@ -707,13 +706,12 @@ export const App: React.FC = () => {
                 />
               </div>
               <div className="mb-3">
-                <label className="form-label" style={{ color: colors.text.secondary, fontSize: '0.8rem', fontWeight: 600, marginBottom: '6px' }}>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-400">
                   {t('auth.password')}
                 </label>
                 <input
                   type="password"
-                  className="form-control"
-                  style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                  className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -722,13 +720,12 @@ export const App: React.FC = () => {
               </div>
               {mfaEnabled && (
                 <div className="mb-3">
-                  <label className="form-label" style={{ color: colors.text.secondary, fontSize: '0.8rem', fontWeight: 600, marginBottom: '6px' }}>
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-400">
                     {t('auth.totpCode')}
                   </label>
                   <input
                     type="text"
-                    className="form-control text-tabular"
-                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary, letterSpacing: '0.2em' }}
+                    className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 font-mono text-sm tabular-nums text-slate-100 tracking-[0.2em] whitespace-nowrap outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
                     value={totpCode}
                     onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
                     required
@@ -751,22 +748,13 @@ export const App: React.FC = () => {
                   alignItems: 'center',
                   gap: '8px',
                 }}>
-                  <span>✕</span>
+                  <span>X</span>
                   <span>{authError}</span>
                 </div>
               )}
               <button
                 type="submit"
-                className="btn w-100"
-                style={{
-                  backgroundColor: colors.accent,
-                  borderColor: colors.accent,
-                  color: colors.accentText,
-                  fontWeight: 700,
-                  fontSize: '0.85rem',
-                  padding: '0.54rem 1rem',
-                  marginTop: '4px',
-                }}
+                className="mt-1 flex h-10 w-full items-center justify-center rounded-md bg-cyan-300 px-4 text-sm font-medium tracking-wide text-[#06111f] transition hover:bg-cyan-200"
               >
                 {t('auth.signIn')}
               </button>
@@ -800,14 +788,13 @@ export const App: React.FC = () => {
   }));
   const safeSidebarItems = Array.isArray(sidebarItems) ? sidebarItems : [];
   const safeNotifications = Array.isArray(notifications) ? notifications : [];
-  const safeHeaderStats = Array.isArray(headerSummary.stats) ? headerSummary.stats : [];
   const safeMountedTabs = Array.isArray(mountedTabs) ? mountedTabs : [];
 
   const renderTabContent = (tab: TabType) => {
     switch (tab) {
       case 'dashboard':
         return (
-          <div className="dashboard-command-grid dashboard-shell min-w-0 overflow-hidden p-6 min-h-screen transition-all duration-300 ease-in-out xl:grid xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start xl:gap-6">
+          <div className="dashboard-command-grid min-w-0 overflow-hidden p-6 min-h-screen transition-all duration-300 ease-in-out xl:grid xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start xl:gap-6">
             <div className="dashboard-command-grid__main min-w-0 overflow-hidden">
               <DashboardSummary onNavigate={(tab) => {
                 const t = tab as TabType;
@@ -816,18 +803,17 @@ export const App: React.FC = () => {
                   setMountedTabs(prev => prev.includes(t) ? prev : [...prev, t]);
                 }
               }}
-              heroDescription={headerSummary.description}
               heroStats={headerSummary.stats}
               fleetSummary={fleetSummary}
               />
-              <section className="mb-6 bg-[#0f1420] rounded-lg p-4">
+              <section className="mb-6 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04)]">
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <h3 className="text-sm font-bold text-cyan-300 font-mono uppercase tracking-wider">{t('nodes.intakeTitle').toUpperCase()}</h3>
-                    <p className="text-[10px] text-gray-500 font-mono mt-1">{t('nodes.intakeHint')}</p>
+                    <h3 className="text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">{t('nodes.intakeTitle').toUpperCase()}</h3>
+                    <p className="mt-1 text-[10px] font-light leading-4 text-slate-500">{t('nodes.intakeHint')}</p>
                   </div>
                   <button
-                    className="px-3 py-1.5 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white rounded-lg font-mono font-bold text-xs flex items-center gap-1"
+                    className="flex items-center gap-1 rounded-md border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 px-3 py-1.5 text-xs font-medium tracking-wide text-white shadow-[0_10px_24px_rgba(34,211,238,0.16)]"
                     type="button"
                     onClick={() => {
                       setActiveTab('inbounds');
@@ -903,16 +889,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div
-      className={`app-layout${activeTab === 'dashboard' ? ' dashboard-shell app-layout--dashboard-shell' : ''}`}
-      style={{
-        backgroundColor: activeTab === 'dashboard' ? '#0a0e1a' : colors.bg.primary,
-        color: activeTab === 'dashboard' ? '#f8fafc' : colors.text.primary,
-        fontFamily: activeTab === 'dashboard'
-          ? 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace'
-          : 'var(--font-sans)',
-      }}
-    >
+    <div className="app-layout">
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -924,31 +901,26 @@ export const App: React.FC = () => {
         onMobileClose={() => setMobileSidebarOpen(false)}
       />
 
-      <div className={`app-main${activeTab === 'dashboard' ? ' app-main--dashboard-shell' : ''}`} style={{ position: 'relative' }}>
-        <header
-          className={`app-topbar${activeTab === 'dashboard' ? ' app-topbar--dashboard-shell' : ''}`}
-          style={activeTab === 'dashboard' ? undefined : { backgroundColor: colors.bg.secondary, borderBottom: `1px solid ${colors.border}` }}
-        >
+      <div className="app-main min-w-0 flex-1 overflow-hidden">
+        <header className="app-topbar">
           <button
             className="app-topbar__menu-btn"
             onClick={() => setMobileSidebarOpen(true)}
             aria-label={t('main.openMenu')}
-            style={activeTab === 'dashboard' ? undefined : { color: colors.text.primary, backgroundColor: colors.bg.tertiary, border: `1px solid ${colors.border}` }}
           >
             <UIIcon name="menu" size={16} />
           </button>
-          <h1 className="app-topbar__title" style={activeTab === 'dashboard' ? undefined : { color: colors.text.primary }}>
-            <span className="d-inline-flex align-items-center gap-2">
+          <h1 className="app-topbar__title">
+            <span className="inline-flex items-center gap-2">
               <UIIcon name={tabMeta[activeTab].icon} size={16} />
               {tabMeta[activeTab].label}
             </span>
           </h1>
 
-          <div className={`d-flex align-items-center gap-2${activeTab === 'dashboard' ? ' app-topbar__actions' : ''}`}>
+          <div className="app-topbar__actions flex items-center gap-2">
             {browserNotifySupported && browserNotifyPermission !== 'granted' && (
               <button
-                className={`btn btn-sm topbar-push-btn${activeTab === 'dashboard' ? ' app-topbar__command-btn' : ''}`}
-                style={activeTab === 'dashboard' ? undefined : { backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                className="topbar-push-btn app-topbar__command-btn inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-medium tracking-wide"
                 onClick={requestBrowserNotifications}
               >
                 {t('push.enableBrowser')}
@@ -956,15 +928,14 @@ export const App: React.FC = () => {
             )}
 
             <button
-              className={`btn btn-sm position-relative${activeTab === 'dashboard' ? ' app-topbar__command-btn app-topbar__icon-command' : ''}`}
-              style={activeTab === 'dashboard' ? undefined : { backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+              className="app-topbar__command-btn app-topbar__icon-command relative inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-medium tracking-wide"
               onClick={() => setNotificationPanelOpen((v) => !v)}
               title={t('push.title')}
             >
               <UIIcon name="bell" size={15} />
               {unreadCount > 0 && (
                 <span
-                  className="position-absolute top-0 start-100 translate-middle badge rounded-pill"
+                  className="absolute left-full top-0 -translate-x-1/2 -translate-y-1/2 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
                   style={{ backgroundColor: colors.danger }}
                 >
                   {unreadCount > 99 ? '99+' : unreadCount}
@@ -973,8 +944,7 @@ export const App: React.FC = () => {
             </button>
 
             <button
-              className={`btn btn-sm${activeTab === 'dashboard' ? ` app-topbar__command-btn${logPanelOpen ? ' is-active' : ''}` : ''}`}
-              style={activeTab === 'dashboard' ? undefined : { backgroundColor: logPanelOpen ? '#1f6feb' : colors.bg.tertiary, borderColor: logPanelOpen ? '#1f6feb' : colors.border, color: logPanelOpen ? '#fff' : colors.text.primary, fontFamily: 'monospace', fontSize: '0.72rem' }}
+              className={`app-topbar__command-btn inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-medium tracking-wide${logPanelOpen ? ' is-active' : ''}`}
               onClick={() => setLogPanelOpen(v => !v)}
               title="Activity Log"
             >
@@ -1002,88 +972,43 @@ export const App: React.FC = () => {
 
         {notificationPanelOpen && (
           <div
-            className="card notif-panel"
-            style={{
-              position: 'absolute',
-              top: '56px',
-              right: '16px',
-              width: '360px',
-              maxHeight: '420px',
-              overflowY: 'auto',
-              zIndex: 50,
-              backgroundColor: colors.bg.secondary,
-              borderColor: colors.border,
-            }}
+            className="notif-panel absolute left-4 right-4 top-14 z-50 max-h-[420px] overflow-y-auto rounded-lg border border-cyan-500/20 bg-[#0f1420] shadow-2xl sm:left-auto sm:w-full sm:max-w-[22.5rem]"
           >
-            <div className="card-header d-flex justify-content-between align-items-center" style={{ borderColor: colors.border }}>
-              <strong style={{ color: colors.text.primary }}>{t('push.title')}</strong>
+            <div className="flex items-center justify-between border-b border-cyan-500/20 px-4 py-3">
+              <strong className="text-sm font-medium uppercase tracking-wider text-slate-300">{t('push.title')}</strong>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                className="inline-flex h-8 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 text-xs font-medium text-slate-300 transition hover:text-cyan-200"
                 onClick={() => setNotifications([])}
               >
                 {t('push.clear')}
               </button>
             </div>
-            <div className="card-body p-2">
+            <div className="p-2">
               {notifications.length === 0 && (
-                <div className="small" style={{ color: colors.text.secondary }}>{t('push.empty')}</div>
+                <div className="text-xs text-slate-500">{t('push.empty')}</div>
               )}
               {safeNotifications.map((item) => (
                 <div
                   key={item.id}
-                  className="p-2 mb-2 rounded"
-                  style={{ backgroundColor: colors.bg.primary, border: `1px solid ${colors.border}` }}
+                  className="mb-2 rounded-md border border-cyan-500/20 bg-[#0a0e1a] p-2"
                 >
-                  <div className="d-flex justify-content-between align-items-center">
-                    <strong style={{ color: levelColor(item.level) }}>{item.title}</strong>
-                    <small style={{ color: colors.text.secondary }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <strong className="min-w-0 truncate text-xs font-medium" style={{ color: levelColor(item.level) }}>{item.title}</strong>
+                    <span className="font-mono tabular-nums whitespace-nowrap text-[11px] text-slate-500">
                       {new Date(item.ts).toLocaleTimeString()}
-                    </small>
+                    </span>
                   </div>
-                  <div className="small" style={{ color: colors.text.primary }}>{item.message}</div>
+                  <div className="mt-1 text-xs text-slate-300">{item.message}</div>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        <main className={`app-content${activeTab === 'dashboard' ? ' app-content--dashboard-shell' : ''}`}>
-          {activeTab !== 'dashboard' && (
-            <section className="app-shell-header">
-              <div className="app-shell-header__hero card p-4">
-                <div className="app-shell-header__main">
-                  <div className="app-shell-header__intro">
-                    <div className="app-shell-header__eyebrow">{tabMeta[activeTab].eyebrow}</div>
-                    <h1 className="app-shell-header__title">
-                      <span className="d-inline-flex align-items-center gap-2">
-                        <UIIcon name={tabMeta[activeTab].icon} size={18} />
-                        {tabMeta[activeTab].label}
-                      </span>
-                    </h1>
-                    <p className="app-shell-header__copy">{headerSummary.description}</p>
-                    {(headerLoading || pendingRequests > 0) && <div className="app-shell-header__live-note">{t('header.updating')}</div>}
-                  </div>
-
-                  <div className="app-shell-header__stats">
-                    {safeHeaderStats.map((stat) => (
-                      <article key={stat.label} className={`app-shell-stat app-shell-stat--${stat.tone || 'default'}`}>
-                        <span className="app-shell-stat__label">{stat.label}</span>
-                        <span className="app-shell-stat__value">{stat.value}</span>
-                      </article>
-                    ))}
-                    {headerLoading && safeHeaderStats.length === 0 && (
-                      <article className="app-shell-stat app-shell-stat--default">
-                        <span className="app-shell-stat__label">{t('header.sync')}</span>
-                        <span className="app-shell-stat__value">{t('app.loading')}</span>
-                      </article>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </section>
-          )}
-
+        <main
+          className="app-content min-w-0 overflow-hidden"
+          aria-busy={headerLoading || pendingRequests > 0}
+        >
           <div className="tab-panel">
             {safeMountedTabs.map((tabId) => (
               <section

@@ -8,7 +8,6 @@ import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
 import { readStaleCache, writeStaleCache } from '../services/staleCache';
 import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
-import EmptyState from './EmptyState';
 import { ClientEditModal } from './ClientEditModal';
 
 interface Client {
@@ -82,6 +81,28 @@ const TRAFFIC_FETCH_MAX_CLIENTS = 20;
 const TRAFFIC_FETCH_CONCURRENCY = 4;
 const TRAFFIC_FETCH_TIMEOUT_MS = 8000;
 
+const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
+
+const inputClass = 'box-border min-w-0 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 font-mono text-xs font-light text-slate-100 outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-50 placeholder:text-slate-600';
+const selectClass = `${inputClass} h-8 py-1 pr-8`;
+const fieldLabelClass = 'mb-1 block text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500';
+const checkboxClass = 'h-4 w-4 rounded border-cyan-500/20 bg-[#0a0e1a] text-cyan-300 accent-cyan-300';
+const buttonBaseClass = 'inline-flex h-8 min-w-0 items-center justify-center gap-1 whitespace-nowrap rounded-md border border-transparent px-3 text-xs font-medium leading-none tracking-wide transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-45';
+const buttonNeutralClass = `${buttonBaseClass} border-cyan-500/20 bg-[#0f1420] text-slate-200 hover:bg-[#0a0e1a]`;
+const buttonAccentClass = `${buttonBaseClass} border-cyan-300/25 bg-cyan-400 text-[#06111f] hover:bg-cyan-300`;
+const buttonSuccessClass = `${buttonBaseClass} border-emerald-300/20 bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25`;
+const buttonWarningClass = `${buttonBaseClass} border-amber-300/20 bg-amber-400/15 text-amber-300 hover:bg-amber-400/25`;
+const buttonDangerClass = `${buttonBaseClass} border-rose-300/20 bg-rose-500/15 text-rose-300 hover:bg-rose-500/25`;
+const buttonIconClass = 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0f1420] text-slate-300 transition-colors hover:bg-[#0a0e1a] hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-45';
+const sortButtonClass = 'inline-flex min-w-0 items-center gap-1 whitespace-nowrap text-left text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500 transition-colors hover:text-cyan-300';
+const badgeBaseClass = 'inline-flex min-w-0 items-center justify-center whitespace-nowrap rounded-md border border-cyan-500/20 px-2 py-1 text-[11px] font-medium leading-none';
+const modalBackdropClass = 'fixed inset-0 z-50 flex min-w-0 items-start justify-center overflow-y-auto bg-black/80 p-4';
+const modalPanelClass = 'my-8 flex w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] text-slate-100 shadow-2xl ring-1 ring-cyan-500/10';
+const modalHeaderClass = 'flex min-w-0 items-center justify-between gap-3 border-b border-cyan-500/20 px-4 py-3';
+const modalBodyClass = 'min-w-0 overflow-y-auto p-4';
+const modalFooterClass = 'flex min-w-0 flex-wrap items-center justify-end gap-2 border-t border-cyan-500/20 px-4 py-3';
+const modalTitleClass = 'min-w-0 truncate text-sm font-medium uppercase tracking-wider text-slate-300';
+
 const asFiniteNumber = (value: unknown): number | null => {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value !== 'string') return null;
@@ -150,7 +171,7 @@ export const ClientManager: React.FC = () => {
   const trafficEndpointModeRef = useRef<'unknown' | 'query' | 'legacy' | 'disabled'>('unknown');
   const trafficEndpointProbeRef = useRef<Promise<void> | null>(null);
   
-  // Filters — persisted in localStorage
+  // Filters persisted in localStorage.
   const FILTER_STORAGE_KEY = 'sub_manager_client_filters_v1';
   const _savedFilters = (() => { try { return JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY) || '{}'); } catch { return {}; } })();
   const [searchTerm, setSearchTerm] = useState<string>(_savedFilters.searchTerm ?? '');
@@ -160,7 +181,7 @@ export const ClientManager: React.FC = () => {
   const [filterInboundId, setFilterInboundId] = useState<number | null>(null);
   const [filterExpiringSoon, setFilterExpiringSoon] = useState<boolean>(_savedFilters.filterExpiringSoon ?? false);
   const [expiringSoonDays, setExpiringSoonDays] = useState<number>(_savedFilters.expiringSoonDays ?? 7);
-  // Online clients map: email → true
+  // Online clients map: email -> true.
   const [onlineEmails, setOnlineEmails] = useState<Set<string>>(new Set());
   const [sortField, setSortField] = useState<'email' | 'node' | 'download' | 'total' | 'expiry' | 'lastOnline' | 'usedPct' | 'health'>(_savedFilters.sortField ?? 'email');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(_savedFilters.sortDirection ?? 'asc');
@@ -187,12 +208,7 @@ export const ClientManager: React.FC = () => {
   // Del Depleted
   const [delDepletedLoading, setDelDepletedLoading] = useState(false);
 
-  // QR modal
-  const [qrLinks, setQrLinks] = useState<string[]>([]);
-  const [qrEmail, setQrEmail] = useState('');
-  const [showQrModal, setShowQrModal] = useState(false);
-
-  // Last online map: email → ISO string
+  // Last online map: email -> ISO string.
   const [lastOnlineMap, setLastOnlineMap] = useState<Record<string, string>>({});
 
   // Bulk Adjust Modal
@@ -222,7 +238,7 @@ export const ClientManager: React.FC = () => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [, setExpandedKey] = useState<string | null>(null);
   const NOTES_KEY = 'sub_manager_client_notes_v1';
   const [clientNotes, setClientNotes] = useState<Record<string, string>>(() => {
     try { return JSON.parse(localStorage.getItem(NOTES_KEY) || '{}'); } catch { return {}; }
@@ -256,18 +272,8 @@ export const ClientManager: React.FC = () => {
   const [groupMemberEmails, setGroupMemberEmails] = useState<string[]>([]);
   const [groupMembersLoading, setGroupMembersLoading] = useState(false);
   const [groupAddEmails, setGroupAddEmails] = useState('');
-  const [copiedKey, setCopiedKey] = useState<string | null>(null);
-
-  const copyWithFeedback = useCallback((text: string, key: string, label = 'Copied') => {
-    navigator.clipboard.writeText(text).then(() => {
-      setCopiedKey(key);
-      toast(label, 'info');
-      setTimeout(() => setCopiedKey(k => k === key ? null : k), 1500);
-    });
-  }, [toast]);
-
   useEffect(() => {
-    // Handle navigation from InboundManager — apply inbound filter if set
+    // Handle navigation from InboundManager: apply inbound filter if set.
     try {
       const nav = sessionStorage.getItem('sm_nav_inbound_filter');
       if (nav) {
@@ -276,7 +282,7 @@ export const ClientManager: React.FC = () => {
         if (id) setFilterInboundId(Number(id));
       }
     } catch {}
-    // Handle navigation from TrafficStats — apply email search filter if set
+    // Handle navigation from TrafficStats: apply email search filter if set.
     try {
       const emailNav = sessionStorage.getItem('sm_nav_client_search');
       if (emailNav) {
@@ -284,7 +290,7 @@ export const ClientManager: React.FC = () => {
         setSearchTerm(emailNav);
       }
     } catch {}
-    // Handle navigation from InboundManager "Add Client" — open batch add with pre-filled inbound
+    // Handle navigation from InboundManager "Add Client": open batch add with pre-filled inbound.
     try {
       const addToInbound = sessionStorage.getItem('sm_nav_add_to_inbound');
       if (addToInbound) {
@@ -408,7 +414,7 @@ export const ClientManager: React.FC = () => {
     requestIdRef.current = requestId;
 
     try {
-      // Fire both requests in parallel — backend serves from cache (20s fresh / 180s stale).
+      // Fire both requests in parallel; backend serves from cache (20s fresh / 180s stale).
       const [nodesRes, clientsRes, inboundsRes] = await Promise.all([
         api.get('/v1/nodes', { auth: getAuth(), signal: controller.signal }),
         api.get('/v1/clients', { auth: getAuth(), signal: controller.signal }),
@@ -1207,7 +1213,7 @@ export const ClientManager: React.FC = () => {
     setSortDirection('asc');
   };
   const sortIndicator = (field: 'email' | 'node' | 'download' | 'total' | 'expiry' | 'lastOnline' | 'usedPct' | 'health') =>
-    sortField === field ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
+    sortField === field ? (sortDirection === 'asc' ? ' ^' : ' v') : '';
   
   const formatBytes = (bytes: number) => {
     if (bytes === 0) return '0 GB';
@@ -1227,14 +1233,67 @@ export const ClientManager: React.FC = () => {
   
   const nodes = Array.from(new Set(clients.map(c => c.node_name)));
   const protocols = Array.from(new Set(clients.map(c => c.protocol)));
+  const visibleClients = filteredClients.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const allFilteredSelected =
+    filteredClients.length > 0 && filteredClients.every((c) => selectedClientKeys.has(clientKey(c)));
+  const statusChipClass = (client: Client, isExpired: boolean, isDepleted: boolean) =>
+    cn(
+      'inline-flex h-7 items-center rounded-md border px-2 text-[11px] font-medium whitespace-nowrap',
+      isExpired
+        ? 'border-amber-300/25 bg-amber-400/10 text-amber-300'
+        : isDepleted
+          ? 'border-rose-400/25 bg-rose-500/10 text-rose-300'
+          : client.enable
+            ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-300'
+            : 'border-cyan-500/20 bg-[#0f1420] text-slate-500'
+    );
   
   return (
-    <div className="client-manager client-manager--no-form">
-      <div className="card p-3 mb-3">
-
-
+    <div data-client-manager-root className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6">
+      <div className="min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]">
+        <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">
+            <UIIcon name="clients" size={16} />
+            {t('clients.title')}
+          </h2>
+          {clients.length > 0 && (() => {
+            const now = Date.now();
+            const active = clients.filter(c => c.enable && !(c.expiryTime > 0 && c.expiryTime < now) && !(c.total > 0 && c.up + c.down >= c.total)).length;
+            const expired = clients.filter(c => c.expiryTime > 0 && c.expiryTime < now).length;
+            const depleted = clients.filter(c => c.total > 0 && c.up + c.down >= c.total).length;
+            const disabled = clients.filter(c => !c.enable).length;
+            const online = onlineEmails.size;
+            return (
+              <div className="grid grid-cols-3 gap-2 sm:grid-cols-6 lg:flex lg:flex-wrap">
+                {[
+                  { label: 'Total', value: clients.length, className: 'text-slate-100', status: '' },
+                  { label: 'Active', value: `${active} (${clients.length ? Math.round(active / clients.length * 100) : 0}%)`, className: 'text-emerald-300', status: 'active' },
+                  { label: 'Online', value: `${online} (${active ? Math.round(online / active * 100) : 0}%)`, className: 'text-cyan-300', status: 'online' },
+                  { label: 'Expired', value: expired, className: 'text-amber-300', status: 'expired' },
+                  { label: 'Depleted', value: depleted, className: 'text-rose-300', status: 'depleted' },
+                  { label: 'Disabled', value: disabled, className: 'text-slate-500', status: 'disabled' },
+                ].map(s => (
+                  <button
+                    key={s.label}
+                    type="button"
+                    className={cn(
+                      'min-w-0 rounded-md bg-[#0a0e1a] px-2 py-1 text-left text-[11px] text-slate-500 ring-1 transition-colors',
+                      s.status ? 'cursor-pointer hover:ring-cyan-300/35' : 'cursor-default',
+                      filterStatus === s.status && s.status ? 'ring-cyan-300/50' : 'ring-cyan-500/10'
+                    )}
+                    title={s.status ? (filterStatus === s.status ? 'Click to clear filter' : `Click to filter by ${s.label}`) : undefined}
+                    onClick={() => s.status && setFilterStatus(prev => prev === s.status ? '' : s.status)}
+                  >
+                    <span className="block truncate uppercase tracking-wider">{s.label}</span>
+                    <strong className={cn('mt-1 block font-mono text-sm tabular-nums whitespace-nowrap', s.className)}>{s.value}</strong>
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
+        </div>
         {error && (
-          <div className="alert alert-danger">
+          <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
             {error}
           </div>
         )}
@@ -1251,33 +1310,33 @@ export const ClientManager: React.FC = () => {
             </div>
             <div className="panel-inline-actions">
               <button
-                className={`btn btn-sm ${showAddForm ? 'btn-ghost-accent' : 'btn-accent'}`}
+                className={cn(showAddForm ? buttonNeutralClass : buttonAccentClass)}
                 onClick={() => setShowAddForm(v => !v)}
                 title={showAddForm ? 'Hide add form' : 'Add client to multiple servers'}
               >
-                <span className="d-inline-flex align-items-center gap-1">
+                <span className="inline-flex items-center gap-1">
                   <UIIcon name={showAddForm ? 'x' : 'plus'} size={14} />
                   {showAddForm ? t('common.close') : t('common.add')}
                 </span>
               </button>
               <button
-                className="btn btn-sm btn-neutral"
+                className={buttonNeutralClass}
                 onClick={() => setShowBatchModal(true)}
               >
-                <span className="d-inline-flex align-items-center gap-1"><UIIcon name="plus" size={14} />{t('clients.batchAdd')}</span>
+                <span className="inline-flex items-center gap-1"><UIIcon name="plus" size={14} />{t('clients.batchAdd')}</span>
               </button>
               <button
-                className="btn btn-sm btn-success-fill"
+                className={buttonSuccessClass}
                 onClick={exportToCSV}
               >
-                <span className="d-inline-flex align-items-center gap-1"><UIIcon name="download" size={14} />{t('clients.exportCsv')}</span>
+                <span className="inline-flex items-center gap-1"><UIIcon name="download" size={14} />{t('clients.exportCsv')}</span>
               </button>
               <label
-                className="btn btn-sm btn-neutral mb-0"
+                className={cn(buttonNeutralClass, 'mb-0')}
                 title={t('clients.importCsvTitle')}
               >
-                <span className="d-inline-flex align-items-center gap-1"><UIIcon name="upload" size={14} /> {t('clients.importCsv')}</span>
-                <input type="file" accept=".csv,.txt" className="d-none"
+                <span className="inline-flex items-center gap-1"><UIIcon name="upload" size={14} /> {t('clients.importCsv')}</span>
+                <input type="file" accept=".csv,.txt" className="hidden"
                   onChange={async (e) => {
                     const file = e.target.files?.[0];
                     e.target.value = '';
@@ -1301,24 +1360,24 @@ export const ClientManager: React.FC = () => {
                 />
               </label>
               <button
-                className="btn btn-sm btn-accent"
+                className={buttonAccentClass}
                 onClick={() => loadClients()}
                 disabled={loading}
               >
-                <span className="d-inline-flex align-items-center gap-1">
+                <span className="inline-flex items-center gap-1">
                   <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
                   {t('common.refresh')}
                 </span>
               </button>
               <button
-                className={`btn btn-sm ${autoRefresh ? 'btn-ghost-accent' : 'btn-neutral'}`}
+                className={cn(autoRefresh ? buttonAccentClass : buttonNeutralClass)}
                 onClick={() => setAutoRefresh(v => !v)}
                 title={autoRefresh ? t('clients.autoRefreshEvery', { seconds: refreshInterval }) : t('clients.enableAutoRefresh')}
               >
                 {t('clients.auto')}
               </button>
               {autoRefresh && (
-                <select className="form-select form-select-sm form-select-inline"
+                <select className={selectClass}
                   value={refreshInterval} onChange={e => setRefreshInterval(Number(e.target.value))}>
                   {[15, 30, 60, 120, 300].map(s => <option key={s} value={s}>{s}s</option>)}
                 </select>
@@ -1339,8 +1398,8 @@ export const ClientManager: React.FC = () => {
               <input
                 ref={searchInputRef}
                 type="text"
-                className="form-control form-control-sm"
-                placeholder={t('clients.searchPlaceholder') + ' (Ctrl+/) — space=AND, |=OR'}
+                className={inputClass}
+                placeholder={t('clients.searchPlaceholder') + ' (Ctrl+/) - space=AND, |=OR'}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
 
@@ -1359,7 +1418,7 @@ export const ClientManager: React.FC = () => {
               />
               {inboundOptions.length > 0 && (
                 <select
-                  className="form-select form-select-sm form-select-inline"
+                  className={selectClass}
                   value={filterInboundId ?? ''}
                   onChange={e => setFilterInboundId(e.target.value ? Number(e.target.value) : null)}
                   style={{ maxWidth: '180px', fontSize: '0.75rem' }}
@@ -1377,23 +1436,23 @@ export const ClientManager: React.FC = () => {
                   { value: 'disabled', label: t('clients.disabled') },
                   { value: 'expired', label: t('clients.expired') },
                   { value: 'depleted', label: t('clients.depleted') },
-                  { value: 'online', label: '● Online' },
-                  { value: 'offline', label: '○ Offline' },
+                  { value: 'online', label: 'Online' },
+                  { value: 'offline', label: 'Offline' },
                 ]}
                 value={filterStatus}
                 onChange={(value) => setFilterStatus(value)}
                 
               />
-              <div className="d-flex align-items-center gap-1">
+              <div className="flex items-center gap-1">
                 <button
-                  className={`btn btn-sm ${filterExpiringSoon ? 'btn-warning-fill' : 'btn-neutral'}`}
+                  className={cn(filterExpiringSoon ? buttonWarningClass : buttonNeutralClass)}
                   style={{ fontSize: '0.75rem' }}
                   onClick={() => setFilterExpiringSoon(v => !v)}
                 >
-                  ⏱ Expiring {expiringSoonDays}d
+                  Expiring {expiringSoonDays}d
                 </button>
                 <select
-                  className="form-select form-select-sm form-select-inline"
+                  className={selectClass}
                   value={expiringSoonDays}
                   onChange={e => setExpiringSoonDays(Number(e.target.value))}
                   style={{ padding: '2px 20px 2px 6px' }}
@@ -1404,15 +1463,15 @@ export const ClientManager: React.FC = () => {
                 </select>
               </div>
               <button
-                className={`btn btn-sm ${onlineFirst ? 'btn-ghost-accent' : 'btn-neutral'}`}
+                className={cn(onlineFirst ? buttonAccentClass : buttonNeutralClass)}
                 onClick={() => setOnlineFirst(v => !v)}
                 title="Show online clients first"
               >
                 {t('clients.onlineFirst')}
               </button>
               <button
-                className="btn btn-sm btn-neutral"
-                title="Find clients with same email on multiple nodes (duplicates)"
+                className={buttonNeutralClass}
+                title={t('clients.duplicates')}
                 onClick={() => {
                   const emailCount: Record<string, string[]> = {};
                   clients.forEach(c => {
@@ -1422,14 +1481,14 @@ export const ClientManager: React.FC = () => {
                   const dupes = Object.entries(emailCount).filter(([, nodes]) => nodes.length > 1);
                   if (dupes.length === 0) { toast('No duplicate emails found', 'info'); return; }
                   setSearchTerm(dupes[0][0]);
-                  toast(`${dupes.length} duplicate email(s) found — showing first: "${dupes[0][0]}" (${dupes[0][1].join(', ')})`, 'warning');
+                  toast(`${dupes.length} duplicate email(s) found - showing first: "${dupes[0][0]}" (${dupes[0][1].join(', ')})`, 'warning');
                 }}
               >
                 {t('clients.duplicates')}
               </button>
               {(searchTerm || filterNode || filterProtocol || filterStatus || filterExpiringSoon || filterInboundId !== null) && (
                 <button
-                  className="btn btn-sm btn-ghost-warning"
+                  className={buttonWarningClass}
                   onClick={() => {
                     setSearchTerm('');
                     setFilterNode('');
@@ -1439,7 +1498,7 @@ export const ClientManager: React.FC = () => {
                     setFilterInboundId(null);
                   }}
                 >
-                  ✕ {t('inbounds.clearFilters')}
+                  X {t('inbounds.clearFilters')}
                 </button>
               )}
             </div>
@@ -1458,7 +1517,7 @@ export const ClientManager: React.FC = () => {
               {selectedClientKeys.size > 0 && (
                 <div className="selection-bar">
                   <strong className="selection-bar__count">{t('clients.selectedCount', { count: selectedClientKeys.size })}</strong>
-                  <button className="btn btn-sm btn-neutral"
+                  <button className={buttonNeutralClass}
                     title={t('clients.copySelectedEmails')}
                     onClick={() => {
                       const emails = filteredClients.filter(c => selectedClientKeys.has(clientKey(c))).map(c => c.email);
@@ -1466,10 +1525,10 @@ export const ClientManager: React.FC = () => {
                     }}>
                     <UIIcon name="copy" size={13} /> {t('clients.copyEmails')}
                   </button>
-                  <button className="btn btn-sm btn-danger-fill" onClick={() => handleBatchDelete('selected')}>
-                    <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={13} />{t('clients.deleteSelected')}</span>
+                  <button className={buttonDangerClass} onClick={() => handleBatchDelete('selected')}>
+                    <span className="inline-flex items-center gap-1"><UIIcon name="trash" size={13} />{t('clients.deleteSelected')}</span>
                   </button>
-                  <button className="btn btn-sm btn-success-fill"
+                  <button className={buttonSuccessClass}
                     onClick={async () => {
                       const emails = filteredClients.filter(c => selectedClientKeys.has(clientKey(c))).map(c => c.email);
                       const { user, password } = getAuth();
@@ -1481,7 +1540,7 @@ export const ClientManager: React.FC = () => {
                     }}>
                     {t('common.enable')}
                   </button>
-                  <button className="btn btn-sm btn-neutral"
+                  <button className={buttonNeutralClass}
                     onClick={async () => {
                       const emails = filteredClients.filter(c => selectedClientKeys.has(clientKey(c))).map(c => c.email);
                       const { user, password } = getAuth();
@@ -1493,11 +1552,11 @@ export const ClientManager: React.FC = () => {
                     }}>
                     {t('common.disable')}
                   </button>
-                  <button className="btn btn-sm btn-accent"
+                  <button className={buttonAccentClass}
                     onClick={() => { setBulkAdjustMode('add'); setShowBulkAdjust(true); }}>
-                    +days/GB
+                    {t('messages.bulkAdjustTitle')}
                   </button>
-                  <button className="btn btn-sm btn-neutral"
+                  <button className={buttonNeutralClass}
                     title={t('clients.setExactLimitTitle')}
                     onClick={async () => {
                       const selected = filteredClients.filter(c => selectedClientKeys.has(clientKey(c)));
@@ -1520,7 +1579,7 @@ export const ClientManager: React.FC = () => {
                     }}>
                     {t('clients.setLimit')}
                   </button>
-                  <button className="btn btn-sm btn-info-fill"
+                  <button className={buttonAccentClass}
                     onClick={async () => {
                       const emails = filteredClients.filter(c => selectedClientKeys.has(clientKey(c))).map(c => c.email);
                       if (!window.confirm(`Reset traffic for ${emails.length} clients?`)) return;
@@ -1533,7 +1592,7 @@ export const ClientManager: React.FC = () => {
                     }}>
                     {t('clients.resetTraffic')}
                   </button>
-                  <button className="btn btn-sm btn-ghost-warning"
+                  <button className={buttonWarningClass}
                     title={t('clients.freezeSelectedTitle')}
                     onClick={async () => {
                       const selected = filteredClients.filter(c => selectedClientKeys.has(clientKey(c)));
@@ -1556,8 +1615,8 @@ export const ClientManager: React.FC = () => {
                     }}>
                     {t('clients.freezeSelected')}
                   </button>
-                  <button className="btn btn-sm btn-neutral"
-                    title="Export selected clients as CSV"
+                  <button className={buttonNeutralClass}
+                    title={t('clients.exportCsv')}
                     onClick={() => {
                       const selected = filteredClients.filter(c => selectedClientKeys.has(clientKey(c)));
                       const headers = ['Email', 'Node', 'Protocol', 'Status', 'Download (GB)', 'Total (GB)', 'Expiry'];
@@ -1577,7 +1636,7 @@ export const ClientManager: React.FC = () => {
                     }}>
                     <UIIcon name="download" size={13} /> {t('clients.exportCsv')}
                   </button>
-                  <button className="btn btn-sm btn-neutral"
+                  <button className={buttonNeutralClass}
                     title="Download subscription links for all selected clients"
                     onClick={async () => {
                       const selected = filteredClients.filter(c => selectedClientKeys.has(clientKey(c)));
@@ -1604,7 +1663,7 @@ export const ClientManager: React.FC = () => {
                     }}>
                     <UIIcon name="download" size={13} /> {t('clients.exportLinks')}
                   </button>
-                  <button className="btn btn-sm btn-neutral"
+                  <button className={buttonNeutralClass}
                     onClick={async () => {
                       const selectedEmails = filteredClients.filter(c => selectedClientKeys.has(clientKey(c))).map(c => c.email);
                       const nodeMap = new Map<string, number>();
@@ -1628,53 +1687,53 @@ export const ClientManager: React.FC = () => {
                   </button>
                 </div>
               )}
-              <div className="d-flex gap-2 mb-2 flex-wrap align-items-center">
-                <span className="small text-muted-2">{t('clients.quickSelect')}</span>
-                <button className="btn btn-sm btn-ghost-danger" style={{ fontSize: '0.75rem' }}
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-slate-500">{t('clients.quickSelect')}</span>
+                <button className={buttonDangerClass} style={{ fontSize: '0.75rem' }}
                   onClick={() => selectAllBy(c => c.expiryTime > 0 && c.expiryTime < Date.now())}>
                   {t('clients.selectAllExpired')}
                 </button>
-                <button className="btn btn-sm btn-ghost-warning" style={{ fontSize: '0.75rem' }}
+                <button className={buttonWarningClass} style={{ fontSize: '0.75rem' }}
                   onClick={() => selectAllBy(c => c.total > 0 && c.up + c.down >= c.total)}>
                   {t('clients.selectAllDepleted')}
                 </button>
-                <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.75rem' }}
+                <button className={buttonNeutralClass} style={{ fontSize: '0.75rem' }}
                   onClick={() => selectAllBy(c => !c.enable)}>
                   {t('clients.selectAllDisabled')}
                 </button>
-                <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.75rem' }}
+                <button className={buttonNeutralClass} style={{ fontSize: '0.75rem' }}
                   onClick={() => setSelectedClientKeys(new Set())}>
                   {t('clients.clearSelection')}
                 </button>
               </div>
               <div className="panel-inline-actions">
                 <button
-                  className="btn btn-sm btn-warning-fill"
+                  className={buttonWarningClass}
                   onClick={() => handleBatchDelete('expired')}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />{t('clients.deleteExpired')}</span>
+                  <span className="inline-flex items-center gap-1"><UIIcon name="trash" size={14} />{t('clients.deleteExpired')}</span>
                 </button>
                 <button
-                  className="btn btn-sm btn-warning-fill"
+                  className={buttonWarningClass}
                   onClick={() => handleBatchDelete('depleted')}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />{t('clients.deleteDepleted')}</span>
+                  <span className="inline-flex items-center gap-1"><UIIcon name="trash" size={14} />{t('clients.deleteDepleted')}</span>
                 </button>
                 <button
-                  className="btn btn-sm btn-info-fill"
+                  className={buttonAccentClass}
                   onClick={() => handleResetTraffic(null)}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="refresh" size={14} />{t('clients.resetAllTraffic')}</span>
+                  <span className="inline-flex items-center gap-1"><UIIcon name="refresh" size={14} />{t('clients.resetAllTraffic')}</span>
                 </button>
                 <button
-                  className="btn btn-sm btn-danger-fill"
+                  className={buttonDangerClass}
                   onClick={handleDelDepleted}
                   disabled={delDepletedLoading}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="trash" size={14} />{t('messages.delDepleted')}</span>
+                  <span className="inline-flex items-center gap-1"><UIIcon name="trash" size={14} />{t('messages.delDepleted')}</span>
                 </button>
                 <button
-                  className="btn btn-sm btn-warning-fill"
+                  className={buttonWarningClass}
                   title={t('clients.resetDepletedTitle')}
                   onClick={async () => {
                     const depleted = clients.filter(c => c.total > 0 && c.up + c.down >= c.total);
@@ -1690,10 +1749,10 @@ export const ClientManager: React.FC = () => {
                     } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
                   }}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="refresh" size={14} /> {t('clients.resetDepleted')}</span>
+                  <span className="inline-flex items-center gap-1"><UIIcon name="refresh" size={14} /> {t('clients.resetDepleted')}</span>
                 </button>
                 <button
-                  className="btn btn-sm btn-info-fill"
+                  className={buttonAccentClass}
                   title={t('clients.renewExpiredTitle')}
                   onClick={async () => {
                     const expired = clients.filter(c => c.expiryTime > 0 && c.expiryTime < Date.now());
@@ -1713,10 +1772,10 @@ export const ClientManager: React.FC = () => {
                     } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
                   }}
                 >
-                  <span className="d-inline-flex align-items-center gap-1">{t('clients.renewExpired')}</span>
+                  <span className="inline-flex items-center gap-1">{t('clients.renewExpired')}</span>
                 </button>
                 <button
-                  className="btn btn-sm btn-ghost-warning"
+                  className={buttonWarningClass}
                   title={`Extend all clients expiring within ${expiringSoonDays} days`}
                   onClick={async () => {
                     const now = Date.now();
@@ -1738,13 +1797,13 @@ export const ClientManager: React.FC = () => {
                   {t('clients.extendExpiring')}
                 </button>
                 <button
-                  className="btn btn-sm btn-accent"
+                  className={buttonAccentClass}
                   onClick={() => setShowBulkAdjust(true)}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="edit" size={14} />{t('messages.bulkAdjustTitle')}</span>
+                  <span className="inline-flex items-center gap-1"><UIIcon name="edit" size={14} />{t('messages.bulkAdjustTitle')}</span>
                 </button>
                 <button
-                  className="btn btn-sm btn-neutral"
+                  className={buttonNeutralClass}
                   onClick={() => {
                     const nodeMap = new Map<string, number>();
                     clients.forEach(c => { if (c.node_id) nodeMap.set(c.node_name, c.node_id); });
@@ -1759,34 +1818,34 @@ export const ClientManager: React.FC = () => {
                     }
                   }}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="group" size={13} /> Groups</span>
+                  <span className="inline-flex items-center gap-1"><UIIcon name="group" size={13} /> Groups</span>
                 </button>
                 <button
-                  className={`btn btn-sm ${denseView ? 'btn-accent' : 'btn-neutral'}`}
+                  className={cn(denseView ? buttonAccentClass : buttonNeutralClass)}
                   title={t('clients.toggleDenseView')}
                   onClick={() => setDenseView(v => !v)}
                 >
-                  <span className="d-inline-flex align-items-center gap-1">⚏ Dense</span>
+                  <span className="inline-flex items-center gap-1">Dense</span>
                 </button>
                 <button
-                  className="btn btn-sm btn-neutral"
+                  className={buttonNeutralClass}
                   title={t('clients.findByIpTitle')}
                   onClick={() => { setIpSearchValue(''); setIpSearchResults([]); setShowIpSearch(true); }}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="search" size={13} /> {t('clients.findByIp')}</span>
+                  <span className="inline-flex items-center gap-1"><UIIcon name="search" size={13} /> {t('clients.findByIp')}</span>
                 </button>
                 <button
-                  className="btn btn-sm btn-neutral"
+                  className={buttonNeutralClass}
                   title={t('clients.copyVisibleEmailsTitle')}
                   onClick={() => {
                     const emails = filteredClients.map(c => c.email).join('\n');
                     navigator.clipboard.writeText(emails).then(() => toast(t('clients.copiedEmailsCount', { count: filteredClients.length }), 'info'));
                   }}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="copy" size={13} /> {t('clients.copyEmails')}</span>
+                  <span className="inline-flex items-center gap-1"><UIIcon name="copy" size={13} /> {t('clients.copyEmails')}</span>
                 </button>
                 <button
-                  className="btn btn-sm btn-neutral"
+                  className={buttonNeutralClass}
                   title={t('clients.exportVisibleJsonTitle')}
                   onClick={() => {
                     const data = filteredClients.map(c => ({
@@ -1803,10 +1862,10 @@ export const ClientManager: React.FC = () => {
                     URL.revokeObjectURL(url);
                   }}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="download" size={13} /> JSON</span>
+                  <span className="inline-flex items-center gap-1"><UIIcon name="download" size={13} /> JSON</span>
                 </button>
                 <button
-                  className="btn btn-sm btn-neutral"
+                  className={buttonNeutralClass}
                   title={t('clients.exportVisibleCsvTitle')}
                   onClick={() => {
                     const rows = filteredClients.map(c => {
@@ -1826,7 +1885,7 @@ export const ClientManager: React.FC = () => {
                     URL.revokeObjectURL(url);
                   }}
                 >
-                  <span className="d-inline-flex align-items-center gap-1"><UIIcon name="download" size={13} /> CSV</span>
+                  <span className="inline-flex items-center gap-1"><UIIcon name="download" size={13} /> CSV</span>
                 </button>
               </div>
             </div>
@@ -1843,22 +1902,24 @@ export const ClientManager: React.FC = () => {
         const disabled = clients.filter(c => !c.enable).length;
         const online = onlineEmails.size;
         return (
-          <div className="d-flex flex-wrap gap-2 mb-2">
+          <div className="mb-2 flex flex-wrap gap-2">
             {[
               { label: 'Total',    value: clients.length, cls: '',          status: '' },
-              { label: 'Active',   value: `${active} (${clients.length ? Math.round(active / clients.length * 100) : 0}%)`, cls: 'text-success', status: 'active' },
+              { label: 'Active',   value: `${active} (${clients.length ? Math.round(active / clients.length * 100) : 0}%)`, cls: 'text-emerald-300', status: 'active' },
               { label: 'Online',   value: `${online} (${active ? Math.round(online / active * 100) : 0}%)`, cls: 'text-accent',  status: 'online' },
-              { label: 'Expired',  value: expired,  cls: 'text-danger',  status: 'expired' },
-              { label: 'Depleted', value: depleted, cls: 'text-warning', status: 'depleted' },
-              { label: 'Disabled', value: disabled, cls: 'text-muted',   status: 'disabled' },
+              { label: 'Expired',  value: expired,  cls: 'text-rose-300',  status: 'expired' },
+              { label: 'Depleted', value: depleted, cls: 'text-amber-300', status: 'depleted' },
+              { label: 'Disabled', value: disabled, cls: 'text-slate-500',   status: 'disabled' },
             ].map(s => (
               <span key={s.label}
-                className={`badge px-2 py-1 ${s.cls} ${s.status && filterStatus === s.status ? 'badge--active' : ''}`}
+                className={cn(
+                  badgeBaseClass,
+                  'bg-[#0f1420] font-mono tabular-nums whitespace-nowrap text-[0.78rem] font-normal',
+                  s.cls,
+                  s.status && filterStatus === s.status && 'border-current bg-cyan-400/10 ring-1 ring-cyan-300/50'
+                )}
                 style={{
-                  backgroundColor: filterStatus === s.status && s.status ? 'color-mix(in srgb, currentColor 18%, transparent)' : 'var(--bg-tertiary)',
-                  fontWeight: 400, fontSize: '0.78rem',
                   cursor: s.status ? 'pointer' : 'default',
-                  border: filterStatus === s.status && s.status ? '1px solid currentColor' : '1px solid transparent',
                 }}
                 title={s.status ? (filterStatus === s.status ? 'Click to clear filter' : `Click to filter by ${s.label}`) : undefined}
                 onClick={() => s.status && setFilterStatus(prev => prev === s.status ? '' : s.status)}
@@ -1875,15 +1936,15 @@ export const ClientManager: React.FC = () => {
         <div className="pg-strip pg-strip--bar mb-2">
           <span className="pg-strip__info">
             Page {currentPage} of {Math.ceil(filteredClients.length / pageSize)}
-            {' '}({(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, filteredClients.length)} of {filteredClients.length})
+            {' '}({(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, filteredClients.length)} of {filteredClients.length})
           </span>
-          <div className="d-flex gap-1">
-            <button className="btn btn-sm btn-neutral" disabled={currentPage <= 1} onClick={() => setCurrentPage(1)}>«</button>
-            <button className="btn btn-sm btn-neutral" disabled={currentPage <= 1} onClick={() => setCurrentPage(p => p - 1)}>‹</button>
-            <button className="btn btn-sm btn-neutral" disabled={currentPage >= Math.ceil(filteredClients.length / pageSize)} onClick={() => setCurrentPage(p => p + 1)}>›</button>
-            <button className="btn btn-sm btn-neutral" disabled={currentPage >= Math.ceil(filteredClients.length / pageSize)} onClick={() => setCurrentPage(Math.ceil(filteredClients.length / pageSize))}>»</button>
+          <div className="flex gap-1">
+            <button className={buttonNeutralClass} disabled={currentPage <= 1} onClick={() => setCurrentPage(1)}>{"<<"}</button>
+            <button className={buttonNeutralClass} disabled={currentPage <= 1} onClick={() => setCurrentPage(p => p - 1)}>{"<"}</button>
+            <button className={buttonNeutralClass} disabled={currentPage >= Math.ceil(filteredClients.length / pageSize)} onClick={() => setCurrentPage(p => p + 1)}>{">"}</button>
+            <button className={buttonNeutralClass} disabled={currentPage >= Math.ceil(filteredClients.length / pageSize)} onClick={() => setCurrentPage(Math.ceil(filteredClients.length / pageSize))}>{">>"}</button>
           </div>
-          <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.72rem' }}
+          <button className={buttonNeutralClass} style={{ fontSize: '0.72rem' }}
             title={t('clients.selectPageTitle')}
             onClick={() => {
               const pageClients = filteredClients.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -1895,13 +1956,13 @@ export const ClientManager: React.FC = () => {
             }}>
             {t('clients.selectPage')}
           </button>
-          <select className="form-select form-select-sm form-select-inline"
+          <select className={selectClass}
             value={currentPage} onChange={e => setCurrentPage(Number(e.target.value))}>
             {Array.from({ length: Math.ceil(filteredClients.length / pageSize) }, (_, i) => (
               <option key={i + 1} value={i + 1}>Page {i + 1}</option>
             ))}
           </select>
-          <select className="form-select form-select-sm form-select-inline"
+          <select className={selectClass}
             value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}
             title={t('clients.rowsPerPage')}>
             {[25, 50, 100, 200, 500].map(n => <option key={n} value={n}>{n} / page</option>)}
@@ -1909,602 +1970,64 @@ export const ClientManager: React.FC = () => {
         </div>
       )}
 
-      {/* Client Table */}
-      <div className="card p-3">
-        {loading && filteredClients.length > 0 && (
-          <div className="table-loading-bar mb-1" />
-        )}
-        {loading && filteredClients.length === 0 && (
-          <div className="table-responsive">
-            <table className="skeleton-table">
-              <tbody>
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <tr key={i}>
-                    <td style={{ width: 36 }}><div className="skeleton-cell skeleton-cell--circle" /></td>
-                    <td style={{ width: '28%' }}><div className="skeleton-cell skeleton-cell--xl" /></td>
-                    <td style={{ width: '14%' }}><div className="skeleton-cell skeleton-cell--md" /></td>
-                    <td style={{ width: '8%' }}><div className="skeleton-cell skeleton-cell--sm" /></td>
-                    <td style={{ width: '10%' }}><div className="skeleton-cell skeleton-cell--badge" /></td>
-                    <td style={{ width: '12%' }}><div className="skeleton-cell skeleton-cell--md" /></td>
-                    <td style={{ width: '10%' }}><div className="skeleton-cell skeleton-cell--sm" /></td>
-                    <td style={{ width: '12%' }}><div className="skeleton-cell skeleton-cell--md" /></td>
-                    <td style={{ width: '6%' }}><div className="skeleton-cell skeleton-cell--xs" /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {!loading && trafficLoading && (
-          <div className="d-flex align-items-center gap-2 py-1 px-1" style={{ color: 'var(--text-tertiary)', fontSize: '0.73rem' }}>
-            <div className="spinner-border spinner-border-sm spinner-accent" style={{ width: '10px', height: '10px', borderWidth: '0.12em' }} />
-            {t('clients.loadingTraffic')}
-          </div>
-        )}
-        
+      {/* Client Database */}
+      <section className="min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420]">
+        {loading && filteredClients.length > 0 && <div className="h-1 overflow-hidden bg-[#0a0e1a]"><div className="h-full w-1/3 animate-pulse rounded-full bg-cyan-300" /></div>}
+        {loading && filteredClients.length === 0 && <div className="grid gap-3 p-3">{Array.from({ length: 8 }).map((_, i) => <div key={i} className="h-16 animate-pulse rounded-lg bg-[#0a0e1a] ring-1 ring-cyan-500/10" />)}</div>}
+        {!loading && trafficLoading && <div className="flex items-center gap-2 px-3 py-2 text-xs text-slate-500"><UIIcon name="spinner" size={12} className="animate-spin text-cyan-300" /><span className="whitespace-nowrap">{t('clients.loadingTraffic')}</span></div>}
         {!loading && filteredClients.length === 0 && clients.length === 0 && (
-          <EmptyState
-            icon="👤"
-            title={t('clients.noClientsFound')}
-            hint="Add clients to your inbounds on the Inbounds tab, or use Batch Add below."
-            action={{ label: t('clients.batchAdd'), onClick: () => setShowBatchModal(true) }}
-          />
+          <div className="flex flex-col items-center justify-center px-4 py-10 text-center"><div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[#0a0e1a] text-cyan-300"><UIIcon name="clients" size={18} /></div><div className="text-sm font-medium uppercase tracking-[0.14em] text-slate-100">{t('clients.noClientsFound')}</div><button type="button" className={cn(buttonAccentClass, 'mt-4')} onClick={() => setShowBatchModal(true)}><UIIcon name="plus" size={14} />{t('clients.batchAdd')}</button></div>
         )}
         {!loading && filteredClients.length === 0 && clients.length > 0 && (
-          <EmptyState
-            icon="⊘"
-            title={t('clients.noClientsMatchFilters')}
-            hint="Try clearing the search or changing filter options."
-          />
+          <div className="flex flex-col items-center justify-center px-4 py-10 text-center"><div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[#0a0e1a] text-slate-400"><UIIcon name="clear" size={18} /></div><div className="text-sm font-medium uppercase tracking-[0.14em] text-slate-100">{t('clients.noClientsMatchFilters')}</div></div>
         )}
-        
-        {filteredClients.length > 0 && (
-          <div className="table-responsive">
-            <table className={`table table-hover${denseView ? ' table-sm' : ''}`} style={{ fontSize: denseView ? '0.8rem' : undefined }}>
-              <thead>
-                <tr>
-                  <th>
-                    <input
-                      type="checkbox"
-                      checked={
-                        filteredClients.length > 0 &&
-                        filteredClients.every((c) => selectedClientKeys.has(clientKey(c)))
-                      }
-                      onChange={toggleSelectAll}
-                    />
-                  </th>
-                  <th>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" onClick={() => applySortFromHeader('email')}>
-                      {t('clients.email')}{sortIndicator('email')}
-                    </button>
-                  </th>
-                  <th>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" onClick={() => applySortFromHeader('node')}>
-                      {t('traffic.node')}{sortIndicator('node')}
-                    </button>
-                  </th>
-                  {!denseView && <th className="col-hide-mobile">{t('inbounds.protocol')}</th>}
-                  <th>{t('common.status')}</th>
-                  <th>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" onClick={() => applySortFromHeader('download')}>
-                      {t('traffic.download')}{sortIndicator('download')}
-                    </button>
-                    {' / '}
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ fontSize: '0.72rem' }} onClick={() => applySortFromHeader('usedPct')}
-                      title={t('clients.sortByUsedPct')}>
-                      %{sortIndicator('usedPct')}
-                    </button>
-                  </th>
-                  <th className="col-hide-md">
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" onClick={() => applySortFromHeader('total')}>
-                      {t('clients.totalLimit')}{sortIndicator('total')}
-                    </button>
-                  </th>
-                  <th>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" onClick={() => applySortFromHeader('expiry')}>
-                      {t('clients.expiryTime')}{sortIndicator('expiry')}
-                    </button>
-                  </th>
-                  {!denseView && (
-                    <th className="col-hide-md">
-                      <button className="btn btn-link btn-sm p-0 text-decoration-none" onClick={() => applySortFromHeader('lastOnline')}>
-                        Last Online{sortIndicator('lastOnline')}
-                      </button>
-                    </th>
-                  )}
-                  <th className="col-hide-md" style={{ color: 'var(--text-secondary)' }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applySortFromHeader('health')}
-                      title={t('clients.sortByHealthScore')}>
-                      Health{sortIndicator('health')}
-                    </button>
-                  </th>
-                  <th style={{ color: 'var(--text-secondary)' }}>{t('common.actions')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredClients.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((client) => {
-                  const trafficKey = client.node_id != null ? `${client.node_id}:${client.email}` : null;
-                  const downloadBytes = getTrafficBytes(trafficKey, 'download', client.down);
-                  const isExpired = client.expiryTime > 0 && client.expiryTime < Date.now();
-                  const isDepleted = client.total > 0 && (client.up + client.down) >= client.total;
-                  const now = Date.now();
-                  const isExpiringSoon = !isExpired && client.expiryTime > 0 && client.expiryTime < now + expiringSoonDays * 86400_000;
-                  const rowBg = isExpired ? 'color-mix(in srgb, var(--danger) 8%, transparent)'
-                    : isDepleted ? 'color-mix(in srgb, var(--warning) 8%, transparent)'
-                    : isExpiringSoon ? 'color-mix(in srgb, var(--warning) 5%, transparent)'
-                    : !client.enable ? 'color-mix(in srgb, var(--bg-tertiary) 50%, transparent)'
-                    : 'transparent';
-
-                  return (
-                    <React.Fragment key={clientKey(client)}>
-                    <tr style={{ borderColor: 'var(--border-color)', backgroundColor: rowBg }}>
-                      <td>
-                        <input
-                          type="checkbox"
-                          checked={selectedClientKeys.has(clientKey(client))}
-                          onChange={() => toggleSelection(client)}
-                        />
-                      </td>
-                      <td>
-                        <div className="d-flex align-items-center gap-1">
-                          {onlineEmails.has(client.email) && (
-                            <span style={{ color: 'var(--success)', fontSize: '0.7rem' }} title="Online">●</span>
-                          )}
-                          <strong
-                            style={{ color: 'var(--text-primary)', cursor: 'pointer' }}
-                            title={t('clients.expandOrCopyHint')}
-                            onClick={() => setExpandedKey(prev => prev === clientKey(client) ? null : clientKey(client))}
-                            onDoubleClick={e => { e.stopPropagation(); navigator.clipboard.writeText(client.email).then(() => toast('Email copied', 'info')); }}
-                          >
-                            {expandedKey === clientKey(client) ? '▾' : '▸'} {client.email}
-                          </strong>
-                          {(client as any).subId && (
-                            <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)', marginLeft: '2px' }} title={t('clients.hasSubscriptionLink')}>🔗</span>
-                          )}
-                          <button
-                            className="btn btn-sm p-0 ms-1"
-                            style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', opacity: 0.6 }}
-                            title={t('clients.copySubscriptionLinks')}
-                            onClick={async () => {
-                              const { user, password } = getAuth();
-                              try {
-                                const res = await api.get(`/v1/clients/${encodeURIComponent(client.email)}/links`, { auth: { username: user, password } });
-                                const links: string[] = res.data?.links || [];
-                                if (links.length > 0) {
-                                  await navigator.clipboard.writeText(links.join('\n'));
-                                  toast(`Copied ${links.length} link(s)`, 'info');
-                                } else {
-                                  toast('No links available (requires v3 panel)', 'warning');
-                                }
-                              } catch (e) { console.error(e); }
-                            }}
-                          >
-                            <UIIcon name="link" size={12} />
-                          </button>
-                          <button
-                            className="btn btn-sm p-0 ms-1"
-                            style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', opacity: 0.6 }}
-                            title={t('clients.showQrCodes')}
-                            onClick={async () => {
-                              const { user, password } = getAuth();
-                              try {
-                                const res = await api.get(`/v1/clients/${encodeURIComponent(client.email)}/links`, { auth: { username: user, password } });
-                                const links: string[] = res.data?.links || [];
-                                if (links.length > 0) {
-                                  setQrLinks(links);
-                                  setQrEmail(client.email);
-                                  setShowQrModal(true);
-                                } else {
-                                  toast('No links available (requires v3 panel)', 'warning');
-                                }
-                              } catch (e) { console.error(e); }
-                            }}
-                          >
-                            ▦
-                          </button>
-                        </div>
-                      </td>
-                      <td>
-                        <span
-                          className={`client-node-chip${filterNode === client.node_name ? ' is-active' : ''}`}
-                          title={filterNode === client.node_name ? 'Click to clear node filter' : `Filter by ${client.node_name}`}
-                          onClick={() => setFilterNode(prev => prev === client.node_name ? '' : client.node_name)}
-                        >
-                          {client.node_name}
-                        </span>
-                      </td>
-                      {!denseView && (
-                        <td className="col-hide-mobile">
-                          <span
-                            className={`client-node-chip client-node-chip--proto${filterProtocol === client.protocol ? ' is-active' : ''}`}
-                            title={filterProtocol === client.protocol ? 'Click to clear protocol filter' : `Filter by ${client.protocol}`}
-                            onClick={() => setFilterProtocol(prev => prev === client.protocol ? '' : client.protocol)}
-                          >
-                            {client.protocol.toUpperCase()}
-                          </span>
-                        </td>
-                      )}
-                      <td>
-                        <button
-                          className={`client-status-dot client-status-dot--${isExpired ? 'expired' : isDepleted ? 'depleted' : client.enable ? 'active' : 'disabled'}`}
-                          title={`${isExpired ? 'Expired' : isDepleted ? 'Depleted' : client.enable ? 'Active — click to disable' : 'Disabled — click to enable'}`}
-                          onClick={async () => {
-                            const identifier = clientIdentifier(client);
-                            if (!identifier) return;
-                            try {
-                              await api.put(`/v1/clients/${encodeURIComponent(identifier)}`, {
-                                node_id: client.node_id,
-                                inbound_id: client.inbound_id,
-                                updates: { email: client.email, enable: !client.enable },
-                              }, { auth: getAuth() });
-                              setClients(prev => prev.map(c =>
-                                clientKey(c) === clientKey(client) ? { ...c, enable: !c.enable } : c
-                              ));
-                            } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
-                          }}
-                        >
-                        
-                        </button>
-                      </td>
-                      <td>
-                        <div>
-                          {formatBytes(downloadBytes)}
-                          {client.total > 0 && (() => {
-                            const used = client.up + client.down;
-                            const pct = Math.min(100, (used / client.total) * 100);
-                            const barColor = pct >= 90 ? 'var(--danger)' : pct >= 70 ? 'var(--warning)' : 'var(--success)';
-                            return (
-                              <>
-                                <div className="progress mt-1" style={{ height: '3px', backgroundColor: 'var(--bg-tertiary)', minWidth: '60px' }}>
-                                  <div className="progress-bar" style={{ width: `${pct}%`, backgroundColor: barColor }} />
-                                </div>
-                                <div style={{ fontSize: '0.65rem', color: barColor, marginTop: '1px' }}>
-                                  {(used / 1073741824).toFixed(1)}/{(client.total / 1073741824).toFixed(1)} GB
-                                </div>
-                              </>
-                            );
-                          })()}
-                        </div>
-                      </td>
-                      <td className="col-hide-md">
-                        <span
-                          style={{ cursor: 'pointer', color: client.total > 0 ? 'var(--text-primary)' : 'var(--text-secondary)' }}
-                          title={t('clients.setTrafficLimitTitle')}
-                          onClick={async () => {
-                            const identifier = clientIdentifier(client);
-                            if (!identifier) return;
-                            const current = client.total > 0 ? (client.total / 1073741824).toFixed(1) : '0';
-                            const input = window.prompt(`Set traffic limit (GB) for "${client.email}":\n0 = unlimited`, current);
-                            if (input === null) return;
-                            const gb = parseFloat(input);
-                            if (isNaN(gb) || gb < 0) return;
-                            try {
-                              await api.put(`/v1/clients/${encodeURIComponent(identifier)}`, {
-                                node_id: client.node_id, inbound_id: client.inbound_id,
-                                updates: { email: client.email, totalGB: gb },
-                              }, { auth: getAuth() });
-                              toast(`Limit set: ${gb > 0 ? gb + ' GB' : 'unlimited'} → ${client.email}`, 'success');
-                              loadClients(true);
-                            } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
-                          }}
-                        >
-                          {client.total > 0 ? formatBytes(client.total) : '∞'}
-                        </span>
-                      </td>
-                      <td>
-                        <div
-                          style={{ cursor: 'pointer' }}
-                          title={t('clients.setExpiryDateTitle')}
-                          onClick={async () => {
-                            const identifier = clientIdentifier(client);
-                            if (!identifier) return;
-                            const current = client.expiryTime > 0 ? new Date(client.expiryTime).toISOString().slice(0,10) : '';
-                            const input = window.prompt(`Set expiry date for "${client.email}" (YYYY-MM-DD, blank = never):`, current);
-                            if (input === null) return;
-                            const ts = input.trim() ? new Date(input.trim()).getTime() : 0;
-                            if (input.trim() && isNaN(ts)) { toast('Invalid date format', 'warning'); return; }
-                            try {
-                              await api.put(`/v1/clients/${encodeURIComponent(identifier)}`, {
-                                node_id: client.node_id, inbound_id: client.inbound_id,
-                                updates: { email: client.email, expiryTime: ts },
-                              }, { auth: getAuth() });
-                              toast(`Expiry set → ${client.email}`, 'success');
-                              loadClients(true);
-                            } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
-                          }}
-                        >
-                          {client.expiryTime > 0 ? (() => {
-                            const daysLeft = Math.ceil((client.expiryTime - Date.now()) / 86400000);
-                            const urgency = isExpired ? 'expired' : daysLeft <= 3 ? 'urgent' : daysLeft <= 7 ? 'soon' : 'ok';
-                            return (
-                              <div className={`expiry-chip expiry-chip--${urgency}`}>
-                                <span className="expiry-chip__date">{new Date(client.expiryTime).toLocaleDateString()}</span>
-                                {!isExpired && <span className="expiry-chip__days">{daysLeft}d left</span>}
-                              </div>
-                            );
-                          })() : (
-                            <span className="expiry-chip expiry-chip--never">{t('clients.never')}</span>
-                          )}
-                        </div>
-                      </td>
-                      {!denseView && (
-                        <td className="col-hide-md">
-                          {lastOnlineMap[client.email] ? (
-                            <small style={{ color: 'var(--text-secondary)' }}>
-                              {new Date(lastOnlineMap[client.email]).toLocaleDateString()}
-                            </small>
-                          ) : (
-                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.75rem' }}>—</span>
-                          )}
-                        </td>
-                      )}
-                      <td className="col-hide-md">
-                        {(() => {
-                          const hs = getHealthScore(client);
-                          const hColor = hs >= 70 ? 'var(--success)' : hs >= 35 ? 'var(--warning)' : 'var(--danger)';
-                          const hLabel = hs >= 70 ? '●' : hs >= 35 ? '◑' : '○';
-                          return (
-                            <span title={`Health score: ${hs}/100`} style={{ color: hColor, fontWeight: 600, fontSize: '0.8rem', cursor: 'default' }}>
-                              {hLabel} {hs}
-                            </span>
-                          );
-                        })()}
-                      </td>
-                      <td>
-                        <div className="d-inline-flex gap-1 align-items-center">
-                          <button className="row-action-btn row-action-btn--accent"
-                            onClick={() => handleClientEditClick(client)}
-                            title={t('messages.editClient')}
-                            aria-label={t('messages.editClient')}>
-                            <UIIcon name="edit" size={13} />
-                          </button>
-                          <button className="row-action-btn row-action-btn--info"
-                            onClick={() => handleResetTraffic(client)}
-                            title={t('clients.resetTraffic')}
-                            aria-label={t('clients.resetTraffic')}>
-                            <UIIcon name="refresh" size={13} />
-                          </button>
-                          <button className="row-action-btn row-action-btn--success"
-                            title={t('clients.renewAddDaysTitle')}
-                            aria-label={t('clients.renewAddDaysTitle')}
-                            onClick={async () => {
-                              const identifier = clientIdentifier(client);
-                              if (!identifier) return;
-                              const daysStr = window.prompt(`Add days to "${client.email}" (current expiry: ${client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : 'never'}):`, '30');
-                              const days = parseInt(daysStr || '');
-                              if (!days || days <= 0) return;
-                              const baseTime = client.expiryTime > 0 ? client.expiryTime : Date.now();
-                              const newExpiry = baseTime + days * 86400000;
-                              try {
-                                await api.put(`/v1/clients/${encodeURIComponent(identifier)}`, {
-                                  node_id: client.node_id, inbound_id: client.inbound_id,
-                                  updates: { email: client.email, expiryTime: newExpiry, enable: true },
-                                }, { auth: getAuth() });
-                                toast(`+${days}d → ${client.email}`, 'success');
-                                loadClients(true);
-                              } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
-                            }}>
-                            {t('clients.addDaysShort')}
-                          </button>
-                          <button className="row-action-btn row-action-btn--warning"
-                            title={t('clients.freezeNowTitle')}
-                            aria-label={t('clients.freezeClient')}
-                            onClick={async () => {
-                              if (!window.confirm(`Freeze "${client.email}"? This sets expiry to now.`)) return;
-                              const identifier = clientIdentifier(client);
-                              if (!identifier) return;
-                              try {
-                                await api.put(`/v1/clients/${encodeURIComponent(identifier)}`, {
-                                  node_id: client.node_id, inbound_id: client.inbound_id,
-                                  updates: { email: client.email, expiryTime: Date.now(), enable: false },
-                                }, { auth: getAuth() });
-                                toast(`Frozen: ${client.email}`, 'warning');
-                                loadClients(true);
-                              } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
-                            }}>
-                            <UIIcon name="snowflake" size={13} />
-                          </button>
-                          <button className="row-action-btn row-action-btn--info"
-                            title={t('clients.viewActiveIps')}
-                            aria-label={t('clients.viewActiveIps')}
-                            onClick={async () => {
-                              const { user, password } = getAuth();
-                              try {
-                                const res = await api.get(`/v1/clients/${encodeURIComponent(client.email)}/ips`, { auth: { username: user, password } });
-                                const results = res.data?.results || [];
-                                const all = results.flatMap((r: any) => (r.ips || []).map((ip: string) => `${r.node}: ${ip}`));
-                                const lo = lastOnlineMap[client.email];
-                                const loStr = lo ? `\nLast online: ${new Date(lo).toLocaleString()}` : '';
-                                toast(all.length > 0 ? `IPs: ${all.join(', ')}${loStr}` : `No active IPs${loStr}`, 'info');
-                              } catch (e) { console.error(e); }
-                            }}>
-                            IP
-                          </button>
-                          <button className="row-action-btn row-action-btn--warning"
-                            title={t('clients.clearStoredIps')}
-                            aria-label={t('clients.clearStoredIps')}
-                            onClick={async () => {
-                              if (!window.confirm(`Clear stored IPs for "${client.email}"?`)) return;
-                              try {
-                                await api.post(`/v1/clients/${encodeURIComponent(client.email)}/clear-ips`, {}, { auth: getAuth() });
-                                toast('IPs cleared', 'success');
-                              } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
-                            }}>
-                            {t('clients.clearIp')}
-                          </button>
-                          <button className="row-action-btn row-action-btn--info"
-                            title={t('clients.attachDetachInbounds')}
-                            aria-label={t('clients.attachOrDetachInbounds')}
-                            onClick={() => handleOpenAttach(client, 'attach')}>
-                            <UIIcon name="attach" size={13} />
-                          </button>
-                          <button className="row-action-btn row-action-btn--accent"
-                            title={t('clients.duplicateClient')}
-                            aria-label={t('clients.duplicateClient')}
-                            onClick={() => {
-                              setBatchText(`${client.email}_copy`);
-                              if (client.inbound_id) setBatchInboundId(client.inbound_id.toString());
-                              setShowBatchModal(true);
-                            }}>
-                            <UIIcon name="duplicate" size={13} />
-                          </button>
-                          <button className={`row-action-btn ${clientNotes[clientKey(client)] ? 'row-action-btn--accent' : ''}`}
-                            title={clientNotes[clientKey(client)] ? `Note: ${clientNotes[clientKey(client)]}` : 'Add note (local only)'}
-                            aria-label={clientNotes[clientKey(client)] ? 'Edit note' : 'Add note'}
-                            onClick={() => {
-                              const key = clientKey(client);
-                              const note = window.prompt(t('clients.localNotePrompt'), clientNotes[key] || '');
-                              if (note !== null) saveClientNote(key, note);
-                            }}>
-                            <UIIcon name="note" size={13} />
-                          </button>
-                          <button className="row-action-btn row-action-btn--danger"
-                            title={t('clients.deleteClient') || 'Delete client'}
-                            aria-label={t('clients.deleteClient') || 'Delete client'}
-                            onClick={async () => {
-                              const identifier = clientIdentifier(client);
-                              if (!identifier || !client.inbound_id) { toast('Cannot identify client', 'warning'); return; }
-                              if (!window.confirm(`Delete client "${client.email}"?`)) return;
-                              try {
-                                await api.delete(`/v1/clients/${encodeURIComponent(identifier)}`, {
-                                  auth: getAuth(),
-                                  params: { node_id: client.node_id, inbound_id: client.inbound_id },
-                                });
-                                loadClients(true);
-                              } catch (e: any) { toast(e.response?.data?.detail || 'Delete failed', 'error'); }
-                            }}>
-                            <UIIcon name="trash" size={13} />
-                          </button>
-                        </div>
-                        {lastOnlineMap[client.email] && !onlineEmails.has(client.email) && (
-                          <div className="small mt-1" style={{ color: 'var(--text-secondary)', fontSize: '0.68rem' }}>
-                            {new Date(lastOnlineMap[client.email]).toLocaleDateString()}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                    {expandedKey === clientKey(client) && (
-                      <tr className="row-detail row-detail--open" style={{ backgroundColor: 'color-mix(in srgb, var(--bg-tertiary) 40%, transparent)' }}>
-                        <td colSpan={99} style={{ padding: '8px 16px', fontSize: '0.78rem' }}>
-                          <div className="d-flex flex-wrap gap-3 align-items-start">
-                            <div className="d-flex flex-wrap gap-3">
-                                <span className="d-inline-flex align-items-center gap-1">
-                                <strong>Email:</strong>
-                                <span style={{ color: 'var(--text-primary)' }}>{client.email}</span>
-                                <button className="row-action-btn"
-                                  title={t('clients.copyEmail')}
-                                  aria-label={t('clients.copyEmailAddress')}
-                                  style={{ fontSize: '0.75rem' }}
-                                  onClick={() => copyWithFeedback(client.email, `email-${clientKey(client)}`, 'Email copied')}>
-                                  {copiedKey === `email-${clientKey(client)}` ? <UIIcon name="check" size={12} /> : <UIIcon name="copy" size={12} />}
-                                </button>
-                              </span>
-                            {clientNotes[clientKey(client)] && (
-                              <span className="d-inline-flex align-items-center gap-1 text-accent">
-                                <strong>{t('clients.noteLabel')}</strong>
-                                <span>{clientNotes[clientKey(client)]}</span>
-                                <button className="btn btn-sm p-0" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', fontSize: '0.7rem' }}
-                                  title={t('clients.clearNote')}
-                                  onClick={() => saveClientNote(clientKey(client), '')}>✕</button>
-                              </span>
-                            )}
-                            {client.inbound_id && <span><strong>Inbound:</strong> #{client.inbound_id}</span>}
-                              {client.node_id && <span><strong>{t('clients.nodeIdLabel')}</strong> {client.node_id}</span>}
-                              {client.protocol && <span><strong>Protocol:</strong> {client.protocol}</span>}
-                              {(client as any).id && (
-                                <span className="d-inline-flex align-items-center gap-1">
-                                  <strong>UUID:</strong>
-                                  <code style={{ fontSize: '0.72rem' }}>{(client as any).id}</code>
-                                  <button className="btn btn-sm p-0" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }}
-                                    title={t('clients.copyUuid')}
-                                    onClick={() => navigator.clipboard.writeText((client as any).id).then(() => toast(t('clients.uuidCopied'), 'info'))}>
-                                    <UIIcon name="copy" size={12} />
-                                  </button>
-                                </span>
-                              )}
-                              {(client as any).subId && (
-                                <span className="d-inline-flex align-items-center gap-1">
-                                  <strong>{t('clients.subIdLabel')}</strong>
-                                  <code style={{ fontSize: '0.72rem' }}>{(client as any).subId}</code>
-                                  <button className="btn btn-sm p-0" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)' }}
-                                    title={t('clients.copySubscriptionUrl')}
-                                    onClick={() => {
-                                      const url = `${window.location.origin}/sub/${(client as any).subId}`;
-                                      navigator.clipboard.writeText(url).then(() => toast(t('clients.subUrlCopied'), 'info'));
-                                    }}>
-                                    🔗
-                                  </button>
-                                </span>
-                              )}
-                              {client.total > 0 && <span><strong>Limit:</strong> {(client.total / 1073741824).toFixed(1)} GB</span>}
-                              {client.expiryTime > 0 && (() => {
-                                const daysLeft = Math.ceil((client.expiryTime - Date.now()) / 86400000);
-                                const color = daysLeft <= 0 ? 'var(--danger)' : daysLeft <= 3 ? 'var(--danger)' : daysLeft <= 7 ? 'var(--warning)' : 'var(--success)';
-                                return (
-                                  <span>
-                                    <strong>Expires:</strong> {new Date(client.expiryTime).toLocaleDateString()}
-                                    <span className="badge ms-1" style={{ backgroundColor: color, fontSize: '0.65rem' }}>
-                                      {daysLeft <= 0 ? 'expired' : `${daysLeft}d`}
-                                    </span>
-                                  </span>
-                                );
-                              })()}
-                              {(client as any).flow && <span><strong>Flow:</strong> {(client as any).flow}</span>}
-                              {(client as any).tgId && <span><strong>Telegram:</strong> {(client as any).tgId}</span>}
-                              {onlineEmails.has(client.email) && (
-                                <span className="badge" style={{ backgroundColor: 'var(--success)', fontSize: '0.7rem' }}>{t('clients.onlineNow')}</span>
-                              )}
-                              {lastOnlineMap[client.email] && !onlineEmails.has(client.email) && (
-                                <span style={{ color: 'var(--text-secondary)', fontSize: '0.7rem' }}>
-                                  Last seen: {new Date(lastOnlineMap[client.email]).toLocaleString()}
-                                </span>
-                              )}
-                            </div>
-                            {(client as any).subId && (
-                              <img
-                                src={`https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(`${window.location.origin}/sub/${(client as any).subId}`)}`}
-                                alt="QR"
-                                style={{ width: 80, height: 80, borderRadius: 6, border: `1px solid ${'var(--border-color)'}` }}
-                                title={`Subscription QR: ${(client as any).subId}`}
-                              />
-                            )}
-                          </div>
-                        </td>
-                      </tr>
-                    )}
-                    </React.Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
+        {filteredClients.length > 0 && <>
+          <div className="grid min-w-0 grid-cols-1 gap-3 p-3 lg:hidden">
+            {visibleClients.map((client) => {
+              const trafficKey = client.node_id != null ? `${client.node_id}:${client.email}` : null;
+              const downloadBytes = getTrafficBytes(trafficKey, 'download', client.down);
+              const isExpired = client.expiryTime > 0 && client.expiryTime < Date.now();
+              const isDepleted = client.total > 0 && (client.up + client.down) >= client.total;
+              const used = client.up + client.down;
+              const pct = client.total > 0 ? Math.min(100, (used / client.total) * 100) : 0;
+              return <article key={clientKey(client)} className="min-w-0 overflow-hidden rounded-lg bg-[#0a0e1a] p-3 ring-1 ring-cyan-500/10">
+                <div className="flex min-w-0 items-start justify-between gap-3"><label className="flex min-w-0 items-start gap-2"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /><span className="min-w-0"><button type="button" className="block max-w-full truncate text-left text-sm font-medium text-slate-100 hover:text-cyan-300" title={client.email} onClick={() => setExpandedKey(prev => prev === clientKey(client) ? null : clientKey(client))}>{client.email}</button><span className="mt-1 block truncate text-[11px] text-slate-500" title={client.id || ''}>{client.id || client.password || '-'}</span></span></label><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier) return; try { await api.put(`/v1/clients/${encodeURIComponent(identifier)}`, { node_id: client.node_id, inbound_id: client.inbound_id, updates: { email: client.email, enable: !client.enable } }, { auth: getAuth() }); setClients(prev => prev.map(c => clientKey(c) === clientKey(client) ? { ...c, enable: !c.enable } : c)); } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); } }}>{isExpired ? 'Expired' : isDepleted ? 'Depleted' : client.enable ? 'Active' : 'Disabled'}</button></div>
+                <div className="mt-3 grid min-w-0 grid-cols-2 gap-2"><button type="button" className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] text-slate-200')} onClick={() => setFilterNode(prev => prev === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol(prev => prev === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{formatBytes(downloadBytes)}</span></span><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : 'unlimited'}</span></span></div>
+                {client.total > 0 && <div className="mt-3"><div className="h-1 overflow-hidden rounded-full bg-[#0f1420]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></div>}
+                <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-500"><div className="min-w-0"><span className="block uppercase tracking-wider">{t('clients.expiryTime')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-200 whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</span></div><div className="min-w-0 text-right"><span className="block uppercase tracking-wider">Last Online</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-300 whitespace-nowrap">{lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).toLocaleDateString() : '-'}</span></div></div>
+                <div className="mt-3 grid grid-cols-5 gap-2"><button type="button" className={buttonIconClass} onClick={() => handleClientEditClick(client)} title={t('messages.editClient')}><UIIcon name="edit" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleResetTraffic(client)} title={t('clients.resetTraffic')}><UIIcon name="refresh" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleOpenAttach(client, 'attach')} title={t('clients.attachDetachInbounds')}><UIIcon name="attach" size={14} /></button><button type="button" className={cn(buttonIconClass, clientNotes[clientKey(client)] && 'text-cyan-300')} onClick={() => { const key = clientKey(client); const note = window.prompt(t('clients.localNotePrompt'), clientNotes[key] || ''); if (note !== null) saveClientNote(key, note); }} title="Note"><UIIcon name="note" size={14} /></button><button type="button" className={cn(buttonIconClass, 'bg-rose-500 text-white hover:bg-rose-400')} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier || !client.inbound_id) { toast('Cannot identify client', 'warning'); return; } if (!window.confirm(`Delete client "${client.email}"?`)) return; try { await api.delete(`/v1/clients/${encodeURIComponent(identifier)}`, { auth: getAuth(), params: { node_id: client.node_id, inbound_id: client.inbound_id } }); loadClients(true); } catch (e: any) { toast(e.response?.data?.detail || 'Delete failed', 'error'); } }} title={t('clients.deleteClient') || 'Delete client'}><UIIcon name="trash" size={14} /></button></div>
+              </article>;
+            })}
           </div>
-        )}
-        
-        <div className="mt-2 small" style={{ color: 'var(--text-secondary)' }}>
-          {t('clients.showingCount', { filtered: filteredClients.length, total: clients.length })}
-        </div>
-      </div>
-      
+          <div className="hidden min-w-0 overflow-hidden bg-[#0a0e1a] lg:block"><div className="min-w-0 overflow-x-auto"><table className={cn('w-full border-collapse text-left text-xs', denseView ? 'min-w-[1120px]' : 'min-w-[1260px]')}><thead className="bg-[#0f1420] text-[10px] uppercase tracking-wider text-slate-500"><tr className="border-b border-cyan-500/20"><th className="w-10 px-3 py-3"><input className={checkboxClass} type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAll} /></th><th className="w-[24%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('email')}>{t('clients.email')}{sortIndicator('email')}</button></th><th className="w-[14%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('node')}>{t('traffic.node')}{sortIndicator('node')}</button></th>{!denseView && <th className="w-[9%] px-3 py-3">{t('inbounds.protocol')}</th>}<th className="w-[10%] px-3 py-3">{t('common.status')}</th><th className="w-[13%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('download')}>{t('traffic.download')}{sortIndicator('download')}</button></th><th className="w-[11%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('total')}>{t('clients.totalLimit')}{sortIndicator('total')}</button></th><th className="w-[12%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('expiry')}>{t('clients.expiryTime')}{sortIndicator('expiry')}</button></th>{!denseView && <th className="w-[10%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('lastOnline')}>Last Online{sortIndicator('lastOnline')}</button></th>}<th className="w-[8%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('health')}>Health{sortIndicator('health')}</button></th><th className="w-[14%] px-3 py-3">{t('common.actions')}</th></tr></thead><tbody className="divide-y divide-slate-800/60 text-slate-200">
+            {visibleClients.map((client) => { const trafficKey = client.node_id != null ? `${client.node_id}:${client.email}` : null; const downloadBytes = getTrafficBytes(trafficKey, 'download', client.down); const isExpired = client.expiryTime > 0 && client.expiryTime < Date.now(); const isDepleted = client.total > 0 && (client.up + client.down) >= client.total; const used = client.up + client.down; const pct = client.total > 0 ? Math.min(100, (used / client.total) * 100) : 0; const hs = getHealthScore(client); return <tr key={clientKey(client)} className={cn('transition-colors hover:bg-cyan-400/5', isExpired && 'bg-amber-400/5', isDepleted && 'bg-rose-500/5', !client.enable && 'bg-[#0f1420]/60 opacity-80')}><td className="px-3 py-3"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /></td><td className="min-w-0 px-3 py-3"><button type="button" className="block max-w-full truncate text-left font-medium text-slate-100 hover:text-cyan-300" title={client.email} onClick={() => setExpandedKey(prev => prev === clientKey(client) ? null : clientKey(client))}>{client.email}</button><div className="mt-1 truncate font-mono text-[11px] text-slate-500" title={client.id || client.password || ''}>{client.id || client.password || '-'}</div></td><td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'max-w-full justify-start bg-[#0f1420] text-slate-200')} onClick={() => setFilterNode(prev => prev === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button></td>{!denseView && <td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol(prev => prev === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button></td>}<td className="px-3 py-3"><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier) return; try { await api.put(`/v1/clients/${encodeURIComponent(identifier)}`, { node_id: client.node_id, inbound_id: client.inbound_id, updates: { email: client.email, enable: !client.enable } }, { auth: getAuth() }); setClients(prev => prev.map(c => clientKey(c) === clientKey(client) ? { ...c, enable: !c.enable } : c)); } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); } }}>{isExpired ? 'Expired' : isDepleted ? 'Depleted' : client.enable ? 'Active' : 'Disabled'}</button></td><td className="px-3 py-3"><div className="font-mono tabular-nums whitespace-nowrap">{formatBytes(downloadBytes)}</div>{client.total > 0 && <><div className="mt-1 h-1 min-w-[72px] overflow-hidden rounded-full bg-[#0f1420]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></>}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : 'unlimited'}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</td>{!denseView && <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-slate-500">{lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).toLocaleDateString() : '-'}</td>}<td className={cn('px-3 py-3 font-mono tabular-nums font-medium whitespace-nowrap', hs >= 70 ? 'text-emerald-300' : hs >= 35 ? 'text-amber-300' : 'text-rose-300')}>{hs}</td><td className="px-3 py-3"><div className="flex flex-nowrap gap-1"><button type="button" className={buttonIconClass} onClick={() => handleClientEditClick(client)} title={t('messages.editClient')}><UIIcon name="edit" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleResetTraffic(client)} title={t('clients.resetTraffic')}><UIIcon name="refresh" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleOpenAttach(client, 'attach')} title={t('clients.attachDetachInbounds')}><UIIcon name="attach" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => { const key = clientKey(client); const note = window.prompt(t('clients.localNotePrompt'), clientNotes[key] || ''); if (note !== null) saveClientNote(key, note); }} title="Note"><UIIcon name="note" size={14} /></button><button type="button" className={cn(buttonIconClass, 'bg-rose-500 text-white hover:bg-rose-400')} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier || !client.inbound_id) { toast('Cannot identify client', 'warning'); return; } if (!window.confirm(`Delete client "${client.email}"?`)) return; try { await api.delete(`/v1/clients/${encodeURIComponent(identifier)}`, { auth: getAuth(), params: { node_id: client.node_id, inbound_id: client.inbound_id } }); loadClients(true); } catch (e: any) { toast(e.response?.data?.detail || 'Delete failed', 'error'); } }} title={t('clients.deleteClient') || 'Delete client'}><UIIcon name="trash" size={14} /></button></div></td></tr>; })}
+          </tbody></table></div></div>
+        </>}
+        <div className="flex min-w-0 flex-wrap items-center gap-3 px-3 py-3 text-xs text-slate-500"><span className="whitespace-nowrap">{t('clients.showingCount', { filtered: filteredClients.length, total: clients.length })}</span>{selectedClientKeys.size > 0 && <span className="text-cyan-300 whitespace-nowrap">{t('clients.selectedCount', { count: selectedClientKeys.size })}</span>}</div>
+      </section>
       {/* Batch Add Modal */}
       {showBatchModal && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }}>
-          <div className="modal-dialog modal-lg">
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-              <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
-                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>{t('clients.batchAddTitle')}</h6>
+        <div className={modalBackdropClass}>
+          <div className="my-8 w-full max-w-3xl">
+            <div className={modalPanelClass}>
+              <div className={modalHeaderClass}>
+                <h6 className={modalTitleClass}>{t('clients.batchAddTitle')}</h6>
                 <button
                   type="button"
-                  className="btn-close"
+                  className={buttonIconClass}
+                  aria-label={t('common.close')}
                   onClick={() => setShowBatchModal(false)}
-                ></button>
+                >
+                  X
+                </button>
               </div>
-              <div className="modal-body">
+              <div className={modalBodyClass}>
                 <div className="mb-3">
-                  <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
+                  <label className={fieldLabelClass}>
                     {t('clients.batchEmailsLabel')}
                   </label>
                   <textarea
-                    className="form-control"
+                    className={inputClass}
                     rows={8}
                     value={batchText}
                     onChange={(e) => setBatchText(e.target.value)}
@@ -2512,9 +2035,9 @@ export const ClientManager: React.FC = () => {
     
                   />
                 </div>
-                <div className="row g-2">
-                  <div className="col-md-4">
-                    <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
+                <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-3">
+                  <div className="min-w-0">
+                    <label className={fieldLabelClass}>
                       {t('clients.inboundSelector')}
                     </label>
                     <ChoiceChips
@@ -2528,14 +2051,14 @@ export const ClientManager: React.FC = () => {
                       size="md"
                     />
                   </div>
-                  <div className="col-md-4">
-                    <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
+                  <div className="min-w-0">
+                    <label className={fieldLabelClass}>
                       {batchInboundMode === 'id' ? t('clients.inboundIdLabel') : t('clients.inboundRemarkLabel')}
                     </label>
                     {batchInboundMode === 'id' ? (
                       <input
                         type="number"
-                        className="form-control"
+                        className={inputClass}
                         value={batchInboundId}
                         onChange={(e) => setBatchInboundId(e.target.value)}
         
@@ -2543,7 +2066,7 @@ export const ClientManager: React.FC = () => {
                     ) : (
                       <input
                         type="text"
-                        className="form-control"
+                        className={inputClass}
                         value={batchInboundRemark}
                         onChange={(e) => setBatchInboundRemark(e.target.value)}
                         placeholder={t('clients.inboundRemarkPlaceholder')}
@@ -2551,8 +2074,8 @@ export const ClientManager: React.FC = () => {
                       />
                     )}
                   </div>
-                  <div className="col-md-4">
-                    <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
+                  <div className="min-w-0">
+                    <label className={fieldLabelClass}>
                       {t('clients.flowLabel')}
                     </label>
                     <ChoiceChips
@@ -2567,49 +2090,49 @@ export const ClientManager: React.FC = () => {
                       size="md"
                     />
                   </div>
-                  <div className="col-md-4">
-                    <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
+                  <div className="min-w-0">
+                    <label className={fieldLabelClass}>
                       {t('clients.totalGbOptional')}
                     </label>
                     <input
                       type="number"
-                      className="form-control"
+                      className={inputClass}
                       value={batchTotalGB}
                       onChange={(e) => setBatchTotalGB(e.target.value)}
                       placeholder="50"
       
                     />
                   </div>
-                  <div className="col-md-4">
-                    <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
+                  <div className="min-w-0">
+                    <label className={fieldLabelClass}>
                       {t('clients.expiryDaysOptional')}
                     </label>
                     <input
                       type="number"
-                      className="form-control"
+                      className={inputClass}
                       value={batchExpiryDays}
                       onChange={(e) => setBatchExpiryDays(e.target.value)}
                       placeholder="30"
       
                     />
                   </div>
-                  <div className="col-md-4 d-flex align-items-end">
-                    <div className="form-check form-switch">
+                  <div className="flex min-w-0 items-end">
+                    <div className="flex items-center gap-2">
                       <input
-                        className="form-check-input"
+                        className={checkboxClass}
                         type="checkbox"
                         id="batchEnableToggle"
                         checked={batchEnable}
                         onChange={(e) => setBatchEnable(e.target.checked)}
                       />
-                      <label className="form-check-label small" htmlFor="batchEnableToggle" style={{ color: 'var(--text-secondary)' }}>
+                      <label className="text-xs text-slate-500" htmlFor="batchEnableToggle">
                         {t('clients.enableAfterAdd')}
                       </label>
                     </div>
                   </div>
                 </div>
                 {inboundOptions.length > 0 && (
-                  <div className="mt-3 small" style={{ color: 'var(--text-secondary)', maxHeight: '120px', overflowY: 'auto' }}>
+                  <div className="mt-3 max-h-[120px] overflow-y-auto font-mono text-xs text-slate-500">
                     {t('clients.knownInbounds')}:
                     {inboundOptions.slice(0, 40).map((ib) => (
                       <div key={`${ib.node_name}:${ib.id}`}>
@@ -2619,16 +2142,15 @@ export const ClientManager: React.FC = () => {
                   </div>
                 )}
               </div>
-              <div className="modal-footer" style={{ borderColor: 'var(--border-color)' }}>
+              <div className={modalFooterClass}>
                 <button
-                  className="btn"
-                  style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                  className={buttonNeutralClass}
                   onClick={() => setShowBatchModal(false)}
                 >
                   {t('common.cancel')}
                 </button>
                 <button
-                  className="btn btn-accent"
+                  className={buttonAccentClass}
                   onClick={handleBatchAdd}
                   disabled={loading}
                 >
@@ -2642,18 +2164,21 @@ export const ClientManager: React.FC = () => {
 
       {/* Add Client Modal */}
       {showAddForm && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }}>
-          <div className="modal-dialog modal-xl modal-dialog-scrollable">
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-              <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
-                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>{t('common.add')}</h6>
+        <div className={modalBackdropClass}>
+          <div className="my-8 w-full max-w-5xl">
+            <div className={modalPanelClass}>
+              <div className={modalHeaderClass}>
+                <h6 className={modalTitleClass}>{t('common.add')}</h6>
                 <button
                   type="button"
-                  className="btn-close"
+                  className={buttonIconClass}
+                  aria-label={t('common.close')}
                   onClick={() => setShowAddForm(false)}
-                ></button>
+                >
+                  X
+                </button>
               </div>
-              <div className="modal-body">
+              <div className={modalBodyClass}>
                 <AddClientMultiServer />
               </div>
             </div>
@@ -2670,81 +2195,50 @@ export const ClientManager: React.FC = () => {
         />
       )}
 
-      {/* QR Code Modal */}
-      {showQrModal && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }} onClick={(e) => { if (e.target === e.currentTarget) setShowQrModal(false); }}>
-          <div className="modal-dialog modal-lg">
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-              <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
-                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>▦ QR Codes — {qrEmail}</h6>
-                <button type="button" className="btn-close btn-close-white" onClick={() => setShowQrModal(false)} />
-              </div>
-              <div className="modal-body">
-                <div className="row g-3">
-                  {qrLinks.map((link, idx) => {
-                    const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(link)}`;
-                    return (
-                      <div key={idx} className="col-md-6 d-flex flex-column align-items-center gap-2">
-                        <img src={qrUrl} alt={`QR ${idx + 1}`} width={220} height={220}
-                          style={{ border: `2px solid ${'var(--border-color)'}`, borderRadius: '8px', backgroundColor: '#fff' }} />
-                        <div className="d-flex gap-2 w-100">
-                          <input readOnly className="form-control form-control-sm" value={link}
-                            style={{ fontFamily: 'monospace', fontSize: '11px', backgroundColor: 'var(--bg-primary)', color: 'var(--text-secondary)', borderColor: 'var(--border-color)' }} />
-                          <button className="btn btn-sm" style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14', whiteSpace: 'nowrap' }}
-                            onClick={() => navigator.clipboard.writeText(link)}>Copy</button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Bulk Adjust Modal */}
       {showBulkAdjust && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }} onClick={(e) => { if (e.target === e.currentTarget) setShowBulkAdjust(false); }}>
-          <div className="modal-dialog">
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-              <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
-                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>{t('messages.bulkAdjustTitle')}</h6>
-                <button type="button" className="btn-close btn-close-white" onClick={() => setShowBulkAdjust(false)} />
+        <div className={modalBackdropClass} onClick={(e) => { if (e.target === e.currentTarget) setShowBulkAdjust(false); }}>
+          <div className="my-8 w-full max-w-xl">
+            <div className={modalPanelClass}>
+              <div className={modalHeaderClass}>
+                <h6 className={modalTitleClass}>{t('messages.bulkAdjustTitle')}</h6>
+                <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setShowBulkAdjust(false)}>
+                  X
+                </button>
               </div>
-              <div className="modal-body">
-                <p className="small mb-2" style={{ color: 'var(--text-secondary)' }}>{t('clients.bulkAdjustScopeHint')}</p>
-                <div className="d-flex gap-2 mb-3">
-                  <button className="btn btn-sm" style={{ backgroundColor: bulkAdjustMode === 'add' ? 'var(--accent)' : 'var(--bg-tertiary)', borderColor: bulkAdjustMode === 'add' ? 'var(--accent)' : 'var(--border-color)', color: bulkAdjustMode === 'add' ? '#000f14' : 'var(--text-secondary)' }}
+              <div className={modalBodyClass}>
+                <p className="mb-2 text-xs text-slate-500">{t('clients.bulkAdjustScopeHint')}</p>
+                <div className="mb-3 flex gap-2">
+                  <button className={bulkAdjustMode === 'add' ? buttonAccentClass : buttonNeutralClass}
                     onClick={() => setBulkAdjustMode('add')}>+ Add Days / GB</button>
-                  <button className="btn btn-sm" style={{ backgroundColor: bulkAdjustMode === 'set' ? 'var(--accent)' : 'var(--bg-tertiary)', borderColor: bulkAdjustMode === 'set' ? 'var(--accent)' : 'var(--border-color)', color: bulkAdjustMode === 'set' ? '#000f14' : 'var(--text-secondary)' }}
-                    onClick={() => setBulkAdjustMode('set')}>📅 Set Exact Expiry</button>
+                  <button className={bulkAdjustMode === 'set' ? buttonAccentClass : buttonNeutralClass}
+                    onClick={() => setBulkAdjustMode('set')}>Set Exact Expiry</button>
                 </div>
                 {bulkAdjustMode === 'add' ? (
                   <>
                     <div className="mb-3">
-                      <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('messages.bulkAdjustAddDays')}</label>
-                      <input type="number" className="form-control" value={bulkAdjustDays} onChange={(e) => setBulkAdjustDays(e.target.value)}
-                        style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }} />
+                      <label className={fieldLabelClass}>{t('messages.bulkAdjustAddDays')}</label>
+                      <input type="number" className={inputClass} value={bulkAdjustDays} onChange={(e) => setBulkAdjustDays(e.target.value)}
+                         />
                     </div>
                     <div className="mb-3">
-                      <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('messages.bulkAdjustAddGB')}</label>
-                      <input type="number" step="1" className="form-control" value={bulkAdjustGB} onChange={(e) => setBulkAdjustGB(e.target.value)}
-                        style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }} />
+                      <label className={fieldLabelClass}>{t('messages.bulkAdjustAddGB')}</label>
+                      <input type="number" step="1" className={inputClass} value={bulkAdjustGB} onChange={(e) => setBulkAdjustGB(e.target.value)}
+                         />
                     </div>
                   </>
                 ) : (
                   <div className="mb-3">
-                    <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('clients.setExpiryForSelected')}</label>
-                    <input type="date" className="form-control" value={bulkSetExpiryDate} onChange={e => setBulkSetExpiryDate(e.target.value)}
-                      style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }} />
-                    <div className="small mt-1" style={{ color: 'var(--text-secondary)' }}>{t('clients.setExpiryOverwriteHint')}</div>
+                    <label className={fieldLabelClass}>{t('clients.setExpiryForSelected')}</label>
+                    <input type="date" className={inputClass} value={bulkSetExpiryDate} onChange={e => setBulkSetExpiryDate(e.target.value)}
+                       />
+                    <div className="mt-1 text-xs text-slate-500">{t('clients.setExpiryOverwriteHint')}</div>
                   </div>
                 )}
               </div>
-              <div className="modal-footer" style={{ borderColor: 'var(--border-color)' }}>
-                <button className="btn btn-sm" style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }} onClick={() => setShowBulkAdjust(false)}>{t('common.cancel')}</button>
-                <button className="btn btn-sm btn-accent" onClick={handleBulkAdjust} disabled={bulkAdjustLoading}>{bulkAdjustLoading ? '...' : t('messages.bulkAdjustApply')}</button>
+              <div className={modalFooterClass}>
+                <button className={buttonNeutralClass} onClick={() => setShowBulkAdjust(false)}>{t('common.cancel')}</button>
+                <button className={buttonAccentClass} onClick={handleBulkAdjust} disabled={bulkAdjustLoading}>{bulkAdjustLoading ? '...' : t('messages.bulkAdjustApply')}</button>
               </div>
             </div>
           </div>
@@ -2753,28 +2247,30 @@ export const ClientManager: React.FC = () => {
 
       {/* Attach/Detach Inbounds Modal */}
       {showAttachModal && attachClient && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }} onClick={e => { if (e.target === e.currentTarget) setShowAttachModal(false); }}>
-          <div className="modal-dialog">
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-              <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
-                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>⇄ Inbounds — {attachClient.email}</h6>
-                <button type="button" className="btn-close btn-close-white" onClick={() => setShowAttachModal(false)} />
+        <div className={modalBackdropClass} onClick={e => { if (e.target === e.currentTarget) setShowAttachModal(false); }}>
+          <div className="my-8 w-full max-w-xl">
+            <div className={modalPanelClass}>
+              <div className={modalHeaderClass}>
+                <h6 className={modalTitleClass}>Inbounds - {attachClient.email}</h6>
+                <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setShowAttachModal(false)}>
+                  X
+                </button>
               </div>
-              <div className="modal-body">
-                <div className="d-flex gap-2 mb-3">
-                  <button className="btn btn-sm" style={{ backgroundColor: attachMode === 'attach' ? 'var(--accent)' : 'var(--bg-tertiary)', borderColor: attachMode === 'attach' ? 'var(--accent)' : 'var(--border-color)', color: attachMode === 'attach' ? '#000f14' : 'var(--text-secondary)' }}
+              <div className={modalBodyClass}>
+                <div className="mb-3 flex gap-2">
+                  <button className={attachMode === 'attach' ? buttonAccentClass : buttonNeutralClass}
                     onClick={() => setAttachMode('attach')}>Attach</button>
-                  <button className="btn btn-sm" style={{ backgroundColor: attachMode === 'detach' ? 'var(--danger)' : 'var(--bg-tertiary)', borderColor: attachMode === 'detach' ? 'var(--danger)' : 'var(--border-color)', color: attachMode === 'detach' ? '#fff' : 'var(--text-secondary)' }}
+                  <button className={attachMode === 'detach' ? buttonDangerClass : buttonNeutralClass}
                     onClick={() => setAttachMode('detach')}>Detach</button>
                 </div>
-                <p className="small mb-2" style={{ color: 'var(--text-secondary)' }}>
+                <p className="mb-2 text-xs text-slate-500">
                   Select inbounds to {attachMode} this client {attachMode === 'attach' ? 'to' : 'from'}:
                 </p>
-                {attachLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
-                {!attachLoading && attachInbounds.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>{t('clients.noInboundsForNode')}</p>}
-                <div className="d-flex flex-column gap-1 mb-3">
+                {attachLoading && <div className="py-2 text-center"><div className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-500/20 border-t-cyan-300" /></div>}
+                {!attachLoading && attachInbounds.length === 0 && <p className="text-sm text-slate-500">{t('clients.noInboundsForNode')}</p>}
+                <div className="mb-3 flex flex-col gap-1">
                   {attachInbounds.map(ib => (
-                    <label key={ib.id} className="d-flex align-items-center gap-2 p-2 rounded" style={{ backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer' }}>
+                    <label key={ib.id} className="flex cursor-pointer items-center gap-2 rounded-md bg-[#0a0e1a] p-2">
                       <input type="checkbox" checked={attachSelected.has(ib.id)}
                         onChange={e => {
                           setAttachSelected(prev => {
@@ -2783,16 +2279,16 @@ export const ClientManager: React.FC = () => {
                             return next;
                           });
                         }} />
-                      <span style={{ color: 'var(--text-primary)' }}>{ib.remark || `#${ib.id}`}</span>
-                      <span className="badge ms-auto" style={{ backgroundColor: 'var(--accent)' }}>{ib.protocol.toUpperCase()}</span>
+                      <span className="min-w-0 truncate text-slate-100">{ib.remark || `#${ib.id}`}</span>
+                      <span className={cn(badgeBaseClass, 'ml-auto bg-cyan-400 text-[#06111f]')}>{ib.protocol.toUpperCase()}</span>
                     </label>
                   ))}
                 </div>
               </div>
-              <div className="modal-footer" style={{ borderColor: 'var(--border-color)' }}>
-                <button className="btn btn-sm" style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+              <div className={modalFooterClass}>
+                <button className={buttonNeutralClass}
                   onClick={() => setShowAttachModal(false)}>Cancel</button>
-                <button className="btn btn-sm" style={{ backgroundColor: attachMode === 'attach' ? 'var(--accent)' : 'var(--danger)', color: '#fff' }}
+                <button className={attachMode === 'attach' ? buttonAccentClass : buttonDangerClass}
                   onClick={handleAttachSubmit} disabled={attachSelected.size === 0}>
                   {attachMode === 'attach' ? 'Attach' : 'Detach'} ({attachSelected.size})
                 </button>
@@ -2804,21 +2300,23 @@ export const ClientManager: React.FC = () => {
 
       {/* Client Groups Modal */}
       {showGroupsModal && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }} onClick={(e) => { if (e.target === e.currentTarget) setShowGroupsModal(false); }}>
-          <div className="modal-dialog modal-lg">
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-              <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
-                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>🗂 Client Groups{groupsNodeName ? ` — ${groupsNodeName}` : ''}</h6>
-                <button type="button" className="btn-close btn-close-white" onClick={() => setShowGroupsModal(false)} />
+        <div className={modalBackdropClass} onClick={(e) => { if (e.target === e.currentTarget) setShowGroupsModal(false); }}>
+          <div className="my-8 w-full max-w-3xl">
+            <div className={modalPanelClass}>
+              <div className={modalHeaderClass}>
+                <h6 className={modalTitleClass}>Client Groups{groupsNodeName ? ` - ${groupsNodeName}` : ''}</h6>
+                <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setShowGroupsModal(false)}>
+                  X
+                </button>
               </div>
-              <div className="modal-body">
+              <div className={modalBodyClass}>
                 {/* Node selector if no node chosen yet */}
                 {!groupsNodeId && (
                   <div className="mb-3">
-                    <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('clients.selectNode')}</label>
-                    <div className="d-flex flex-wrap gap-2">
+                    <label className={fieldLabelClass}>{t('clients.selectNode')}</label>
+                    <div className="flex flex-wrap gap-2">
                       {Array.from(new Map(clients.filter(c => c.node_id).map(c => [c.node_name, c.node_id!]))).map(([name, id]) => (
-                        <button key={id} className="btn btn-sm" style={{ backgroundColor: 'var(--accent)', color: '#000f14' }}
+                        <button key={id} className={buttonAccentClass}
                           onClick={() => handleOpenGroups(id, name)}>
                           {name}
                         </button>
@@ -2829,75 +2327,75 @@ export const ClientManager: React.FC = () => {
 
                 {groupsNodeId && (
                   <>
-                    {groupsLoading && <div className="text-center py-2"><div className="spinner-border spinner-border-sm" /></div>}
+                    {groupsLoading && <div className="py-2 text-center"><div className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-500/20 border-t-cyan-300" /></div>}
 
                     {/* Create group */}
-                    <div className="d-flex gap-2 mb-3">
-                      <input className="form-control form-control-sm" placeholder={t('clients.newGroupName')} value={groupNewName}
+                    <div className="mb-3 flex gap-2">
+                      <input className={inputClass} placeholder={t('clients.newGroupName')} value={groupNewName}
                         onChange={e => setGroupNewName(e.target.value)}
                         onKeyDown={e => { if (e.key === 'Enter') handleCreateGroup(); }}
-                        style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }} />
-                      <button className="btn btn-sm" style={{ backgroundColor: 'var(--accent)', color: '#000f14', whiteSpace: 'nowrap' }}
+                         />
+                      <button className={buttonAccentClass}
                         onClick={handleCreateGroup} disabled={!groupNewName.trim()}>{t('clients.createWithPlus')}</button>
                     </div>
 
                     {/* Rename group */}
                     {groupRenameFrom && (
-                      <div className="d-flex gap-2 mb-3 p-2 rounded" style={{ backgroundColor: 'var(--bg-tertiary)' }}>
-                        <span className="small" style={{ color: 'var(--text-secondary)', alignSelf: 'center' }}>Rename "{groupRenameFrom}":</span>
-                        <input className="form-control form-control-sm" placeholder={t('common.name')} value={groupRenameTo}
+                      <div className="mb-3 flex gap-2 rounded-md bg-[#0a0e1a] p-2">
+                        <span className="self-center text-xs text-slate-500">Rename "{groupRenameFrom}":</span>
+                        <input className={inputClass} placeholder={t('common.name')} value={groupRenameTo}
                           onChange={e => setGroupRenameTo(e.target.value)}
                           onKeyDown={e => { if (e.key === 'Enter') handleRenameGroup(); }}
-                          style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }} />
-                        <button className="btn btn-sm" style={{ backgroundColor: 'var(--accent)', color: '#000f14' }}
+                           />
+                        <button className={buttonAccentClass}
                           onClick={handleRenameGroup} disabled={!groupRenameTo.trim()}>Save</button>
-                        <button className="btn btn-sm" style={{ backgroundColor: 'transparent', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
-                          onClick={() => { setGroupRenameFrom(''); setGroupRenameTo(''); }}>✕</button>
+                        <button className={buttonNeutralClass}
+                          onClick={() => { setGroupRenameFrom(''); setGroupRenameTo(''); }}>Cancel</button>
                       </div>
                     )}
 
                     {/* Groups list */}
                     {!groupsLoading && groupsList.length === 0 && (
-                      <p style={{ color: 'var(--text-secondary)' }}>{t('clients.noGroupsYet')}</p>
+                      <p className="text-sm text-slate-500">{t('clients.noGroupsYet')}</p>
                     )}
-                    <div className="d-flex flex-column gap-2">
+                    <div className="flex flex-col gap-2">
                       {groupsList.map(group => (
                         <div key={group}>
-                          <div className="d-flex align-items-center justify-content-between p-2 rounded" style={{ backgroundColor: 'var(--bg-tertiary)' }}>
-                            <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{group}</span>
-                            <div className="d-flex gap-1">
-                              <button className="btn btn-sm" style={{ backgroundColor: 'transparent', borderColor: 'var(--border-color)', color: 'var(--text-secondary)', padding: '2px 8px', fontSize: '0.75rem' }}
+                          <div className="flex items-center justify-between rounded-md bg-[#0a0e1a] p-2">
+                            <span className="font-semibold text-slate-100">{group}</span>
+                            <div className="flex gap-1">
+                              <button className={cn(buttonNeutralClass, 'h-7 px-2 text-[11px]')}
                                 onClick={() => handleViewGroupMembers(group)}>
                                 {showGroupMembers === group ? 'Hide' : 'Members'}
                               </button>
-                              <button className="btn btn-sm" style={{ backgroundColor: 'transparent', borderColor: 'var(--border-color)', color: 'var(--text-secondary)', padding: '2px 6px' }}
-                                onClick={() => { setGroupRenameFrom(group); setGroupRenameTo(group); }} title="Rename">✎</button>
-                              <button className="btn btn-sm btn-ghost-danger" style={{ padding: '2px 6px' }}
-                                onClick={() => handleDeleteGroup(group)} title="Delete">✕</button>
+                              <button className={cn(buttonNeutralClass, 'h-7 px-2 text-[11px]')}
+                                onClick={() => { setGroupRenameFrom(group); setGroupRenameTo(group); }} title="Rename">Rename</button>
+                              <button className={cn(buttonDangerClass, 'h-7 px-2 text-[11px]')}
+                                onClick={() => handleDeleteGroup(group)} title="Delete">Delete</button>
                             </div>
                           </div>
 
                           {/* Members panel */}
                           {showGroupMembers === group && (
-                            <div className="mt-1 ms-2 p-2 rounded" style={{ backgroundColor: 'var(--bg-primary)', border: `1px solid ${'var(--border-color)'}` }}>
-                              {groupMembersLoading && <div className="spinner-border spinner-border-sm" />}
+                            <div className="mt-1 ml-2 rounded border border-cyan-500/20 bg-[#0a0e1a] p-2">
+                              {groupMembersLoading && <div className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-500/20 border-t-cyan-300" />}
                               {!groupMembersLoading && groupMemberEmails.length === 0 && (
-                                <p className="small mb-2" style={{ color: 'var(--text-secondary)' }}>{t('clients.noMembers')}</p>
+                                <p className="mb-2 text-xs text-slate-500">{t('clients.noMembers')}</p>
                               )}
-                              <div className="d-flex flex-wrap gap-1 mb-2">
+                              <div className="mb-2 flex flex-wrap gap-1">
                                 {groupMemberEmails.map(email => (
-                                  <span key={email} className="badge d-flex align-items-center gap-1" style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: 400 }}>
+                                  <span key={email} className={cn(badgeBaseClass, 'gap-1 bg-[#0f1420] font-mono font-normal text-slate-200')}>
                                     {email}
-                                    <button className="btn btn-sm p-0 ms-1" style={{ color: 'var(--danger)', lineHeight: 1, background: 'none', border: 'none' }}
-                                      onClick={() => handleRemoveFromGroup(group, email)} title="Remove">✕</button>
+                                    <button className={cn(buttonIconClass, 'h-6 w-6 bg-transparent text-rose-300')}
+                                      onClick={() => handleRemoveFromGroup(group, email)} title="Remove">x</button>
                                   </span>
                                 ))}
                               </div>
-                              <div className="d-flex gap-2">
-                                <input className="form-control form-control-sm" placeholder={t('clients.groupEmailsPlaceholder')}
+                              <div className="flex gap-2">
+                                <input className={inputClass} placeholder={t('clients.groupEmailsPlaceholder')}
                                   value={groupAddEmails} onChange={e => setGroupAddEmails(e.target.value)}
-                                  style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }} />
-                                <button className="btn btn-sm" style={{ backgroundColor: 'var(--accent)', color: '#000f14', whiteSpace: 'nowrap' }}
+                                   />
+                                <button className={buttonAccentClass}
                                   onClick={() => handleAddToGroup(group)} disabled={!groupAddEmails.trim()}>+ Add</button>
                               </div>
                             </div>
@@ -2915,20 +2413,22 @@ export const ClientManager: React.FC = () => {
 
       {/* IP Search Modal */}
       {showIpSearch && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }} onClick={e => { if (e.target === e.currentTarget) setShowIpSearch(false); }}>
-          <div className="modal-dialog modal-lg">
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-              <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
-                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>{t('clients.findByIpModalTitle')}</h6>
-                <button type="button" className="btn-close btn-close-white" onClick={() => setShowIpSearch(false)} />
+        <div className={modalBackdropClass} onClick={e => { if (e.target === e.currentTarget) setShowIpSearch(false); }}>
+          <div className="my-8 w-full max-w-3xl">
+            <div className={modalPanelClass}>
+              <div className={modalHeaderClass}>
+                <h6 className={modalTitleClass}>{t('clients.findByIpModalTitle')}</h6>
+                <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setShowIpSearch(false)}>
+                  X
+                </button>
               </div>
-              <div className="modal-body">
-                <p className="small mb-2" style={{ color: 'var(--text-secondary)' }}>
+              <div className={modalBodyClass}>
+                <p className="mb-2 text-xs text-slate-500">
                   {t('clients.findByIpModalHint')}
                 </p>
-                <div className="d-flex gap-2 mb-3">
+                <div className="mb-3 flex gap-2">
                   <input
-                    className="form-control"
+                    className={inputClass}
                     placeholder={t('clients.ipPlaceholder')}
                     value={ipSearchValue}
                     onChange={e => setIpSearchValue(e.target.value)}
@@ -2945,8 +2445,7 @@ export const ClientManager: React.FC = () => {
     
                   />
                   <button
-                    className="btn"
-                    style={{ backgroundColor: 'var(--accent)', color: '#000f14', whiteSpace: 'nowrap' }}
+                    className={buttonAccentClass}
                     disabled={!ipSearchValue.trim() || ipSearchLoading}
                     onClick={async () => {
                       setIpSearchLoading(true);
@@ -2958,23 +2457,23 @@ export const ClientManager: React.FC = () => {
                       finally { setIpSearchLoading(false); }
                     }}
                   >
-                    {ipSearchLoading ? '…' : 'Search'}
+                    {ipSearchLoading ? '...' : 'Search'}
                   </button>
                 </div>
-                {ipSearchLoading && <div className="text-center py-3"><div className="spinner-border spinner-border-sm" /></div>}
+                {ipSearchLoading && <div className="py-3 text-center"><div className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-500/20 border-t-cyan-300" /></div>}
                 {!ipSearchLoading && ipSearchResults.length === 0 && ipSearchValue && (
-                  <p style={{ color: 'var(--text-secondary)' }}>No clients found with IP {ipSearchValue}</p>
+                  <p className="text-sm text-slate-500">No clients found with IP {ipSearchValue}</p>
                 )}
                 {ipSearchResults.length > 0 && (
-                  <div className="d-flex flex-column gap-2">
-                    <div className="small mb-1 text-success">{ipSearchResults.length} match(es) found</div>
+                  <div className="flex flex-col gap-2">
+                    <div className="mb-1 text-xs text-emerald-300">{ipSearchResults.length} match(es) found</div>
                     {ipSearchResults.map((r, i) => (
-                      <div key={i} className="p-2 rounded" style={{ backgroundColor: 'var(--bg-tertiary)' }}>
-                        <div className="d-flex align-items-center gap-2">
-                          <strong style={{ color: 'var(--text-primary)' }}>{r.email}</strong>
-                          <span className="badge" style={{ backgroundColor: 'var(--accent)' }}>{r.node}</span>
+                      <div key={i} className="rounded bg-[#0a0e1a] p-2">
+                        <div className="flex items-center gap-2">
+                          <strong className="min-w-0 truncate font-mono text-slate-100">{r.email}</strong>
+                          <span className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')}>{r.node}</span>
                         </div>
-                        <div className="small mt-1" style={{ color: 'var(--text-secondary)', fontFamily: 'monospace' }}>
+                        <div className="mt-1 font-mono text-xs text-slate-500">
                           {r.ips.join(', ')}
                         </div>
                       </div>
@@ -2989,5 +2488,4 @@ export const ClientManager: React.FC = () => {
     </div>
   );
 };
-
 

@@ -251,7 +251,7 @@
     "copyEmail": "Копировать email",
     "renewAddDaysTitle": "Продление: добавить дни к сроку",
     "copySubscriptionUrl": "Копировать URL подписки",
-    "batchEmailsPlaceholder": "user1@example.com`nuser2@example.com`nuser3@example.com",
+    "batchEmailsPlaceholder": "user1@example.com\nuser2@example.com\nuser3@example.com",
     "localNotePrompt": "Заметка клиента (хранится локально):",
     "ipPlaceholder": "например, 1.2.3.4",
     "copyUuid": "Копировать UUID",
@@ -982,7 +982,7 @@
     "topByTraffic": "Top by traffic",
     "signalDeckTitle": "Server Status",
     "signalDeckCopy": "Следите за состоянием узлов и ядра в одной компактной сигнальной полосе.",
-    "ingressMatrixTitle": "Ingress Matrix",
+    "ingressMatrixTitle": "Ingress",
     "ingressMatrixCopy": "Отслеживайте зарегистрированные узлы панели, режим доступа и ingress-экспозицию без перехода в полный менеджер.",
     "ingressEmptyCopy": "Добавьте первый узел панели, чтобы начать управлять доступом парка и клиентскими операциями."
   },

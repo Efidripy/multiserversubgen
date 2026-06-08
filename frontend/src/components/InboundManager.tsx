@@ -3,9 +3,7 @@ import { useToast } from './Toast';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { getAuth } from '../auth';
-import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
-import EmptyState from './EmptyState';
 import { InboundEditModal } from './InboundEditModal';
 import { readStaleCache, writeStaleCache } from '../services/staleCache';
 
@@ -153,6 +151,45 @@ interface InboundManagerProps {
 
 const inboundKey = (ib: Inbound) => `${ib.node_name}:${ib.id}`;
 const INBOUNDS_PAGE_CACHE_KEY = 'sub_manager_inbounds_page_cache_v1';
+
+const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
+
+const panelTitleClass = 'text-xs font-medium uppercase tracking-[0.14em] text-cyan-300';
+const panelHintClass = 'mt-1 text-xs font-light leading-5 text-slate-500';
+const fieldLabelClass = 'mb-1 block text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500';
+const inputClass = 'box-border min-w-0 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 font-mono text-xs font-light text-slate-100 outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-50 placeholder:text-slate-600';
+const textareaClass = `${inputClass} w-full resize-y leading-relaxed`;
+const checkboxClass = 'h-4 w-4 shrink-0 rounded bg-[#0a0e1a] accent-cyan-300';
+const buttonBaseClass = 'inline-flex h-8 min-w-0 items-center justify-center gap-1 whitespace-nowrap rounded-md border border-transparent px-3 text-xs font-medium leading-none tracking-wide transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-45';
+const buttonNeutralClass = `${buttonBaseClass} border-cyan-500/20 bg-[#0f1420] text-slate-200 hover:bg-[#0a0e1a]`;
+const buttonAccentClass = `${buttonBaseClass} border-cyan-300/25 bg-cyan-400 text-[#06111f] hover:bg-cyan-300`;
+const buttonSuccessClass = `${buttonBaseClass} bg-emerald-500 text-white hover:bg-emerald-400`;
+const buttonWarningClass = `${buttonBaseClass} bg-amber-400 text-[#06111f] hover:bg-amber-300`;
+const buttonDangerClass = `${buttonBaseClass} bg-rose-500 text-white hover:bg-rose-400`;
+const buttonGhostClass = `${buttonBaseClass} border-cyan-300/20 bg-transparent text-cyan-300 hover:bg-cyan-400/10`;
+const buttonIconClass = 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0f1420] text-slate-300 transition-colors hover:bg-[#0a0e1a] hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-45';
+const sortButtonClass = 'inline-flex items-center gap-1 whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500 transition-colors hover:text-cyan-300';
+const badgeBaseClass = 'inline-flex min-w-0 items-center justify-center whitespace-nowrap rounded-md border border-cyan-500/20 px-2 py-1 text-[11px] font-medium leading-none';
+const drawerPanelClass = 'fixed inset-y-2 right-2 z-50 flex w-[calc(100%-1rem)] max-w-[520px] flex-col overflow-hidden rounded-lg border border-cyan-300/20 bg-[#0f1420] shadow-2xl ring-1 ring-cyan-300/10 sm:w-[min(92vw,520px)]';
+const drawerPanelWideClass = 'fixed inset-y-2 right-2 z-50 flex w-[calc(100%-1rem)] max-w-[760px] flex-col overflow-hidden rounded-lg border border-cyan-300/20 bg-[#0f1420] shadow-2xl ring-1 ring-cyan-300/10 sm:w-[min(94vw,760px)]';
+const drawerHeaderClass = 'flex min-w-0 items-start justify-between gap-4 border-b border-cyan-300/20 px-5 py-4';
+const drawerBodyClass = 'min-w-0 flex-1 overflow-y-auto p-5';
+const drawerFooterClass = 'flex flex-wrap justify-end gap-2 border-t border-cyan-300/20 px-5 py-4';
+const drawerTitleClass = 'min-w-0 truncate text-sm font-medium uppercase tracking-[0.16em] text-cyan-300';
+const drawerSubtitleClass = 'mt-1 min-w-0 truncate text-xs font-light text-slate-500';
+
+const segmentButtonClass = (active: boolean) =>
+  cn(
+    buttonBaseClass,
+    'h-7 px-2 text-[11px]',
+    active ? 'bg-cyan-400 text-[#06111f]' : 'bg-[#0a0e1a] text-slate-400 hover:bg-[#0f1420] hover:text-slate-100',
+  );
+
+const nodeCheckClass = (active: boolean) =>
+  cn(
+    'inline-flex min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 py-1 text-xs transition-colors',
+    active ? 'bg-cyan-400/15 text-cyan-200' : 'bg-[#0a0e1a] text-slate-400 hover:bg-[#0f1420] hover:text-slate-100',
+  );
 
 export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavigateToClients, onAddClientToInbound }) => {
   const { toast } = useToast();
@@ -363,7 +400,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     requestIdRef.current = requestId;
 
     try {
-      // Single parallel fetch — backend returns from cache (30s fresh / 300s stale).
+      // Single parallel fetch â€” backend returns from cache (30s fresh / 300s stale).
       const [nodesRes, inboundsRes] = await Promise.all([
         api.get('/v1/nodes', { auth: getAuth() }),
         api.get('/v1/inbounds', { auth: getAuth() }),
@@ -454,7 +491,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     setSortDirection('asc');
   };
   const sortIndicator = (field: 'name' | 'node' | 'protocol' | 'port' | 'status') =>
-    sortField === field ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
+    sortField === field ? (sortDirection === 'asc' ? ' â–²' : ' â–¼') : '';
 
   const handleDelete = async (inbound: Inbound) => {
     if (!window.confirm(`${t('inbounds.confirmDeleteSingle')} \"${inbound.remark || inbound.id}\"?`)) return;
@@ -750,24 +787,26 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
   const allFilteredSelected =
     filteredInbounds.length > 0 && filteredInbounds.every((ib) => selectedKeys.has(inboundKey(ib)));
+  const visibleInbounds = filteredInbounds.slice((ibPage - 1) * ibPageSize, ibPage * ibPageSize);
 
   return (
-    <div className="inbound-manager">
-      <div className="card p-3 mb-4" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-        <div className="d-flex justify-content-between align-items-center mb-3">
-          <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: 'var(--accent)' }}>
+    <div data-inbound-manager-root className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6">
+      <div className="min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]">
+        <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">
             <UIIcon name="inbounds" size={16} />
             {t('inbounds.title')}
-          </h5>
+          </h2>
           {inbounds.length > 0 && (
-            <div className="d-flex gap-2">
+            <div className="grid grid-cols-3 gap-2 sm:flex sm:flex-wrap">
               {[
-                { label: 'Inbounds', value: inbounds.length, color: 'var(--text-primary)' },
-                { label: 'Active', value: inbounds.filter(ib => ib.enable).length, color: 'var(--success)' },
-                { label: 'Clients', value: inbounds.reduce((s, ib) => s + (ib.client_count ?? 0), 0), color: 'var(--accent)' },
+                { label: 'Inbounds', value: inbounds.length, className: 'text-slate-100' },
+                { label: 'Active', value: inbounds.filter(ib => ib.enable).length, className: 'text-emerald-400' },
+                { label: 'Clients', value: inbounds.reduce((s, ib) => s + (ib.client_count ?? 0), 0), className: 'text-cyan-300' },
               ].map(s => (
-                <span key={s.label} className="badge px-2 py-1" style={{ backgroundColor: 'var(--bg-tertiary)', color: s.color, fontWeight: 400, fontSize: '0.78rem' }}>
-                  {s.label}: <strong>{s.value}</strong>
+                <span key={s.label} className="min-w-0 rounded-md bg-[#0a0e1a] px-2 py-1 text-[11px] text-slate-500">
+                  <span className="block truncate uppercase tracking-wider">{s.label}</span>
+                  <strong className={cn('mt-1 block font-mono text-sm tabular-nums whitespace-nowrap', s.className)}>{s.value}</strong>
                 </span>
               ))}
             </div>
@@ -775,77 +814,105 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         </div>
 
         {error && (
-          <div className="alert alert-danger">
+          <div className="mb-4 min-w-0 overflow-hidden rounded-lg bg-rose-500/10 px-3 py-2 text-sm text-rose-300 ring-1 ring-rose-400/25">
             {error}
           </div>
         )}
 
-        <div className="mb-3">
-          <div className="panel-block panel-block--wide">
-            <div className="panel-block__header">
-              <div>
-                <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>{t('common.filter')}</h6>
-                <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
-                  {t('inbounds.filtersHint')}
-                </p>
-              </div>
-            </div>
-            <div className="panel-block__stack">
+        <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
+          <div className="mb-3 flex min-w-0 flex-col gap-1">
+            <h3 className={panelTitleClass}>{t('common.filter')}</h3>
+            <p className={panelHintClass}>{t('inbounds.filtersHint')}</p>
+          </div>
+          <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(180px,260px)_minmax(0,1fr)]">
               <input
                 type="text"
-                className="form-control form-control-sm"
+                className={cn(inputClass, 'w-full')}
                 placeholder={t('inbounds.searchPlaceholder')}
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)', maxWidth: '220px' }}
               />
-              <ChoiceChips
-                options={[{ value: '', label: t('inbounds.allProtocols') }, ...protocols.map((p) => ({ value: p, label: p.toUpperCase() }))]}
-                value={filterProtocol}
-                onChange={(value) => setFilterProtocol(value)}
-                
-              />
-              <ChoiceChips
-                options={[{ value: '', label: t('inbounds.allSecurity') }, ...securities.map((s) => ({ value: s, label: s || 'none' }))]}
-                value={filterSecurity}
-                onChange={(value) => setFilterSecurity(value)}
-                
-              />
-              <ChoiceChips
-                options={[{ value: '', label: t('inbounds.allNodes') }, ...nodes.map((n) => ({ value: n, label: n }))]}
-                value={filterNode}
-                onChange={(value) => setFilterNode(value)}
-                
-              />
-              <ChoiceChips
-                options={[
+              <div className="min-w-0 overflow-hidden">
+                <div className="flex min-w-0 flex-wrap gap-1">
+                  {[{ value: '', label: t('inbounds.allProtocols') }, ...protocols.map((p) => ({ value: p, label: p.toUpperCase() }))].map((option) => (
+                    <button
+                      key={option.value || 'all-protocols'}
+                      type="button"
+                      className={segmentButtonClass(filterProtocol === option.value)}
+                      onClick={() => setFilterProtocol(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="min-w-0 overflow-hidden">
+                <div className="flex min-w-0 flex-wrap gap-1">
+                  {[{ value: '', label: t('inbounds.allSecurity') }, ...securities.map((s) => ({ value: s, label: s || 'none' }))].map((option) => (
+                    <button
+                      key={option.value || 'all-security'}
+                      type="button"
+                      className={segmentButtonClass(filterSecurity === option.value)}
+                      onClick={() => setFilterSecurity(option.value)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="min-w-0 overflow-hidden">
+                <div className="flex min-w-0 flex-wrap gap-1">
+                  {[{ value: '', label: t('inbounds.allNodes') }, ...nodes.map((n) => ({ value: n, label: n }))].map((option) => (
+                    <button
+                      key={option.value || 'all-nodes'}
+                      type="button"
+                      className={segmentButtonClass(filterNode === option.value)}
+                      onClick={() => setFilterNode(option.value)}
+                    >
+                      <span className="max-w-[9rem] truncate">{option.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="min-w-0 overflow-hidden">
+                <div className="flex min-w-0 flex-wrap gap-1">
+                  {[
                   { value: 'all', label: t('common.all') },
-                  { value: 'enabled', label: `● ${t('inbounds.active')}` },
-                  { value: 'disabled', label: `○ ${t('common.disabled')}` },
-                ]}
-                value={filterEnabledStatus}
-                onChange={(value) => setFilterEnabledStatus(value as 'all' | 'enabled' | 'disabled')}
-                
-              />
+                  { value: 'enabled', label: t('inbounds.active') },
+                  { value: 'disabled', label: t('common.disabled') },
+                  ].map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={segmentButtonClass(filterEnabledStatus === option.value)}
+                      onClick={() => setFilterEnabledStatus(option.value as 'all' | 'enabled' | 'disabled')}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: filterEmptyOnly ? 'var(--warning)' : 'var(--bg-tertiary)', borderColor: filterEmptyOnly ? 'var(--warning)' : 'var(--border-color)', color: filterEmptyOnly ? '#000' : 'var(--text-primary)' }}
+                type="button"
+                className={cn(buttonBaseClass, filterEmptyOnly ? 'bg-amber-400 text-[#06111f]' : 'bg-[#0f1420] text-slate-200 hover:bg-[#0a0e1a]')}
                 onClick={() => setFilterEmptyOnly(v => !v)}
                 title={t('inbounds.emptyOnlyTitle')}
               >
-                ∅ {t('inbounds.emptyOnly')}
+                <UIIcon name="clear" size={13} />
+                {t('inbounds.emptyOnly')}
               </button>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: filterDuplicatesOnly ? 'var(--danger)' : 'var(--bg-tertiary)', borderColor: filterDuplicatesOnly ? 'var(--danger)' : 'var(--border-color)', color: filterDuplicatesOnly ? '#fff' : 'var(--text-primary)' }}
+                type="button"
+                className={cn(buttonBaseClass, filterDuplicatesOnly ? 'bg-rose-500 text-white' : 'bg-[#0f1420] text-slate-200 hover:bg-[#0a0e1a]')}
                 onClick={() => setFilterDuplicatesOnly(v => !v)}
                 title={t('inbounds.duplicatesTitle')}
               >
-                ⚠ {t('inbounds.duplicates')}
+                <UIIcon name="warning" size={13} />
+                {t('inbounds.duplicates')}
               </button>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                type="button"
+                className={buttonNeutralClass}
                 onClick={() => {
                   setFilterProtocol('');
                   setFilterSecurity('');
@@ -858,28 +925,26 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               >
                 {t('inbounds.clearFilters')}
               </button>
-            </div>
           </div>
-
         </div>
 
-        <div className="card p-2 mb-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
-          <div className="row g-2 align-items-end">
-            <div className="col-lg-4 col-md-6">
-              <div className="small" style={{ color: 'var(--text-secondary)' }}>
+        <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
+          <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-[minmax(180px,240px)_minmax(220px,280px)_minmax(180px,240px)_minmax(0,1fr)]">
+            <div className="min-w-0">
+              <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">
                 {t('inbounds.selectedCount', { count: selectedKeys.size })}
               </div>
-              <div className="d-flex gap-2 mt-1">
+              <div className="mt-2 grid grid-cols-2 gap-2">
                 <button
-                  className="btn btn-sm"
-                  style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                  type="button"
+                  className={buttonNeutralClass}
                   onClick={toggleSelectAllFiltered}
                 >
                   {allFilteredSelected ? t('common.deselectAll') : t('common.selectAll')}
                 </button>
                 <button
-                  className="btn btn-sm"
-                  style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                  type="button"
+                  className={buttonNeutralClass}
                   onClick={clearSelection}
                   disabled={selectedKeys.size === 0}
                 >
@@ -888,95 +953,97 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               </div>
             </div>
 
-            <div className="col-lg-4 col-md-6">
-              <div className="small fw-semibold" style={{ color: 'var(--text-primary)' }}>{t('common.actions')}</div>
-              <div className="small mb-1" style={{ color: 'var(--text-secondary)' }}>{t('inbounds.actionsHint')}</div>
-              <div className="panel-inline-actions">
+            <div className="min-w-0">
+              <div className={panelTitleClass}>{t('common.actions')}</div>
+              <div className={panelHintClass}>{t('inbounds.actionsHint')}</div>
+              <div className="mt-2 grid grid-cols-2 gap-2">
                 <button
-                  className="btn btn-sm"
-                  style={{ backgroundColor: 'var(--success)', borderColor: 'var(--success)', color: '#ffffff' }}
+                  type="button"
+                  className={buttonSuccessClass}
                   onClick={() => setShowAddModal(true)}
                 >
-                  <span className="d-inline-flex align-items-center gap-1">
-                    <UIIcon name="plus" size={14} />
-                    {t('inbounds.addInbound')}
-                  </span>
+                  <UIIcon name="plus" size={14} />
+                  {t('inbounds.addInbound')}
                 </button>
                 <button
-                  className="btn btn-sm"
-                  style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
+                  type="button"
+                  className={buttonAccentClass}
                   onClick={() => { void loadInbounds(); }}
                   disabled={loading}
                 >
-                  <span className="d-inline-flex align-items-center gap-1">
-                    <UIIcon name="refresh" size={14} />
-                    {t('common.refresh')}
-                  </span>
+                  <UIIcon name="refresh" size={14} />
+                  {t('common.refresh')}
                 </button>
               </div>
             </div>
 
-            <div className="col-lg-3 col-md-6">
-              <label className="form-label small mb-1" style={{ color: 'var(--text-secondary)' }}>{t('inbounds.batchRemark')}</label>
+            <div className="min-w-0">
+              <label className={fieldLabelClass}>{t('inbounds.batchRemark')}</label>
               <input
-                className="form-control form-control-sm"
+                className={cn(inputClass, 'w-full')}
                 value={batchRemark}
                 onChange={(e) => setBatchRemark(e.target.value)}
                 placeholder={t('inbounds.batchRemarkPlaceholder')}
-                style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
               />
             </div>
 
-            <div className="col-lg-2 col-md-6">
-              <label className="form-label small mb-1" style={{ color: 'var(--text-secondary)' }}>{t('inbounds.batchEnableMode')}</label>
-              <ChoiceChips
-                options={[
+            <div className="min-w-0">
+              <label className={fieldLabelClass}>{t('inbounds.batchEnableMode')}</label>
+              <div className="flex min-w-0 flex-wrap gap-1">
+                {[
                   { value: 'none', label: t('common.no') },
                   { value: 'enable', label: t('inbounds.batchEnable') },
                   { value: 'disable', label: t('inbounds.batchDisable') },
-                ]}
-                value={batchEnableMode}
-                onChange={(value) => setBatchEnableMode(value)}
-                
-              />
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    className={segmentButtonClass(batchEnableMode === option.value)}
+                    onClick={() => setBatchEnableMode(option.value as 'none' | 'enable' | 'disable')}
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            <div className="col-lg-4 col-md-12 d-flex gap-2 flex-wrap">
+            <div className="min-w-0 md:col-span-2 xl:col-span-4">
+              <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-[repeat(9,max-content)]">
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--success)', borderColor: 'var(--success)', color: '#ffffff' }}
+                type="button"
+                className={buttonSuccessClass}
                 onClick={() => handleBatchEnable(true)}
                 disabled={loading || selectedKeys.size === 0}
               >
                 {t('inbounds.batchEnable')}
               </button>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--warning)', borderColor: 'var(--warning)', color: 'var(--text-primary)' }}
+                type="button"
+                className={buttonWarningClass}
                 onClick={() => handleBatchEnable(false)}
                 disabled={loading || selectedKeys.size === 0}
               >
                 {t('inbounds.batchDisable')}
               </button>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--info)', borderColor: 'var(--info)', color: '#ffffff' }}
+                type="button"
+                className={buttonAccentClass}
                 onClick={handleBatchUpdate}
                 disabled={loading || selectedKeys.size === 0}
               >
                 {t('inbounds.batchUpdate')}
               </button>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--danger)', borderColor: 'var(--danger)', color: '#ffffff' }}
+                type="button"
+                className={buttonDangerClass}
                 onClick={handleBatchDelete}
                 disabled={loading || selectedKeys.size === 0}
               >
                 {t('inbounds.batchDelete')}
               </button>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--warning)' + '22', borderColor: 'var(--warning)' + '66', color: 'var(--warning)' }}
+                type="button"
+                className={`${buttonBaseClass} bg-amber-400/10 text-amber-300 hover:bg-amber-400/15`}
                 title={t('inbounds.resetSelectedTitle')}
                 disabled={loading || selectedKeys.size === 0}
                 onClick={async () => {
@@ -993,27 +1060,30 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                   toast(t('inbounds.resetSelectedResult', { ok, fail }), ok > 0 ? 'success' : 'error');
                 }}
               >
-                ↺ {t('inbounds.resetSelected')}
+                <UIIcon name="refresh" size={13} />
+                {t('inbounds.resetSelected')}
               </button>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--danger)' + '22', borderColor: 'var(--danger)' + '66', color: 'var(--danger)' }}
+                type="button"
+                className={`${buttonBaseClass} bg-rose-500/10 text-rose-300 hover:bg-rose-500/15`}
                 title={t('inbounds.resetAllTitle')}
                 onClick={handleResetAllTraffic}
               >
-                ↺ {t('inbounds.resetAllTraffic')}
+                <UIIcon name="refresh" size={13} />
+                {t('inbounds.resetAllTraffic')}
               </button>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                type="button"
+                className={buttonNeutralClass}
                 title={t('inbounds.importJsonTitle')}
                 onClick={() => { setImportJson(''); setImportTargetNodeIds(new Set()); setImportError(''); setImportResult(''); setShowImportModal(true); }}
               >
-                ⬆ {t('inbounds.importJson')}
+                <UIIcon name="upload" size={13} />
+                {t('inbounds.importJson')}
               </button>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                type="button"
+                className={buttonNeutralClass}
                 title={t('inbounds.exportJsonTitle')}
                 onClick={() => {
                   const toExport = selectedKeys.size > 0 ? selectedInbounds : filteredInbounds;
@@ -1035,11 +1105,12 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                   toast(t('inbounds.exportedJson', { count: toExport.length }), 'success');
                 }}
               >
-                ⬇ {t('inbounds.exportJson')}
+                <UIIcon name="download" size={13} />
+                {t('inbounds.exportJson')}
               </button>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
+                type="button"
+                className={buttonNeutralClass}
                 title={t('inbounds.exportCsvTitle')}
                 onClick={() => {
                   const toExport = selectedKeys.size > 0 ? selectedInbounds : filteredInbounds;
@@ -1059,42 +1130,53 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                   toast(t('inbounds.exportedCsv', { count: toExport.length }), 'success');
                 }}
               >
-                ⬇ {t('inbounds.csv')}
+                <UIIcon name="download" size={13} />
+                {t('inbounds.csv')}
               </button>
             </div>
           </div>
         </div>
+        </div>
 
         {pageLoading && filteredInbounds.length > 0 && (
-          <div className="table-loading-bar mb-1" />
+          <div className="mb-3 h-1 overflow-hidden rounded-full bg-[#0f1420]">
+            <div className="h-full w-1/3 animate-pulse rounded-full bg-cyan-300" />
+          </div>
         )}
         {pageLoading && filteredInbounds.length === 0 && (
-          <div className="table-responsive">
-            <table className="skeleton-table">
-              <tbody>
-                {Array.from({ length: 8 }).map((_, i) => (
-                  <tr key={i}>
-                    <td style={{ width: 36 }}><div className="skeleton-cell skeleton-cell--circle" /></td>
-                    <td style={{ width: '22%' }}><div className="skeleton-cell skeleton-cell--lg" /></td>
-                    <td style={{ width: '14%' }}><div className="skeleton-cell skeleton-cell--md" /></td>
-                    <td style={{ width: '10%' }}><div className="skeleton-cell skeleton-cell--sm" /></td>
-                    <td style={{ width: '8%' }}><div className="skeleton-cell skeleton-cell--sm" /></td>
-                    <td style={{ width: '10%' }}><div className="skeleton-cell skeleton-cell--sm" /></td>
-                    <td style={{ width: '8%' }}><div className="skeleton-cell skeleton-cell--xs" /></td>
-                    <td style={{ width: '10%' }}><div className="skeleton-cell skeleton-cell--badge" /></td>
-                    <td style={{ width: '14%' }}><div className="skeleton-cell skeleton-cell--md" /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-1">
+            {Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} className="min-h-[64px] animate-pulse rounded-lg bg-[#0a0e1a] p-3">
+                <div className="grid grid-cols-[28px_minmax(0,1fr)_5rem] items-center gap-3">
+                  <div className="h-4 w-4 rounded bg-[#0f1420]" />
+                  <div className="min-w-0 space-y-2">
+                    <div className="h-3 w-2/3 rounded bg-[#0f1420]" />
+                    <div className="h-2 w-1/2 rounded bg-[#0a0e1a]" />
+                  </div>
+                  <div className="h-6 rounded bg-[#0f1420]" />
+                </div>
+              </div>
+            ))}
           </div>
         )}
 
         {!pageLoading && filteredInbounds.length === 0 && inbounds.length === 0 && (
-          <EmptyState icon="⇄" title={t('inbounds.emptyTitle')} hint={t('inbounds.emptyHint')} />
+          <div className="mb-3 flex min-w-0 flex-col items-center justify-center overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-10 text-center">
+            <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[#0f1420] text-cyan-300">
+              <UIIcon name="inbounds" size={18} />
+            </div>
+            <div className="text-sm font-medium uppercase tracking-[0.14em] text-slate-100">{t('inbounds.emptyTitle')}</div>
+            <div className="mt-2 max-w-md text-xs font-light leading-relaxed text-slate-500">{t('inbounds.emptyHint')}</div>
+          </div>
         )}
         {!pageLoading && filteredInbounds.length === 0 && inbounds.length > 0 && (
-          <EmptyState icon="⊘" title={t('inbounds.noMatchesTitle')} hint={t('inbounds.noMatchesHint')} />
+          <div className="mb-3 flex min-w-0 flex-col items-center justify-center overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-10 text-center">
+            <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-lg bg-[#0f1420] text-slate-400">
+              <UIIcon name="clear" size={18} />
+            </div>
+            <div className="text-sm font-medium uppercase tracking-[0.14em] text-slate-100">{t('inbounds.noMatchesTitle')}</div>
+            <div className="mt-2 max-w-md text-xs font-light leading-relaxed text-slate-500">{t('inbounds.noMatchesHint')}</div>
+          </div>
         )}
 
         {inbounds.length > 0 && (() => {
@@ -1102,16 +1184,16 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
           const totalClients = inbounds.reduce((s, ib) => s + (ib.client_count ?? 0), 0);
           const byProto = inbounds.reduce<Record<string, number>>((acc, ib) => { acc[ib.protocol] = (acc[ib.protocol] || 0) + 1; return acc; }, {});
           return (
-            <div className="d-flex flex-wrap gap-2 mb-2">
+            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex lg:flex-wrap">
               {[
-                { label: t('common.total'), value: inbounds.length, color: 'var(--text-primary)' },
-                { label: t('common.enabled'), value: enabled, color: 'var(--success)' },
-                { label: t('common.disabled'), value: inbounds.length - enabled, color: 'var(--text-secondary)' },
-                ...(totalClients > 0 ? [{ label: t('inbounds.clients'), value: totalClients, color: 'var(--accent)' }] : []),
-                ...Object.entries(byProto).map(([p, n]) => ({ label: p.toUpperCase(), value: n, color: 'var(--info)' })),
+                { label: t('common.total'), value: inbounds.length, className: 'text-slate-100' },
+                { label: t('common.enabled'), value: enabled, className: 'text-emerald-400' },
+                { label: t('common.disabled'), value: inbounds.length - enabled, className: 'text-slate-500' },
+                ...(totalClients > 0 ? [{ label: t('inbounds.clients'), value: totalClients, className: 'text-cyan-300' }] : []),
+                ...Object.entries(byProto).map(([p, n]) => ({ label: p.toUpperCase(), value: n, className: 'text-sky-300' })),
               ].map(s => (
-                <span key={s.label} className="badge px-2 py-1" style={{ backgroundColor: 'var(--bg-tertiary)', color: s.color, fontWeight: 400, fontSize: '0.75rem' }}>
-                  {s.label}: <strong>{s.value}</strong>
+                <span key={s.label} className="min-w-0 rounded-md bg-[#0a0e1a] px-2 py-1 text-[11px] text-slate-500">
+                  <span className="truncate uppercase tracking-wider">{s.label}</span>: <strong className={cn('font-mono tabular-nums whitespace-nowrap', s.className)}>{s.value}</strong>
                 </span>
               ))}
             </div>
@@ -1119,13 +1201,13 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         })()}
 
         {filteredInbounds.length > ibPageSize && (
-          <div className="d-flex align-items-center gap-2 mb-2 flex-wrap small" style={{ color: 'var(--text-secondary)' }}>
-            <span>{t('inbounds.pageStatus', { page: ibPage, pages: Math.ceil(filteredInbounds.length / ibPageSize), from: (ibPage - 1) * ibPageSize + 1, to: Math.min(ibPage * ibPageSize, filteredInbounds.length), total: filteredInbounds.length })}</span>
-            <div className="d-flex gap-1">
-              <button className="btn btn-sm" style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)', padding: '1px 6px' }} disabled={ibPage <= 1} onClick={() => setIbPage(p => p - 1)}>‹</button>
-              <button className="btn btn-sm" style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)', padding: '1px 6px' }} disabled={ibPage >= Math.ceil(filteredInbounds.length / ibPageSize)} onClick={() => setIbPage(p => p + 1)}>›</button>
+          <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2 text-xs text-slate-500">
+            <span className="whitespace-nowrap">{t('inbounds.pageStatus', { page: ibPage, pages: Math.ceil(filteredInbounds.length / ibPageSize), from: (ibPage - 1) * ibPageSize + 1, to: Math.min(ibPage * ibPageSize, filteredInbounds.length), total: filteredInbounds.length })}</span>
+            <div className="flex gap-1">
+              <button type="button" className={buttonIconClass} disabled={ibPage <= 1} onClick={() => setIbPage(p => p - 1)}>&lt;</button>
+              <button type="button" className={buttonIconClass} disabled={ibPage >= Math.ceil(filteredInbounds.length / ibPageSize)} onClick={() => setIbPage(p => p + 1)}>&gt;</button>
             </div>
-            <select className="form-select form-select-sm" style={{ width: 'auto', backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)', fontSize: '0.72rem' }}
+            <select className={cn(inputClass, 'h-8 w-auto py-1 text-[11px] text-slate-400')}
               value={ibPageSize} onChange={e => { setIbPageSize(Number(e.target.value)); setIbPage(1); }}>
               {[25, 50, 100, 200].map(n => <option key={n} value={n}>{t('inbounds.rowsPerPageOption', { count: n })}</option>)}
             </select>
@@ -1133,283 +1215,230 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         )}
 
         {filteredInbounds.length > 0 && (
-        <div className="table-responsive">
-          <table className="table table-sm table-hover" style={{ color: 'var(--text-primary)' }}>
-            <thead>
-              <tr style={{ borderColor: 'var(--border-color)' }}>
-                <th style={{ color: 'var(--text-secondary)', width: '40px' }}>
-                  <input
-                    type="checkbox"
-                    checked={allFilteredSelected}
-                    onChange={toggleSelectAllFiltered}
-                    aria-label={t('common.selectAll')}
-                  />
-                </th>
-                <th style={{ color: 'var(--text-secondary)' }}>
-                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applySortFromHeader('node')}>
-                    {t('common.name')}{sortIndicator('node')}
-                  </button>
-                </th>
-                <th style={{ color: 'var(--text-secondary)' }}>
-                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applySortFromHeader('name')}>
-                    {t('inbounds.remark')}{sortIndicator('name')}
-                  </button>
-                </th>
-                <th style={{ color: 'var(--text-secondary)' }}>
-                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applySortFromHeader('protocol')}>
-                    {t('inbounds.protocol')}{sortIndicator('protocol')}
-                  </button>
-                </th>
-                <th style={{ color: 'var(--text-secondary)' }}>
-                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applySortFromHeader('port')}>
-                    {t('inbounds.port')}{sortIndicator('port')}
-                  </button>
-                </th>
-                <th style={{ color: 'var(--text-secondary)' }}>{t('inbounds.security')}</th>
-                <th style={{ color: 'var(--text-secondary)' }}>
-                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applySortFromHeader('status')}>
-                    {t('common.status')}{sortIndicator('status')}
-                  </button>
-                </th>
-                <th style={{ color: 'var(--text-secondary)' }}>
-                  <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }}
-                    onClick={() => applySortFromHeader('clients')} title={t('inbounds.sortByClientCount')}>
-                    {t('inbounds.clients')}{sortField === 'clients' ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : ''}
-                  </button>
-                </th>
-                <th style={{ color: 'var(--text-secondary)' }}>{t('common.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredInbounds.slice((ibPage - 1) * ibPageSize, ibPage * ibPageSize).map((ib) => (
-                <tr key={inboundKey(ib)} style={{ borderColor: 'var(--border-color)', backgroundColor: !ib.enable ? 'var(--bg-tertiary)' + '60' : 'transparent', opacity: !ib.enable ? 0.75 : 1 }}>
-                  <td>
+          <>
+            <div className="grid min-w-0 grid-cols-1 gap-3 lg:hidden">
+              {visibleInbounds.map((ib) => (
+                <article
+                  key={inboundKey(ib)}
+                  className={cn('min-w-0 overflow-hidden rounded-lg bg-[#0a0e1a] p-3', !ib.enable && 'opacity-70')}
+                >
+                  <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-3">
                     <input
+                      className={checkboxClass}
                       type="checkbox"
                       checked={selectedKeys.has(inboundKey(ib))}
                       onChange={() => toggleSelectOne(ib)}
                       aria-label={t('inbounds.selectInbound', { name: ib.remark || ib.id })}
                     />
-                  </td>
-                  <td>
-                    <span
-                      className="badge"
-                      style={{ backgroundColor: filterNode === ib.node_name ? 'var(--accent)' : 'var(--bg-tertiary)', color: filterNode === ib.node_name ? '#000f14' : 'var(--text-primary)', cursor: 'pointer' }}
-                      title={filterNode === ib.node_name ? t('inbounds.clearNodeFilter') : t('inbounds.filterByNodeName', { node: ib.node_name })}
-                      onClick={() => setFilterNode(prev => prev === ib.node_name ? '' : ib.node_name)}
-                    >
-                      {ib.node_name}
-                    </span>
-                  </td>
-                  <td
-                    title={t('inbounds.quickEditRemarkTitle')}
-                    onDoubleClick={async () => {
-                      const newRemark = window.prompt(t('inbounds.newRemarkPrompt', { id: ib.id, node: ib.node_name }), ib.remark || '');
-                      if (newRemark === null || newRemark === ib.remark) return;
-                      const nodeObj = allNodes.find(n => n.name === ib.node_name);
-                      if (!nodeObj) return;
-                      try {
-                        await api.put(`/v1/inbounds/${nodeObj.id}/${ib.id}`, { remark: newRemark }, { auth: getAuth() });
-                        setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, remark: newRemark } : x));
-                        toast(t('inbounds.remarkUpdated', { remark: newRemark || t('inbounds.emptyRemark') }), 'success');
-                      } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
-                    }}
-                  >
-                    {ib.remark || <span style={{ color: 'var(--text-secondary)' }}>-</span>}
-                  </td>
-                  <td>
-                    <span
-                      className="badge"
-                      style={{ backgroundColor: filterProtocol === ib.protocol ? 'var(--warning)' : 'var(--accent)', cursor: 'pointer' }}
-                      title={filterProtocol === ib.protocol ? t('inbounds.clearProtocolFilter') : t('inbounds.filterByProtocolName', { protocol: ib.protocol })}
-                      onClick={() => setFilterProtocol(prev => prev === ib.protocol ? '' : ib.protocol)}
-                    >
-                      {ib.protocol.toUpperCase()}
-                    </span>
-                  </td>
-                  <td className="text-monospace">
-                    <span
-                      style={isDuplicatePort(ib) ? { color: 'var(--warning)', fontWeight: 700 } : undefined}
-                      title={isDuplicatePort(ib) ? t('inbounds.duplicatePortTitle', { port: ib.port, node: ib.node_name }) : undefined}
-                    >
-                      {ib.port}
-                      {isDuplicatePort(ib) && <span className="ms-1" style={{ fontSize: '0.65rem' }}>⚠</span>}
-                    </span>
-                    <button className="btn btn-sm p-0 ms-1" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', opacity: 0.5, fontSize: '0.65rem' }}
-                      title={t('inbounds.copyPortNumber')}
-                      onClick={() => navigator.clipboard.writeText(String(ib.port))}>📋</button>
-                  </td>
-                  <td>
-                    {ib.is_reality && (
-                      <span className="badge" style={{ backgroundColor: filterSecurity === 'reality' ? 'var(--warning)' : 'var(--success)', cursor: 'pointer' }}
-                        onClick={() => setFilterSecurity(prev => prev === 'reality' ? '' : 'reality')} title={t('inbounds.filterByReality')}>
-                        {t('inbounds.reality')}
-                      </span>
-                    )}
-                    {!ib.is_reality && ib.security && (
-                      <span className="badge" style={{ backgroundColor: filterSecurity === ib.security ? 'var(--warning)' : 'var(--info)', cursor: 'pointer' }}
-                        onClick={() => setFilterSecurity(prev => prev === (ib.security ?? '') ? '' : (ib.security ?? ''))}
-                        title={t('inbounds.filterBySecurityName', { security: ib.security })}>
-                        {ib.security}
-                      </span>
-                    )}
-                    {!ib.security && <span style={{ color: 'var(--text-secondary)' }}>-</span>}
-                  </td>
-                  <td>
+                    <div className="min-w-0">
+                      <button
+                        type="button"
+                        className="max-w-full truncate text-left text-sm font-medium text-slate-100 hover:text-cyan-300"
+                        title={t('inbounds.quickEditRemarkTitle')}
+                        onDoubleClick={async () => {
+                          const newRemark = window.prompt(t('inbounds.newRemarkPrompt', { id: ib.id, node: ib.node_name }), ib.remark || '');
+                          if (newRemark === null || newRemark === ib.remark) return;
+                          const nodeObj = allNodes.find(n => n.name === ib.node_name);
+                          if (!nodeObj) return;
+                          try {
+                            await api.put('/v1/inbounds/' + nodeObj.id + '/' + ib.id, { remark: newRemark }, { auth: getAuth() });
+                            setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, remark: newRemark } : x));
+                            toast(t('inbounds.remarkUpdated', { remark: newRemark || t('inbounds.emptyRemark') }), 'success');
+                          } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
+                        }}
+                      >
+                        {ib.remark || <span className="text-slate-600">-</span>}
+                      </button>
+                      <div className="mt-1 truncate text-[11px] text-slate-500">#{ib.id}</div>
+                    </div>
                     <button
-                      className="btn btn-sm px-1 py-0"
-                      style={{
-                        background: 'none', border: 'none',
-                        color: ib.enable ? 'var(--success)' : 'var(--text-secondary)',
-                        fontSize: '0.85rem', cursor: 'pointer'
-                      }}
+                      type="button"
+                      className={cn('inline-flex h-7 items-center rounded-md border px-2 text-[11px] font-medium whitespace-nowrap', ib.enable ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-300' : 'border-cyan-500/20 bg-[#0f1420] text-slate-500')}
                       title={ib.enable ? t('inbounds.clickToDisable') : t('inbounds.clickToEnable')}
                       onClick={async () => {
                         const nodeObj = allNodes.find(n => n.name === ib.node_name);
                         if (!nodeObj) return;
                         const { user, password } = getAuth();
                         try {
-                          await api.post(`/v1/inbounds/${nodeObj.id}/${ib.id}/set-enable`, { enable: !ib.enable }, { auth: { username: user, password } });
+                          await api.post('/v1/inbounds/' + nodeObj.id + '/' + ib.id + '/set-enable', { enable: !ib.enable }, { auth: { username: user, password } });
                           setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, enable: !ib.enable } : x));
-                          toast(t('inbounds.enableToggled', { name: ib.remark || `#${ib.id}`, status: !ib.enable ? t('common.enabled') : t('common.disabled') }), 'success');
+                          toast(t('inbounds.enableToggled', { name: ib.remark || '#' + ib.id, status: !ib.enable ? t('common.enabled') : t('common.disabled') }), 'success');
                         } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                       }}
                     >
-                      {ib.enable ? '● ' + t('common.enabled') : '○ ' + t('common.disabled')}
+                      {ib.enable ? t('common.enabled') : t('common.disabled')}
                     </button>
-                  </td>
-                  <td>
+                  </div>
+
+                  <div className="mt-3 grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-4">
+                    <button
+                      type="button"
+                      className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] text-slate-200')}
+                      title={filterNode === ib.node_name ? t('inbounds.clearNodeFilter') : t('inbounds.filterByNodeName', { node: ib.node_name })}
+                      onClick={() => setFilterNode(prev => prev === ib.node_name ? '' : ib.node_name)}
+                    >
+                      <span className="truncate">{ib.node_name}</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')}
+                      title={filterProtocol === ib.protocol ? t('inbounds.clearProtocolFilter') : t('inbounds.filterByProtocolName', { protocol: ib.protocol })}
+                      onClick={() => setFilterProtocol(prev => prev === ib.protocol ? '' : ib.protocol)}
+                    >
+                      {ib.protocol.toUpperCase()}
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(badgeBaseClass, 'justify-start bg-[#0f1420]', isDuplicatePort(ib) ? 'text-amber-300' : 'text-slate-300')}
+                      title={isDuplicatePort(ib) ? t('inbounds.duplicatePortTitle', { port: ib.port, node: ib.node_name }) : t('inbounds.copyPortNumber')}
+                      onClick={() => navigator.clipboard.writeText(String(ib.port))}
+                    >
+                      <span className="font-mono tabular-nums whitespace-nowrap">{ib.port}</span>
+                      {isDuplicatePort(ib) && <UIIcon name="warning" size={12} />}
+                    </button>
                     {ib.client_count !== undefined ? (
-                      <span
-                        className="badge"
-                        style={{
-                          backgroundColor: ib.client_count > 0 ? 'var(--accent)' : 'var(--bg-tertiary)',
-                          color: ib.client_count > 0 ? '#000f14' : 'var(--text-secondary)',
-                          cursor: ib.client_count > 0 && onNavigateToClients ? 'pointer' : 'default',
-                        }}
+                      <button
+                        type="button"
+                        className={cn(badgeBaseClass, ib.client_count > 0 ? 'bg-cyan-400 text-[#06111f]' : 'bg-[#0f1420] text-slate-500')}
                         title={ib.client_count > 0 && onNavigateToClients ? t('inbounds.viewClientsTitle', { count: ib.client_count }) : undefined}
-                        onClick={() => ib.client_count && ib.client_count > 0 && onNavigateToClients && onNavigateToClients(ib.id, ib.remark || `#${ib.id}`)}
+                        onClick={() => ib.client_count && ib.client_count > 0 && onNavigateToClients && onNavigateToClients(ib.id, ib.remark || '#' + ib.id)}
                       >
-                        {ib.client_count}
-                      </span>
+                        <span className="font-mono tabular-nums whitespace-nowrap">{ib.client_count}</span>
+                      </button>
                     ) : (
-                      <span style={{ color: 'var(--text-secondary)' }}>—</span>
+                      <span className={cn(badgeBaseClass, 'bg-[#0f1420] text-slate-600')}>-</span>
                     )}
-                  </td>
-                  <td>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-4 gap-2 sm:grid-cols-8">
+                    <button type="button" className={buttonIconClass} onClick={() => handleEditClick(ib)} title={t('inbounds.editInbound')} aria-label={t('inbounds.editInbound')}><UIIcon name="edit" size={14} /></button>
+                    <button type="button" className={buttonIconClass} title={t('inbounds.addClientTitle')} onClick={() => onAddClientToInbound && onAddClientToInbound(ib.id, ib.node_name)} disabled={!onAddClientToInbound} aria-label={t('inbounds.addClientTitle')}><UIIcon name="plus" size={14} /></button>
+                    <button type="button" className={buttonIconClass} onClick={() => handleCloneClick(ib)} title={t('inbounds.cloneInbound')} aria-label={t('inbounds.cloneInbound')}><UIIcon name="copy" size={14} /></button>
+                    <button type="button" className={buttonIconClass} title={t('inbounds.viewConfigTitle')} onClick={() => { setConfigModalInbound(ib); setShowConfigModal(true); }} aria-label={t('inbounds.viewConfigTitle')}>{'{}'}</button>
                     <button
-                      className="btn btn-sm me-1"
-                      style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
-                      onClick={() => handleEditClick(ib)}
-                      title={t('inbounds.editInbound')}
-                    >
-                      <UIIcon name="edit" size={14} />
-                    </button>
-                    <button
-                      className="btn btn-sm me-1"
-                      style={{ backgroundColor: 'var(--success)', borderColor: 'var(--success)', color: '#fff' }}
-                      title={t('inbounds.addClientTitle')}
-                      onClick={() => onAddClientToInbound && onAddClientToInbound(ib.id, ib.node_name)}
-                      disabled={!onAddClientToInbound}
-                    >
-                      +
-                    </button>
-                    <button
-                      className="btn btn-sm me-1"
-                      style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
-                      onClick={() => handleCloneClick(ib)}
-                      title={t('inbounds.cloneInbound')}
-                    >
-                      <UIIcon name="copy" size={14} />
-                    </button>
-                    <button
-                      className="btn btn-sm me-1"
-                      style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
-                      title={t('inbounds.viewConfigTitle')}
-                      onClick={() => { setConfigModalInbound(ib); setShowConfigModal(true); }}
-                    >
-                      {'{}'}
-                    </button>
-                    <button
-                      className="btn btn-sm me-1"
-                      style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
+                      type="button"
+                      className={buttonIconClass}
                       title={t('inbounds.copyJsonConfig')}
                       onClick={() => {
-                        const config = {
-                          protocol: ib.protocol,
-                          port: ib.port,
-                          remark: ib.remark,
-                          settings: ib.settings || {},
-                          streamSettings: ib.streamSettings || {},
-                        };
+                        const config = { protocol: ib.protocol, port: ib.port, remark: ib.remark, settings: ib.settings || {}, streamSettings: ib.streamSettings || {} };
                         navigator.clipboard.writeText(JSON.stringify(config, null, 2));
                         toast(t('inbounds.configCopied'), 'info');
                       }}
-                    >
-                      <UIIcon name="copy" size={14} />
-                    </button>
-                    <button
-                      className="btn btn-sm me-1"
-                      style={{ backgroundColor: 'var(--warning)', borderColor: 'var(--warning)', color: '#000' }}
-                      onClick={() => handleResetInboundTraffic(ib)}
-                      title={t('inbounds.resetTraffic')}
-                    >
-                      <UIIcon name="refresh" size={14} />
-                    </button>
-                    <button
-                      className="btn btn-sm me-1"
-                      style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--danger)' }}
-                      onClick={() => handleDelAllClients(ib)}
-                      title={t('inbounds.delAllClients')}
-                    >
-                      <UIIcon name="clients" size={14} />
-                    </button>
-                    <button
-                      className="btn btn-sm"
-                      style={{ backgroundColor: 'var(--danger)', borderColor: 'var(--danger)', color: '#ffffff' }}
-                      onClick={() => handleDelete(ib)}
-                      title={t('inbounds.deleteInbound')}
-                    >
-                      <UIIcon name="trash" size={14} />
-                    </button>
-                  </td>
-                </tr>
+                      aria-label={t('inbounds.copyJsonConfig')}
+                    ><UIIcon name="copy" size={14} /></button>
+                    <button type="button" className={buttonIconClass} onClick={() => handleResetInboundTraffic(ib)} title={t('inbounds.resetTraffic')} aria-label={t('inbounds.resetTraffic')}><UIIcon name="refresh" size={14} /></button>
+                    <button type="button" className={cn(buttonIconClass, 'text-rose-300')} onClick={() => handleDelAllClients(ib)} title={t('inbounds.delAllClients')} aria-label={t('inbounds.delAllClients')}><UIIcon name="clients" size={14} /></button>
+                    <button type="button" className={cn(buttonIconClass, 'bg-rose-500 text-white hover:bg-rose-400 hover:text-white')} onClick={() => handleDelete(ib)} title={t('inbounds.deleteInbound')} aria-label={t('inbounds.deleteInbound')}><UIIcon name="trash" size={14} /></button>
+                  </div>
+                </article>
               ))}
-            </tbody>
-          </table>
-        </div>
-        )}
+            </div>
 
-        <div className="mt-2 small d-flex gap-3 align-items-center" style={{ color: 'var(--text-secondary)' }}>
-          <span>{t('inbounds.showingCount', { filtered: filteredInbounds.length, total: inbounds.length })}</span>
+            <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] lg:block">
+              <div className="min-w-0 overflow-x-auto">
+                <table className="w-full min-w-[1040px] table-fixed border-collapse text-left text-xs">
+                  <thead className="bg-[#0f1420] text-[10px] uppercase tracking-wider text-slate-500">
+                    <tr>
+                      <th className="w-10 px-3 py-3"><input className={checkboxClass} type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAllFiltered} aria-label={t('common.selectAll')} /></th>
+                      <th className="w-[15%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('node')}>{t('common.name')}{sortIndicator('node')}</button></th>
+                      <th className="w-[24%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('name')}>{t('inbounds.remark')}{sortIndicator('name')}</button></th>
+                      <th className="w-[10%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('protocol')}>{t('inbounds.protocol')}{sortIndicator('protocol')}</button></th>
+                      <th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('port')}>{t('inbounds.port')}{sortIndicator('port')}</button></th>
+                      <th className="w-[10%] px-3 py-3">{t('inbounds.security')}</th>
+                      <th className="w-[11%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('status')}>{t('common.status')}{sortIndicator('status')}</button></th>
+                      <th className="w-[8%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('clients')} title={t('inbounds.sortByClientCount')}>{t('inbounds.clients')}{sortField === 'clients' ? (sortDirection === 'asc' ? ' ^' : ' v') : ''}</button></th>
+                      <th className="w-[13%] px-3 py-3">{t('common.actions')}</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-900 text-slate-200">
+                    {visibleInbounds.map((ib) => (
+                      <tr key={inboundKey(ib)} className={cn('transition-colors hover:bg-cyan-400/5', !ib.enable && 'bg-[#0f1420]/60 opacity-75')}>
+                        <td className="px-3 py-3 align-middle"><input className={checkboxClass} type="checkbox" checked={selectedKeys.has(inboundKey(ib))} onChange={() => toggleSelectOne(ib)} aria-label={t('inbounds.selectInbound', { name: ib.remark || ib.id })} /></td>
+                        <td className="px-3 py-3 align-middle"><button type="button" className={cn(badgeBaseClass, 'max-w-full justify-start bg-[#0f1420] text-slate-200')} title={filterNode === ib.node_name ? t('inbounds.clearNodeFilter') : t('inbounds.filterByNodeName', { node: ib.node_name })} onClick={() => setFilterNode(prev => prev === ib.node_name ? '' : ib.node_name)}><span className="truncate">{ib.node_name}</span></button></td>
+                        <td className="min-w-0 px-3 py-3 align-middle" title={t('inbounds.quickEditRemarkTitle')} onDoubleClick={async () => {
+                          const newRemark = window.prompt(t('inbounds.newRemarkPrompt', { id: ib.id, node: ib.node_name }), ib.remark || '');
+                          if (newRemark === null || newRemark === ib.remark) return;
+                          const nodeObj = allNodes.find(n => n.name === ib.node_name);
+                          if (!nodeObj) return;
+                          try {
+                            await api.put('/v1/inbounds/' + nodeObj.id + '/' + ib.id, { remark: newRemark }, { auth: getAuth() });
+                            setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, remark: newRemark } : x));
+                            toast(t('inbounds.remarkUpdated', { remark: newRemark || t('inbounds.emptyRemark') }), 'success');
+                          } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
+                        }}><span className="block truncate">{ib.remark || <span className="text-slate-600">-</span>}</span></td>
+                        <td className="px-3 py-3 align-middle"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} title={filterProtocol === ib.protocol ? t('inbounds.clearProtocolFilter') : t('inbounds.filterByProtocolName', { protocol: ib.protocol })} onClick={() => setFilterProtocol(prev => prev === ib.protocol ? '' : ib.protocol)}>{ib.protocol.toUpperCase()}</button></td>
+                        <td className="px-3 py-3 align-middle"><button type="button" className={cn('inline-flex items-center gap-1 text-xs tabular-nums whitespace-nowrap', isDuplicatePort(ib) ? 'font-bold text-amber-300' : 'text-slate-300')} title={isDuplicatePort(ib) ? t('inbounds.duplicatePortTitle', { port: ib.port, node: ib.node_name }) : t('inbounds.copyPortNumber')} onClick={() => navigator.clipboard.writeText(String(ib.port))}>{ib.port}{isDuplicatePort(ib) && <UIIcon name="warning" size={12} />}</button></td>
+                        <td className="px-3 py-3 align-middle">
+                          {ib.is_reality && <button type="button" className={cn(badgeBaseClass, filterSecurity === 'reality' ? 'bg-amber-400 text-[#06111f]' : 'bg-emerald-400/15 text-emerald-300')} onClick={() => setFilterSecurity(prev => prev === 'reality' ? '' : 'reality')} title={t('inbounds.filterByReality')}>{t('inbounds.reality')}</button>}
+                          {!ib.is_reality && ib.security && <button type="button" className={cn(badgeBaseClass, filterSecurity === ib.security ? 'bg-amber-400 text-[#06111f]' : 'bg-sky-400/15 text-sky-300')} onClick={() => setFilterSecurity(prev => prev === (ib.security ?? '') ? '' : (ib.security ?? ''))} title={t('inbounds.filterBySecurityName', { security: ib.security })}>{ib.security}</button>}
+                          {!ib.security && <span className="text-slate-600">-</span>}
+                        </td>
+                        <td className="px-3 py-3 align-middle"><button type="button" className={cn('inline-flex h-7 items-center rounded-md border px-2 text-[11px] font-medium whitespace-nowrap', ib.enable ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-300' : 'border-cyan-500/20 bg-[#0f1420] text-slate-500')} title={ib.enable ? t('inbounds.clickToDisable') : t('inbounds.clickToEnable')} onClick={async () => {
+                          const nodeObj = allNodes.find(n => n.name === ib.node_name);
+                          if (!nodeObj) return;
+                          const { user, password } = getAuth();
+                          try {
+                            await api.post('/v1/inbounds/' + nodeObj.id + '/' + ib.id + '/set-enable', { enable: !ib.enable }, { auth: { username: user, password } });
+                            setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, enable: !ib.enable } : x));
+                            toast(t('inbounds.enableToggled', { name: ib.remark || '#' + ib.id, status: !ib.enable ? t('common.enabled') : t('common.disabled') }), 'success');
+                          } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
+                        }}>{ib.enable ? t('common.enabled') : t('common.disabled')}</button></td>
+                        <td className="px-3 py-3 align-middle">
+                          {ib.client_count !== undefined ? <button type="button" className={cn(badgeBaseClass, ib.client_count > 0 ? 'bg-cyan-400 text-[#06111f]' : 'bg-[#0f1420] text-slate-500')} title={ib.client_count > 0 && onNavigateToClients ? t('inbounds.viewClientsTitle', { count: ib.client_count }) : undefined} onClick={() => ib.client_count && ib.client_count > 0 && onNavigateToClients && onNavigateToClients(ib.id, ib.remark || '#' + ib.id)}><span className="font-mono tabular-nums whitespace-nowrap">{ib.client_count}</span></button> : <span className="text-slate-600">-</span>}
+                        </td>
+                        <td className="px-3 py-3 align-middle"><div className="flex min-w-0 flex-nowrap gap-1">
+                          <button type="button" className={buttonIconClass} onClick={() => handleEditClick(ib)} title={t('inbounds.editInbound')} aria-label={t('inbounds.editInbound')}><UIIcon name="edit" size={14} /></button>
+                          <button type="button" className={buttonIconClass} title={t('inbounds.addClientTitle')} onClick={() => onAddClientToInbound && onAddClientToInbound(ib.id, ib.node_name)} disabled={!onAddClientToInbound} aria-label={t('inbounds.addClientTitle')}><UIIcon name="plus" size={14} /></button>
+                          <button type="button" className={buttonIconClass} onClick={() => handleCloneClick(ib)} title={t('inbounds.cloneInbound')} aria-label={t('inbounds.cloneInbound')}><UIIcon name="copy" size={14} /></button>
+                          <button type="button" className={buttonIconClass} title={t('inbounds.viewConfigTitle')} onClick={() => { setConfigModalInbound(ib); setShowConfigModal(true); }} aria-label={t('inbounds.viewConfigTitle')}>{'{}'}</button>
+                          <button type="button" className={buttonIconClass} title={t('inbounds.copyJsonConfig')} onClick={() => { const config = { protocol: ib.protocol, port: ib.port, remark: ib.remark, settings: ib.settings || {}, streamSettings: ib.streamSettings || {} }; navigator.clipboard.writeText(JSON.stringify(config, null, 2)); toast(t('inbounds.configCopied'), 'info'); }} aria-label={t('inbounds.copyJsonConfig')}><UIIcon name="copy" size={14} /></button>
+                          <button type="button" className={buttonIconClass} onClick={() => handleResetInboundTraffic(ib)} title={t('inbounds.resetTraffic')} aria-label={t('inbounds.resetTraffic')}><UIIcon name="refresh" size={14} /></button>
+                          <button type="button" className={cn(buttonIconClass, 'text-rose-300')} onClick={() => handleDelAllClients(ib)} title={t('inbounds.delAllClients')} aria-label={t('inbounds.delAllClients')}><UIIcon name="clients" size={14} /></button>
+                          <button type="button" className={cn(buttonIconClass, 'bg-rose-500 text-white hover:bg-rose-400 hover:text-white')} onClick={() => handleDelete(ib)} title={t('inbounds.deleteInbound')} aria-label={t('inbounds.deleteInbound')}><UIIcon name="trash" size={14} /></button>
+                        </div></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        )}
+        <div className="mt-4 flex min-w-0 flex-wrap items-center gap-3 text-xs text-slate-500">
+          <span className="whitespace-nowrap">{t('inbounds.showingCount', { filtered: filteredInbounds.length, total: inbounds.length })}</span>
           {filteredInbounds.some(ib => ib.client_count !== undefined) && (
-            <span>
+            <span className="whitespace-nowrap">
               {t('inbounds.clientsInView', { count: filteredInbounds.reduce((s, ib) => s + (ib.client_count ?? 0), 0) })}
             </span>
           )}
           {selectedKeys.size > 0 && (
-            <span style={{ color: 'var(--accent)' }}>
+            <span className="text-cyan-300 whitespace-nowrap">
               {t('inbounds.selectedInline', { count: selectedKeys.size })}
             </span>
           )}
-          <button className="btn btn-sm py-0 px-1" style={{ backgroundColor: 'transparent', border: 'none', color: 'var(--text-secondary)', fontSize: '0.72rem' }}
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 text-[11px] text-slate-500 transition-colors hover:text-cyan-300 whitespace-nowrap"
             title={t('inbounds.copyVisiblePortsTitle')}
             onClick={() => {
               const ports = filteredInbounds.slice(0, ibPage * ibPageSize).map(ib => ib.port).filter(Boolean).join(', ');
               navigator.clipboard.writeText(ports).then(() => toast(t('inbounds.copiedPorts', { count: filteredInbounds.slice(0, ibPage * ibPageSize).length }), 'info'));
-            }}>
-            📋 {t('inbounds.copyPorts')}
+            }}
+          >
+            <UIIcon name="copy" size={12} />
+            {t('inbounds.copyPorts')}
           </button>
           {(() => {
             const dupCount = inbounds.filter(ib => isDuplicatePort(ib)).length;
             return dupCount > 0 ? (
               <button
-                className="btn btn-sm py-0 px-1"
-                style={{ background: 'none', border: 'none', color: 'var(--warning)', fontSize: '0.72rem' }}
+                type="button"
+                className="inline-flex items-center gap-1 text-[11px] text-amber-300 transition-colors hover:text-amber-200 whitespace-nowrap"
                 title={t('inbounds.showDuplicateConflictsTitle')}
                 onClick={() => setFilterDuplicatesOnly(v => !v)}
               >
-                ⚠ {t('inbounds.portConflicts', { count: dupCount })}
+                <UIIcon name="warning" size={12} />
+                {t('inbounds.portConflicts', { count: dupCount })}
               </button>
             ) : null;
           })()}
@@ -1417,129 +1446,116 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       </div>
 
       {showCloneModal && (
-        <div className="drawer">
-          <div className="drawer__backdrop" onClick={() => setShowCloneModal(false)} />
-          <div className="drawer__panel">
-            <div className="drawer__header">
-              <div>
-                <div className="drawer__title">{t('inbounds.cloneInbound')}</div>
-                <div className="drawer__subtitle">{cloneSource?.remark || `#${cloneSource?.id}`}</div>
+        <div className="fixed inset-0 z-50">
+          <button type="button" className="absolute inset-0 h-full w-full bg-black/60 backdrop-blur-sm" aria-label={t('common.close')} onClick={() => setShowCloneModal(false)} />
+          <aside className={drawerPanelClass} role="dialog" aria-modal="true">
+            <div className={drawerHeaderClass}>
+              <div className="min-w-0">
+                <div className={drawerTitleClass}>{t('inbounds.cloneInbound')}</div>
+                <div className={drawerSubtitleClass}>{cloneSource?.remark || '#' + cloneSource?.id}</div>
               </div>
-              <button className="drawer__close" aria-label={t('common.close')} onClick={() => setShowCloneModal(false)}>✕</button>
+              <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setShowCloneModal(false)}><UIIcon name="x" size={14} /></button>
             </div>
-            <div className="drawer__body">
-              <div className="mb-3">
-                <label className="form-label small">{t('inbounds.newRemark')}</label>
-                <input type="text" className="form-control" value={cloneRemark}
-                  onChange={(e) => setCloneRemark(e.target.value)} />
-              </div>
-              <div className="mb-3">
-                <label className="form-label small">{t('inbounds.newPortOptional')}</label>
-                <input type="number" className="form-control" value={clonePort}
-                  onChange={(e) => setClonePort(e.target.value)}
-                  placeholder={t('inbounds.clonePortPlaceholder')} />
-              </div>
-              <div className="mb-3">
-                <div className="d-flex justify-content-between align-items-center mb-2">
-                  <label className="form-label small mb-0">{t('inbounds.targetNodes')}</label>
-                  <div className="d-flex gap-1">
-                    <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.72rem' }}
-                      onClick={() => setCloneTargetNodeIds(new Set(allNodes.map(n => n.id)))}>{t('common.all')}</button>
-                    <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.72rem' }}
-                      onClick={() => setCloneTargetNodeIds(new Set())}>{t('common.none')}</button>
-                  </div>
+            <div className={drawerBodyClass}>
+              <div className="grid min-w-0 grid-cols-1 gap-4">
+                <div className="min-w-0">
+                  <label className={fieldLabelClass}>{t('inbounds.newRemark')}</label>
+                  <input type="text" className={cn(inputClass, 'w-full')} value={cloneRemark} onChange={(e) => setCloneRemark(e.target.value)} />
                 </div>
-                <div className="d-flex flex-wrap gap-2">
-                  {allNodes.map((node) => (
-                    <label key={node.id} className="d-inline-flex align-items-center gap-2 small">
-                      <input type="checkbox" checked={cloneTargetNodeIds.has(node.id)}
-                        onChange={() => {
+                <div className="min-w-0">
+                  <label className={fieldLabelClass}>{t('inbounds.newPortOptional')}</label>
+                  <input type="number" className={cn(inputClass, 'w-full tabular-nums')} value={clonePort} onChange={(e) => setClonePort(e.target.value)} placeholder={t('inbounds.clonePortPlaceholder')} />
+                </div>
+                <div className="min-w-0">
+                  <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+                    <label className={fieldLabelClass}>{t('inbounds.targetNodes')}</label>
+                    <div className="flex gap-1">
+                      <button type="button" className={segmentButtonClass(false)} onClick={() => setCloneTargetNodeIds(new Set(allNodes.map(n => n.id)))}>{t('common.all')}</button>
+                      <button type="button" className={segmentButtonClass(false)} onClick={() => setCloneTargetNodeIds(new Set())}>{t('common.none')}</button>
+                    </div>
+                  </div>
+                  <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+                    {allNodes.map((node) => (
+                      <label key={node.id} className={nodeCheckClass(cloneTargetNodeIds.has(node.id))}>
+                        <input className={checkboxClass} type="checkbox" checked={cloneTargetNodeIds.has(node.id)} onChange={() => {
                           const next = new Set(cloneTargetNodeIds);
                           if (next.has(node.id)) next.delete(node.id);
                           else next.add(node.id);
                           setCloneTargetNodeIds(next);
                         }} />
-                      {node.name}
-                    </label>
-                  ))}
+                        <span className="truncate">{node.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">{t('inbounds.cloneSameNodeHint')}</p>
                 </div>
-                <p className="small mt-2" style={{ color: 'var(--text-secondary)' }}>{t('inbounds.cloneSameNodeHint')}</p>
+                <p className="text-xs text-slate-500">{t('inbounds.cloneHint')}</p>
               </div>
-              <p className="small" style={{ color: 'var(--text-secondary)' }}>{t('inbounds.cloneHint')}</p>
             </div>
-            <div className="drawer__footer">
-              <button className="btn btn-ghost-accent" onClick={() => setShowCloneModal(false)} disabled={loading}>
-                {t('common.cancel')}
-              </button>
-              <button className="btn btn-accent" onClick={handleCloneSubmit} disabled={loading}>
-                {loading ? t('inbounds.cloning') : t('inbounds.cloneInbound')}
-              </button>
+            <div className={drawerFooterClass}>
+              <button type="button" className={buttonGhostClass} onClick={() => setShowCloneModal(false)} disabled={loading}>{t('common.cancel')}</button>
+              <button type="button" className={buttonAccentClass} onClick={handleCloneSubmit} disabled={loading}>{loading ? t('inbounds.cloning') : t('inbounds.cloneInbound')}</button>
             </div>
-          </div>
+          </aside>
         </div>
       )}
 
       {showAddModal && (
-        <div className="drawer">
-          <div className="drawer__backdrop" onClick={() => setShowAddModal(false)} />
-          <div className="drawer__panel drawer__panel--wide">
-            <div className="drawer__header">
-              <div>
-                <div className="drawer__title">{t('inbounds.addInbound')}</div>
-                <div className="drawer__subtitle">{t('inbounds.addSubtitle')}</div>
+        <div className="fixed inset-0 z-50">
+          <button type="button" className="absolute inset-0 h-full w-full bg-black/60 backdrop-blur-sm" aria-label={t('common.close')} onClick={() => setShowAddModal(false)} />
+          <aside className={drawerPanelWideClass} role="dialog" aria-modal="true">
+            <div className={drawerHeaderClass}>
+              <div className="min-w-0">
+                <div className={drawerTitleClass}>{t('inbounds.addInbound')}</div>
+                <div className={drawerSubtitleClass}>{t('inbounds.addSubtitle')}</div>
               </div>
-              <button className="drawer__close" aria-label={t('common.close')} onClick={() => setShowAddModal(false)}>✕</button>
+              <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setShowAddModal(false)}><UIIcon name="x" size={14} /></button>
             </div>
-            <div className="drawer__body">
-              <div className="mb-3">
-                <label className="form-label small">{t('inbounds.template')}</label>
-                <ChoiceChips
-                  options={[
-                    { value: 'vless', label: 'VLESS' },
-                    { value: 'vmess', label: 'VMESS' },
-                    { value: 'trojan', label: 'TROJAN' },
-                  ]}
-                  value={addTemplateProtocol}
-                  onChange={(value) => handleTemplateChange(value)}
-                />
-              </div>
-              <div className="mb-3">
-                <div className="d-flex justify-content-between align-items-center mb-2">
-                  <label className="form-label small mb-0">{t('inbounds.targetNodes')}</label>
-                  <div className="d-flex gap-1">
-                    <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.72rem' }}
-                      onClick={() => setAddTargetNodeIds(new Set(allNodes.map(n => n.id)))}>{t('common.all')}</button>
-                    <button className="btn btn-sm btn-neutral" style={{ fontSize: '0.72rem' }}
-                      onClick={() => setAddTargetNodeIds(new Set())}>{t('common.none')}</button>
+            <div className={drawerBodyClass}>
+              <div className="grid min-w-0 grid-cols-1 gap-4">
+                <div className="min-w-0">
+                  <label className={fieldLabelClass}>{t('inbounds.template')}</label>
+                  <div className="flex flex-wrap gap-1">
+                    {[
+                      { value: 'vless', label: 'VLESS' },
+                      { value: 'vmess', label: 'VMESS' },
+                      { value: 'trojan', label: 'TROJAN' },
+                    ].map((option) => (
+                      <button key={option.value} type="button" className={segmentButtonClass(addTemplateProtocol === option.value)} onClick={() => handleTemplateChange(option.value as 'vless' | 'vmess' | 'trojan')}>
+                        {option.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-                <div className="d-flex flex-wrap gap-2">
-                  {allNodes.map((node) => (
-                    <label key={node.id} className="d-inline-flex align-items-center gap-2 small">
-                      <input type="checkbox" checked={addTargetNodeIds.has(node.id)}
-                        onChange={() => toggleAddTarget(node.id)} />
-                      {node.name}
-                    </label>
-                  ))}
+                <div className="min-w-0">
+                  <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+                    <label className={fieldLabelClass}>{t('inbounds.targetNodes')}</label>
+                    <div className="flex gap-1">
+                      <button type="button" className={segmentButtonClass(false)} onClick={() => setAddTargetNodeIds(new Set(allNodes.map(n => n.id)))}>{t('common.all')}</button>
+                      <button type="button" className={segmentButtonClass(false)} onClick={() => setAddTargetNodeIds(new Set())}>{t('common.none')}</button>
+                    </div>
+                  </div>
+                  <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {allNodes.map((node) => (
+                      <label key={node.id} className={nodeCheckClass(addTargetNodeIds.has(node.id))}>
+                        <input className={checkboxClass} type="checkbox" checked={addTargetNodeIds.has(node.id)} onChange={() => toggleAddTarget(node.id)} />
+                        <span className="truncate">{node.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="min-w-0">
+                  <label className={fieldLabelClass}>{t('inbounds.jsonConfigLabel')}</label>
+                  <textarea className={cn(textareaClass, 'min-h-[360px] text-[12px]')} rows={16} value={addJsonConfig} onChange={(e) => setAddJsonConfig(e.target.value)} />
+                  <p className="mt-2 text-xs text-slate-500">{t('inbounds.jsonConfigHint')}</p>
                 </div>
               </div>
-              <div>
-                <label className="form-label small">{t('inbounds.jsonConfigLabel')}</label>
-                <textarea className="form-control" rows={16} value={addJsonConfig}
-                  onChange={(e) => setAddJsonConfig(e.target.value)}
-                  style={{ fontFamily: 'monospace', fontSize: '12px' }} />
-                <p className="small mt-2" style={{ color: 'var(--text-secondary)' }}>{t('inbounds.jsonConfigHint')}</p>
-              </div>
             </div>
-            <div className="drawer__footer">
-              <button className="btn btn-ghost-accent" onClick={() => setShowAddModal(false)} disabled={loading}>
-                {t('common.cancel')}
-              </button>
-              <button className="btn btn-success-fill" onClick={handleAddInboundSubmit} disabled={loading}>
-                {loading ? t('inbounds.adding') : t('inbounds.addInbound')}
-              </button>
+            <div className={drawerFooterClass}>
+              <button type="button" className={buttonGhostClass} onClick={() => setShowAddModal(false)} disabled={loading}>{t('common.cancel')}</button>
+              <button type="button" className={buttonSuccessClass} onClick={handleAddInboundSubmit} disabled={loading}>{loading ? t('inbounds.adding') : t('inbounds.addInbound')}</button>
             </div>
-          </div>
+          </aside>
         </div>
       )}
       {editingInbound && (() => {
@@ -1558,81 +1574,90 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
       {/* Import JSON Drawer */}
       {showImportModal && (
-        <div className="drawer">
-          <div className="drawer__backdrop" onClick={() => setShowImportModal(false)} />
-          <div className="drawer__panel drawer__panel--wide">
-            <div className="drawer__header">
-              <div>
-                <div className="drawer__title">{t('inbounds.importInbounds')}</div>
-                <div className="drawer__subtitle">{t('inbounds.importSubtitle')}</div>
+        <div className="fixed inset-0 z-50">
+          <button type="button" className="absolute inset-0 h-full w-full bg-black/60 backdrop-blur-sm" aria-label={t('common.close')} onClick={() => setShowImportModal(false)} />
+          <aside className={drawerPanelWideClass} role="dialog" aria-modal="true">
+            <div className={drawerHeaderClass}>
+              <div className="min-w-0">
+                <div className={drawerTitleClass}>{t('inbounds.importInbounds')}</div>
+                <div className={drawerSubtitleClass}>{t('inbounds.importSubtitle')}</div>
               </div>
-              <button className="drawer__close" aria-label={t('common.close')} onClick={() => setShowImportModal(false)}>✕</button>
+              <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setShowImportModal(false)}><UIIcon name="x" size={14} /></button>
             </div>
-            <div className="drawer__body">
-              <div className="mb-3">
-                <label className="form-label small">{t('inbounds.targetNodes')}</label>
-                <div className="d-flex flex-wrap gap-1">
-                  {allNodes.map(n => (
-                    <label key={n.id} className="d-flex align-items-center gap-1 px-2 py-1 rounded"
-                      style={{ backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', fontSize: '0.8rem' }}>
-                      <input type="checkbox" checked={importTargetNodeIds.has(n.id)}
-                        onChange={e => {
-                          setImportTargetNodeIds(prev => {
-                            const next = new Set(prev);
-                            if (e.target.checked) next.add(n.id); else next.delete(n.id);
-                            return next;
-                          });
-                        }} />
-                      {n.name}
-                    </label>
-                  ))}
+            <div className={drawerBodyClass}>
+              <div className="grid min-w-0 grid-cols-1 gap-4">
+                <div className="min-w-0">
+                  <label className={fieldLabelClass}>{t('inbounds.targetNodes')}</label>
+                  <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {allNodes.map(n => (
+                      <label key={n.id} className={nodeCheckClass(importTargetNodeIds.has(n.id))}>
+                        <input
+                          className={checkboxClass}
+                          type="checkbox"
+                          checked={importTargetNodeIds.has(n.id)}
+                          onChange={e => {
+                            setImportTargetNodeIds(prev => {
+                              const next = new Set(prev);
+                              if (e.target.checked) next.add(n.id); else next.delete(n.id);
+                              return next;
+                            });
+                          }}
+                        />
+                        <span className="truncate">{n.name}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
+                <div className="min-w-0">
+                  <label className={fieldLabelClass}>{t('inbounds.jsonConfig')}</label>
+                  <textarea
+                    className={cn(textareaClass, 'min-h-[280px] text-[12px]')}
+                    rows={12}
+                    value={importJson}
+                    onChange={e => setImportJson(e.target.value)}
+                    placeholder={'[\n  {\n    "protocol": "vless",\n    "port": 8443,\n    ...\n  }\n]'}
+                  />
+                </div>
+                {importError && <div className="rounded-md bg-rose-500/10 px-3 py-2 text-xs text-rose-300 ring-1 ring-rose-400/25">{importError}</div>}
+                {importResult && <div className="rounded-md bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300 ring-1 ring-emerald-400/25">{importResult}</div>}
               </div>
-              <div>
-                <label className="form-label small">{t('inbounds.jsonConfig')}</label>
-                <textarea className="form-control font-monospace" rows={12}
-                  value={importJson} onChange={e => setImportJson(e.target.value)}
-                  placeholder={'[\n  {\n    "protocol": "vless",\n    "port": 8443,\n    ...\n  }\n]'}
-                  style={{ fontSize: '12px' }} />
-              </div>
-              {importError && <div className="alert alert-danger mt-2 py-1 small">{importError}</div>}
-              {importResult && <div className="alert alert-success mt-2 py-1 small">{importResult}</div>}
             </div>
-            <div className="drawer__footer">
-              <button className="btn btn-ghost-accent" onClick={() => setShowImportModal(false)}>{t('common.cancel')}</button>
-              <button className="btn btn-accent" onClick={handleImportSubmit}
-                disabled={importLoading || !importJson.trim()}>
-                {importLoading ? t('inbounds.importing') : t('common.import')}
-              </button>
+            <div className={drawerFooterClass}>
+              <button type="button" className={buttonGhostClass} onClick={() => setShowImportModal(false)}>{t('common.cancel')}</button>
+              <button type="button" className={buttonAccentClass} onClick={handleImportSubmit} disabled={importLoading || !importJson.trim()}>{importLoading ? t('inbounds.importing') : t('common.import')}</button>
             </div>
-          </div>
+          </aside>
         </div>
       )}
 
       {/* Inbound Config JSON Drawer */}
       {showConfigModal && configModalInbound && (
-        <div className="drawer">
-          <div className="drawer__backdrop" onClick={() => setShowConfigModal(false)} />
-          <div className="drawer__panel drawer__panel--wide">
-            <div className="drawer__header">
-              <div>
-                <div className="drawer__title">{'{ }'} {configModalInbound.remark || `#${configModalInbound.id}`}</div>
-                <div className="drawer__subtitle">{configModalInbound.protocol.toUpperCase()} · {configModalInbound.node_name}</div>
+        <div className="fixed inset-0 z-50">
+          <button type="button" className="absolute inset-0 h-full w-full bg-black/60 backdrop-blur-sm" aria-label={t('common.close')} onClick={() => setShowConfigModal(false)} />
+          <aside className={drawerPanelWideClass} role="dialog" aria-modal="true">
+            <div className={drawerHeaderClass}>
+              <div className="min-w-0">
+                <div className={drawerTitleClass}>{'{ }'} {configModalInbound.remark || '#' + configModalInbound.id}</div>
+                <div className={drawerSubtitleClass}>{configModalInbound.protocol.toUpperCase()} - {configModalInbound.node_name}</div>
               </div>
-              <div className="d-flex gap-2 align-items-center">
-                <button className="btn btn-sm btn-neutral"
-                  onClick={() => { navigator.clipboard.writeText(JSON.stringify(configModalInbound, null, 2)); toast(t('inbounds.configCopied'), 'info'); }}>
-                  📋 {t('common.copy')}
+              <div className="flex shrink-0 items-center gap-2">
+                <button
+                  type="button"
+                  className={buttonNeutralClass}
+                  onClick={() => { navigator.clipboard.writeText(JSON.stringify(configModalInbound, null, 2)); toast(t('inbounds.configCopied'), 'info'); }}
+                >
+                  <UIIcon name="copy" size={14} />
+                  {t('common.copy')}
                 </button>
-                <button className="drawer__close" aria-label={t('common.close')} onClick={() => setShowConfigModal(false)}>✕</button>
+                <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setShowConfigModal(false)}><UIIcon name="x" size={14} /></button>
               </div>
             </div>
-            <div className="drawer__body">
-              <pre style={{ backgroundColor: 'var(--bg-primary)', border: '1px solid var(--border-color)', borderRadius: '8px', padding: '12px', margin: 0, fontSize: '12px', lineHeight: 1.5, overflowX: 'auto' }}>
+            <div className={drawerBodyClass}>
+              <pre className="m-0 min-w-0 overflow-x-auto rounded-lg bg-[#0a0e1a] p-4 text-xs leading-relaxed text-slate-200 ring-1 ring-cyan-500/10">
                 {JSON.stringify(configModalInbound, null, 2)}
               </pre>
             </div>
-          </div>
+          </aside>
         </div>
       )}
     </div>

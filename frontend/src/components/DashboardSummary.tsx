@@ -7,7 +7,6 @@ type StatTone = 'default' | 'accent' | 'success' | 'warning' | 'danger';
 
 interface DashboardSummaryProps {
   onNavigate?: (tab: string) => void;
-  heroDescription?: string;
   heroStats?: Array<{ label: string; value: string; tone?: StatTone }>;
   fleetSummary?: {
     total: number;
@@ -110,7 +109,6 @@ const getWidthClass = (percent: number) => {
 
 export function DashboardSummary({
   onNavigate,
-  heroDescription,
   heroStats = [],
   fleetSummary,
 }: DashboardSummaryProps) {
@@ -176,21 +174,15 @@ export function DashboardSummary({
 
   return (
     <section>
-      <div className="mb-6 bg-[#0f1420] rounded-lg p-5">
-        <div className="text-[10px] text-gray-500 font-mono uppercase mb-1">{t('dashboardSummary.missionControl')}</div>
-        <h1 className="text-2xl font-bold text-cyan-300 font-mono mb-1 flex items-center gap-2">
-          <Server className="w-5 h-5" />
-          DASHBOARD
-        </h1>
-        <p className="text-gray-400 text-sm font-mono">
-          {heroDescription || t('tabDescription.dashboard')}
-        </p>
-
-        <div className="flex flex-wrap gap-6 mt-4">
+      <h2 className="mb-4 font-mono text-base font-medium uppercase tracking-[0.18em] text-cyan-300">
+        {t('dashboardSummary.missionControl').toUpperCase()}
+      </h2>
+      <div className="mb-6 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-5 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)] backdrop-blur-sm">
+        <div className="mt-4 flex flex-wrap gap-x-7 gap-y-4">
           {headerStats.map((stat) => (
             <div key={stat.label} className="flex flex-col">
-              <span className="text-xs text-gray-500 font-mono uppercase">{stat.label}</span>
-              <span className={`text-xl font-bold font-mono ${
+              <span className="font-mono text-[10px] font-light uppercase tracking-wider text-gray-500">{stat.label}</span>
+              <span className={`font-mono text-xl font-bold leading-tight ${
                 stat.variant === 'success'
                   ? 'text-green-400'
                   : stat.variant === 'accent'
@@ -209,14 +201,14 @@ export function DashboardSummary({
       </div>
 
       <div className="mb-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-bold text-cyan-300 font-mono uppercase tracking-wider">{t('dashboardSummary.fleetOverview').toUpperCase()}</h2>
+        <div className="mb-4 flex items-center justify-between">
+          <h2 className="font-mono text-base font-medium uppercase tracking-[0.18em] text-cyan-300">{t('dashboardSummary.fleetOverview').toUpperCase()}</h2>
           <div className="flex items-center gap-2">
-            <span className="text-[10px] text-gray-500 font-mono">
+            <span className="font-mono text-[10px] font-light tracking-wide text-gray-500">
               {lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '12:00 AM'}
             </span>
             <button
-              className="w-7 h-7 bg-[#0f1420] rounded flex items-center justify-center disabled:opacity-50"
+              className="flex h-8 w-8 items-center justify-center rounded border border-cyan-500/20 bg-[#0a0e1a] transition-colors hover:border-cyan-400/30 disabled:opacity-50"
               title="Refresh"
               aria-label="Refresh"
               type="button"
@@ -228,23 +220,23 @@ export function DashboardSummary({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-4">
+        <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {kpiCards.map((card) => {
             const CardIcon = card.icon;
             return (
               <button
                 type="button"
                 key={card.label}
-                className="min-h-[96px] text-left bg-[#0f1420] rounded-lg p-4 transition-colors duration-200 hover:bg-[#111827]"
+                className="min-h-[96px] rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 text-left shadow-[inset_0_1px_0_rgba(103,232,249,0.05)] transition-colors duration-200 hover:border-cyan-400/30 hover:bg-[#111827]"
                 onClick={() => onNavigate?.(card.tab)}
               >
-                <div className="h-full flex items-center justify-between gap-4">
+                <div className="flex h-full items-center justify-between gap-4">
                   <div>
-                    <div className="text-xs text-gray-400 font-mono uppercase mb-2">{card.label}</div>
-                    <div className="text-3xl font-bold text-white font-mono">{card.value}</div>
+                    <div className="mb-2 font-mono text-xs font-light uppercase tracking-[0.12em] text-gray-400">{card.label}</div>
+                    <div className="font-mono text-3xl font-bold leading-none text-white">{card.value}</div>
                   </div>
-                  <div className={`w-14 h-14 bg-gradient-to-br ${iconTone[card.variant]} rounded-lg flex items-center justify-center`}>
-                    <CardIcon className="w-7 h-7 text-white" />
+                  <div className={`flex h-14 w-14 items-center justify-center rounded-lg border border-white/10 bg-gradient-to-br ${iconTone[card.variant]}`}>
+                    <CardIcon className="h-7 w-7 text-white" />
                   </div>
                 </div>
               </button>
@@ -252,22 +244,22 @@ export function DashboardSummary({
           })}
         </div>
 
-        <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10 gap-2 mb-4">
+        <div className="mb-4 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10">
           {onlineByNode.map(([node, count]) => (
             <button
               type="button"
               key={node}
-              className="min-h-[24px] w-full px-2 py-1 bg-[#0f1420] rounded-sm text-[11px] leading-none font-mono text-gray-300 hover:bg-[#111827] hover:text-cyan-300 transition-colors duration-200 whitespace-nowrap text-center"
+              className="min-h-[24px] w-full whitespace-nowrap rounded-full border border-cyan-500/20 bg-[#0f1420] px-3 py-1 text-center font-mono text-[11px] font-light leading-none text-gray-300 transition-colors duration-200 hover:border-cyan-300/35 hover:bg-cyan-500/5 hover:text-cyan-300"
               onClick={() => onNavigate?.('clients')}
             >
-              {node}: <strong className="text-white">{count}</strong>
+              {node}: <strong className="font-medium text-white">{count}</strong>
             </button>
           ))}
         </div>
 
         <div>
-          <div className="text-xs text-gray-500 font-mono uppercase tracking-widest mb-2">{t('dashboardSummary.topByTraffic').toUpperCase()}</div>
-          <div className="bg-[#0f1420] rounded-lg p-4 overflow-x-hidden scrollbar-none">
+          <div className="mb-2 font-mono text-xs font-medium uppercase tracking-widest text-gray-500">{t('dashboardSummary.topByTraffic').toUpperCase()}</div>
+          <div className="scrollbar-none overflow-x-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)]">
             <div className="space-y-3 scrollbar-none">
               {topClients.map((client, index) => {
                 const percent = (client.total / maxTraffic) * 100;
@@ -275,7 +267,7 @@ export function DashboardSummary({
                   <button
                     key={client.email}
                     type="button"
-                    className="w-full text-left rounded-sm hover:bg-cyan-400/5 transition-colors duration-200 scrollbar-none"
+                    className="scrollbar-none w-full rounded-lg border border-transparent text-left transition-colors duration-200 hover:border-cyan-500/20 hover:bg-cyan-400/5"
                     onClick={() => {
                       try {
                         sessionStorage.setItem('sm_nav_client_search', client.email);
@@ -284,14 +276,14 @@ export function DashboardSummary({
                     }}
                   >
                     <span className="grid h-5 w-full max-w-[360px] grid-cols-[18px_minmax(72px,86px)_minmax(90px,1fr)_minmax(5.5rem,5.5rem)] sm:grid-cols-[20px_minmax(82px,96px)_minmax(110px,1fr)_minmax(6rem,6rem)] items-center gap-2">
-                      <span className="text-xs text-gray-500 font-mono text-right">{index + 1}.</span>
-                      <span className="text-sm text-cyan-300 font-mono truncate" title={client.email}>
+                      <span className="text-right font-mono text-xs font-light text-gray-500">{index + 1}.</span>
+                      <span className="truncate font-mono text-sm font-light text-cyan-300" title={client.email}>
                         {client.email}
                       </span>
-                      <span className="h-1.5 bg-[#1b2638] rounded-full overflow-hidden">
+                      <span className="h-1.5 overflow-hidden rounded-full border border-cyan-500/10 bg-[#0a0e1a]">
                         <span className={`block h-full rounded-full bg-gradient-to-r from-cyan-400 via-sky-400 to-blue-400 ${getWidthClass(percent)}`} />
                       </span>
-                      <span className="text-sm text-gray-400 font-mono text-right whitespace-nowrap tabular-nums">{formatBytes(client.total)}</span>
+                      <span className="whitespace-nowrap text-right font-mono text-sm font-light tabular-nums text-gray-400">{formatBytes(client.total)}</span>
                     </span>
                   </button>
                 );

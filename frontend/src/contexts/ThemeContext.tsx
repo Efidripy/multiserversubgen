@@ -45,7 +45,7 @@ const COLORS: ThemeContextType['colors'] = {
     secondary: '#a0a0a0',
     tertiary:  '#666666',
   },
-  border:      'transparent',
+  border:      'rgba(34, 211, 238, 0.20)',
   accent:      '#22d3ee',
   accentText:  '#06111f',
   success:     '#4ade80',

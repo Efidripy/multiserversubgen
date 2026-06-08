@@ -24,6 +24,24 @@ interface SubscriptionGroup {
   count: number;
 }
 
+const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
+
+const shellClass = 'min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6';
+const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]';
+const insetPanelClass = 'min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4';
+const titleClass = 'text-xs font-medium uppercase tracking-[0.14em] text-slate-300';
+const hintClass = 'mt-1 text-xs font-light leading-5 text-slate-500';
+const metricClass = 'font-mono tabular-nums whitespace-nowrap';
+const headerButtonClass = 'inline-flex whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500 transition hover:text-cyan-300';
+const primaryButtonClass = 'inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-lg border border-cyan-300/25 bg-gradient-to-r from-cyan-400 to-emerald-300 px-5 text-xs font-medium uppercase tracking-[0.14em] text-[#06111f] shadow-[0_14px_38px_rgba(34,211,238,0.18)] transition hover:from-cyan-300 hover:to-emerald-200 disabled:cursor-not-allowed disabled:opacity-45';
+const secondaryButtonClass = 'inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 text-xs font-medium uppercase tracking-[0.14em] text-slate-300 transition hover:bg-[#0f1420] hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-45';
+const iconButtonClass = 'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-cyan-500/20 bg-[#0a0e1a] text-slate-300 transition hover:bg-[#0f1420] hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-45';
+const inputClass = 'block w-full min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2.5 text-sm font-light text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10';
+const codeInputClass = 'block w-full min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2.5 font-mono text-xs font-light text-slate-200 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10';
+const metaLabelClass = 'text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500';
+const metaValueClass = 'mt-1 block min-w-0 text-xs font-light text-slate-200';
+const cardMetaValueClass = 'mt-1 block min-w-0 truncate text-right text-xs font-light text-slate-200';
+
 export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) => {
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -55,7 +73,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       const res = await api.get('/v1/emails', {
         params: { _ts: Date.now() },
         headers: { 'Cache-Control': 'no-cache' },
-        auth: { username: getAuth().user, password: getAuth().password }
+        auth: { username: getAuth().user, password: getAuth().password },
       });
       setEmails(res.data.emails || []);
       setStats(res.data.stats || {});
@@ -72,7 +90,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   const loadNodes = async () => {
     try {
       const res = await api.get('/v1/nodes', {
-        auth: { username: getAuth().user, password: getAuth().password }
+        auth: { username: getAuth().user, password: getAuth().password },
       });
       setNodes(res.data || []);
     } catch (err) {
@@ -102,7 +120,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         groupList.push({
           identifier,
           emails: emailList,
-          count: emailList.length
+          count: emailList.length,
         });
       }
     });
@@ -146,15 +164,11 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     return params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
   };
 
-  if (loading && emails.length === 0) {
-    return <div className="text-center py-5" style={{ color: 'var(--text-secondary)' }}>{t('app.loading')}</div>;
-  }
-
   const compareText = (a: string, b: string) =>
     a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 
   const filteredEmails = emailSearch.trim()
-    ? emails.filter(e => e.toLowerCase().includes(emailSearch.trim().toLowerCase()))
+    ? emails.filter((email) => email.toLowerCase().includes(emailSearch.trim().toLowerCase()))
     : emails;
 
   const sortedEmails = [...filteredEmails].sort((a, b) => {
@@ -203,209 +217,286 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   };
 
   const individualSortIndicator = (field: 'email' | 'downloads' | 'last') =>
-    individualSortField === field ? (individualSortDir === 'asc' ? ' ▲' : ' ▼') : '';
+    individualSortField === field ? (individualSortDir === 'asc' ? ' ^' : ' v') : '';
 
   const toggleNodeSelection = (nodeName: string) => {
     setSelectedNodes((prev) =>
-      prev.includes(nodeName) ? prev.filter((node) => node !== nodeName) : [...prev, nodeName]
+      prev.includes(nodeName) ? prev.filter((node) => node !== nodeName) : [...prev, nodeName],
     );
   };
 
+  const renderIndividualActions = (email: string) => {
+    const subscriptionUrl = buildSubscriptionUrl(email);
+    return (
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          className={iconButtonClass}
+          title={t('common.copy')}
+          aria-label={t('common.copy')}
+          onClick={() => copyToClipboard(subscriptionUrl)}
+        >
+          <UIIcon name="copy" size={15} />
+        </button>
+        <button
+          type="button"
+          className={iconButtonClass}
+          title={t('subscriptions.showQrCode')}
+          aria-label={t('subscriptions.showQrCode')}
+          onClick={() => {
+            setQrUrl(subscriptionUrl);
+            setShowQr(true);
+          }}
+        >
+          <UIIcon name="subscriptions" size={15} />
+        </button>
+      </div>
+    );
+  };
+
+  const renderGroupActions = (group: SubscriptionGroup) => {
+    const groupedUrl = buildSubscriptionUrl(group.identifier, true);
+    return (
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          className={iconButtonClass}
+          title={t('common.copy')}
+          aria-label={t('common.copy')}
+          onClick={() => copyToClipboard(groupedUrl)}
+        >
+          <UIIcon name="copy" size={15} />
+        </button>
+        <button
+          type="button"
+          className={iconButtonClass}
+          title={t('subscriptions.copyGroupLinksTitle')}
+          aria-label={t('subscriptions.copyGroupLinksTitle')}
+          onClick={async () => {
+            const links = group.emails.map((email) => buildSubscriptionUrl(email)).join('\n');
+            await copyToClipboard(links);
+          }}
+        >
+          <UIIcon name="link" size={15} />
+        </button>
+      </div>
+    );
+  };
+
+  const filtersActive = Boolean(
+    filterProtocol || selectedNodes.length > 0 || deliveryTransport !== 'all' || deliveryFormat !== 'base64',
+  );
+
+  if (loading && emails.length === 0) {
+    return (
+      <div className={shellClass}>
+        <div className="rounded-lg border border-cyan-500/20 bg-[#0f1420] px-4 py-8 text-center text-sm text-slate-500">
+          {t('app.loading')}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="subscription-manager">
-      <div className="panel-grid panel-grid--compact mb-3">
-        <section className="panel-block panel-block--wide">
-          <div className="panel-block__header">
-            <div>
-              <h6 className="panel-block__title">{t('subscriptions.controlsTitle')}</h6>
-              <p className="panel-block__hint">{t('subscriptions.controlsHint')}</p>
-            </div>
-            <div className="panel-inline-actions">
-              <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
-                onClick={loadEmails}
-                disabled={loading}
-              >
-                <span className="d-inline-flex align-items-center gap-1">
-                  <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
-                  {t('subscriptions.refreshEmails')}
-                </span>
-              </button>
-              <input
-                type="text"
-                className="form-control form-control-sm"
-                placeholder={t('subscriptions.searchEmailsPlaceholder')}
-                value={emailSearch}
-                onChange={e => setEmailSearch(e.target.value)}
-                style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)', width: '180px' }}
-              />
-              <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
-                title={t('subscriptions.copyAllLinksTitle')}
-                onClick={async () => {
-                  const allLinks = filteredEmails.map(email => buildSubscriptionUrl(email));
-                  await copyToClipboard(allLinks.join('\n'));
-                }}
-                disabled={filteredEmails.length === 0}
-              >
-                <span className="d-inline-flex align-items-center gap-1">
-                  <UIIcon name="copy" size={14} />
-                  {t('subscriptions.copyAllLinks', { count: filteredEmails.length })}
-                </span>
-              </button>
-              <button
-                className="btn btn-sm"
-                style={{
-                  backgroundColor: viewMode === 'individual' ? 'var(--accent)' : 'var(--bg-tertiary)',
-                  borderColor: 'var(--border-color)',
-                  color: viewMode === 'individual' ? '#000f14' : 'var(--text-primary)'
-                }}
-                onClick={() => setViewMode('individual')}
-              >
-                <span className="d-inline-flex align-items-center gap-1">
-                  <UIIcon name="user" size={14} />
-                  {t('subscriptions.individual')}
-                </span>
-              </button>
-              <button
-                className="btn btn-sm"
-                style={{
-                  backgroundColor: viewMode === 'grouped' ? 'var(--accent)' : 'var(--bg-tertiary)',
-                  borderColor: 'var(--border-color)',
-                  color: viewMode === 'grouped' ? '#000f14' : 'var(--text-primary)'
-                }}
-                onClick={() => setViewMode('grouped')}
-              >
-                <span className="d-inline-flex align-items-center gap-1">
-                  <UIIcon name="folder" size={14} />
-                  {t('subscriptions.grouped')}
-                </span>
-              </button>
-            </div>
+    <div className={shellClass}>
+      <section className={cn(panelClass, 'mb-4')}>
+        <div className="mb-4 flex min-w-0 flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div className="min-w-0">
+            <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">
+              <UIIcon name="subscriptions" size={16} />
+              {t('subscriptions.controlsTitle')}
+            </h2>
+            <p className={hintClass}>{t('subscriptions.controlsHint')}</p>
           </div>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <button type="button" className={primaryButtonClass} onClick={loadEmails} disabled={loading}>
+              <UIIcon name={loading ? 'spinner' : 'refresh'} size={15} />
+              <span className="whitespace-nowrap">{t('subscriptions.refreshEmails')}</span>
+            </button>
+            <button
+              type="button"
+              className={secondaryButtonClass}
+              title={t('subscriptions.copyAllLinksTitle')}
+              onClick={async () => {
+                const allLinks = filteredEmails.map((email) => buildSubscriptionUrl(email));
+                await copyToClipboard(allLinks.join('\n'));
+              }}
+              disabled={filteredEmails.length === 0}
+            >
+              <UIIcon name="copy" size={15} />
+              <span className="whitespace-nowrap">{t('subscriptions.copyAllLinks', { count: filteredEmails.length })}</span>
+            </button>
+          </div>
+        </div>
 
-          {error && (
-            <div className="alert mb-2" style={{ backgroundColor: 'color-mix(in srgb, var(--danger) 14%, transparent)', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
-              {error}
-            </div>
-          )}
-          {successMessage && (
-            <div className="alert mb-2" style={{ backgroundColor: 'color-mix(in srgb, var(--success) 14%, transparent)', borderColor: 'var(--success)', color: 'var(--success)' }}>
-              {successMessage}
-            </div>
-          )}
+        {error && (
+          <div className="mb-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+            {error}
+          </div>
+        )}
+        {successMessage && (
+          <div className="mb-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+            {successMessage}
+          </div>
+        )}
 
-          <div className="row g-2 mb-2">
-            <div className="col-12">
-              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('subscriptions.nodeFilter')}</label>
-              <div className="panel-inline-actions">
-                {nodes.map((node) => (
-                  <button
-                    key={node.id}
-                    className="btn btn-sm"
-                    style={{
-                      backgroundColor: selectedNodes.includes(node.name) ? 'var(--accent)' : 'var(--bg-tertiary)',
-                      borderColor: 'var(--border-color)',
-                      color: selectedNodes.includes(node.name) ? '#000f14' : 'var(--text-primary)'
-                    }}
-                    onClick={() => toggleNodeSelection(node.name)}
-                  >
-                    <span className="d-inline-flex align-items-center gap-1">
-                      {selectedNodes.includes(node.name) && <UIIcon name="check" size={12} />}
-                      {node.name}
-                    </span>
-                  </button>
-                ))}
-                {selectedNodes.length > 0 && (
-                  <button
-                    className="btn btn-sm"
-                    style={{ backgroundColor: 'var(--warning)', borderColor: 'var(--warning)', color: 'var(--text-primary)' }}
-                    onClick={() => setSelectedNodes([])}
-                  >
-                    <span className="d-inline-flex align-items-center gap-1">
-                      <UIIcon name="x" size={12} />
-                      {t('common.clear')}
-                    </span>
-                  </button>
-                )}
+        <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+          <div className={insetPanelClass}>
+            <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <h3 className={titleClass}>{t('subscriptions.deliveryProfile')}</h3>
+                <p className={hintClass}>{t('subscriptions.deliveryHint')}</p>
+              </div>
+              <div className="flex min-w-0 flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={cn(
+                    secondaryButtonClass,
+                    viewMode === 'individual' && 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200',
+                  )}
+                  onClick={() => setViewMode('individual')}
+                >
+                  <UIIcon name="user" size={14} />
+                  <span className="whitespace-nowrap">{t('subscriptions.individual')}</span>
+                </button>
+                <button
+                  type="button"
+                  className={cn(
+                    secondaryButtonClass,
+                    viewMode === 'grouped' && 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200',
+                  )}
+                  onClick={() => setViewMode('grouped')}
+                >
+                  <UIIcon name="folder" size={14} />
+                  <span className="whitespace-nowrap">{t('subscriptions.grouped')}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-3">
+              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4">
+                <label className={titleClass}>{t('subscriptions.subscriptionProfile')}</label>
+                <div className="mt-3 min-w-0">
+                  <ChoiceChips
+                    options={[
+                      { value: '', label: t('common.all') },
+                      { value: 'vless', label: 'VLESS' },
+                      { value: 'vmess', label: 'VMess' },
+                      { value: 'trojan', label: 'Trojan' },
+                    ]}
+                    value={filterProtocol}
+                    onChange={(value) => setFilterProtocol(value)}
+                  />
+                </div>
+              </div>
+              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4">
+                <label className={titleClass}>{t('subscriptions.transportHint')}</label>
+                <div className="mt-3 min-w-0">
+                  <ChoiceChips
+                    options={[
+                      { value: 'all', label: t('common.all') },
+                      { value: 'ws', label: 'WS' },
+                      { value: 'grpc', label: 'gRPC' },
+                    ]}
+                    value={deliveryTransport}
+                    onChange={(value) => setDeliveryTransport(value)}
+                  />
+                </div>
+              </div>
+              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4">
+                <label className={titleClass}>{t('subscriptions.outputFormat')}</label>
+                <div className="mt-3 min-w-0">
+                  <ChoiceChips
+                    options={[
+                      { value: 'base64', label: 'Base64' },
+                      { value: 'json', label: 'JSON' },
+                      { value: 'raw', label: 'Raw' },
+                    ]}
+                    value={deliveryFormat}
+                    onChange={(value) => setDeliveryFormat(value)}
+                  />
+                </div>
               </div>
             </div>
           </div>
 
-          {(filterProtocol || selectedNodes.length > 0 || deliveryTransport !== 'all' || deliveryFormat !== 'base64') && (
-            <div className="alert mt-2 mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--info) 14%, transparent)', borderColor: 'var(--info)', color: 'var(--text-primary)' }}>
-              <small>
-                <strong>{t('subscriptions.activeFilters')}:</strong>
-                {filterProtocol && ` ${t('subscriptions.protocolFilter')}: ${filterProtocol.toUpperCase()}`}
-                {selectedNodes.length > 0 && ` | ${t('subscriptions.nodeFilters')}: ${selectedNodes.join(', ')}`}
-                {deliveryTransport !== 'all' && ` | ${t('subscriptions.transportHint')}: ${deliveryTransport.toUpperCase()}`}
-                {deliveryFormat !== 'base64' && ` | ${t('subscriptions.outputFormat')}: ${deliveryFormat.toUpperCase()}`}
-              </small>
+          <aside className={insetPanelClass}>
+            <div className="min-w-0">
+              <h3 className={titleClass}>{t('subscriptions.nodeFilter')}</h3>
+              <p className={hintClass}>{t('subscriptions.searchEmailsPlaceholder')}</p>
             </div>
-          )}
-        </section>
 
-        <aside className="panel-block">
-          <div className="panel-block__header">
-            <div>
-              <h6 className="panel-block__title">{t('subscriptions.deliveryProfile')}</h6>
-              <p className="panel-block__hint">{t('subscriptions.deliveryHint')}</p>
+            <div className="mt-4">
+              <div className="relative min-w-0">
+                <UIIcon name="search" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
+                <input
+                  type="text"
+                  className={cn(inputClass, 'pl-10')}
+                  placeholder={t('subscriptions.searchEmailsPlaceholder')}
+                  value={emailSearch}
+                  onChange={(e) => setEmailSearch(e.target.value)}
+                />
+              </div>
             </div>
-          </div>
-          <div className="panel-block__stack">
-            <div>
-              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('subscriptions.subscriptionProfile')}</label>
-              <ChoiceChips
-                options={[
-                  { value: '', label: t('common.all') },
-                  { value: 'vless', label: 'VLESS' },
-                  { value: 'vmess', label: 'VMess' },
-                  { value: 'trojan', label: 'Trojan' },
-                ]}
-                value={filterProtocol}
-                onChange={(value) => setFilterProtocol(value)}
-                
-              />
-            </div>
-            <div>
-              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('subscriptions.transportHint')}</label>
-              <ChoiceChips
-                options={[
-                  { value: 'all', label: t('common.all') },
-                  { value: 'ws', label: 'WS' },
-                  { value: 'grpc', label: 'gRPC' },
-                ]}
-                value={deliveryTransport}
-                onChange={(value) => setDeliveryTransport(value)}
-                
-              />
-            </div>
-            <div>
-              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>{t('subscriptions.outputFormat')}</label>
-              <ChoiceChips
-                options={[
-                  { value: 'base64', label: 'Base64' },
-                  { value: 'json', label: 'JSON' },
-                  { value: 'raw', label: 'Raw' },
-                ]}
-                value={deliveryFormat}
-                onChange={(value) => setDeliveryFormat(value)}
-                
-              />
-            </div>
-          </div>
-        </aside>
-      </div>
 
-      <section className="panel-block">
-        <div className="d-flex justify-content-between align-items-center mb-3 gap-2">
-          <h6 className="mb-0" style={{ color: 'var(--text-primary)' }}>
-            {viewMode === 'individual' ? t('subscriptions.individualTitle', { count: emails.length }) : t('subscriptions.groupedTitle', { count: groups.length })}
-          </h6>
-          {viewMode === 'grouped' ? (
-            <div className="d-flex gap-2">
+            <div className="mt-4 flex min-w-0 flex-wrap gap-2">
+              {nodes.map((node) => {
+                const active = selectedNodes.includes(node.name);
+                return (
+                  <button
+                    key={node.id}
+                    type="button"
+                    className={cn(
+                      secondaryButtonClass,
+                      'h-9 px-3 text-[11px]',
+                      active && 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200',
+                    )}
+                    onClick={() => toggleNodeSelection(node.name)}
+                  >
+                    {active && <UIIcon name="check" size={13} />}
+                    <span className="min-w-0 truncate">{node.name}</span>
+                  </button>
+                );
+              })}
+              {selectedNodes.length > 0 && (
+                <button type="button" className={secondaryButtonClass} onClick={() => setSelectedNodes([])}>
+                  <UIIcon name="clear" size={14} />
+                  <span className="whitespace-nowrap">{t('common.clear')}</span>
+                </button>
+              )}
+            </div>
+
+            {filtersActive && (
+              <div className="mt-4 rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-3 text-xs text-slate-300">
+                <span className="block text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
+                  {t('subscriptions.activeFilters')}
+                </span>
+                <div className="mt-2 flex min-w-0 flex-wrap gap-2 text-slate-400">
+                  {filterProtocol && <span className={metricClass}>{t('subscriptions.protocolFilter')}: {filterProtocol.toUpperCase()}</span>}
+                  {selectedNodes.length > 0 && <span className="min-w-0 truncate">{t('subscriptions.nodeFilters')}: {selectedNodes.join(', ')}</span>}
+                  {deliveryTransport !== 'all' && <span className={metricClass}>{t('subscriptions.transportHint')}: {deliveryTransport.toUpperCase()}</span>}
+                  {deliveryFormat !== 'base64' && <span className={metricClass}>{t('subscriptions.outputFormat')}: {deliveryFormat.toUpperCase()}</span>}
+                </div>
+              </div>
+            )}
+          </aside>
+        </div>
+      </section>
+
+      <section className={panelClass}>
+        <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-slate-100">
+              {viewMode === 'individual'
+                ? t('subscriptions.individualTitle', { count: emails.length })
+                : t('subscriptions.groupedTitle', { count: groups.length })}
+            </h3>
+            <p className={hintClass}>
+              {viewMode === 'grouped' ? t('subscriptions.copyGroupLinksTitle') : t('traffic.sortHint')}
+            </p>
+          </div>
+          {viewMode === 'grouped' && (
+            <div className="flex min-w-0 flex-wrap gap-2">
               <ChoiceChips
                 options={[
                   { value: 'count', label: t('subscriptions.count') },
@@ -413,7 +504,6 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                 ]}
                 value={groupSortField}
                 onChange={(value) => setGroupSortField(value)}
-                
               />
               <ChoiceChips
                 options={[
@@ -422,149 +512,191 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                 ]}
                 value={groupSortDir}
                 onChange={(value) => setGroupSortDir(value)}
-                
               />
             </div>
-          ) : (
-            <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('traffic.sortHint')}</div>
           )}
         </div>
 
         {emails.length === 0 ? (
-          <p className="text-center py-3 mb-0" style={{ color: 'var(--text-secondary)' }}>{t('subscriptions.noUsersFound')}</p>
+          <p className="rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-8 text-center text-sm text-slate-500">
+            {t('subscriptions.noUsersFound')}
+          </p>
         ) : viewMode === 'individual' ? (
-          <div className="table-responsive table-shell">
-            <table className="table table-hover small mb-0" style={{ color: 'var(--text-primary)' }}>
-              <thead>
-                <tr style={{ borderColor: 'var(--border-color)' }}>
-                  <th style={{ color: 'var(--text-secondary)' }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyIndividualSortFromHeader('email')}>
-                      {t('clients.email')}{individualSortIndicator('email')}
-                    </button>
-                  </th>
-                  <th style={{ color: 'var(--text-secondary)' }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyIndividualSortFromHeader('downloads')}>
-                      {t('subscriptions.downloads')}{individualSortIndicator('downloads')}
-                    </button>
-                  </th>
-                  <th style={{ color: 'var(--text-secondary)' }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: 'var(--text-secondary)' }} onClick={() => applyIndividualSortFromHeader('last')}>
-                      {t('subscriptions.lastSeen')}{individualSortIndicator('last')}
-                    </button>
-                  </th>
-                  <th style={{ color: 'var(--text-secondary)' }}>{t('subscriptions.link')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedEmails.map((email) => (
-                  <tr key={email} style={{ borderColor: 'var(--border-color)' }}>
-                    <td className="align-middle">
-                      <strong style={{ color: 'var(--text-primary)' }}>{email}</strong>
-                    </td>
-                    <td className="align-middle">
-                      <span className="badge" style={{ backgroundColor: 'var(--info)' }}>
-                        {stats[email]?.count || 0}
-                      </span>
-                    </td>
-                    <td className="align-middle">
-                      <small style={{ color: 'var(--text-secondary)' }}>{stats[email]?.last || '--'}</small>
-                    </td>
-                    <td className="align-middle">
-                      <div className="input-group input-group-sm">
-                        <input
-                          type="text"
-                          id={`sub-${email}`}
-                          className="form-control form-control-sm"
-                          readOnly
-                          value={buildSubscriptionUrl(email)}
-                          style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
-                        />
-                        <button
-                          className="btn"
-                          style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
-                          onClick={() => copyToClipboard(buildSubscriptionUrl(email))}
-                        >
-                          {t('common.copy')}
-                        </button>
-                        <button
-                          className="btn"
-                          style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
-                          title={t('subscriptions.showQrCode')}
-                          onClick={() => { setQrUrl(buildSubscriptionUrl(email)); setShowQr(true); }}
-                        >
-                          ▦
-                        </button>
-                      </div>
-                    </td>
+          <div className="min-w-0">
+            <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 lg:block">
+              <table className="w-full table-fixed border-collapse text-left text-xs">
+                <thead className="bg-[#0a0e1a] text-[10px] uppercase tracking-wider text-slate-500">
+                  <tr className="border-b border-cyan-500/20">
+                    <th className="px-4 py-3">
+                      <button type="button" className={headerButtonClass} onClick={() => applyIndividualSortFromHeader('email')}>
+                        {t('clients.email')}{individualSortIndicator('email')}
+                      </button>
+                    </th>
+                    <th className="w-32 px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        className={cn(headerButtonClass, 'justify-end')}
+                        onClick={() => applyIndividualSortFromHeader('downloads')}
+                      >
+                        {t('subscriptions.downloads')}{individualSortIndicator('downloads')}
+                      </button>
+                    </th>
+                    <th className="w-40 px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        className={cn(headerButtonClass, 'justify-end')}
+                        onClick={() => applyIndividualSortFromHeader('last')}
+                      >
+                        {t('subscriptions.lastSeen')}{individualSortIndicator('last')}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3">{t('subscriptions.link')}</th>
+                    <th className="w-28 px-4 py-3 text-right">{t('common.actions')}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-slate-200">
+                  {sortedEmails.map((email) => {
+                    const subscriptionUrl = buildSubscriptionUrl(email);
+                    return (
+                      <tr key={email} className="bg-[#0f1420] transition hover:bg-cyan-400/5">
+                        <td className="min-w-0 px-4 py-3">
+                          <div className="min-w-0">
+                            <strong className="block truncate text-sm text-slate-100" title={email}>{email}</strong>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className={cn(metricClass, 'inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-cyan-200')}>
+                            {stats[email]?.count || 0}
+                          </span>
+                        </td>
+                        <td className={cn(metricClass, 'px-4 py-3 text-right text-slate-400')}>
+                          {stats[email]?.last || '--'}
+                        </td>
+                        <td className="min-w-0 px-4 py-3">
+                          <div className="min-w-0">
+                            <input
+                              type="text"
+                              readOnly
+                              value={subscriptionUrl}
+                              className={cn(codeInputClass, 'truncate whitespace-nowrap')}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-2">
+                            {renderIndividualActions(email)}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="grid min-w-0 grid-cols-1 gap-3 lg:hidden">
+              {sortedEmails.map((email) => {
+                const subscriptionUrl = buildSubscriptionUrl(email);
+                return (
+                  <article key={email} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <strong className="block truncate text-sm text-slate-100" title={email}>{email}</strong>
+                        <div className="mt-3 grid min-w-0 grid-cols-2 gap-3">
+                          <div className="min-w-0">
+                            <span className={metaLabelClass}>{t('subscriptions.downloads')}</span>
+                            <span className={cn(metaValueClass, metricClass)}>{stats[email]?.count || 0}</span>
+                          </div>
+                          <div className="min-w-0 text-right">
+                            <span className={metaLabelClass}>{t('subscriptions.lastSeen')}</span>
+                            <span className={cn(cardMetaValueClass, metricClass)}>{stats[email]?.last || '--'}</span>
+                          </div>
+                        </div>
+                        <div className="mt-3 min-w-0">
+                          <span className={metaLabelClass}>{t('subscriptions.link')}</span>
+                          <div className="mt-2 min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] px-3 py-2">
+                            <span className="block min-w-0 truncate font-mono text-xs text-slate-300" title={subscriptionUrl}>
+                              {subscriptionUrl}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex shrink-0 flex-col gap-2">
+                        {renderIndividualActions(email)}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
           </div>
         ) : (
-          <div className="row g-3">
-            {sortedGroups.map((group, idx) => (
-              <div className="col-md-6" key={idx}>
-                <div className="panel-block h-100">
-                  <div className="d-flex justify-content-between align-items-center mb-2">
-                    <div>
-                      <h6 className="mb-0" style={{ color: 'var(--accent)' }}>
-                        <span className="d-inline-flex align-items-center gap-1">
-                          <UIIcon name="folder" size={13} />
-                          {group.identifier}
-                        </span>
-                      </h6>
-                      <small style={{ color: 'var(--text-secondary)' }}>
-                        {t('subscriptions.clientCount', { count: group.count })}
-                        {group.emails && group.emails.length > 0 && group.emails.length !== group.count && (
-                          <span style={{ color: 'var(--text-secondary)' }}> · {t('subscriptions.emailCount', { count: group.emails.length })}</span>
-                        )}
-                      </small>
-                    </div>
-                    <span className="badge" style={{ backgroundColor: 'var(--accent)' }}>{group.count}</span>
-                  </div>
-
-                  <div className="mb-2" style={{ maxHeight: '120px', overflowY: 'auto' }}>
-                    {group.emails.map((email, i) => (
-                      <div key={i} className="small" style={{ color: 'var(--text-secondary)' }}>
-                        • {email}
+          <div className="grid min-w-0 grid-cols-1 gap-6 md:grid-cols-3">
+            {sortedGroups.map((group) => {
+              const groupedUrl = buildSubscriptionUrl(group.identifier, true);
+              return (
+                <article
+                  key={group.identifier}
+                  className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.22)]"
+                >
+                  <div className="mb-4 flex min-w-0 items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
+                        <UIIcon name="folder" size={12} />
+                        <span className="whitespace-nowrap">{t('subscriptions.group')}</span>
                       </div>
-                    ))}
+                      <h4 className="mt-3 truncate text-base font-semibold text-slate-100" title={group.identifier}>
+                        {group.identifier}
+                      </h4>
+                      <p className="mt-2 text-sm text-slate-400">
+                        <span className={metricClass}>{t('subscriptions.clientCount', { count: group.count })}</span>
+                        {group.emails.length > 0 && group.emails.length !== group.count && (
+                          <span className={cn(metricClass, 'ml-2 text-slate-500')}>
+                            {t('subscriptions.emailCount', { count: group.emails.length })}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                    <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 font-mono text-xs tabular-nums text-cyan-200 whitespace-nowrap">
+                      {group.count}
+                    </span>
                   </div>
 
-                  <div className="input-group input-group-sm">
-                    <input
-                      type="text"
-                      className="form-control form-control-sm"
-                      readOnly
-                      value={buildSubscriptionUrl(group.identifier, true)}
-                      style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
-                    />
-                    <button
-                      className="btn"
-                      style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
-                      onClick={() => copyToClipboard(buildSubscriptionUrl(group.identifier, true))}
-                    >
-                      {t('common.copy')}
-                    </button>
-                    <button
-                      className="btn"
-                      style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}
-                      title={t('subscriptions.copyGroupLinksTitle')}
-                      onClick={async () => {
-                        const links = group.emails.map(e => buildSubscriptionUrl(e)).join('\n');
-                        await copyToClipboard(links);
-                      }}
-                    >
-                      {t('subscriptions.allLinks')}
-                    </button>
+                  <div className="rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3">
+                    <span className={titleClass}>{t('subscriptions.link')}</span>
+                    <div className="mt-2 min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] px-3 py-2">
+                      <span className="block min-w-0 truncate font-mono text-xs text-slate-300" title={groupedUrl}>
+                        {groupedUrl}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              </div>
-            ))}
+
+                  <div className="mt-4 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className={titleClass}>{t('clients.email')}</span>
+                      <span className={cn(metricClass, 'text-[11px] text-slate-500')}>{group.emails.length}</span>
+                    </div>
+                    <div className="max-h-32 space-y-2 overflow-y-auto pr-1">
+                      {group.emails.map((email) => (
+                        <div key={email} className="min-w-0 rounded-lg border border-cyan-500/15 bg-[#0f1420] px-3 py-2">
+                          <span className="block min-w-0 truncate font-mono text-xs text-slate-300" title={email}>
+                            {email}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-end gap-2">
+                    {renderGroupActions(group)}
+                  </div>
+                </article>
+              );
+            })}
+
             {groups.length === 0 && (
-              <div className="col-12">
-                <p className="text-center py-3 mb-0" style={{ color: 'var(--text-secondary)' }}>
+              <div className="md:col-span-3">
+                <p className="rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-8 text-center text-sm text-slate-500">
                   {t('subscriptions.noGroupsFound')}
                 </p>
               </div>
@@ -573,27 +705,49 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         )}
       </section>
 
-      {/* QR Code Modal */}
       {showQr && qrUrl && (
-        <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.7)' }} onClick={e => { if (e.target === e.currentTarget) setShowQr(false); }}>
-          <div className="modal-dialog modal-dialog-centered">
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-              <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
-                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>▦ {t('subscriptions.qrCodeTitle')}</h6>
-                <button type="button" className="btn-close btn-close-white" onClick={() => setShowQr(false)} />
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowQr(false);
+          }}
+        >
+          <div className="w-full max-w-md rounded-lg border border-cyan-500/20 bg-[#0f1420] shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+            <div className="flex items-center justify-between border-b border-cyan-500/20 px-5 py-4">
+              <div className="min-w-0">
+                <h4 className="flex items-center gap-2 text-sm font-medium uppercase tracking-[0.14em] text-slate-100">
+                  <UIIcon name="subscriptions" size={15} />
+                  {t('subscriptions.qrCodeTitle')}
+                </h4>
+                <p className="mt-1 text-xs text-slate-500">{t('subscriptions.qrCodeAlt')}</p>
               </div>
-              <div className="modal-body d-flex flex-column align-items-center gap-3">
+              <button
+                type="button"
+                className={iconButtonClass}
+                aria-label={t('common.close', 'Close')}
+                onClick={() => setShowQr(false)}
+              >
+                <UIIcon name="x" size={15} />
+              </button>
+            </div>
+            <div className="space-y-4 px-5 py-5">
+              <div className="flex justify-center rounded-lg border border-cyan-500/20 bg-white p-4">
                 <img
                   src={`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(qrUrl)}`}
                   alt={t('subscriptions.qrCodeAlt')}
-                  width={280} height={280}
-                  style={{ border: '2px solid var(--border-color)', borderRadius: '8px', backgroundColor: '#fff' }}
+                  width={280}
+                  height={280}
+                  className="h-auto w-full max-w-[280px]"
                 />
-                <div className="d-flex gap-2 w-100">
-                  <input readOnly className="form-control form-control-sm" value={qrUrl}
-                    style={{ fontFamily: 'monospace', fontSize: '11px', backgroundColor: 'var(--bg-primary)', color: 'var(--text-secondary)', borderColor: 'var(--border-color)' }} />
-                  <button className="btn btn-sm" style={{ backgroundColor: 'var(--accent)', color: '#000f14', whiteSpace: 'nowrap' }}
-                    onClick={() => copyToClipboard(qrUrl)}>{t('common.copy')}</button>
+              </div>
+              <div className="min-w-0">
+                <label className={titleClass}>{t('subscriptions.link')}</label>
+                <div className="mt-2 flex min-w-0 items-center gap-2">
+                  <input type="text" readOnly value={qrUrl} className={cn(codeInputClass, 'truncate whitespace-nowrap')} />
+                  <button type="button" className={secondaryButtonClass} onClick={() => copyToClipboard(qrUrl)}>
+                    <UIIcon name="copy" size={15} />
+                    <span className="whitespace-nowrap">{t('common.copy')}</span>
+                  </button>
                 </div>
               </div>
             </div>

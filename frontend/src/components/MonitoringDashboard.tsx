@@ -240,6 +240,7 @@ function buildGrafanaUrl(runtimePath?: string): string {
 const bytesToMb = (bytes: number) => bytes / (1024 * 1024);
 const bytesToGb = (bytes: number) => bytes / (1024 * 1024 * 1024);
 const CHART_PALETTE = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#e11d48', '#84cc16', '#f97316', '#14b8a6'];
+const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
 
 function getBucketSec(rangeSec: number, preferredStepSec?: number): number {
   if (preferredStepSec && preferredStepSec > 0) return preferredStepSec;
@@ -1070,7 +1071,7 @@ export const MonitoringDashboard: React.FC = () => {
         align: 'start' as const,
         maxHeight: 84,
         labels: {
-          color: 'var(--text-primary)',
+          color: '#e2e8f0',
           usePointStyle: true,
           pointStyle: 'circle' as const,
           boxWidth: 10,
@@ -1083,11 +1084,11 @@ export const MonitoringDashboard: React.FC = () => {
         },
       },
       tooltip: {
-        backgroundColor: 'rgba(8, 8, 8, 0.96)',
-        borderColor: 'rgba(255, 255, 255, 0.18)',
+        backgroundColor: '#0f1420',
+        borderColor: 'rgba(30, 41, 59, 0.6)',
         borderWidth: 1,
-        titleColor: '#fafafa',
-        bodyColor: '#d4d4d8',
+        titleColor: '#e2e8f0',
+        bodyColor: '#cbd5e1',
         padding: 10,
         cornerRadius: 10,
         displayColors: true,
@@ -1111,22 +1112,22 @@ export const MonitoringDashboard: React.FC = () => {
     scales: {
       x: {
         ticks: {
-          color: 'var(--text-secondary)',
+          color: '#94a3b8',
           maxTicksLimit: 10,
           font: {
             weight: 600 as const,
           },
         },
-        grid: { color: 'var(--border-color)' + '55' },
+        grid: { color: 'rgba(30, 41, 59, 0.6)' },
       },
       y: {
         ticks: {
-          color: 'var(--text-secondary)',
+          color: '#94a3b8',
           font: {
             weight: 600 as const,
           },
         },
-        grid: { color: 'var(--border-color)' + '55' },
+        grid: { color: 'rgba(30, 41, 59, 0.6)' },
       },
     },
   };
@@ -1145,7 +1146,7 @@ export const MonitoringDashboard: React.FC = () => {
           },
           title: (items: any[]) => {
             const base = items?.[0]?.label || '';
-            return `${base} • ${trafficModeLabel} • step ${effectiveTrafficStepSec}s • ${trafficSourceLabel} • ${trafficSmoothingLabel}`;
+            return `${base} â€¢ ${trafficModeLabel} â€¢ step ${effectiveTrafficStepSec}s â€¢ ${trafficSourceLabel} â€¢ ${trafficSmoothingLabel}`;
           },
         },
       },
@@ -1273,353 +1274,373 @@ export const MonitoringDashboard: React.FC = () => {
     };
   }, [adguardHistory, adguardTrendLabels]);
 
+  const inputClass =
+    'min-w-0 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-xs font-light text-slate-100 outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10 placeholder:text-slate-600';
+  const selectClass = `${inputClass} pr-8`;
+  const primaryButtonClass =
+    'inline-flex h-9 min-w-0 items-center justify-center rounded-md border border-cyan-300/25 bg-gradient-to-r from-cyan-500 to-blue-500 px-3 text-xs font-medium tracking-wide text-white transition hover:from-cyan-400 hover:to-blue-400 disabled:cursor-not-allowed disabled:opacity-45';
+  const secondaryButtonClass =
+    'inline-flex h-9 min-w-0 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 text-xs font-medium text-slate-100 transition hover:border-cyan-300/40 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-45';
+  const sectionTitleClass = 'text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400';
+  const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420]';
+  const subtlePanelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a]';
+  const metricValueClass = 'font-mono tabular-nums whitespace-nowrap text-sm font-medium text-slate-100';
+  const compactMetricClass = 'font-mono tabular-nums whitespace-nowrap text-xs font-medium text-slate-100';
+  const chartCardClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4';
+  const toneClass = (ok: boolean) => (ok ? 'text-emerald-300' : 'text-rose-300');
+  const gaugeTone = (value: number) =>
+    value >= 85
+      ? { fill: 'from-rose-500 to-red-600', text: 'text-rose-300' }
+      : value >= 60
+      ? { fill: 'from-amber-400 to-orange-500', text: 'text-amber-300' }
+      : { fill: 'from-cyan-500 to-blue-500', text: 'text-cyan-300' };
+  const usageCards = [
+    {
+      label: 'Collector',
+      value: depsHealth?.collector_running ? 'running' : 'stopped',
+      percent: depsHealth?.collector_running ? 100 : 0,
+      helper: depsHealth?.collector_running ? 'polling active' : 'polling idle',
+    },
+    {
+      label: 'Redis',
+      value: depsHealth?.redis?.enabled ? (depsHealth?.redis?.ok ? 'ok' : 'degraded') : 'disabled',
+      percent: depsHealth?.redis?.enabled ? (depsHealth?.redis?.ok ? 100 : 62) : 0,
+      helper: depsHealth?.redis?.enabled ? (depsHealth?.redis?.error || 'cache layer') : 'cache off',
+    },
+    {
+      label: isAllScope ? t('monitoringDashboard.nodesOnline') : t('monitoringDashboard.nodeStatus'),
+      value: isAllScope
+        ? `${allNodesStatus.online}/${allNodesStatus.total}`
+        : latestForSelected?.available
+        ? t('nodes.online')
+        : t('nodes.offline'),
+      percent: isAllScope
+        ? allNodesStatus.total > 0
+          ? Math.round((allNodesStatus.online / allNodesStatus.total) * 100)
+          : 0
+        : latestForSelected?.available
+        ? 100
+        : 0,
+      helper: isAllScope ? 'available fleet' : selectedNodeName,
+    },
+    {
+      label: isAllScope ? t('monitoringDashboard.currentOnlineClients') : t('monitoringDashboard.currentOnlineClients'),
+      value: String(isAllScope ? allNodesStatus.onlineClients : latestForSelected?.online_clients ?? 0),
+      percent: Math.min(100, (isAllScope ? allNodesStatus.onlineClients : latestForSelected?.online_clients ?? 0) * 5),
+      helper: isAllScope ? 'active sessions' : 'node sessions',
+    },
+  ];
+  const stackCards = [
+    {
+      label: 'Prometheus',
+      ok: Boolean(stackStatus?.services?.prometheus?.ok),
+      value: stackStatus?.services?.prometheus?.ok ? t('nodes.online') : t('nodes.offline'),
+      percent: stackStatus?.services?.prometheus?.ok ? 100 : 0,
+    },
+    {
+      label: 'Loki',
+      ok: Boolean(stackStatus?.services?.loki?.ok),
+      value: stackStatus?.services?.loki?.ok ? t('nodes.online') : t('nodes.offline'),
+      percent: stackStatus?.services?.loki?.ok ? 100 : 0,
+    },
+    {
+      label: 'Grafana',
+      ok: Boolean(stackStatus?.services?.grafana?.ok),
+      value: stackStatus?.services?.grafana?.ok ? t('nodes.online') : t('nodes.offline'),
+      percent: stackStatus?.services?.grafana?.ok ? 100 : 0,
+    },
+  ];
+
   return (
-    <div className="monitoring-panel panel-block" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-      <div className="monitoring-panel__header mb-3">
-        <h4 className="mb-0" style={{ color: 'var(--text-primary)' }}>
-          {t('nav.monitoring')}
-        </h4>
-        <a
-          className="btn btn-sm"
-          href={grafanaUrl}
-          target="_blank"
-          rel="noreferrer"
-          style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
-        >
+    <div className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6">
+      <div className="mb-6 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">{t('nav.monitoring')}</h2>
+        </div>
+        <a className={primaryButtonClass} href={grafanaUrl} target="_blank" rel="noreferrer">
           {t('monitoringDashboard.openGrafana')}
         </a>
       </div>
 
       {error && (
-        <div className="alert mb-3" style={{ backgroundColor: 'color-mix(in srgb, var(--danger) 14%, transparent)', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
+        <div className="mb-4 rounded-lg border border-rose-500/45 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
           {error}
         </div>
       )}
 
-      <div className="row g-2 mb-3">
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            {t('common.server')}
-          </label>
-          <ChoiceChips
-            options={[
-              { value: 'all', label: t('common.all') },
-              ...nodes.map((n) => ({ value: String(n.id), label: n.name })),
-            ]}
-            value={selectedScope}
-            onChange={(value) => setSelectedScope(value)}
-            
-          />
+      <section className="mb-4 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('common.server')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={[
+                { value: 'all', label: t('common.all') },
+                ...nodes.map((n) => ({ value: String(n.id), label: n.name })),
+              ]}
+              value={selectedScope}
+              onChange={(value) => setSelectedScope(value)}
+            />
+          </div>
         </div>
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            {t('monitoringDashboard.range')}
-          </label>
-          <ChoiceChips
-            options={RANGE_OPTIONS.map((range) => ({ value: range.value, label: range.label }))}
-            value={rangeSec}
-            onChange={(value) => setRangeSec(value)}
-            
-          />
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('monitoringDashboard.range')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={RANGE_OPTIONS.map((range) => ({ value: range.value, label: range.label }))}
+              value={rangeSec}
+              onChange={(value) => setRangeSec(value)}
+            />
+          </div>
         </div>
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            {t('traffic.title')}
-          </label>
-          <ChoiceChips
-            options={[
-              { value: 'MB', label: 'MB' },
-              { value: 'GB', label: 'GB' },
-            ]}
-            value={trafficUnit}
-            onChange={(value) => setTrafficUnit(value as 'MB' | 'GB')}
-            
-          />
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('traffic.title')}</div>
+          </div>
+          <div className="flex min-w-0 flex-col gap-3 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={[
+                { value: 'MB', label: 'MB' },
+                { value: 'GB', label: 'GB' },
+              ]}
+              value={trafficUnit}
+              onChange={(value) => setTrafficUnit(value as 'MB' | 'GB')}
+            />
+            <button
+              className={secondaryButtonClass}
+              onClick={() => {
+                loadHistory(selectedScope, rangeSec);
+                loadLatestSnapshot();
+                loadDepsHealth();
+                loadAdguardOverview();
+                loadAdguardHistory();
+                loadStackStatus();
+              }}
+              disabled={loadingHistory}
+            >
+              {loadingHistory ? t('header.updating') : t('common.refresh')}
+            </button>
+          </div>
         </div>
-        <div className="col-md-3 d-flex align-items-end">
-          <button
-            className="btn btn-sm w-100"
-            style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
-            onClick={() => {
-              loadHistory(selectedScope, rangeSec);
-              loadLatestSnapshot();
-              loadDepsHealth();
-              loadAdguardOverview();
-              loadAdguardHistory();
-              loadStackStatus();
-            }}
-            disabled={loadingHistory}
-          >
-            {loadingHistory ? t('header.updating') : t('common.refresh')}
-          </button>
-        </div>
-      </div>
+      </section>
 
-      <div className="row g-2 mb-3">
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            {t('monitoringDashboard.trafficMode')}
-          </label>
-          <ChoiceChips
-            options={[
-              { value: 'history', label: 'History' },
-              { value: 'live', label: 'Live' },
-            ]}
-            value={trafficMode}
-            onChange={(value) => setTrafficMode(value as TrafficMode)}
-            
-          />
+      <section className="mb-6 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-5">
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('monitoringDashboard.trafficMode')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={[
+                { value: 'history', label: 'History' },
+                { value: 'live', label: 'Live' },
+              ]}
+              value={trafficMode}
+              onChange={(value) => setTrafficMode(value as TrafficMode)}
+            />
+          </div>
         </div>
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            {t('monitoringDashboard.source')}
-          </label>
-          <ChoiceChips
-            options={[
-              { value: 'nodes', label: 'Nodes' },
-              { value: 'people', label: t('monitoringDashboard.people') },
-              { value: 'inbounds', label: t('nav.inbounds') },
-            ]}
-            value={trafficSource}
-            onChange={(value) => setTrafficSource(value as TrafficSource)}
-            
-          />
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('monitoringDashboard.source')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={[
+                { value: 'nodes', label: 'Nodes' },
+                { value: 'people', label: t('monitoringDashboard.people') },
+                { value: 'inbounds', label: t('nav.inbounds') },
+              ]}
+              value={trafficSource}
+              onChange={(value) => setTrafficSource(value as TrafficSource)}
+            />
+          </div>
         </div>
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            {t('monitoringDashboard.step')}
-          </label>
-          <ChoiceChips
-            options={TRAFFIC_STEP_OPTIONS.map((step) => ({ value: step.value, label: step.label }))}
-            value={trafficStepSec}
-            onChange={(value) => setTrafficStepSec(Number(value))}
-            
-          />
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('monitoringDashboard.step')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={TRAFFIC_STEP_OPTIONS.map((step) => ({ value: step.value, label: step.label }))}
+              value={trafficStepSec}
+              onChange={(value) => setTrafficStepSec(Number(value))}
+            />
+          </div>
         </div>
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            {t('monitoringDashboard.style')}
-          </label>
-          <ChoiceChips
-            options={[
-              { value: 'stepped', label: 'Stepped' },
-              { value: 'bars', label: 'Bars' },
-              { value: 'smooth', label: 'Smooth' },
-            ]}
-            value={trafficVisualStyle}
-            onChange={(value) => setTrafficVisualStyle(value as TrafficVisualStyle)}
-            
-          />
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('monitoringDashboard.style')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={[
+                { value: 'stepped', label: 'Stepped' },
+                { value: 'bars', label: 'Bars' },
+                { value: 'smooth', label: 'Smooth' },
+              ]}
+              value={trafficVisualStyle}
+              onChange={(value) => setTrafficVisualStyle(value as TrafficVisualStyle)}
+            />
+          </div>
         </div>
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
-            {t('monitoringDashboard.smoothing')}
-          </label>
-          <ChoiceChips
-            options={[
-              { value: 'raw', label: 'Raw' },
-              { value: 'sma3', label: 'SMA-3' },
-              { value: 'sma5', label: 'SMA-5' },
-            ]}
-            value={trafficSmoothing}
-            onChange={(value) => setTrafficSmoothing(value as TrafficSmoothing)}
-            
-          />
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('monitoringDashboard.smoothing')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={[
+                { value: 'raw', label: 'Raw' },
+                { value: 'sma3', label: 'SMA-3' },
+                { value: 'sma5', label: 'SMA-5' },
+              ]}
+              value={trafficSmoothing}
+              onChange={(value) => setTrafficSmoothing(value as TrafficSmoothing)}
+            />
+          </div>
         </div>
-      </div>
+      </section>
 
-      <div className="row g-2 mb-3">
-        <div className="col-md-3">
-          <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
-            <div className="small" style={{ color: 'var(--text-secondary)' }}>Collector</div>
-            <strong style={{ color: depsHealth?.collector_running ? 'var(--success)' : 'var(--danger)' }}>
-              {depsHealth?.collector_running ? 'running' : 'stopped'}
-            </strong>
-          </div>
-        </div>
-        <div className="col-md-3">
-          <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
-            <div className="small" style={{ color: 'var(--text-secondary)' }}>Redis</div>
-            <strong style={{ color: depsHealth?.redis?.ok ? 'var(--success)' : 'var(--warning)' }}>
-              {depsHealth?.redis?.enabled ? (depsHealth?.redis?.ok ? 'ok' : 'degraded') : 'disabled'}
-            </strong>
-          </div>
-        </div>
-        <div className="col-md-3">
-          <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
-            <div className="small" style={{ color: 'var(--text-secondary)' }}>
-              {isAllScope ? t('monitoringDashboard.nodesOnline') : t('monitoringDashboard.nodeStatus')}
-            </div>
-            <strong style={{ color: isAllScope ? 'var(--success)' : latestForSelected?.available ? 'var(--success)' : 'var(--danger)' }}>
-              {isAllScope
-                ? `${allNodesStatus.online}/${allNodesStatus.total}`
-                : latestForSelected?.available
-                ? t('nodes.online')
-                : t('nodes.offline')}
-            </strong>
-          </div>
-        </div>
-        <div className="col-md-3">
-          <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
-            <div className="small" style={{ color: 'var(--text-secondary)' }}>
-              {isAllScope ? t('monitoringDashboard.onlineClientsAll') : t('monitoringDashboard.currentOnlineClients')}
-            </div>
-            <strong style={{ color: 'var(--accent)' }}>
-              {isAllScope ? allNodesStatus.onlineClients : latestForSelected?.online_clients ?? 0}
-            </strong>
-          </div>
-        </div>
-      </div>
+      <section className="mb-6 grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-3">
+        {usageCards.map((card) => {
+          const tone = gaugeTone(card.percent);
+          return (
+            <article key={card.label} className={chartCardClass}>
+              <div className="flex items-center justify-between gap-3">
+                <span className={sectionTitleClass}>{card.label}</span>
+                <span className={cn('font-mono tabular-nums whitespace-nowrap text-xs font-medium', tone.text)}>
+                  {card.percent}%
+                </span>
+              </div>
+              <div className="mt-3 flex items-baseline justify-between gap-3">
+                <strong className={metricValueClass}>{card.value}</strong>
+                <span className="truncate text-right text-[11px] text-slate-500">{card.helper}</span>
+              </div>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#0a0e1a]">
+                <div className={cn('h-full rounded-full bg-gradient-to-r', tone.fill)} style={{ width: `${card.percent}%` }} />
+              </div>
+            </article>
+          );
+        })}
+      </section>
 
-      <div className="row g-3">
+      <div className="grid min-w-0 grid-cols-1 gap-6">
         {trafficSource !== 'nodes' && (
-          <div className="col-12">
-            <div className="alert mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--info) 14%, transparent)', borderColor: 'var(--info)', color: 'var(--info)' }}>
+          <div className="rounded-lg border border-cyan-500/35 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-200">
               {t('monitoringDashboard.liveSourceHint')}
-            </div>
           </div>
         )}
         {!isAllScope && trafficSource !== 'nodes' && (
-          <div className="col-12">
-            <div className="alert mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--warning) 14%, transparent)', borderColor: 'var(--warning)', color: 'var(--warning)' }}>
+          <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
               {t('monitoringDashboard.singleServerFallbackHint')}
-            </div>
           </div>
         )}
         {liveTrafficError && (
-          <div className="col-12">
-            <div className="alert mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--danger) 14%, transparent)', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
+          <div className="rounded-lg border border-rose-500/45 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
               {liveTrafficError}
-            </div>
           </div>
         )}
         {showingLiveSnapshotFallback && (
-          <div className="col-12">
-            <div className="alert mb-0" style={{ backgroundColor: 'color-mix(in srgb, var(--warning) 14%, transparent)', borderColor: 'var(--warning)', color: 'var(--warning)' }}>
+          <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
               {t('monitoringDashboard.liveSnapshotFallbackHint')}
-            </div>
           </div>
         )}
-        <div className="col-12" style={{ order: 100 }}>
-          <div className="card p-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
-            <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-              <h6 className="mb-0" style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.adguardTitle')}</h6>
-              <button
-                className="btn btn-sm"
-                style={{ backgroundColor: 'var(--info)', borderColor: 'var(--info)', color: '#ffffff' }}
-                onClick={collectAdguardNow}
-                disabled={adguardLoading}
-              >
-                {adguardLoading ? t('monitoringDashboard.collecting') : t('monitoringDashboard.collectNow')}
-              </button>
+        <section className={chartCardClass}>
+          <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-cyan-300">{t('monitoringDashboard.adguardTitle')}</h3>
             </div>
+            <button className={primaryButtonClass} onClick={collectAdguardNow} disabled={adguardLoading}>
+              {adguardLoading ? t('monitoringDashboard.collecting') : t('monitoringDashboard.collectNow')}
+            </button>
+          </div>
 
             {adguardError && (
-              <div className="alert mb-3" style={{ backgroundColor: 'color-mix(in srgb, var(--danger) 14%, transparent)', borderColor: 'var(--danger)', color: 'var(--danger)' }}>
+              <div className="mb-4 rounded-lg border border-rose-500/45 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
                 {adguardError}
               </div>
             )}
 
-            <div className="row g-2 mb-3">
-              <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.sources')}</div>
-                  <strong style={{ color: 'var(--text-primary)' }}>{adguardOverview?.summary?.sources_online || 0}/{adguardOverview?.summary?.sources_total || 0}</strong>
-                </div>
-              </div>
-              <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.queries')}</div>
-                  <strong style={{ color: stylePreset === '3' ? 'var(--text-primary)' : 'var(--accent)' }}>{Math.round(adguardOverview?.summary?.queries_total || 0).toLocaleString()}</strong>
-                </div>
-              </div>
-              <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.blockRate')}</div>
-                  <strong style={{ color: 'var(--warning)' }}>{(adguardOverview?.summary?.blocked_rate || 0).toFixed(2)}%</strong>
-                </div>
-              </div>
-              <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.latency')}</div>
-                  <strong style={{ color: 'var(--success)' }}>{(adguardOverview?.summary?.avg_latency_ms || 0).toFixed(1)} ms</strong>
-                </div>
-              </div>
-              <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.cacheHit')}</div>
-                  <strong style={{ color: stylePreset === '3' ? 'var(--text-primary)' : 'var(--info)' }}>{(adguardOverview?.summary?.cache_hit_ratio || 0).toFixed(2)}%</strong>
-                </div>
-              </div>
-              <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.upstreamErrors')}</div>
-                  <strong style={{ color: 'var(--danger)' }}>{Math.round(adguardOverview?.summary?.upstream_errors || 0).toLocaleString()}</strong>
-                </div>
-              </div>
+            <div className="mb-5 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
+              {[
+                { label: t('monitoringDashboard.sources'), value: `${adguardOverview?.summary?.sources_online || 0}/${adguardOverview?.summary?.sources_total || 0}`, tone: 'text-slate-100' },
+                { label: t('monitoringDashboard.queries'), value: Math.round(adguardOverview?.summary?.queries_total || 0).toLocaleString(), tone: stylePreset === '3' ? 'text-slate-100' : 'text-cyan-300' },
+                { label: t('monitoringDashboard.blockRate'), value: `${(adguardOverview?.summary?.blocked_rate || 0).toFixed(2)}%`, tone: 'text-amber-300' },
+                { label: t('monitoringDashboard.latency'), value: `${(adguardOverview?.summary?.avg_latency_ms || 0).toFixed(1)} ms`, tone: 'text-emerald-300' },
+                { label: t('monitoringDashboard.cacheHit'), value: `${(adguardOverview?.summary?.cache_hit_ratio || 0).toFixed(2)}%`, tone: stylePreset === '3' ? 'text-slate-100' : 'text-cyan-300' },
+                { label: t('monitoringDashboard.upstreamErrors'), value: Math.round(adguardOverview?.summary?.upstream_errors || 0).toLocaleString(), tone: 'text-rose-300' },
+              ].map((item) => (
+                <article key={item.label} className={subtlePanelClass}>
+                  <div className="px-4 py-3">
+                    <div className={sectionTitleClass}>{item.label}</div>
+                    <strong className={cn('mt-2 block font-mono tabular-nums whitespace-nowrap text-sm font-medium', item.tone)}>{item.value}</strong>
+                  </div>
+                </article>
+              ))}
             </div>
 
-            <div className="row g-2 mb-3">
-              <div className="col-md-3">
-                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Prometheus</div>
-                  <strong style={{ color: stackStatus?.services?.prometheus?.ok ? 'var(--success)' : 'var(--warning)' }}>
-                    {stackStatus?.services?.prometheus?.ok ? t('nodes.online') : t('nodes.offline')}
-                  </strong>
-                </div>
-              </div>
-              <div className="col-md-3">
-                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Loki</div>
-                  <strong style={{ color: stackStatus?.services?.loki?.ok ? 'var(--success)' : 'var(--warning)' }}>
-                    {stackStatus?.services?.loki?.ok ? t('nodes.online') : t('nodes.offline')}
-                  </strong>
-                </div>
-              </div>
-              <div className="col-md-3">
-                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>Grafana</div>
-                  <strong style={{ color: stackStatus?.services?.grafana?.ok ? 'var(--success)' : 'var(--warning)' }}>
-                    {stackStatus?.services?.grafana?.ok ? t('nodes.online') : t('nodes.offline')}
-                  </strong>
-                </div>
-              </div>
-              <div className="col-md-3">
-                <div className="card kpi-card p-2" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                  <div className="small" style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.promUp')}</div>
-                  <strong style={{ color: 'var(--text-primary)' }}>
-                    {Math.round(Number(stackStatus?.prometheus_metrics?.up_sum || 0))}
-                  </strong>
-                </div>
-              </div>
+            <div className="mb-5 grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-3">
+              {stackCards.map((card) => {
+                const tone = gaugeTone(card.percent);
+                return (
+                  <article key={card.label} className={chartCardClass}>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className={sectionTitleClass}>{card.label}</span>
+                      <span className={cn('font-mono tabular-nums whitespace-nowrap text-xs font-medium', tone.text)}>{card.percent}%</span>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <strong className={cn(metricValueClass, toneClass(card.ok))}>{card.value}</strong>
+                    </div>
+                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#0a0e1a]">
+                      <div className={cn('h-full rounded-full bg-gradient-to-r', tone.fill)} style={{ width: `${card.percent}%` }} />
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            <div className="mb-5 flex items-center justify-between rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-3">
+              <span className={sectionTitleClass}>{t('monitoringDashboard.promUp')}</span>
+              <strong className={metricValueClass}>{Math.round(Number(stackStatus?.prometheus_metrics?.up_sum || 0))}</strong>
             </div>
 
             {!!(adguardHistory?.series || []).length && (
-              <div className="row g-3 mb-3">
-                <div className="col-12">
-                  <div className="card p-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                    <div className="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
-                      <h6 className="mb-0" style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.adguardQpsTitle')}</h6>
-                      <small style={{ color: 'var(--text-secondary)' }}>
-                        Δqueries: {Math.round(adguardHistory?.summary?.queries_delta || 0).toLocaleString()} | QPS: {(adguardHistory?.summary?.queries_per_sec || 0).toFixed(3)}
-                      </small>
+              <div className="mb-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+                <div className="lg:col-span-2">
+                  <div className={chartCardClass}>
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <h6 className="mb-0 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.adguardQpsTitle')}</h6>
+                      <span className="font-mono tabular-nums whitespace-nowrap text-[11px] text-slate-500">
+                        Î”queries: {Math.round(adguardHistory?.summary?.queries_delta || 0).toLocaleString()} | QPS: {(adguardHistory?.summary?.queries_per_sec || 0).toFixed(3)}
+                      </span>
                     </div>
                     <div style={{ height: 220 }}>
                       <Line data={adguardQpsData} options={chartOptions} />
                     </div>
                   </div>
                 </div>
-                <div className="col-md-6">
-                  <div className="card p-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                    <h6 className="mb-2" style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.adguardBlockRateTitle')}</h6>
+                <div>
+                  <div className={chartCardClass}>
+                    <h6 className="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.adguardBlockRateTitle')}</h6>
                     <div style={{ height: 220 }}>
                       <Line data={adguardBlockRateData} options={chartOptions} />
                     </div>
                   </div>
                 </div>
-                <div className="col-md-6">
-                  <div className="card p-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
-                    <h6 className="mb-2" style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.adguardLatencyTitle')}</h6>
+                <div>
+                  <div className={chartCardClass}>
+                    <h6 className="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.adguardLatencyTitle')}</h6>
                     <div style={{ height: 220 }}>
                       <Line data={adguardLatencyData} options={chartOptions} />
                     </div>
@@ -1628,163 +1649,158 @@ export const MonitoringDashboard: React.FC = () => {
               </div>
             )}
 
-            <div className="table-responsive mb-3">
-              <table className="table table-sm align-middle mb-0" style={{ color: 'var(--text-primary)' }}>
-                <thead>
-                  <tr>
-                    <th>{t('monitoringDashboard.source')}</th>
-                    <th>{t('common.status')}</th>
-                    <th>{t('monitoringDashboard.queries')}</th>
-                    <th>{t('monitoringDashboard.blocked')}</th>
-                    <th>{t('monitoringDashboard.blockPercent')}</th>
-                    <th>{t('monitoringDashboard.latency')}</th>
-                    <th>{t('monitoringDashboard.cachePercent')}</th>
-                    <th>{t('monitoringDashboard.errors')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(adguardOverview?.sources || []).map((s) => (
-                    <tr key={s.source_id}>
-                      <td>{s.source_name}</td>
-                      <td style={{ color: s.available ? 'var(--success)' : 'var(--danger)' }}>{s.available ? t('nodes.online') : t('nodes.offline')}</td>
-                      <td>{Math.round(s.queries_total || 0).toLocaleString()}</td>
-                      <td>{Math.round(s.blocked_total || 0).toLocaleString()}</td>
-                      <td>{(s.blocked_rate || 0).toFixed(2)}%</td>
-                      <td>{(s.avg_latency_ms || 0).toFixed(1)} ms</td>
-                      <td>{(s.cache_hit_ratio || 0).toFixed(2)}%</td>
-                      <td>{Math.round(s.upstream_errors || 0).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                  {!(adguardOverview?.sources || []).length && (
-                    <tr>
-                      <td colSpan={8} style={{ color: 'var(--text-secondary)' }}>{t('monitoringDashboard.noAdguardData')}</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <section className="mb-5">
+              <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 lg:block">
+                <div className="min-w-0 overflow-x-auto">
+                  <table className="w-full min-w-[980px] table-fixed border-collapse text-left text-sm">
+                    <thead className="bg-[#0a0e1a] text-[10px] uppercase tracking-wider text-slate-500">
+                      <tr className="border-b border-cyan-500/20">
+                        <th className="px-4 py-3">{t('monitoringDashboard.source')}</th>
+                        <th className="px-4 py-3">{t('common.status')}</th>
+                        <th className="px-4 py-3 text-right">{t('monitoringDashboard.queries')}</th>
+                        <th className="px-4 py-3 text-right">{t('monitoringDashboard.blocked')}</th>
+                        <th className="px-4 py-3 text-right">{t('monitoringDashboard.blockPercent')}</th>
+                        <th className="px-4 py-3 text-right">{t('monitoringDashboard.latency')}</th>
+                        <th className="px-4 py-3 text-right">{t('monitoringDashboard.cachePercent')}</th>
+                        <th className="px-4 py-3 text-right">{t('monitoringDashboard.errors')}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/50">
+                      {(adguardOverview?.sources || []).map((s) => (
+                        <tr key={s.source_id} className="hover:bg-cyan-400/5">
+                          <td className="px-4 py-3 font-mono whitespace-nowrap text-slate-100">{s.source_name}</td>
+                          <td className={cn('px-4 py-3 font-mono whitespace-nowrap', s.available ? 'text-emerald-300' : 'text-rose-300')}>{s.available ? t('nodes.online') : t('nodes.offline')}</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap">{Math.round(s.queries_total || 0).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap">{Math.round(s.blocked_total || 0).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap">{(s.blocked_rate || 0).toFixed(2)}%</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap">{(s.avg_latency_ms || 0).toFixed(1)} ms</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap">{(s.cache_hit_ratio || 0).toFixed(2)}%</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap">{Math.round(s.upstream_errors || 0).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="grid min-w-0 grid-cols-1 gap-2 lg:hidden">
+                {(adguardOverview?.sources || []).map((s) => (
+                  <article key={s.source_id} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate font-mono text-sm font-medium text-slate-100">{s.source_name}</div>
+                        <div className={cn('mt-1 font-mono text-xs whitespace-nowrap', s.available ? 'text-emerald-300' : 'text-rose-300')}>{s.available ? t('nodes.online') : t('nodes.offline')}</div>
+                      </div>
+                      <div className="text-right font-mono tabular-nums whitespace-nowrap text-xs text-slate-400">{(s.blocked_rate || 0).toFixed(2)}%</div>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                      <div className="flex items-center justify-between rounded-md bg-[#0f1420] px-3 py-2"><span className="text-slate-500">{t('monitoringDashboard.queries')}</span><span className={compactMetricClass}>{Math.round(s.queries_total || 0).toLocaleString()}</span></div>
+                      <div className="flex items-center justify-between rounded-md bg-[#0f1420] px-3 py-2"><span className="text-slate-500">{t('monitoringDashboard.blocked')}</span><span className={compactMetricClass}>{Math.round(s.blocked_total || 0).toLocaleString()}</span></div>
+                      <div className="flex items-center justify-between rounded-md bg-[#0f1420] px-3 py-2"><span className="text-slate-500">{t('monitoringDashboard.latency')}</span><span className={compactMetricClass}>{(s.avg_latency_ms || 0).toFixed(1)} ms</span></div>
+                      <div className="flex items-center justify-between rounded-md bg-[#0f1420] px-3 py-2"><span className="text-slate-500">{t('monitoringDashboard.cachePercent')}</span><span className={compactMetricClass}>{(s.cache_hit_ratio || 0).toFixed(2)}%</span></div>
+                    </div>
+                  </article>
+                ))}
+                {!(adguardOverview?.sources || []).length && (
+                  <div className="rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-3 text-sm text-slate-500">{t('monitoringDashboard.noAdguardData')}</div>
+                )}
+              </div>
+            </section>
 
-            <div className="row g-3 mb-2">
-              <div className="col-md-6">
-                <h6 style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.topBlockedDomains')}</h6>
-                <div className="d-flex gap-2 mb-2">
-                  <select
-                    className="form-select form-select-sm"
-                    style={{ maxWidth: 180, backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
-                    value={blockedSourceFilter}
-                    onChange={(e) => setBlockedSourceFilter(e.target.value)}
-                  >
+            <div className="mb-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className={chartCardClass}>
+                <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.topBlockedDomains')}</h6>
+                <div className="mb-3 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[180px_minmax(0,1fr)_110px]">
+                  <select className={selectClass} value={blockedSourceFilter} onChange={(e) => setBlockedSourceFilter(e.target.value)}>
                     <option value="all">{t('monitoringDashboard.allSources')}</option>
                     {(adguardOverview?.sources || []).map((s) => (
                       <option key={s.source_id} value={String(s.source_id)}>{s.source_name}</option>
                     ))}
                   </select>
                   <input
-                    className="form-control form-control-sm"
+                    className={inputClass}
                     placeholder={t('monitoringDashboard.searchDomainPlaceholder')}
                     value={blockedSearch}
                     onChange={(e) => setBlockedSearch(e.target.value)}
-                    style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                   />
-                  <select
-                    className="form-select form-select-sm"
-                    style={{ maxWidth: 110, backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
-                    value={String(blockedShowCount)}
-                    onChange={(e) => setBlockedShowCount(Number(e.target.value))}
-                  >
+                  <select className={selectClass} value={String(blockedShowCount)} onChange={(e) => setBlockedShowCount(Number(e.target.value))}>
                     <option value="10">10</option>
                     <option value="25">25</option>
                     <option value="50">50</option>
                     <option value="100">100</option>
                   </select>
                 </div>
-                <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: 8 }}>
-                <ul className="list-group">
+                <div className="max-h-[360px] overflow-x-auto rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-2">
+                <ul className="space-y-2">
                   {topBlockedDomains.map((it) => (
-                    <li key={it.name} className="list-group-item d-flex justify-content-between" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}>
-                      <span>{it.name}</span>
-                      <strong>{it.count}</strong>
+                    <li key={it.name} className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-[#0f1420] px-3 py-2">
+                      <span className="truncate font-mono text-sm text-slate-200">{it.name}</span>
+                      <strong className={compactMetricClass}>{it.count}</strong>
                     </li>
                   ))}
                   {!topBlockedDomains.length && (
-                    <li className="list-group-item" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}>
+                    <li className="rounded-md bg-[#0f1420] px-3 py-2 text-sm text-slate-500">
                       {t('monitoringDashboard.noDataYet')}
                     </li>
                   )}
                 </ul>
                 </div>
               </div>
-              <div className="col-md-6">
-                <h6 style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.topClients')}</h6>
-                <ul className="list-group">
+              <div className={chartCardClass}>
+                <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.topClients')}</h6>
+                <div className="max-h-[360px] overflow-x-auto rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-2">
+                <ul className="space-y-2">
                   {topClients.map((it) => (
-                    <li key={it.name} className="list-group-item d-flex justify-content-between" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}>
-                      <span>{it.name}</span>
-                      <strong>{it.count}</strong>
+                    <li key={it.name} className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-[#0f1420] px-3 py-2">
+                      <span className="truncate font-mono text-sm text-slate-200">{it.name}</span>
+                      <strong className={compactMetricClass}>{it.count}</strong>
                     </li>
                   ))}
                   {!topClients.length && (
-                    <li className="list-group-item" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-secondary)' }}>
+                    <li className="rounded-md bg-[#0f1420] px-3 py-2 text-sm text-slate-500">
                       {t('monitoringDashboard.noDataYet')}
                     </li>
                   )}
                 </ul>
+                </div>
               </div>
             </div>
 
-            <hr style={{ borderColor: 'var(--border-color)' }} />
-            <h6 className="mb-2" style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.addAdguardSource')}</h6>
-            <div className="row g-2">
-              <div className="col-md-2">
+            <div className="mb-4 border-t border-cyan-500/20 pt-4">
+            <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.addAdguardSource')}</h6>
+            <div className="grid min-w-0 grid-cols-1 gap-2 lg:grid-cols-[1fr_1.4fr_1fr_1fr_1fr_auto]">
                 <input
-                  className="form-control form-control-sm"
+                  className={inputClass}
                   placeholder={t('common.name')}
                   value={adguardForm.name}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, name: e.target.value }))}
-                  style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 />
-              </div>
-              <div className="col-md-3">
                 <input
-                  className="form-control form-control-sm"
+                  className={inputClass}
                   placeholder={t('monitoringDashboard.adminUrl')}
                   value={adguardForm.admin_url}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, admin_url: e.target.value }))}
-                  style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 />
-              </div>
-              <div className="col-md-2">
                 <input
-                  className="form-control form-control-sm"
+                  className={inputClass}
                   placeholder={t('monitoringDashboard.dnsUrlOptional')}
                   value={adguardForm.dns_url}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, dns_url: e.target.value }))}
-                  style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 />
-              </div>
-              <div className="col-md-2">
                 <input
-                  className="form-control form-control-sm"
+                  className={inputClass}
                   placeholder={t('auth.username')}
                   value={adguardForm.username}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, username: e.target.value }))}
-                  style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 />
-              </div>
-              <div className="col-md-2">
                 <input
-                  className="form-control form-control-sm"
+                  className={inputClass}
                   type="password"
                   placeholder={t('auth.password')}
                   value={adguardForm.password}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, password: e.target.value }))}
-                  style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 />
-              </div>
-              <div className="col-md-1 d-grid">
                 <button
-                  className="btn btn-sm"
-                  style={{ backgroundColor: 'var(--success)', borderColor: 'var(--success)', color: '#ffffff' }}
+                  className={primaryButtonClass}
                   onClick={async () => {
                     try {
                       await api.post('/v1/adguard/sources', adguardForm, { auth: getAuth() });
@@ -1805,35 +1821,29 @@ export const MonitoringDashboard: React.FC = () => {
                 >
                   {t('common.add')}
                 </button>
-              </div>
+            </div>
             </div>
             {!!adguardSources.length && (
-              <div className="small mt-2" style={{ color: 'var(--text-secondary)' }}>
+              <div className="text-xs text-slate-500">
                 {t('monitoringDashboard.sourcesConfigured', { sources: adguardSources.map((s) => s.name).join(', ') })}
               </div>
             )}
-          </div>
-        </div>
+        </section>
 
-        <div className="col-12" style={{ order: 10 }}>
-          <div className="card p-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
-            <h6 style={{ color: 'var(--text-primary)' }}>CPU ({selectedNodeName})</h6>
+        <section className={chartCardClass}>
+            <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">CPU <span className="font-mono tabular-nums whitespace-nowrap text-slate-500">({selectedNodeName})</span></h6>
             <div style={{ height: 260 }}>
               <Line data={cpuData} options={chartOptions} />
             </div>
-          </div>
-        </div>
-        <div className="col-12" style={{ order: 20 }}>
-          <div className="card p-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
-            <h6 style={{ color: 'var(--text-primary)' }}>{t('monitoringDashboard.onlineClientsChart', { node: selectedNodeName })}</h6>
+        </section>
+        <section className={chartCardClass}>
+            <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.onlineClientsChart', { node: selectedNodeName })}</h6>
             <div style={{ height: 260 }}>
               <Line data={onlineData} options={chartOptions} />
             </div>
-          </div>
-        </div>
-        <div className="col-12" style={{ order: 30 }}>
-          <div className="card p-3" style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)' }}>
-            <h6 style={{ color: 'var(--text-primary)' }}>
+        </section>
+        <section className={chartCardClass}>
+            <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">
               {t('monitoringDashboard.trafficConsumptionTitle', { label: trafficConsumptionLabel, node: selectedNodeName, mode: trafficModeLabel, source: trafficSourceLabel, step: effectiveTrafficStepSec, smoothing: trafficSmoothingLabel })}
             </h6>
             <div style={{ height: 260 }}>
@@ -1843,9 +1853,7 @@ export const MonitoringDashboard: React.FC = () => {
                 <Line data={trafficData} options={trafficChartOptions} />
               )}
             </div>
-          </div>
-        </div>
-
+        </section>
       </div>
     </div>
   );

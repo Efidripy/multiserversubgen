@@ -276,13 +276,13 @@ export function ServerStatus({
 
   return (
     <section className={dashboardMode ? 'pb-6' : 'px-6 pb-6'}>
-      <div className="bg-[#0f1420] rounded-lg overflow-hidden">
-        <div className="p-3 bg-[#0d1b2b]">
+      <div className="overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] shadow-[inset_0_1px_0_rgba(103,232,249,0.05)] backdrop-blur-sm">
+        <div className="border-b border-cyan-500/20 bg-cyan-500/5 p-3">
           <div className="flex items-center justify-between gap-2 mb-2">
             <div className="flex items-center gap-2 flex-wrap">
-              <h2 className="text-sm font-bold text-cyan-300 font-mono uppercase tracking-wider">{t('serverStatus.title').toUpperCase()}</h2>
-              <span className="text-xs text-gray-400 font-mono">{online}/{servers.length} online</span>
-              <span className="px-2 py-0.5 bg-green-400/20 text-green-300 rounded text-[10px] font-mono">
+              <h2 className="font-mono text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">{t('serverStatus.title').toUpperCase()}</h2>
+              <span className="font-mono text-xs font-light text-gray-400">{online}/{servers.length} online</span>
+              <span className="rounded border border-green-300/20 bg-green-400/10 px-2 py-0.5 font-mono text-[10px] font-light text-green-300">
                 {loading || fleetSummary?.loading ? 'syncing' : 'active'}
               </span>
             </div>
@@ -294,8 +294,8 @@ export function ServerStatus({
               {(['name', 'cpu', 'status', 'clients'] as const).map((sort) => (
                 <button
                   key={sort}
-                  className={`h-7 px-2.5 rounded text-[10px] font-mono transition-colors duration-200 flex-shrink-0 ${
-                    cardSort === sort ? 'bg-cyan-500/20 text-cyan-300' : 'text-gray-400 hover:bg-cyan-400/5 hover:text-cyan-300'
+                  className={`h-7 flex-shrink-0 rounded border px-2.5 font-mono text-[10px] font-light transition-colors duration-200 ${
+                    cardSort === sort ? 'border-cyan-300/30 bg-cyan-500/15 text-cyan-300' : 'border-cyan-500/0 text-gray-400 hover:border-cyan-300/20 hover:bg-cyan-400/5 hover:text-cyan-300'
                   }`}
                   onClick={() => setCardSort(sort)}
                   type="button"
@@ -305,12 +305,12 @@ export function ServerStatus({
               ))}
             </div>
             <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-2 min-h-7 xl:flex xl:justify-end">
-              <label className="flex min-w-0 items-center gap-1.5 text-[10px] text-gray-400 font-mono">
+              <label className="flex min-w-0 items-center gap-1.5 font-mono text-[10px] font-light text-gray-400">
                 <input type="checkbox" className="w-3 h-3 flex-shrink-0" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
                 <span className="truncate">{t('serverStatus.autoRefresh')}</span>
               </label>
               <select
-                className="h-7 bg-[#0a0e1a] rounded px-2 text-[10px] text-gray-400 font-mono flex-shrink-0"
+                className="h-7 flex-shrink-0 rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-gray-400"
                 value={refreshInterval}
                 onChange={(event) => setRefreshInterval(Number(event.target.value))}
                 aria-label={t('serverStatus.autoRefresh')}
@@ -320,7 +320,7 @@ export function ServerStatus({
                 ))}
               </select>
               <button
-                className="w-7 h-7 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white rounded flex items-center justify-center disabled:opacity-50 flex-shrink-0"
+                className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white disabled:opacity-50"
                 onClick={async () => {
                   try {
                     await refreshNodesNow();
@@ -337,7 +337,7 @@ export function ServerStatus({
               {onToggleFleet && (
                 <button
                   onClick={onToggleFleet}
-                  className="w-7 h-7 bg-[#0a0e1a] rounded flex items-center justify-center flex-shrink-0"
+                  className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-cyan-500/20 bg-[#0a0e1a]"
                   title={t('nodes.registeredFleet')}
                   aria-label={t('nodes.registeredFleet')}
                   type="button"
@@ -361,12 +361,12 @@ export function ServerStatus({
           </div>
 
           <div className="server-status__stat-grid grid grid-cols-2 sm:grid-cols-3 xl:flex xl:flex-wrap gap-1.5">
-            <span className="h-6 px-2 bg-[#0a0e1a] text-green-400 rounded text-[10px] font-mono flex items-center justify-center whitespace-nowrap">Online: <strong>{fleetSummary?.online ?? online}/{fleetSummary?.total ?? servers.length}</strong></span>
-            <span className="h-6 px-2 bg-[#0a0e1a] text-yellow-400 rounded text-[10px] font-mono flex items-center justify-center whitespace-nowrap">Errors: <strong>{fleetSummary?.checking ?? 2}</strong></span>
-            <span className="h-6 px-2 bg-[#0a0e1a] text-red-400 rounded text-[10px] font-mono flex items-center justify-center whitespace-nowrap">Offline: <strong>{fleetSummary?.offline ?? offline}</strong></span>
-            <span className="h-6 px-2 bg-[#0a0e1a] text-green-400 rounded text-[10px] font-mono flex items-center justify-center whitespace-nowrap">{t('serverStatus.avgCpu')}: <strong>{avgCpu.toFixed(1)}%</strong></span>
-            <span className="h-6 px-2 bg-[#0a0e1a] text-green-400 rounded text-[10px] font-mono flex items-center justify-center whitespace-nowrap">{t('serverStatus.fleetRam')}: <strong>{'10.4/19.2 GB'}</strong></span>
-            <span className="h-6 px-2 bg-[#0a0e1a] text-gray-300 rounded text-[10px] font-mono flex items-center justify-center whitespace-nowrap">{t('serverStatus.onlineClients')}: <strong>-</strong></span>
+            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">Online: <strong className="ml-1 font-medium">{fleetSummary?.online ?? online}/{fleetSummary?.total ?? servers.length}</strong></span>
+            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-yellow-400">Errors: <strong className="ml-1 font-medium">{fleetSummary?.checking ?? 2}</strong></span>
+            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-red-400">Offline: <strong className="ml-1 font-medium">{fleetSummary?.offline ?? offline}</strong></span>
+            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">{t('serverStatus.avgCpu')}: <strong className="ml-1 font-medium">{avgCpu.toFixed(1)}%</strong></span>
+            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">{t('serverStatus.fleetRam')}: <strong className="ml-1 font-medium">{'10.4/19.2 GB'}</strong></span>
+            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-gray-300">{t('serverStatus.onlineClients')}: <strong className="ml-1 font-medium">-</strong></span>
           </div>
         </div>
 
@@ -393,17 +393,17 @@ function ServerCard({ server }: { server: UiServer }) {
   ];
 
   return (
-    <article className="min-h-[286px] bg-[#0a0e1a] rounded-lg p-3 flex flex-col overflow-hidden">
+    <article className="flex min-h-[286px] flex-col overflow-hidden rounded-lg border border-cyan-500/10 bg-[#0a0e1a] p-3 shadow-[inset_0_1px_0_rgba(103,232,249,0.04)] transition-colors duration-200 hover:border-cyan-400/20">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 mb-2">
         <div className="flex items-center gap-2 min-w-0">
           <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${isOffline ? 'bg-red-400' : 'bg-green-400'}`} />
-          <span className="text-base font-bold text-white font-mono truncate">{server.name}</span>
+          <span className="truncate font-mono text-base font-medium text-white">{server.name}</span>
         </div>
         <div className="flex items-center gap-1.5 flex-nowrap justify-end">
-          <span className={`px-1.5 py-px rounded-sm text-[10px] font-mono leading-tight ${isOffline ? 'bg-red-950/70 text-red-300/80' : 'bg-emerald-950/70 text-emerald-300/80'}`}>
+          <span className={`rounded border px-1.5 py-px font-mono text-[10px] font-light leading-tight ${isOffline ? 'border-red-300/20 bg-red-950/60 text-red-300/80' : 'border-emerald-300/20 bg-emerald-950/60 text-emerald-300/80'}`}>
             {server.status}
           </span>
-          <span className={`px-1.5 py-px rounded-sm text-[10px] font-mono leading-tight ${isOffline ? 'bg-red-950/50 text-red-300/75' : 'bg-amber-950/60 text-amber-300/80'}`}>
+          <span className={`rounded border px-1.5 py-px font-mono text-[10px] font-light leading-tight ${isOffline ? 'border-red-300/20 bg-red-950/45 text-red-300/75' : 'border-amber-300/20 bg-amber-950/55 text-amber-300/80'}`}>
             {server.latency}
           </span>
         </div>
@@ -415,7 +415,7 @@ function ServerCard({ server }: { server: UiServer }) {
         <MetricRow label="Disk Usage" value={server.diskPercent} valueText={`${server.diskPercent}%`} detail={server.diskDetail} color="from-green-400 to-emerald-400" />
       </div>
 
-      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[10px] text-gray-500 font-mono mb-2">
+      <div className="mb-2 grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[10px] font-light text-gray-500">
         {metaItems.map((item) => (
           <div key={item.label} className="grid grid-cols-[auto_minmax(34px,1fr)_minmax(0,1.4fr)] items-center gap-1.5 min-w-0">
             <span className="text-gray-500/60 flex items-center justify-center">{item.icon}</span>
@@ -425,12 +425,12 @@ function ServerCard({ server }: { server: UiServer }) {
         ))}
       </div>
 
-      <div className="mt-auto h-[73px] pt-2 border-t border-slate-800/60 overflow-hidden">
+      <div className="mt-auto h-[73px] overflow-hidden border-t border-cyan-500/10 pt-2">
         {isOffline ? (
           <div className="text-center py-1.5">
-            <div className="text-red-400 text-sm font-mono mb-1">{server.issue || 'Connection Lost'}</div>
-            <div className="text-gray-500 text-xs font-mono">Last seen: {server.lastSeen}</div>
-            <button className="mt-1.5 px-3 py-1 bg-[#0f1420] text-gray-300 hover:text-cyan-200 rounded text-xs font-mono transition-colors duration-200" type="button">
+            <div className="mb-1 font-mono text-sm font-light text-red-400">{server.issue || 'Connection Lost'}</div>
+            <div className="font-mono text-xs font-light text-gray-500">Last seen: {server.lastSeen}</div>
+            <button className="mt-1.5 rounded border border-cyan-500/20 bg-[#0f1420] px-3 py-1 font-mono text-xs font-light text-gray-300 transition-colors duration-200 hover:text-cyan-200" type="button">
               {t('serverStatus.retryConnection')}
             </button>
           </div>
@@ -438,19 +438,19 @@ function ServerCard({ server }: { server: UiServer }) {
           <>
             <div className="flex items-center justify-between gap-2 mb-1.5">
               <div className="flex items-center gap-1.5">
-                <span className="text-xs text-gray-400 font-mono">Core {server.core}</span>
+                <span className="font-mono text-xs font-light text-gray-400">Core {server.core}</span>
                 <span className="w-4 h-4 bg-emerald-950/80 rounded-full flex items-center justify-center">
                   <CheckCircle className="w-3 h-3 text-emerald-300/70" />
                 </span>
               </div>
               <div className="flex items-center gap-1">
-                <button className="w-6 h-6 bg-[#0f1420] text-gray-500 hover:text-cyan-300 rounded flex items-center justify-center transition-colors duration-200" title={t('serverStatus.restartXray')} type="button">
+                <button className="flex h-6 w-6 items-center justify-center rounded border border-cyan-500/20 bg-[#0f1420] text-gray-500 transition-colors duration-200 hover:text-cyan-300" title={t('serverStatus.restartXray')} type="button">
                   <RotateCcw className="w-3.5 h-3.5 opacity-60" />
                 </button>
-                <button className="w-6 h-6 bg-[#0f1420] text-gray-500 hover:text-red-300 rounded flex items-center justify-center transition-colors duration-200" title={t('serverStatus.stopXray')} type="button">
+                <button className="flex h-6 w-6 items-center justify-center rounded border border-cyan-500/20 bg-[#0f1420] text-gray-500 transition-colors duration-200 hover:text-red-300" title={t('serverStatus.stopXray')} type="button">
                   <Square className="w-3.5 h-3.5 opacity-60" />
                 </button>
-                <button className="h-6 px-2 bg-[#0f1420] text-gray-400 hover:text-cyan-200 rounded text-[10px] font-mono transition-colors duration-200" title="Logs" type="button">
+                <button className="h-6 rounded border border-cyan-500/20 bg-[#0f1420] px-2 font-mono text-[10px] font-light text-gray-400 transition-colors duration-200 hover:text-cyan-200" title="Logs" type="button">
                   Logs
                 </button>
               </div>
@@ -488,10 +488,10 @@ function MetricRow({
   return (
     <div>
       <div className="flex items-center justify-between gap-3 mb-1 whitespace-nowrap">
-        <span className="text-[11px] text-gray-400 font-mono leading-none">{label}</span>
-        <span className="text-[11px] text-green-400 font-mono font-bold leading-none text-right">
+        <span className="font-mono text-[11px] font-light leading-none text-gray-400">{label}</span>
+        <span className="text-right font-mono text-[11px] font-medium leading-none text-green-400">
           {valueText}
-          {detail && <span className="text-gray-500 text-[10px] ml-1.5 font-normal">{detail}</span>}
+          {detail && <span className="ml-1.5 text-[10px] font-light text-gray-500">{detail}</span>}
         </span>
       </div>
       <div className="w-full h-[3px] bg-[#1b2638] rounded-full overflow-hidden">
@@ -504,7 +504,7 @@ function MetricRow({
 function IconAction({ icon, title }: { icon: ReactNode; title: string }) {
   return (
     <button
-      className="w-6 h-6 bg-[#0f1420] text-gray-500 hover:text-cyan-300 rounded flex items-center justify-center transition-colors duration-200"
+      className="flex h-6 w-6 items-center justify-center rounded border border-cyan-500/20 bg-[#0f1420] text-gray-500 transition-colors duration-200 hover:text-cyan-300"
       title={title}
       aria-label={title}
       type="button"
