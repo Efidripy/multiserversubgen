@@ -120,7 +120,9 @@ def build_cache_facade(*, live_stats_runtime, clients_runtime, audit_runtime):
     )
 
 
-def build_subscription_links_facade(*, subscription_links_service):
+def build_subscription_links_facade(*, subscription_links_service, db_path: str):
+    subscription_links_service.configure_snapshot_db(db_path)
+
     def invalidate_subscription_cache():
         return subscription_links_service.invalidate_subscription_cache()
 

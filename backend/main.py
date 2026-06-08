@@ -321,7 +321,7 @@ def has_min_role(user_role: str, min_role: str) -> bool:
     get_emails,
     get_links,
     get_links_filtered,
-) = build_subscription_links_facade(subscription_links_service=subscription_links_service)
+) = build_subscription_links_facade(subscription_links_service=subscription_links_service, db_path=DB_PATH)
 
 
 app.middleware("http")(

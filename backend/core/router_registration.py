@@ -192,6 +192,7 @@ def register_app_routers(
             client_mgr=client_mgr,
             server_monitor=server_monitor,
             get_node_or_404=get_node_or_404,
+            snapshot_collector=snapshot_collector,
         )
     )
     app.include_router(

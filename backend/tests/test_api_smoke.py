@@ -333,6 +333,66 @@ def test_node_server_status_uses_snapshot_cache_without_xui_fetch(monkeypatch):
     assert payload["system"]["cpu"] == 11
 
 
+def test_servers_status_routes_use_snapshot_cache_without_monitor_fetch(monkeypatch):
+    nodes = [
+        {"id": 1, "name": "alpha"},
+        {"id": 2, "name": "beta"},
+    ]
+    monkeypatch.setattr(main.p, "authenticate", lambda u, p: True)
+    monkeypatch.setattr(main.node_service, "list_nodes", lambda: nodes)
+    monkeypatch.setattr(main.node_service, "get_node", lambda node_id: nodes[node_id - 1] if node_id in (1, 2) else None)
+
+    def _fail_live_fetch(*_args, **_kwargs):
+        raise AssertionError("server_monitor live fetch must not run")
+
+    monkeypatch.setattr(main.server_monitor, "get_all_servers_status", _fail_live_fetch)
+    monkeypatch.setattr(main.server_monitor, "get_server_status", _fail_live_fetch)
+    monkeypatch.setattr(main.server_monitor, "check_server_availability", _fail_live_fetch)
+
+    main.snapshot_collector._latest = {
+        "timestamp": 1234567890.0,
+        "nodes": {
+            "alpha": {
+                "name": "alpha",
+                "node_id": 1,
+                "available": True,
+                "poll_ms": 12.5,
+                "timestamp": 1234567890.0,
+                "server_status": {
+                    "node": "alpha",
+                    "available": True,
+                    "system": {"cpu": 8},
+                    "xray": {"running": True},
+                    "network": {"upload": 1, "download": 2},
+                },
+            },
+            "beta": {
+                "name": "beta",
+                "node_id": 2,
+                "available": False,
+                "status": "offline",
+                "reason": "timeout",
+                "error": "Read timed out",
+                "poll_ms": 3000,
+                "timestamp": 1234567891.0,
+            },
+        },
+    }
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+
+    fleet = client.get("/api/v1/servers/status", headers=_basic_auth())
+    single = client.get("/api/v1/servers/1/status", headers=_basic_auth())
+    availability = client.get("/api/v1/servers/availability", headers=_basic_auth())
+
+    assert fleet.status_code == 200
+    assert fleet.json()["count"] == 2
+    assert fleet.json()["servers"][0]["cached"] is True
+    assert single.status_code == 200
+    assert single.json()["system"]["cpu"] == 8
+    assert availability.status_code == 200
+    assert availability.json()["availability"][0]["latency_ms"] == 12.5
+
+
 def test_inbound_update_auth_required():
     """PUT /inbounds/{node_id}/{id} requires auth."""
     client = TestClient(_build_test_app(monitoring_enabled=False))
@@ -441,6 +501,95 @@ def test_status_endpoint_public(monkeypatch):
     assert body.get("status") == "ok"
     assert "nodes_total" in body
     assert "version" in body
+
+
+def test_sub_grouped_cache_hit_avoids_sqlite(monkeypatch, tmp_path):
+    from routers import subscriptions as subscriptions_router
+    from routers.subscriptions import build_subscriptions_router
+    from services.db_bootstrap import init_db
+
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    app = FastAPI()
+    calls = {"links": 0}
+
+    class NodeServiceStub:
+        def list_nodes(self):
+            return [{"id": 1, "name": "node1", "ip": "1.2.3.4"}]
+
+    def get_links_filtered(nodes, email, protocol):
+        calls["links"] += 1
+        return [f"{protocol}://{email}@node1"]
+
+    app.include_router(
+        build_subscriptions_router(
+            check_auth=lambda request: "admin",
+            db_path=db_path,
+            node_service=NodeServiceStub(),
+            check_subscription_rate_limit=lambda request, key: (True, 0),
+            get_emails=lambda nodes: ["alpha@example.com"],
+            get_links_filtered=get_links_filtered,
+            invalidate_subscription_cache=lambda: None,
+            logger=main.logger,
+        )
+    )
+    client = TestClient(app)
+
+    first = client.get("/api/v1/sub-grouped/alpha?protocol=vless&nodes=node1")
+    assert first.status_code == 200
+    assert first.headers["x-subscription-cache"] == "miss"
+    assert base64.b64decode(first.text).decode() == "vless://alpha@example.com@node1"
+
+    def fail_connect(*_args, **_kwargs):
+        raise AssertionError("SQLite must not be touched on subscription cache hit")
+
+    monkeypatch.setattr(subscriptions_router, "connect", fail_connect)
+    second = client.get("/api/v1/sub-grouped/alpha?protocol=vless&nodes=node1")
+
+    assert second.status_code == 200
+    assert second.headers["x-subscription-cache"] == "hit"
+    assert second.text == first.text
+    assert calls["links"] == 1
+
+
+def test_sub_grouped_cache_key_includes_filters(tmp_path):
+    from routers.subscriptions import build_subscriptions_router
+    from services.db_bootstrap import init_db
+
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    app = FastAPI()
+
+    class NodeServiceStub:
+        def list_nodes(self):
+            return [{"id": 1, "name": "node1", "ip": "1.2.3.4"}]
+
+    def get_links_filtered(nodes, email, protocol):
+        return [f"{protocol}://{email}@node1"]
+
+    app.include_router(
+        build_subscriptions_router(
+            check_auth=lambda request: "admin",
+            db_path=db_path,
+            node_service=NodeServiceStub(),
+            check_subscription_rate_limit=lambda request, key: (True, 0),
+            get_emails=lambda nodes: ["alpha@example.com"],
+            get_links_filtered=get_links_filtered,
+            invalidate_subscription_cache=lambda: None,
+            logger=main.logger,
+        )
+    )
+    client = TestClient(app)
+
+    vless = client.get("/api/v1/sub-grouped/alpha?protocol=vless&nodes=node1")
+    trojan = client.get("/api/v1/sub-grouped/alpha?protocol=trojan&nodes=node1")
+
+    assert vless.status_code == 200
+    assert trojan.status_code == 200
+    assert vless.headers["x-subscription-cache"] == "miss"
+    assert trojan.headers["x-subscription-cache"] == "miss"
+    assert base64.b64decode(vless.text).decode() == "vless://alpha@example.com@node1"
+    assert base64.b64decode(trojan.text).decode() == "trojan://alpha@example.com@node1"
 
 
 def test_inbound_set_enable_auth_required():

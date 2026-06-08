@@ -1,7 +1,10 @@
 import base64
 import datetime
+import hashlib
 import json
 import sqlite3
+import time
+from threading import Lock
 from services.db_bootstrap import connect
 from shared.sql import update_by_id_query
 from typing import Dict, Optional
@@ -22,6 +25,9 @@ def build_subscriptions_router(
     logger,
 ):
     router = APIRouter()
+    subscription_response_cache: Dict[str, tuple[float, str]] = {}
+    subscription_response_cache_lock = Lock()
+    subscription_response_cache_ttl = 300
 
     def _no_cache_headers():
         return {
@@ -29,6 +35,41 @@ def build_subscriptions_router(
             "Pragma": "no-cache",
             "Expires": "0",
         }
+
+    def _subscription_headers(cache_status: str):
+        headers = _no_cache_headers()
+        headers["X-Subscription-Cache"] = cache_status
+        return headers
+
+    def _subscription_cache_key(request: Request, identifier: str) -> str:
+        query_items = sorted((key, value) for key, value in request.query_params.multi_items())
+        raw_key = json.dumps(
+            {"identifier": identifier, "query": query_items},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
+
+    def _get_subscription_response_cache(cache_key: str) -> Optional[str]:
+        now = time.time()
+        with subscription_response_cache_lock:
+            cached = subscription_response_cache.get(cache_key)
+            if not cached:
+                return None
+            ts, content = cached
+            if now - ts > subscription_response_cache_ttl:
+                subscription_response_cache.pop(cache_key, None)
+                return None
+            return content
+
+    def _set_subscription_response_cache(cache_key: str, content: str) -> None:
+        with subscription_response_cache_lock:
+            subscription_response_cache[cache_key] = (time.time(), content)
+
+    def _clear_subscription_response_cache() -> None:
+        with subscription_response_cache_lock:
+            subscription_response_cache.clear()
 
     def _ensure_stats_table(conn: sqlite3.Connection) -> None:
         conn.execute(
@@ -110,7 +151,15 @@ def build_subscriptions_router(
                 headers={"Retry-After": str(retry_after)},
             )
 
-        no_cache_headers = _no_cache_headers()
+        cache_key = _subscription_cache_key(request, identifier)
+        cached_response = _get_subscription_response_cache(cache_key)
+        if cached_response is not None:
+            return PlainTextResponse(
+                content=cached_response,
+                headers=_subscription_headers("hit"),
+            )
+
+        no_cache_headers = _subscription_headers("miss")
         with connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             _ensure_stats_table(conn)
@@ -153,6 +202,7 @@ def build_subscriptions_router(
 
             if all_links:
                 now = datetime.datetime.now().strftime("%d.%m %H:%M")
+                content = base64.b64encode("\n".join(all_links).encode()).decode()
                 with connect(db_path) as db:
                     for matched_email in matching_emails:
                         db.execute(
@@ -161,8 +211,9 @@ def build_subscriptions_router(
                             (matched_email, now, now),
                         )
                     db.commit()
+                _set_subscription_response_cache(cache_key, content)
                 return PlainTextResponse(
-                    content=base64.b64encode("\n".join(all_links).encode()).decode(),
+                    content=content,
                     headers=no_cache_headers,
                 )
 
@@ -218,6 +269,7 @@ def build_subscriptions_router(
                 )
                 conn.commit()
             invalidate_subscription_cache()
+            _clear_subscription_response_cache()
             return {"status": "success", "identifier": identifier}
         except Exception as exc:
             logger.error(f"Error creating subscription group: {exc}")
@@ -265,6 +317,7 @@ def build_subscriptions_router(
                 )
                 conn.commit()
             invalidate_subscription_cache()
+            _clear_subscription_response_cache()
             return {"status": "success"}
         except Exception as exc:
             logger.error(f"Error updating subscription group: {exc}")
@@ -281,6 +334,7 @@ def build_subscriptions_router(
                 conn.execute("DELETE FROM subscription_groups WHERE id = ?", (group_id,))
                 conn.commit()
             invalidate_subscription_cache()
+            _clear_subscription_response_cache()
             return {"status": "success"}
         except Exception as exc:
             logger.error(f"Error deleting subscription group: {exc}")

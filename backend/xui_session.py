@@ -8,6 +8,7 @@ import time
 from threading import Lock
 import requests
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 logger = logging.getLogger("sub_manager")
 
@@ -122,7 +123,7 @@ XUI_HTTP_RETRY_BACKOFF_SEC = max(0.0, _env_float("XUI_HTTP_RETRY_BACKOFF_SEC", 0
 XUI_HTTP_RETRY_STATUSES = {429, 500, 502, 503, 504}
 XUI_FAST_TIMEOUT_SEC = min(XUI_READ_TIMEOUT_SEC, max(1.0, _env_float("XUI_FAST_TIMEOUT_SEC", XUI_READ_TIMEOUT_SEC)))
 XUI_FAST_RETRIES = max(0, _env_int("XUI_FAST_RETRIES", 0))
-XUI_SESSION_TTL_SEC = max(30, _env_int("XUI_SESSION_TTL_SEC", 900))
+XUI_SESSION_TTL_SEC = max(0, _env_int("XUI_SESSION_TTL_SEC", 0))
 
 
 def bounded_xui_timeout(timeout: float | tuple | list | None = None) -> tuple[float, float]:
@@ -172,6 +173,14 @@ def invalidate_session_cache(node_key: str | None = None) -> None:
         _SESSION_CACHE.pop(node_key, None)
 
 
+def _is_cached_session_usable(cached: Dict[str, Any] | None, now: float) -> bool:
+    if not cached:
+        return False
+    if XUI_SESSION_TTL_SEC <= 0:
+        return True
+    return now - float(cached.get("ts", 0.0)) <= XUI_SESSION_TTL_SEC
+
+
 def _cache_session(node_key: str, session: requests.Session, base_url: str) -> None:
     with _SESSION_CACHE_LOCK:
         if len(_SESSION_CACHE) >= _SESSION_CACHE_MAX:
@@ -192,26 +201,13 @@ def get_authenticated_session(
     verify_value: Any,
     timeout: float | None = None,
     retries: int | None = None,
+    force_reauth: bool = False,
 ) -> Dict[str, Any]:
     now = time.time()
-    with _SESSION_CACHE_LOCK:
-        cached = _SESSION_CACHE.get(node_key)
-        if cached and (now - float(cached.get("ts", 0.0)) <= XUI_SESSION_TTL_SEC):
-            return {
-                "ok": True,
-                "session": cached["session"],
-                "base_url": cached["base_url"],
-                "cached": True,
-                "reason": "ok",
-                "error": "",
-            }
-
-    lock = _node_lock(node_key)
-    with lock:
-        now = time.time()
+    if not force_reauth:
         with _SESSION_CACHE_LOCK:
             cached = _SESSION_CACHE.get(node_key)
-            if cached and (now - float(cached.get("ts", 0.0)) <= XUI_SESSION_TTL_SEC):
+            if _is_cached_session_usable(cached, now):
                 return {
                     "ok": True,
                     "session": cached["session"],
@@ -220,6 +216,22 @@ def get_authenticated_session(
                     "reason": "ok",
                     "error": "",
                 }
+
+    lock = _node_lock(node_key)
+    with lock:
+        now = time.time()
+        if not force_reauth:
+            with _SESSION_CACHE_LOCK:
+                cached = _SESSION_CACHE.get(node_key)
+                if _is_cached_session_usable(cached, now):
+                    return {
+                        "ok": True,
+                        "session": cached["session"],
+                        "base_url": cached["base_url"],
+                        "cached": True,
+                        "reason": "ok",
+                        "error": "",
+                    }
 
         session = requests.Session()
         session.verify = verify_value
@@ -251,6 +263,29 @@ def get_authenticated_session(
             "reason": "ok",
             "error": "",
         }
+
+
+def is_auth_failure_response(response: requests.Response) -> bool:
+    status_code = getattr(response, "status_code", None)
+    if status_code in (401, 403):
+        return True
+
+    final_url = str(getattr(response, "url", "") or "").lower()
+    if final_url:
+        path = urlparse(final_url).path.rstrip("/").lower()
+        if path.endswith("/login") or path.endswith("/panel/login"):
+            return True
+
+    headers = getattr(response, "headers", {}) or {}
+    content_type = ""
+    if hasattr(headers, "get"):
+        content_type = str(headers.get("content-type", "") or "").lower()
+    text = str(getattr(response, "text", "") or "").lower()[:2000]
+    if "text/html" in content_type and "password" in text and ("login" in text or "username" in text):
+        return True
+    if "window.location" in text and "login" in text:
+        return True
+    return False
 
 
 def _cache_auth_method(base_url: str, method: str) -> None:

@@ -344,6 +344,7 @@ def build_nodes_router(
 
         try:
             with connect(db_path) as conn:
+                conn.execute("DELETE FROM node_snapshots WHERE node_id = ?", (node_id,))
                 conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
                 conn.commit()
         except Exception as exc:

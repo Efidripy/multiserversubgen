@@ -21,6 +21,7 @@ from xui_session import (
     extract_node_auth,
     get_authenticated_session,
     invalidate_session_cache,
+    is_auth_failure_response,
     make_node_key,
     login_panel,
     xui_request,
@@ -85,7 +86,7 @@ class ThreeXUIMonitor:
             return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
         return None, None, {"ok": False, "reason": "connection_failed", "error": "Failed to connect"}
 
-    def _get_session(self, node: Dict) -> tuple:
+    def _get_session(self, node: Dict, *, force_reauth: bool = False) -> tuple:
         """Создать авторизованную сессию для узла.
 
         Returns:
@@ -105,6 +106,7 @@ class ThreeXUIMonitor:
                 verify_value=_requests_verify_value(),
                 timeout=XUI_FAST_TIMEOUT_SEC,
                 retries=XUI_FAST_RETRIES,
+                force_reauth=force_reauth,
             )
             if not auth.get("ok"):
                 logger.warning(f"ThreeXUIMonitor: failed to login to {node['name']}")
@@ -116,12 +118,47 @@ class ThreeXUIMonitor:
                 "reason": "monitor_exception",
                 "error": str(exc),
             }
-        return auth["session"], auth["base_url"], {"ok": True, "reason": "ok", "error": ""}
+        return auth["session"], auth["base_url"], {
+            "ok": True,
+            "reason": "ok",
+            "error": "",
+            "cached": bool(auth.get("cached")),
+        }
+
+    def _request_with_reauth(self, node: Dict, method: str, path: str, **kwargs) -> tuple:
+        s, base_url, login_result = self._normalize_session_result(self._get_session(node))
+        if not s:
+            return None, None, login_result
+
+        try:
+            res = xui_request(s, method, f"{base_url}{path}", **kwargs)
+        except Exception as exc:
+            return None, None, {"ok": False, "reason": "request_failed", "error": str(exc)}
+        if not is_auth_failure_response(res):
+            return res, base_url, {"ok": True, "reason": "ok", "error": ""}
+
+        logger.info("ThreeXUIMonitor: session expired for %s, re-authenticating once", node.get("name"))
+        self._invalidate_cached_session(node)
+        s, base_url, login_result = self._normalize_session_result(self._get_session(node, force_reauth=True))
+        if not s:
+            return None, None, login_result
+
+        try:
+            res = xui_request(s, method, f"{base_url}{path}", **kwargs)
+        except Exception as exc:
+            return None, None, {"ok": False, "reason": "request_failed", "error": str(exc)}
+        if is_auth_failure_response(res):
+            self._invalidate_cached_session(node)
+        return res, base_url, {"ok": True, "reason": "ok", "error": ""}
 
     def get_server_status(self, node: Dict) -> Dict:
         """GET /panel/api/server/status — статус CPU, RAM, диска, core service, сети."""
-        s, base_url, login_result = self._normalize_session_result(self._get_session(node))
-        if not s:
+        res, _base_url, login_result = self._request_with_reauth(
+            node,
+            "GET",
+            "/panel/api/server/status",
+        )
+        if res is None:
             return {
                 "node": node["name"],
                 "available": False,
@@ -130,13 +167,6 @@ class ThreeXUIMonitor:
                 "error": login_result.get("error") or "Failed to connect",
             }
         try:
-            res = xui_request(
-                s,
-                "GET",
-                f"{base_url}/panel/api/server/status",
-            )
-            if res.status_code in (401, 403):
-                self._invalidate_cached_session(node)
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
@@ -205,8 +235,12 @@ class ThreeXUIMonitor:
 
     def get_inbounds(self, node: Dict) -> Dict:
         """GET /panel/api/inbounds/list — список inbounds."""
-        s, base_url, login_result = self._normalize_session_result(self._get_session(node))
-        if not s:
+        res, _base_url, login_result = self._request_with_reauth(
+            node,
+            "GET",
+            "/panel/api/inbounds/list",
+        )
+        if res is None:
             return {
                 "node": node["name"],
                 "available": False,
@@ -215,13 +249,6 @@ class ThreeXUIMonitor:
                 "inbounds": [],
             }
         try:
-            res = xui_request(
-                s,
-                "GET",
-                f"{base_url}/panel/api/inbounds/list",
-            )
-            if res.status_code in (401, 403):
-                self._invalidate_cached_session(node)
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
@@ -267,8 +294,12 @@ class ThreeXUIMonitor:
 
     def get_online_clients(self, node: Dict) -> Dict:
         """POST /panel/api/inbounds/onlines — список активных клиентов."""
-        s, base_url, login_result = self._normalize_session_result(self._get_session(node))
-        if not s:
+        res, _base_url, login_result = self._request_with_reauth(
+            node,
+            "POST",
+            "/panel/api/inbounds/onlines",
+        )
+        if res is None:
             return {
                 "node": node["name"],
                 "available": False,
@@ -277,13 +308,6 @@ class ThreeXUIMonitor:
                 "online_clients": [],
             }
         try:
-            res = xui_request(
-                s,
-                "POST",
-                f"{base_url}/panel/api/inbounds/onlines",
-            )
-            if res.status_code in (401, 403):
-                self._invalidate_cached_session(node)
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
@@ -302,8 +326,13 @@ class ThreeXUIMonitor:
 
     def get_client_traffic(self, node: Dict, email: str) -> Dict:
         """GET /panel/api/inbounds/getClientTraffics/{email} — трафик клиента."""
-        s, base_url, login_result = self._normalize_session_result(self._get_session(node))
-        if not s:
+        safe_email = quote(email, safe="")
+        res, _base_url, login_result = self._request_with_reauth(
+            node,
+            "GET",
+            f"/panel/api/inbounds/getClientTraffics/{safe_email}",
+        )
+        if res is None:
             return {
                 "node": node["name"],
                 "available": False,
@@ -311,12 +340,6 @@ class ThreeXUIMonitor:
                 "error": login_result.get("error") or "Failed to connect",
             }
         try:
-            safe_email = quote(email, safe="")
-            res = xui_request(
-                s,
-                "GET",
-                f"{base_url}/panel/api/inbounds/getClientTraffics/{safe_email}",
-            )
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):

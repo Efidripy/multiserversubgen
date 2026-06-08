@@ -2,142 +2,153 @@ import base64
 import json
 import logging
 import os
+import sqlite3
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 from typing import Dict, List, Optional
 
-
-from crypto import decrypt
+from services.db_bootstrap import connect
 from utils import parse_field_as_dict
-from xui_session import (
-    XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC,
-    extract_node_auth, get_authenticated_session, make_node_key, xui_request,
-    get_node_api_version, set_node_api_version,
-)
 
 logger = logging.getLogger("sub_manager")
 
 CACHE_TTL = int(os.getenv("CACHE_TTL", "30"))
-VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
-CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
 
-emails_cache = {"ts": 0.0, "emails": []}
+_SNAPSHOT_DB_PATH: Optional[str] = None
+_cache_lock = Lock()
+
+emails_cache = {"ts": 0.0, "emails": [], "items": {}}
 links_cache = {}
+_inbounds_cache = {}
 
 
-def _requests_verify_value():
-    if not VERIFY_TLS:
-        return False
-    if CA_BUNDLE_PATH:
-        return CA_BUNDLE_PATH
-    return True
+def configure_snapshot_db(db_path: str) -> None:
+    global _SNAPSHOT_DB_PATH
+    _SNAPSHOT_DB_PATH = db_path
 
 
 def invalidate_subscription_cache() -> None:
-    emails_cache["ts"] = 0.0
-    emails_cache["emails"] = []
-    links_cache.clear()
+    with _cache_lock:
+        emails_cache["ts"] = 0.0
+        emails_cache["emails"] = []
+        emails_cache["items"] = {}
+        links_cache.clear()
+        _inbounds_cache.clear()
+
+
+def _node_cache_key(node: Dict) -> str:
+    return "|".join(
+        [
+            str(_SNAPSHOT_DB_PATH or ""),
+            str(node.get("id") or ""),
+            str(node.get("name") or ""),
+            str(node.get("ip") or ""),
+            str(node.get("port") or ""),
+            str(node.get("base_path") or ""),
+        ]
+    )
+
+
+def _nodes_cache_key(nodes: List[Dict]) -> str:
+    return ";".join(_node_cache_key(node) for node in nodes)
+
+
+def _normalise_inbound_for_subscriptions(inbound: Dict, node: Dict) -> Dict:
+    normalised = dict(inbound)
+    normalised["streamSettings"] = parse_field_as_dict(
+        inbound.get("streamSettings"),
+        node_id=node.get("name"),
+        field_name="streamSettings",
+    )
+    normalised["settings"] = parse_field_as_dict(
+        inbound.get("settings"),
+        node_id=node.get("name"),
+        field_name="settings",
+    )
+    return normalised
 
 
 def fetch_inbounds(node: Dict) -> List[Dict]:
-    base_path = node.get("base_path", "").strip("/")
-    prefix = f"/{base_path}" if base_path else ""
-    scheme = node.get("scheme", "https")
-    base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
+    """Return subscription inbounds only from local persisted node snapshots."""
+    cache_key = _node_cache_key(node)
+    now = time.time()
+    with _cache_lock:
+        cached = _inbounds_cache.get(cache_key)
+        if cached and now - cached[0] < CACHE_TTL:
+            return cached[1]
 
-    try:
-        username, password, bearer_token = extract_node_auth(node, decrypt)
-        auth = get_authenticated_session(
-            node_key=make_node_key(node.get("ip"), node.get("port"), node.get("base_path", "")),
-            base_url=base_url,
-            username=username,
-            password=password,
-            bearer_token=bearer_token,
-            verify_value=_requests_verify_value(),
-            timeout=XUI_FAST_TIMEOUT_SEC,
-            retries=XUI_FAST_RETRIES,
-        )
-        if not auth.get("ok"):
-            logger.warning("node panel login failed for node %s", node["name"])
-            return []
+    inbounds = _fetch_inbounds_from_snapshot(node)
+    with _cache_lock:
+        _inbounds_cache[cache_key] = (now, inbounds)
+    return inbounds
 
-        response = xui_request(
-            auth["session"],
-            "GET",
-            f"{base_url}/panel/api/inbounds/list",
-            timeout=XUI_FAST_TIMEOUT_SEC,
-            retries=XUI_FAST_RETRIES,
-        )
-        if response.status_code != 200:
-            logger.warning(
-                "node panel %s inbounds list returned status %s; response (first 200 chars): %r",
-                node["name"],
-                response.status_code,
-                response.text[:200],
-            )
-            return []
-        data = response.json()
-        return data.get("obj", []) if data.get("success", False) else []
-    except Exception as exc:
-        logger.warning("Failed to fetch inbounds from %s: %s", node["name"], exc)
+
+def _fetch_inbounds_from_snapshot(node: Dict) -> List[Dict]:
+    if not _SNAPSHOT_DB_PATH:
         return []
 
+    row = None
+    try:
+        with connect(_SNAPSHOT_DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            node_id = node.get("id")
+            if node_id is not None:
+                row = conn.execute(
+                    "SELECT status_data FROM node_snapshots WHERE node_id = ?",
+                    (node_id,),
+                ).fetchone()
+            if row is None and node.get("name"):
+                row = conn.execute(
+                    """
+                    SELECT s.status_data
+                    FROM node_snapshots s
+                    INNER JOIN nodes n ON n.id = s.node_id
+                    WHERE n.name = ?
+                    """,
+                    (node.get("name"),),
+                ).fetchone()
+    except sqlite3.Error as exc:
+        logger.debug("Failed to read node snapshot for %s: %s", node.get("name"), exc)
+        return []
 
-def _fetch_emails_v3(node: Dict) -> Optional[set]:
-    """Попробовать получить emails через v3 /clients/list (быстрее — без парсинга inbound JSON)."""
-    base_path = node.get("base_path", "").strip("/")
-    prefix = f"/{base_path}" if base_path else ""
-    base_url = f"{node.get('scheme', 'https')}://{node.get('ip', '')}:{node.get('port', '')}{prefix}"
+    if row is None:
+        return []
 
     try:
-        username, password, bearer_token = extract_node_auth(node, decrypt)
-        auth = get_authenticated_session(
-            node_key=make_node_key(node.get("ip"), node.get("port"), node.get("base_path", "")),
-            base_url=base_url,
-            username=username,
-            password=password,
-            bearer_token=bearer_token,
-            verify_value=_requests_verify_value(),
-            timeout=XUI_FAST_TIMEOUT_SEC, retries=XUI_FAST_RETRIES,
-        )
-        if not auth.get("ok"):
-            return None
-
-        res = xui_request(auth["session"], "GET", f"{base_url}/panel/api/clients/list",
-                          timeout=XUI_FAST_TIMEOUT_SEC, retries=XUI_FAST_RETRIES)
-        if res.status_code == 404:
-            set_node_api_version(base_url, "v2")
-            return None  # v2 нода
-        if res.status_code != 200:
-            return None
-        data = res.json()
-        if not data.get("success"):
-            return None
-        set_node_api_version(base_url, "v3")
-        return {c["email"] for c in (data.get("obj") or []) if c.get("email")}
+        snapshot = json.loads(row["status_data"] or "{}")
     except Exception as exc:
-        logger.warning("v3 email fetch failed for %s: %s", node.get("name"), exc)
-        return None
+        logger.warning("Invalid persisted node snapshot for %s: %s", node.get("name"), exc)
+        return []
+
+    if not isinstance(snapshot, dict):
+        return []
+
+    raw_inbounds = snapshot.get("inbounds")
+    if not isinstance(raw_inbounds, list):
+        inbounds_result = snapshot.get("inbounds_result")
+        if isinstance(inbounds_result, dict):
+            raw_inbounds = inbounds_result.get("inbounds")
+
+    if not isinstance(raw_inbounds, list):
+        return []
+
+    return [
+        _normalise_inbound_for_subscriptions(inbound, node)
+        for inbound in raw_inbounds
+        if isinstance(inbound, dict)
+    ]
 
 
 def get_emails(nodes: List[Dict]) -> List[str]:
     now = time.time()
-    if now - emails_cache["ts"] < CACHE_TTL:
-        return emails_cache["emails"]
+    cache_key = _nodes_cache_key(nodes)
+    with _cache_lock:
+        cached = emails_cache.get("items", {}).get(cache_key)
+        if cached and now - cached[0] < CACHE_TTL:
+            return cached[1]
 
-    def _collect_node_emails(node: Dict) -> set:
-        node_emails = set()
-
-        # Пробуем v3 если нода его поддерживает
-        base_path = node.get("base_path", "").strip("/")
-        prefix = f"/{base_path}" if base_path else ""
-        base_url = f"{node.get('scheme', 'https')}://{node.get('ip', '')}:{node.get('port', '')}{prefix}"
-        if get_node_api_version(base_url) != "v2":
-            v3_emails = _fetch_emails_v3(node)
-            if v3_emails is not None:
-                return v3_emails
-
-        # v2 fallback: извлекаем email из inbounds
+    emails = set()
+    for node in nodes:
         for inbound in fetch_inbounds(node):
             clients = parse_field_as_dict(
                 inbound.get("settings"),
@@ -147,22 +158,13 @@ def get_emails(nodes: List[Dict]) -> List[str]:
             for client in clients:
                 email = client.get("email")
                 if email:
-                    node_emails.add(email)
-        return node_emails
-
-    emails = set()
-    if nodes:
-        workers = min(8, len(nodes))
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(_collect_node_emails, node) for node in nodes]
-            for future in as_completed(futures):
-                try:
-                    emails.update(future.result())
-                except Exception as exc:
-                    logger.warning("Failed to collect emails: %s", exc)
+                    emails.add(email)
 
     emails_list = sorted(emails, key=lambda value: value.lower())
-    emails_cache.update({"ts": now, "emails": emails_list})
+    with _cache_lock:
+        emails_cache["ts"] = now
+        emails_cache["emails"] = emails_list
+        emails_cache.setdefault("items", {})[cache_key] = (now, emails_list)
     return emails_list
 
 
@@ -197,65 +199,20 @@ def _fingerprint_from_stream_settings(stream_settings: Dict) -> str:
     return "chrome"
 
 
-def _fetch_links_v3(node: Dict, email: str) -> Optional[List[str]]:
-    """Получить subscription links через v3 API /clients/links/{email}.
-    Возвращает список URL или None если v2 нода.
-    """
-    base_path = node.get("base_path", "").strip("/")
-    prefix = f"/{base_path}" if base_path else ""
-    base_url = f"{node.get('scheme', 'https')}://{node.get('ip', '')}:{node.get('port', '')}{prefix}"
-
-    try:
-        username, password, bearer_token = extract_node_auth(node, decrypt)
-        auth = get_authenticated_session(
-            node_key=make_node_key(node.get("ip"), node.get("port"), node.get("base_path", "")),
-            base_url=base_url,
-            username=username,
-            password=password,
-            bearer_token=bearer_token,
-            verify_value=_requests_verify_value(),
-            timeout=XUI_FAST_TIMEOUT_SEC, retries=XUI_FAST_RETRIES,
-        )
-        if not auth.get("ok"):
-            return None
-        res = xui_request(auth["session"], "GET",
-                          f"{base_url}/panel/api/clients/links/{email}",
-                          timeout=XUI_FAST_TIMEOUT_SEC, retries=XUI_FAST_RETRIES)
-        if res.status_code == 404:
-            set_node_api_version(base_url, "v2")
-            return None
-        if res.status_code == 200:
-            data = res.json()
-            if data.get("success"):
-                set_node_api_version(base_url, "v3")
-                return data.get("obj") or []
-    except Exception as exc:
-        logger.debug("v3 links fetch failed for %s/%s: %s", node.get("name"), email, exc)
-    return None
-
-
 def get_links_filtered(
     nodes: List[Dict],
     email: str,
     protocol_filter: Optional[str] = None,
 ) -> List[str]:
-    cache_key = f"{email}_{protocol_filter or 'all'}_{','.join([node['name'] for node in nodes])}"
+    cache_key = f"{email.lower()}|{protocol_filter or 'all'}|{_nodes_cache_key(nodes)}"
     now_link = time.time()
-    cached = links_cache.get(cache_key)
-    if cached and now_link - cached[0] < CACHE_TTL:
-        return cached[1]
+    with _cache_lock:
+        cached = links_cache.get(cache_key)
+        if cached and now_link - cached[0] < CACHE_TTL:
+            return cached[1]
 
     links = []
     for node in nodes:
-        # v3: панель сама генерирует ссылки (только если нет фильтра по протоколу)
-        base_path = node.get("base_path", "").strip("/")
-        prefix = f"/{base_path}" if base_path else ""
-        base_url = f"{node.get('scheme', 'https')}://{node.get('ip', '')}:{node.get('port', '')}{prefix}"
-        if not protocol_filter and get_node_api_version(base_url) != "v2":
-            v3_links = _fetch_links_v3(node, email)
-            if v3_links is not None:
-                links.extend(v3_links)
-                continue
         for inbound in fetch_inbounds(node):
             protocol = inbound.get("protocol", "")
             if protocol_filter and protocol != protocol_filter:
@@ -346,6 +303,6 @@ def get_links_filtered(
                             f"&sni={sni}&type={network}#{node['name']}"
                         )
 
-    links_cache[cache_key] = (now_link, links)
-    links_cache[email] = (now_link, links)
+    with _cache_lock:
+        links_cache[cache_key] = (now_link, links)
     return links

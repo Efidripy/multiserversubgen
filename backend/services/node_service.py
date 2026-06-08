@@ -2,6 +2,8 @@ import sqlite3
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
+from services.db_bootstrap import connect
+
 
 class NodeService:
     """Node access adapter with a canonical runtime schema.
@@ -43,7 +45,7 @@ class NodeService:
         return node
 
     def list_nodes(self) -> List[Dict]:
-        with sqlite3.connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             return [
                 self._normalize_node(dict(n))
@@ -53,7 +55,7 @@ class NodeService:
             ]
 
     def list_nodes_simple(self) -> List[Dict]:
-        with sqlite3.connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             return [
                 {"id": n["id"], "name": n["name"]}
@@ -63,7 +65,7 @@ class NodeService:
             ]
 
     def get_node(self, node_id: int) -> Optional[Dict]:
-        with sqlite3.connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
             return self._normalize_node(dict(row)) if row else None
@@ -76,6 +78,6 @@ class NodeService:
             return self.get_node(node_id)
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         params = list(fields.values()) + [node_id]
-        with sqlite3.connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.execute(f"UPDATE nodes SET {set_clause} WHERE id = ?", params)
         return self.get_node(node_id)

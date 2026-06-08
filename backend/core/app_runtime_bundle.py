@@ -118,6 +118,7 @@ def build_app_runtime_bundle(
         fetch_nodes=node_service.list_nodes,
         xui_monitor=xui_monitor,
         ws_manager=ws_manager,
+        db_path=db_path,
         on_snapshot=on_snapshot,
         base_interval_sec=collector_base_interval_sec,
         max_interval_sec=collector_max_interval_sec,

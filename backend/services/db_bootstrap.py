@@ -12,7 +12,9 @@ def connect(db_path: str) -> sqlite3.Connection:
 
     Используйте эту функцию везде вместо ``sqlite3.connect(db_path)`` напрямую.
     """
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
@@ -154,6 +156,14 @@ def init_db(db_path: str) -> None:
                       traffic_total REAL NOT NULL,
                       poll_ms REAL NOT NULL)"""
         )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS node_snapshots
+                     (node_id INTEGER PRIMARY KEY,
+                      status_data TEXT NOT NULL,
+                      is_online INTEGER NOT NULL DEFAULT 0,
+                      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE)"""
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_node_history_ts ON node_history(ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_node_history_node_ts ON node_history(node_id, ts)")
         conn.execute(
@@ -195,7 +205,7 @@ def init_db(db_path: str) -> None:
 
 
 def sync_node_history_names_with_nodes(db_path: str, logger: logging.Logger) -> None:
-    with sqlite3.connect(db_path) as conn:
+    with connect(db_path) as conn:
         result = conn.execute(
             """
             UPDATE node_history

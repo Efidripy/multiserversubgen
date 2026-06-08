@@ -326,6 +326,59 @@ class TestThreeXUIMonitor:
         assert inbound["security"] == "reality"
         assert inbound["is_reality"] is True
 
+    def test_get_inbounds_reauths_once_on_401(self):
+        monitor = self._build_monitor()
+        body = {"success": True, "obj": [{"id": 1, "remark": "test", "protocol": "vless", "up": 100, "down": 200}]}
+        responses = [
+            _make_response(401, {"detail": "Unauthorized"}, url="https://1.2.3.4:443/panel/api/inbounds/list"),
+            _make_response(200, body),
+        ]
+        with patch.object(monitor, "_get_session") as mock_gs:
+            sess1 = MagicMock(name="session1")
+            sess2 = MagicMock(name="session2")
+
+            def _fake_get_session(node, force_reauth=False):
+                return (sess2 if force_reauth else sess1, "https://1.2.3.4:443", {"ok": True, "reason": "ok", "error": ""})
+
+            mock_gs.side_effect = _fake_get_session
+            with patch.object(monitor, "_invalidate_cached_session") as mock_invalidate:
+                with patch("server_monitor.xui_request", side_effect=responses) as mock_xui:
+                    result = monitor.get_inbounds(self._node())
+
+        assert result["available"] is True
+        assert len(result["inbounds"]) == 1
+        assert mock_gs.call_args_list[0] == call(self._node())
+        assert mock_gs.call_args_list[1] == call(self._node(), force_reauth=True)
+        assert mock_invalidate.called
+        assert mock_xui.call_args_list[0] == call(sess1, "GET", "https://1.2.3.4:443/panel/api/inbounds/list")
+        assert mock_xui.call_args_list[1] == call(sess2, "GET", "https://1.2.3.4:443/panel/api/inbounds/list")
+
+    def test_get_online_clients_treats_login_redirect_as_auth_failure(self):
+        monitor = self._build_monitor()
+        login_page = _make_response(200, None, url="https://1.2.3.4:443/login")
+        login_page.headers = {"content-type": "text/html; charset=utf-8"}
+        login_page.text = "<html><form><input name='username'><input type='password'></form></html>"
+        body = {"success": True, "obj": ["user@a.com", "user@b.com"]}
+        with patch.object(monitor, "_get_session") as mock_gs:
+            sess1 = MagicMock(name="session1")
+            sess2 = MagicMock(name="session2")
+
+            def _fake_get_session(node, force_reauth=False):
+                return (sess2 if force_reauth else sess1, "https://1.2.3.4:443", {"ok": True, "reason": "ok", "error": ""})
+
+            mock_gs.side_effect = _fake_get_session
+            with patch.object(monitor, "_invalidate_cached_session") as mock_invalidate:
+                with patch("server_monitor.xui_request", side_effect=[login_page, _make_response(200, body)]) as mock_xui:
+                    result = monitor.get_online_clients(self._node())
+
+        assert result["available"] is True
+        assert result["online_clients"] == ["user@a.com", "user@b.com"]
+        assert mock_gs.call_args_list[0] == call(self._node())
+        assert mock_gs.call_args_list[1] == call(self._node(), force_reauth=True)
+        assert mock_invalidate.called
+        assert mock_xui.call_args_list[0] == call(sess1, "POST", "https://1.2.3.4:443/panel/api/inbounds/onlines")
+        assert mock_xui.call_args_list[1] == call(sess2, "POST", "https://1.2.3.4:443/panel/api/inbounds/onlines")
+
     def test_get_traffic_aggregates_inbounds(self):
         monitor = self._build_monitor()
         inbounds = [

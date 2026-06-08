@@ -151,3 +151,49 @@ class TestVlessFlowParameter:
 
         assert len(links) == 1
         assert f"&fp={fingerprint}&" in links[0]
+
+
+def test_links_are_generated_from_persisted_node_snapshot(tmp_path):
+    from services.db_bootstrap import connect, init_db
+
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    inbound = _make_inbound("reality", flow="xtls-rprx-vision")
+    snapshot = {
+        "name": "node1",
+        "node_id": 1,
+        "available": True,
+        "inbounds": [inbound],
+    }
+
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO nodes (id, name, ip, port, user, password)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (1, "node1", "1.2.3.4", "443", "root", "encrypted"),
+        )
+        conn.execute(
+            """
+            INSERT INTO node_snapshots (node_id, status_data, is_online)
+            VALUES (?, ?, ?)
+            """,
+            (1, json.dumps(snapshot), 1),
+        )
+        conn.commit()
+
+    subscription_links_service.configure_snapshot_db(db_path)
+    subscription_links_service.invalidate_subscription_cache()
+    try:
+        links = subscription_links_service.get_links_filtered(
+            [{"id": 1, "name": "node1", "ip": "1.2.3.4"}],
+            "user@example.com",
+        )
+    finally:
+        subscription_links_service.configure_snapshot_db(main.DB_PATH)
+        subscription_links_service.invalidate_subscription_cache()
+
+    assert len(links) == 1
+    assert links[0].startswith("vless://client-uuid@1.2.3.4:443")
+    assert "&flow=xtls-rprx-vision&" in links[0]
