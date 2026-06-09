@@ -129,6 +129,13 @@ function invalidateForMutation(url: string): void {
 }
 
 /** Pre-configured axios instance – use this instead of raw axios for all API calls. */
+function isCanceledApiError(error: any): boolean {
+  return axios.isCancel(error)
+    || error?.code === 'ERR_CANCELED'
+    || error?.name === 'CanceledError'
+    || error?.message === 'canceled';
+}
+
 const api = axios.create({
   baseURL: API_BASE,
   withCredentials: true,
@@ -172,6 +179,9 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   return config;
 }, (error) => {
   requestActivityStore.decrement();
+  if (isCanceledApiError(error)) {
+    return Promise.reject(error);
+  }
   const errUrl = error.config?.url ?? '';
   const errStatus = error.response?.status ?? 0;
   const errMethod = error.config?.method?.toUpperCase() ?? '';
@@ -217,6 +227,9 @@ api.interceptors.response.use((response) => {
   return response;
 }, (error) => {
   requestActivityStore.decrement();
+  if (isCanceledApiError(error)) {
+    return Promise.reject(error);
+  }
   const errUrl = error.config?.url ?? '';
   const errStatus = error.response?.status ?? 0;
   const errMethod = error.config?.method?.toUpperCase() ?? '';

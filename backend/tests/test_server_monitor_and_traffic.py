@@ -310,6 +310,40 @@ class TestThreeXUIMonitor:
         assert result["xray"]["version"] == "1.8.10"
         assert result["system"]["cpu"] == 15
 
+    def test_get_server_status_normalizes_telemetry_aliases(self):
+        monitor = self._build_monitor()
+        body = {
+            "success": True,
+            "obj": {
+                "cpuPercent": "17.5%",
+                "memory": {"used": "256", "total": "1024"},
+                "storage": {"used": "10", "total": "100"},
+                "uptime": "3600",
+                "loadavg": "0.10 0.20 0.30",
+                "network": {"tx": "5000", "rx": "10000"},
+                "xray": {"running": True, "version": "1.8.10", "upTime": "200"},
+                "panelVersion": "2.6.0",
+            },
+        }
+        with patch.object(monitor, '_get_session') as mock_gs:
+            sess = MagicMock()
+            mock_gs.return_value = (sess, "https://1.2.3.4:443")
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)):
+                result = monitor.get_server_status(self._node())
+
+        assert result["available"] is True
+        assert result["system"]["cpu"] == 17.5
+        assert result["system"]["mem"]["current"] == 256.0
+        assert result["system"]["mem"]["total"] == 1024.0
+        assert result["system"]["mem"]["percent"] == 25.0
+        assert result["system"]["disk"]["percent"] == 10.0
+        assert result["system"]["loads"] == [0.1, 0.2, 0.3]
+        assert result["network"]["upload"] == 5000.0
+        assert result["network"]["download"] == 10000.0
+        assert result["xray"]["running"] is True
+        assert result["xray"]["uptime"] == 200.0
+        assert result["panel_version"] == "2.6.0"
+
     def test_get_session_preserves_panel_url_path_for_session_pool(self):
         monitor = self._build_monitor()
         node = {

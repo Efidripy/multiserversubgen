@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Activity,
@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { getDashboardServerDeck, type DashboardServerStatus } from '../api/dashboard';
 import { refreshNodesNow } from '../api/nodes';
+import { useTrafficStatsSubscription, type TrafficUpdate } from '../services/useTrafficStatsSubscription';
 
 interface ServerStatusProps {
   dashboardMode?: boolean;
@@ -44,6 +45,7 @@ interface ServerStatusProps {
 type SortMode = 'name' | 'cpu' | 'status' | 'clients';
 
 type UiServer = {
+  nodeId?: number;
   name: string;
   status: 'online' | 'offline';
   latency: string;
@@ -124,12 +126,38 @@ const formatUptime = (seconds?: number) => {
   return `${m}m`;
 };
 
+const toNumber = (value: unknown, fallback = 0): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const formatLastSeen = (value?: string | number | null) => {
+  if (value === undefined || value === null || value === '') return '-';
+  const numeric = Number(value);
+  const date = Number.isFinite(numeric)
+    ? new Date(numeric < 1_000_000_000 ? Date.now() : numeric < 1_000_000_000_000 ? numeric * 1000 : numeric)
+    : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+};
+
+const metricDetail = (metric: any, fallback: string) => {
+  if (!metric || typeof metric !== 'object') return fallback;
+  return `${formatBytes(toNumber(metric.current))}/${formatBytes(toNumber(metric.total))}`;
+};
+
+const formatLoads = (loads: unknown, fallback: string) => {
+  if (!Array.isArray(loads) || loads.length === 0) return fallback;
+  return loads.slice(0, 3).map((item) => toNumber(item).toFixed(2)).join(' / ');
+};
+
 const toUiServer = (server: DashboardServerStatus): UiServer => {
   const isOnline = Boolean(server.available);
   const cpu = Number(server.system?.cpu ?? 0);
   const ramPercent = Number(server.system?.mem?.percent ?? 0);
   const diskPercent = Number(server.system?.disk?.percent ?? 0);
   return {
+    nodeId: server.nodeId,
     name: server.node,
     status: isOnline ? 'online' : 'offline',
     latency: isOnline ? 'online' : 'No connection',
@@ -142,9 +170,43 @@ const toUiServer = (server: DashboardServerStatus): UiServer => {
     uptime: formatUptime(server.xray?.uptime || server.system?.uptime),
     load: (server.system?.loads || []).slice(0, 3).map((item: number) => item.toFixed(2)).join(' / ') || '-',
     swap: server.system?.swap ? `${formatBytes(server.system.swap.current)}/${formatBytes(server.system.swap.total)}` : '-',
-    core: server.xray?.version || '26.4.17',
-    lastSeen: server.timestamp ? new Date(server.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-',
+    core: server.xray?.version || server.panel_version || '26.4.17',
+    lastSeen: formatLastSeen(server.timestamp),
     issue: server.error || server.reason,
+  };
+};
+
+const mergeServerTelemetry = (server: UiServer, data: Record<string, any>): UiServer => {
+  const system = data.system && typeof data.system === 'object' ? data.system : {};
+  const xray = data.xray && typeof data.xray === 'object' ? data.xray : {};
+  const network = data.network && typeof data.network === 'object' ? data.network : {};
+  const available = data.available === undefined ? server.status === 'online' : Boolean(data.available);
+  const status = data.status === 'offline' ? 'offline' : data.status === 'online' ? 'online' : available ? 'online' : 'offline';
+  const pollMs = Number(data.poll_ms);
+  const lastSeen = formatLastSeen(data.timestamp);
+
+  return {
+    ...server,
+    nodeId: data.node_id !== undefined && data.node_id !== null ? Number(data.node_id) : server.nodeId,
+    name: String(data.node || data.name || server.name),
+    status,
+    latency: status === 'online'
+      ? Number.isFinite(pollMs) && pollMs > 0 ? `${Math.round(pollMs)}ms` : server.latency === 'No connection' ? 'online' : server.latency
+      : 'No connection',
+    cpu: toNumber(system.cpu ?? data.cpu, server.cpu),
+    ramPercent: toNumber(system.mem?.percent, server.ramPercent),
+    ramDetail: metricDetail(system.mem, server.ramDetail),
+    diskPercent: toNumber(system.disk?.percent, server.diskPercent),
+    diskDetail: metricDetail(system.disk, server.diskDetail),
+    network: Object.keys(network).length > 0
+      ? `${formatBytes(toNumber(network.upload))} / ${formatBytes(toNumber(network.download))}`
+      : server.network,
+    uptime: xray.uptime || system.uptime ? formatUptime(toNumber(xray.uptime || system.uptime)) : server.uptime,
+    load: formatLoads(system.loads, server.load),
+    swap: metricDetail(system.swap, server.swap),
+    core: String(xray.version || data.panel_version || server.core),
+    lastSeen: lastSeen === '-' ? server.lastSeen : lastSeen,
+    issue: data.error || data.reason || (status === 'online' ? undefined : server.issue),
   };
 };
 
@@ -168,7 +230,7 @@ export function ServerStatus({
   void includeCounts;
   void includeCollectorStatus;
 
-  const loadServersStatus = async () => {
+  const loadServersStatus = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
@@ -184,24 +246,81 @@ export function ServerStatus({
     } finally {
       setLoading(false);
     }
-  };
+  }, [dashboardMode, includeLiveStatus, includePanelUpdateChecks, t]);
 
-  const refreshDeck = async () => {
+  const refreshDeck = useCallback(async () => {
     try {
       await refreshNodesNow();
     } catch {}
     await loadServersStatus();
-  };
+  }, [loadServersStatus]);
+
+  const applyServerTelemetry = useCallback((rawData: Record<string, any>) => {
+    const data = rawData.snapshot && typeof rawData.snapshot === 'object'
+      ? { ...rawData.snapshot, ...rawData }
+      : rawData;
+    const nodeName = String(data.node || data.name || '');
+    const nodeId = data.node_id !== undefined && data.node_id !== null ? Number(data.node_id) : null;
+
+    setServers((current) => {
+      let matched = false;
+      const next = current.map((server) => {
+        const byId = nodeId !== null && server.nodeId !== undefined && Number(server.nodeId) === nodeId;
+        const byName = Boolean(nodeName) && server.name === nodeName;
+        if (!byId && !byName) return server;
+        matched = true;
+        return mergeServerTelemetry(server, data);
+      });
+
+      if (matched || !nodeName) {
+        return next;
+      }
+
+      return [
+        ...next,
+        toUiServer({
+          nodeId: nodeId ?? undefined,
+          node: nodeName,
+          available: Boolean(data.available),
+          status: data.status,
+          reason: data.reason,
+          error: data.error,
+          timestamp: data.timestamp,
+          system: data.system,
+          xray: data.xray,
+          network: data.network,
+          panel_version: data.panel_version,
+          api_version: data.api_version,
+        }),
+      ];
+    });
+    setLoadError(null);
+    setLoading(false);
+  }, []);
+
+  const handleRealtimeUpdate = useCallback((update: TrafficUpdate) => {
+    if (update.type !== 'server_status') return;
+    if (!update.data || typeof update.data !== 'object') return;
+    applyServerTelemetry(update.data);
+  }, [applyServerTelemetry]);
 
   useEffect(() => {
     loadServersStatus();
-  }, []);
+  }, [loadServersStatus]);
 
   useEffect(() => {
     if (!autoRefresh) return;
     const timer = window.setInterval(loadServersStatus, refreshInterval * 1000);
     return () => window.clearInterval(timer);
-  }, [autoRefresh, refreshInterval, includeLiveStatus, includePanelUpdateChecks, dashboardMode]);
+  }, [autoRefresh, refreshInterval, loadServersStatus]);
+
+  useTrafficStatsSubscription({
+    channels: ['server_status'],
+    onUpdate: handleRealtimeUpdate,
+    onError: (err) => console.warn('[ServerStatus] realtime error:', err),
+    fallbackPollIntervalMs: 60_000,
+    fallbackRun: loadServersStatus,
+  });
 
   const sortedServers = useMemo(() => {
     return [...servers].sort((a, b) => {

@@ -211,6 +211,126 @@ def test_snapshot_collector_opens_timeout_circuit():
     assert snapshot["reason"] == "timeout"
 
 
+def test_snapshot_collector_promotes_server_telemetry_to_snapshot():
+    from services.collector import SnapshotCollector
+
+    class TelemetryMonitor:
+        def get_server_status(self, node):
+            return {
+                "node": node["name"],
+                "available": True,
+                "system": {
+                    "cpu": 12.5,
+                    "mem": {"current": 512, "total": 1024, "percent": 50.0},
+                    "disk": {"current": 20, "total": 100, "percent": 20.0},
+                    "uptime": 3600,
+                    "loads": [0.1, 0.2, 0.3],
+                },
+                "xray": {"running": True, "version": "1.8.10", "uptime": 120},
+                "network": {"upload": 1000, "download": 2000},
+                "panel_version": "2.6.0",
+            }
+
+        def get_online_clients(self, _node):
+            return {"available": True, "online_clients": ["a@test.local", "b@test.local"]}
+
+        def get_inbounds(self, _node):
+            return {"available": True, "inbounds": [{"up": 10, "down": 20}]}
+
+    collector = SnapshotCollector(
+        fetch_nodes=lambda: [],
+        xui_monitor=TelemetryMonitor(),
+        ws_manager=SimpleNamespace(active_connections=[]),
+    )
+
+    snapshot = collector._collect_node_snapshot({"id": 1, "name": "alpha"})
+
+    assert snapshot["available"] is True
+    assert snapshot["cpu"] == 12.5
+    assert snapshot["system"]["mem"]["percent"] == 50.0
+    assert snapshot["system"]["disk"]["percent"] == 20.0
+    assert snapshot["system"]["loads"] == [0.1, 0.2, 0.3]
+    assert snapshot["xray_running"] is True
+    assert snapshot["xray"]["version"] == "1.8.10"
+    assert snapshot["network"]["upload"] == 1000
+    assert snapshot["network"]["download"] == 2000
+    assert snapshot["online_clients"] == 2
+    assert snapshot["traffic_total"] == 30
+    assert snapshot["panel_version"] == "2.6.0"
+
+
+def test_snapshot_collector_broadcasts_server_status_telemetry():
+    from services.collector import SnapshotCollector
+
+    class CaptureWs:
+        active_connections = [object()]
+
+        def __init__(self):
+            self.messages = []
+
+        async def broadcast(self, message, channel=None):
+            self.messages.append((channel, message))
+
+        async def broadcast_server_status(self, status_data):
+            self.messages.append(("server_status", status_data))
+
+        async def broadcast_client_update(self, client_data):
+            self.messages.append(("clients", client_data))
+
+        async def broadcast_inbound_update(self, inbound_data):
+            self.messages.append(("inbounds", inbound_data))
+
+        async def broadcast_traffic_update(self, traffic_data):
+            self.messages.append(("traffic", traffic_data))
+
+    ws = CaptureWs()
+    collector = SnapshotCollector(
+        fetch_nodes=lambda: [],
+        xui_monitor=SimpleNamespace(),
+        ws_manager=ws,
+    )
+    snapshot = {
+        "name": "alpha",
+        "node_id": 1,
+        "available": True,
+        "status": "online",
+        "reason": "ok",
+        "cpu": 12.5,
+        "system": {
+            "cpu": 12.5,
+            "mem": {"current": 512, "total": 1024, "percent": 50.0},
+            "disk": {"current": 20, "total": 100, "percent": 20.0},
+            "uptime": 3600,
+            "loads": [0.1, 0.2, 0.3],
+        },
+        "xray": {"running": True, "version": "1.8.10", "uptime": 120},
+        "network": {"upload": 1000, "download": 2000},
+        "xray_running": True,
+        "online_clients": 2,
+        "traffic_total": 30,
+        "panel_version": "2.6.0",
+        "api_version": "v3",
+        "poll_ms": 42.5,
+        "timestamp": time.time(),
+        "inbounds": [],
+    }
+
+    asyncio.run(collector._broadcast_delta("alpha", snapshot))
+
+    status_payload = next(data for channel, data in ws.messages if channel == "server_status")
+    assert status_payload["source"] == "snapshot_collector"
+    assert status_payload["node"] == "alpha"
+    assert status_payload["system"]["mem"]["percent"] == 50.0
+    assert status_payload["system"]["disk"]["percent"] == 20.0
+    assert status_payload["system"]["loads"] == [0.1, 0.2, 0.3]
+    assert status_payload["network"]["upload"] == 1000
+    assert status_payload["network"]["download"] == 2000
+    assert status_payload["xray"]["version"] == "1.8.10"
+    assert status_payload["panel_version"] == "2.6.0"
+    assert status_payload["api_version"] == "v3"
+    assert status_payload["poll_ms"] == 42.5
+
+
 def test_snapshot_collector_persists_and_loads_sqlite_snapshots(tmp_path):
     from services.collector import SnapshotCollector
     from services.db_bootstrap import connect, init_db

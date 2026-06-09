@@ -269,6 +269,15 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
 
   const handleRealtimeUpdate = useCallback(
     (update: TrafficUpdate) => {
+      if (update.data?.source === 'snapshot_collector') {
+        if (update.type !== 'client_update') {
+          return;
+        }
+        loadTrafficStats(groupBy, period, { silent: true });
+        loadOnlineClients(true);
+        loadOnlineTrafficTotals(period);
+        return;
+      }
       if (update.type === 'traffic_update') {
         loadTrafficStats(groupBy, period, { silent: true });
         loadOnlineTrafficTotals(period);

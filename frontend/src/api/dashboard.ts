@@ -44,6 +44,8 @@ export interface DashboardServerStatus {
   system?: any;
   xray?: any;
   network?: any;
+  panel_version?: string;
+  api_version?: string;
 }
 
 interface SnapshotNode {
@@ -56,6 +58,14 @@ interface SnapshotNode {
   xray_running?: boolean;
   timestamp?: number;
   online_clients?: number;
+  traffic_total?: number;
+  poll_ms?: number;
+  cpu?: number;
+  system?: any;
+  xray?: any;
+  network?: any;
+  panel_version?: string;
+  api_version?: string;
 }
 
 export interface DashboardServerDeck {
@@ -211,12 +221,15 @@ function buildBaseStatuses(nodes: NodeRecord[], snapshotNodes: SnapshotNode[]): 
       reason: snapshot?.reason || (snapshot?.available ? 'ok' : 'unknown'),
       error: snapshot?.error || '',
       timestamp: snapshot?.timestamp ? new Date(snapshot.timestamp * 1000).toISOString() : undefined,
+      system: snapshot?.system,
       xray: snapshot ? {
-        state: snapshot.xray_running ? 'running' : 'stopped',
-        running: Boolean(snapshot.xray_running),
-        version: '',
-        uptime: 0,
+        ...(snapshot.xray || {}),
+        state: snapshot.xray?.state || (snapshot.xray_running ? 'running' : 'stopped'),
+        running: snapshot.xray?.running ?? Boolean(snapshot.xray_running),
       } : undefined,
+      network: snapshot?.network,
+      panel_version: snapshot?.panel_version,
+      api_version: snapshot?.api_version,
     };
   });
 }

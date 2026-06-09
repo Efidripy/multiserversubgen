@@ -10,7 +10,7 @@ from urllib.parse import quote
 import sys
 import os
 from pathlib import Path
-from typing import List, Dict
+from typing import Any, List, Dict
 from datetime import datetime
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -41,6 +41,96 @@ def _requests_verify_value():
     if CA_BUNDLE_PATH:
         return CA_BUNDLE_PATH
     return True
+
+
+def _to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        if value is None or value == "":
+            return default
+        if isinstance(value, str):
+            value = value.strip().rstrip("%")
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _first_number(source: Any, keys: tuple[str, ...], default: float = 0.0) -> float:
+    if not isinstance(source, dict):
+        return default
+    for key in keys:
+        if key in source:
+            return _to_float(source.get(key), default)
+    return default
+
+
+def _metric_block(source: Any) -> Dict[str, float]:
+    if not isinstance(source, dict):
+        source = {}
+    current = _first_number(source, ("current", "used", "usage", "value"), 0.0)
+    total = _first_number(source, ("total", "max", "limit"), 0.0)
+    percent = _first_number(source, ("percent", "percentage", "usedPercent", "usagePercent"), -1.0)
+    if percent < 0:
+        percent = (current / total * 100) if total > 0 else 0.0
+    return {
+        "current": current,
+        "total": total,
+        "percent": round(percent, 2),
+    }
+
+
+def _normalize_loads(value: Any) -> List[float]:
+    if isinstance(value, list):
+        return [_to_float(item, 0.0) for item in value[:3]]
+    if isinstance(value, str):
+        return [_to_float(part, 0.0) for part in value.replace(",", " ").split()[:3]]
+    if isinstance(value, dict):
+        return [
+            _first_number(value, ("load1", "1", "one", "one_min"), 0.0),
+            _first_number(value, ("load5", "5", "five", "five_min"), 0.0),
+            _first_number(value, ("load15", "15", "fifteen", "fifteen_min"), 0.0),
+        ]
+    return []
+
+
+def _normalize_network(obj: Dict[str, Any]) -> Dict[str, float]:
+    net = obj.get("netTraffic") or obj.get("network") or obj.get("net") or {}
+    return {
+        "upload": _first_number(net, ("sent", "upload", "tx", "txBytes", "up"), 0.0),
+        "download": _first_number(net, ("recv", "download", "rx", "rxBytes", "down"), 0.0),
+    }
+
+
+def _normalize_3xui_status(node: Dict, obj: Any) -> Dict:
+    if not isinstance(obj, dict):
+        obj = {}
+
+    xray = obj.get("xray") if isinstance(obj.get("xray"), dict) else {}
+    xray_state = str(xray.get("state") or "")
+    xray_running = bool(xray.get("running")) or xray_state.lower() == "running"
+    loads = _normalize_loads(obj.get("loads") or obj.get("load") or obj.get("loadavg"))
+
+    return {
+        "node": node["name"],
+        "node_id": node.get("id"),
+        "available": True,
+        "timestamp": datetime.now().isoformat(),
+        "system": {
+            "cpu": _first_number(obj, ("cpu", "cpuPercent", "cpu_percent"), 0.0),
+            "mem": _metric_block(obj.get("mem") or obj.get("memory") or obj.get("ram")),
+            "disk": _metric_block(obj.get("disk") or obj.get("storage")),
+            "swap": _metric_block(obj.get("swap")),
+            "uptime": _first_number(obj, ("uptime", "upTime", "hostUptime"), 0.0),
+            "loads": loads,
+        },
+        "xray": {
+            "state": xray_state,
+            "running": xray_running,
+            "version": str(xray.get("version") or ""),
+            "uptime": _first_number(xray, ("uptime", "upTime"), 0.0),
+        },
+        "network": _normalize_network(obj),
+        "panel_version": str(obj.get("panelVersion") or obj.get("panel_version") or ""),
+    }
 
 
 class ThreeXUIMonitor:
@@ -170,49 +260,7 @@ class ThreeXUIMonitor:
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
-                    obj = data.get("obj", {})
-                    mem = obj.get("mem", {})
-                    disk = obj.get("disk", {})
-                    xray = obj.get("xray", {})
-                    return {
-                        "node": node["name"],
-                        "available": True,
-                        "timestamp": datetime.now().isoformat(),
-                        "system": {
-                            "cpu": obj.get("cpu", 0),
-                            "mem": {
-                                "current": mem.get("current", 0),
-                                "total": mem.get("total", 1),
-                                "percent": round(
-                                    mem.get("current", 0) / max(mem.get("total", 1), 1) * 100, 2
-                                ),
-                            },
-                            "disk": {
-                                "current": disk.get("current", 0),
-                                "total": disk.get("total", 1),
-                                "percent": round(
-                                    disk.get("current", 0) / max(disk.get("total", 1), 1) * 100, 2
-                                ),
-                            },
-                            "swap": {
-                                "current": obj.get("swap", {}).get("current", 0),
-                                "total": obj.get("swap", {}).get("total", 0),
-                            },
-                            "uptime": obj.get("uptime", 0),
-                            "loads": obj.get("loads", []),
-                        },
-                        "xray": {
-                            "state": xray.get("state", ""),
-                            "running": xray.get("state", "") == "running",
-                            "version": xray.get("version", ""),
-                            "uptime": xray.get("uptime", 0),
-                        },
-                        "network": {
-                            "upload": obj.get("netTraffic", {}).get("sent", 0),
-                            "download": obj.get("netTraffic", {}).get("recv", 0),
-                        },
-                        "panel_version": obj.get("panelVersion", ""),
-                    }
+                    return _normalize_3xui_status(node, data.get("obj", {}))
             logger.warning(
                 f"ThreeXUIMonitor: server status for {node['name']} returned {res.status_code}"
             )
@@ -459,42 +507,7 @@ class ServerMonitor:
                 data = res.json()
                 
                 if data.get("success"):
-                    obj = data.get("obj", {})
-                    
-                    return {
-                        "node": node["name"],
-                        "available": True,
-                        "timestamp": datetime.now().isoformat(),
-                        "system": {
-                            "cpu": obj.get("cpu", 0),
-                            "mem": {
-                                "current": obj.get("mem", {}).get("current", 0),
-                                "total": obj.get("mem", {}).get("total", 0),
-                                "percent": round(obj.get("mem", {}).get("current", 0) / obj.get("mem", {}).get("total", 1) * 100, 2)
-                            },
-                            "disk": {
-                                "current": obj.get("disk", {}).get("current", 0),
-                                "total": obj.get("disk", {}).get("total", 0),
-                                "percent": round(obj.get("disk", {}).get("current", 0) / obj.get("disk", {}).get("total", 1) * 100, 2)
-                            },
-                            "swap": {
-                                "current": obj.get("swap", {}).get("current", 0),
-                                "total": obj.get("swap", {}).get("total", 0)
-                            },
-                            "uptime": obj.get("uptime", 0),
-                            "loads": obj.get("loads", [])
-                        },
-                        "xray": {
-                            "state": obj.get("xray", {}).get("state", ""),
-                            "running": obj.get("xray", {}).get("state", "") == "running",
-                            "version": obj.get("xray", {}).get("version", ""),
-                            "uptime": obj.get("xray", {}).get("uptime", 0)
-                        },
-                        "network": {
-                            "upload": obj.get("netTraffic", {}).get("sent", 0),
-                            "download": obj.get("netTraffic", {}).get("recv", 0)
-                        }
-                    }
+                    return _normalize_3xui_status(node, data.get("obj", {}))
             
             return {
                 "node": node["name"],

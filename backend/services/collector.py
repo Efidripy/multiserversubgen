@@ -4,7 +4,7 @@ import logging
 import sqlite3
 import time
 from datetime import datetime, timezone
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from enum import Enum
 
 from services.db_bootstrap import connect
@@ -259,6 +259,11 @@ class SnapshotCollector:
         except (TypeError, ValueError):
             return default
 
+    @staticmethod
+    def _status_object(status: Dict, field: str) -> Dict[str, Any]:
+        value = status.get(field) if isinstance(status, dict) else None
+        return value if isinstance(value, dict) else {}
+
     def is_running(self) -> bool:
         return self._running
 
@@ -480,6 +485,9 @@ class SnapshotCollector:
         name = node.get("name", "unknown")
         try:
             status = self.xui_monitor.get_server_status(node)
+            system_status = self._status_object(status, "system")
+            xray_status = self._status_object(status, "xray")
+            network_status = self._status_object(status, "network")
             if not bool(status.get("available")):
                 return {
                     "name": name,
@@ -489,6 +497,10 @@ class SnapshotCollector:
                     "reason": status.get("reason", "unavailable"),
                     "error": status.get("error", "Failed to connect"),
                     "server_status": status,
+                    "system": system_status,
+                    "xray": xray_status,
+                    "network": network_status,
+                    "panel_version": status.get("panel_version", "") if isinstance(status, dict) else "",
                     "xray_running": False,
                     "cpu": 0,
                     "online_clients": 0,
@@ -521,8 +533,11 @@ class SnapshotCollector:
                 "status": "online" if available else "offline",
                 "reason": status.get("reason") or ("ok" if available else "unknown"),
                 "error": status.get("error", "") if isinstance(status, dict) else "",
-                "xray_running": ((status.get("xray") or {}).get("running", False) if isinstance(status, dict) else False),
-                "cpu": ((status.get("system") or {}).get("cpu", 0) if isinstance(status, dict) else 0),
+                "system": system_status,
+                "xray": xray_status,
+                "network": network_status,
+                "xray_running": (xray_status.get("running", False) if isinstance(status, dict) else False),
+                "cpu": (system_status.get("cpu", 0) if isinstance(status, dict) else 0),
                 "online_clients": len((online.get("online_clients") or []) if isinstance(online, dict) else []),
                 "traffic_total": total_traffic,
                 "timestamp": time.time(),
@@ -548,6 +563,9 @@ class SnapshotCollector:
                     "reason": "collector_exception",
                     "error": str(exc),
                 },
+                "system": {},
+                "xray": {},
+                "network": {},
                 "xray_running": False,
                 "cpu": 0,
                 "online_clients": 0,
@@ -571,7 +589,20 @@ class SnapshotCollector:
         delta = {"node": key, "snapshot": snapshot}
         delta_fields = {}
         if isinstance(previous, dict):
-            for field in ("available", "xray_running", "cpu", "online_clients", "traffic_total", "reason", "error"):
+            for field in (
+                "available",
+                "xray_running",
+                "cpu",
+                "system",
+                "xray",
+                "network",
+                "online_clients",
+                "traffic_total",
+                "panel_version",
+                "api_version",
+                "reason",
+                "error",
+            ):
                 old_v = previous.get(field)
                 new_v = snapshot.get(field)
                 if old_v != new_v:
@@ -594,13 +625,25 @@ class SnapshotCollector:
 
             await self.ws_manager.broadcast_server_status(
                 {
+                    "source": "snapshot_collector",
+                    "action": "snapshot",
                     "node": key,
                     "node_id": snapshot.get("node_id"),
                     "available": snapshot.get("available"),
                     "status": snapshot.get("status"),
                     "reason": snapshot.get("reason"),
+                    "error": snapshot.get("error"),
                     "cpu": snapshot.get("cpu"),
+                    "system": snapshot.get("system"),
+                    "xray": snapshot.get("xray"),
+                    "network": snapshot.get("network"),
                     "xray_running": snapshot.get("xray_running"),
+                    "panel_version": snapshot.get("panel_version"),
+                    "api_version": snapshot.get("api_version"),
+                    "online_clients": snapshot.get("online_clients"),
+                    "traffic_total": snapshot.get("traffic_total"),
+                    "poll_ms": snapshot.get("poll_ms"),
+                    "timestamp": snapshot.get("timestamp"),
                     "_delta": bool(delta_fields),
                     "changes": delta_fields,
                 }
