@@ -1,6 +1,6 @@
 from typing import Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import ORJSONResponse
 
 
 def build_clients_router(
@@ -57,7 +57,7 @@ def build_clients_router(
         nodes = node_service.list_nodes()
         clients = get_cached_clients(nodes, email_filter=None)
         expired = [c for c in clients if c.get("expiryTime", 0) > 0 and c.get("expiryTime", 0) < now_ms]
-        return {"clients": expired, "count": len(expired)}
+        return ORJSONResponse(content={"clients": expired, "count": len(expired)})
 
     @router.get("/api/v1/clients/depleted")
     async def list_depleted_clients(request: Request):
@@ -71,7 +71,7 @@ def build_clients_router(
             c for c in clients
             if c.get("total", 0) > 0 and (c.get("up", 0) + c.get("down", 0)) >= c.get("total", 0)
         ]
-        return {"clients": depleted, "count": len(depleted)}
+        return ORJSONResponse(content={"clients": depleted, "count": len(depleted)})
 
     @router.get("/api/v1/clients/search")
     async def search_clients(
@@ -110,7 +110,7 @@ def build_clients_router(
             clients = [c for c in clients if not c.get("enable")]
         total = len(clients)
         page_clients = clients[offset: offset + limit]
-        return {"clients": page_clients, "total": total, "limit": limit, "offset": offset}
+        return ORJSONResponse(content={"clients": page_clients, "total": total, "limit": limit, "offset": offset})
 
     @router.get("/api/v1/clients")
     async def list_clients(request: Request, email: Optional[str] = None):
@@ -120,7 +120,7 @@ def build_clients_router(
 
         nodes = node_service.list_nodes()
         clients = get_cached_clients(nodes, email_filter=email)
-        return JSONResponse(
+        return ORJSONResponse(
             content={"clients": clients, "count": len(clients)},
             headers={"Cache-Control": "private, max-age=180"},
         )
@@ -138,7 +138,7 @@ def build_clients_router(
         all_nodes = node_service.list_nodes()
         all_clients = get_cached_clients(all_nodes, email_filter=email)
         clients = [c for c in all_clients if c.get("node_name") == node_name]
-        return JSONResponse(
+        return ORJSONResponse(
             content={"clients": clients, "count": len(clients)},
             headers={"Cache-Control": "private, max-age=20"},
         )
@@ -377,7 +377,7 @@ def build_clients_router(
             raise HTTPException(status_code=401)
         nodes = node_service.list_nodes()
         online = client_mgr.get_online_clients(nodes)
-        return {"online": online, "count": len(online)}
+        return ORJSONResponse(content={"online": online, "count": len(online)})
 
     # --- IP tracking ---
 

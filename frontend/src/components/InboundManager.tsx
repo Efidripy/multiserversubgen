@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useCallback, useRef, useState, useEffect } from 'react';
 import { useToast } from './Toast';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
@@ -8,9 +8,11 @@ import { listNodes } from '../api/nodes';
 import { UIIcon } from './UIIcon';
 import { InboundEditModal } from './InboundEditModal';
 import { readStaleCache, writeStaleCache } from '../services/staleCache';
+import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
 
 interface Inbound {
   id: number;
+  node_id?: number | null;
   node_name: string;
   node_ip: string;
   protocol: string;
@@ -156,6 +158,41 @@ const INBOUNDS_PAGE_CACHE_KEY = 'sub_manager_inbounds_page_cache_v1';
 
 const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
 
+const extractInboundArray = (payload: unknown): unknown[] => {
+  if (Array.isArray(payload)) return payload;
+  if (payload && typeof payload === 'object') {
+    const record = payload as Record<string, unknown>;
+    if (Array.isArray(record.inbounds)) return record.inbounds;
+    if (Array.isArray(record.data)) return record.data;
+  }
+  return [];
+};
+
+const normalizeInboundRows = (
+  payload: unknown,
+  nodeNameToId: Record<string, number> = {},
+): Inbound[] => extractInboundArray(payload).map((ib: any) => {
+  const streamSettings = parseMaybeJsonObject(ib.streamSettings);
+  const settings = parseMaybeJsonObject(ib.settings);
+  const security = ib.security || streamSettings.security || '';
+  const nodeName = ib.node_name || ib.node || '';
+  return {
+    id: Number(ib.id || 0),
+    node_id: ib.node_id ?? nodeNameToId[nodeName] ?? null,
+    node_name: nodeName,
+    node_ip: ib.node_ip || nodeName,
+    protocol: ib.protocol || '',
+    port: Number(ib.port || 0),
+    remark: ib.remark || '',
+    enable: Boolean(ib.enable),
+    security,
+    is_reality: Boolean(ib.is_reality ?? security === 'reality'),
+    client_count: Number.isFinite(Number(ib.client_count)) ? Number(ib.client_count) : undefined,
+    settings: Object.keys(settings).length > 0 ? settings : undefined,
+    streamSettings: Object.keys(streamSettings).length > 0 ? streamSettings : undefined,
+  };
+});
+
 const panelTitleClass = 'text-xs font-medium uppercase tracking-[0.14em] text-cyan-300';
 const panelHintClass = 'mt-1 text-xs font-light leading-5 text-slate-500';
 const fieldLabelClass = 'mb-1 block text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500';
@@ -182,6 +219,7 @@ const drawerSubtitleClass = 'mt-1 min-w-0 truncate text-xs font-light text-slate
 const tableSkeletonLineClass = 'block animate-pulse rounded bg-[#182133]';
 const tableStateChipClass = 'inline-flex min-w-0 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0f1420] px-3 py-2 font-mono text-[11px] font-light uppercase tracking-[0.14em] text-slate-400';
 const tableErrorClass = 'mb-4 min-w-0 overflow-hidden rounded-lg border border-rose-400/25 bg-rose-500/10 px-3 py-2 font-mono text-[11px] font-light text-rose-200/90 shadow-[inset_0_1px_0_rgba(251,113,133,0.08)]';
+const inboundLongValueClass = 'block min-w-0 max-w-[150px] truncate md:max-w-[220px] lg:max-w-xs';
 
 const segmentButtonClass = (active: boolean) =>
   cn(
@@ -222,11 +260,11 @@ const InboundTableSkeleton = () => (
         </div>
       ))}
     </div>
-    <div className="hidden min-w-0 overflow-x-auto lg:block">
-      <table className="w-full min-w-[1040px] table-fixed border-collapse text-left text-xs">
+    <div className="hidden w-full min-w-0 overflow-x-auto lg:block">
+      <table className="w-full table-fixed border-collapse text-left text-xs">
         <thead className="bg-[#0f1420]">
           <tr className="border-b border-cyan-500/20">
-            {['w-10', 'w-[15%]', 'w-[24%]', 'w-[10%]', 'w-[9%]', 'w-[10%]', 'w-[11%]', 'w-[8%]', 'w-[13%]'].map((width, index) => (
+            {['w-10', 'w-[12%]', 'w-[18%]', 'w-[8%]', 'w-[8%]', 'w-[9%]', 'w-[10%]', 'w-[6%]', 'w-[156px]'].map((width, index) => (
               <th key={index} className={`${width} px-3 py-3`}>
                 <span className={`${tableSkeletonLineClass} h-3 w-16`} />
               </th>
@@ -254,6 +292,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   const { t } = useTranslation();
 
   const [inbounds, setInbounds] = useState<Inbound[]>([]);
+  const inboundsRef = useRef<Inbound[]>([]);
   const [filteredInbounds, setFilteredInbounds] = useState<Inbound[]>([]);
   const [nodeNameToId, setNodeNameToId] = useState<Record<string, number>>({});
   const [allNodes, setAllNodes] = useState<NodeInfo[]>([]);
@@ -304,6 +343,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   const [configModalInbound, setConfigModalInbound] = useState<Inbound | null>(null);
 
   const [editingInbound, setEditingInbound] = useState<Inbound | null>(null);
+
+  useEffect(() => {
+    inboundsRef.current = inbounds;
+  }, [inbounds]);
 
   useEffect(() => {
     // Always show stale data instantly (stale-while-revalidate), then refresh in background.
@@ -486,24 +529,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         setAddTargetNodeIds(new Set(nodes.map((n) => n.id)));
       }
 
-      const normalized: Inbound[] = rawInbounds.map((ib: any) => {
-        const streamSettings = parseMaybeJsonObject(ib.streamSettings);
-        const settings = parseMaybeJsonObject(ib.settings);
-        const security = ib.security || streamSettings.security || '';
-        return {
-          id: ib.id,
-          node_name: ib.node_name || '',
-          node_ip: ib.node_name || '',
-          protocol: ib.protocol,
-          port: Number(ib.port || 0),
-          remark: ib.remark || '',
-          enable: Boolean(ib.enable),
-          security,
-          is_reality: security === 'reality',
-          settings: Object.keys(settings).length > 0 ? settings : undefined,
-          streamSettings: Object.keys(streamSettings).length > 0 ? streamSettings : undefined,
-        };
-      });
+      const normalized = normalizeInboundRows(rawInbounds, nameMap);
 
       setInbounds(normalized);
       if (!silent) setPageLoading(false);
@@ -513,6 +539,55 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       if (!silent) setPageLoading(false);
     }
   };
+
+  const handleRealtimeUpdate = useCallback(
+    (update: TrafficUpdate) => {
+      if (update.type !== 'inbound_update') return;
+
+      if (update.data?.source === 'snapshot_collector') {
+        if (update.data?.has_table_payload && Array.isArray(update.data.inbounds)) {
+          const incoming = normalizeInboundRows(update.data.inbounds, nodeNameToId);
+          const nodeId = update.data.node_id != null ? Number(update.data.node_id) : null;
+          const nodeName = String(update.data.node || update.data.node_name || '');
+          const retained = inboundsRef.current.filter((ib) => {
+            if (nodeId !== null && ib.node_id != null) {
+              return Number(ib.node_id) !== nodeId;
+            }
+            return ib.node_name !== nodeName;
+          });
+
+          const deduped = new Map<string, Inbound>();
+          [...retained, ...incoming].forEach((ib) => deduped.set(inboundKey(ib), ib));
+          const nextInbounds = Array.from(deduped.values());
+          inboundsRef.current = nextInbounds;
+          setInbounds(nextInbounds);
+          writeStaleCache<InboundsPageCache>(INBOUNDS_PAGE_CACHE_KEY, {
+            ts: Date.now(),
+            inbounds: nextInbounds,
+            allNodes,
+            nodeNameToId,
+            filterProtocol,
+            filterSecurity,
+            filterNode,
+            sortField,
+            sortDirection,
+          });
+        }
+        return;
+      }
+
+      void loadInbounds(true);
+    },
+    [allNodes, filterNode, filterProtocol, filterSecurity, loadInbounds, nodeNameToId, sortDirection, sortField],
+  );
+
+  useTrafficStatsSubscription({
+    channels: ['inbounds'],
+    onUpdate: handleRealtimeUpdate,
+    onError: (err) => console.warn('[InboundManager] realtime error:', err),
+    fallbackPollIntervalMs: 5 * 60 * 1000,
+    fallbackRun: () => loadInbounds(true),
+  });
 
   const selectedInbounds = inbounds.filter((ib) => selectedKeys.has(inboundKey(ib)));
   const selectedInboundIds = Array.from(new Set(selectedInbounds.map((ib) => ib.id)));
@@ -1374,27 +1449,27 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               ))}
             </div>
 
-            <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] lg:block">
-              <div className="min-w-0 overflow-x-auto">
-                <table className="w-full min-w-[1040px] table-fixed border-collapse text-left text-xs">
+            <div className="hidden w-full min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] lg:block">
+              <div className="w-full min-w-0 overflow-x-auto">
+                <table className="w-full table-fixed border-collapse text-left text-xs">
                   <thead className="bg-[#0f1420] text-[10px] uppercase tracking-wider text-slate-500">
                     <tr>
                       <th className="w-10 px-3 py-3"><input className={checkboxClass} type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAllFiltered} aria-label={t('common.selectAll')} /></th>
-                      <th className="w-[15%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('node')}>{t('common.name')}{sortIndicator('node')}</button></th>
-                      <th className="w-[24%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('name')}>{t('inbounds.remark')}{sortIndicator('name')}</button></th>
-                      <th className="w-[10%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('protocol')}>{t('inbounds.protocol')}{sortIndicator('protocol')}</button></th>
-                      <th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('port')}>{t('inbounds.port')}{sortIndicator('port')}</button></th>
-                      <th className="w-[10%] px-3 py-3">{t('inbounds.security')}</th>
-                      <th className="w-[11%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('status')}>{t('common.status')}{sortIndicator('status')}</button></th>
-                      <th className="w-[8%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('clients')} title={t('inbounds.sortByClientCount')}>{t('inbounds.clients')}{sortField === 'clients' ? (sortDirection === 'asc' ? ' ^' : ' v') : ''}</button></th>
-                      <th className="w-[13%] px-3 py-3">{t('common.actions')}</th>
+                      <th className="w-[12%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('node')}>{t('common.name')}{sortIndicator('node')}</button></th>
+                      <th className="w-[18%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('name')}>{t('inbounds.remark')}{sortIndicator('name')}</button></th>
+                      <th className="w-[8%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('protocol')}>{t('inbounds.protocol')}{sortIndicator('protocol')}</button></th>
+                      <th className="w-[8%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('port')}>{t('inbounds.port')}{sortIndicator('port')}</button></th>
+                      <th className="w-[9%] px-3 py-3">{t('inbounds.security')}</th>
+                      <th className="w-[10%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('status')}>{t('common.status')}{sortIndicator('status')}</button></th>
+                      <th className="w-[6%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('clients')} title={t('inbounds.sortByClientCount')}>{t('inbounds.clients')}{sortField === 'clients' ? (sortDirection === 'asc' ? ' ^' : ' v') : ''}</button></th>
+                      <th className="w-[156px] px-3 py-3">{t('common.actions')}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-900 text-slate-200">
                     {visibleInbounds.map((ib) => (
                       <tr key={inboundKey(ib)} className={cn('transition-colors hover:bg-cyan-400/5', !ib.enable && 'bg-[#0f1420]/60 opacity-75')}>
                         <td className="px-3 py-3 align-middle"><input className={checkboxClass} type="checkbox" checked={selectedKeys.has(inboundKey(ib))} onChange={() => toggleSelectOne(ib)} aria-label={t('inbounds.selectInbound', { name: ib.remark || ib.id })} /></td>
-                        <td className="px-3 py-3 align-middle"><button type="button" className={cn(badgeBaseClass, 'max-w-full justify-start bg-[#0f1420] text-slate-200')} title={filterNode === ib.node_name ? t('inbounds.clearNodeFilter') : t('inbounds.filterByNodeName', { node: ib.node_name })} onClick={() => setFilterNode(prev => prev === ib.node_name ? '' : ib.node_name)}><span className="truncate">{ib.node_name}</span></button></td>
+                        <td className="px-3 py-3 align-middle"><button type="button" className={cn(badgeBaseClass, 'max-w-full justify-start overflow-hidden bg-[#0f1420] text-slate-200')} title={ib.node_name} onClick={() => setFilterNode(prev => prev === ib.node_name ? '' : ib.node_name)}><span className={inboundLongValueClass}>{ib.node_name}</span></button></td>
                         <td className="min-w-0 px-3 py-3 align-middle" title={t('inbounds.quickEditRemarkTitle')} onDoubleClick={async () => {
                           const newRemark = window.prompt(t('inbounds.newRemarkPrompt', { id: ib.id, node: ib.node_name }), ib.remark || '');
                           if (newRemark === null || newRemark === ib.remark) return;
@@ -1405,12 +1480,12 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                             setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, remark: newRemark } : x));
                             toast(t('inbounds.remarkUpdated', { remark: newRemark || t('inbounds.emptyRemark') }), 'success');
                           } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
-                        }}><span className="block truncate">{ib.remark || <span className="text-slate-600">-</span>}</span></td>
+                        }}><span className={inboundLongValueClass} title={ib.remark || `#${ib.id}`}>{ib.remark || <span className="text-slate-600">-</span>}</span></td>
                         <td className="px-3 py-3 align-middle"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} title={filterProtocol === ib.protocol ? t('inbounds.clearProtocolFilter') : t('inbounds.filterByProtocolName', { protocol: ib.protocol })} onClick={() => setFilterProtocol(prev => prev === ib.protocol ? '' : ib.protocol)}>{ib.protocol.toUpperCase()}</button></td>
                         <td className="px-3 py-3 align-middle"><button type="button" className={cn('inline-flex items-center gap-1 font-mono text-xs tabular-nums whitespace-nowrap', isDuplicatePort(ib) ? 'font-bold text-amber-300' : 'text-slate-300')} title={isDuplicatePort(ib) ? t('inbounds.duplicatePortTitle', { port: ib.port, node: ib.node_name }) : t('inbounds.copyPortNumber')} onClick={() => navigator.clipboard.writeText(String(ib.port))}>{ib.port}{isDuplicatePort(ib) && <UIIcon name="warning" size={12} />}</button></td>
                         <td className="px-3 py-3 align-middle">
                           {ib.is_reality && <button type="button" className={cn(badgeBaseClass, filterSecurity === 'reality' ? 'bg-amber-400 text-[#06111f]' : 'bg-emerald-400/15 text-emerald-300')} onClick={() => setFilterSecurity(prev => prev === 'reality' ? '' : 'reality')} title={t('inbounds.filterByReality')}>{t('inbounds.reality')}</button>}
-                          {!ib.is_reality && ib.security && <button type="button" className={cn(badgeBaseClass, filterSecurity === ib.security ? 'bg-amber-400 text-[#06111f]' : 'bg-sky-400/15 text-sky-300')} onClick={() => setFilterSecurity(prev => prev === (ib.security ?? '') ? '' : (ib.security ?? ''))} title={t('inbounds.filterBySecurityName', { security: ib.security })}>{ib.security}</button>}
+                          {!ib.is_reality && ib.security && <button type="button" className={cn(badgeBaseClass, 'max-w-full overflow-hidden', filterSecurity === ib.security ? 'bg-amber-400 text-[#06111f]' : 'bg-sky-400/15 text-sky-300')} onClick={() => setFilterSecurity(prev => prev === (ib.security ?? '') ? '' : (ib.security ?? ''))} title={ib.security}><span className="truncate">{ib.security}</span></button>}
                           {!ib.security && <span className="text-slate-600">-</span>}
                         </td>
                         <td className="px-3 py-3 align-middle"><button type="button" className={cn('inline-flex h-7 items-center rounded-md border px-2 text-[11px] font-medium whitespace-nowrap', ib.enable ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-300' : 'border-cyan-500/20 bg-[#0f1420] text-slate-500')} title={ib.enable ? t('inbounds.clickToDisable') : t('inbounds.clickToEnable')} onClick={async () => {
@@ -1426,7 +1501,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                         <td className="px-3 py-3 align-middle">
                           {ib.client_count !== undefined ? <button type="button" className={cn(badgeBaseClass, ib.client_count > 0 ? 'bg-cyan-400 text-[#06111f]' : 'bg-[#0f1420] text-slate-500')} title={ib.client_count > 0 && onNavigateToClients ? t('inbounds.viewClientsTitle', { count: ib.client_count }) : undefined} onClick={() => ib.client_count && ib.client_count > 0 && onNavigateToClients && onNavigateToClients(ib.id, ib.remark || '#' + ib.id)}><span className="font-mono tabular-nums whitespace-nowrap">{ib.client_count}</span></button> : <span className="text-slate-600">-</span>}
                         </td>
-                        <td className="px-3 py-3 align-middle"><div className="flex min-w-0 flex-nowrap gap-1">
+                        <td className="px-3 py-3 align-middle"><div className="flex min-w-0 flex-wrap justify-end gap-1">
                           <button type="button" className={buttonIconClass} onClick={() => handleEditClick(ib)} title={t('inbounds.editInbound')} aria-label={t('inbounds.editInbound')}><UIIcon name="edit" size={14} /></button>
                           <button type="button" className={buttonIconClass} title={t('inbounds.addClientTitle')} onClick={() => onAddClientToInbound && onAddClientToInbound(ib.id, ib.node_name)} disabled={!onAddClientToInbound} aria-label={t('inbounds.addClientTitle')}><UIIcon name="plus" size={14} /></button>
                           <button type="button" className={buttonIconClass} onClick={() => handleCloneClick(ib)} title={t('inbounds.cloneInbound')} aria-label={t('inbounds.cloneInbound')}><UIIcon name="copy" size={14} /></button>

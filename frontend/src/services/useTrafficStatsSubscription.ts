@@ -51,7 +51,7 @@ export function useTrafficStatsSubscription({
 }: TrafficStatsSubscriptionOptions) {
   const fallbackIntervalRef = useRef<number | null>(null);
   const [isConnected, setIsConnected] = useState(wsManager.isConnected());
-  const lastUpdateRef = useRef<number>(0);
+  const lastUpdateRef = useRef<Record<string, number>>({});
   const debounceMs = 100;
 
   // Store callbacks in refs so effect deps stay stable even if callers pass inline functions
@@ -85,8 +85,9 @@ export function useTrafficStatsSubscription({
 
     const handleEvent = (eventType: TrafficUpdate['type']) => (message: unknown) => {
       const now = Date.now();
-      if (now - lastUpdateRef.current < debounceMs) return;
-      lastUpdateRef.current = now;
+      const lastUpdate = lastUpdateRef.current[eventType] || 0;
+      if (now - lastUpdate < debounceMs) return;
+      lastUpdateRef.current[eventType] = now;
 
       const payload = (message as Record<string, any>) || {};
       const data = payload.data && typeof payload.data === 'object' ? payload.data : payload;

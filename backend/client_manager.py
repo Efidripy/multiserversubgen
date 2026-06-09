@@ -15,7 +15,8 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
 from xui_session import (
     XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC,
-    extract_node_auth, get_authenticated_session, make_node_key, xui_request,
+    build_panel_base_url,
+    extract_node_auth, get_authenticated_session, make_node_key_for_node, xui_request,
     get_node_api_version, set_node_api_version,
 )
 from utils import parse_field_as_dict
@@ -70,15 +71,12 @@ class ClientManager:
         Returns:
             Кортеж (session, base_url)
         """
-        b_path = node.get("base_path", "").strip("/")
-        prefix = f"/{b_path}" if b_path else ""
-        scheme = node.get("scheme", "https")
-        base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
+        base_url = build_panel_base_url(node)
 
         try:
             username, password, bearer_token = extract_node_auth(node, self.decrypt)
             auth = get_authenticated_session(
-                node_key=make_node_key(node.get("ip"), node.get("port"), node.get("base_path", "")),
+                node_key=make_node_key_for_node(node),
                 base_url=base_url,
                 username=username,
                 password=password,

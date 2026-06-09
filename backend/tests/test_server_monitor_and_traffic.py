@@ -155,6 +155,34 @@ class TestGetClientTrafficHardening:
 
         assert traffic == {"up": 100, "down": 200}
 
+    def test_get_session_preserves_panel_url_path_for_session_pool(self):
+        mgr = self._build_manager()
+        node = {
+            **self._node(),
+            "panel_url": "https://panel.example.test/secret-path",
+            "ip": "panel.example.test",
+            "base_path": "",
+        }
+        session = MagicMock()
+        captured = {}
+
+        def fake_get_authenticated_session(**kwargs):
+            captured.update(kwargs)
+            return {
+                "ok": True,
+                "session": session,
+                "base_url": kwargs["base_url"],
+                "cached": False,
+            }
+
+        with patch("client_manager.get_authenticated_session", side_effect=fake_get_authenticated_session):
+            result_session, base_url = mgr._get_session(node)
+
+        assert result_session is session
+        assert base_url == "https://panel.example.test/secret-path"
+        assert captured["node_key"] == "panel.example.test:443:secret-path"
+        assert captured["base_url"] == "https://panel.example.test/secret-path"
+
     def test_list_obj_returns_empty_dict(self):
         """When node panel returns a list for obj, must return {} not crash."""
         mgr = self._build_manager()
@@ -282,6 +310,35 @@ class TestThreeXUIMonitor:
         assert result["xray"]["version"] == "1.8.10"
         assert result["system"]["cpu"] == 15
 
+    def test_get_session_preserves_panel_url_path_for_session_pool(self):
+        monitor = self._build_monitor()
+        node = {
+            **self._node(),
+            "panel_url": "https://panel.example.test/secret-path",
+            "ip": "panel.example.test",
+            "base_path": "",
+        }
+        session = MagicMock()
+        captured = {}
+
+        def fake_get_authenticated_session(**kwargs):
+            captured.update(kwargs)
+            return {
+                "ok": True,
+                "session": session,
+                "base_url": kwargs["base_url"],
+                "cached": False,
+            }
+
+        with patch("server_monitor.get_authenticated_session", side_effect=fake_get_authenticated_session):
+            result_session, base_url, login_result = monitor._get_session(node)
+
+        assert result_session is session
+        assert base_url == "https://panel.example.test/secret-path"
+        assert login_result["ok"] is True
+        assert captured["node_key"] == "panel.example.test:443:secret-path"
+        assert captured["base_url"] == "https://panel.example.test/secret-path"
+
     def test_get_server_status_login_failure(self):
         monitor = self._build_monitor()
         with patch.object(monitor, '_get_session') as mock_gs:
@@ -302,6 +359,22 @@ class TestThreeXUIMonitor:
         mock_xui.assert_called_once_with(sess, "GET", "https://1.2.3.4:443/panel/api/inbounds/list")
         assert result["available"] is True
         assert len(result["inbounds"]) == 1
+
+    def test_get_inbounds_preserves_base_url_prefix(self):
+        monitor = self._build_monitor()
+        body = {"success": True, "obj": []}
+        with patch.object(monitor, '_get_session') as mock_gs:
+            sess = MagicMock()
+            mock_gs.return_value = (sess, "https://panel.example.test/secret-path")
+            with patch("server_monitor.xui_request", return_value=_make_response(200, body)) as mock_xui:
+                result = monitor.get_inbounds(self._node())
+
+        mock_xui.assert_called_once_with(
+            sess,
+            "GET",
+            "https://panel.example.test/secret-path/panel/api/inbounds/list",
+        )
+        assert result["available"] is True
 
     def test_get_inbounds_normalizes_reality_security(self):
         monitor = self._build_monitor()
@@ -332,6 +405,33 @@ class TestThreeXUIMonitor:
         responses = [
             _make_response(401, {"detail": "Unauthorized"}, url="https://1.2.3.4:443/panel/api/inbounds/list"),
             _make_response(200, body),
+        ]
+        with patch.object(monitor, "_get_session") as mock_gs:
+            sess1 = MagicMock(name="session1")
+            sess2 = MagicMock(name="session2")
+
+            def _fake_get_session(node, force_reauth=False):
+                return (sess2 if force_reauth else sess1, "https://1.2.3.4:443", {"ok": True, "reason": "ok", "error": ""})
+
+            mock_gs.side_effect = _fake_get_session
+            with patch.object(monitor, "_invalidate_cached_session") as mock_invalidate:
+                with patch("server_monitor.xui_request", side_effect=responses) as mock_xui:
+                    result = monitor.get_inbounds(self._node())
+
+        assert result["available"] is True
+        assert len(result["inbounds"]) == 1
+        assert mock_gs.call_args_list[0] == call(self._node())
+        assert mock_gs.call_args_list[1] == call(self._node(), force_reauth=True)
+        assert mock_invalidate.called
+        assert mock_xui.call_args_list[0] == call(sess1, "GET", "https://1.2.3.4:443/panel/api/inbounds/list")
+        assert mock_xui.call_args_list[1] == call(sess2, "GET", "https://1.2.3.4:443/panel/api/inbounds/list")
+
+    def test_get_inbounds_reauths_once_on_panel_api_404(self):
+        monitor = self._build_monitor()
+        body = {"success": True, "obj": [{"id": 1, "remark": "test", "protocol": "vless", "up": 100, "down": 200}]}
+        responses = [
+            _make_response(404, {"detail": "Not Found"}, url="https://1.2.3.4:443/panel/api/inbounds/list"),
+            _make_response(200, body, url="https://1.2.3.4:443/panel/api/inbounds/list"),
         ]
         with patch.object(monitor, "_get_session") as mock_gs:
             sess1 = MagicMock(name="session1")

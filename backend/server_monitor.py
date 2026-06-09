@@ -18,11 +18,13 @@ from xui_session import (
     XUI_FAST_RETRIES,
     XUI_FAST_TIMEOUT_SEC,
     bounded_xui_timeout,
+    build_panel_base_url,
     extract_node_auth,
     get_authenticated_session,
     invalidate_session_cache,
     is_auth_failure_response,
-    make_node_key,
+    join_panel_url,
+    make_node_key_for_node,
     login_panel,
     xui_request,
 )
@@ -51,7 +53,7 @@ class ThreeXUIMonitor:
         self.decrypt = decrypt_func
 
     def _invalidate_cached_session(self, node: Dict) -> None:
-        invalidate_session_cache(make_node_key(node.get("ip"), node.get("port"), node.get("base_path", "")))
+        invalidate_session_cache(make_node_key_for_node(node))
 
     @staticmethod
     def _normalize_inbound(inbound: Dict, node: Dict) -> Dict:
@@ -92,13 +94,11 @@ class ThreeXUIMonitor:
         Returns:
             Кортеж (session, base_url) или (None, None) при ошибке.
         """
-        b_path = node.get("base_path", "").strip("/")
-        prefix = f"/{b_path}" if b_path else ""
-        base_url = f"https://{node['ip']}:{node['port']}{prefix}"
+        base_url = build_panel_base_url(node)
         try:
             username, password, bearer_token = extract_node_auth(node, self.decrypt)
             auth = get_authenticated_session(
-                node_key=make_node_key(node.get("ip"), node.get("port"), node.get("base_path", "")),
+                node_key=make_node_key_for_node(node),
                 base_url=base_url,
                 username=username,
                 password=password,
@@ -131,7 +131,7 @@ class ThreeXUIMonitor:
             return None, None, login_result
 
         try:
-            res = xui_request(s, method, f"{base_url}{path}", **kwargs)
+            res = xui_request(s, method, join_panel_url(base_url, path), **kwargs)
         except Exception as exc:
             return None, None, {"ok": False, "reason": "request_failed", "error": str(exc)}
         if not is_auth_failure_response(res):
@@ -144,7 +144,7 @@ class ThreeXUIMonitor:
             return None, None, login_result
 
         try:
-            res = xui_request(s, method, f"{base_url}{path}", **kwargs)
+            res = xui_request(s, method, join_panel_url(base_url, path), **kwargs)
         except Exception as exc:
             return None, None, {"ok": False, "reason": "request_failed", "error": str(exc)}
         if is_auth_failure_response(res):
@@ -408,9 +408,7 @@ class ServerMonitor:
         """
         s = requests.Session()
         s.verify = _requests_verify_value()
-        b_path = node.get("base_path", "").strip("/")
-        prefix = f"/{b_path}" if b_path else ""
-        base_url = f"https://{node['ip']}:{node['port']}{prefix}"
+        base_url = build_panel_base_url(node)
         
         try:
             username, password, bearer_token = extract_node_auth(node, self.decrypt)
@@ -442,12 +440,12 @@ class ServerMonitor:
         
         try:
             # Primary API endpoint for node panel panel (panel/api path)
-            primary_url = f"{base_url}/panel/api/server/status"
+            primary_url = join_panel_url(base_url, "/panel/api/server/status")
             res = xui_request(s, "POST", primary_url)
             
             if res.status_code == 404:
                 # Fallback for older node panel versions
-                fallback_url = f"{base_url}/server/status"
+                fallback_url = join_panel_url(base_url, "/server/status")
                 logger.debug(f"Primary endpoint 404, falling back to {fallback_url}")
                 res = xui_request(s, "POST", fallback_url)
             
@@ -540,13 +538,11 @@ class ServerMonitor:
         start_time = time.time()
         
         try:
-            b_path = node.get("base_path", "").strip("/")
-            prefix = f"/{b_path}" if b_path else ""
-            base_url = f"https://{node['ip']}:{node['port']}{prefix}"
+            base_url = build_panel_base_url(node)
             
             # Простой запрос для проверки доступности
             res = requests.get(
-                f"{base_url}/",
+                join_panel_url(base_url, "/"),
                 verify=_requests_verify_value(),
                 timeout=bounded_xui_timeout(),
             )

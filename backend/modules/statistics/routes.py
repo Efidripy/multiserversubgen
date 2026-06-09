@@ -6,6 +6,7 @@ from typing import Optional, TYPE_CHECKING
 
 from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import ORJSONResponse
 
 if TYPE_CHECKING:
     from .service import StatisticsService
@@ -36,7 +37,7 @@ def build_statistics_router(service: "StatisticsService") -> APIRouter:
         data = await run_in_threadpool(
             service.get_hourly_stats, node_id=node_id, hours_back=hours_back
         )
-        return {"data": data, "count": len(data)}
+        return ORJSONResponse(content={"data": data, "count": len(data)})
 
     @router.get("/history/daily")
     async def daily_stats(
@@ -48,7 +49,7 @@ def build_statistics_router(service: "StatisticsService") -> APIRouter:
         data = await run_in_threadpool(
             service.get_daily_stats, node_id=node_id, days_back=days_back
         )
-        return {"data": data, "count": len(data)}
+        return ORJSONResponse(content={"data": data, "count": len(data)})
 
     @router.get("/history/monthly")
     async def monthly_stats(
@@ -60,6 +61,6 @@ def build_statistics_router(service: "StatisticsService") -> APIRouter:
         data = await run_in_threadpool(
             service.get_monthly_stats, node_id=node_id, months_back=months_back
         )
-        return {"data": data, "count": len(data)}
+        return ORJSONResponse(content={"data": data, "count": len(data)})
 
     return router

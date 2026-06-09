@@ -4,6 +4,7 @@
  */
 
 import React from 'react';
+import { getAuth } from '../auth';
 import { devLog } from '../utils/devLogger';
 
 export interface DeltaUpdate<T> {
@@ -29,8 +30,8 @@ class WebSocketManager {
     // Construct WebSocket URL from current location if not provided
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const host = window.location.host;
-    const path = window.location.pathname.split('/').slice(0, -1).join('/'); // Remove current route
-    this.url = wsUrl || `${protocol}://${host}${path}/ws`;
+    const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+    this.url = wsUrl || `${protocol}://${host}${basePath}/ws`;
   }
 
   connect(): Promise<void> {
@@ -48,6 +49,16 @@ class WebSocketManager {
           devLog('[WebSocket] Connected');
           this.isConnecting = false;
           this.reconnectDelay = 1000;
+
+          const auth = getAuth();
+          if (auth.username && auth.password) {
+            this.ws?.send(JSON.stringify({
+              type: 'auth',
+              username: auth.username,
+              password: auth.password,
+              totp: auth.totpCode,
+            }));
+          }
 
           // Flush queued messages
           while (this.messageQueue.length > 0) {
@@ -73,10 +84,13 @@ class WebSocketManager {
           reject(error);
         };
 
-        this.ws.onclose = () => {
+        this.ws.onclose = (event) => {
           devLog('[WebSocket] Disconnected');
           this.isConnecting = false;
           this.ws = null;
+          if (event.code === 1008) {
+            return;
+          }
           this.attemptReconnect();
         };
       } catch (err) {

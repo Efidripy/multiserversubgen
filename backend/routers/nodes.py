@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 import requests
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import ORJSONResponse
 
 from xui_session import invalidate_auth_method_cache
 
@@ -42,7 +42,7 @@ def build_nodes_router(
         for node_dict in nodes:
             node_dict.pop("password", None)
             result.append(node_dict)
-        return JSONResponse(content=result, headers={"Cache-Control": "private, max-age=300"})
+        return ORJSONResponse(content=result, headers={"Cache-Control": "private, max-age=300"})
 
     @router.get("/api/v1/nodes/list")
     async def list_nodes_simple(request: Request):
@@ -50,7 +50,7 @@ def build_nodes_router(
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
 
-        return JSONResponse(
+        return ORJSONResponse(
             content=node_service.list_nodes_simple(),
             headers={"Cache-Control": "private, max-age=300"},
         )

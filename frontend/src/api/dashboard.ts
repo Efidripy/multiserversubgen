@@ -144,8 +144,10 @@ export async function getClientsHeaderSource(): Promise<{ clients: any[]; nodes:
     api.get('/v1/clients', { auth: getAuth() }),
     listNodes(),
   ]);
+  const data = clientsRes.data;
   return {
-    clients: Array.isArray(clientsRes.data) ? clientsRes.data : [],
+    clients: Array.isArray(data?.clients) ? data.clients
+      : Array.isArray(data) ? data : [],
     nodes,
   };
 }

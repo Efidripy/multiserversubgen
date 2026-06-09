@@ -8,6 +8,7 @@ from typing import Callable, Dict, List, Optional
 from enum import Enum
 
 from services.db_bootstrap import connect
+from services.snapshot_push import build_snapshot_push_payload
 
 
 logger = logging.getLogger("sub_manager")
@@ -405,6 +406,8 @@ class SnapshotCollector:
             started = time.time()
             snapshot = await asyncio.to_thread(self._collect_node_snapshot, node)
         elapsed = time.time() - started
+        previous = self._latest["nodes"].get(key)
+        should_broadcast = False
         state = self._node_state.setdefault(
             key,
             {
@@ -422,7 +425,7 @@ class SnapshotCollector:
             changed = curr_hash != state["last_hash"]
             if changed:
                 state["stable_cycles"] = 0
-                await self._broadcast_delta(key, snapshot)
+                should_broadcast = True
             else:
                 state["stable_cycles"] += 1
 
@@ -453,6 +456,9 @@ class SnapshotCollector:
                 backoff = current_interval * (2 ** min(state["failures"], 4))
                 state["interval"] = float(min(self.max_interval_sec, backoff))
             state["stable_cycles"] = 0
+            curr_hash = json.dumps(snapshot, sort_keys=True, ensure_ascii=False)
+            should_broadcast = curr_hash != state["last_hash"]
+            state["last_hash"] = curr_hash
 
         state["next_poll"] = time.time() + state["interval"]
         snapshot["poll_ms"] = round(elapsed * 1000, 2)
@@ -467,6 +473,8 @@ class SnapshotCollector:
             self._latest["timestamp"] = time.time()
             self._latest["nodes"][key] = snapshot
         await self._persist_snapshot(snapshot)
+        if should_broadcast:
+            await self._broadcast_delta(key, snapshot, previous=previous)
 
     def _collect_node_snapshot(self, node: Dict) -> Dict:
         name = node.get("name", "unknown")
@@ -554,8 +562,12 @@ class SnapshotCollector:
         error = str(snapshot.get("error") or "").lower()
         return "timeout" in reason or "timed out" in error or "read timed out" in error
 
-    async def _broadcast_delta(self, key: str, snapshot: Dict):
-        previous = self._latest["nodes"].get(key)
+    async def _broadcast_delta(self, key: str, snapshot: Dict, *, previous: Optional[Dict] = None):
+        if not getattr(self.ws_manager, "active_connections", None):
+            return
+        if not hasattr(self.ws_manager, "broadcast"):
+            return
+
         delta = {"node": key, "snapshot": snapshot}
         delta_fields = {}
         if isinstance(previous, dict):
@@ -573,13 +585,13 @@ class SnapshotCollector:
             }
             delta_fields = delta["changes"]
 
-        await self.ws_manager.broadcast(
-            {"type": "snapshot_delta", "data": delta, "timestamp": time.time()},
-            channel="snapshot_delta",
-        )
-
-        # Backward-compatible channel broadcasts consumed by frontend real-time hooks.
         try:
+            push_payload = build_snapshot_push_payload(key=key, snapshot=snapshot, changes=delta_fields)
+            await self.ws_manager.broadcast(
+                {"type": "snapshot_delta", "data": delta, "timestamp": time.time()},
+                channel="snapshot_delta",
+            )
+
             await self.ws_manager.broadcast_server_status(
                 {
                     "node": key,
@@ -594,26 +606,37 @@ class SnapshotCollector:
                 }
             )
 
-            if "traffic_total" in delta_fields:
-                await self.ws_manager.broadcast_traffic_update(
-                    {
-                        "node": key,
-                        "node_id": snapshot.get("node_id"),
-                        "traffic_total": snapshot.get("traffic_total", 0),
-                        "_delta": True,
-                        "changes": {"traffic_total": delta_fields.get("traffic_total")},
-                    }
-                )
+            await self.ws_manager.broadcast_client_update(
+                {
+                    **push_payload,
+                    "_delta": bool(delta_fields),
+                    "count": len(push_payload["clients"]),
+                }
+            )
 
-            if "online_clients" in delta_fields:
-                await self.ws_manager.broadcast_client_update(
-                    {
-                        "node": key,
-                        "node_id": snapshot.get("node_id"),
-                        "online_clients": snapshot.get("online_clients", 0),
-                        "_delta": True,
-                        "changes": {"online_clients": delta_fields.get("online_clients")},
-                    }
-                )
+            await self.ws_manager.broadcast_inbound_update(
+                {
+                    **push_payload,
+                    "_delta": bool(delta_fields),
+                    "count": len(push_payload["inbounds"]),
+                }
+            )
+
+            await self.ws_manager.broadcast_traffic_update(
+                {
+                    "source": "snapshot_collector",
+                    "action": "snapshot",
+                    "node": key,
+                    "node_id": snapshot.get("node_id"),
+                    "traffic_total": snapshot.get("traffic_total", 0),
+                    "online_clients": snapshot.get("online_clients", 0),
+                    "_delta": bool(delta_fields),
+                    "changes": {
+                        field: delta_fields[field]
+                        for field in ("traffic_total", "online_clients")
+                        if field in delta_fields
+                    },
+                }
+            )
         except Exception as exc:
             logger.warning(f"Collector websocket broadcast failed for {key}: {exc}")

@@ -8,7 +8,7 @@ import zipfile
 from typing import Dict
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import ORJSONResponse, Response
 
 
 def build_operations_router(
@@ -167,7 +167,7 @@ def build_operations_router(
             _status_from_snapshot(node, _snapshot_for_node(node, by_id, by_name))
             for node in nodes
         ]
-        return {"servers": statuses, "count": len(statuses)}
+        return ORJSONResponse(content={"servers": statuses, "count": len(statuses)})
 
     @router.get("/api/v1/servers/{node_id}/status")
     async def get_server_status(request: Request, node_id: int):
@@ -189,7 +189,7 @@ def build_operations_router(
             _availability_from_snapshot(node, _snapshot_for_node(node, by_id, by_name))
             for node in nodes
         ]
-        return {"availability": availability}
+        return ORJSONResponse(content={"availability": availability})
 
     @router.post("/api/v1/servers/{node_id}/restart-xray")
     async def restart_xray_on_server(request: Request, node_id: int):

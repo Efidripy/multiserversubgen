@@ -6,6 +6,8 @@ import logging
 from typing import Set, Dict, Any
 from fastapi import WebSocket
 
+import orjson
+
 logger = logging.getLogger("websocket_manager")
 
 
@@ -37,6 +39,9 @@ class ConnectionManager:
         self.subscriptions[websocket] = set()
         logger.info(f"New WebSocket connection. Total: {len(self.active_connections)}")
         self._notify_activity()
+
+    async def _send_json(self, websocket: WebSocket, message: Dict[str, Any]):
+        await websocket.send_text(orjson.dumps(message).decode("utf-8"))
         
     def disconnect(self, websocket: WebSocket):
         """Отключить соединение"""
@@ -60,7 +65,7 @@ class ConnectionManager:
     async def send_personal(self, message: Dict[str, Any], websocket: WebSocket):
         """Отправить сообщение конкретному клиенту"""
         try:
-            await websocket.send_json(message)
+            await self._send_json(websocket, message)
         except Exception as e:
             logger.error(f"Error sending personal message: {e}")
             
@@ -68,13 +73,13 @@ class ConnectionManager:
         """Отправить сообщение всем подключенным клиентам или в канал"""
         disconnected = set()
         
-        for connection in self.active_connections:
+        for connection in list(self.active_connections):
             # Если указан канал, отправляем только подписанным
             if channel and channel not in self.subscriptions.get(connection, set()):
                 continue
                 
             try:
-                await connection.send_json(message)
+                await self._send_json(connection, message)
             except Exception as e:
                 logger.error(f"Error broadcasting message: {e}")
                 disconnected.add(connection)

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import requests
 import sqlite3
 import sys
 import time
@@ -17,6 +18,103 @@ def test_xui_timeout_is_hard_capped():
 
     assert connect_timeout <= 3.0
     assert read_timeout <= 4.0
+
+
+def test_xui_panel_base_url_preserves_panel_url_path():
+    import xui_session
+
+    node = {
+        "panel_url": "https://panel.example.test/secret-path",
+        "ip": "panel.example.test",
+        "port": "443",
+        "scheme": "https",
+        "base_path": "",
+    }
+
+    assert xui_session.build_panel_base_url(node) == "https://panel.example.test/secret-path"
+    assert xui_session.make_node_key_for_node(node) == "panel.example.test:443:secret-path"
+
+
+def test_xui_panel_base_url_recovers_path_from_urlish_ip():
+    import xui_session
+
+    node = {
+        "ip": "https://panel.example.test/secret-path",
+        "port": "443",
+        "scheme": "https",
+        "base_path": "",
+    }
+
+    assert xui_session.build_panel_base_url(node) == "https://panel.example.test:443/secret-path"
+    assert xui_session.make_node_key_for_node(node) == "panel.example.test:443:secret-path"
+
+
+def test_xui_login_requests_keep_base_url_prefix(monkeypatch):
+    import xui_session
+
+    urls = []
+
+    def response(status_code, body=None):
+        payload = body or {}
+        return SimpleNamespace(
+            status_code=status_code,
+            text=json.dumps(payload),
+            headers={},
+            url="",
+            json=lambda: payload,
+        )
+
+    def fake_xui_request(_session, _method, url, **_kwargs):
+        urls.append(url)
+        if url.endswith("/csrf-token"):
+            return response(404)
+        if url.endswith("/panel/login"):
+            return response(404)
+        return response(200, {"success": True})
+
+    monkeypatch.setattr(xui_session, "xui_request", fake_xui_request)
+
+    result = xui_session.login_panel_detailed(
+        requests.Session(),
+        "https://panel.example.test/secret-path",
+        "admin",
+        "pass",
+    )
+
+    assert result["ok"] is True
+    assert urls == [
+        "https://panel.example.test/secret-path/csrf-token",
+        "https://panel.example.test/secret-path/panel/login",
+        "https://panel.example.test/secret-path/login",
+    ]
+
+
+def test_xui_panel_api_404_is_auth_failure():
+    import xui_session
+
+    resp = SimpleNamespace(
+        status_code=404,
+        text="not found",
+        headers={},
+        url="https://panel.example.test/secret-path/panel/api/server/status",
+        request=SimpleNamespace(url="https://panel.example.test/secret-path/panel/api/server/status"),
+    )
+
+    assert xui_session.is_auth_failure_response(resp) is True
+
+
+def test_xui_plain_404_is_not_auth_failure():
+    import xui_session
+
+    resp = SimpleNamespace(
+        status_code=404,
+        text="not found",
+        headers={},
+        url="https://panel.example.test/secret-path/something-else",
+        request=SimpleNamespace(url="https://panel.example.test/secret-path/something-else"),
+    )
+
+    assert xui_session.is_auth_failure_response(resp) is False
 
 
 def test_xui_session_pool_reuses_session_until_forced_reauth(monkeypatch):

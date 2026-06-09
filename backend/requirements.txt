@@ -10,3 +10,4 @@ aiofiles
 prometheus-client
 redis
 pyotp
+orjson

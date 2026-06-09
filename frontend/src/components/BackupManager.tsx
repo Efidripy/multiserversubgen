@@ -495,9 +495,9 @@ export const BackupManager: React.FC = () => {
                           {point.createdAt}
                         </td>
                         <td className="min-w-0 px-4 py-3">
-                          <div className="min-w-0">
-                            <strong className="block truncate text-sm text-slate-100" title={fileName}>{fileName}</strong>
-                            <span className="mt-1 block truncate text-[11px] text-slate-500" title={point.nodeName}>
+                          <div className="flex min-w-0 flex-col gap-1">
+                            <span className="min-w-0 truncate font-mono text-sm text-slate-100" title={fileName}>{fileName}</span>
+                            <span className="min-w-0 truncate text-xs text-slate-500" title={point.nodeName}>
                               {point.nodeName}
                             </span>
                           </div>

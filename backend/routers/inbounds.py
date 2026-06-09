@@ -1,6 +1,6 @@
 from typing import Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import ORJSONResponse
 
 
 def build_inbounds_router(
@@ -39,7 +39,7 @@ def build_inbounds_router(
         if security:
             inbounds = [ib for ib in inbounds if ib.get("security") == security]
 
-        return JSONResponse(
+        return ORJSONResponse(
             content={"inbounds": inbounds, "count": len(inbounds)},
             headers={"Cache-Control": "private, max-age=30"},
         )

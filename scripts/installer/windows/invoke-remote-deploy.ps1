@@ -61,6 +61,7 @@ function New-Archive {
         & tar `
             --exclude="$leaf/.git" `
             --exclude="$leaf/.venv" `
+            --exclude="$leaf/.venv-wsl" `
             --exclude="$leaf/frontend/node_modules" `
             --exclude="$leaf/.tmp" `
             --exclude="$leaf/.local_snapshots" `
@@ -75,6 +76,7 @@ function New-Archive {
 function Get-Transport {
     param(
         [string]$Password,
+        [string]$PasswordFile,
         [string]$HostKey,
         [string]$KeyPath
     )
@@ -89,11 +91,12 @@ function Get-Transport {
             throw "For password-based deployment install PuTTY tools (plink.exe and pscp.exe), or use key-based OpenSSH."
         }
         return @{
-            Type    = "putty"
-            Plink   = $plink
-            Pscp    = $pscp
-            HostKey = $HostKey
-            KeyPath = $KeyPath
+            Type         = "putty"
+            Plink        = $plink
+            Pscp         = $pscp
+            HostKey      = $HostKey
+            KeyPath      = $KeyPath
+            PasswordFile = $PasswordFile
         }
     }
 
@@ -124,7 +127,7 @@ function Invoke-RemoteCommand {
         $args = @("-ssh", "-batch", "-P", "$Port")
         if ($Transport.HostKey) { $args += @("-hostkey", $Transport.HostKey) }
         if ($Transport.KeyPath) { $args += @("-i", $Transport.KeyPath) }
-        if ($Password) { $args += @("-pw", $Password) }
+        if ($Transport.PasswordFile) { $args += @("-pwfile", $Transport.PasswordFile) }
         $args += "$UserName@$HostName"
         $args += $Command
         & $Transport.Plink @args
@@ -154,7 +157,7 @@ function Copy-ToRemote {
         $args = @("-batch", "-P", "$Port")
         if ($Transport.HostKey) { $args += @("-hostkey", $Transport.HostKey) }
         if ($Transport.KeyPath) { $args += @("-i", $Transport.KeyPath) }
-        if ($Password) { $args += @("-pw", $Password) }
+        if ($Transport.PasswordFile) { $args += @("-pwfile", $Transport.PasswordFile) }
         $args += $LocalPath
         $args += "${UserName}@${HostName}:$RemotePath"
         & $Transport.Pscp @args
@@ -169,7 +172,12 @@ function Copy-ToRemote {
 }
 
 $repoRoot = Get-RepoRoot
-$transport = Get-Transport -Password $Password -HostKey $HostKey -KeyPath $KeyPath
+$passwordFile = $null
+if ($Password) {
+    $passwordFile = Join-Path ([IO.Path]::GetTempPath()) ("mssg-putty-password-{0}.txt" -f ([guid]::NewGuid().ToString("N")))
+    [IO.File]::WriteAllText($passwordFile, $Password, [Text.UTF8Encoding]::new($false))
+}
+$transport = Get-Transport -Password $Password -PasswordFile $passwordFile -HostKey $HostKey -KeyPath $KeyPath
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $runId = [guid]::NewGuid().ToString("N")
 $archivePath = Join-Path ([IO.Path]::GetTempPath()) "multiserversubgen-remote-$timestamp-$runId.tar.gz"
@@ -177,40 +185,47 @@ $remoteArchive = "/tmp/multiserversubgen-remote-$timestamp-$runId.tar.gz"
 $remoteLog = "/tmp/sub-manager-$Mode-$timestamp.log"
 $remoteWorkDir = "$RemoteDir-$runId"
 
-if (-not $SkipSync) {
-    Write-Host "Packing current source tree..."
-    New-Archive -RepoRoot $repoRoot -ArchivePath $archivePath
+try {
+    if (-not $SkipSync) {
+        Write-Host "Packing current source tree..."
+        New-Archive -RepoRoot $repoRoot -ArchivePath $archivePath
 
-    Write-Host "Copying source archive to $UserName@$HostName ..."
-    Copy-ToRemote -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -LocalPath $archivePath -RemotePath $remoteArchive
+        Write-Host "Copying source archive to $UserName@$HostName ..."
+        Copy-ToRemote -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -LocalPath $archivePath -RemotePath $remoteArchive
 
-    Write-Host "Extracting source tree on remote host..."
-    $extractCmd = "bash -lc 'rm -rf $remoteWorkDir && mkdir -p $remoteWorkDir && tar -xzf $remoteArchive -C $remoteWorkDir --strip-components=1 && rm -f $remoteArchive'"
-    Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $extractCmd
-}
+        Write-Host "Extracting source tree on remote host..."
+        $extractCmd = "bash -lc 'rm -rf $remoteWorkDir && mkdir -p $remoteWorkDir && tar -xzf $remoteArchive -C $remoteWorkDir --strip-components=1 && rm -f $remoteArchive'"
+        Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $extractCmd
+    }
 
-switch ($Mode) {
-    "install" {
-        if (-not $AnswersFile) {
-            throw "Mode=install requires -AnswersFile."
+    switch ($Mode) {
+        "install" {
+            if (-not $AnswersFile) {
+                throw "Mode=install requires -AnswersFile."
+            }
+            $answersResolved = (Resolve-Path $AnswersFile).Path
+            $remoteAnswers = "/tmp/sub-manager-install-answers-$timestamp.txt"
+            Write-Host "Copying install answers file..."
+            Copy-ToRemote -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -LocalPath $answersResolved -RemotePath $remoteAnswers
+            $remoteCmd = "bash -lc 'cd $remoteWorkDir && sudo bash -x ./install.sh < $remoteAnswers 2>&1 | tee $remoteLog; rc=`${PIPESTATUS[0]}; rm -f $remoteAnswers; exit `$rc'"
+            Write-Host "Running remote install..."
+            Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $remoteCmd
         }
-        $answersResolved = (Resolve-Path $AnswersFile).Path
-        $remoteAnswers = "/tmp/sub-manager-install-answers-$timestamp.txt"
-        Write-Host "Copying install answers file..."
-        Copy-ToRemote -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -LocalPath $answersResolved -RemotePath $remoteAnswers
-        $remoteCmd = "bash -lc 'cd $remoteWorkDir && sudo bash -x ./install.sh < $remoteAnswers 2>&1 | tee $remoteLog; rc=`${PIPESTATUS[0]}; rm -f $remoteAnswers; exit `$rc'"
-        Write-Host "Running remote install..."
-        Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $remoteCmd
+        "update" {
+            $remoteCmd = "bash -lc 'cd $remoteWorkDir && sudo NONINTERACTIVE=true UPDATE_CHOICE=$UpdateChoice bash -x ./update.sh 2>&1 | tee $remoteLog; exit `${PIPESTATUS[0]}'"
+            Write-Host "Running remote update..."
+            Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $remoteCmd
+        }
+        "smoke" {
+            $remoteCmd = "bash -lc 'cd $remoteWorkDir && sudo bash scripts/ops/smoke-test.sh 2>&1 | tee $remoteLog; exit `${PIPESTATUS[0]}'"
+            Write-Host "Running remote smoke checks..."
+            Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $remoteCmd
+        }
     }
-    "update" {
-        $remoteCmd = "bash -lc 'cd $remoteWorkDir && sudo NONINTERACTIVE=true UPDATE_CHOICE=$UpdateChoice bash -x ./update.sh 2>&1 | tee $remoteLog; exit `${PIPESTATUS[0]}'"
-        Write-Host "Running remote update..."
-        Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $remoteCmd
-    }
-    "smoke" {
-        $remoteCmd = "bash -lc 'cd $remoteWorkDir && sudo bash scripts/ops/smoke-test.sh 2>&1 | tee $remoteLog; exit `${PIPESTATUS[0]}'"
-        Write-Host "Running remote smoke checks..."
-        Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $remoteCmd
+}
+finally {
+    if ($passwordFile -and (Test-Path -LiteralPath $passwordFile)) {
+        Remove-Item -LiteralPath $passwordFile -Force -ErrorAction SilentlyContinue
     }
 }
 

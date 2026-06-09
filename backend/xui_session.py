@@ -28,6 +28,79 @@ _SESSION_CACHE: dict[str, Dict[str, Any]] = {}
 _SESSION_CACHE_MAX = 1024
 
 
+def _clean_url_path(value: Any) -> str:
+    return str(value or "").strip().strip("/")
+
+
+def _parse_panel_url_candidate(value: str, default_scheme: str):
+    raw = str(value or "").strip().rstrip("/")
+    if not raw:
+        return None
+    candidate = raw if "://" in raw else f"{default_scheme}://{raw.lstrip('/')}"
+    parsed = urlparse(candidate)
+    if parsed.hostname:
+        return parsed
+    return None
+
+
+def _safe_parsed_port(parsed) -> int | None:
+    try:
+        return parsed.port
+    except ValueError:
+        return None
+
+
+def build_panel_base_url(node: Dict[str, Any]) -> str:
+    """Return the canonical panel base URL, preserving any configured path prefix."""
+    scheme = str(node.get("scheme") or "https").strip() or "https"
+    node_port = str(node.get("port") or "").strip()
+    base_path = _clean_url_path(node.get("base_path") or node.get("access_path"))
+
+    parsed_source = None
+    for field_name in ("panel_url", "ip"):
+        parsed = _parse_panel_url_candidate(str(node.get(field_name) or ""), scheme)
+        if not parsed:
+            continue
+        if parsed_source is None:
+            parsed_source = (field_name, parsed)
+        if not base_path and parsed.path:
+            base_path = _clean_url_path(parsed.path)
+
+    if parsed_source is None:
+        raise ValueError("Node panel host is missing")
+
+    source_field, parsed = parsed_source
+    scheme = parsed.scheme or scheme
+    host = parsed.hostname or ""
+    parsed_port = _safe_parsed_port(parsed)
+    port = parsed_port or (None if source_field == "panel_url" else node_port)
+
+    if not host:
+        raise ValueError("Node panel host is missing")
+
+    netloc = host
+    if port:
+        netloc = f"{host}:{port}"
+
+    base_url = f"{scheme}://{netloc}"
+    if base_path:
+        base_url = f"{base_url}/{base_path}"
+    return base_url.rstrip("/")
+
+
+def join_panel_url(base_url: str, path: str) -> str:
+    return f"{str(base_url).rstrip('/')}/{str(path or '').lstrip('/')}"
+
+
+def make_node_key_for_node(node: Dict[str, Any]) -> str:
+    base_url = build_panel_base_url(node)
+    parsed = urlparse(base_url)
+    port = parsed.port
+    if port is None:
+        port = 80 if parsed.scheme == "http" else 443
+    return make_node_key(parsed.hostname or "", port, parsed.path.strip("/"))
+
+
 def get_node_api_version(base_url: str) -> str | None:
     """Вернуть закешированную версию API ноды, или None если не определена."""
     with _NODE_API_VERSION_LOCK:
@@ -66,19 +139,13 @@ def seed_node_api_versions(nodes: list) -> None:
             api_version = (node.get("api_version") or "").strip()
             if not api_version:
                 continue
-            # Build base_url the same way client_manager does:
-            # scheme://ip:port/base_path
-            scheme = node.get("scheme") or "https"
-            ip = node.get("ip") or node.get("panel_url") or ""
-            port = str(node.get("port") or "443")
-            base_path = (node.get("base_path") or "").strip("/")
-            if ip:
-                base_url = f"{scheme}://{ip}:{port}"
-                if base_path:
-                    base_url = f"{base_url}/{base_path}"
-                if base_url not in _NODE_API_VERSION:
-                    _NODE_API_VERSION[base_url] = api_version
-                    seeded += 1
+            try:
+                base_url = build_panel_base_url(node)
+            except ValueError:
+                continue
+            if base_url not in _NODE_API_VERSION:
+                _NODE_API_VERSION[base_url] = api_version
+                seeded += 1
     if seeded:
         logger.info("Seeded API version cache: %d nodes", seeded)
 
@@ -152,6 +219,14 @@ def bounded_xui_timeout(timeout: float | tuple | list | None = None) -> tuple[fl
 
 
 def make_node_key(ip: str, port: int | str, base_path: str = "") -> str:
+    parsed = _parse_panel_url_candidate(str(ip or ""), "https")
+    if parsed:
+        ip = parsed.hostname or ip
+        if not base_path and parsed.path:
+            base_path = parsed.path.strip("/")
+        parsed_port = _safe_parsed_port(parsed)
+        if not port and parsed_port:
+            port = parsed_port
     normalized_path = str(base_path or "").strip("/")
     return f"{ip}:{port}:{normalized_path}"
 
@@ -267,10 +342,21 @@ def get_authenticated_session(
 
 def is_auth_failure_response(response: requests.Response) -> bool:
     status_code = getattr(response, "status_code", None)
+    final_url = str(getattr(response, "url", "") or "")
+    if not final_url:
+        request_obj = getattr(response, "request", None)
+        final_url = str(getattr(request_obj, "url", "") or "")
+
     if status_code in (401, 403):
         return True
+    if status_code == 404 and final_url:
+        # 3x-ui can mask expired/invalid panel sessions as 404 under /panel/api/*
+        # instead of returning 401/403, so treat this as an auth-failure signal.
+        path = urlparse(final_url).path.rstrip("/").lower()
+        if "/panel/api/" in path or path.endswith("/panel/api"):
+            return True
 
-    final_url = str(getattr(response, "url", "") or "").lower()
+    final_url = final_url.lower()
     if final_url:
         path = urlparse(final_url).path.rstrip("/").lower()
         if path.endswith("/login") or path.endswith("/panel/login"):
@@ -458,7 +544,7 @@ def _validate_bearer_token(
         resp = xui_request(
             session,
             "GET",
-            f"{base_url}/panel/api/inbounds/list",
+            join_panel_url(base_url, "/panel/api/inbounds/list"),
             headers={"Authorization": f"Bearer {bearer_token}"},
             timeout=timeout,
             retries=retries,
@@ -501,7 +587,7 @@ def _try_csrf_login(
         None если CSRF не поддерживается (fallback на legacy).
     """
     try:
-        resp = xui_request(session, "GET", f"{base_url}/csrf-token", timeout=timeout, retries=retries)
+        resp = xui_request(session, "GET", join_panel_url(base_url, "/csrf-token"), timeout=timeout, retries=retries)
     except requests.RequestException as exc:
         logger.debug("Could not fetch CSRF token from %s: %s", base_url, exc)
         return None
@@ -520,7 +606,7 @@ def _try_csrf_login(
     logger.debug("Got CSRF token for %s, attempting login", base_url)
 
     for login_path in ("/login", "/panel/login"):
-        url = f"{base_url}{login_path}"
+        url = join_panel_url(base_url, login_path)
         try:
             resp = xui_request(
                 session, "POST", url,
@@ -570,7 +656,7 @@ def _try_legacy_login(
     last_error: Dict[str, Any] | None = None
 
     for login_path in ("/panel/login", "/login"):
-        url = f"{base_url}{login_path}"
+        url = join_panel_url(base_url, login_path)
         try:
             resp = xui_request(
                 session, "POST", url,
@@ -615,7 +701,7 @@ def _try_legacy_login(
         return last_error
     logger.warning("node panel login failed at all paths for %s", base_url)
     return {"ok": False, "status_code": 404, "reason": "login_endpoint_not_found",
-            "error": "Login endpoint not found", "login_url": f"{base_url}/login"}
+            "error": "Login endpoint not found", "login_url": join_panel_url(base_url, "/login")}
 
 
 def _do_credential_login(
@@ -676,7 +762,7 @@ def login_panel_detailed(
                 "status_code": 200,
                 "reason": "bearer_token_validated",
                 "error": "",
-                "login_url": f"{base_url}/panel/api",
+                "login_url": join_panel_url(base_url, "/panel/api"),
             }
         logger.debug("Bearer token validation failed (detailed), falling back to credential auth")
 
@@ -686,7 +772,7 @@ def login_panel_detailed(
             "status_code": None,
             "reason": "bearer_token_invalid",
             "error": "Bearer token authentication failed and no fallback credentials provided",
-            "login_url": f"{base_url}/panel/api",
+            "login_url": join_panel_url(base_url, "/panel/api"),
         }
 
     return _do_credential_login(session, base_url, username, password, timeout, retries)

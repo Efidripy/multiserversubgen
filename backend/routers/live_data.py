@@ -3,6 +3,7 @@ from typing import Callable, Dict
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import ORJSONResponse
 
 
 def build_live_data_router(
@@ -80,7 +81,7 @@ def build_live_data_router(
             raise HTTPException(status_code=400, detail="group_by must be client, inbound, or node")
         nodes = await run_in_threadpool(list_nodes)
         payload = await run_in_threadpool(get_cached_traffic_stats, nodes, group_by)
-        return _apply_limit(payload, limit)
+        return ORJSONResponse(content=_apply_limit(payload, limit))
 
     @router.get("/api/v1/clients/online")
     async def get_online_clients(request: Request, limit: int = 0):
@@ -91,7 +92,7 @@ def build_live_data_router(
         online = await run_in_threadpool(get_cached_online_clients, nodes)
         if limit > 0:
             online = online[:limit]
-        return {"online_clients": online, "count": len(online)}
+        return ORJSONResponse(content={"online_clients": online, "count": len(online)})
 
     @router.get("/api/v1/dashboard/summary")
     async def get_dashboard_summary(request: Request):
@@ -116,7 +117,7 @@ def build_live_data_router(
             if cached.get("available"):
                 online_nodes += 1
             total_traffic += int(cached.get("traffic_total") or 0)
-        return {
+        return ORJSONResponse(content={
             "nodes_total": len(nodes),
             "nodes_online": online_nodes,
             "clients_total": 0,
@@ -134,7 +135,7 @@ def build_live_data_router(
                 "age_sec": round(time.time() - snapshot["timestamp"], 2) if snapshot.get("timestamp") else None,
                 "ready": bool(snapshot.get("nodes")),
             },
-        }
+        })
 
     @router.get("/api/v1/nodes/{node_id}/server-status")
     async def get_node_server_status(request: Request, node_id: int):
@@ -145,7 +146,7 @@ def build_live_data_router(
         by_id, by_name, _snapshot = _snapshot_by_node([node])
         cached = _snapshot_for_node(node, by_id, by_name)
         if not isinstance(cached, dict):
-            return {
+            return ORJSONResponse(content={
                 "node": node.get("name"),
                 "node_id": node_id,
                 "available": False,
@@ -153,7 +154,7 @@ def build_live_data_router(
                 "reason": "snapshot_not_ready",
                 "error": "Status has not been collected yet",
                 "cached": True,
-            }
+            })
         server_status = cached.get("server_status")
         if isinstance(server_status, dict):
             payload = dict(server_status)
@@ -176,7 +177,7 @@ def build_live_data_router(
         payload["poll_ms"] = cached.get("poll_ms")
         if cached.get("circuit_open_until"):
             payload["circuit_open_until"] = cached.get("circuit_open_until")
-        return payload
+        return ORJSONResponse(content=payload)
 
     @router.get("/api/v1/nodes/{node_id}/traffic")
     async def get_node_traffic(request: Request, node_id: int):
@@ -184,7 +185,8 @@ def build_live_data_router(
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
         node = await run_in_threadpool(get_node_or_404, node_id)
-        return await run_in_threadpool(xui_monitor.get_traffic, node)
+        payload = await run_in_threadpool(xui_monitor.get_traffic, node)
+        return ORJSONResponse(content=payload)
 
     @router.get("/api/v1/nodes/{node_id}/inbounds")
     async def get_node_inbounds(request: Request, node_id: int):
@@ -192,7 +194,8 @@ def build_live_data_router(
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
         node = await run_in_threadpool(get_node_or_404, node_id)
-        return await run_in_threadpool(xui_monitor.get_inbounds, node)
+        payload = await run_in_threadpool(xui_monitor.get_inbounds, node)
+        return ORJSONResponse(content=payload)
 
     @router.get("/api/v1/nodes/{node_id}/online-clients")
     async def get_node_online_clients(request: Request, node_id: int):
@@ -200,14 +203,16 @@ def build_live_data_router(
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
         node = await run_in_threadpool(get_node_or_404, node_id)
-        return await run_in_threadpool(xui_monitor.get_online_clients, node)
+        payload = await run_in_threadpool(xui_monitor.get_online_clients, node)
+        return ORJSONResponse(content=payload)
 
     async def _get_node_client_traffic_impl(request: Request, node_id: int, email: str):
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
         node = await run_in_threadpool(get_node_or_404, node_id)
-        return await run_in_threadpool(xui_monitor.get_client_traffic, node, email)
+        payload = await run_in_threadpool(xui_monitor.get_client_traffic, node, email)
+        return ORJSONResponse(content=payload)
 
     @router.get("/api/v1/nodes/{node_id}/client-traffic")
     async def get_node_client_traffic_query(request: Request, node_id: int, email: str):
@@ -234,10 +239,10 @@ def build_live_data_router(
             # Fallback to regular stats if handler not provided
             nodes = await run_in_threadpool(list_nodes)
             payload = await run_in_threadpool(get_cached_traffic_stats, nodes, group_by)
-            return _apply_limit(payload, limit)
+            return ORJSONResponse(content=_apply_limit(payload, limit))
         
         nodes = await run_in_threadpool(list_nodes)
         payload = await run_in_threadpool(period_stats_handler, nodes, group_by, period)
-        return _apply_limit(payload, limit)
+        return ORJSONResponse(content=_apply_limit(payload, limit))
 
     return router

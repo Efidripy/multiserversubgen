@@ -1,7 +1,7 @@
 from typing import Callable, Dict
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import ORJSONResponse, Response
 
 
 def build_observability_router(
@@ -17,7 +17,7 @@ def build_observability_router(
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
-        return get_latest_snapshot()
+        return ORJSONResponse(content=get_latest_snapshot())
 
     @router.get("/metrics")
     async def metrics():
