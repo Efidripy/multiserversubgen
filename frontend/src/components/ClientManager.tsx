@@ -2,6 +2,13 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useToast } from './Toast';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
+import {
+  clearClientIpHistory,
+  getClientIpHistory,
+  listClientsBySource,
+  type ClientIpHistoryEntry,
+  type ClientSourceFilter,
+} from '../api/clients';
 import { getInboundsHeaderSource } from '../api/dashboard';
 import { listNodes } from '../api/nodes';
 import { AddClientMultiServer } from './AddClientMultiServer';
@@ -66,6 +73,7 @@ interface ClientsPageCache {
   clients: Client[];
   trafficCache: Record<string, TrafficData | null>;
   endpointMode?: 'unknown' | 'query' | 'legacy' | 'disabled';
+  sourceFilter?: ClientSourceFilter;
 }
 
 const clientIdentifier = (client: Client): string | null =>
@@ -243,6 +251,8 @@ export const ClientManager: React.FC = () => {
   const [refreshInterval, setRefreshInterval] = useState<number>(_cmPrefs.refreshInterval ?? 60);
   const [clients, setClients] = useState<Client[]>([]);
   const clientsRef = useRef<Client[]>([]);
+  const [clientSourceFilter, setClientSourceFilter] = useState<ClientSourceFilter>('all');
+  const clientSourceFilterRef = useRef<ClientSourceFilter>('all');
   const [filteredClients, setFilteredClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
   const [trafficLoading, setTrafficLoading] = useState(false);
@@ -332,6 +342,13 @@ export const ClientManager: React.FC = () => {
   const [ipSearchResults, setIpSearchResults] = useState<Array<{email: string; node: string; ips: string[]}>>([]);
   const [ipSearchLoading, setIpSearchLoading] = useState(false);
 
+  // Per-client IP history modal
+  const [ipHistoryClient, setIpHistoryClient] = useState<Client | null>(null);
+  const [ipHistoryEntries, setIpHistoryEntries] = useState<ClientIpHistoryEntry[]>([]);
+  const [ipHistoryLoading, setIpHistoryLoading] = useState(false);
+  const [ipHistoryClearing, setIpHistoryClearing] = useState(false);
+  const [ipHistoryError, setIpHistoryError] = useState('');
+
   // Client Groups modal
   const [showGroupsModal, setShowGroupsModal] = useState(false);
   const [groupsNodeId, setGroupsNodeId] = useState<number | null>(null);
@@ -349,6 +366,10 @@ export const ClientManager: React.FC = () => {
   useEffect(() => {
     clientsRef.current = clients;
   }, [clients]);
+
+  useEffect(() => {
+    clientSourceFilterRef.current = clientSourceFilter;
+  }, [clientSourceFilter]);
 
   useEffect(() => {
     // Handle navigation from InboundManager: apply inbound filter if set.
@@ -380,7 +401,7 @@ export const ClientManager: React.FC = () => {
 
     // Show cached snapshot instantly if available, then refresh in background.
     const cached = readStaleCache<ClientsPageCache>(CLIENTS_PAGE_CACHE_KEY, CLIENTS_PAGE_CACHE_MAX_AGE_MS);
-    if (cached.data) {
+    if (cached.data && (cached.data.sourceFilter ?? 'all') === 'all') {
       if (Array.isArray(cached.data.clients)) setClients(cached.data.clients);
       if (cached.data.trafficCache && typeof cached.data.trafficCache === 'object') {
         setTrafficCache(cached.data.trafficCache);
@@ -476,7 +497,7 @@ export const ClientManager: React.FC = () => {
     };
   }, [filteredClients, trafficCache]);
   
-  const loadClients = async (silent = false) => {
+  const loadClients = async (silent = false, sourceFilter: ClientSourceFilter = clientSourceFilterRef.current) => {
     if (refreshInFlightRef.current) {
       clientsLoadAbortRef.current?.abort();
     }
@@ -487,15 +508,16 @@ export const ClientManager: React.FC = () => {
     refreshInFlightRef.current = true;
     if (!silent) setLoading(true);
     setError('');
+    clientSourceFilterRef.current = sourceFilter;
 
     const requestId = Date.now();
     requestIdRef.current = requestId;
 
     try {
       // Fire both requests in parallel; backend serves from cache (20s fresh / 180s stale).
-      const [nodeList, clientsRes, rawInbounds] = await Promise.all([
+      const [nodeList, clientsPayload, rawInbounds] = await Promise.all([
         listNodes(),
-        api.get('/v1/clients', { auth: getAuth(), signal: controller.signal }),
+        listClientsBySource(sourceFilter, controller.signal),
         getInboundsHeaderSource(),
       ]);
 
@@ -504,7 +526,7 @@ export const ClientManager: React.FC = () => {
       const nodeNameToId: Record<string, number> = {};
       nodeList.forEach(n => { nodeNameToId[n.name] = n.id; });
 
-      const mappedClients = normalizeClientRows(clientsRes.data, nodeNameToId);
+      const mappedClients = normalizeClientRows(clientsPayload, nodeNameToId);
 
       const deduped = new Map<string, Client>();
       mappedClients.forEach(c => deduped.set(clientKey(c), c));
@@ -516,6 +538,7 @@ export const ClientManager: React.FC = () => {
         clients: next,
         trafficCache,
         endpointMode: trafficEndpointModeRef.current,
+        sourceFilter,
       });
 
       const inboundList: InboundOption[] = rawInbounds.map((ib: any) => ({
@@ -706,6 +729,7 @@ export const ClientManager: React.FC = () => {
       clients: clientList,
       trafficCache: cache,
       endpointMode: trafficEndpointModeRef.current,
+      sourceFilter: clientSourceFilterRef.current,
     });
   };
 
@@ -716,6 +740,10 @@ export const ClientManager: React.FC = () => {
       }
       if (update.data?.source === 'snapshot_collector') {
         if (update.type === 'client_update' && update.data?.has_table_payload && Array.isArray(update.data.clients)) {
+          if (clientSourceFilterRef.current !== 'all') {
+            loadClients(true);
+            return;
+          }
           const existingNotes = new Map(
             clientsRef.current.map((client) => [clientKey(client), client.notes || ''])
           );
@@ -756,6 +784,7 @@ export const ClientManager: React.FC = () => {
               clients: nextClients,
               trafficCache: nextTraffic,
               endpointMode: trafficEndpointModeRef.current,
+              sourceFilter: clientSourceFilterRef.current,
             });
             return nextTraffic;
           });
@@ -823,6 +852,7 @@ export const ClientManager: React.FC = () => {
           clients: nextClients,
           trafficCache,
           endpointMode: trafficEndpointModeRef.current,
+          sourceFilter: clientSourceFilterRef.current,
         });
         return nextClients;
       });
@@ -836,6 +866,54 @@ export const ClientManager: React.FC = () => {
     const note = window.prompt(t('clients.localNotePrompt'), client.notes || '');
     if (note !== null) {
       void saveClientNote(client, note);
+    }
+  };
+
+  const handleClientSourceFilterChange = (value: ClientSourceFilter) => {
+    if (value === clientSourceFilterRef.current) return;
+    clientSourceFilterRef.current = value;
+    setClientSourceFilter(value);
+    setFilterStatus('');
+    setSelectedClientKeys(new Set());
+    setCurrentPage(1);
+    void loadClients(false, value);
+  };
+
+  const handleOpenClientIpHistory = async (client: Client) => {
+    setIpHistoryClient(client);
+    setIpHistoryEntries([]);
+    setIpHistoryError('');
+    setIpHistoryLoading(true);
+    try {
+      const data = await getClientIpHistory(client.email, client.node_id);
+      setIpHistoryEntries(
+        data.results
+          .map((entry) => ({
+            node: entry.node,
+            ips: Array.isArray(entry.ips) ? entry.ips.filter(Boolean) : [],
+          }))
+          .filter((entry) => entry.ips.length > 0),
+      );
+    } catch (err: any) {
+      const message = err.response?.data?.detail || t('clients.ipHistoryLoadFailed');
+      setIpHistoryError(message);
+      toast(message, 'error');
+    } finally {
+      setIpHistoryLoading(false);
+    }
+  };
+
+  const handleClearClientIpHistory = async () => {
+    if (!ipHistoryClient) return;
+    setIpHistoryClearing(true);
+    try {
+      await clearClientIpHistory(ipHistoryClient.email, ipHistoryClient.node_id);
+      setIpHistoryEntries([]);
+      toast(t('clients.ipHistoryCleared'), 'success');
+    } catch (err: any) {
+      toast(err.response?.data?.detail || t('clients.ipHistoryClearFailed'), 'error');
+    } finally {
+      setIpHistoryClearing(false);
     }
   };
 
@@ -1564,6 +1642,15 @@ export const ClientManager: React.FC = () => {
               </div>
             </div>
             <div className="panel-block__stack">
+              <ChoiceChips
+                options={[
+                  { value: 'all', label: t('common.all'), title: '/api/v1/clients' },
+                  { value: 'expired', label: t('clients.expired'), title: '/api/v1/clients/expired' },
+                  { value: 'depleted', label: t('clients.depleted'), title: '/api/v1/clients/depleted' },
+                ]}
+                value={clientSourceFilter}
+                onChange={handleClientSourceFilterChange}
+              />
               <input
                 ref={searchInputRef}
                 type="text"
@@ -1655,10 +1742,11 @@ export const ClientManager: React.FC = () => {
               >
                 {t('clients.duplicates')}
               </button>
-              {(searchTerm || filterNode || filterProtocol || filterStatus || filterExpiringSoon || filterInboundId !== null) && (
+              {(clientSourceFilter !== 'all' || searchTerm || filterNode || filterProtocol || filterStatus || filterExpiringSoon || filterInboundId !== null) && (
                 <button
                   className={buttonWarningClass}
                   onClick={() => {
+                    handleClientSourceFilterChange('all');
                     setSearchTerm('');
                     setFilterNode('');
                     setFilterProtocol('');
@@ -2164,12 +2252,12 @@ export const ClientManager: React.FC = () => {
                 <div className="mt-3 grid min-w-0 grid-cols-2 gap-2"><button type="button" className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] text-slate-200')} onClick={() => setFilterNode(prev => prev === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol(prev => prev === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{formatBytes(downloadBytes)}</span></span><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : 'unlimited'}</span></span></div>
                 {client.total > 0 && <div className="mt-3"><div className="h-1 overflow-hidden rounded-full bg-[#0f1420]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></div>}
                 <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-500"><div className="min-w-0"><span className="block uppercase tracking-wider">{t('clients.expiryTime')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-200 whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</span></div><div className="min-w-0 text-right"><span className="block uppercase tracking-wider">Last Online</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-300 whitespace-nowrap">{lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).toLocaleDateString() : '-'}</span></div></div>
-                <div className="mt-3 grid grid-cols-5 gap-2"><button type="button" className={buttonIconClass} onClick={() => handleClientEditClick(client)} title={t('messages.editClient')}><UIIcon name="edit" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleResetTraffic(client)} title={t('clients.resetTraffic')}><UIIcon name="refresh" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleOpenAttach(client, 'attach')} title={t('clients.attachDetachInbounds')}><UIIcon name="attach" size={14} /></button><button type="button" className={cn(buttonIconClass, client.notes && 'text-cyan-300')} onClick={() => handleClientNoteClick(client)} title={t('clients.noteTitle')}><UIIcon name="note" size={14} /></button><button type="button" className={cn(buttonIconClass, 'bg-rose-500 text-white hover:bg-rose-400')} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier || !client.inbound_id) { toast('Cannot identify client', 'warning'); return; } if (!window.confirm(`Delete client "${client.email}"?`)) return; try { await api.delete(`/v1/clients/${encodeURIComponent(identifier)}`, { auth: getAuth(), params: { node_id: client.node_id, inbound_id: client.inbound_id } }); loadClients(true); } catch (e: any) { toast(e.response?.data?.detail || 'Delete failed', 'error'); } }} title={t('clients.deleteClient') || 'Delete client'}><UIIcon name="trash" size={14} /></button></div>
+                <div className="mt-3 grid grid-cols-6 gap-2"><button type="button" className={buttonIconClass} onClick={() => handleClientEditClick(client)} title={t('messages.editClient')}><UIIcon name="edit" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleResetTraffic(client)} title={t('clients.resetTraffic')}><UIIcon name="refresh" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleOpenAttach(client, 'attach')} title={t('clients.attachDetachInbounds')}><UIIcon name="attach" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleOpenClientIpHistory(client)} title={t('clients.ipHistoryTitle')}><UIIcon name="ip" size={14} /></button><button type="button" className={cn(buttonIconClass, client.notes && 'text-cyan-300')} onClick={() => handleClientNoteClick(client)} title={t('clients.noteTitle')}><UIIcon name="note" size={14} /></button><button type="button" className={cn(buttonIconClass, 'bg-rose-500 text-white hover:bg-rose-400')} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier || !client.inbound_id) { toast('Cannot identify client', 'warning'); return; } if (!window.confirm(`Delete client "${client.email}"?`)) return; try { await api.delete(`/v1/clients/${encodeURIComponent(identifier)}`, { auth: getAuth(), params: { node_id: client.node_id, inbound_id: client.inbound_id } }); loadClients(true); } catch (e: any) { toast(e.response?.data?.detail || 'Delete failed', 'error'); } }} title={t('clients.deleteClient') || 'Delete client'}><UIIcon name="trash" size={14} /></button></div>
               </article>;
             })}
           </div>
-          <div className="hidden w-full min-w-0 overflow-hidden bg-[#0a0e1a] lg:block"><div className="w-full min-w-0 overflow-x-auto"><table className="w-full table-fixed border-collapse text-left text-xs"><thead className="bg-[#0f1420] text-[10px] uppercase tracking-wider text-slate-500"><tr className="border-b border-cyan-500/20"><th className="w-10 px-3 py-3"><input className={checkboxClass} type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAll} /></th><th className="w-[17%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('email')}>{t('clients.email')}{sortIndicator('email')}</button></th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('node')}>{t('traffic.node')}{sortIndicator('node')}</button></th>{!denseView && <th className="w-[6%] px-3 py-3">{t('inbounds.protocol')}</th>}<th className="w-[8%] px-3 py-3">{t('common.status')}</th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('download')}>{t('traffic.download')}{sortIndicator('download')}</button></th><th className="w-[8%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('total')}>{t('clients.totalLimit')}{sortIndicator('total')}</button></th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('expiry')}>{t('clients.expiryTime')}{sortIndicator('expiry')}</button></th>{!denseView && <th className="w-[7%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('lastOnline')}>Last Online{sortIndicator('lastOnline')}</button></th>}<th className="w-[5%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('health')}>Health{sortIndicator('health')}</button></th><th className="w-[184px] px-3 py-3">{t('common.actions')}</th></tr></thead><tbody className="divide-y divide-slate-800/60 text-slate-200">
-            {visibleClients.map((client) => { const trafficKey = client.node_id != null ? `${client.node_id}:${client.email}` : null; const downloadBytes = getTrafficBytes(trafficKey, 'download', client.down); const isExpired = client.expiryTime > 0 && client.expiryTime < Date.now(); const isDepleted = client.total > 0 && (client.up + client.down) >= client.total; const used = client.up + client.down; const pct = client.total > 0 ? Math.min(100, (used / client.total) * 100) : 0; const hs = getHealthScore(client); return <tr key={clientKey(client)} className={cn('transition-colors hover:bg-cyan-400/5', isExpired && 'bg-amber-400/5', isDepleted && 'bg-rose-500/5', !client.enable && 'bg-[#0f1420]/60 opacity-80')}><td className="px-3 py-3"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /></td><td className="min-w-0 px-3 py-3"><button type="button" className={tableLongEmailClass} title={client.email} onClick={() => setExpandedKey(prev => prev === clientKey(client) ? null : clientKey(client))}>{client.email}</button><div className={tableLongIdClass} title={client.id || client.password || ''}>{client.id || client.password || '-'}</div></td><td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'max-w-full justify-start bg-[#0f1420] text-slate-200')} onClick={() => setFilterNode(prev => prev === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button></td>{!denseView && <td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol(prev => prev === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button></td>}<td className="px-3 py-3"><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier) return; try { await api.put(`/v1/clients/${encodeURIComponent(identifier)}`, { node_id: client.node_id, inbound_id: client.inbound_id, updates: { email: client.email, enable: !client.enable } }, { auth: getAuth() }); setClients(prev => prev.map(c => clientKey(c) === clientKey(client) ? { ...c, enable: !c.enable } : c)); } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); } }}>{isExpired ? 'Expired' : isDepleted ? 'Depleted' : client.enable ? 'Active' : 'Disabled'}</button></td><td className="px-3 py-3"><div className="font-mono tabular-nums whitespace-nowrap">{formatBytes(downloadBytes)}</div>{client.total > 0 && <><div className="mt-1 h-1 min-w-[72px] overflow-hidden rounded-full bg-[#0f1420]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></>}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : 'unlimited'}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</td>{!denseView && <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-slate-500">{lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).toLocaleDateString() : '-'}</td>}<td className={cn('px-3 py-3 font-mono tabular-nums font-medium whitespace-nowrap', hs >= 70 ? 'text-emerald-300' : hs >= 35 ? 'text-amber-300' : 'text-rose-300')}>{hs}</td><td className="px-3 py-3"><div className="flex flex-wrap justify-end gap-1"><button type="button" className={buttonIconClass} onClick={() => handleClientEditClick(client)} title={t('messages.editClient')}><UIIcon name="edit" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleResetTraffic(client)} title={t('clients.resetTraffic')}><UIIcon name="refresh" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleOpenAttach(client, 'attach')} title={t('clients.attachDetachInbounds')}><UIIcon name="attach" size={14} /></button><button type="button" className={cn(buttonIconClass, client.notes && 'text-cyan-300')} onClick={() => handleClientNoteClick(client)} title={t('clients.noteTitle')}><UIIcon name="note" size={14} /></button><button type="button" className={cn(buttonIconClass, 'bg-rose-500 text-white hover:bg-rose-400')} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier || !client.inbound_id) { toast('Cannot identify client', 'warning'); return; } if (!window.confirm(`Delete client "${client.email}"?`)) return; try { await api.delete(`/v1/clients/${encodeURIComponent(identifier)}`, { auth: getAuth(), params: { node_id: client.node_id, inbound_id: client.inbound_id } }); loadClients(true); } catch (e: any) { toast(e.response?.data?.detail || 'Delete failed', 'error'); } }} title={t('clients.deleteClient') || 'Delete client'}><UIIcon name="trash" size={14} /></button></div></td></tr>; })}
+          <div className="hidden w-full min-w-0 overflow-hidden bg-[#0a0e1a] lg:block"><div className="w-full min-w-0 overflow-x-auto"><table className="w-full table-fixed border-collapse text-left text-xs"><thead className="bg-[#0f1420] text-[10px] uppercase tracking-wider text-slate-500"><tr className="border-b border-cyan-500/20"><th className="w-10 px-3 py-3"><input className={checkboxClass} type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAll} /></th><th className="w-[17%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('email')}>{t('clients.email')}{sortIndicator('email')}</button></th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('node')}>{t('traffic.node')}{sortIndicator('node')}</button></th>{!denseView && <th className="w-[6%] px-3 py-3">{t('inbounds.protocol')}</th>}<th className="w-[8%] px-3 py-3">{t('common.status')}</th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('download')}>{t('traffic.download')}{sortIndicator('download')}</button></th><th className="w-[8%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('total')}>{t('clients.totalLimit')}{sortIndicator('total')}</button></th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('expiry')}>{t('clients.expiryTime')}{sortIndicator('expiry')}</button></th>{!denseView && <th className="w-[7%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('lastOnline')}>Last Online{sortIndicator('lastOnline')}</button></th>}<th className="w-[5%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('health')}>Health{sortIndicator('health')}</button></th><th className="w-[224px] px-3 py-3">{t('common.actions')}</th></tr></thead><tbody className="divide-y divide-slate-800/60 text-slate-200">
+            {visibleClients.map((client) => { const trafficKey = client.node_id != null ? `${client.node_id}:${client.email}` : null; const downloadBytes = getTrafficBytes(trafficKey, 'download', client.down); const isExpired = client.expiryTime > 0 && client.expiryTime < Date.now(); const isDepleted = client.total > 0 && (client.up + client.down) >= client.total; const used = client.up + client.down; const pct = client.total > 0 ? Math.min(100, (used / client.total) * 100) : 0; const hs = getHealthScore(client); return <tr key={clientKey(client)} className={cn('transition-colors hover:bg-cyan-400/5', isExpired && 'bg-amber-400/5', isDepleted && 'bg-rose-500/5', !client.enable && 'bg-[#0f1420]/60 opacity-80')}><td className="px-3 py-3"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /></td><td className="min-w-0 px-3 py-3"><button type="button" className={tableLongEmailClass} title={client.email} onClick={() => setExpandedKey(prev => prev === clientKey(client) ? null : clientKey(client))}>{client.email}</button><div className={tableLongIdClass} title={client.id || client.password || ''}>{client.id || client.password || '-'}</div></td><td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'max-w-full justify-start bg-[#0f1420] text-slate-200')} onClick={() => setFilterNode(prev => prev === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button></td>{!denseView && <td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol(prev => prev === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button></td>}<td className="px-3 py-3"><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier) return; try { await api.put(`/v1/clients/${encodeURIComponent(identifier)}`, { node_id: client.node_id, inbound_id: client.inbound_id, updates: { email: client.email, enable: !client.enable } }, { auth: getAuth() }); setClients(prev => prev.map(c => clientKey(c) === clientKey(client) ? { ...c, enable: !c.enable } : c)); } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); } }}>{isExpired ? 'Expired' : isDepleted ? 'Depleted' : client.enable ? 'Active' : 'Disabled'}</button></td><td className="px-3 py-3"><div className="font-mono tabular-nums whitespace-nowrap">{formatBytes(downloadBytes)}</div>{client.total > 0 && <><div className="mt-1 h-1 min-w-[72px] overflow-hidden rounded-full bg-[#0f1420]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></>}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : 'unlimited'}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</td>{!denseView && <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-slate-500">{lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).toLocaleDateString() : '-'}</td>}<td className={cn('px-3 py-3 font-mono tabular-nums font-medium whitespace-nowrap', hs >= 70 ? 'text-emerald-300' : hs >= 35 ? 'text-amber-300' : 'text-rose-300')}>{hs}</td><td className="px-3 py-3"><div className="flex flex-wrap justify-end gap-1"><button type="button" className={buttonIconClass} onClick={() => handleClientEditClick(client)} title={t('messages.editClient')}><UIIcon name="edit" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleResetTraffic(client)} title={t('clients.resetTraffic')}><UIIcon name="refresh" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleOpenAttach(client, 'attach')} title={t('clients.attachDetachInbounds')}><UIIcon name="attach" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleOpenClientIpHistory(client)} title={t('clients.ipHistoryTitle')}><UIIcon name="ip" size={14} /></button><button type="button" className={cn(buttonIconClass, client.notes && 'text-cyan-300')} onClick={() => handleClientNoteClick(client)} title={t('clients.noteTitle')}><UIIcon name="note" size={14} /></button><button type="button" className={cn(buttonIconClass, 'bg-rose-500 text-white hover:bg-rose-400')} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier || !client.inbound_id) { toast('Cannot identify client', 'warning'); return; } if (!window.confirm(`Delete client "${client.email}"?`)) return; try { await api.delete(`/v1/clients/${encodeURIComponent(identifier)}`, { auth: getAuth(), params: { node_id: client.node_id, inbound_id: client.inbound_id } }); loadClients(true); } catch (e: any) { toast(e.response?.data?.detail || 'Delete failed', 'error'); } }} title={t('clients.deleteClient') || 'Delete client'}><UIIcon name="trash" size={14} /></button></div></td></tr>; })}
           </tbody></table></div></div>
         </>}
         <div className="flex min-w-0 flex-wrap items-center gap-3 px-3 py-3 text-xs text-slate-500"><span className="whitespace-nowrap">{t('clients.showingCount', { filtered: filteredClients.length, total: clients.length })}</span>{selectedClientKeys.size > 0 && <span className="text-cyan-300 whitespace-nowrap">{t('clients.selectedCount', { count: selectedClientKeys.size })}</span>}</div>
@@ -2574,6 +2662,61 @@ export const ClientManager: React.FC = () => {
                     </div>
                   </>
                 )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Client IP History Modal */}
+      {ipHistoryClient && (
+        <div className={modalBackdropClass} onClick={e => { if (e.target === e.currentTarget) setIpHistoryClient(null); }}>
+          <div className="my-8 w-full max-w-xl">
+            <div className={modalPanelClass}>
+              <div className={modalHeaderClass}>
+                <h6 className={modalTitleClass}>{t('clients.ipHistoryTitle')} - {ipHistoryClient.email}</h6>
+                <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setIpHistoryClient(null)}>
+                  <UIIcon name="x" size={14} />
+                </button>
+              </div>
+              <div className={modalBodyClass}>
+                <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2 text-xs text-slate-500">
+                  <span className={cn(badgeBaseClass, 'bg-[#0a0e1a] font-mono text-slate-300')}>{ipHistoryClient.node_name || '-'}</span>
+                  {ipHistoryClient.node_id != null && <span className="font-mono">node_id={ipHistoryClient.node_id}</span>}
+                </div>
+                {ipHistoryLoading && (
+                  <div className="flex items-center gap-2 py-3 text-sm text-slate-500">
+                    <UIIcon name="spinner" size={14} className="animate-spin text-cyan-300" />
+                    <span>{t('clients.ipHistoryLoading')}</span>
+                  </div>
+                )}
+                {!ipHistoryLoading && ipHistoryError && <div className={tableErrorClass}>{ipHistoryError}</div>}
+                {!ipHistoryLoading && !ipHistoryError && ipHistoryEntries.length === 0 && (
+                  <p className="rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-3 text-sm text-slate-500">{t('clients.ipHistoryEmpty')}</p>
+                )}
+                {!ipHistoryLoading && ipHistoryEntries.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    {ipHistoryEntries.map((entry) => (
+                      <div key={entry.node} className="rounded-md border border-cyan-500/20 bg-[#0a0e1a] p-3">
+                        <div className="mb-2 flex min-w-0 items-center justify-between gap-2">
+                          <strong className="min-w-0 truncate text-sm text-slate-100">{entry.node}</strong>
+                          <span className={cn(badgeBaseClass, 'bg-cyan-400/10 text-cyan-200')}>{entry.ips.length}</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {entry.ips.map((ip) => (
+                            <span key={`${entry.node}:${ip}`} className={cn(badgeBaseClass, 'bg-[#0f1420] font-mono text-slate-300')}>{ip}</span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className={modalFooterClass}>
+                <button className={buttonNeutralClass} onClick={() => setIpHistoryClient(null)}>{t('common.close')}</button>
+                <button className={buttonDangerClass} onClick={handleClearClientIpHistory} disabled={ipHistoryLoading || ipHistoryClearing}>
+                  <span className="inline-flex items-center gap-1"><UIIcon name={ipHistoryClearing ? 'spinner' : 'clear'} size={14} className={ipHistoryClearing ? 'animate-spin' : undefined} />{ipHistoryClearing ? '...' : t('clients.clearStoredIps')}</span>
+                </button>
               </div>
             </div>
           </div>
