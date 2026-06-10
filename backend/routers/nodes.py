@@ -1,4 +1,5 @@
 from services.db_bootstrap import connect
+import json
 import time
 from typing import Callable, Dict
 from shared.sql import update_by_id_query
@@ -9,6 +10,28 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import ORJSONResponse
 
 from xui_session import invalidate_auth_method_cache
+
+
+def _serialize_tags(value) -> str:
+    if value is None or value == "":
+        return "[]"
+    if isinstance(value, list):
+        tags = [str(tag).strip() for tag in value if str(tag).strip()]
+        return json.dumps(tags, ensure_ascii=False)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return "[]"
+        try:
+            parsed = json.loads(stripped)
+            if isinstance(parsed, list):
+                tags = [str(tag).strip() for tag in parsed if str(tag).strip()]
+                return json.dumps(tags, ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
+        tags = [tag.strip() for tag in stripped.split(",") if tag.strip()]
+        return json.dumps(tags, ensure_ascii=False)
+    return "[]"
 
 
 def build_nodes_router(
@@ -67,6 +90,7 @@ def build_nodes_router(
         password = data.get("password")
         bearer_token = str(data.get("bearer_token") or "").strip()
         read_only = bool(data.get("read_only", False))
+        tags = _serialize_tags(data.get("tags"))
 
         if not all([name, url]):
             raise HTTPException(status_code=400, detail="name and url are required")
@@ -104,9 +128,9 @@ def build_nodes_router(
                     INSERT INTO nodes (
                         name, panel_url, username, user,
                         password, ip, port, base_path, access_path,
-                        read_only, scheme, verify_tls
+                        read_only, scheme, verify_tls, tags
                     )
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """,
                     (
                         name,
@@ -121,6 +145,7 @@ def build_nodes_router(
                         1 if read_only else 0,
                         scheme,
                         0,
+                        tags,
                     ),
                 )
                 conn.commit()
@@ -233,7 +258,8 @@ def build_nodes_router(
         has_read_only = "read_only" in data
         has_bearer = "bearer_token" in data
         has_credentials = "user" in data or "password" in data
-        if not has_name and not has_read_only and not has_bearer and not has_credentials:
+        has_tags = "tags" in data
+        if not has_name and not has_read_only and not has_bearer and not has_credentials and not has_tags:
             raise HTTPException(status_code=400, detail="No updatable fields provided")
 
         new_name = None
@@ -278,6 +304,10 @@ def build_nodes_router(
                 if has_read_only:
                     update_fields.append("read_only")
                     update_values.append(1 if new_read_only else 0)
+
+                if has_tags:
+                    update_fields.append("tags")
+                    update_values.append(_serialize_tags(data.get("tags")))
 
                 if has_bearer:
                     new_bearer = str(data.get("bearer_token") or "").strip()

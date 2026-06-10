@@ -39,9 +39,25 @@ _SCHEMA_STATEMENTS = [
         password     TEXT,
         base_path    TEXT DEFAULT '',
         read_only    INTEGER DEFAULT 0,
-        scheme       TEXT DEFAULT 'https'
+        scheme       TEXT DEFAULT 'https',
+        tags         TEXT DEFAULT '[]'
     )
     """,
+    # Client notes are local metadata for clients that physically live on x-ui nodes.
+    """
+    CREATE TABLE IF NOT EXISTS client_notes (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        node_id           INTEGER NOT NULL,
+        inbound_id        INTEGER NOT NULL DEFAULT 0,
+        client_identifier TEXT NOT NULL,
+        email             TEXT NOT NULL,
+        notes             TEXT DEFAULT '',
+        created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(node_id, inbound_id, client_identifier)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_client_notes_email ON client_notes(email)",
     # Subscription groups
     """
     CREATE TABLE IF NOT EXISTS subscription_groups (
@@ -117,6 +133,7 @@ _SCHEMA_STATEMENTS = [
 _MIGRATIONS = [
     "ALTER TABLE nodes ADD COLUMN base_path TEXT DEFAULT ''",
     "ALTER TABLE nodes ADD COLUMN read_only INTEGER DEFAULT 0",
+    "ALTER TABLE nodes ADD COLUMN tags TEXT DEFAULT '[]'",
 ]
 
 

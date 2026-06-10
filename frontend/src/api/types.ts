@@ -20,4 +20,5 @@ export interface NodeRecord {
   user?: string;
   password?: string;
   bearer_token?: string;
+  tags?: string[];
 }

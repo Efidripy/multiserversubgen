@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from typing import Dict, List, Optional
@@ -93,8 +94,8 @@ class NodesService:
         with sqlite3.connect(self._db_path) as conn:
             cur = conn.execute(
                 """
-                INSERT INTO nodes (name, ip, port, user, password, base_path)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO nodes (name, ip, port, user, password, base_path, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     data["name"],
@@ -103,6 +104,7 @@ class NodesService:
                     data["user"],
                     encrypted_password,
                     data.get("base_path", ""),
+                    self._serialize_tags(data.get("tags")),
                 ),
             )
             if data.get("read_only") is not None:
@@ -151,6 +153,9 @@ class NodesService:
         if "panel_version" in updates:
             fields.append("panel_version")
             params.append(updates["panel_version"])
+        if "tags" in updates:
+            fields.append("tags")
+            params.append(self._serialize_tags(updates["tags"]))
 
         if not fields:
             return self.get_node(node_id)
@@ -163,6 +168,25 @@ class NodesService:
             )
             conn.commit()
         return self.get_node(node_id)
+
+    @staticmethod
+    def _serialize_tags(value) -> str:
+        if value is None or value == "":
+            return "[]"
+        if isinstance(value, list):
+            return json.dumps([str(tag).strip() for tag in value if str(tag).strip()], ensure_ascii=False)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return "[]"
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, list):
+                    return json.dumps([str(tag).strip() for tag in parsed if str(tag).strip()], ensure_ascii=False)
+            except json.JSONDecodeError:
+                pass
+            return json.dumps([tag.strip() for tag in stripped.split(",") if tag.strip()], ensure_ascii=False)
+        return "[]"
 
     def delete_node(self, node_id: int) -> bool:
         """Delete a node by *node_id*.

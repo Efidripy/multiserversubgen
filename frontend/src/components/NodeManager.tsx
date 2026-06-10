@@ -41,6 +41,11 @@ const NODE_STATUS_CACHE_KEY = 'sub_manager_node_status_cache_v1';
 const NODE_LIST_CACHE_KEY = 'sub_manager_node_list_cache_v1';
 const NODE_SNAPSHOT_TTL_MS = 20_000;
 
+const getNodeTags = (node: Node): string[] => Array.isArray(node.tags) ? node.tags : [];
+
+const normalizeTags = (tags: string[]): string[] =>
+  Array.from(new Set(tags.map((tag) => tag.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
 type NodeSnapshotPayload = {
   nodes: Node[];
   statuses: Record<number, boolean | null>;
@@ -117,19 +122,29 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set());
   const [nodeClientCounts, setNodeClientCounts] = useState<Record<number, number>>({});
   const [nodeInboundCounts, setNodeInboundCounts] = useState<Record<number, number>>({});
-  const NODE_TAGS_KEY = 'sub_manager_node_tags_v1';
-  const [nodeTags, setNodeTags] = useState<Record<number, string[]>>(() => {
-    try { return JSON.parse(localStorage.getItem(NODE_TAGS_KEY) || '{}'); } catch { return {}; }
-  });
   const [filterTag, setFilterTag] = useState<string>('');
-  const saveNodeTags = (nodeId: number, tags: string[]) => {
-    setNodeTags(prev => {
-      const updated = { ...prev, [nodeId]: tags.filter(t => t.trim()) };
-      localStorage.setItem(NODE_TAGS_KEY, JSON.stringify(updated));
-      return updated;
-    });
+  const saveNodeTags = async (nodeId: number, tags: string[]) => {
+    const nextTags = normalizeTags(tags);
+    try {
+      await updateNode(nodeId, { tags: nextTags });
+      setNodes(prev => {
+        const nextNodes = prev.map(node => node.id === nodeId ? { ...node, tags: nextTags } : node);
+        if (sharedNodeSnapshot) {
+          sharedNodeSnapshot = { ...sharedNodeSnapshot, nodes: nextNodes };
+        }
+        try {
+          localStorage.setItem(NODE_LIST_CACHE_KEY, JSON.stringify(nextNodes));
+        } catch {
+          // Ignore cache failures.
+        }
+        return nextNodes;
+      });
+      setSuccess(t('nodes.tagsSaved'));
+    } catch (err: any) {
+      setError(err.response?.data?.detail || t('nodes.tagsSaveFailed'));
+    }
   };
-  const allTags = Array.from(new Set(Object.values(nodeTags).flat())).sort();
+  const allTags = Array.from(new Set(nodes.flatMap(getNodeTags))).sort();
   const [statusLoading, setStatusLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -293,7 +308,7 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
     }
   }, []);
 
-  const filteredNodes = nodes.filter(n => !filterTag || (nodeTags[n.id] || []).includes(filterTag));
+  const filteredNodes = nodes.filter(n => !filterTag || getNodeTags(n).includes(filterTag));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -924,11 +939,11 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
                 </tr>
               </thead>
               <tbody>
-                {nodes.filter(n => !filterTag || (nodeTags[n.id] || []).includes(filterTag)).map((node) => {
+                {filteredNodes.map((node) => {
                   const status = nodeStatuses[node.id];
                   const dotColor = status === true ? colors.success : status === false ? colors.danger : colors.text.secondary;
                   const statusLabel = status === true ? t('nodes.online') : status === false ? t('nodes.offline') : t('nodes.checking');
-                  const tags = nodeTags[node.id] || [];
+                  const tags = getNodeTags(node);
                   const panelUrl = getNodePanelUrl(node);
                   return (
                     <React.Fragment key={node.id}>
@@ -1120,10 +1135,10 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
                               title={tags.length > 0 ? t('nodes.tagsTitle', { tags: tags.join(', ') }) : t('nodes.addTagsTitle')}
                               onClick={() => {
                                 const current = tags.join(', ');
-                                const input = window.prompt(`Tags for "${node.name}" (comma-separated):`, current);
+                                const input = window.prompt(t('nodes.tagsPrompt', { name: node.name }), current);
                                 if (input !== null) {
                                   const newTags = input.split(',').map(t => t.trim()).filter(Boolean);
-                                  saveNodeTags(node.id, newTags);
+                                  void saveNodeTags(node.id, newTags);
                                 }
                               }}
                             >

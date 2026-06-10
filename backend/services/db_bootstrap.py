@@ -52,7 +52,8 @@ def init_db(db_path: str) -> None:
                       api_base TEXT DEFAULT '',
                       ip TEXT DEFAULT '',
                       verify_tls INTEGER DEFAULT 1,
-                      scheme TEXT DEFAULT 'https')"""
+                      scheme TEXT DEFAULT 'https',
+                      tags TEXT DEFAULT '[]')"""
         )
 
         node_columns = [r[1] for r in conn.execute("PRAGMA table_info(nodes)").fetchall()]
@@ -73,6 +74,7 @@ def init_db(db_path: str) -> None:
                 ("scheme", "ALTER TABLE nodes ADD COLUMN scheme TEXT DEFAULT 'https'"),
                 ("api_version", "ALTER TABLE nodes ADD COLUMN api_version TEXT DEFAULT NULL"),
                 ("panel_version", "ALTER TABLE nodes ADD COLUMN panel_version TEXT DEFAULT NULL"),
+                ("tags", "ALTER TABLE nodes ADD COLUMN tags TEXT DEFAULT '[]'"),
             ]
             for col_name, stmt in migrations:
                 if col_name not in node_columns:
@@ -125,6 +127,19 @@ def init_db(db_path: str) -> None:
                       status TEXT,
                       details TEXT)"""
         )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS client_notes
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      node_id INTEGER NOT NULL,
+                      inbound_id INTEGER NOT NULL DEFAULT 0,
+                      client_identifier TEXT NOT NULL,
+                      email TEXT NOT NULL,
+                      notes TEXT DEFAULT '',
+                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      UNIQUE(node_id, inbound_id, client_identifier))"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_client_notes_email ON client_notes(email)")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS subscription_groups
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,

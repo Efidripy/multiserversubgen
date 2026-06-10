@@ -137,6 +137,7 @@ def register_app_routers(
         build_clients_router(
             check_auth=check_auth,
             client_mgr=client_mgr,
+            db_path=db_path,
             get_cached_clients=get_cached_clients,
             node_service=node_service,
             get_node_or_404=get_node_or_404,

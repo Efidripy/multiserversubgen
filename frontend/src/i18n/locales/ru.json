@@ -253,7 +253,10 @@
     "renewAddDaysTitle": "Продление: добавить дни к сроку",
     "copySubscriptionUrl": "Копировать URL подписки",
     "batchEmailsPlaceholder": "user1@example.com\nuser2@example.com\nuser3@example.com",
-    "localNotePrompt": "Заметка клиента (хранится локально):",
+    "localNotePrompt": "Заметка клиента:",
+    "noteTitle": "Заметка",
+    "noteSaved": "Заметка сохранена",
+    "noteSaveFailed": "Не удалось сохранить заметку",
     "ipPlaceholder": "например, 1.2.3.4",
     "copyUuid": "Копировать UUID",
     "clearNote": "Очистить заметку",
@@ -671,8 +674,11 @@
     "testThisConnectionTitle": "????????? ??????????? ????? ????",
     "onlineWithPing": "?????? ({{ping}}??)",
     "nodeConnectionFailed": "{{node}}: ??????????? ?? ???????",
-    "tagsTitle": "????: {{tags}}",
-    "addTagsTitle": "???????? ???? (????? ???????)"
+    "tagsTitle": "Теги: {{tags}}",
+    "addTagsTitle": "Добавить теги (через запятую)",
+    "tagsPrompt": "Теги для \"{{name}}\" (через запятую):",
+    "tagsSaved": "Теги сохранены",
+    "tagsSaveFailed": "Не удалось сохранить теги"
   },
   "serverStatus": {
     "title": "Ð¡Ñ‚Ð°Ñ‚ÑƒÑ ÑÐµÑ€Ð²ÐµÑ€Ð¾Ð²",

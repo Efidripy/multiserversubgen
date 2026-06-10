@@ -2,11 +2,14 @@ from typing import Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import ORJSONResponse
 
+from services.client_notes import enrich_clients_with_notes, upsert_client_note
+
 
 def build_clients_router(
     *,
     check_auth,
     client_mgr,
+    db_path,
     get_cached_clients,
     node_service,
     get_node_or_404,
@@ -33,6 +36,9 @@ def build_clients_router(
             return [get_node_or_404(node_id) for node_id in node_ids]
         return node_service.list_nodes()
 
+    def _with_notes(clients, nodes):
+        return enrich_clients_with_notes(db_path, clients, nodes=nodes)
+
     @router.get("/api/v1/clients/count")
     async def count_clients(request: Request, node_id: Optional[int] = None):
         """Return total client count without the full payload."""
@@ -55,7 +61,7 @@ def build_clients_router(
         import time as _time
         now_ms = int(_time.time() * 1000)
         nodes = node_service.list_nodes()
-        clients = get_cached_clients(nodes, email_filter=None)
+        clients = _with_notes(get_cached_clients(nodes, email_filter=None), nodes)
         expired = [c for c in clients if c.get("expiryTime", 0) > 0 and c.get("expiryTime", 0) < now_ms]
         return ORJSONResponse(content={"clients": expired, "count": len(expired)})
 
@@ -66,7 +72,7 @@ def build_clients_router(
         if not user:
             raise HTTPException(status_code=401)
         nodes = node_service.list_nodes()
-        clients = get_cached_clients(nodes, email_filter=None)
+        clients = _with_notes(get_cached_clients(nodes, email_filter=None), nodes)
         depleted = [
             c for c in clients
             if c.get("total", 0) > 0 and (c.get("up", 0) + c.get("down", 0)) >= c.get("total", 0)
@@ -93,7 +99,7 @@ def build_clients_router(
         nodes = node_service.list_nodes()
         if node_id is not None:
             nodes = [n for n in nodes if int(n.get("id", -1)) == node_id]
-        clients = get_cached_clients(nodes, email_filter=None)
+        clients = _with_notes(get_cached_clients(nodes, email_filter=None), nodes)
         if q:
             q_lower = q.lower()
             clients = [c for c in clients if q_lower in c.get("email", "").lower()]
@@ -119,7 +125,7 @@ def build_clients_router(
             raise HTTPException(status_code=401)
 
         nodes = node_service.list_nodes()
-        clients = get_cached_clients(nodes, email_filter=email)
+        clients = _with_notes(get_cached_clients(nodes, email_filter=email), nodes)
         return ORJSONResponse(
             content={"clients": clients, "count": len(clients)},
             headers={"Cache-Control": "private, max-age=180"},
@@ -136,7 +142,7 @@ def build_clients_router(
         # Use the shared cache (20s fresh / 180s stale) instead of a live panel call.
         # Fetch all nodes so the cache covers the full fleet and filter to this node.
         all_nodes = node_service.list_nodes()
-        all_clients = get_cached_clients(all_nodes, email_filter=email)
+        all_clients = _with_notes(get_cached_clients(all_nodes, email_filter=email), all_nodes)
         clients = [c for c in all_clients if c.get("node_name") == node_name]
         return ORJSONResponse(
             content={"clients": clients, "count": len(clients)},
@@ -201,27 +207,77 @@ def build_clients_router(
 
         node_id = data.get("node_id")
         inbound_id = data.get("inbound_id")
-        updates = data.get("updates", {})
+        updates = dict(data.get("updates", {}) or {})
+        note_present = "notes" in updates
+        note_value = updates.pop("notes", "")
 
         if not node_id or not inbound_id:
             raise HTTPException(status_code=400, detail="node_id and inbound_id required")
 
         node = get_node_or_404(node_id)
-        success = client_mgr.update_client(node, inbound_id, client_uuid, updates)
+        success = True if not updates else client_mgr.update_client(node, inbound_id, client_uuid, updates)
         if success:
+            saved_note = None
+            if note_present:
+                try:
+                    saved_note = upsert_client_note(
+                        db_path,
+                        node_id=node_id,
+                        inbound_id=inbound_id,
+                        client_identifier=updates.get("id") or client_uuid,
+                        email=updates.get("email") or data.get("email") or client_uuid,
+                        notes=note_value,
+                    )
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc))
             invalidate_live_stats_cache()
             invalidate_subscription_cache()
+            broadcast_updates = dict(updates)
+            if saved_note is not None:
+                broadcast_updates["notes"] = saved_note["notes"]
             await _broadcast_client_update(
                 {
                     "action": "update_client",
                     "node_id": node_id,
                     "inbound_id": inbound_id,
                     "client_uuid": client_uuid,
-                    "updates": updates,
+                    "updates": broadcast_updates,
                     "_delta": True,
                 }
             )
         return {"success": success}
+
+    @router.put("/api/v1/clients/{client_identifier}/notes")
+    @router.post("/api/v1/clients/{client_identifier}/notes")
+    async def update_client_notes(request: Request, client_identifier: str, data: Dict):
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401)
+
+        try:
+            saved = upsert_client_note(
+                db_path,
+                node_id=data.get("node_id"),
+                inbound_id=data.get("inbound_id", 0),
+                client_identifier=client_identifier,
+                email=data.get("email"),
+                notes=data.get("notes", ""),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+        await _broadcast_client_update(
+            {
+                "action": "update_client_notes",
+                "node_id": saved["node_id"],
+                "inbound_id": saved["inbound_id"],
+                "client_uuid": saved["client_identifier"],
+                "email": saved["email"],
+                "notes": saved["notes"],
+                "_delta": True,
+            }
+        )
+        return {"status": "success", **saved}
 
     @router.delete("/api/v1/clients/{client_uuid}")
     async def delete_client(request: Request, client_uuid: str, node_id: int, inbound_id: int):

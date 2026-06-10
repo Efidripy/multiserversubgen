@@ -38,6 +38,7 @@ export interface ClientForEdit {
   remark?: string;
   limitIp?: number;
   totalGB?: number;
+  notes?: string;
 }
 
 interface Props {
@@ -104,6 +105,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
   const [uuid, setUuid] = useState(client.id || '');
   const [enable, setEnable] = useState(client.enable);
   const [remark, setRemark] = useState(client.remark || '');
+  const [notes, setNotes] = useState(client.notes || '');
   const [flow, setFlow] = useState(client.flow || '');
   const [totalGB, setTotalGB] = useState(() => {
     const raw = client.totalGB ?? client.total ?? 0;
@@ -145,6 +147,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
         totalGB: totalGBNum,
         expiryTime: expiryMs,
         limitIp: limitIpNum,
+        notes,
       };
       if (remark) updates.remark = remark;
       if (flow !== undefined) updates.flow = flow;
@@ -270,6 +273,17 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
             </Row>
 
             {/* Flow — only for VLESS + Reality/TCP */}
+            <Row label={t('clients.noteTitle')} colors={colors}>
+              <textarea
+                className="form-control form-control-sm"
+                style={inputStyle}
+                rows={3}
+                value={notes}
+                onChange={e => setNotes(e.target.value)}
+                placeholder=""
+              />
+            </Row>
+
             {showFlow && (
               <Row label={t('clients.flowLabel')} colors={colors}>
                 <select

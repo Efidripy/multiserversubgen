@@ -63,6 +63,26 @@ const toFiniteId = (value: unknown): number | null => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 
+const toStringArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item).trim()).filter(Boolean);
+      }
+    } catch {
+      // Plain comma-separated strings are accepted for backward compatibility.
+    }
+    return trimmed.split(',').map((item) => item.trim()).filter(Boolean);
+  }
+  return [];
+};
+
 const extractNodeArray = (payload: unknown): unknown[] => {
   if (Array.isArray(payload)) return payload;
   if (payload && typeof payload === 'object') {
@@ -98,6 +118,7 @@ const normalizeNodeRecord = (raw: unknown): NodeRecord | null => {
     user: toOptionalString(record.user),
     password: toOptionalString(record.password),
     bearer_token: toOptionalString(record.bearer_token),
+    tags: toStringArray(record.tags),
   };
 };
 

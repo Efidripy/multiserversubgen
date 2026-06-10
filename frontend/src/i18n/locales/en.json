@@ -253,7 +253,10 @@
     "renewAddDaysTitle": "Renew: add days to expiry",
     "copySubscriptionUrl": "Copy subscription URL",
     "batchEmailsPlaceholder": "user1@example.com\nuser2@example.com\nuser3@example.com",
-    "localNotePrompt": "Client note (stored locally):",
+    "localNotePrompt": "Client note:",
+    "noteTitle": "Note",
+    "noteSaved": "Note saved",
+    "noteSaveFailed": "Failed to save note",
     "ipPlaceholder": "e.g. 1.2.3.4",
     "copyUuid": "Copy UUID",
     "clearNote": "Clear note",
@@ -672,7 +675,10 @@
     "onlineWithPing": "online ({{ping}}ms)",
     "nodeConnectionFailed": "{{node}}: connection failed",
     "tagsTitle": "Tags: {{tags}}",
-    "addTagsTitle": "Add tags (comma-separated)"
+    "addTagsTitle": "Add tags (comma-separated)",
+    "tagsPrompt": "Tags for \"{{name}}\" (comma-separated):",
+    "tagsSaved": "Tags saved",
+    "tagsSaveFailed": "Failed to save tags"
   },
   "serverStatus": {
     "title": "Server Status",
