@@ -18,6 +18,7 @@ import { useToast } from './Toast';
 import api from '../api';
 import { getAuth } from '../auth';
 import { useTranslation } from 'react-i18next';
+import { generateNodeUuid, generateNodeVlessEncryption } from '../api/serverOps';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ export interface ClientForEdit {
   security?: string;             // 'none' | 'reality' | 'tls'
   network?: string;              // 'tcp' | 'ws' | 'grpc' | 'xhttp' …
   flow?: string;
+  encryption?: string;
   remark?: string;
   limitIp?: number;
   totalGB?: number;
@@ -64,12 +66,6 @@ const toDateInput = (ms: number): string => {
 
 const fromDateInput = (d: string): number =>
   d ? new Date(d + 'T00:00:00').getTime() : 0;
-
-const generateUUID = (): string =>
-  'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-    const r = (Math.random() * 16) | 0;
-    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-  });
 
 // Flow is relevant only for VLESS with Reality or plain TCP
 const showFlowField = (protocol: string, security?: string, network?: string): boolean =>
@@ -107,6 +103,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
   const [remark, setRemark] = useState(client.remark || '');
   const [notes, setNotes] = useState(client.notes || '');
   const [flow, setFlow] = useState(client.flow || '');
+  const [vlessEncryption, setVlessEncryption] = useState(client.encryption || 'none');
   const [totalGB, setTotalGB] = useState(() => {
     const raw = client.totalGB ?? client.total ?? 0;
     return raw >= 1e6 ? String(raw / (1024 ** 3)) : String(raw || 0);
@@ -116,8 +113,11 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [resetTrafficLoading, setResetTrafficLoading] = useState(false);
+  const [uuidLoading, setUuidLoading] = useState(false);
+  const [vlessEncLoading, setVlessEncLoading] = useState(false);
 
   const showFlow = showFlowField(client.protocol, client.security, client.network);
+  const showVlessEncryption = client.protocol === 'vless';
 
   // ── Computed traffic values ─────────────────────────────────────────────────
   const usedBytes = client.up + client.down;
@@ -133,6 +133,44 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
   };
 
   // ── Handlers ────────────────────────────────────────────────────────────────
+  const handleGenerateUuid = async () => {
+    if (!client.node_id) {
+      toast(t('clients.nodeRequiredForGeneration'), 'warning');
+      return;
+    }
+    setUuidLoading(true);
+    try {
+      setUuid(await generateNodeUuid(client.node_id));
+      toast(t('clients.uuidGenerated'), 'success');
+    } catch (e: any) {
+      toast(e?.message || t('clients.uuidGenerationFailed'), 'error');
+    } finally {
+      setUuidLoading(false);
+    }
+  };
+
+  const handleGenerateVlessEncryption = async () => {
+    if (!client.node_id) {
+      toast(t('clients.nodeRequiredForGeneration'), 'warning');
+      return;
+    }
+    setVlessEncLoading(true);
+    try {
+      const auths = await generateNodeVlessEncryption(client.node_id);
+      const selected = auths.find((item) => item.encryption) || auths[0];
+      const encryption = String(selected?.encryption || '').trim();
+      if (!encryption) {
+        throw new Error(t('clients.vlessEncryptionGenerationFailed'));
+      }
+      setVlessEncryption(encryption);
+      toast(t('clients.vlessEncryptionGenerated'), 'success');
+    } catch (e: any) {
+      toast(e?.message || t('clients.vlessEncryptionGenerationFailed'), 'error');
+    } finally {
+      setVlessEncLoading(false);
+    }
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setError('');
@@ -151,6 +189,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
       };
       if (remark) updates.remark = remark;
       if (flow !== undefined) updates.flow = flow;
+      if (showVlessEncryption) updates.encryption = vlessEncryption.trim() || 'none';
       // Send UUID update if changed
       if (uuid && uuid !== client.id) updates.id = uuid;
 
@@ -256,8 +295,9 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
                   className="btn btn-sm"
                   style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary, flexShrink: 0, fontSize: '0.82rem' }}
                   title={t('clients.generateNewUuid')}
-                  onClick={() => setUuid(generateUUID())}
-                >↻</button>
+                  onClick={handleGenerateUuid}
+                  disabled={uuidLoading || !client.node_id}
+                >{uuidLoading ? '…' : '↻'}</button>
               </div>
             </Row>
 
@@ -296,6 +336,27 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                   ))}
                 </select>
+              </Row>
+            )}
+
+            {showVlessEncryption && (
+              <Row label={t('clients.vlessEncryption')} colors={colors}>
+                <div className="d-flex align-items-center gap-2">
+                  <input
+                    className="form-control form-control-sm"
+                    style={{ ...inputStyle, fontFamily: 'monospace', fontSize: '0.74rem' }}
+                    value={vlessEncryption}
+                    onChange={e => setVlessEncryption(e.target.value)}
+                    placeholder="none"
+                  />
+                  <button
+                    className="btn btn-sm"
+                    style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary, flexShrink: 0, fontSize: '0.82rem' }}
+                    title={t('clients.generateVlessEncryption')}
+                    onClick={handleGenerateVlessEncryption}
+                    disabled={vlessEncLoading || !client.node_id}
+                  >{vlessEncLoading ? '…' : '↻'}</button>
+                </div>
               </Row>
             )}
 

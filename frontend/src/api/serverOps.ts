@@ -3,9 +3,85 @@ import { getAuth } from '../auth';
 
 export type NodeLogKind = 'panel' | 'xray';
 
+export interface X25519KeyPair {
+  privateKey?: string;
+  publicKey?: string;
+}
+
+export interface VlessEncryptionAuth {
+  id?: string | number;
+  label?: string;
+  encryption?: string;
+  decryption?: string;
+  [key: string]: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function assertGeneratorPayload<T>(payload: T): T {
+  if (isRecord(payload) && payload.error) {
+    throw new Error(String(payload.error));
+  }
+  return payload;
+}
+
 export async function restartXray(nodeId: number): Promise<any> {
   const res = await api.post(`/v1/servers/${nodeId}/restart-xray`, {}, { auth: getAuth() });
   return res.data;
+}
+
+export async function generateNodeUuid(nodeId: number): Promise<string> {
+  const res = await api.get(`/v1/nodes/${nodeId}/generate-uuid`, { auth: getAuth() });
+  const payload = assertGeneratorPayload(res.data || {});
+  const uuid = String(payload.uuid || '').trim();
+  if (!uuid) {
+    throw new Error('UUID generator returned an empty value');
+  }
+  return uuid;
+}
+
+export async function generateNodeX25519(nodeId: number): Promise<X25519KeyPair> {
+  const res = await api.get(`/v1/nodes/${nodeId}/generate-x25519`, { auth: getAuth() });
+  const payload = assertGeneratorPayload<X25519KeyPair & { error?: unknown }>(res.data || {});
+  if (!payload.privateKey && !payload.publicKey) {
+    throw new Error('X25519 generator returned an empty keypair');
+  }
+  return payload;
+}
+
+export async function generateNodeVlessEncryption(nodeId: number): Promise<VlessEncryptionAuth[]> {
+  const res = await api.get(`/v1/nodes/${nodeId}/generate-vless-enc`, { auth: getAuth() });
+  const payload = assertGeneratorPayload<unknown>(res.data || {});
+  const rawAuths = Array.isArray(payload)
+    ? payload
+    : isRecord(payload) && Array.isArray(payload.auths)
+      ? payload.auths
+      : isRecord(payload) && Array.isArray(payload.obj)
+        ? payload.obj
+        : isRecord(payload)
+          ? [payload]
+          : [];
+  const auths = rawAuths
+    .map((item): VlessEncryptionAuth | null => {
+      if (!isRecord(item)) {
+        const value = String(item || '').trim();
+        return value ? { label: value, encryption: value, decryption: value } : null;
+      }
+      return {
+        ...item,
+        id: item.id as string | number | undefined,
+        label: String(item.label || item.id || '').trim(),
+        encryption: String(item.encryption || '').trim(),
+        decryption: String(item.decryption || '').trim(),
+      };
+    })
+    .filter((item): item is VlessEncryptionAuth => item !== null);
+  if (!auths.length) {
+    throw new Error('VLESS encryption generator returned an empty payload');
+  }
+  return auths;
 }
 
 export async function getNodeLogs(

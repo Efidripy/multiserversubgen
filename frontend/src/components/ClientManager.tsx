@@ -34,6 +34,7 @@ interface Client {
   protocol: string;
   totalGB?: number;
   flow?: string;
+  encryption?: string;
   remark?: string;
   limitIp?: number;
   security?: string;

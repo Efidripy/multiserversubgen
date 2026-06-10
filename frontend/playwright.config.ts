@@ -1,6 +1,6 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'https://vm2.kleva.ru/mssg/';
+const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'https://dev.kleva.ru/y4cooovh/';
 
 export default defineConfig({
   testDir: './tests',

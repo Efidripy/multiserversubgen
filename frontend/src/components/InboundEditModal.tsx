@@ -15,6 +15,7 @@ import { useToast } from './Toast';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { getAuth } from '../auth';
+import { generateNodeVlessEncryption, generateNodeX25519 } from '../api/serverOps';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -132,6 +133,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
 
   // ── Parse raw data ──────────────────────────────────────────────────────────
   const ss0 = parseJ(inbound.streamSettings);
+  const settings0 = parseJ(inbound.settings);
   const sn0 = parseJ(inbound.sniffing);
   const wsS0 = ss0.wsSettings || {};
   const grpcS0 = ss0.grpcSettings || {};
@@ -152,6 +154,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
   const [security, setSecurity] = useState<Security>(
     ss0.security === 'reality' ? 'reality' : ss0.security === 'tls' ? 'tls' : 'none'
   );
+  const [vlessDecryption, setVlessDecryption] = useState(settings0.decryption || 'none');
 
   // WS settings
   const [wsHost, setWsHost] = useState(wsS0.host || '');
@@ -227,6 +230,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [genKeyLoading, setGenKeyLoading] = useState(false);
+  const [genVlessEncLoading, setGenVlessEncLoading] = useState(false);
 
   // ── Computed streamSettings ─────────────────────────────────────────────────
   const buildStreamSettings = useCallback((): Record<string, any> => {
@@ -305,13 +309,21 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
     return { enabled: sniffEnabled, destOverride, metadataOnly: sniffMetaOnly, routeOnly: sniffRouteOnly };
   };
 
+  const buildInboundSettings = (): Record<string, any> => {
+    const result = { ...settings0 };
+    if (inbound.protocol === 'vless') {
+      result.decryption = String(vlessDecryption || '').trim() || 'none';
+    }
+    return result;
+  };
+
   // ── Generate Reality keys ───────────────────────────────────────────────────
   const handleGenKeys = async () => {
     setGenKeyLoading(true);
     try {
-      const res = await api.post(`/v1/nodes/${nodeId}/generate-keypair`, {}, { auth: getAuth() });
-      if (res.data?.privateKey) setRealPrivateKey(res.data.privateKey);
-      if (res.data?.publicKey) setRealPublicKey(res.data.publicKey);
+      const keypair = await generateNodeX25519(nodeId);
+      if (keypair.privateKey) setRealPrivateKey(keypair.privateKey);
+      if (keypair.publicKey) setRealPublicKey(keypair.publicKey);
       toast(t('inbounds.realityKeysGenerated'), 'success');
     } catch {
       // fallback: generate short IDs at least
@@ -321,6 +333,22 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
       setRealShortIds(hex);
       toast(t('inbounds.keyGenUnavailable'), 'warning');
     } finally { setGenKeyLoading(false); }
+  };
+
+  const handleGenVlessEnc = async () => {
+    setGenVlessEncLoading(true);
+    try {
+      const auths = await generateNodeVlessEncryption(nodeId);
+      const selected = auths.find((item) => item.decryption) || auths[0];
+      const decryption = String(selected?.decryption || '').trim();
+      if (!decryption) {
+        throw new Error(t('inbounds.vlessDecryptionGenerationFailed'));
+      }
+      setVlessDecryption(decryption);
+      toast(t('inbounds.vlessDecryptionGenerated'), 'success');
+    } catch (e: any) {
+      toast(e?.message || t('inbounds.vlessDecryptionGenerationFailed'), 'error');
+    } finally { setGenVlessEncLoading(false); }
   };
 
   // ── Save ────────────────────────────────────────────────────────────────────
@@ -336,6 +364,9 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
         streamSettings: buildStreamSettings(),
         sniffing: buildSniffing(),
       };
+      if (inbound.protocol === 'vless' && String(settings0.decryption || 'none') !== String(vlessDecryption || 'none')) {
+        updates.settings = buildInboundSettings();
+      }
       await api.put(`/v1/inbounds/${nodeId}/${inbound.id}`, updates, { auth: getAuth() });
       toast(t('inbounds.savedInbound', { name: remark || inbound.id }), 'success');
       onSaved();
@@ -390,7 +421,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                   {t('inbounds.fullConfigReadOnlyHint')}
                 </p>
                 <pre style={{ ...inputStyle, borderRadius: '8px', border: `1px solid ${colors.border}`, padding: '10px', fontSize: '0.73rem', overflowX: 'auto', maxHeight: '500px' }}>
-                  {JSON.stringify({ remark, port, enable, listen: listenIP, streamSettings: buildStreamSettings(), sniffing: buildSniffing() }, null, 2)}
+                  {JSON.stringify({ remark, port, enable, listen: listenIP, settings: buildInboundSettings(), streamSettings: buildStreamSettings(), sniffing: buildSniffing() }, null, 2)}
                 </pre>
               </div>
             ) : (
@@ -518,6 +549,26 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                     </button>
                   ))}
                 </div>
+
+                {inbound.protocol === 'vless' && (
+                  <Field label={t('inbounds.vlessDecryption')} colors={colors}>
+                    <div className="d-flex align-items-center gap-2">
+                      <TextInput
+                        value={vlessDecryption}
+                        onChange={setVlessDecryption}
+                        placeholder={t('inbounds.vlessDecryptionPlaceholder')}
+                        mono
+                        colors={colors}
+                      />
+                      <button className="btn btn-sm"
+                        style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary, fontSize: '0.75rem' }}
+                        onClick={handleGenVlessEnc}
+                        disabled={genVlessEncLoading || !nodeId}>
+                        {genVlessEncLoading ? '…' : `⚙ ${t('inbounds.generateVlessDecryption')}`}
+                      </button>
+                    </div>
+                  </Field>
+                )}
 
                 {/* Reality */}
                 {security === 'reality' && (

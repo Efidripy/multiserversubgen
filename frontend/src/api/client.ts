@@ -51,6 +51,7 @@ const ROUTE_TTLS: Array<[string, number]> = [
 ];
 
 function getTTLForUrl(url: string): number {
+  if (url.includes('/generate-')) return 0;
   for (const [pattern, ttl] of ROUTE_TTLS) {
     if (url.includes(pattern)) return ttl;
   }
