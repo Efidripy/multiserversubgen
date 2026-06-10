@@ -23,7 +23,9 @@ import {
 } from 'lucide-react';
 import { getDashboardServerDeck, type DashboardServerStatus } from '../api/dashboard';
 import { refreshNodesNow } from '../api/nodes';
+import { getNodeLogs, restartXray, stopXray, updateGeofile, type NodeLogKind } from '../api/serverOps';
 import { useTrafficStatsSubscription, type TrafficUpdate } from '../services/useTrafficStatsSubscription';
+import { useToast } from './Toast';
 
 interface ServerStatusProps {
   dashboardMode?: boolean;
@@ -43,6 +45,7 @@ interface ServerStatusProps {
 }
 
 type SortMode = 'name' | 'cpu' | 'status' | 'clients';
+type NodeAction = 'restart' | 'stop' | 'geofile' | 'xrayLogs' | 'serverLogs';
 
 type UiServer = {
   nodeId?: number;
@@ -69,6 +72,8 @@ type ServerMetaItem = {
   icon: ReactNode;
   tone?: string;
 };
+
+const nodeActionKey = (server: UiServer, action: NodeAction) => `${server.nodeId ?? server.name}:${action}`;
 
 const widthClasses = [
   'w-0',
@@ -221,14 +226,33 @@ export function ServerStatus({
   onToggleFleet,
 }: ServerStatusProps) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const [servers, setServers] = useState<UiServer[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState(30);
   const [cardSort, setCardSort] = useState<SortMode>('name');
+  const [pendingActions, setPendingActions] = useState<Record<string, boolean>>({});
   void includeCounts;
   void includeCollectorStatus;
+
+  const setActionPending = useCallback((key: string, pending: boolean) => {
+    setPendingActions((current) => {
+      const next = { ...current };
+      if (pending) {
+        next[key] = true;
+      } else {
+        delete next[key];
+      }
+      return next;
+    });
+  }, []);
+
+  const getNodeActionError = useCallback((error: any) => {
+    const detail = error?.response?.data?.detail || error?.response?.data?.error || error?.message;
+    return detail ? String(detail) : t('common.failed');
+  }, [t]);
 
   const loadServersStatus = useCallback(async () => {
     setLoading(true);
@@ -254,6 +278,131 @@ export function ServerStatus({
     } catch {}
     await loadServersStatus();
   }, [loadServersStatus]);
+
+  const requireNodeId = useCallback((server: UiServer): number | null => {
+    if (server.nodeId !== undefined && Number.isFinite(server.nodeId)) {
+      return server.nodeId;
+    }
+    toast(t('serverStatus.actionRequiresNodeId', { node: server.name }), 'warning');
+    return null;
+  }, [t, toast]);
+
+  const runNodeCommand = useCallback(async (
+    server: UiServer,
+    action: NodeAction,
+    command: (nodeId: number) => Promise<unknown>,
+    successKey: string,
+    failureKey: string,
+  ) => {
+    const nodeId = requireNodeId(server);
+    if (nodeId === null) return;
+    const key = nodeActionKey(server, action);
+    setActionPending(key, true);
+    try {
+      await command(nodeId);
+      toast(t(successKey, { node: server.name }), 'success');
+      await loadServersStatus();
+    } catch (error: any) {
+      toast(`${t(failureKey, { node: server.name })}: ${getNodeActionError(error)}`, 'error');
+    } finally {
+      setActionPending(key, false);
+    }
+  }, [getNodeActionError, loadServersStatus, requireNodeId, setActionPending, t, toast]);
+
+  const handleRestartXray = useCallback((server: UiServer) => {
+    void runNodeCommand(server, 'restart', restartXray, 'serverStatus.restartSentNode', 'serverStatus.restartFailedNode');
+  }, [runNodeCommand]);
+
+  const handleStopXray = useCallback((server: UiServer) => {
+    if (!window.confirm(t('serverStatus.confirmStopXrayNode', { node: server.name }))) return;
+    void runNodeCommand(server, 'stop', stopXray, 'serverStatus.xrayStoppedNode', 'serverStatus.stopXrayFailedNode');
+  }, [runNodeCommand, t]);
+
+  const handleUpdateGeofile = useCallback((server: UiServer) => {
+    void runNodeCommand(server, 'geofile', updateGeofile, 'serverStatus.geofileUpdatedNode', 'serverStatus.geofileUpdateFailedNode');
+  }, [runNodeCommand]);
+
+  const handleShowLogs = useCallback(async (server: UiServer, kind: NodeLogKind) => {
+    const nodeId = requireNodeId(server);
+    if (nodeId === null) return;
+    const action: NodeAction = kind === 'xray' ? 'xrayLogs' : 'serverLogs';
+    const key = nodeActionKey(server, action);
+    setActionPending(key, true);
+    try {
+      const logs = await getNodeLogs(nodeId, kind, { count: 120 });
+      const title = t(kind === 'xray' ? 'serverStatus.xrayLogsTitle' : 'serverStatus.serverLogsTitle', { node: server.name });
+      const body = logs.length > 0 ? logs.slice(-120).join('\n') : t('serverStatus.logsEmptyNode', { node: server.name });
+      window.alert(`${title}\n\n${body}`);
+      toast(t('serverStatus.logsLoadedNode', { node: server.name }), 'success');
+    } catch (error: any) {
+      toast(`${t('serverStatus.failedToLoadLogs')}: ${getNodeActionError(error)}`, 'error');
+    } finally {
+      setActionPending(key, false);
+    }
+  }, [getNodeActionError, requireNodeId, setActionPending, t, toast]);
+
+  const copyFleetSummary = useCallback(async () => {
+    const summary = servers.map((server) => (
+      `${server.name}: ${server.status}; CPU ${server.cpu}%; RAM ${server.ramPercent}%; Disk ${server.diskPercent}%; Core ${server.core}; Seen ${server.lastSeen}`
+    )).join('\n');
+    try {
+      await navigator.clipboard.writeText(summary);
+      toast(t('serverStatus.fleetSummaryCopied'), 'success');
+    } catch {
+      toast(t('serverStatus.clipboardUnavailable'), 'error');
+    }
+  }, [servers, t, toast]);
+
+  const handleRestartAllXray = useCallback(async () => {
+    const targets = servers.filter((server) => server.status === 'online' && server.nodeId !== undefined);
+    if (targets.length === 0) {
+      toast(t('serverStatus.noOnlineNodes'), 'warning');
+      return;
+    }
+    if (!window.confirm(t('serverStatus.confirmRestartAll', { count: targets.length }))) return;
+    const key = 'global:restart';
+    setActionPending(key, true);
+    let ok = 0;
+    let fail = 0;
+    for (const server of targets) {
+      try {
+        await restartXray(server.nodeId as number);
+        ok += 1;
+      } catch {
+        fail += 1;
+      }
+    }
+    toast(t('serverStatus.restartAllResult', { ok, fail }), ok > 0 ? 'success' : 'error');
+    setActionPending(key, false);
+    await loadServersStatus();
+  }, [loadServersStatus, servers, setActionPending, t, toast]);
+
+  const handleUpdateAllGeofiles = useCallback(async () => {
+    const targets = servers.filter((server) => server.status === 'online' && server.nodeId !== undefined);
+    if (targets.length === 0) {
+      toast(t('serverStatus.noOnlineNodes'), 'warning');
+      return;
+    }
+    if (!window.confirm(t('serverStatus.confirmUpdateGeofileAll', { count: targets.length }))) return;
+    const key = 'global:geofile';
+    setActionPending(key, true);
+    let ok = 0;
+    let fail = 0;
+    for (const server of targets) {
+      try {
+        await updateGeofile(server.nodeId as number);
+        ok += 1;
+      } catch {
+        fail += 1;
+      }
+    }
+    toast(
+      ok > 0 ? t('serverStatus.geofileUpdatedAll', { count: ok }) : t('serverStatus.updateGeofileAllFailed', { fail }),
+      ok > 0 ? 'success' : 'error',
+    );
+    setActionPending(key, false);
+    await loadServersStatus();
+  }, [loadServersStatus, servers, setActionPending, t, toast]);
 
   const applyServerTelemetry = useCallback((rawData: Record<string, any>) => {
     const data = rawData.snapshot && typeof rawData.snapshot === 'object'
@@ -405,13 +554,30 @@ export function ServerStatus({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 xl:flex gap-1.5 mb-2">
-            <button className="h-6 px-3 bg-[#0a0e1a] text-amber-300/80 border border-amber-400/25 rounded-md text-[10px] font-mono hover:bg-amber-400/5 hover:border-amber-300/40 transition-colors duration-200 whitespace-nowrap" type="button">
+            <button
+              className="h-6 px-3 bg-[#0a0e1a] text-amber-300/80 border border-amber-400/25 rounded-md text-[10px] font-mono hover:bg-amber-400/5 hover:border-amber-300/40 transition-colors duration-200 whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50"
+              type="button"
+              title={t('serverStatus.restartAllTitle')}
+              onClick={handleRestartAllXray}
+              disabled={Boolean(pendingActions['global:restart'])}
+            >
               {t('serverStatus.restartAllXray')}
             </button>
-            <button className="h-6 px-3 bg-[#0a0e1a] text-cyan-300/80 border border-cyan-300/25 rounded-md text-[10px] font-mono hover:bg-cyan-400/5 hover:border-cyan-300/40 transition-colors duration-200 whitespace-nowrap" type="button">
+            <button
+              className="h-6 px-3 bg-[#0a0e1a] text-cyan-300/80 border border-cyan-300/25 rounded-md text-[10px] font-mono hover:bg-cyan-400/5 hover:border-cyan-300/40 transition-colors duration-200 whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50"
+              type="button"
+              title={t('serverStatus.updateAllGeofilesTitle')}
+              onClick={handleUpdateAllGeofiles}
+              disabled={Boolean(pendingActions['global:geofile'])}
+            >
               {t('serverStatus.updateAllGeofiles')}
             </button>
-            <button className="h-6 px-3 bg-[#0a0e1a] text-cyan-300/75 border border-cyan-300/20 rounded-md text-[10px] font-mono hover:bg-cyan-400/5 hover:border-cyan-300/35 transition-colors duration-200 whitespace-nowrap" type="button">
+            <button
+              className="h-6 px-3 bg-[#0a0e1a] text-cyan-300/75 border border-cyan-300/20 rounded-md text-[10px] font-mono hover:bg-cyan-400/5 hover:border-cyan-300/35 transition-colors duration-200 whitespace-nowrap"
+              type="button"
+              title={t('serverStatus.copyFleetSummaryTitle')}
+              onClick={copyFleetSummary}
+            >
               {t('serverStatus.copySummary')}
             </button>
           </div>
@@ -429,7 +595,15 @@ export function ServerStatus({
         <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,22rem),1fr))] gap-3 p-3">
           {sortedServers.length > 0 ? (
             sortedServers.map((server) => (
-              <ServerCard key={server.name} server={server} />
+              <ServerCard
+                key={server.name}
+                server={server}
+                onRestartXray={handleRestartXray}
+                onStopXray={handleStopXray}
+                onUpdateGeofile={handleUpdateGeofile}
+                onShowLogs={handleShowLogs}
+                isActionPending={(action) => Boolean(pendingActions[nodeActionKey(server, action)])}
+              />
             ))
           ) : (
             <div className="col-span-full flex min-h-[286px] items-center justify-center rounded-lg border border-dashed border-cyan-500/15 bg-[#0a0e1a]/70 px-4 py-10 text-center shadow-[inset_0_1px_0_rgba(103,232,249,0.03)]">
@@ -464,9 +638,28 @@ export function ServerStatus({
   );
 }
 
-function ServerCard({ server }: { server: UiServer }) {
+function ServerCard({
+  server,
+  onRestartXray,
+  onStopXray,
+  onUpdateGeofile,
+  onShowLogs,
+  isActionPending,
+}: {
+  server: UiServer;
+  onRestartXray: (server: UiServer) => void;
+  onStopXray: (server: UiServer) => void;
+  onUpdateGeofile: (server: UiServer) => void;
+  onShowLogs: (server: UiServer, kind: NodeLogKind) => void;
+  isActionPending: (action: NodeAction) => boolean;
+}) {
   const { t } = useTranslation();
   const isOffline = server.status === 'offline';
+  const restartPending = isActionPending('restart');
+  const stopPending = isActionPending('stop');
+  const geofilePending = isActionPending('geofile');
+  const xrayLogsPending = isActionPending('xrayLogs');
+  const serverLogsPending = isActionPending('serverLogs');
   const metaItems: ServerMetaItem[] = [
     { label: 'Net', value: server.network, icon: <Network className="w-3.5 h-3.5" /> },
     { label: 'Uptime', value: server.uptime, icon: <Timer className="w-3.5 h-3.5" /> },
@@ -528,14 +721,34 @@ function ServerCard({ server }: { server: UiServer }) {
                 </span>
               </div>
               <div className="flex items-center gap-1">
-                <button className="flex h-6 w-6 items-center justify-center rounded border border-cyan-500/20 bg-[#0f1420] text-gray-500 transition-colors duration-200 hover:text-cyan-300" title={t('serverStatus.restartXray')} type="button">
-                  <RotateCcw className="w-3.5 h-3.5 opacity-60" />
+                <button
+                  className="flex h-6 w-6 items-center justify-center rounded border border-cyan-500/20 bg-[#0f1420] text-gray-500 transition-colors duration-200 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={t('serverStatus.restartXray')}
+                  aria-label={t('serverStatus.restartXray')}
+                  type="button"
+                  onClick={() => onRestartXray(server)}
+                  disabled={restartPending}
+                >
+                  <RotateCcw className={`w-3.5 h-3.5 opacity-60 ${restartPending ? 'animate-spin' : ''}`} />
                 </button>
-                <button className="flex h-6 w-6 items-center justify-center rounded border border-cyan-500/20 bg-[#0f1420] text-gray-500 transition-colors duration-200 hover:text-red-300" title={t('serverStatus.stopXray')} type="button">
+                <button
+                  className="flex h-6 w-6 items-center justify-center rounded border border-cyan-500/20 bg-[#0f1420] text-gray-500 transition-colors duration-200 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={t('serverStatus.stopXray')}
+                  aria-label={t('serverStatus.stopXray')}
+                  type="button"
+                  onClick={() => onStopXray(server)}
+                  disabled={stopPending}
+                >
                   <Square className="w-3.5 h-3.5 opacity-60" />
                 </button>
-                <button className="h-6 rounded border border-cyan-500/20 bg-[#0f1420] px-2 font-mono text-[10px] font-light text-gray-400 transition-colors duration-200 hover:text-cyan-200" title="Logs" type="button">
-                  Logs
+                <button
+                  className="h-6 rounded border border-cyan-500/20 bg-[#0f1420] px-2 font-mono text-[10px] font-light text-gray-400 transition-colors duration-200 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={t('serverStatus.xrayLogsTitle', { node: server.name })}
+                  type="button"
+                  onClick={() => onShowLogs(server, 'xray')}
+                  disabled={xrayLogsPending}
+                >
+                  {t('serverStatus.logs')}
                 </button>
               </div>
             </div>
@@ -545,8 +758,18 @@ function ServerCard({ server }: { server: UiServer }) {
               <IconAction icon={<Clipboard className="w-3 h-3" />} title={t('serverStatus.copySummary')} />
               <IconAction icon={<KeyRound className="w-3 h-3" />} title={t('serverStatus.keyGenerator')} />
               <IconAction icon={<LineChart className="w-3 h-3" />} title="Metrics" />
-              <IconAction icon={<Shield className="w-3 h-3" />} title="Geofiles" />
-              <IconAction icon={<FileText className="w-3 h-3" />} title="Logs" />
+              <IconAction
+                icon={geofilePending ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
+                title={t('serverStatus.updateGeofiles')}
+                onClick={() => onUpdateGeofile(server)}
+                disabled={geofilePending}
+              />
+              <IconAction
+                icon={serverLogsPending ? <RefreshCw className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
+                title={t('serverStatus.serverLogsTitle', { node: server.name })}
+                onClick={() => onShowLogs(server, 'panel')}
+                disabled={serverLogsPending}
+              />
               <IconAction icon={<Settings className="w-3 h-3" />} title="Config" />
             </div>
           </>
@@ -585,13 +808,25 @@ function MetricRow({
   );
 }
 
-function IconAction({ icon, title }: { icon: ReactNode; title: string }) {
+function IconAction({
+  icon,
+  title,
+  onClick,
+  disabled = false,
+}: {
+  icon: ReactNode;
+  title: string;
+  onClick?: () => void;
+  disabled?: boolean;
+}) {
   return (
     <button
-      className="flex h-6 w-6 items-center justify-center rounded border border-cyan-500/20 bg-[#0f1420] text-gray-500 transition-colors duration-200 hover:text-cyan-300"
+      className="flex h-6 w-6 items-center justify-center rounded border border-cyan-500/20 bg-[#0f1420] text-gray-500 transition-colors duration-200 hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
       title={title}
       aria-label={title}
       type="button"
+      onClick={onClick}
+      disabled={disabled}
     >
       <span className="opacity-60">{icon}</span>
     </button>
