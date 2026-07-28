@@ -12,7 +12,7 @@
     "i18n:check": "node scripts/i18n-hardcoded-check.mjs"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.1.12",
+    "@tailwindcss/vite": "^4.3.3",
     "axios": "^1.18.1",
     "chart.js": "^4.5.1",
     "i18next": "^25.8.13",
