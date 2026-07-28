@@ -10,7 +10,8 @@ param(
     [ValidateSet("install", "update", "smoke")]
     [string]$Mode = "install",
 
-    [string]$RemoteDir = "~/multiserversubgen-remote",
+    [ValidatePattern('^/[A-Za-z0-9._/-]{1,200}$')]
+    [string]$RemoteDir = "/opt/multiserversubgen-remote",
 
     [string]$Password,
 
@@ -42,6 +43,13 @@ function Get-CommandPathOrNull {
     $cmd = Get-Command $Name -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
     return $null
+}
+
+function Assert-SafeRemotePath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if ($Path -notmatch '^/[A-Za-z0-9._/-]{1,200}$' -or $Path -match '(^|/)\.\.(/|$)' -or $Path -match '//') {
+        throw "RemoteDir must be an absolute POSIX path without shell metacharacters or parent traversal."
+    }
 }
 
 function New-Archive {
@@ -90,6 +98,7 @@ function Get-Transport {
         if (-not $plink -or -not $pscp) {
             throw "For password-based deployment install PuTTY tools (plink.exe and pscp.exe), or use key-based OpenSSH."
         }
+        if (-not $HostKey) { throw "Password-based PuTTY deployment requires a pinned -HostKey." }
         return @{
             Type         = "putty"
             Plink        = $plink
@@ -176,10 +185,21 @@ function Copy-ToRemote {
 }
 
 $repoRoot = Get-RepoRoot
+$null = Assert-SafeRemotePath -Path $RemoteDir
 $passwordFile = $null
+$passwordDirectory = $null
 if ($Password) {
-    $passwordFile = Join-Path ([IO.Path]::GetTempPath()) ("mssg-putty-password-{0}.txt" -f ([guid]::NewGuid().ToString("N")))
+    $passwordBase = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:TEMP }
+    $passwordDirectory = Join-Path $passwordBase "mssg-secure"
+    New-Item -ItemType Directory -Path $passwordDirectory -Force | Out-Null
+    $passwordFile = Join-Path $passwordDirectory ("mssg-putty-password-{0}.txt" -f ([guid]::NewGuid().ToString("N")))
     [IO.File]::WriteAllText($passwordFile, $Password, [Text.UTF8Encoding]::new($false))
+    $acl = Get-Acl -LiteralPath $passwordFile
+    $acl.SetAccessRuleProtection($true, $false)
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, "Read", "Allow")
+    $acl.SetAccessRule($rule)
+    Set-Acl -LiteralPath $passwordFile -AclObject $acl
 }
 $transport = Get-Transport -Password $Password -PasswordFile $passwordFile -HostKey $HostKey -KeyPath $KeyPath
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -198,7 +218,7 @@ try {
         Copy-ToRemote -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -LocalPath $archivePath -RemotePath $remoteArchive
 
         Write-Host "Extracting source tree on remote host..."
-        $extractCmd = "bash -lc 'rm -rf $remoteWorkDir && mkdir -p $remoteWorkDir && tar -xzf $remoteArchive -C $remoteWorkDir --strip-components=1 && rm -f $remoteArchive'"
+        $extractCmd = "bash -lc 'rm -rf -- $remoteWorkDir && mkdir -p -- $remoteWorkDir && tar -xzf -- $remoteArchive -C $remoteWorkDir --strip-components=1 && rm -f -- $remoteArchive'"
         Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $extractCmd
     }
 

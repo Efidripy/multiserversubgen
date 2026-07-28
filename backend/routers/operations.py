@@ -9,6 +9,7 @@ from typing import Dict
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import ORJSONResponse, Response
+from shared.security import MAX_BACKUP_BYTES, MAX_BACKUP_B64_CHARS, safe_content_disposition_filename
 
 
 def build_operations_router(
@@ -233,7 +234,7 @@ def build_operations_router(
 
         filename = f"backup_{backup.get('node','node')}_{datetime.datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.db"
         headers = {
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": safe_content_disposition_filename(filename, "backup.db"),
             "Content-Encoding": "identity",
             "Cache-Control": "no-store",
         }
@@ -246,7 +247,7 @@ def build_operations_router(
             raise HTTPException(status_code=401)
 
         backup_data = data.get("backup_data")
-        if not backup_data:
+        if not isinstance(backup_data, str) or not backup_data or len(backup_data) > MAX_BACKUP_B64_CHARS:
             raise HTTPException(status_code=400, detail="backup_data required")
         success = server_monitor.import_database_backup(_load_node(node_id), backup_data)
         return {"success": success}
@@ -263,7 +264,9 @@ def build_operations_router(
         if upload is None:
             raise HTTPException(status_code=400, detail="file required")
 
-        content = await upload.read()
+        content = await upload.read(MAX_BACKUP_BYTES + 1)
+        if len(content) > MAX_BACKUP_BYTES:
+            raise HTTPException(status_code=413, detail="backup file is too large")
         if not content:
             raise HTTPException(status_code=400, detail="empty file")
 

@@ -5,14 +5,100 @@
 import logging
 import hashlib
 import os
+from urllib.parse import urlparse
 import time
 from threading import Lock
 import requests
+from requests.adapters import HTTPAdapter
+from requests.cookies import extract_cookies_to_jar
+from requests.utils import select_proxy
 from typing import Any, Dict
-from urllib.parse import urlparse
-from shared.security import validate_outbound_url
+from urllib3 import connection as urllib3_connection
+from urllib3.connection import HTTPConnection as Urllib3HTTPConnection
+from urllib3.connection import HTTPSConnection as Urllib3HTTPSConnection
+from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
+from shared.security import redact_mapping, redact_url, validate_and_resolve_outbound_url, validate_outbound_url
 
 logger = logging.getLogger("sub_manager")
+
+
+class _PinnedHTTPConnection(Urllib3HTTPConnection):
+    """Connect to an approved address while retaining the logical HTTP host."""
+
+    def __init__(self, *args, pinned_address: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._dns_host = pinned_address
+
+
+class _PinnedHTTPSConnection(Urllib3HTTPSConnection):
+    """Connect to an approved address while retaining TLS hostname verification."""
+
+    def __init__(self, *args, pinned_address: str, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._dns_host = pinned_address
+
+
+class _PinnedHTTPConnectionPool(HTTPConnectionPool):
+    ConnectionCls = _PinnedHTTPConnection
+
+
+class _PinnedHTTPSConnectionPool(HTTPSConnectionPool):
+    ConnectionCls = _PinnedHTTPSConnection
+
+
+class _PinnedHTTPAdapter(HTTPAdapter):
+    """Use one validated address for every connection created by this request."""
+
+    def __init__(self, *, pinned_address: str, hostname: str):
+        self._pinned_address = pinned_address
+        self._hostname = hostname
+        super().__init__(pool_connections=1, pool_maxsize=1, max_retries=0)
+
+    def get_connection_with_tls_context(self, request, verify, proxies=None, cert=None):
+        if select_proxy(request.url, proxies):
+            raise requests.RequestException("Pinned XUI requests do not support proxy resolution")
+        host_params, pool_kwargs = self.build_connection_pool_key_attributes(request, verify, cert)
+        pool_kwargs = dict(pool_kwargs)
+        pool_kwargs["pinned_address"] = self._pinned_address
+        pool_class = _PinnedHTTPSConnectionPool if host_params["scheme"] == "https" else _PinnedHTTPConnectionPool
+        if host_params["scheme"] == "https":
+            pool_kwargs["server_hostname"] = self._hostname
+        return pool_class(host=host_params["host"], port=host_params["port"], **pool_kwargs)
+
+
+def _pinned_session_request(
+    session: requests.Session,
+    method: str,
+    url: str,
+    *,
+    pinned_address: str,
+    timeout: float,
+    **kwargs,
+) -> requests.Response:
+    """Prepare a session request and send it through an address-pinned adapter."""
+    request_options = dict(kwargs)
+    verify = request_options.pop("verify", True)
+    cert = request_options.pop("cert", None)
+    stream = request_options.pop("stream", False)
+    proxies = request_options.pop("proxies", {}) or {}
+    prepared = session.prepare_request(requests.Request(method=method, url=url, **request_options))
+    parsed = urlparse(url)
+    if "Host" not in prepared.headers:
+        prepared.headers["Host"] = parsed.netloc
+    settings = session.merge_environment_settings(
+        prepared.url,
+        proxies=proxies,
+        stream=stream,
+        verify=verify,
+        cert=cert,
+    )
+    adapter = _PinnedHTTPAdapter(pinned_address=pinned_address, hostname=parsed.hostname or "")
+    try:
+        response = adapter.send(prepared, timeout=timeout, **settings)
+    finally:
+        adapter.close()
+    extract_cookies_to_jar(session.cookies, prepared, response.raw)
+    return response
 
 # Кеш метода авторизации: base_url → "csrf" | "legacy"
 _AUTH_METHOD_CACHE: dict[str, str] = {}
@@ -88,7 +174,7 @@ def build_panel_base_url(node: Dict[str, Any]) -> str:
     if base_path:
         base_url = f"{base_url}/{base_path}"
     base_url = base_url.rstrip("/")
-    valid_url, url_error = validate_outbound_url(base_url)
+    valid_url, url_error = validate_outbound_url(base_url, resolve_dns=False)
     if not valid_url:
         raise ValueError(url_error)
     return base_url
@@ -451,19 +537,20 @@ def xui_request(
 
     for attempt in range(attempts):
         try:
-            log_kwargs = {k: v for k, v in kwargs.items() if k not in ("data",)}
-            logger.debug("XUI %s %s attempt=%d kwargs=%s", method.upper(), url, attempt, log_kwargs)
-            response = session.request(
-                method=method.upper(),
-                url=url,
+            valid_url, url_error, pinned_address = validate_and_resolve_outbound_url(url)
+            if not valid_url or not pinned_address:
+                raise requests.RequestException(f"Outbound URL rejected: {url_error or 'Destination address is unavailable'}")
+            log_kwargs = redact_mapping({k: v for k, v in kwargs.items() if k not in ("data", "json")})
+            logger.debug("XUI %s %s attempt=%d kwargs=%s", method.upper(), redact_url(url), attempt, log_kwargs)
+            response = _pinned_session_request(
+                session,
+                method.upper(),
+                url,
+                pinned_address=pinned_address,
                 timeout=actual_timeout,
                 **kwargs,
             )
-            logger.debug(
-                "XUI %s %s -> HTTP %d body=%r",
-                method.upper(), url, response.status_code,
-                response.text[:500] if response.text else "",
-            )
+            logger.debug("XUI %s %s -> HTTP %d", method.upper(), redact_url(url), response.status_code)
             if (
                 response.status_code in XUI_HTTP_RETRY_STATUSES
                 and attempt < attempts - 1
@@ -471,7 +558,7 @@ def xui_request(
                 sleep_for = XUI_HTTP_RETRY_BACKOFF_SEC * (2 ** attempt)
                 logger.warning(
                     "XUI %s %s HTTP %d, retry in %.1fs (attempt %d/%d)",
-                    method.upper(), url, response.status_code, sleep_for, attempt + 1, attempts,
+                    method.upper(), redact_url(url), response.status_code, sleep_for, attempt + 1, attempts,
                 )
                 if sleep_for > 0:
                     time.sleep(sleep_for)
@@ -479,7 +566,7 @@ def xui_request(
             return response
         except requests.RequestException as exc:
             last_exc = exc
-            logger.warning("XUI %s %s request error (attempt %d/%d): %s", method.upper(), url, attempt + 1, attempts, exc)
+            logger.warning("XUI %s %s request error (attempt %d/%d): %s", method.upper(), redact_url(url), attempt + 1, attempts, type(exc).__name__)
             if attempt >= attempts - 1:
                 raise
             sleep_for = XUI_HTTP_RETRY_BACKOFF_SEC * (2 ** attempt)

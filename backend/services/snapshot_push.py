@@ -9,6 +9,24 @@ def _as_list(value: Any) -> List[Any]:
     return value if isinstance(value, list) else []
 
 
+_SENSITIVE_KEYS = {
+    "password", "passwd", "secret", "token", "api_token", "bearer_token",
+    "authorization", "cookie", "ws_ticket", "private_key", "client_secret",
+}
+
+
+def _redact_snapshot(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _redact_snapshot(item)
+            for key, item in value.items()
+            if str(key).lower() not in _SENSITIVE_KEYS
+        }
+    if isinstance(value, list):
+        return [_redact_snapshot(item) for item in value]
+    return value
+
+
 def _to_int(value: Any, default: int = 0) -> int:
     try:
         if value is None or value == "":
@@ -104,7 +122,7 @@ def flatten_snapshot_tables(snapshot: Dict[str, Any]) -> Dict[str, List[Dict[str
                     "inbound_id": inbound_id,
                     "inbound_remark": remark,
                     "protocol": protocol,
-                    "password": client.get("password", "") if protocol == "trojan" else "",
+                    "password": "",
                     "security": security,
                     "network": stream_settings.get("network", ""),
                 }
@@ -126,8 +144,8 @@ def build_snapshot_push_payload(
         "node": key,
         "node_id": snapshot.get("node_id"),
         "available": bool(snapshot.get("available")),
-        "snapshot": snapshot,
-        "changes": changes,
+        "snapshot": _redact_snapshot(snapshot),
+        "changes": _redact_snapshot(changes),
         "clients": table_payload["clients"],
         "inbounds": table_payload["inbounds"],
         "has_table_payload": bool(snapshot.get("available")),

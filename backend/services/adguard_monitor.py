@@ -83,7 +83,7 @@ class AdGuardMonitor:
             login_url = f"{prefix}/control/login"
             payload = {"name": source.username, "password": source.password}
             try:
-                res = session.post(login_url, json=payload, timeout=8, verify=self._verify_value(source))
+                res = session.post(login_url, json=payload, timeout=8, verify=self._verify_value(source), allow_redirects=False)
                 if res.status_code in (200, 204):
                     return session, prefix, None
                 errors.append(f"{prefix} login_status={res.status_code}")
@@ -98,6 +98,7 @@ class AdGuardMonitor:
                     f"{prefix}/control/status",
                     timeout=8,
                     verify=self._verify_value(source),
+                    allow_redirects=False,
                 )
                 if status_res.status_code == 200:
                     return session, prefix, None
@@ -111,7 +112,10 @@ class AdGuardMonitor:
 
     def _get_json(self, session: requests.Session, url: str, verify, timeout: int = 8) -> Optional[Dict]:
         try:
-            res = session.get(url, timeout=timeout, verify=verify)
+            valid, _ = validate_outbound_url(url, allow_private=False, require_https=urlparse(url).scheme == "https")
+            if not valid:
+                return None
+            res = session.get(url, timeout=timeout, verify=verify, allow_redirects=False)
             if res.status_code == 200:
                 return res.json()
         except Exception:
@@ -120,7 +124,10 @@ class AdGuardMonitor:
 
     def _get_text(self, session: requests.Session, url: str, verify, timeout: int = 8) -> Optional[str]:
         try:
-            res = session.get(url, timeout=timeout, verify=verify)
+            valid, _ = validate_outbound_url(url, allow_private=False, require_https=urlparse(url).scheme == "https")
+            if not valid:
+                return None
+            res = session.get(url, timeout=timeout, verify=verify, allow_redirects=False)
             if res.status_code == 200:
                 return res.text
         except Exception:
@@ -136,9 +143,15 @@ class AdGuardMonitor:
         for method, url, payload in candidates:
             try:
                 if method == "get":
-                    res = session.get(url, timeout=10, verify=verify)
+                    valid, _ = validate_outbound_url(url, allow_private=False, require_https=urlparse(url).scheme == "https")
+                    if not valid:
+                        continue
+                    res = session.get(url, timeout=10, verify=verify, allow_redirects=False)
                 else:
-                    res = session.post(url, json=payload, timeout=10, verify=verify)
+                    valid, _ = validate_outbound_url(url, allow_private=False, require_https=urlparse(url).scheme == "https")
+                    if not valid:
+                        continue
+                    res = session.post(url, json=payload, timeout=10, verify=verify, allow_redirects=False)
                 if res.status_code != 200:
                     continue
                 data = res.json()

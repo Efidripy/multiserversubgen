@@ -69,7 +69,7 @@ def build_server_ops_router(
         if not user:
             raise HTTPException(status_code=401)
         node = get_node_or_404(node_id)
-        return server_monitor.get_server_logs(node, count=count, level=level)
+        return server_monitor.get_server_logs(node, count=min(max(count, 1), 500), level=level)
 
     @router.get("/api/v1/nodes/{node_id}/xray-logs")
     async def get_xray_logs(request: Request, node_id: int, count: int = 100, level: str = "info"):
@@ -77,7 +77,7 @@ def build_server_ops_router(
         if not user:
             raise HTTPException(status_code=401)
         node = get_node_or_404(node_id)
-        return server_monitor.get_xray_logs(node, count=count, level=level)
+        return server_monitor.get_xray_logs(node, count=min(max(count, 1), 500), level=level)
 
     @router.get("/api/v1/nodes/{node_id}/xray-versions")
     async def get_xray_versions(request: Request, node_id: int):

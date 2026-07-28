@@ -22,6 +22,7 @@ ROLE_RANK: Dict[str, int] = {"viewer": 1, "operator": 2, "admin": 3}
 # Auth cache (username → (expire_ts, role))
 _auth_cache_lock = Lock()
 _auth_cache: Dict[str, Tuple[float, str]] = {}
+_AUTH_CACHE_SECRET = secrets.token_bytes(32)
 AUTH_CACHE_TTL_SEC = 30
 AUTH_CACHE_NEGATIVE_TTL_SEC = 5
 
@@ -129,7 +130,12 @@ class AuthService:
 
         Results are cached briefly to avoid repeated PAM calls.
         """
-        cache_key = f"auth:{username}:{hashlib.sha256(password.encode()).hexdigest()[:8]}"
+        password_fingerprint = hmac.new(
+            _AUTH_CACHE_SECRET,
+            password.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()[:16]
+        cache_key = f"auth:{username}:{password_fingerprint}"
 
         with _auth_cache_lock:
             entry = _auth_cache.get(cache_key)
@@ -218,19 +224,22 @@ class AuthService:
         * ``GET`` → viewer
         """
         method = method.upper()
+        path = path.lower()
         if method == "DELETE":
             return "admin"
         if method == "POST":
             admin_paths = (
-                "/restart-xray", "/reset-traffic", "/reset-all-traffic",
-                "/backup/", "/api-tokens", "/install-xray/", "/update-panel",
-                "/update-geofile", "/backup-telegram", "/generate-",
+                "/restart-xray", "/stop-xray", "/reset-traffic", "/reset-all-traffic",
+                "/reset-all-traffics", "/del-all-clients", "/batch-delete", "/batch-del",
+                "/bulkdel", "/bulkreset", "/resetclienttraffic", "/backup/", "/api-tokens",
+                "/install-xray/", "/update-panel", "/update-geofile", "/backup-telegram",
+                "/generate-", "/automation/reset-all-traffic",
             )
             if any(p in path for p in admin_paths) or path.endswith("/backup"):
                 return "admin"
             return "operator"
         if method == "GET" and (
-            any(p in path for p in ("/backup/", "/api-tokens", "/generate-", "/xray-config"))
+            any(p in path for p in ("/backup/", "/api-tokens", "/generate-", "/xray-config", "/server-logs", "/xray-logs", "/emails", "/subscription-groups"))
             or path.endswith("/backup")
         ):
             return "admin"

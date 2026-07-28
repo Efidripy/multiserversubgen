@@ -356,6 +356,7 @@ app.middleware("http")(
         get_client_ip=_get_client_ip,
         extract_basic_auth_username=extract_basic_auth_username,
         enqueue_audit_event=enqueue_audit_event,
+        allowed_origins=ALLOW_ORIGINS,
     )
 )
 

@@ -29,6 +29,7 @@ from xui_session import (
     xui_request,
 )
 from utils import parse_field_as_dict
+from shared.security import MAX_BACKUP_B64_CHARS, bounded_log_count, validate_path_segment
 
 logger = logging.getLogger("sub_manager")
 VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
@@ -664,6 +665,7 @@ class ServerMonitor:
         Returns:
             Логи сервера
         """
+        count = bounded_log_count(count)
         s, base_url = self._get_session(node)
         if not s:
             return {"error": "Failed to connect"}
@@ -783,6 +785,8 @@ class ServerMonitor:
             return False
         
         try:
+            if not isinstance(backup_data, str) or not backup_data or len(backup_data) > MAX_BACKUP_B64_CHARS:
+                return False
             raw_bytes = b""
             try:
                 raw_bytes = base64.b64decode(backup_data, validate=True)
@@ -960,6 +964,10 @@ class ServerMonitor:
         if not s:
             return {"error": r.get("error")}
         try:
+            version = validate_path_segment(version, field="xray version")
+        except ValueError:
+            return {"error": "invalid xray version"}
+        try:
             res = xui_request(s, "POST", f"{base_url}/panel/api/server/installXray/{version}", timeout=180)
             if res.status_code == 200:
                 data = res.json()
@@ -974,6 +982,11 @@ class ServerMonitor:
         s, base_url, r = self._normalize_session_result(self._get_session(node))
         if not s:
             return {"error": r.get("error")}
+        try:
+            if file_name:
+                file_name = validate_path_segment(file_name, field="geofile name")
+        except ValueError:
+            return {"error": "invalid geofile name"}
         try:
             path = f"{base_url}/panel/api/server/updateGeofile"
             if file_name:
@@ -1005,6 +1018,7 @@ class ServerMonitor:
         s, base_url, r = self._normalize_session_result(self._get_session(node))
         if not s:
             return {"error": r.get("error"), "logs": []}
+        count = bounded_log_count(count)
         try:
             res = xui_request(s, "POST", f"{base_url}/panel/api/server/xraylogs/{count}",
                               json={"level": level, "syslog": False}, timeout=15)

@@ -20,37 +20,6 @@ apt_fix_broken() {
     DEBIAN_FRONTEND=noninteractive apt-get install -f -y "${APT_DPKG_OPTS[@]}"
 }
 
-install_grafana_with_fallback_deb() {
-    local arch
-    arch="$(dpkg --print-architecture 2>/dev/null || echo amd64)"
-    local version="${GRAFANA_FALLBACK_VERSION:-11.6.0}"
-    local urls=()
-
-    if [ -n "${GRAFANA_DEB_URL:-}" ]; then
-        urls+=("${GRAFANA_DEB_URL}")
-    fi
-    urls+=(
-        "https://dl.grafana.com/oss/release/grafana_${version}_${arch}.deb"
-        "https://dl.grafana.com/enterprise/release/grafana-enterprise_${version}_${arch}.deb"
-    )
-
-    local tmp_deb
-    tmp_deb="$(mktemp --suffix=.deb)"
-    local installed="false"
-
-    for deb_url in "${urls[@]}"; do
-        if curl -fL --retry 3 --retry-all-errors -A "Mozilla/5.0" "$deb_url" -o "$tmp_deb"; then
-            if dpkg -i "$tmp_deb" >/dev/null 2>&1 || (apt_fix_broken >/dev/null 2>&1 && dpkg -i "$tmp_deb" >/dev/null 2>&1); then
-                installed="true"
-                break
-            fi
-        fi
-    done
-
-    rm -f "$tmp_deb"
-    [ "$installed" = "true" ]
-}
-
 ensure_grafana_repo() {
     if ! apt-cache show grafana >/dev/null 2>&1; then
         echo "Grafana package not found in current APT sources. Adding official Grafana repo..."
@@ -439,7 +408,8 @@ configure_monitoring_stack() {
 
     echo "Настройка Prometheus + Grafana..."
     if ! ensure_grafana_repo; then
-        echo "  ⚠️ Репозиторий Grafana недоступен. Пробуем fallback установку из .deb..."
+        echo "  ❌ Репозиторий Grafana недоступен; неподписанные fallback-пакеты запрещены."
+        return 1
     fi
 
     apt_install prometheus >/dev/null 2>&1 || {
@@ -448,11 +418,8 @@ configure_monitoring_stack() {
     }
 
     if ! apt_install grafana >/dev/null 2>&1; then
-        echo "  ⚠️ Установка grafana через APT не удалась. Пробуем fallback .deb..."
-        if ! install_grafana_with_fallback_deb; then
-            echo "  ❌ Не удалось установить Grafana ни через APT, ни через .deb fallback."
-            return 1
-        fi
+        echo "  ❌ Не удалось установить Grafana из подписанного APT-репозитория."
+        return 1
     fi
 
     local adguard_scrape_block=""

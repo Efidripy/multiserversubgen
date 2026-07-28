@@ -30,6 +30,7 @@ def build_subscriptions_router(
     subscription_response_cache: Dict[str, tuple[float, str]] = {}
     subscription_response_cache_lock = Lock()
     subscription_response_cache_ttl = 300
+    subscription_response_cache_max_size = 1024
     subscription_token_ttl_sec = 30 * 24 * 60 * 60
 
     def _no_cache_headers():
@@ -68,6 +69,9 @@ def build_subscriptions_router(
 
     def _set_subscription_response_cache(cache_key: str, content: str) -> None:
         with subscription_response_cache_lock:
+            if len(subscription_response_cache) >= subscription_response_cache_max_size and cache_key not in subscription_response_cache:
+                oldest_key = min(subscription_response_cache, key=lambda item: subscription_response_cache[item][0])
+                subscription_response_cache.pop(oldest_key, None)
             subscription_response_cache[cache_key] = (time.time(), content)
 
     def _clear_subscription_response_cache() -> None:

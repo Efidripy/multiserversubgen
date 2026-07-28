@@ -7,6 +7,7 @@ import logging
 import uuid
 import sys
 import os
+from urllib.parse import quote
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -190,7 +191,7 @@ class ClientManager:
         """POST /panel/api/clients/update/{email} — v3."""
         payload = {"email": email, **updates}
         try:
-            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/update/{email}",
+            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/update/{quote(str(email), safe='')}",
                               json=payload)
             if res.status_code == 404:
                 return None  # v2 fallback
@@ -203,7 +204,7 @@ class ClientManager:
                           keep_traffic: bool = False) -> Optional[bool]:
         """POST /panel/api/clients/del/{email} — v3."""
         try:
-            url = f"{base_url}/panel/api/clients/del/{email}"
+            url = f"{base_url}/panel/api/clients/del/{quote(str(email), safe='')}"
             if keep_traffic:
                 url += "?keepTraffic=1"
             res = xui_request(s, "POST", url)
@@ -545,7 +546,7 @@ class ClientManager:
 
             # v2 fallback: delete by UUID
             res = xui_request(s, "POST",
-                              f"{base_url}/panel/api/inbounds/{inbound_id}/delClient/{client_uuid}")
+                              f"{base_url}/panel/api/inbounds/{quote(str(inbound_id), safe='')}/delClient/{quote(str(client_uuid), safe='')}")
             return self._xui_success(res)
         except Exception as exc:
             logger.warning(f"Failed to delete client from {node['name']}: {exc}")
@@ -803,7 +804,7 @@ class ClientManager:
             res = xui_request(
                 s,
                 "POST",
-                f"{base_url}/panel/api/inbounds/resetClientTraffic/{client_email}",
+                f"{base_url}/panel/api/inbounds/resetClientTraffic/{quote(str(client_email), safe='')}",
                 json=payload,
             )
             return res.status_code == 200
@@ -1184,7 +1185,7 @@ class ClientManager:
                     # Fall back: reset individually
                     for email in emails:
                         try:
-                            r2 = xui_request(s, "POST", f"{base_url}/panel/api/clients/resetClientTraffic/{email}")
+                            r2 = xui_request(s, "POST", f"{base_url}/panel/api/clients/resetClientTraffic/{quote(str(email), safe='')}")
                             if r2.status_code == 200 and r2.json().get("success"):
                                 successful += 1
                             else:

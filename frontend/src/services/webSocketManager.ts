@@ -155,7 +155,7 @@ class WebSocketManager {
       try {
         handler(data);
       } catch (err) {
-        console.error(`[WebSocket] Handler error for '${type}':`, err);
+        console.error('[WebSocket] Handler error for event:', type, err);
       }
     });
   }

@@ -15,6 +15,7 @@ _AUTH_CACHE_MAX_SIZE = 4096
 
 # Окно для TOTP replay-защиты (секунды) — чуть больше окна valid_window=1 (90с)
 _TOTP_REPLAY_WINDOW_SEC = 120
+_SUBSCRIPTION_RATE_MAX_KEYS = 8192
 
 
 class RequestRuntime:
@@ -160,6 +161,17 @@ class RequestRuntime:
         now = time.time()
         key = f"{self.get_client_ip(request)}:{resource_key}"
         with self.subscription_rate_lock:
+            expired_keys = []
+            for existing_key, existing_q in self.subscription_rate_state.items():
+                while existing_q and now - existing_q[0] > self.sub_rate_limit_window_sec:
+                    existing_q.popleft()
+                if not existing_q:
+                    expired_keys.append(existing_key)
+            for expired_key in expired_keys:
+                self.subscription_rate_state.pop(expired_key, None)
+            if len(self.subscription_rate_state) >= _SUBSCRIPTION_RATE_MAX_KEYS and key not in self.subscription_rate_state:
+                oldest_key = min(self.subscription_rate_state, key=lambda item: self.subscription_rate_state[item][0])
+                self.subscription_rate_state.pop(oldest_key, None)
             q = self.subscription_rate_state[key]
             while q and now - q[0] > self.sub_rate_limit_window_sec:
                 q.popleft()

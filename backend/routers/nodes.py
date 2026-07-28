@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import ORJSONResponse
 
 from xui_session import invalidate_auth_method_cache
-from shared.security import validate_outbound_url
+from shared.security import redact_url, validate_outbound_url
 
 
 def _serialize_tags(value) -> str:
@@ -191,7 +191,8 @@ def build_nodes_router(
             raise HTTPException(status_code=400, detail="Invalid URL")
         valid_url, url_error = validate_outbound_url(url)
         if not valid_url:
-            raise HTTPException(status_code=400, detail=url_error)
+            logger.info("Node connection URL rejected: %s", url_error)
+            raise HTTPException(status_code=400, detail="Invalid outbound URL")
 
         scheme = parsed.scheme or "https"
         port = parsed.port or 443
@@ -241,7 +242,8 @@ def build_nodes_router(
                 else:
                     details = f"inbounds/list status={probe.status_code}"
             except Exception as exc:
-                details = f"inbounds probe failed: {exc}"
+                logger.warning("Node inbounds probe failed for %s: %s", redact_url(base_url), exc)
+                details = "Unable to read panel status"
 
             return {
                 "success": True,
@@ -251,8 +253,8 @@ def build_nodes_router(
                 "details": details,
             }
         except Exception as exc:
-            logger.warning(f"Node connection check failed for {base_url}: {exc}")
-            return {"success": False, "message": str(exc), "base_url": base_url}
+            logger.warning("Node connection check failed for %s: %s", redact_url(base_url), exc)
+            return {"success": False, "message": "Connection check failed", "base_url": base_url}
 
     @router.put("/api/v1/nodes/{node_id}")
     async def update_node(node_id: int, request: Request, data: Dict):
