@@ -1645,9 +1645,9 @@ export const ClientManager: React.FC = () => {
             <div className="panel-block__stack">
               <ChoiceChips
                 options={[
-                  { value: 'all', label: t('common.all'), title: '/api/v1/clients' },
-                  { value: 'expired', label: t('clients.expired'), title: '/api/v1/clients/expired' },
-                  { value: 'depleted', label: t('clients.depleted'), title: '/api/v1/clients/depleted' },
+                  { value: 'all', label: t('common.all'), title: 'API v1 clients' },
+                  { value: 'expired', label: t('clients.expired'), title: 'API v1 clients (expired)' },
+                  { value: 'depleted', label: t('clients.depleted'), title: 'API v1 clients (depleted)' },
                 ]}
                 value={clientSourceFilter}
                 onChange={handleClientSourceFilterChange}

@@ -4,6 +4,7 @@ import { BookOpen, ChevronLeft, ChevronRight, ClipboardList, Home, Keyboard, Log
 import { useTheme } from '../contexts/ThemeContext';
 import { ChoiceChips } from './ChoiceChips';
 import { IconName, UIIcon } from './UIIcon';
+import { API_BASE } from '../api/client';
 
 type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 
@@ -164,7 +165,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <span className="sidebar__footer-label">{t('sidebar.activityLog', 'Activity Log')}</span>
                 </button>
                 <a
-                  href="/api/docs"
+                  href={`${API_BASE}/docs`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="sidebar__footer-btn"

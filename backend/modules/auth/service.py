@@ -130,11 +130,13 @@ class AuthService:
 
         Results are cached briefly to avoid repeated PAM calls.
         """
-        password_fingerprint = hmac.new(
-            _AUTH_CACHE_SECRET,
+        password_fingerprint = hashlib.pbkdf2_hmac(
+            "sha256",
             password.encode("utf-8"),
-            hashlib.sha256,
-        ).hexdigest()[:16]
+            _AUTH_CACHE_SECRET,
+            100_000,
+            dklen=16,
+        ).hex()
         cache_key = f"auth:{username}:{password_fingerprint}"
 
         with _auth_cache_lock:

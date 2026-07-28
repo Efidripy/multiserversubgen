@@ -5,6 +5,7 @@
 import logging
 import hashlib
 import os
+import secrets
 from urllib.parse import urlparse
 import time
 from threading import Lock
@@ -17,7 +18,7 @@ from urllib3 import connection as urllib3_connection
 from urllib3.connection import HTTPConnection as Urllib3HTTPConnection
 from urllib3.connection import HTTPSConnection as Urllib3HTTPSConnection
 from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
-from shared.security import redact_mapping, redact_url, validate_and_resolve_outbound_url, validate_outbound_url
+from shared.security import redact_url, validate_and_resolve_outbound_url, validate_outbound_url
 
 logger = logging.getLogger("sub_manager")
 
@@ -113,6 +114,7 @@ _NODE_API_VERSION_LOCK = Lock()
 _SESSION_CACHE_LOCK = Lock()
 _SESSION_LOGIN_LOCKS: dict[str, Lock] = {}
 _SESSION_CACHE: dict[str, Dict[str, Any]] = {}
+_SESSION_CACHE_SECRET = secrets.token_bytes(32)
 _SESSION_CACHE_MAX = 1024
 
 
@@ -373,7 +375,14 @@ def get_authenticated_session(
     force_reauth: bool = False,
 ) -> Dict[str, Any]:
     credential_material = (bearer_token or (username + "\x00" + password)).encode("utf-8")
-    cache_key = node_key + ":" + hashlib.sha256(credential_material).hexdigest()
+    credential_fingerprint = hashlib.pbkdf2_hmac(
+        "sha256",
+        credential_material,
+        _SESSION_CACHE_SECRET,
+        100_000,
+        dklen=16,
+    ).hex()
+    cache_key = node_key + ":" + credential_fingerprint
     now = time.time()
     if not force_reauth:
         with _SESSION_CACHE_LOCK:
@@ -540,8 +549,7 @@ def xui_request(
             valid_url, url_error, pinned_address = validate_and_resolve_outbound_url(url)
             if not valid_url or not pinned_address:
                 raise requests.RequestException(f"Outbound URL rejected: {url_error or 'Destination address is unavailable'}")
-            log_kwargs = redact_mapping({k: v for k, v in kwargs.items() if k not in ("data", "json")})
-            logger.debug("XUI %s %s attempt=%d kwargs=%s", method.upper(), redact_url(url), attempt, log_kwargs)
+            logger.debug("XUI %s %s attempt=%d", method.upper(), redact_url(url), attempt)
             response = _pinned_session_request(
                 session,
                 method.upper(),

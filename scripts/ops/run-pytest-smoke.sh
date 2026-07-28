@@ -34,7 +34,7 @@ TEST_FILES=(
 if [[ "$PYTHON_BIN" == *.exe && -n "$(command -v wslpath 2>/dev/null)" ]]; then
   REQ_FILE="$(wslpath -w "$REQ_FILE")"
   for i in "${!TEST_FILES[@]}"; do
-    TEST_FILES[$i]="$(wslpath -w "${TEST_FILES[$i]}")"
+    TEST_FILES[$i]="$(wslpath -w "${TEST_FILES[i]}")"
   done
 fi
 
