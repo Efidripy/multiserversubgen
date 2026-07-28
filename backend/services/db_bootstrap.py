@@ -182,6 +182,25 @@ def init_db(db_path: str) -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_node_history_ts ON node_history(ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_node_history_node_ts ON node_history(node_id, ts)")
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS traffic_stats_snapshots
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      group_by TEXT NOT NULL,
+                      bucket_kind TEXT NOT NULL,
+                      bucket_start INTEGER NOT NULL,
+                      snapshot_ts INTEGER NOT NULL,
+                      stats_json TEXT NOT NULL,
+                      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                      UNIQUE(group_by, bucket_kind, bucket_start))"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_traffic_stats_snapshots_lookup "
+            "ON traffic_stats_snapshots(group_by, bucket_kind, snapshot_ts)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_traffic_stats_snapshots_bucket "
+            "ON traffic_stats_snapshots(group_by, bucket_kind, bucket_start)"
+        )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS adguard_sources
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       name TEXT NOT NULL,

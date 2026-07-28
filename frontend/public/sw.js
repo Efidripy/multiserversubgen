@@ -70,27 +70,15 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // API calls: network first, fallback to nearest stale cache
+  // Never cache authenticated API responses. Browser Cache Storage is shared
+  // by all tabs under the origin and is not an identity boundary.
   if (url.pathname.startsWith(apiPrefix)) {
     event.respondWith(
       fetch(request)
-        .then((response) => {
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, clone);
-            });
-          }
-          return response;
-        })
-        .catch(() => {
-          return caches.match(request).then((cachedResponse) => {
-            return cachedResponse || new Response('Offline - no cache available', {
-              status: 503,
-              statusText: 'Service Unavailable',
-            });
-          });
-        })
+        .catch(() => new Response('Offline - API unavailable', {
+          status: 503,
+          statusText: 'Service Unavailable',
+        }))
     );
     return;
   }

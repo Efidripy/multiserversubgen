@@ -81,9 +81,12 @@ AUDIT_IDLE_SLEEP_SEC = SETTINGS.audit_idle_sleep_sec
 AUDIT_ACTIVE_SLEEP_SEC = SETTINGS.audit_active_sleep_sec
 ROLE_VIEWERS = SETTINGS.role_viewers
 ROLE_OPERATORS = SETTINGS.role_operators
+ROLE_ADMINS = SETTINGS.role_admins
 MFA_TOTP_ENABLED = SETTINGS.mfa_totp_enabled
 MFA_TOTP_USERS = SETTINGS.mfa_totp_users
 MFA_TOTP_WS_STRICT = SETTINGS.mfa_totp_ws_strict
+WS_AUTH_SECRET = SETTINGS.ws_auth_secret
+SUBSCRIPTION_SIGNING_SECRET = SETTINGS.subscription_signing_secret
 ADGUARD_COLLECT_INTERVAL_SEC = SETTINGS.adguard_collect_interval_sec
 PROMETHEUS_URL = SETTINGS.prometheus_url
 LOKI_URL = SETTINGS.loki_url
@@ -99,6 +102,8 @@ if REQUESTS_VERIFY is False:
 auth_service = AuthService(
     role_viewers=ROLE_VIEWERS,
     role_operators=ROLE_OPERATORS,
+    role_admins=ROLE_ADMINS,
+    ws_auth_secret=WS_AUTH_SECRET,
     mfa_totp_enabled=MFA_TOTP_ENABLED,
     mfa_totp_users=MFA_TOTP_USERS,
 )
@@ -151,6 +156,20 @@ node_metric_labels_state = runtime_state.node_metric_labels_state
 node_metric_labels_lock = runtime_state.node_metric_labels_lock
 
 metrics_runtime = None
+live_stats_runtime = None
+
+
+def _on_snapshot(snapshot: dict) -> None:
+    _record_node_snapshot(snapshot)
+    _persist_node_version(snapshot)
+    if live_stats_runtime is None:
+        return
+    try:
+        live_stats_runtime.ensure_current_period_snapshots(node_service.list_nodes())
+    except Exception as exc:
+        logger.warning("Traffic snapshot auto-seed failed: %s", exc)
+
+
 bundle = build_app_runtime_bundle(
     db_path=DB_PATH,
     decrypt=decrypt,
@@ -207,10 +226,7 @@ bundle = build_app_runtime_bundle(
     adguard_latest=adguard_latest,
     adguard_latest_lock=adguard_latest_lock,
     ws_manager=ws_manager,
-    on_snapshot=lambda snapshot: (
-        _record_node_snapshot(snapshot),
-        _persist_node_version(snapshot),
-    ),
+    on_snapshot=_on_snapshot,
 )
 inbound_mgr = bundle.inbound_mgr
 client_mgr = bundle.client_mgr
@@ -291,6 +307,7 @@ adguard_collector_loop = adguard_runtime.collector_loop
 def _sync_auth_service_roles() -> None:
     auth_service.role_viewers = ROLE_VIEWERS
     auth_service.role_operators = ROLE_OPERATORS
+    auth_service.role_admins = ROLE_ADMINS
 
 
 def get_user_role(username: str) -> str:
@@ -351,6 +368,8 @@ register_app_routers(
     check_auth=check_auth,
     verify_totp_code=verify_totp_code,
     get_user_role=get_user_role,
+    issue_ws_ticket=auth_service.issue_ws_ticket,
+    verify_ws_ticket=auth_service.verify_ws_ticket,
     mfa_totp_enabled=MFA_TOTP_ENABLED,
     monitoring_enabled=MONITORING_ENABLED,
     get_node_or_404=partial(get_node_or_404, node_service),
@@ -379,6 +398,7 @@ register_app_routers(
     check_subscription_rate_limit=_check_subscription_rate_limit,
     get_emails=get_emails,
     get_links_filtered=get_links_filtered,
+    subscription_signing_secret=SUBSCRIPTION_SIGNING_SECRET,
     verify_tls_default=VERIFY_TLS,
     list_adguard_sources=adguard_runtime.list_sources,
     collect_adguard_once=collect_adguard_once,
@@ -406,6 +426,7 @@ register_app_routers(
 )
 app.router.lifespan_context = build_lifespan(
     sync_node_history_names_with_nodes=sync_node_history_names_with_nodes,
+    backfill_traffic_history_snapshots=live_stats_runtime.backfill_node_history_snapshots,
     audit_worker_loop=audit_worker_loop,
     snapshot_collector=snapshot_collector,
     adguard_collector_loop=adguard_collector_loop,

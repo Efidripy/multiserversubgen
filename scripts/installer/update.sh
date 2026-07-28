@@ -939,7 +939,7 @@ run_post_update_checks() {
     fi
 
     local panel_status=""
-    panel_status=$(curl -ksS -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${WEB_PATH}/" 2>/dev/null || true)
+    panel_status=$(curl -fsSL -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${WEB_PATH}/" 2>/dev/null || true)
     if [[ "$panel_status" =~ ^(200|301|302)$ ]]; then
         echo "  ✅ public panel -> HTTP $panel_status"
     else
@@ -1017,7 +1017,7 @@ SECURITY_MTLS_CA_PATH=${SECURITY_MTLS_CA_PATH:-""}
 SECURITY_IP_ALLOWLIST=${SECURITY_IP_ALLOWLIST:-""}
 MFA_TOTP_ENABLED=${MFA_TOTP_ENABLED:-"false"}
 MFA_TOTP_USERS=${MFA_TOTP_USERS:-""}
-MFA_TOTP_WS_STRICT=${MFA_TOTP_WS_STRICT:-"false"}
+MFA_TOTP_WS_STRICT=${MFA_TOTP_WS_STRICT:-"true"}
 normalize_public_access_vars
 heal_public_domain_from_selected_cfg
 

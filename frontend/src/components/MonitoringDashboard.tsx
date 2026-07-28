@@ -494,6 +494,7 @@ export const MonitoringDashboard: React.FC = () => {
   const [blockedSearch, setBlockedSearch] = useState('');
   const [blockedShowCount, setBlockedShowCount] = useState<number>(25);
   const realtimeRefreshRef = useRef(0);
+  const [editingAdguardSourceId, setEditingAdguardSourceId] = useState<number | null>(null);
   const [adguardForm, setAdguardForm] = useState({
     name: '',
     admin_url: '',
@@ -684,6 +685,65 @@ export const MonitoringDashboard: React.FC = () => {
       setAdguardError('');
     } catch (err: any) {
       setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.collectAdguardFailed'));
+    } finally {
+      setAdguardLoading(false);
+    }
+  };
+
+  const resetAdguardForm = () => {
+    setEditingAdguardSourceId(null);
+    setAdguardForm({
+      name: '',
+      admin_url: '',
+      dns_url: '',
+      username: '',
+      password: '',
+      verify_tls: true,
+      enabled: true,
+    });
+  };
+
+  const editAdguardSource = (source: AdGuardSource) => {
+    setEditingAdguardSourceId(source.id);
+    setAdguardForm({
+      name: source.name || '',
+      admin_url: source.admin_url || '',
+      dns_url: source.dns_url || '',
+      username: source.username || '',
+      password: '',
+      verify_tls: source.verify_tls !== false,
+      enabled: source.enabled !== false,
+    });
+  };
+
+  const saveAdguardSource = async () => {
+    try {
+      setAdguardLoading(true);
+      if (editingAdguardSourceId !== null) {
+        await api.put(`/v1/adguard/sources/${editingAdguardSourceId}`, adguardForm, { auth: getAuth() });
+      } else {
+        await api.post('/v1/adguard/sources', adguardForm, { auth: getAuth() });
+      }
+      resetAdguardForm();
+      await Promise.all([loadAdguardSources(), collectAdguardNow()]);
+    } catch (err: any) {
+      setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.addAdguardSourceFailed'));
+    } finally {
+      setAdguardLoading(false);
+    }
+  };
+
+  const deleteAdguardSource = async (source: AdGuardSource) => {
+    if (!window.confirm(`${t('common.delete')} ${source.name}?`)) return;
+    try {
+      setAdguardLoading(true);
+      await api.delete(`/v1/adguard/sources/${source.id}`, { auth: getAuth() });
+      if (editingAdguardSourceId === source.id) {
+        resetAdguardForm();
+      }
+      await Promise.all([loadAdguardSources(), loadAdguardOverview(), loadAdguardHistory()]);
+    } catch (err: any) {
+      setAdguardError(err?.response?.data?.detail || t('common.failed'));
     } finally {
       setAdguardLoading(false);
     }
@@ -2008,8 +2068,10 @@ export const MonitoringDashboard: React.FC = () => {
             </div>
 
             <div className="mb-4 border-t border-cyan-500/20 pt-4">
-            <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.addAdguardSource')}</h6>
-            <div className="grid min-w-0 grid-cols-1 gap-2 lg:grid-cols-[1fr_1.4fr_1fr_1fr_1fr_auto]">
+            <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">
+              {editingAdguardSourceId === null ? t('monitoringDashboard.addAdguardSource') : t('common.edit')}
+            </h6>
+            <div className="grid min-w-0 grid-cols-1 gap-2 lg:grid-cols-[1fr_1.4fr_1fr_1fr_1fr_auto_auto]">
                 <input
                   className={inputClass}
                   placeholder={t('common.name')}
@@ -2041,33 +2103,62 @@ export const MonitoringDashboard: React.FC = () => {
                   value={adguardForm.password}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, password: e.target.value }))}
                 />
+                <label className="inline-flex h-9 items-center gap-2 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 text-xs text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={adguardForm.enabled}
+                    onChange={(e) => setAdguardForm((s) => ({ ...s, enabled: e.target.checked }))}
+                  />
+                  {t('common.enabled')}
+                </label>
                 <button
                   className={primaryButtonClass}
-                  onClick={async () => {
-                    try {
-                      await api.post('/v1/adguard/sources', adguardForm, { auth: getAuth() });
-                      setAdguardForm({
-                        name: '',
-                        admin_url: '',
-                        dns_url: '',
-                        username: '',
-                        password: '',
-                        verify_tls: true,
-                        enabled: true,
-                      });
-                      await Promise.all([loadAdguardSources(), collectAdguardNow()]);
-                    } catch (err: any) {
-                      setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.addAdguardSourceFailed'));
-                    }
-                  }}
+                  onClick={() => void saveAdguardSource()}
+                  disabled={adguardLoading}
                 >
-                  {t('common.add')}
+                  {editingAdguardSourceId === null ? t('common.add') : t('common.save')}
                 </button>
+                {editingAdguardSourceId !== null && (
+                  <button className={secondaryButtonClass} onClick={resetAdguardForm} disabled={adguardLoading}>
+                    {t('common.cancel')}
+                  </button>
+                )}
             </div>
+            <label className="mt-2 inline-flex items-center gap-2 text-xs text-slate-400">
+              <input
+                type="checkbox"
+                checked={adguardForm.verify_tls}
+                onChange={(e) => setAdguardForm((s) => ({ ...s, verify_tls: e.target.checked }))}
+              />
+              {t('monitoringDashboard.verifyTls', { defaultValue: 'verify TLS' })}
+            </label>
             </div>
             {!!adguardSources.length && (
-              <div className="text-xs text-slate-500">
-                {t('monitoringDashboard.sourcesConfigured', { sources: adguardSources.map((s) => s.name).join(', ') })}
+              <div className="space-y-2 text-xs text-slate-500">
+                <div>{t('monitoringDashboard.sourcesConfigured', { sources: adguardSources.map((s) => s.name).join(', ') })}</div>
+                <div className="grid min-w-0 grid-cols-1 gap-2 lg:grid-cols-2">
+                  {adguardSources.map((source) => (
+                    <div key={source.id} className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="truncate font-mono text-xs text-slate-200" title={source.name}>{source.name}</div>
+                        <div className="mt-0.5 truncate font-mono text-[11px] text-slate-500" title={source.admin_url}>{source.admin_url}</div>
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <button className={secondaryButtonClass} type="button" onClick={() => editAdguardSource(source)} disabled={adguardLoading}>
+                          {t('common.edit')}
+                        </button>
+                        <button
+                          className={`${secondaryButtonClass} border-rose-400/30 text-rose-200 hover:border-rose-300/50 hover:text-rose-100`}
+                          type="button"
+                          onClick={() => void deleteAdguardSource(source)}
+                          disabled={adguardLoading}
+                        >
+                          {t('common.delete')}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
         </section>

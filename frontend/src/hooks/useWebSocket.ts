@@ -77,7 +77,19 @@ export const useWebSocket = ({
       const wsPath = `${basePath}/ws`;
       let wsUrl = url || `${protocol}//${host}${wsPath}`;
 
-      wsRef.current = new WebSocket(wsUrl);
+      const allowInsecureWs = import.meta.env.VITE_ALLOW_INSECURE_WS === 'true';
+      if (protocol === 'ws:' && !allowInsecureWs && !['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)) {
+        console.error('Refusing insecure WebSocket outside local development. Configure HTTPS/WSS.');
+        reconnectBlockedRef.current = true;
+        return;
+      }
+      if (!auth.wsTicket) {
+        console.warn('WebSocket ticket is missing; waiting for authenticated session.');
+        reconnectBlockedRef.current = true;
+        return;
+      }
+
+      wsRef.current = new WebSocket(wsUrl, [`mssg-ticket.${auth.wsTicket}`]);
 
       wsRef.current.onopen = () => {
         setIsConnected(true);
@@ -86,15 +98,6 @@ export const useWebSocket = ({
         everConnectedRef.current = true;
         initialConnectFailCountRef.current = 0;
         reconnectCooldownUntilRef.current = 0;
-
-        if (!url && auth.username && auth.password) {
-          safeSend({
-            type: 'auth',
-            username: auth.username,
-            password: auth.password,
-            totp: auth.totpCode,
-          });
-        }
 
         // Subscribe to channels
         channelsRef.current.forEach((channel) => {

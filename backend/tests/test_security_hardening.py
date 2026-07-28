@@ -78,14 +78,15 @@ def test_list_nodes_does_not_return_password(monkeypatch):
     assert "password" not in payload[0]
 
 
-def test_websocket_auth_uses_first_message_not_query_string(monkeypatch):
+def test_websocket_requires_short_lived_ticket_and_never_accepts_password_json(monkeypatch):
     app = FastAPI()
+    ticket = main.auth_service.issue_ws_ticket("admin")
     app.include_router(
         build_realtime_router(
             check_basic_auth_header=main.check_basic_auth_header,
-            verify_totp_code=lambda _user, _code: False,
-            mfa_totp_ws_strict=False,
-            pam_authenticate=lambda u, p: u == "admin" and p == "secret",
+            verify_totp_code=lambda _user, _code: True,
+            verify_ws_ticket=main.auth_service.verify_ws_ticket,
+            get_user_role=main.get_user_role,
             ws_manager=main.ws_manager,
             handle_websocket_message=main.handle_websocket_message,
             logger=main.logger,
@@ -93,7 +94,7 @@ def test_websocket_auth_uses_first_message_not_query_string(monkeypatch):
     )
     client = TestClient(app)
 
-    with client.websocket_connect("/ws") as websocket:
+    with client.websocket_connect("/ws", subprotocols=[f"mssg-ticket.{ticket}"]) as websocket:
         websocket.send_json({"type": "auth", "username": "admin", "password": "secret"})
         websocket.send_json({"type": "subscribe", "channel": "traffic"})
         response = websocket.receive_json()

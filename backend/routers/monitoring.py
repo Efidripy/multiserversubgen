@@ -6,6 +6,7 @@ from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from shared.security import validate_outbound_url
 
 
 def build_monitoring_router(
@@ -65,6 +66,14 @@ def build_monitoring_router(
             admin_url = "https://" + admin_url
         if dns_url and not dns_url.startswith(("http://", "https://")):
             dns_url = "http://" + dns_url
+        valid_url, url_error = validate_outbound_url(admin_url)
+        if not valid_url:
+            raise HTTPException(status_code=400, detail=url_error)
+        if dns_url:
+            valid_url, url_error = validate_outbound_url(dns_url)
+            if not valid_url:
+                raise HTTPException(status_code=400, detail=url_error)
+        verify_tls = True
 
         with connect(db_path) as conn:
             conn.execute(
@@ -114,6 +123,14 @@ def build_monitoring_router(
                 admin_url = "https://" + admin_url
             if dns_url and not dns_url.startswith(("http://", "https://")):
                 dns_url = "http://" + dns_url
+            valid_url, url_error = validate_outbound_url(admin_url)
+            if not valid_url:
+                raise HTTPException(status_code=400, detail=url_error)
+            if dns_url:
+                valid_url, url_error = validate_outbound_url(dns_url)
+                if not valid_url:
+                    raise HTTPException(status_code=400, detail=url_error)
+            verify_tls = True
 
             conn.execute(
                 """

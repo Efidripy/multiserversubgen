@@ -106,7 +106,7 @@ check_shell() {
 check "systemd $PROJECT_NAME active" systemctl is-active --quiet "$PROJECT_NAME"
 check "nginx active" systemctl is-active --quiet nginx
 check_shell "nginx config valid" "sudo -n nginx -t >/dev/null 2>&1"
-check_shell "local /health is 200" "code=\$(curl -ksS --max-time '${CURL_MAX_TIME}' -o /dev/null -w '%{http_code}' http://127.0.0.1:${APP_PORT}/health); [[ \"\$code\" == \"200\" ]]"
+check_shell "local /health is 200" "code=\$(curl -fsSL --max-time '${CURL_MAX_TIME}' -o /dev/null -w '%{http_code}' http://127.0.0.1:${APP_PORT}/health); [[ \"\$code\" == \"200\" ]]"
 
 if [[ -d "${PROJECT_DIR:-/opt/${PROJECT_NAME}}/build" ]]; then
   check_shell "frontend build references existing assets" "PROJECT_DIR='${PROJECT_DIR:-/opt/${PROJECT_NAME}}'; WEB_PATH='${WEB_PATH}'; PUBLIC_SCHEME='${PUBLIC_SCHEME:-https}'; PUBLIC_DOMAIN='${PUBLIC_DOMAIN:-}'; bash '${SCRIPT_DIR}/scripts/deploy/verify-frontend-release.sh' \"\$PROJECT_DIR/build\" \"\$WEB_PATH\" \"\$PUBLIC_SCHEME\" \"\$PUBLIC_DOMAIN\" >/dev/null"
@@ -119,7 +119,7 @@ if [[ -n "$PUBLIC_DOMAIN" ]]; then
   panel_path="/"
   [[ -n "$WEB_PATH" ]] && panel_path="/${WEB_PATH}/"
   panel_url="${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}${panel_path}"
-  check_shell "public panel URL is reachable ($panel_url)" "code=\$(curl -ksS --max-time '${CURL_MAX_TIME}' -o /dev/null -w '%{http_code}' '$panel_url'); [[ \"\$code\" == \"200\" || \"\$code\" == \"301\" || \"\$code\" == \"302\" || \"\$code\" == \"401\" ]]"
+  check_shell "public panel URL is reachable ($panel_url)" "code=\$(curl -fsSL --max-time '${CURL_MAX_TIME}' -o /dev/null -w '%{http_code}' '$panel_url'); [[ \"\$code\" == \"200\" || \"\$code\" == \"301\" || \"\$code\" == \"302\" || \"\$code\" == \"401\" ]]"
 fi
 
 printf '\nSmoke summary: ok=%d fail=%d\n' "$ok" "$fail"

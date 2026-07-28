@@ -21,12 +21,23 @@ interface SubscriptionGroup {
   protocol_filter: string;
   created_at: string;
   updated_at: string;
+  subscription_token: string;
 }
 
 interface SubscriptionGroupPreview extends SubscriptionGroup {
   emails: string[];
   count: number;
   link: string;
+}
+
+interface SubscriptionGroupForm {
+  id: number | null;
+  name: string;
+  identifier: string;
+  description: string;
+  email_patterns: string;
+  node_filters: string;
+  protocol_filter: string;
 }
 
 type SortField = 'email' | 'downloads' | 'last';
@@ -50,10 +61,28 @@ const metaLabelClass = 'text-[10px] font-medium uppercase tracking-[0.14em] text
 const metaValueClass = 'mt-1 block min-w-0 truncate text-xs font-light text-slate-200';
 const cardMetaValueClass = 'mt-1 block min-w-0 truncate text-right text-xs font-light text-slate-200';
 
+const emptyGroupForm: SubscriptionGroupForm = {
+  id: null,
+  name: '',
+  identifier: '',
+  description: '',
+  email_patterns: '',
+  node_filters: '',
+  protocol_filter: '',
+};
+
+const listToCsv = (items: string[]) => items.join(', ');
+
+const csvToList = (value: string) => value
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
+
 export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) => {
   const { toast } = useToast();
   const { t } = useTranslation();
   const [emails, setEmails] = useState<string[]>([]);
+  const [emailTokens, setEmailTokens] = useState<Record<string, string>>({});
   const [stats, setStats] = useState<Record<string, Stats>>({});
   const [nodes, setNodes] = useState<NodeRecord[]>([]);
   const [groups, setGroups] = useState<SubscriptionGroup[]>([]);
@@ -75,6 +104,9 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   const [deliveryFormat, setDeliveryFormat] = useState<'base64' | 'json' | 'raw'>('base64');
   const [qrUrl, setQrUrl] = useState('');
   const [showQr, setShowQr] = useState(false);
+  const [groupEditorOpen, setGroupEditorOpen] = useState(false);
+  const [groupForm, setGroupForm] = useState<SubscriptionGroupForm>(emptyGroupForm);
+  const [groupSaving, setGroupSaving] = useState(false);
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -100,6 +132,9 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         headers: { 'Cache-Control': 'no-cache' },
       });
       setEmails(Array.isArray(res.data?.emails) ? res.data.emails : []);
+      setEmailTokens(res.data?.subscription_tokens && typeof res.data.subscription_tokens === 'object'
+        ? res.data.subscription_tokens
+        : {});
       setStats(res.data?.stats || {});
       setSuccessMessage(t('subscriptions.emailsRefreshed'));
       window.setTimeout(() => setSuccessMessage(''), 3000);
@@ -129,7 +164,8 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
           node_filters: Array.isArray(group.node_filters) ? group.node_filters : [],
           protocol_filter: String(group.protocol_filter || ''),
           created_at: String(group.created_at || ''),
-          updated_at: String(group.updated_at || ''),
+           updated_at: String(group.updated_at || ''),
+           subscription_token: String(group.subscription_token || ''),
         })),
       );
     } catch (err: any) {
@@ -162,11 +198,86 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     void refreshAll();
   }, []);
 
+  const openCreateGroup = () => {
+    setGroupForm(emptyGroupForm);
+    setGroupEditorOpen(true);
+    setViewMode('grouped');
+  };
+
+  const openEditGroup = (group: SubscriptionGroup) => {
+    setGroupForm({
+      id: group.id,
+      name: group.name,
+      identifier: group.identifier,
+      description: group.description || '',
+      email_patterns: listToCsv(group.email_patterns || []),
+      node_filters: listToCsv(group.node_filters || []),
+      protocol_filter: group.protocol_filter || '',
+    });
+    setGroupEditorOpen(true);
+    setViewMode('grouped');
+  };
+
+  const saveGroup = async () => {
+    const payload = {
+      name: groupForm.name.trim(),
+      identifier: groupForm.identifier.trim(),
+      description: groupForm.description.trim(),
+      email_patterns: csvToList(groupForm.email_patterns),
+      node_filters: csvToList(groupForm.node_filters),
+      protocol_filter: groupForm.protocol_filter.trim() || null,
+    };
+
+    if (!payload.name || !payload.identifier) {
+      toast(t('subscriptions.groupName'), 'warning');
+      return;
+    }
+
+    setGroupSaving(true);
+    setError('');
+    try {
+      if (groupForm.id) {
+        await api.put(`/v1/subscription-groups/${groupForm.id}`, payload);
+      } else {
+        await api.post('/v1/subscription-groups', payload);
+      }
+      toast(t('app.success'), 'success');
+      setGroupEditorOpen(false);
+      setGroupForm(emptyGroupForm);
+      await loadGroups();
+    } catch (err: any) {
+      const message = err.response?.data?.detail || t('common.failed');
+      setError(message);
+      toast(message, 'error');
+    } finally {
+      setGroupSaving(false);
+    }
+  };
+
+  const deleteGroup = async (group: SubscriptionGroup) => {
+    if (!window.confirm(`${t('subscriptions.deleteGroup')}: ${group.name || group.identifier}?`)) return;
+    setGroupSaving(true);
+    setError('');
+    try {
+      await api.delete(`/v1/subscription-groups/${group.id}`);
+      toast(t('app.success'), 'success');
+      await loadGroups();
+    } catch (err: any) {
+      const message = err.response?.data?.detail || t('common.failed');
+      setError(message);
+      toast(message, 'error');
+    } finally {
+      setGroupSaving(false);
+    }
+  };
+
   const compareText = (a: string, b: string) =>
     a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
 
-  const buildSubscriptionUrl = (identifier: string, isGrouped = false) => {
-    const baseUrl = isGrouped ? `${apiUrl}/v1/sub-grouped/${identifier}` : `${apiUrl}/v1/sub/${identifier}`;
+  const buildSubscriptionUrl = (identifier: string, isGrouped = false, identifierIsToken = false) => {
+    const token = identifierIsToken ? identifier : (isGrouped ? '' : emailTokens[identifier] || '');
+    if (!token) return '';
+    const baseUrl = isGrouped ? `${apiUrl}/v1/sub-grouped/${token}` : `${apiUrl}/v1/sub/${token}`;
     const params = new URLSearchParams();
     if (filterProtocol) params.append('protocol', filterProtocol);
     if (selectedNodes.length > 0) params.append('nodes', selectedNodes.join(','));
@@ -208,7 +319,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         ...group,
         emails: patternMatches,
         count: patternMatches.length,
-        link: buildSubscriptionUrl(group.identifier, true),
+         link: buildSubscriptionUrl(group.subscription_token, true, true),
       };
     });
   }, [buildSubscriptionUrl, emails, groups]);
@@ -305,6 +416,25 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       >
         <UIIcon name="link" size={15} />
       </button>
+      <button
+        type="button"
+        className={iconButtonClass}
+        title={t('subscriptions.editGroup')}
+        aria-label={t('subscriptions.editGroup')}
+        onClick={() => openEditGroup(group)}
+      >
+        <UIIcon name="edit" size={15} />
+      </button>
+      <button
+        type="button"
+        className={iconButtonClass}
+        title={t('subscriptions.deleteGroup')}
+        aria-label={t('subscriptions.deleteGroup')}
+        onClick={() => void deleteGroup(group)}
+        disabled={groupSaving}
+      >
+        <UIIcon name="trash" size={15} />
+      </button>
     </div>
   );
 
@@ -334,6 +464,10 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
             <button type="button" className={primaryButtonClass} onClick={() => void refreshAll()} disabled={totalLoading}>
               <UIIcon name={totalLoading ? 'spinner' : 'refresh'} size={15} />
               <span className="whitespace-nowrap">{t('subscriptions.refreshEmails')}</span>
+            </button>
+            <button type="button" className={secondaryButtonClass} onClick={openCreateGroup} disabled={totalLoading || groupSaving}>
+              <UIIcon name="plus" size={15} />
+              <span className="whitespace-nowrap">{t('subscriptions.addGroup')}</span>
             </button>
             <button
               type="button"
@@ -746,6 +880,99 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         )}
       </section>
 
+      {groupEditorOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setGroupEditorOpen(false);
+          }}
+        >
+          <div className="w-full max-w-2xl overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+            <div className="flex items-center justify-between border-b border-cyan-500/20 px-5 py-4">
+              <div className="min-w-0">
+                <h4 className="flex items-center gap-2 text-sm font-medium uppercase tracking-[0.14em] text-slate-100">
+                  <UIIcon name="folder" size={15} />
+                  {groupForm.id ? t('subscriptions.editGroup') : t('subscriptions.addGroup')}
+                </h4>
+                <p className="mt-1 truncate text-xs text-slate-500">{groupForm.identifier || t('subscriptions.identifier')}</p>
+              </div>
+              <button
+                type="button"
+                className={iconButtonClass}
+                aria-label={t('common.close', 'Close')}
+                onClick={() => setGroupEditorOpen(false)}
+              >
+                <UIIcon name="x" size={15} />
+              </button>
+            </div>
+            <div className="grid min-w-0 grid-cols-1 gap-4 px-5 py-5 sm:grid-cols-2">
+              <label className="min-w-0">
+                <span className={metaLabelClass}>{t('subscriptions.groupName')}</span>
+                <input
+                  className={cn(inputClass, 'mt-2')}
+                  value={groupForm.name}
+                  onChange={(e) => setGroupForm((current) => ({ ...current, name: e.target.value }))}
+                />
+              </label>
+              <label className="min-w-0">
+                <span className={metaLabelClass}>{t('subscriptions.identifier')}</span>
+                <input
+                  className={cn(codeInputClass, 'mt-2')}
+                  value={groupForm.identifier}
+                  onChange={(e) => setGroupForm((current) => ({ ...current, identifier: e.target.value }))}
+                />
+              </label>
+              <label className="min-w-0 sm:col-span-2">
+                <span className={metaLabelClass}>{t('common.description')}</span>
+                <textarea
+                  className={cn(inputClass, 'mt-2 min-h-20')}
+                  value={groupForm.description}
+                  onChange={(e) => setGroupForm((current) => ({ ...current, description: e.target.value }))}
+                />
+              </label>
+              <label className="min-w-0 sm:col-span-2">
+                <span className={metaLabelClass}>{t('subscriptions.emailPatterns')}</span>
+                <input
+                  className={cn(codeInputClass, 'mt-2')}
+                  value={groupForm.email_patterns}
+                  onChange={(e) => setGroupForm((current) => ({ ...current, email_patterns: e.target.value }))}
+                />
+              </label>
+              <label className="min-w-0">
+                <span className={metaLabelClass}>{t('subscriptions.nodeFilters')}</span>
+                <input
+                  className={cn(codeInputClass, 'mt-2')}
+                  value={groupForm.node_filters}
+                  onChange={(e) => setGroupForm((current) => ({ ...current, node_filters: e.target.value }))}
+                />
+              </label>
+              <label className="min-w-0">
+                <span className={metaLabelClass}>{t('subscriptions.protocolFilter')}</span>
+                <select
+                  className={cn(inputClass, 'mt-2')}
+                  value={groupForm.protocol_filter}
+                  onChange={(e) => setGroupForm((current) => ({ ...current, protocol_filter: e.target.value }))}
+                >
+                  <option value="">{t('common.all')}</option>
+                  <option value="vless">VLESS</option>
+                  <option value="vmess">VMess</option>
+                  <option value="trojan">Trojan</option>
+                </select>
+              </label>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-cyan-500/20 px-5 py-4">
+              <button type="button" className={secondaryButtonClass} onClick={() => setGroupEditorOpen(false)}>
+                {t('common.cancel')}
+              </button>
+              <button type="button" className={primaryButtonClass} onClick={() => void saveGroup()} disabled={groupSaving}>
+                <UIIcon name={groupSaving ? 'spinner' : 'check'} size={15} />
+                {t('common.save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showQr && qrUrl && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6"
@@ -773,13 +1000,9 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
             </div>
             <div className="space-y-4 px-5 py-5">
               <div className="flex justify-center rounded-lg border border-cyan-500/20 bg-white p-4">
-                <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(qrUrl)}`}
-                  alt={t('subscriptions.qrCodeAlt')}
-                  width={280}
-                  height={280}
-                  className="h-auto w-full max-w-[280px]"
-                />
+                <div className="max-w-[280px] text-center text-sm text-slate-600">
+                  {t('subscriptions.qrCodeUnavailable', 'QR generation is kept local to avoid sending subscription links to third parties.')}
+                </div>
               </div>
               <div className="min-w-0">
                 <label className={titleClass}>{t('subscriptions.link')}</label>

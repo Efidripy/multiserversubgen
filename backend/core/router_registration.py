@@ -22,6 +22,8 @@ def register_app_routers(
     check_auth,
     verify_totp_code,
     get_user_role,
+    issue_ws_ticket,
+    verify_ws_ticket,
     mfa_totp_enabled,
     get_node_or_404,
     get_cached_traffic_stats,
@@ -49,6 +51,7 @@ def register_app_routers(
     check_subscription_rate_limit,
     get_emails,
     get_links_filtered,
+    subscription_signing_secret,
     verify_tls_default,
     list_adguard_sources,
     collect_adguard_once,
@@ -87,6 +90,7 @@ def register_app_routers(
             check_auth=check_auth,
             verify_totp_code=verify_totp_code,
             get_user_role=get_user_role,
+            issue_ws_ticket=issue_ws_ticket,
             mfa_totp_enabled=mfa_totp_enabled,
             monitoring_enabled=monitoring_enabled,
         )
@@ -154,6 +158,7 @@ def register_app_routers(
             check_subscription_rate_limit=check_subscription_rate_limit,
             get_emails=get_emails,
             get_links_filtered=get_links_filtered,
+            subscription_signing_secret=subscription_signing_secret,
             invalidate_subscription_cache=invalidate_subscription_cache,
             logger=logger,
         )
@@ -208,8 +213,8 @@ def register_app_routers(
         build_realtime_router(
             check_basic_auth_header=check_basic_auth_header,
             verify_totp_code=verify_totp_code,
-            mfa_totp_ws_strict=mfa_totp_ws_strict,
-            pam_authenticate=pam_authenticate,
+            verify_ws_ticket=verify_ws_ticket,
+            get_user_role=get_user_role,
             ws_manager=ws_manager,
             handle_websocket_message=handle_websocket_message,
             logger=logger,

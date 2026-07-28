@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Optional
+from shared.security import redact_url
 
 logger = logging.getLogger(__name__)
 
@@ -26,13 +27,13 @@ def create_redis_client(url: str) -> Optional[Any]:
         import redis  # type: ignore[import-untyped]
         client = redis.from_url(url)
         client.ping()
-        logger.info("Redis: connected to %s", url)
+        logger.info("Redis: connected to %s", redact_url(url))
         return client
     except ImportError:
         logger.warning("Redis: redis package not installed")
         return None
     except Exception as exc:
-        logger.warning("Redis: could not connect to %s: %s", url, exc)
+        logger.warning("Redis: could not connect to %s: %s", redact_url(url), exc)
         return None
 
 

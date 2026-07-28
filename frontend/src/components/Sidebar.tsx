@@ -24,23 +24,6 @@ interface SidebarProps {
   onMobileClose: () => void;
 }
 
-const NAV_GROUPS: Record<string, string | null> = {
-  dashboard: null,
-  inbounds: 'nav.groupData',
-  clients: null,
-  traffic: null,
-  monitoring: 'nav.groupSystem',
-  backup: null,
-  subscriptions: 'nav.groupSettings',
-};
-
-function getNavGroupLabel(id: string, prevId?: string): string | null {
-  const labelKey = NAV_GROUPS[id] ?? null;
-  if (!labelKey) return null;
-  const prevLabelKey = prevId ? (NAV_GROUPS[prevId] ?? null) : null;
-  return labelKey !== prevLabelKey ? labelKey : null;
-}
-
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   setActiveTab,
@@ -122,26 +105,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
         </div>
 
         <nav className="sidebar__nav" role="navigation" aria-label={t('sidebar.navAria')}>
-          {safeItems.map((item, idx) => {
-            const prev = safeItems[idx - 1];
-            const groupLabel = getNavGroupLabel(item.id, prev?.id);
-            return (
-              <React.Fragment key={item.id}>
-                {groupLabel && (
-                  <div className="sidebar__nav-group-label">{t(groupLabel)}</div>
-                )}
-                <button
-                  className={`sidebar__nav-item${activeTab === item.id ? ' sidebar__nav-item--active' : ''}`}
-                  onClick={() => handleNav(item.id)}
-                  aria-current={activeTab === item.id ? 'page' : undefined}
-                  title={effectiveCollapsed ? t(item.labelKey) : undefined}
-                >
-                  <span className="sidebar__nav-icon"><UIIcon name={item.icon} size={16} /></span>
-                  <span className="sidebar__nav-label">{t(item.labelKey)}</span>
-                </button>
-              </React.Fragment>
-            );
-          })}
+          {safeItems.map((item) => (
+            <button
+              key={item.id}
+              className={`sidebar__nav-item${activeTab === item.id ? ' sidebar__nav-item--active' : ''}`}
+              onClick={() => handleNav(item.id)}
+              aria-current={activeTab === item.id ? 'page' : undefined}
+              title={effectiveCollapsed ? t(item.labelKey) : undefined}
+            >
+              <span className="sidebar__nav-icon"><UIIcon name={item.icon} size={16} /></span>
+              <span className="sidebar__nav-label">{t(item.labelKey)}</span>
+            </button>
+          ))}
         </nav>
 
         <div className="sidebar__spacer" />

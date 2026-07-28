@@ -31,6 +31,14 @@ interface NodeInfo {
   name: string;
 }
 
+interface InboundStats {
+  total: number;
+  enabled: number;
+  disabled: number;
+  by_protocol: Record<string, number>;
+  by_security: Record<string, number>;
+}
+
 interface InboundTemplateMap {
   [key: string]: Record<string, any>;
 }
@@ -193,6 +201,14 @@ const normalizeInboundRows = (
   };
 });
 
+const normalizeInboundStats = (payload: any): InboundStats => ({
+  total: Number(payload?.total || 0),
+  enabled: Number(payload?.enabled || 0),
+  disabled: Number(payload?.disabled || 0),
+  by_protocol: payload?.by_protocol && typeof payload.by_protocol === 'object' ? payload.by_protocol : {},
+  by_security: payload?.by_security && typeof payload.by_security === 'object' ? payload.by_security : {},
+});
+
 const panelTitleClass = 'text-xs font-medium uppercase tracking-[0.14em] text-cyan-300';
 const panelHintClass = 'mt-1 text-xs font-light leading-5 text-slate-500';
 const fieldLabelClass = 'mb-1 block text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500';
@@ -296,6 +312,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   const [filteredInbounds, setFilteredInbounds] = useState<Inbound[]>([]);
   const [nodeNameToId, setNodeNameToId] = useState<Record<string, number>>({});
   const [allNodes, setAllNodes] = useState<NodeInfo[]>([]);
+  const [inboundStats, setInboundStats] = useState<InboundStats | null>(null);
 
   const [loading, setLoading] = useState(false);
   const [pageLoading, setPageLoading] = useState(false);
@@ -513,9 +530,15 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
     try {
       // Single parallel fetch â€” backend returns from cache (30s fresh / 300s stale).
-      const [nodes, rawInbounds] = await Promise.all([
+      const inboundStatsPromise = api
+        .get('/v1/inbounds/stats', { auth: getAuth() })
+        .then((res) => normalizeInboundStats(res.data))
+        .catch(() => null);
+
+      const [nodes, rawInbounds, stats] = await Promise.all([
         listNodes(),
         getInboundsHeaderSource(),
+        inboundStatsPromise,
       ]);
 
       if (requestIdRef.current !== requestId) return;
@@ -525,6 +548,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
       setAllNodes(nodes);
       setNodeNameToId(nameMap);
+      setInboundStats(stats);
       if (addTargetNodeIds.size === 0) {
         setAddTargetNodeIds(new Set(nodes.map((n) => n.id)));
       }
@@ -906,13 +930,28 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   };
 
   const handleResetAllTraffic = async () => {
+    if (allNodes.length === 0) {
+      toast(t('nodes.noNodesYet'), 'warning');
+      return;
+    }
     if (!window.confirm(t('inbounds.confirmResetAllTraffic'))) return;
-    try {
-      const res = await api.post('/v1/automation/reset-all-traffic', {}, { auth: getAuth() });
-      const total = res.data?.total_reset ?? res.data?.count ?? '?';
-      toast(t('inbounds.resetTrafficDone', { count: total }), 'success');
-      await loadInbounds();
-    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
+    let ok = 0;
+    let fail = 0;
+    for (const node of allNodes) {
+      try {
+        const res = await api.post(`/v1/inbounds/${node.id}/reset-all-traffics`, {}, { auth: getAuth() });
+        if (res.data?.success === false) {
+          fail++;
+        } else {
+          ok++;
+        }
+      } catch {
+        fail++;
+      }
+    }
+    toast(t('inbounds.resetSelectedResult', { ok, fail }), ok > 0 ? 'success' : 'error');
+    await loadInbounds();
+    onReload?.();
   };
 
   const protocols = Array.from(new Set(inbounds.map((ib) => ib.protocol)));
@@ -956,6 +995,47 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         </div>
 
         {error && <div className={tableErrorClass}>{error}</div>}
+
+        {inboundStats && (
+          <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
+            <div className="grid min-w-0 grid-cols-3 gap-2 lg:grid-cols-[repeat(3,minmax(90px,120px))_minmax(0,1fr)_minmax(0,1fr)]">
+              {[
+                { label: t('common.total'), value: inboundStats.total, tone: 'text-slate-100' },
+                { label: t('common.enabled'), value: inboundStats.enabled, tone: 'text-emerald-300' },
+                { label: t('common.disabled'), value: inboundStats.disabled, tone: 'text-rose-300' },
+              ].map((item) => (
+                <div key={item.label} className="rounded-md border border-cyan-500/15 bg-[#0f1420] px-3 py-2">
+                  <span className="block truncate text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{item.label}</span>
+                  <strong className={cn('mt-1 block font-mono text-lg tabular-nums', item.tone)}>{item.value}</strong>
+                </div>
+              ))}
+              <div className="col-span-3 min-w-0 rounded-md border border-cyan-500/15 bg-[#0f1420] px-3 py-2 lg:col-span-1">
+                <span className="block text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('inbounds.protocol')}</span>
+                <div className="mt-2 flex min-w-0 flex-wrap gap-1.5">
+                  {Object.entries(inboundStats.by_protocol).map(([name, count]) => (
+                    <span key={name} className={badgeBaseClass}>
+                      <span className="truncate">{name || 'unknown'}</span>
+                      <strong className="ml-1 font-mono tabular-nums text-cyan-200">{count}</strong>
+                    </span>
+                  ))}
+                  {Object.keys(inboundStats.by_protocol).length === 0 && <span className="text-xs text-slate-500">-</span>}
+                </div>
+              </div>
+              <div className="col-span-3 min-w-0 rounded-md border border-cyan-500/15 bg-[#0f1420] px-3 py-2 lg:col-span-1">
+                <span className="block text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('inbounds.security')}</span>
+                <div className="mt-2 flex min-w-0 flex-wrap gap-1.5">
+                  {Object.entries(inboundStats.by_security).map(([name, count]) => (
+                    <span key={name} className={badgeBaseClass}>
+                      <span className="truncate">{name || 'none'}</span>
+                      <strong className="ml-1 font-mono tabular-nums text-cyan-200">{count}</strong>
+                    </span>
+                  ))}
+                  {Object.keys(inboundStats.by_security).length === 0 && <span className="text-xs text-slate-500">-</span>}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
           <div className="mb-3 flex min-w-0 flex-col gap-1">

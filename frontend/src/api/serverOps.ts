@@ -8,6 +8,12 @@ export interface X25519KeyPair {
   publicKey?: string;
 }
 
+export interface Mldsa65KeyPair {
+  privateKey?: string;
+  publicKey?: string;
+  [key: string]: unknown;
+}
+
 export interface VlessEncryptionAuth {
   id?: string | number;
   label?: string;
@@ -47,6 +53,15 @@ export async function generateNodeX25519(nodeId: number): Promise<X25519KeyPair>
   const payload = assertGeneratorPayload<X25519KeyPair & { error?: unknown }>(res.data || {});
   if (!payload.privateKey && !payload.publicKey) {
     throw new Error('X25519 generator returned an empty keypair');
+  }
+  return payload;
+}
+
+export async function generateNodeMldsa65(nodeId: number): Promise<Mldsa65KeyPair> {
+  const res = await api.get(`/v1/nodes/${nodeId}/generate-mldsa65`, { auth: getAuth() });
+  const payload = assertGeneratorPayload<Mldsa65KeyPair & { error?: unknown }>(res.data || {});
+  if (!payload.privateKey && !payload.publicKey) {
+    throw new Error('ML-DSA-65 generator returned an empty keypair');
   }
   return payload;
 }
@@ -131,6 +146,16 @@ export async function getOutboundsTraffic(nodeId: number): Promise<any[]> {
   return res.data?.outbounds || [];
 }
 
+export async function getNodeTraffic(nodeId: number): Promise<any> {
+  const res = await api.get(`/v1/nodes/${nodeId}/traffic`, { auth: getAuth() });
+  return res.data;
+}
+
+export async function getNodeOnlineClients(nodeId: number): Promise<any> {
+  const res = await api.get(`/v1/nodes/${nodeId}/online-clients`, { auth: getAuth() });
+  return res.data;
+}
+
 export async function getXrayMetrics(nodeId: number): Promise<any> {
   const res = await api.get(`/v1/nodes/${nodeId}/xray-metrics`, { auth: getAuth() });
   return res.data;
@@ -152,6 +177,11 @@ export async function getServerHistory(nodeId: number, metric: string, bucket: s
     auth: getAuth(),
   });
   return res.data?.data || [];
+}
+
+export async function resetAllNodeTraffics(nodeId: number): Promise<any> {
+  const res = await api.post(`/v1/inbounds/${nodeId}/reset-all-traffics`, {}, { auth: getAuth() });
+  return res.data;
 }
 
 export async function getApiTokens(nodeId: number): Promise<any[]> {

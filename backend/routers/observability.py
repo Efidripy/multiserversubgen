@@ -20,7 +20,9 @@ def build_observability_router(
         return ORJSONResponse(content=get_latest_snapshot())
 
     @router.get("/metrics")
-    async def metrics():
+    async def metrics(request: Request):
+        if not getattr(request.state, "auth_user", None):
+            raise HTTPException(status_code=401, detail="Unauthorized")
         return render_metrics()
 
     @router.get("/api/v1/health/deps")

@@ -186,6 +186,7 @@ def build_app_runtime_bundle(
 
     live_stats_runtime = LiveStatsRuntime(
         client_mgr=client_mgr,
+        db_path=db_path,
         traffic_stats_cache=traffic_stats_cache,
         online_clients_cache=online_clients_cache,
         cache_refresh_state=cache_refresh_state,

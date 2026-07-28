@@ -112,6 +112,10 @@ install_grafana_with_fallback_deb() {
 
     for deb_url in "${urls[@]}"; do
         if curl -fL --retry 3 --retry-all-errors -A "Mozilla/5.0" "$deb_url" -o "$tmp_deb"; then
+            if [ -z "${GRAFANA_DEB_SHA256:-}" ] || ! printf '%s  %s\n' "$GRAFANA_DEB_SHA256" "$tmp_deb" | sha256sum -c - >/dev/null 2>&1; then
+                echo "Grafana package digest verification failed; set GRAFANA_DEB_SHA256 to the expected SHA-256." >&2
+                continue
+            fi
             if DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_DPKG_OPTS[@]}" "$tmp_deb" >/dev/null 2>&1 \
                 || (apt_fix_broken >/dev/null 2>&1 && DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_DPKG_OPTS[@]}" "$tmp_deb" >/dev/null 2>&1); then
                 installed="true"
@@ -497,14 +501,14 @@ write_install_log() {
         ONLINE_CLIENTS_CACHE_TTL TRAFFIC_STATS_STALE_TTL ONLINE_CLIENTS_STALE_TTL
         CLIENTS_CACHE_TTL CLIENTS_CACHE_STALE_TTL TRAFFIC_MAX_WORKERS
         COLLECTOR_BASE_INTERVAL_SEC COLLECTOR_MAX_INTERVAL_SEC COLLECTOR_MAX_PARALLEL
-        REDIS_URL AUDIT_QUEUE_BATCH_SIZE ROLE_VIEWERS ROLE_OPERATORS
+        AUDIT_QUEUE_BATCH_SIZE ROLE_VIEWERS ROLE_OPERATORS
         MONITORING_ENABLED GRAFANA_WEB_PATH GRAFANA_HTTP_PORT
         ADGUARD_METRICS_ENABLED ADGUARD_METRICS_TARGETS ADGUARD_METRICS_PATH
         ADGUARD_LOKI_ENABLED ADGUARD_QUERYLOG_PATH ADGUARD_SYSTEMD_UNIT
         ADGUARD_INSTALL_ENABLED ADGUARD_DNS_BIND ADGUARD_WEB_PORT ADGUARD_WEB_PATH ADGUARD_DOH_PATH
-        ADGUARD_ADMIN_USER ADGUARD_ADMIN_PASS
+        ADGUARD_ADMIN_USER
         SECURITY_MTLS_ENABLED SECURITY_MTLS_CA_PATH SECURITY_IP_ALLOWLIST
-        MFA_TOTP_ENABLED MFA_TOTP_USERS MFA_TOTP_WS_STRICT
+        MFA_TOTP_ENABLED MFA_TOTP_WS_STRICT
         PREEXISTING_NGINX_INSTALLED PREEXISTING_PROMETHEUS_INSTALLED
         PREEXISTING_GRAFANA_INSTALLED PREEXISTING_LOKI_INSTALLED PREEXISTING_PROMTAIL_INSTALLED
     )
@@ -512,6 +516,9 @@ write_install_log() {
     local key value
     for key in "${keys[@]}"; do
         value="${!key-}"
+        case "$key" in
+            *PASS*|*PASSWORD*|*SECRET*|*TOKEN*|*TOTP*|REDIS_URL) value="<redacted>" ;;
+        esac
         printf '%s=%q\n' "$key" "$value" >> "$LOG_FILE"
     done
 }
@@ -997,6 +1004,27 @@ install_adguard_home_binary() {
 
     if [ "$download_ok" != "true" ]; then
         echo "❌ Не удалось скачать AdGuard Home архив (all mirrors failed)."
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    local digest="${ADGUARD_SHA256:-}"
+    if [ -z "$digest" ]; then
+        digest="$(python3 - "$arch" <<'PY'
+import json, sys, urllib.request
+arch = sys.argv[1]
+asset = f"AdGuardHome_linux_{arch}.tar.gz"
+with urllib.request.urlopen("https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest", timeout=20) as response:
+    payload = json.load(response)
+for item in payload.get("assets", []):
+    if item.get("name") == asset and item.get("digest", "").startswith("sha256:"):
+        print(item["digest"].split(":", 1)[1])
+        break
+PY
+        )"
+    fi
+    if [ -z "$digest" ] || ! printf '%s  %s\n' "$digest" "$archive_path" | sha256sum -c - >/dev/null 2>&1; then
+        echo "❌ AdGuard Home archive digest verification failed. Set ADGUARD_SHA256 to the expected SHA-256."
         rm -rf "$tmp_dir"
         return 1
     fi
@@ -1657,7 +1685,7 @@ run_post_install_checks() {
     fi
 
     local panel_status=""
-    panel_status=$(curl -ksS -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${WEB_PATH}/" 2>/dev/null || true)
+    panel_status=$(curl -fsSL -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${WEB_PATH}/" 2>/dev/null || true)
     if [[ "$panel_status" =~ ^(200|301|302)$ ]]; then
         echo "✅ Публичная панель доступна (HTTP $panel_status)"
     else
@@ -1687,7 +1715,7 @@ run_post_install_checks() {
     if [ "${ADGUARD_INSTALL_ENABLED:-false}" = "true" ]; then
         local adg_panel_status=""
         local adg_doh_status=""
-        adg_panel_status=$(curl -ksS -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${ADGUARD_WEB_PATH}/" 2>/dev/null || true)
+        adg_panel_status=$(curl -fsSL -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${ADGUARD_WEB_PATH}/" 2>/dev/null || true)
         if [[ "$adg_panel_status" =~ ^(200|301|302)$ ]]; then
             echo "✅ AdGuard панель доступна (HTTP $adg_panel_status)"
         else
@@ -1695,7 +1723,7 @@ run_post_install_checks() {
             failures=$((failures + 1))
         fi
 
-        adg_doh_status=$(curl -ksS -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${ADGUARD_DOH_PATH}/" 2>/dev/null || true)
+        adg_doh_status=$(curl -fsSL -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${ADGUARD_DOH_PATH}/" 2>/dev/null || true)
         if [[ "$adg_doh_status" =~ ^(200|302|307|308|400|401|403|404|405)$ ]]; then
             echo "✅ AdGuard DoH endpoint отвечает (HTTP $adg_doh_status)"
         else
@@ -1953,7 +1981,7 @@ update_project() {
     SECURITY_IP_ALLOWLIST=${SECURITY_IP_ALLOWLIST:-""}
     MFA_TOTP_ENABLED=${MFA_TOTP_ENABLED:-"false"}
     MFA_TOTP_USERS=${MFA_TOTP_USERS:-""}
-    MFA_TOTP_WS_STRICT=${MFA_TOTP_WS_STRICT:-"false"}
+    MFA_TOTP_WS_STRICT=${MFA_TOTP_WS_STRICT:-"true"}
     PREEXISTING_NGINX_INSTALLED=${PREEXISTING_NGINX_INSTALLED:-"false"}
     PREEXISTING_PROMETHEUS_INSTALLED=${PREEXISTING_PROMETHEUS_INSTALLED:-"false"}
     PREEXISTING_GRAFANA_INSTALLED=${PREEXISTING_GRAFANA_INSTALLED:-"false"}
@@ -2056,7 +2084,7 @@ update_project() {
         echo "  URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${ADGUARD_WEB_PATH}/"
         echo "  DoH URL: ${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${ADGUARD_DOH_PATH}/"
         echo "  Login: ${ADGUARD_ADMIN_USER}"
-        echo "  Password: ${ADGUARD_ADMIN_PASS}"
+         echo "  Password: stored in the protected service configuration (not printed)"
     fi
     echo "Ops:"
     echo "  sudo bash $SCRIPT_DIR/scripts/ops/smoke-test.sh"
@@ -2183,7 +2211,7 @@ SECURITY_MTLS_ENABLED="false"
 SECURITY_MTLS_CA_PATH=""
 MFA_TOTP_ENABLED="false"
 MFA_TOTP_USERS=""
-MFA_TOTP_WS_STRICT="false"
+MFA_TOTP_WS_STRICT="true"
 USE_PROXY="y"
 ADGUARD_METRICS_ENABLED="false"
 ADGUARD_METRICS_TARGETS=""
@@ -2208,11 +2236,7 @@ INSTALL_MODE_INPUT=${INSTALL_MODE_INPUT:-b}
 if [[ "$INSTALL_MODE_INPUT" =~ ^[aAфФ]$ ]]; then
     read -p "Разрешенные CORS origins (comma-separated, default: $ALLOW_ORIGINS): " ALLOW_ORIGINS_INPUT
     ALLOW_ORIGINS=${ALLOW_ORIGINS_INPUT:-$ALLOW_ORIGINS}
-    read -p "Включить TLS verify к node panel узлам? (y/n, default: y): " VERIFY_TLS_INPUT
-    VERIFY_TLS_INPUT=${VERIFY_TLS_INPUT:-y}
-    if [[ "$VERIFY_TLS_INPUT" =~ ^[nNнН]$ ]]; then
-        VERIFY_TLS="false"
-    fi
+        VERIFY_TLS="true"
     read -p "Путь к CA bundle (опционально, Enter = системный trust store): " CA_BUNDLE_PATH
     CA_BUNDLE_PATH=${CA_BUNDLE_PATH:-}
     read -p "Включить read-only режим API? (y/n, default: n): " READ_ONLY_INPUT

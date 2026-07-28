@@ -11,6 +11,7 @@ export interface MfaStatusResponse {
 
 export interface VerifyAuthResponse {
   user?: string;
+  ws_ticket?: string;
 }
 
 export async function getFeatureFlags(): Promise<FeatureFlagsResponse> {

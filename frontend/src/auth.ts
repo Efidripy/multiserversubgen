@@ -2,6 +2,7 @@ type RuntimeAuth = {
   username: string;
   password: string;
   totpCode: string;
+  wsTicket: string;
 };
 
 const USERNAME_KEY = 'sub_auth_user';
@@ -9,19 +10,20 @@ const LEGACY_KEY = 'sub_auth';
 const SESSION_AUTH_KEY = 'sub_auth_runtime_v1';
 
 function loadRuntimeAuth(): RuntimeAuth {
-  if (typeof window === 'undefined') return { username: '', password: '', totpCode: '' };
+  if (typeof window === 'undefined') return { username: '', password: '', totpCode: '', wsTicket: '' };
   const raw = sessionStorage.getItem(SESSION_AUTH_KEY);
-  if (!raw) return { username: '', password: '', totpCode: '' };
+  if (!raw) return { username: '', password: '', totpCode: '', wsTicket: '' };
   try {
     const parsed = JSON.parse(raw);
     return {
       username: typeof parsed?.username === 'string' ? parsed.username : '',
       password: typeof parsed?.password === 'string' ? parsed.password : '',
       totpCode: typeof parsed?.totpCode === 'string' ? parsed.totpCode : '',
+      wsTicket: typeof parsed?.wsTicket === 'string' ? parsed.wsTicket : '',
     };
   } catch {
     sessionStorage.removeItem(SESSION_AUTH_KEY);
-    return { username: '', password: '', totpCode: '' };
+    return { username: '', password: '', totpCode: '', wsTicket: '' };
   }
 }
 
@@ -36,22 +38,28 @@ function persistRuntimeAuth(auth: RuntimeAuth): void {
 
 let runtimeAuth: RuntimeAuth = loadRuntimeAuth();
 
-export function setAuthCredentials(username: string, password: string, totpCode: string = ''): void {
-  runtimeAuth = { username, password, totpCode };
+export function setAuthCredentials(username: string, password: string, totpCode: string = '', wsTicket = ''): void {
+  runtimeAuth = { username, password, totpCode, wsTicket };
+  persistRuntimeAuth(runtimeAuth);
+}
+
+export function setWsTicket(wsTicket: string): void {
+  runtimeAuth = { ...runtimeAuth, wsTicket };
   persistRuntimeAuth(runtimeAuth);
 }
 
 export function clearAuthCredentials(): void {
-  runtimeAuth = { username: '', password: '', totpCode: '' };
+  runtimeAuth = { username: '', password: '', totpCode: '', wsTicket: '' };
   persistRuntimeAuth(runtimeAuth);
 }
 
-export function getAuth(): { username: string; password: string; user: string; totpCode: string } {
+export function getAuth(): { username: string; password: string; user: string; totpCode: string; wsTicket: string } {
   return {
     username: runtimeAuth.username,
     password: runtimeAuth.password,
     user: runtimeAuth.username,
     totpCode: runtimeAuth.totpCode,
+    wsTicket: runtimeAuth.wsTicket,
   };
 }
 

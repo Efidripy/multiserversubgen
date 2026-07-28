@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import ORJSONResponse
 
 from xui_session import invalidate_auth_method_cache
+from shared.security import validate_outbound_url
 
 
 def _serialize_tags(value) -> str:
@@ -107,6 +108,9 @@ def build_nodes_router(
         parsed = urlparse(str(url))
         if not parsed.hostname:
             raise HTTPException(status_code=400, detail="Invalid URL")
+        valid_url, url_error = validate_outbound_url(str(url))
+        if not valid_url:
+            raise HTTPException(status_code=400, detail=url_error)
 
         scheme = parsed.scheme or "https"
         port = str(parsed.port) if parsed.port else "443"
@@ -144,7 +148,7 @@ def build_nodes_router(
                         base_path,
                         1 if read_only else 0,
                         scheme,
-                        0,
+                        1,
                         tags,
                     ),
                 )
@@ -185,6 +189,9 @@ def build_nodes_router(
         parsed = urlparse(url)
         if not parsed.hostname:
             raise HTTPException(status_code=400, detail="Invalid URL")
+        valid_url, url_error = validate_outbound_url(url)
+        if not valid_url:
+            raise HTTPException(status_code=400, detail=url_error)
 
         scheme = parsed.scheme or "https"
         port = parsed.port or 443
@@ -193,8 +200,7 @@ def build_nodes_router(
         base_url = f"{scheme}://{parsed.hostname}:{port}{prefix}"
 
         session = requests.Session()
-        # Always allow self-signed certificates for connectivity probing.
-        session.verify = False
+        session.verify = requests_verify if requests_verify is not False else True
 
         try:
             if bearer_token:

@@ -3,12 +3,14 @@
 Централизует логику авторизации с поддержкой sub-path установок.
 """
 import logging
+import hashlib
 import os
 import time
 from threading import Lock
 import requests
 from typing import Any, Dict
 from urllib.parse import urlparse
+from shared.security import validate_outbound_url
 
 logger = logging.getLogger("sub_manager")
 
@@ -85,7 +87,11 @@ def build_panel_base_url(node: Dict[str, Any]) -> str:
     base_url = f"{scheme}://{netloc}"
     if base_path:
         base_url = f"{base_url}/{base_path}"
-    return base_url.rstrip("/")
+    base_url = base_url.rstrip("/")
+    valid_url, url_error = validate_outbound_url(base_url)
+    if not valid_url:
+        raise ValueError(url_error)
+    return base_url
 
 
 def join_panel_url(base_url: str, path: str) -> str:
@@ -245,7 +251,9 @@ def invalidate_session_cache(node_key: str | None = None) -> None:
         if node_key is None:
             _SESSION_CACHE.clear()
             return
-        _SESSION_CACHE.pop(node_key, None)
+        for key in list(_SESSION_CACHE):
+            if key == node_key or key.startswith(str(node_key) + ":"):
+                _SESSION_CACHE.pop(key, None)
 
 
 def _is_cached_session_usable(cached: Dict[str, Any] | None, now: float) -> bool:
@@ -263,7 +271,7 @@ def _cache_session(node_key: str, session: requests.Session, base_url: str) -> N
                 _SESSION_CACHE.pop(next(iter(_SESSION_CACHE)))
             except StopIteration:
                 pass
-        _SESSION_CACHE[node_key] = {"session": session, "base_url": base_url, "ts": time.time()}
+    _SESSION_CACHE[node_key] = {"session": session, "base_url": base_url, "ts": time.time()}
 
 
 def get_authenticated_session(
@@ -278,10 +286,12 @@ def get_authenticated_session(
     retries: int | None = None,
     force_reauth: bool = False,
 ) -> Dict[str, Any]:
+    credential_material = (bearer_token or (username + "\x00" + password)).encode("utf-8")
+    cache_key = node_key + ":" + hashlib.sha256(credential_material).hexdigest()
     now = time.time()
     if not force_reauth:
         with _SESSION_CACHE_LOCK:
-            cached = _SESSION_CACHE.get(node_key)
+            cached = _SESSION_CACHE.get(cache_key)
             if _is_cached_session_usable(cached, now):
                 return {
                     "ok": True,
@@ -292,12 +302,12 @@ def get_authenticated_session(
                     "error": "",
                 }
 
-    lock = _node_lock(node_key)
+    lock = _node_lock(cache_key)
     with lock:
         now = time.time()
         if not force_reauth:
             with _SESSION_CACHE_LOCK:
-                cached = _SESSION_CACHE.get(node_key)
+                cached = _SESSION_CACHE.get(cache_key)
                 if _is_cached_session_usable(cached, now):
                     return {
                         "ok": True,
@@ -329,7 +339,7 @@ def get_authenticated_session(
                 "error": detailed.get("error", "Failed to authenticate"),
             }
 
-        _cache_session(node_key, session, base_url)
+        _cache_session(cache_key, session, base_url)
         return {
             "ok": True,
             "session": session,

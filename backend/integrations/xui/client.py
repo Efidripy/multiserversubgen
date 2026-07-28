@@ -51,7 +51,7 @@ class XUIClient:
         self.username = username
         self._password = password
         self.base_path = base_path.strip("/")
-        self.verify_tls = verify_tls
+        self.verify_tls = verify_tls if verify_tls else True
         self._decrypt = decrypt_func
         self._session: Optional[Any] = None  # requests.Session
 

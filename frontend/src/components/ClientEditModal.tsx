@@ -18,7 +18,7 @@ import { useToast } from './Toast';
 import api from '../api';
 import { getAuth } from '../auth';
 import { useTranslation } from 'react-i18next';
-import { generateNodeUuid, generateNodeVlessEncryption } from '../api/serverOps';
+import { generateNodeMldsa65, generateNodeUuid, generateNodeVlessEncryption } from '../api/serverOps';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -115,6 +115,8 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
   const [resetTrafficLoading, setResetTrafficLoading] = useState(false);
   const [uuidLoading, setUuidLoading] = useState(false);
   const [vlessEncLoading, setVlessEncLoading] = useState(false);
+  const [mldsa65Loading, setMldsa65Loading] = useState(false);
+  const [mldsa65Key, setMldsa65Key] = useState('');
 
   const showFlow = showFlowField(client.protocol, client.security, client.network);
   const showVlessEncryption = client.protocol === 'vless';
@@ -168,6 +170,27 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
       toast(e?.message || t('clients.vlessEncryptionGenerationFailed'), 'error');
     } finally {
       setVlessEncLoading(false);
+    }
+  };
+
+  const handleGenerateMldsa65 = async () => {
+    if (!client.node_id) {
+      toast(t('clients.nodeRequiredForGeneration'), 'warning');
+      return;
+    }
+    setMldsa65Loading(true);
+    try {
+      const keyPair = await generateNodeMldsa65(client.node_id);
+      const serialized = JSON.stringify(keyPair, null, 2);
+      setMldsa65Key(serialized);
+      try {
+        await navigator.clipboard.writeText(serialized);
+      } catch {}
+      toast(t('clients.mldsa65Generated', { defaultValue: 'ML-DSA-65 keypair generated' }), 'success');
+    } catch (e: any) {
+      toast(e?.message || t('clients.mldsa65GenerationFailed', { defaultValue: 'ML-DSA-65 generation failed' }), 'error');
+    } finally {
+      setMldsa65Loading(false);
     }
   };
 
@@ -360,6 +383,26 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
               </Row>
             )}
 
+            <Row label="ML-DSA-65" colors={colors}>
+              <div className="d-flex align-items-start gap-2">
+                <textarea
+                  className="form-control form-control-sm"
+                  style={{ ...inputStyle, fontFamily: 'monospace', fontSize: '0.72rem' }}
+                  rows={3}
+                  value={mldsa65Key}
+                  readOnly
+                  placeholder={t('clients.mldsa65Placeholder', { defaultValue: 'privateKey / publicKey' })}
+                />
+                <button
+                  className="btn btn-sm"
+                  style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.secondary, flexShrink: 0, fontSize: '0.82rem' }}
+                  title={t('clients.generateMldsa65', { defaultValue: 'Generate ML-DSA-65' })}
+                  onClick={handleGenerateMldsa65}
+                  disabled={mldsa65Loading || !client.node_id}
+                >{mldsa65Loading ? '...' : '↻'}</button>
+              </div>
+            </Row>
+
             {/* Total Flow (GB) */}
             <Row label={t('clients.totalFlow')} hint={t('clients.totalFlowHint')} colors={colors}>
               <input
@@ -411,17 +454,6 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
                   </div>
                 </div>
               )}
-            </Row>
-
-            {/* Start After First Use — UI only toggle, maps to expiryTime=0 */}
-            <Row label={t('clients.startAfterFirstUse')} hint={t('clients.startAfterFirstUseHint')} colors={colors}>
-              <div className="form-check form-switch mb-0">
-                <input className="form-check-input" type="checkbox" role="switch"
-                  id="ce-start-after" disabled
-                  checked={false}
-                  onChange={() => {}}
-                />
-              </div>
             </Row>
 
             {/* Duration / Expiry */}

@@ -477,7 +477,7 @@ ${UI_CYAN}--- AdGuard Home ---${UI_RESET}
     DoH URL:   ${UI_GREEN}${adguard_doh_url}${UI_RESET}
    DNS Bind:  127.0.0.1:5353
    Login:     ${UI_CYAN}${adguard_user}${UI_RESET}
-   Password:  ${UI_CYAN}${adguard_pass}${UI_RESET}
+   Password:  stored in protected service configuration
 
 EOF
     fi

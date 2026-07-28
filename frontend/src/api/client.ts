@@ -70,9 +70,10 @@ function stableStringify(value: unknown): string {
   return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`).join(',')}}`;
 }
 
-function buildCacheKey(url: string, params: unknown): string {
-  if (params == null) return `GET:${url}`;
-  return `GET:${url}:${stableStringify(params)}`;
+function buildCacheKey(url: string, params: unknown, identity: string): string {
+  const prefix = `GET:${identity || 'anonymous'}:${url}`;
+  if (params == null) return prefix;
+  return `${prefix}:${stableStringify(params)}`;
 }
 
 function deriveResourceTag(url: string): string {
@@ -168,7 +169,7 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
     const url = config.url ?? '';
     const ttl = getTTLForUrl(url);
     if (ttl > 0) {
-      const key = buildCacheKey(url, config.params);
+      const key = buildCacheKey(url, config.params, auth.username);
       const cached = cacheService.get(key);
       if (cached !== undefined) {
         // Short-circuit the HTTP request by returning the cached response via a
@@ -218,7 +219,7 @@ api.interceptors.response.use((response) => {
   if (method === 'get') {
     const ttl = getTTLForUrl(url);
     if (ttl > 0) {
-      const key = buildCacheKey(url, response.config.params);
+      const key = buildCacheKey(url, response.config.params, getAuth().username);
         cacheService.set(key, response, ttl, deriveCacheTags(url));
     }
   } else if (method === 'post' || method === 'put' || method === 'delete') {

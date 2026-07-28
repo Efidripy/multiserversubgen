@@ -34,7 +34,8 @@ def build_request_controls_and_audit_middleware(
 
         response = None
 
-        if path.startswith("/api/v1/") and not is_public_endpoint(path):
+        protected_path = path.startswith("/api/v1/") or path == "/metrics"
+        if protected_path and not is_public_endpoint(path):
             auth_user = check_basic_auth_header(request.headers.get("Authorization"))
             if not auth_user:
                 response = JSONResponse(status_code=401, content={"detail": "Unauthorized"})

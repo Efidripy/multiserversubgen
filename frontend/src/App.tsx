@@ -17,7 +17,7 @@ import { ToastProvider } from './components/Toast';
 import { Sidebar, SidebarNavItem } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
 import { useWebSocket } from './hooks/useWebSocket';
-import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials } from './auth';
+import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials, setWsTicket } from './auth';
 import { getMfaStatus, verifyCurrentAuth, verifyLoginCredentials } from './api/authService';
 import {
   getBackupHeaderSource,
@@ -276,6 +276,7 @@ export const App: React.FC = () => {
           const verified = await verifyCurrentAuth();
           if (verified.user) {
             setUser(auth.username);
+            if (verified.ws_ticket) setWsTicket(verified.ws_ticket);
             setIsAuthenticated(true);
           }
         } catch {
@@ -590,7 +591,7 @@ export const App: React.FC = () => {
     try {
       const verified = await verifyLoginCredentials(user, password, totpCode.trim());
       if (verified.user) {
-        setAuthCredentials(user, password, totpCode.trim());
+        setAuthCredentials(user, password, totpCode.trim(), verified.ws_ticket || '');
         setIsAuthenticated(true);
         rememberUsername(user);
         setPassword('');
@@ -603,6 +604,7 @@ export const App: React.FC = () => {
 
   const handleLogout = () => {
     clearAuthCredentials();
+    window.dispatchEvent(new Event('sub-manager:cache-clear'));
     setUser('');
     setPassword('');
     setIsAuthenticated(false);

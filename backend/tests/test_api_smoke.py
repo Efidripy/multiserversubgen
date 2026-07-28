@@ -1,5 +1,9 @@
 import base64
+import hashlib
+import hmac
+import json
 import os
+import sqlite3
 import sys
 import tempfile
 
@@ -26,6 +30,8 @@ def _build_test_app(*, monitoring_enabled: bool) -> FastAPI:
         check_auth=main.check_auth,
         verify_totp_code=main.verify_totp_code,
         get_user_role=main.get_user_role,
+        issue_ws_ticket=main.auth_service.issue_ws_ticket,
+        verify_ws_ticket=main.auth_service.verify_ws_ticket,
         mfa_totp_enabled=main.MFA_TOTP_ENABLED,
         monitoring_enabled=monitoring_enabled,
         get_node_or_404=main.partial(main.get_node_or_404, main.node_service),
@@ -54,6 +60,7 @@ def _build_test_app(*, monitoring_enabled: bool) -> FastAPI:
         check_subscription_rate_limit=main._check_subscription_rate_limit,
         get_emails=main.get_emails,
         get_links_filtered=main.get_links_filtered,
+        subscription_signing_secret=main.SUBSCRIPTION_SIGNING_SECRET,
         verify_tls_default=main.VERIFY_TLS,
         list_adguard_sources=main.adguard_runtime.list_sources,
         collect_adguard_once=main.collect_adguard_once,
@@ -510,6 +517,12 @@ def test_sub_grouped_cache_hit_avoids_sqlite(monkeypatch, tmp_path):
 
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO subscription_groups (name, identifier, email_patterns, node_filters) VALUES (?, ?, ?, ?)",
+            ("Alpha", "alpha", json.dumps(["alpha@example.com"]), json.dumps([])),
+        )
+        conn.commit()
     app = FastAPI()
     calls = {"links": 0}
 
@@ -529,13 +542,17 @@ def test_sub_grouped_cache_hit_avoids_sqlite(monkeypatch, tmp_path):
             check_subscription_rate_limit=lambda request, key: (True, 0),
             get_emails=lambda nodes: ["alpha@example.com"],
             get_links_filtered=get_links_filtered,
+            subscription_signing_secret="test-subscription-secret",
             invalidate_subscription_cache=lambda: None,
             logger=main.logger,
         )
     )
     client = TestClient(app)
 
-    first = client.get("/api/v1/sub-grouped/alpha?protocol=vless&nodes=node1")
+    payload = base64.urlsafe_b64encode(b"group|alpha|4102444800").decode().rstrip("=")
+    signature = hmac.new(b"test-subscription-secret", base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)), hashlib.sha256).hexdigest()
+    token = f"{payload}.{signature}"
+    first = client.get(f"/api/v1/sub-grouped/{token}?protocol=vless&nodes=node1")
     assert first.status_code == 200
     assert first.headers["x-subscription-cache"] == "miss"
     assert base64.b64decode(first.text).decode() == "vless://alpha@example.com@node1"
@@ -544,7 +561,7 @@ def test_sub_grouped_cache_hit_avoids_sqlite(monkeypatch, tmp_path):
         raise AssertionError("SQLite must not be touched on subscription cache hit")
 
     monkeypatch.setattr(subscriptions_router, "connect", fail_connect)
-    second = client.get("/api/v1/sub-grouped/alpha?protocol=vless&nodes=node1")
+    second = client.get(f"/api/v1/sub-grouped/{token}?protocol=vless&nodes=node1")
 
     assert second.status_code == 200
     assert second.headers["x-subscription-cache"] == "hit"
@@ -558,6 +575,12 @@ def test_sub_grouped_cache_key_includes_filters(tmp_path):
 
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO subscription_groups (name, identifier, email_patterns, node_filters) VALUES (?, ?, ?, ?)",
+            ("Alpha", "alpha", json.dumps(["alpha@example.com"]), json.dumps([])),
+        )
+        conn.commit()
     app = FastAPI()
 
     class NodeServiceStub:
@@ -575,14 +598,18 @@ def test_sub_grouped_cache_key_includes_filters(tmp_path):
             check_subscription_rate_limit=lambda request, key: (True, 0),
             get_emails=lambda nodes: ["alpha@example.com"],
             get_links_filtered=get_links_filtered,
+            subscription_signing_secret="test-subscription-secret",
             invalidate_subscription_cache=lambda: None,
             logger=main.logger,
         )
     )
     client = TestClient(app)
 
-    vless = client.get("/api/v1/sub-grouped/alpha?protocol=vless&nodes=node1")
-    trojan = client.get("/api/v1/sub-grouped/alpha?protocol=trojan&nodes=node1")
+    payload = base64.urlsafe_b64encode(b"group|alpha|4102444800").decode().rstrip("=")
+    signature = hmac.new(b"test-subscription-secret", base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)), hashlib.sha256).hexdigest()
+    token = f"{payload}.{signature}"
+    vless = client.get(f"/api/v1/sub-grouped/{token}?protocol=vless&nodes=node1")
+    trojan = client.get(f"/api/v1/sub-grouped/{token}?protocol=trojan&nodes=node1")
 
     assert vless.status_code == 200
     assert trojan.status_code == 200

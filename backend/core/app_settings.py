@@ -143,9 +143,12 @@ class AppSettings:
     audit_active_sleep_sec: float
     role_viewers: Set[str]
     role_operators: Set[str]
+    role_admins: Set[str]
     mfa_totp_enabled: bool
     mfa_totp_users: Dict[str, str]
     mfa_totp_ws_strict: bool
+    ws_auth_secret: str
+    subscription_signing_secret: str
     adguard_collect_interval_sec: int
     prometheus_url: str
     loki_url: str
@@ -174,7 +177,7 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         root_path=f"/{web_path}" if web_path else "",
         cache_ttl=int(os.getenv("CACHE_TTL", "30")),
         allow_origins=[origin.strip() for origin in allow_origins_raw.split(",") if origin.strip()],
-        verify_tls=_env_bool("VERIFY_TLS", "false"),
+        verify_tls=_env_bool("VERIFY_TLS", "true"),
         ca_bundle_path=os.getenv("CA_BUNDLE_PATH", "").strip(),
         read_only_mode=_env_bool("READ_ONLY_MODE", "false"),
         sub_rate_limit_count=int(os.getenv("SUB_RATE_LIMIT_COUNT", "30")),
@@ -205,9 +208,16 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         audit_active_sleep_sec=float(os.getenv("AUDIT_ACTIVE_SLEEP_SEC", "0.2")),
         role_viewers=_env_csv_set("ROLE_VIEWERS"),
         role_operators=_env_csv_set("ROLE_OPERATORS"),
+        role_admins=_env_csv_set("ROLE_ADMINS") or {"admin"},
         mfa_totp_enabled=_env_bool("MFA_TOTP_ENABLED", "false"),
         mfa_totp_users=parse_mfa_users(os.getenv("MFA_TOTP_USERS", "").strip()),
-        mfa_totp_ws_strict=_env_bool("MFA_TOTP_WS_STRICT", "false"),
+        mfa_totp_ws_strict=_env_bool("MFA_TOTP_WS_STRICT", "true"),
+        ws_auth_secret=os.getenv("WS_AUTH_SECRET", "").strip() or os.urandom(32).hex(),
+        subscription_signing_secret=(
+            os.getenv("SUBSCRIPTION_SIGNING_SECRET", "").strip()
+            or os.getenv("WS_AUTH_SECRET", "").strip()
+            or os.urandom(32).hex()
+        ),
         adguard_collect_interval_sec=int(os.getenv("ADGUARD_COLLECT_INTERVAL_SEC", "60")),
         prometheus_url=os.getenv("PROMETHEUS_URL", "http://127.0.0.1:9090").strip(),
         loki_url=os.getenv("LOKI_URL", "http://127.0.0.1:3100").strip(),

@@ -25,6 +25,7 @@ import { getDashboardServerDeck, type DashboardServerStatus } from '../api/dashb
 import { refreshNodesNow } from '../api/nodes';
 import { getNodeLogs, restartXray, stopXray, updateGeofile, type NodeLogKind } from '../api/serverOps';
 import { useTrafficStatsSubscription, type TrafficUpdate } from '../services/useTrafficStatsSubscription';
+import { NodeOperationsModal, type NodeOpsTab } from './NodeOperationsModal';
 import { useToast } from './Toast';
 
 interface ServerStatusProps {
@@ -234,6 +235,7 @@ export function ServerStatus({
   const [refreshInterval, setRefreshInterval] = useState(30);
   const [cardSort, setCardSort] = useState<SortMode>('name');
   const [pendingActions, setPendingActions] = useState<Record<string, boolean>>({});
+  const [nodeOpsModal, setNodeOpsModal] = useState<{ nodeId: number; nodeName: string; tab: NodeOpsTab } | null>(null);
   void includeCounts;
   void includeCollectorStatus;
 
@@ -340,6 +342,43 @@ export function ServerStatus({
       setActionPending(key, false);
     }
   }, [getNodeActionError, requireNodeId, setActionPending, t, toast]);
+
+  const handleOpenNodeOps = useCallback((server: UiServer, tab: NodeOpsTab) => {
+    const nodeId = requireNodeId(server);
+    if (nodeId === null) return;
+    setNodeOpsModal({ nodeId, nodeName: server.name, tab });
+  }, [requireNodeId]);
+
+  const handleRetryConnection = useCallback(async (server: UiServer) => {
+    const key = nodeActionKey(server, 'restart');
+    setActionPending(key, true);
+    try {
+      await refreshDeck();
+      toast(t('serverStatus.refreshThisNode'), 'success');
+    } catch (error: any) {
+      toast(`${t('serverStatus.forceRefreshFailed')}: ${getNodeActionError(error)}`, 'error');
+    } finally {
+      setActionPending(key, false);
+    }
+  }, [getNodeActionError, refreshDeck, setActionPending, t, toast]);
+
+  const handleCopyNodeSummary = useCallback(async (server: UiServer) => {
+    const summary = [
+      `${server.name}: ${server.status}`,
+      `CPU ${server.cpu}%`,
+      `RAM ${server.ramPercent}% (${server.ramDetail})`,
+      `Disk ${server.diskPercent}% (${server.diskDetail})`,
+      `Network ${server.network}`,
+      `Core ${server.core}`,
+      `Seen ${server.lastSeen}`,
+    ].join('; ');
+    try {
+      await navigator.clipboard.writeText(summary);
+      toast(t('serverStatus.fleetSummaryCopied'), 'success');
+    } catch {
+      toast(t('serverStatus.clipboardUnavailable'), 'error');
+    }
+  }, [t, toast]);
 
   const copyFleetSummary = useCallback(async () => {
     const summary = servers.map((server) => (
@@ -485,6 +524,7 @@ export function ServerStatus({
   const avgCpu = online > 0 ? servers.reduce((sum, server) => sum + server.cpu, 0) / servers.length : 0;
 
   return (
+    <>
     <section className={dashboardMode ? 'pb-6' : 'px-6 pb-6'}>
       <div className="overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] shadow-[inset_0_1px_0_rgba(103,232,249,0.05)] backdrop-blur-sm">
         <div className="border-b border-cyan-500/20 bg-cyan-500/5 p-3">
@@ -602,6 +642,9 @@ export function ServerStatus({
                 onStopXray={handleStopXray}
                 onUpdateGeofile={handleUpdateGeofile}
                 onShowLogs={handleShowLogs}
+                onOpenNodeOps={handleOpenNodeOps}
+                onRetryConnection={handleRetryConnection}
+                onCopyNodeSummary={handleCopyNodeSummary}
                 isActionPending={(action) => Boolean(pendingActions[nodeActionKey(server, action)])}
               />
             ))
@@ -635,6 +678,16 @@ export function ServerStatus({
         </div>
       </div>
     </section>
+    {nodeOpsModal && (
+      <NodeOperationsModal
+        nodeId={nodeOpsModal.nodeId}
+        nodeName={nodeOpsModal.nodeName}
+        initialTab={nodeOpsModal.tab}
+        onClose={() => setNodeOpsModal(null)}
+        onNodeChanged={() => void loadServersStatus()}
+      />
+    )}
+    </>
   );
 }
 
@@ -644,6 +697,9 @@ function ServerCard({
   onStopXray,
   onUpdateGeofile,
   onShowLogs,
+  onOpenNodeOps,
+  onRetryConnection,
+  onCopyNodeSummary,
   isActionPending,
 }: {
   server: UiServer;
@@ -651,6 +707,9 @@ function ServerCard({
   onStopXray: (server: UiServer) => void;
   onUpdateGeofile: (server: UiServer) => void;
   onShowLogs: (server: UiServer, kind: NodeLogKind) => void;
+  onOpenNodeOps: (server: UiServer, tab: NodeOpsTab) => void;
+  onRetryConnection: (server: UiServer) => void;
+  onCopyNodeSummary: (server: UiServer) => void;
   isActionPending: (action: NodeAction) => boolean;
 }) {
   const { t } = useTranslation();
@@ -707,7 +766,12 @@ function ServerCard({
           <div className="text-center py-1.5">
             <div className="mb-1 font-mono text-sm font-light text-red-400">{server.issue || 'Connection Lost'}</div>
             <div className="font-mono text-xs font-light text-gray-500">Last seen: {server.lastSeen}</div>
-            <button className="mt-1.5 rounded border border-cyan-500/20 bg-[#0f1420] px-3 py-1 font-mono text-xs font-light text-gray-300 transition-colors duration-200 hover:text-cyan-200" type="button">
+            <button
+              className="mt-1.5 rounded border border-cyan-500/20 bg-[#0f1420] px-3 py-1 font-mono text-xs font-light text-gray-300 transition-colors duration-200 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
+              type="button"
+              onClick={() => onRetryConnection(server)}
+              disabled={restartPending}
+            >
               {t('serverStatus.retryConnection')}
             </button>
           </div>
@@ -753,11 +817,11 @@ function ServerCard({
               </div>
             </div>
             <div className="flex flex-wrap gap-1">
-              <IconAction icon={<Play className="w-3 h-3" />} title="Play" />
-              <IconAction icon={<Pause className="w-3 h-3" />} title="Pause" />
-              <IconAction icon={<Clipboard className="w-3 h-3" />} title={t('serverStatus.copySummary')} />
-              <IconAction icon={<KeyRound className="w-3 h-3" />} title={t('serverStatus.keyGenerator')} />
-              <IconAction icon={<LineChart className="w-3 h-3" />} title="Metrics" />
+              <IconAction icon={restartPending ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />} title="Play" onClick={() => onRestartXray(server)} disabled={restartPending} />
+              <IconAction icon={<Pause className="w-3 h-3" />} title="Pause" onClick={() => onStopXray(server)} disabled={stopPending} />
+              <IconAction icon={<Clipboard className="w-3 h-3" />} title={t('serverStatus.copySummary')} onClick={() => onCopyNodeSummary(server)} />
+              <IconAction icon={<KeyRound className="w-3 h-3" />} title={t('serverStatus.keyGenerator')} onClick={() => onOpenNodeOps(server, 'keys')} />
+              <IconAction icon={<LineChart className="w-3 h-3" />} title="Metrics" onClick={() => onOpenNodeOps(server, 'traffic')} />
               <IconAction
                 icon={geofilePending ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Shield className="w-3 h-3" />}
                 title={t('serverStatus.updateGeofiles')}
@@ -770,7 +834,7 @@ function ServerCard({
                 onClick={() => onShowLogs(server, 'panel')}
                 disabled={serverLogsPending}
               />
-              <IconAction icon={<Settings className="w-3 h-3" />} title="Config" />
+              <IconAction icon={<Settings className="w-3 h-3" />} title="Config" onClick={() => onOpenNodeOps(server, 'config')} />
             </div>
           </>
         )}

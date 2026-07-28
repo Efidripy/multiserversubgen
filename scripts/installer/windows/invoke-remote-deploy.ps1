@@ -134,7 +134,9 @@ function Invoke-RemoteCommand {
         return
     }
 
-    $args = @("-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-p", "$Port")
+    $knownHosts = Join-Path $env:USERPROFILE ".ssh\known_hosts"
+    if (-not (Test-Path -LiteralPath $knownHosts)) { throw "Pinned OpenSSH known_hosts file is required: $knownHosts" }
+    $args = @("-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=$knownHosts", "-p", "$Port")
     if ($Transport.HostKey) { $args += @("-o", "HostKeyAlgorithms=ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512,rsa-sha2-256") }
     if ($Transport.KeyPath) { $args += @("-i", $Transport.KeyPath) }
     $args += "$UserName@$HostName"
@@ -164,7 +166,9 @@ function Copy-ToRemote {
         return
     }
 
-    $args = @("-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=accept-new", "-P", "$Port")
+    $knownHosts = Join-Path $env:USERPROFILE ".ssh\known_hosts"
+    if (-not (Test-Path -LiteralPath $knownHosts)) { throw "Pinned OpenSSH known_hosts file is required: $knownHosts" }
+    $args = @("-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=$knownHosts", "-P", "$Port")
     if ($Transport.KeyPath) { $args += @("-i", $Transport.KeyPath) }
     $args += $LocalPath
     $args += "${UserName}@${HostName}:$RemotePath"

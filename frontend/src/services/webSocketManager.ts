@@ -43,22 +43,28 @@ class WebSocketManager {
 
       this.isConnecting = true;
       try {
-        this.ws = new WebSocket(this.url);
+        const auth = getAuth();
+        if (!auth.wsTicket) {
+          this.isConnecting = false;
+          reject(new Error('WebSocket ticket is missing; waiting for authenticated session.'));
+          return;
+        }
+
+        const isSecurePage = window.location.protocol === 'https:';
+        const isLocalDevelopment = ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+        const allowInsecureWs = import.meta.env.VITE_ALLOW_INSECURE_WS === 'true';
+        if (!isSecurePage && !isLocalDevelopment && !allowInsecureWs) {
+          this.isConnecting = false;
+          reject(new Error('Refusing insecure WebSocket outside local development. Configure HTTPS/WSS.'));
+          return;
+        }
+
+        this.ws = new WebSocket(this.url, [`mssg-ticket.${auth.wsTicket}`]);
 
         this.ws.onopen = () => {
           devLog('[WebSocket] Connected');
           this.isConnecting = false;
           this.reconnectDelay = 1000;
-
-          const auth = getAuth();
-          if (auth.username && auth.password) {
-            this.ws?.send(JSON.stringify({
-              type: 'auth',
-              username: auth.username,
-              password: auth.password,
-              totp: auth.totpCode,
-            }));
-          }
 
           // Flush queued messages
           while (this.messageQueue.length > 0) {

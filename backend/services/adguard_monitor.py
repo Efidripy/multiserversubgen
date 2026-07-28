@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
+from shared.security import validate_outbound_url
 
 import requests
 
@@ -65,9 +66,12 @@ class AdGuardMonitor:
         return prefixes
 
     def _verify_value(self, source: AdGuardSource):
-        return bool(source.verify_tls)
+        return True
 
     def _login(self, source: AdGuardSource) -> Tuple[Optional[requests.Session], Optional[str], Optional[str]]:
+        valid_url, url_error = validate_outbound_url(source.admin_url)
+        if not valid_url:
+            return None, None, url_error
         prefixes = self._candidate_prefixes(source.admin_url)
         if not prefixes:
             return None, None, "Empty admin URL"

@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import hmac
 import logging
+import secrets
 import time
 from threading import Lock
 from typing import Dict, Optional, Set, Tuple
@@ -60,11 +62,15 @@ class AuthService:
         *,
         role_viewers: Optional[Set[str]] = None,
         role_operators: Optional[Set[str]] = None,
+        role_admins: Optional[Set[str]] = None,
+        ws_auth_secret: str = "",
         mfa_totp_enabled: bool = False,
         mfa_totp_users: Optional[Dict[str, str]] = None,
     ) -> None:
         self.role_viewers: Set[str] = role_viewers or set()
         self.role_operators: Set[str] = role_operators or set()
+        self.role_admins: Set[str] = role_admins or set()
+        self.ws_auth_secret = ws_auth_secret or secrets.token_urlsafe(32)
         self.mfa_totp_enabled = mfa_totp_enabled
         self.mfa_totp_users: Dict[str, str] = mfa_totp_users or {}
 
@@ -75,13 +81,14 @@ class AuthService:
     def get_user_role(self, username: str) -> str:
         """Return the role string for *username*.
 
-        Priority: ``admin`` (default) > ``operator`` > ``viewer``.
+        Priority: explicit admin > operator > viewer. Unknown PAM users never
+        receive administrator privileges.
         """
-        if username in self.role_viewers:
-            return "viewer"
+        if username in self.role_admins:
+            return "admin"
         if username in self.role_operators:
             return "operator"
-        return "admin"
+        return "viewer"
 
     @staticmethod
     def has_min_role(user_role: str, min_role: str) -> bool:
@@ -159,7 +166,8 @@ class AuthService:
             return True
         secret = self.mfa_totp_users.get(username)
         if not secret:
-            return True
+            return False
+
         if not code:
             return False
         try:
@@ -168,6 +176,32 @@ class AuthService:
         except Exception as exc:
             logger.warning("AuthService.verify_totp error: %s", exc)
             return False
+
+    def issue_ws_ticket(self, username: str, ttl_sec: int = 60) -> str:
+        expires = int(time.time()) + max(15, min(ttl_sec, 300))
+        nonce = secrets.token_urlsafe(12)
+        payload = f"{username}|{expires}|{nonce}".encode("utf-8")
+        signature = hmac.new(self.ws_auth_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=") + "." + signature
+
+    def verify_ws_ticket(self, ticket: Optional[str]) -> Optional[str]:
+        if not ticket or "." not in ticket:
+            return None
+        encoded, signature = ticket.rsplit(".", 1)
+        try:
+            padded = encoded + "=" * (-len(encoded) % 4)
+            payload = base64.urlsafe_b64decode(padded.encode("ascii"))
+            expected = hmac.new(self.ws_auth_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(signature, expected):
+                return None
+            username, expires, nonce = payload.decode("utf-8").split("|", 2)
+            expires_at = int(expires)
+            now = int(time.time())
+            if expires_at < now or not username or not nonce:
+                return None
+            return username
+        except (ValueError, TypeError, UnicodeError):
+            return None
 
     # ------------------------------------------------------------------
     # Route-level RBAC policy
@@ -187,10 +221,21 @@ class AuthService:
         if method == "DELETE":
             return "admin"
         if method == "POST":
-            admin_paths = ("/restart-xray", "/reset-traffic", "/reset-all-traffic")
-            if any(path.endswith(p) for p in admin_paths):
+            admin_paths = (
+                "/restart-xray", "/reset-traffic", "/reset-all-traffic",
+                "/backup/", "/api-tokens", "/install-xray/", "/update-panel",
+                "/update-geofile", "/backup-telegram", "/generate-",
+            )
+            if any(p in path for p in admin_paths) or path.endswith("/backup"):
                 return "admin"
             return "operator"
+        if method == "GET" and (
+            any(p in path for p in ("/backup/", "/api-tokens", "/generate-", "/xray-config"))
+            or path.endswith("/backup")
+        ):
+            return "admin"
+        if method == "GET" and path in {"/metrics", "/api/v1/metrics"}:
+            return "admin"
         if method == "PUT":
             return "operator"
         return "viewer"

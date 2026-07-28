@@ -149,9 +149,7 @@ class RequestRuntime:
         """
         direct_ip = request.client.host if request.client else ""
         # Доверяем X-Forwarded-For только от loopback или private-адресов
-        _trusted_prefixes = ("127.", "::1", "10.", "172.16.", "172.17.", "172.18.",
-                             "172.19.", "172.2", "172.3", "192.168.")
-        is_from_proxy = any(direct_ip.startswith(p) for p in _trusted_prefixes)
+        is_from_proxy = direct_ip in {"127.0.0.1", "::1"}
         if is_from_proxy:
             forwarded_for = request.headers.get("X-Forwarded-For", "")
             if forwarded_for:

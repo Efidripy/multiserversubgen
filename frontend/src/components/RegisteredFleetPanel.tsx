@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, Edit3, Pause, Play, RefreshCw, Trash2 } from 'lucide-react';
 import { deleteNode, getRegisteredFleetOverview, NODES_CHANGED_EVENT, type FleetNode } from '../api/nodes';
+import { restartXray, stopXray } from '../api/serverOps';
 import { useToast } from './Toast';
 
 interface FleetSummary {
@@ -86,6 +87,7 @@ export function RegisteredFleetPanel({
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletingNodeId, setDeletingNodeId] = useState<number | null>(null);
+  const [actionNodeKey, setActionNodeKey] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -119,6 +121,39 @@ export function RegisteredFleetPanel({
     } finally {
       setDeletingNodeId(null);
     }
+  };
+
+  const runNodeAction = async (
+    node: UiFleetNode,
+    action: 'restart' | 'stop',
+    command: (nodeId: number) => Promise<unknown>,
+    successKey: string,
+    failureKey: string,
+  ) => {
+    const key = `${node.id}:${action}`;
+    if (actionNodeKey !== null) return;
+    setActionNodeKey(key);
+    setError(null);
+    try {
+      await command(node.id);
+      toast(t(successKey, { node: node.name }), 'success');
+      await load();
+    } catch (err: any) {
+      const message = err?.response?.data?.detail || err?.response?.data?.error || err?.message || t(failureKey, { node: node.name });
+      setError(message);
+      toast(message, 'error');
+    } finally {
+      setActionNodeKey(null);
+    }
+  };
+
+  const handleRestart = (node: UiFleetNode) => {
+    void runNodeAction(node, 'restart', restartXray, 'serverStatus.restartSentNode', 'serverStatus.restartFailedNode');
+  };
+
+  const handleStop = (node: UiFleetNode) => {
+    if (!window.confirm(t('serverStatus.confirmStopXrayNode', { node: node.name }))) return;
+    void runNodeAction(node, 'stop', stopXray, 'serverStatus.xrayStoppedNode', 'serverStatus.stopXrayFailedNode');
   };
 
   useEffect(() => {
@@ -263,6 +298,8 @@ export function RegisteredFleetPanel({
                   </div>
                 ) : nodes.map((node) => {
                   const isDeleting = deletingNodeId === node.id;
+                  const isRestarting = actionNodeKey === `${node.id}:restart`;
+                  const isStopping = actionNodeKey === `${node.id}:stop`;
                   return (
                     <article key={node.id} className={`rounded-lg border border-cyan-500/15 bg-[#0a0e1a] px-2.5 py-1.5 transition-all duration-200 hover:border-cyan-300/30 hover:bg-[#0b101b] ${isDeleting ? 'opacity-50' : ''}`}>
                     <div className="mb-0.5">
@@ -300,11 +337,25 @@ export function RegisteredFleetPanel({
                     </div>
 
                     <div className="flex items-center justify-start gap-1.5 pt-1">
-                      <button className={fleetActionButtonClass} type="button" title="Play">
-                        <Play className="w-3.5 h-3.5 opacity-60" />
+                      <button
+                        className={fleetActionButtonClass}
+                        type="button"
+                        title={t('serverStatus.restartXray')}
+                        aria-label={t('serverStatus.restartXray')}
+                        onClick={() => handleRestart(node)}
+                        disabled={actionNodeKey !== null}
+                      >
+                        {isRestarting ? <RefreshCw className="w-3.5 h-3.5 animate-spin opacity-60" /> : <Play className="w-3.5 h-3.5 opacity-60" />}
                       </button>
-                      <button className={fleetActionButtonClass} type="button" title="Pause">
-                        <Pause className="w-3.5 h-3.5 opacity-60" />
+                      <button
+                        className={fleetActionButtonClass}
+                        type="button"
+                        title={t('serverStatus.stopXray')}
+                        aria-label={t('serverStatus.stopXray')}
+                        onClick={() => handleStop(node)}
+                        disabled={actionNodeKey !== null}
+                      >
+                        {isStopping ? <RefreshCw className="w-3.5 h-3.5 animate-spin opacity-60" /> : <Pause className="w-3.5 h-3.5 opacity-60" />}
                       </button>
                       <button className={fleetActionButtonClass} type="button" title="Refresh" onClick={load}>
                         <RefreshCw className="w-3.5 h-3.5 opacity-60" />

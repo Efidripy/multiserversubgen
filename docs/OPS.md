@@ -13,7 +13,7 @@ journalctl -u sub-manager -f
 
 ```bash
 curl -s -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1:666/health
-curl -k -s -o /dev/null -w 'panel=%{http_code}\n' https://<your-domain>/<web-path>/
+curl -fsSL -o /dev/null -w 'panel=%{http_code}\n' https://<your-domain>/<web-path>/
 ```
 
 ### Nginx
@@ -46,7 +46,7 @@ grep -E 'script|stylesheet' backend/build/index.html
 Проверить доступность assets:
 
 ```bash
-curl -k -s -o /dev/null -w '%{http_code}\n' https://<your-domain>/<web-path>/assets/<file>.js
+curl -fsSL -o /dev/null -w '%{http_code}\n' https://<your-domain>/<web-path>/assets/<file>.js
 ```
 
 ### Совместимость со старым кэшем

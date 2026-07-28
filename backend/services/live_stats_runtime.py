@@ -1,15 +1,31 @@
 from __future__ import annotations
 
+import json
 import time
 from threading import Thread
 from typing import Dict, List, Optional
 
+from services.db_bootstrap import connect
+
 
 class LiveStatsRuntime:
+    _ROLLING_SNAPSHOT_CONFIG = {
+        "hour": {"bucket_seconds": 3600, "ttl_seconds": 3 * 86400, "max_search_buckets": 48},
+        "day": {"bucket_seconds": 86400, "ttl_seconds": 400 * 86400, "max_search_buckets": 400},
+    }
+
+    _PERIOD_SNAPSHOT_KIND = {
+        "day": ("hour", 48),
+        "week": ("day", 14),
+        "month": ("day", 45),
+        "year": ("day", 400),
+    }
+
     def __init__(
         self,
         *,
         client_mgr,
+        db_path: Optional[str],
         traffic_stats_cache: Dict[str, tuple],
         online_clients_cache: Dict,
         cache_refresh_state: Dict,
@@ -24,6 +40,7 @@ class LiveStatsRuntime:
         logger,
     ) -> None:
         self.client_mgr = client_mgr
+        self.db_path = db_path
         self.traffic_stats_cache = traffic_stats_cache
         self.online_clients_cache = online_clients_cache
         self.cache_refresh_state = cache_refresh_state
@@ -37,9 +54,11 @@ class LiveStatsRuntime:
         self.online_clients_stale_ttl = online_clients_stale_ttl
         self.logger = logger
         # In-memory snapshot fallback when Redis is unavailable.
-        # Key: "traffic_snapshot:{group_by}:{period}:{bucket_id}"
+        # Key: "traffic_snapshot:{group_by}:{bucket_kind}:{bucket_id}"
         # Value: {"ts": float, "stats": dict}
         self._memory_snapshots: Dict[str, dict] = {}
+        self._snapshot_cleanup_ts = 0.0
+        self._snapshot_seed_check_ts = 0.0
 
     def invalidate(self) -> None:
         self.traffic_stats_cache.clear()
@@ -106,63 +125,427 @@ class LiveStatsRuntime:
         self._save_period_snapshots(group_by, data.get("stats", {}), now)
         return data
 
+    def _snapshot_key(self, group_by: str, bucket_kind: str, bucket_id: int) -> str:
+        return f"traffic_snapshot:{group_by}:{bucket_kind}:{bucket_id}"
+
+    def _read_snapshot(self, key: str) -> Optional[dict]:
+        snapshot = self.redis_get_json(key)
+        if isinstance(snapshot, dict):
+            return snapshot
+        memory_snapshot = self._memory_snapshots.get(key)
+        return memory_snapshot if isinstance(memory_snapshot, dict) else None
+
+    def _write_snapshot(self, key: str, snapshot_value: dict, ttl_seconds: int) -> None:
+        existing = self._read_snapshot(key)
+        if existing is not None:
+            return
+        self.redis_set_json(key, snapshot_value, ttl_seconds)
+        self._memory_snapshots[key] = snapshot_value
+
+    def _persist_snapshot_to_db(
+        self,
+        group_by: str,
+        bucket_kind: str,
+        bucket_start: int,
+        snapshot_value: dict,
+    ) -> None:
+        if not self.db_path:
+            return
+
+        try:
+            snapshot_ts = int(float(snapshot_value.get("ts") or 0))
+            stats_json = json.dumps(snapshot_value.get("stats", {}), separators=(",", ":"))
+            with connect(self.db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO traffic_stats_snapshots (
+                        group_by, bucket_kind, bucket_start, snapshot_ts, stats_json
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (group_by, bucket_kind, bucket_start, snapshot_ts, stats_json),
+                )
+
+                if snapshot_ts - self._snapshot_cleanup_ts >= 3600:
+                    self._snapshot_cleanup_ts = float(snapshot_ts)
+                    conn.execute(
+                        """
+                        DELETE FROM traffic_stats_snapshots
+                        WHERE (bucket_kind = 'hour' AND snapshot_ts < ?)
+                           OR (bucket_kind = 'day' AND snapshot_ts < ?)
+                        """,
+                        (
+                            snapshot_ts - self._ROLLING_SNAPSHOT_CONFIG["hour"]["ttl_seconds"],
+                            snapshot_ts - self._ROLLING_SNAPSHOT_CONFIG["day"]["ttl_seconds"],
+                        ),
+                    )
+                conn.commit()
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to persist traffic snapshot (%s/%s): %s",
+                group_by,
+                bucket_kind,
+                exc,
+            )
+
+    def _load_snapshot_from_db(
+        self,
+        group_by: str,
+        bucket_kind: str,
+        target_ts: float,
+    ) -> Optional[dict]:
+        if not self.db_path:
+            return None
+
+        try:
+            with connect(self.db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT snapshot_ts, stats_json
+                    FROM traffic_stats_snapshots
+                    WHERE group_by = ?
+                      AND bucket_kind = ?
+                      AND snapshot_ts <= ?
+                    ORDER BY snapshot_ts DESC
+                    LIMIT 1
+                    """,
+                    (group_by, bucket_kind, int(target_ts)),
+                ).fetchone()
+            if not row:
+                return None
+
+            stats = json.loads(row[1]) if row[1] else {}
+            if not isinstance(stats, dict) or not stats:
+                return None
+            return {"ts": float(row[0]), "stats": stats}
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to load traffic snapshot from DB (%s/%s): %s",
+                group_by,
+                bucket_kind,
+                exc,
+            )
+            return None
+
+    def _load_snapshot_after_from_db(
+        self,
+        group_by: str,
+        bucket_kind: str,
+        target_ts: float,
+        max_bucket_id: int,
+    ) -> Optional[dict]:
+        if not self.db_path:
+            return None
+
+        try:
+            with connect(self.db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT snapshot_ts, stats_json
+                    FROM traffic_stats_snapshots
+                    WHERE group_by = ?
+                      AND bucket_kind = ?
+                      AND snapshot_ts >= ?
+                      AND bucket_start <= ?
+                    ORDER BY snapshot_ts ASC
+                    LIMIT 1
+                    """,
+                    (group_by, bucket_kind, int(target_ts), int(max_bucket_id)),
+                ).fetchone()
+            if not row:
+                return None
+
+            stats = json.loads(row[1]) if row[1] else {}
+            if not isinstance(stats, dict) or not stats:
+                return None
+            return {"ts": float(row[0]), "stats": stats}
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to load traffic snapshot after window start from DB (%s/%s): %s",
+                group_by,
+                bucket_kind,
+                exc,
+            )
+            return None
+
+    def _bucket_exists_in_db(self, group_by: str, bucket_kind: str, bucket_id: int) -> bool:
+        if not self.db_path:
+            return False
+
+        try:
+            with connect(self.db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT 1
+                    FROM traffic_stats_snapshots
+                    WHERE group_by = ?
+                      AND bucket_kind = ?
+                      AND bucket_start = ?
+                    LIMIT 1
+                    """,
+                    (group_by, bucket_kind, int(bucket_id)),
+                ).fetchone()
+            return row is not None
+        except Exception as exc:
+            self.logger.warning(
+                "Failed to check traffic snapshot bucket existence (%s/%s/%s): %s",
+                group_by,
+                bucket_kind,
+                bucket_id,
+                exc,
+            )
+            return False
+
+    def _has_bucket_snapshot(self, group_by: str, bucket_kind: str, bucket_id: int) -> bool:
+        if isinstance(self._read_snapshot(self._snapshot_key(group_by, bucket_kind, bucket_id)), dict):
+            return True
+        return self._bucket_exists_in_db(group_by, bucket_kind, bucket_id)
+
     def _save_period_snapshots(self, group_by: str, stats_data: Dict, now_ts: float) -> None:
-        """Persist earliest snapshot per period bucket (do not overwrite)."""
+        """Persist rolling snapshots used for period deltas."""
         if not isinstance(stats_data, dict):
             return
 
-        period_configs = [
-            ("day", 86400),
-            ("week", 604800),
-            ("month", 2592000),
-            ("year", 31536000),
-        ]
+        snapshot_value = {"ts": now_ts, "stats": stats_data}
+        for bucket_kind, config in self._ROLLING_SNAPSHOT_CONFIG.items():
+            bucket_seconds = int(config["bucket_seconds"])
+            bucket_id = int(now_ts / bucket_seconds)
+            redis_key = self._snapshot_key(group_by, bucket_kind, bucket_id)
+            self._write_snapshot(redis_key, snapshot_value, int(config["ttl_seconds"]))
+            self._persist_snapshot_to_db(group_by, bucket_kind, bucket_id, snapshot_value)
 
-        for period_name, seconds in period_configs:
-            bucket_id = int(now_ts / seconds)
-            redis_key = f"traffic_snapshot:{group_by}:{period_name}:{bucket_id}"
-            existing = self.redis_get_json(redis_key)
-            if existing is not None:
+    def ensure_current_period_snapshots(
+        self,
+        nodes: List[Dict],
+        group_bys: Optional[List[str]] = None,
+        now_ts: Optional[float] = None,
+    ) -> Dict[str, bool]:
+        """Ensure current hour/day buckets are seeded even when Traffic Stats UI is unopened."""
+        now = float(now_ts or time.time())
+        if now - self._snapshot_seed_check_ts < 5.0:
+            return {}
+        self._snapshot_seed_check_ts = now
+
+        targets = group_bys or ["client", "inbound", "node"]
+        seeded: Dict[str, bool] = {}
+        for group_by in targets:
+            missing_bucket = False
+            for bucket_kind, config in self._ROLLING_SNAPSHOT_CONFIG.items():
+                bucket_id = int(now / int(config["bucket_seconds"]))
+                if not self._has_bucket_snapshot(group_by, bucket_kind, bucket_id):
+                    missing_bucket = True
+                    break
+            if not missing_bucket:
                 continue
-            # Check in-memory fallback before writing
-            if redis_key in self._memory_snapshots:
-                continue
-            snapshot_value = {"ts": now_ts, "stats": stats_data}
-            ttl_seconds = seconds * 2
-            self.redis_set_json(redis_key, snapshot_value, ttl_seconds)
-            # Always keep in-memory copy as fallback when Redis is absent
-            self._memory_snapshots[redis_key] = snapshot_value
 
-    def _load_period_snapshot(self, group_by: str, period: str, seconds_back: int, now_ts: float):
-        """Load the best available snapshot around the requested period start."""
-        target_ts = now_ts - seconds_back
-        target_bucket = int(target_ts / seconds_back)
-        current_bucket = int(now_ts / seconds_back)
+            self.get_cached_traffic_stats(nodes, group_by)
+            seeded[group_by] = True
 
-        candidate_buckets = []
-        for bucket in [
-            target_bucket,
-            target_bucket + 1,
-            target_bucket - 1,
-            current_bucket,
-            current_bucket - 1,
-        ]:
-            if bucket not in candidate_buckets:
-                candidate_buckets.append(bucket)
+        return seeded
 
-        for bucket in candidate_buckets:
-            redis_key_snapshot = f"traffic_snapshot:{group_by}:{period}:{bucket}"
-            snapshot = self.redis_get_json(redis_key_snapshot)
+    def backfill_node_history_snapshots(self, now_ts: Optional[float] = None) -> Dict[str, int]:
+        """Backfill node-group period snapshots from persisted node_history rows."""
+        if not self.db_path:
+            return {"hour": 0, "day": 0}
+
+        now = float(now_ts or time.time())
+        summary = {"hour": 0, "day": 0}
+
+        try:
+            with connect(self.db_path) as conn:
+                for bucket_kind in ("hour", "day"):
+                    config = self._ROLLING_SNAPSHOT_CONFIG[bucket_kind]
+                    bucket_seconds = int(config["bucket_seconds"])
+                    cutoff_ts = max(0, int(now - int(config["ttl_seconds"])))
+
+                    existing_bucket_ids = {
+                        int(row[0])
+                        for row in conn.execute(
+                            """
+                            SELECT bucket_start
+                            FROM traffic_stats_snapshots
+                            WHERE group_by = 'node'
+                              AND bucket_kind = ?
+                            """,
+                            (bucket_kind,),
+                        ).fetchall()
+                    }
+
+                    first_rows_by_bucket_node = set()
+                    bucket_payloads: Dict[int, Dict] = {}
+                    for ts, node_id, node_name, traffic_total in conn.execute(
+                        """
+                        SELECT ts, node_id, node_name, traffic_total
+                        FROM node_history
+                        WHERE ts >= ?
+                        ORDER BY ts ASC, node_id ASC
+                        """,
+                        (cutoff_ts,),
+                    ):
+                        bucket_id = int(int(ts) / bucket_seconds)
+                        if bucket_id in existing_bucket_ids:
+                            continue
+
+                        pair = (bucket_id, int(node_id))
+                        if pair in first_rows_by_bucket_node:
+                            continue
+                        first_rows_by_bucket_node.add(pair)
+
+                        payload = bucket_payloads.setdefault(
+                            bucket_id,
+                            {"snapshot_ts": 0, "stats": {}},
+                        )
+                        payload["snapshot_ts"] = max(int(payload["snapshot_ts"]), int(ts))
+
+                        node_key = str(node_name or f"node-{node_id}")
+                        total = int(float(traffic_total or 0))
+                        payload["stats"][node_key] = {
+                            "up": 0,
+                            "down": total,
+                            "total": total,
+                            "count": 1,
+                        }
+
+                    inserted = 0
+                    for bucket_id, payload in sorted(bucket_payloads.items()):
+                        if not payload["stats"]:
+                            continue
+                        result = conn.execute(
+                            """
+                            INSERT OR IGNORE INTO traffic_stats_snapshots (
+                                group_by, bucket_kind, bucket_start, snapshot_ts, stats_json
+                            ) VALUES (?, ?, ?, ?, ?)
+                            """,
+                            (
+                                "node",
+                                bucket_kind,
+                                int(bucket_id),
+                                int(payload["snapshot_ts"]),
+                                json.dumps(payload["stats"], separators=(",", ":")),
+                            ),
+                        )
+                        if result.rowcount:
+                            inserted += 1
+
+                    summary[bucket_kind] = inserted
+
+                conn.commit()
+        except Exception as exc:
+            self.logger.warning("Failed to backfill node traffic snapshots: %s", exc)
+            return summary
+
+        if summary["hour"] or summary["day"]:
+            self.logger.info(
+                "Backfilled node traffic snapshots from node_history: hour=%s day=%s",
+                summary["hour"],
+                summary["day"],
+            )
+        return summary
+
+    def _find_snapshot_before(
+        self,
+        group_by: str,
+        bucket_kind: str,
+        target_ts: float,
+        max_search_buckets: int,
+    ):
+        config = self._ROLLING_SNAPSHOT_CONFIG.get(bucket_kind)
+        if not config:
+            return None, None
+
+        bucket_seconds = int(config["bucket_seconds"])
+        start_bucket = int(target_ts / bucket_seconds)
+
+        for offset in range(max(0, max_search_buckets) + 1):
+            bucket_id = start_bucket - offset
+            snapshot = self._read_snapshot(self._snapshot_key(group_by, bucket_kind, bucket_id))
             if not isinstance(snapshot, dict):
-                # Fallback to in-memory when Redis is unavailable
-                snapshot = self._memory_snapshots.get(redis_key_snapshot)
-            if not isinstance(snapshot, dict):
                 continue
+
+            snapshot_ts = float(snapshot.get("ts") or 0)
+            if snapshot_ts <= 0 or snapshot_ts > target_ts:
+                continue
+
+            snapshot_stats = snapshot.get("stats", {})
+            if isinstance(snapshot_stats, dict) and snapshot_stats:
+                return snapshot, snapshot_stats
+
+        snapshot = self._load_snapshot_from_db(group_by, bucket_kind, target_ts)
+        if isinstance(snapshot, dict):
             snapshot_stats = snapshot.get("stats", {})
             if isinstance(snapshot_stats, dict) and snapshot_stats:
                 return snapshot, snapshot_stats
 
         return None, None
+
+    def _find_snapshot_after(
+        self,
+        group_by: str,
+        bucket_kind: str,
+        target_ts: float,
+        now_ts: float,
+        max_search_buckets: int,
+    ):
+        config = self._ROLLING_SNAPSHOT_CONFIG.get(bucket_kind)
+        if not config:
+            return None, None
+
+        bucket_seconds = int(config["bucket_seconds"])
+        start_bucket = int(target_ts / bucket_seconds)
+        end_bucket = int(now_ts / bucket_seconds) - 1
+        if end_bucket < start_bucket:
+            return None, None
+
+        for offset in range(max(0, max_search_buckets) + 1):
+            bucket_id = start_bucket + offset
+            if bucket_id > end_bucket:
+                break
+
+            snapshot = self._read_snapshot(self._snapshot_key(group_by, bucket_kind, bucket_id))
+            if not isinstance(snapshot, dict):
+                continue
+
+            snapshot_ts = float(snapshot.get("ts") or 0)
+            if snapshot_ts < target_ts or snapshot_ts > now_ts:
+                continue
+
+            snapshot_stats = snapshot.get("stats", {})
+            if isinstance(snapshot_stats, dict) and snapshot_stats:
+                return snapshot, snapshot_stats
+
+        snapshot = self._load_snapshot_after_from_db(group_by, bucket_kind, target_ts, end_bucket)
+        if isinstance(snapshot, dict):
+            snapshot_ts = float(snapshot.get("ts") or 0)
+            if snapshot_ts <= now_ts:
+                snapshot_stats = snapshot.get("stats", {})
+                if isinstance(snapshot_stats, dict) and snapshot_stats:
+                    return snapshot, snapshot_stats
+
+        return None, None
+
+    def _load_period_snapshot(self, group_by: str, period: str, seconds_back: int, now_ts: float):
+        """Load the best available snapshot around the requested period start."""
+        target_ts = now_ts - seconds_back
+        bucket_kind, max_search_buckets = self._PERIOD_SNAPSHOT_KIND.get(period, ("day", 14))
+        snapshot, snapshot_stats = self._find_snapshot_before(
+            group_by,
+            bucket_kind,
+            target_ts,
+            max_search_buckets,
+        )
+        if snapshot_stats:
+            return snapshot, snapshot_stats, False
+
+        snapshot, snapshot_stats = self._find_snapshot_after(
+            group_by,
+            bucket_kind,
+            target_ts,
+            now_ts,
+            max_search_buckets,
+        )
+        if snapshot_stats:
+            return snapshot, snapshot_stats, True
+
+        return None, None, False
 
     def get_cached_online_clients(self, nodes: List[Dict]) -> List[Dict]:
         redis_data = self.redis_get_json("online_clients")
@@ -226,20 +609,24 @@ class LiveStatsRuntime:
         seconds_back = period_seconds[period]
         now = time.time()
         period_start_time = now - seconds_back
-        snapshot, snapshot_stats = self._load_period_snapshot(group_by, period, seconds_back, now)
+        snapshot, snapshot_stats, partial_window = self._load_period_snapshot(group_by, period, seconds_back, now)
         
         if not snapshot_stats or not isinstance(snapshot_stats, dict):
-            # If no snapshot exists for this period, we can't calculate delta
-            # Return current stats as estimate (assumes values only increase)
-            # In production, snapshots should be saved periodically
+            if group_by in {"client", "inbound"}:
+                note = (
+                    "No historical snapshot is available before the requested window yet. "
+                    "Older client/inbound history cannot be reconstructed from the current SQLite schema."
+                )
+            else:
+                note = "No historical snapshot is available before the requested window yet."
             return {
-                "stats": current_data,
+                "stats": {},
                 "group_by": group_by,
                 "period": period,
                 "period_start": period_start_time,
-                "note": "No historical snapshot available; showing current total"
+                "note": note,
             }
-        
+
         # Calculate delta between current and period snapshot
         delta_stats: Dict[str, Dict[str, int]] = {}
         for key, current_val in current_data.items():
@@ -258,6 +645,16 @@ class LiveStatsRuntime:
             "period_start": period_start_time,
             "period_seconds": seconds_back,
             "snapshot_ts": snapshot.get("ts") if isinstance(snapshot, dict) else None,
+            **(
+                {
+                    "note": (
+                        "Historical data covers only part of the requested window. "
+                        "Showing the earliest retained snapshot within that window."
+                    )
+                }
+                if partial_window
+                else {}
+            ),
         }
 
     def save_traffic_snapshot(self, nodes: List[Dict], group_by: str) -> None:
