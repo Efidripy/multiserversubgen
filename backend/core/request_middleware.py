@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import time
 import uuid
+from urllib.parse import urlparse
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from shared.security import safe_request_id
 
 
 def build_request_controls_and_audit_middleware(
@@ -22,9 +24,25 @@ def build_request_controls_and_audit_middleware(
     get_client_ip,
     extract_basic_auth_username,
     enqueue_audit_event,
+    allowed_origins=None,
 ):
+    configured_origins = {str(origin).rstrip("/") for origin in (allowed_origins or []) if origin}
+
+    def _csrf_origin_ok(request: Request) -> bool:
+        if request.method not in {"POST", "PUT", "PATCH", "DELETE"} or not request.url.path.startswith("/api/v1/"):
+            return True
+        origin = request.headers.get("Origin", "").strip().rstrip("/")
+        referer = request.headers.get("Referer", "").strip()
+        candidate = origin or (f"{urlparse(referer).scheme}://{urlparse(referer).netloc}" if referer else "")
+        if not candidate:
+            return False
+        if candidate in configured_origins:
+            return True
+        request_origin = f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
+        return candidate == request_origin
+
     async def request_controls_and_audit_middleware(request: Request, call_next):
-        request_id = request.headers.get("X-Request-ID") or uuid.uuid4().hex
+        request_id = safe_request_id(request.headers.get("X-Request-ID")) or uuid.uuid4().hex
         start = time.perf_counter()
         path = request.url.path
 
@@ -34,7 +52,8 @@ def build_request_controls_and_audit_middleware(
 
         response = None
 
-        if path.startswith("/api/v1/") and not is_public_endpoint(path):
+        protected_path = path.startswith("/api/v1/") or path == "/metrics"
+        if protected_path and not is_public_endpoint(path):
             auth_user = check_basic_auth_header(request.headers.get("Authorization"))
             if not auth_user:
                 response = JSONResponse(status_code=401, content={"detail": "Unauthorized"})
@@ -55,6 +74,8 @@ def build_request_controls_and_audit_middleware(
                         status_code=403,
                         content={"detail": f"Forbidden for role '{auth_role}', requires '{required_role}'"},
                     )
+                if response is None and not _csrf_origin_ok(request):
+                    response = JSONResponse(status_code=403, content={"detail": "CSRF origin check failed"})
 
         if response is None and read_only_mode and request.method in {"POST", "PUT", "DELETE", "PATCH"} and path.startswith("/api/v1/"):
             response = JSONResponse(

@@ -126,3 +126,7 @@ class CacheService {
 }
 
 export const cacheService = new CacheService();
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('sub-manager:cache-clear', () => cacheService.invalidate());
+}

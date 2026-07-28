@@ -28,7 +28,7 @@ curl -u admin:password https://<your-domain>/<web-path>/api/v1/backup/all -o bac
 ```bash
 systemctl is-active sub-manager
 curl -s -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1:666/health
-curl -k -s -o /dev/null -w 'panel=%{http_code}\n' https://<your-domain>/<web-path>/
+curl -fsSL -o /dev/null -w 'panel=%{http_code}\n' https://<your-domain>/<web-path>/
 ```
 
 ## Частый кейс: 404 на assets после обновления

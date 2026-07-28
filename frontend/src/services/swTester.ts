@@ -14,7 +14,7 @@ export interface ServiceWorkerTestResult {
 
 export class ServiceWorkerTester {
   private testResults: ServiceWorkerTestResult[] = [];
-  private readonly healthEndpoint = `${API_BASE}/health`;
+  private readonly healthEndpoint = `${API_BASE}/v1/health`;
 
   /**
    * Запустить все тесты Service Worker

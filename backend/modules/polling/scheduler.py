@@ -39,12 +39,14 @@ class PollingScheduler:
         poll_func: Callable[[Dict], Any],
         fetch_nodes: Callable[[], List[Dict]],
         interval_sec: int = 60,
+        max_parallel: int = 8,
         event_bus=None,
         on_snapshot: Optional[Callable[[Dict], None]] = None,
     ) -> None:
         self._poll_func = poll_func
         self._fetch_nodes = fetch_nodes
         self._interval_sec = max(1, interval_sec)
+        self._max_parallel = max(1, max_parallel)
         self._event_bus = event_bus
         self._on_snapshot = on_snapshot
         self._task: Optional[asyncio.Task] = None
@@ -95,33 +97,38 @@ class PollingScheduler:
                 POLL_CYCLE_STARTED, {"node_count": len(nodes)}
             )
 
-        for node in nodes:
+        semaphore = asyncio.Semaphore(self._max_parallel)
+
+        async def _poll_one(node: Dict) -> None:
             node_id = node.get("id")
             node_name = node.get("name", str(node_id))
             if self._event_bus:
                 await self._event_bus.emit(POLL_STARTED, {"node_id": node_id})
-            try:
-                snapshot = await self._poll_func(node)
-                self._poll_count += 1
-                if self._on_snapshot:
-                    self._on_snapshot(snapshot)
-                if self._event_bus:
-                    await self._event_bus.emit(
-                        POLL_COMPLETED,
-                        {
-                            "node_id": node_id,
-                            "node_name": node_name,
-                            "poll_ms": snapshot.get("poll_ms", 0),
-                        },
-                    )
-            except Exception as exc:
-                self._error_count += 1
-                logger.warning("PollingScheduler: node %s failed: %s", node_id, exc)
-                if self._event_bus:
-                    await self._event_bus.emit(
-                        POLL_FAILED,
-                        {"node_id": node_id, "error": str(exc)},
-                    )
+            async with semaphore:
+                try:
+                    snapshot = await self._poll_func(node)
+                    self._poll_count += 1
+                    if self._on_snapshot:
+                        self._on_snapshot(snapshot)
+                    if self._event_bus:
+                        await self._event_bus.emit(
+                            POLL_COMPLETED,
+                            {
+                                "node_id": node_id,
+                                "node_name": node_name,
+                                "poll_ms": snapshot.get("poll_ms", 0),
+                            },
+                        )
+                except Exception as exc:
+                    self._error_count += 1
+                    logger.warning("PollingScheduler: node %s failed: %s", node_id, exc)
+                    if self._event_bus:
+                        await self._event_bus.emit(
+                            POLL_FAILED,
+                            {"node_id": node_id, "error": str(exc)},
+                        )
+
+        await asyncio.gather(*[_poll_one(n) for n in nodes])
 
         elapsed_ms = (time.perf_counter() - cycle_start) * 1000
         if self._event_bus:

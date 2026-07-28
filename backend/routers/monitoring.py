@@ -1,10 +1,12 @@
 import json
 import sqlite3
+from services.db_bootstrap import connect
 import time
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
+from shared.security import validate_outbound_url
 
 
 def build_monitoring_router(
@@ -64,8 +66,16 @@ def build_monitoring_router(
             admin_url = "https://" + admin_url
         if dns_url and not dns_url.startswith(("http://", "https://")):
             dns_url = "http://" + dns_url
+        valid_url, url_error = validate_outbound_url(admin_url)
+        if not valid_url:
+            raise HTTPException(status_code=400, detail=url_error)
+        if dns_url:
+            valid_url, url_error = validate_outbound_url(dns_url)
+            if not valid_url:
+                raise HTTPException(status_code=400, detail=url_error)
+        verify_tls = True
 
-        with sqlite3.connect(db_path) as conn:
+        with connect(db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO adguard_sources (name, admin_url, dns_url, username, password, verify_tls, enabled)
@@ -90,7 +100,7 @@ def build_monitoring_router(
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
 
-        with sqlite3.connect(db_path) as conn:
+        with connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM adguard_sources WHERE id = ?", (source_id,)).fetchone()
             if not row:
@@ -113,6 +123,14 @@ def build_monitoring_router(
                 admin_url = "https://" + admin_url
             if dns_url and not dns_url.startswith(("http://", "https://")):
                 dns_url = "http://" + dns_url
+            valid_url, url_error = validate_outbound_url(admin_url)
+            if not valid_url:
+                raise HTTPException(status_code=400, detail=url_error)
+            if dns_url:
+                valid_url, url_error = validate_outbound_url(dns_url)
+                if not valid_url:
+                    raise HTTPException(status_code=400, detail=url_error)
+            verify_tls = True
 
             conn.execute(
                 """
@@ -140,7 +158,7 @@ def build_monitoring_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
-        with sqlite3.connect(db_path) as conn:
+        with connect(db_path) as conn:
             conn.execute("DELETE FROM adguard_sources WHERE id = ?", (source_id,))
             conn.execute("DELETE FROM adguard_history WHERE source_id = ?", (source_id,))
             conn.commit()
@@ -172,7 +190,7 @@ def build_monitoring_router(
                 "summary": latest_summary or build_adguard_summary(latest_sources),
             }
 
-        with sqlite3.connect(db_path) as conn:
+        with connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """

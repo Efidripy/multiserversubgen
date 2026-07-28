@@ -12,13 +12,15 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
-from xui_session import XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC, login_panel, xui_request
+from xui_session import XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC, extract_node_auth, login_panel, xui_request
 from utils import parse_field_as_dict
 
 logger = logging.getLogger("sub_manager")
-VERIFY_TLS = os.getenv("VERIFY_TLS", "false").strip().lower() in ("1", "true", "yes", "on")
+VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
 CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
 INBOUND_MAX_WORKERS = max(1, int(os.getenv("INBOUND_MAX_WORKERS", "8")))
+
+_shared_executor = ThreadPoolExecutor(max_workers=INBOUND_MAX_WORKERS, thread_name_prefix="inbound_mgr")
 
 
 def _requests_verify_value():
@@ -63,6 +65,13 @@ class InboundManager:
                         node_id=node["name"],
                         field_name="streamSettings",
                     )
+                    raw_settings = parse_field_as_dict(
+                        ib.get("settings"),
+                        node_id=node["name"],
+                        field_name="settings",
+                    )
+                    # Count clients before stripping them from settings
+                    client_count = len(raw_settings.get("clients", []))
                     inbound = {
                         "id": ib.get("id"),
                         "node_name": node["name"],
@@ -71,12 +80,9 @@ class InboundManager:
                         "port": ib.get("port"),
                         "remark": ib.get("remark", ""),
                         "enable": ib.get("enable", True),
+                        "client_count": client_count,
                         "streamSettings": stream,
-                        "settings": parse_field_as_dict(
-                            ib.get("settings"),
-                            node_id=node["name"],
-                            field_name="settings",
-                        )
+                        "settings": raw_settings,
                     }
                     security = stream.get("security", "")
                     inbound["security"] = security
@@ -87,14 +93,12 @@ class InboundManager:
             return collected
 
         inbounds: List[Dict] = []
-        workers = min(len(nodes), INBOUND_MAX_WORKERS)
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(_collect_node_inbounds, node) for node in nodes]
-            for future in as_completed(futures):
-                try:
-                    inbounds.extend(future.result())
-                except Exception as exc:
-                    logger.warning(f"Failed to aggregate inbounds: {exc}")
+        futures = [_shared_executor.submit(_collect_node_inbounds, node) for node in nodes]
+        for future in as_completed(futures):
+            try:
+                inbounds.extend(future.result())
+            except Exception as exc:
+                logger.warning(f"Failed to aggregate inbounds: {exc}")
 
         return inbounds
     
@@ -108,11 +112,13 @@ class InboundManager:
         base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
         
         try:
+            username, password, bearer_token = extract_node_auth(node, self.decrypt)
             if not login_panel(
                 s,
                 base_url,
-                node['user'],
-                self.decrypt(node.get('password', '')),
+                username,
+                password,
+                bearer_token=bearer_token,
                 timeout=XUI_FAST_TIMEOUT_SEC,
                 retries=XUI_FAST_RETRIES,
             ):
@@ -158,7 +164,8 @@ class InboundManager:
         base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            if not login_panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+            username, password, bearer_token = extract_node_auth(node, self.decrypt)
+            if not login_panel(s, base_url, username, password, bearer_token=bearer_token):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return False
             res = xui_request(
@@ -253,7 +260,8 @@ class InboundManager:
         base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            if not login_panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+            username, password, bearer_token = extract_node_auth(node, self.decrypt)
+            if not login_panel(s, base_url, username, password, bearer_token=bearer_token):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return False
             res = xui_request(
@@ -266,31 +274,6 @@ class InboundManager:
             logger.warning(f"Failed to delete inbound from {node['name']}: {exc}")
             return False
     
-    def reset_inbound_traffic(self, node: Dict, inbound_id: int) -> bool:
-        if self._is_read_only(node):
-            logger.info(f"Skip reset inbound traffic on read-only node {node['name']}")
-            return False
-        """Сбросить статистику инбаунда"""
-        s = requests.Session()
-        s.verify = _requests_verify_value()
-        b_path = node.get("base_path", "").strip("/")
-        prefix = f"/{b_path}" if b_path else ""
-        scheme = node.get("scheme", "https")
-        base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
-        
-        try:
-            if not login_panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
-                logger.warning(f"node panel login failed for node {node['name']}")
-                return False
-            res = xui_request(
-                s,
-                "POST",
-                f"{base_url}/panel/api/inbounds/resetClientTraffic/{inbound_id}",
-            )
-            return self._xui_success(res)
-        except Exception as exc:
-            logger.warning(f"Failed to reset inbound traffic: {exc}")
-            return False
     
     def update_inbound(self, node: Dict, inbound_id: int, updates: Dict) -> bool:
         if self._is_read_only(node):
@@ -314,10 +297,11 @@ class InboundManager:
         base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
         
         try:
-            if not login_panel(s, base_url, node['user'], self.decrypt(node.get('password', ''))):
+            username, password, bearer_token = extract_node_auth(node, self.decrypt)
+            if not login_panel(s, base_url, username, password, bearer_token=bearer_token):
                 logger.warning(f"node panel login failed for node {node['name']}")
                 return False
-            
+
             # Получить текущую конфигурацию инбаунда
             inbounds = self._fetch_inbounds_from_node(node)
             current = next((ib for ib in inbounds if ib.get('id') == inbound_id), None)
@@ -356,7 +340,8 @@ class InboundManager:
             node_inbounds = self._fetch_inbounds_from_node(node)
             for inbound in node_inbounds:
                 if inbound.get('id') in inbound_ids:
-                    success = self.update_inbound(node, inbound['id'], {"enable": enable})
+                    # Используем быстрый setEnable вместо полного update
+                    success = self.set_inbound_enable(node, inbound['id'], enable)
                     results.append({
                         "node": node["name"],
                         "inbound_id": inbound['id'],
@@ -364,7 +349,7 @@ class InboundManager:
                         "success": success,
                         "enabled": enable
                     })
-        
+
         return {
             "results": results,
             "total": len(results),
@@ -429,6 +414,110 @@ class InboundManager:
             "total": len(results),
             "successful": sum(1 for r in results if r['success'])
         }
+    # ------------------------------------------------------------------
+    # v3 / new API operations
+    # ------------------------------------------------------------------
+
+    def set_inbound_enable(self, node: Dict, inbound_id: int, enable: bool) -> bool:
+        """Включить/выключить инбаунд.
+
+        v3: POST /panel/api/inbounds/setEnable/{id} — один лёгкий запрос.
+        v2 fallback: полное обновление через update_inbound.
+        """
+        if self._is_read_only(node):
+            return False
+        s = requests.Session()
+        s.verify = _requests_verify_value()
+        b_path = node.get("base_path", "").strip("/")
+        prefix = f"/{b_path}" if b_path else ""
+        scheme = node.get("scheme", "https")
+        base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
+        try:
+            username, password, bearer_token = extract_node_auth(node, self.decrypt)
+            if not login_panel(s, base_url, username, password, bearer_token=bearer_token):
+                return False
+            res = xui_request(s, "POST",
+                              f"{base_url}/panel/api/inbounds/setEnable/{inbound_id}",
+                              json={"enable": enable})
+            if res.status_code != 404:
+                return self._xui_success(res)
+            # v2 fallback — full update
+            return self.update_inbound(node, inbound_id, {"enable": enable})
+        except Exception as exc:
+            logger.warning("set_inbound_enable failed for %s: %s", node["name"], exc)
+            return False
+
+    def reset_inbound_traffic(self, node: Dict, inbound_id: int) -> bool:
+        """Сбросить трафик одного инбаунда."""
+        if self._is_read_only(node):
+            return False
+        s = requests.Session()
+        s.verify = _requests_verify_value()
+        b_path = node.get("base_path", "").strip("/")
+        prefix = f"/{b_path}" if b_path else ""
+        scheme = node.get("scheme", "https")
+        base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
+        try:
+            username, password, bearer_token = extract_node_auth(node, self.decrypt)
+            if not login_panel(s, base_url, username, password, bearer_token=bearer_token):
+                return False
+            res = xui_request(s, "POST",
+                              f"{base_url}/panel/api/inbounds/{inbound_id}/resetTraffic")
+            return self._xui_success(res)
+        except Exception as exc:
+            logger.warning("reset_inbound_traffic failed for %s: %s", node["name"], exc)
+            return False
+
+    def reset_all_inbound_traffics(self, node: Dict) -> bool:
+        """Сбросить трафик всех инбаундов на ноде одним запросом."""
+        if self._is_read_only(node):
+            return False
+        s = requests.Session()
+        s.verify = _requests_verify_value()
+        b_path = node.get("base_path", "").strip("/")
+        prefix = f"/{b_path}" if b_path else ""
+        scheme = node.get("scheme", "https")
+        base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
+        try:
+            username, password, bearer_token = extract_node_auth(node, self.decrypt)
+            if not login_panel(s, base_url, username, password, bearer_token=bearer_token):
+                return False
+            res = xui_request(s, "POST",
+                              f"{base_url}/panel/api/inbounds/resetAllTraffics")
+            return self._xui_success(res)
+        except Exception as exc:
+            logger.warning("reset_all_inbound_traffics failed for %s: %s", node["name"], exc)
+            return False
+
+    def del_all_inbound_clients(self, node: Dict, inbound_id: int) -> Dict:
+        """Удалить всех клиентов из инбаунда.
+
+        Возвращает {"deleted": N} или {"error": "..."}.
+        """
+        if self._is_read_only(node):
+            return {"error": "read-only node"}
+        s = requests.Session()
+        s.verify = _requests_verify_value()
+        b_path = node.get("base_path", "").strip("/")
+        prefix = f"/{b_path}" if b_path else ""
+        scheme = node.get("scheme", "https")
+        base_url = f"{scheme}://{node['ip']}:{node['port']}{prefix}"
+        try:
+            username, password, bearer_token = extract_node_auth(node, self.decrypt)
+            if not login_panel(s, base_url, username, password, bearer_token=bearer_token):
+                return {"error": "login failed"}
+            res = xui_request(s, "POST",
+                              f"{base_url}/panel/api/inbounds/{inbound_id}/delAllClients")
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("success"):
+                    obj = data.get("obj") or {}
+                    return {"deleted": obj.get("deleted", 0)}
+            return {"error": f"HTTP {res.status_code}"}
+        except Exception as exc:
+            logger.warning("del_all_inbound_clients failed for %s: %s", node["name"], exc)
+            return {"error": str(exc)}
+
     @staticmethod
     def _xui_success(res) -> bool:
         """x-ui may return HTTP 200 with {"success": false}; treat it as failure."""

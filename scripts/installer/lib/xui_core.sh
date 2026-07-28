@@ -49,7 +49,27 @@ xui_download_release() {
     local arch
 
     arch="$(xui_arch)" || return 1
-    curl -fsSL "https://github.com/MHSanaei/3x-ui/releases/download/${tag}/x-ui-linux-${arch}.tar.gz" -o "$target_archive"
+    local asset="x-ui-linux-${arch}.tar.gz"
+    curl -fsSL "https://github.com/MHSanaei/3x-ui/releases/download/${tag}/${asset}" -o "$target_archive"
+    local digest="${XUI_SHA256:-}"
+    if [ -z "$digest" ]; then
+        digest="$(python3 - "$asset" "$tag" <<'PY'
+import json, sys, urllib.request
+asset = sys.argv[1]
+tag = sys.argv[2]
+with urllib.request.urlopen(f"https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/{tag}", timeout=20) as response:
+    payload = json.load(response)
+for item in payload.get("assets", []):
+    if item.get("name") == asset and item.get("digest", "").startswith("sha256:"):
+        print(item["digest"].split(":", 1)[1])
+        break
+PY
+        )"
+    fi
+    [ -n "$digest" ] && printf '%s  %s\n' "$digest" "$target_archive" | sha256sum -c - >/dev/null 2>&1 || {
+        echo "XUI archive digest verification failed; set XUI_SHA256 to the expected SHA-256." >&2
+        return 1
+    }
 }
 
 xui_seed_nginx_bootstrap_files() {
@@ -172,7 +192,6 @@ xui_install_binary() {
     xui_ensure_system_prerequisites
 
     xui_download_release "$archive" "$tag"
-    curl -fsSL https://raw.githubusercontent.com/MHSanaei/3x-ui/main/x-ui.sh -o "${workdir}/x-ui-temp"
 
     if [ -d /usr/local/x-ui ]; then
         sudo systemctl stop x-ui >/dev/null 2>&1 || true
@@ -190,8 +209,7 @@ xui_install_binary() {
         sudo chmod +x "/usr/local/x-ui/bin/xray-linux-${arch}"
     fi
 
-    sudo mv -f "${workdir}/x-ui-temp" /usr/bin/x-ui
-    sudo chmod +x /usr/bin/x-ui
+    sudo install -m 0755 /usr/local/x-ui/x-ui.sh /usr/bin/x-ui
 
     if [ -f /usr/local/x-ui/x-ui.service.debian ]; then
         sudo cp -f /usr/local/x-ui/x-ui.service.debian /etc/systemd/system/x-ui.service
@@ -404,6 +422,26 @@ xui_install_sub2sing_box() {
 
     sudo apt-get install -y -q tar >/dev/null
     curl -fsSL "$asset_url" -o "$archive"
+    local digest="${SUB2SING_BOX_SHA256:-}"
+    if [ -z "$digest" ]; then
+        digest="$(python3 - "$asset_name" "$version" <<'PY'
+import json, sys, urllib.request
+asset = sys.argv[1]
+version = sys.argv[2]
+with urllib.request.urlopen(f"https://api.github.com/repos/legiz-ru/sub2sing-box/releases/tags/v{version}", timeout=20) as response:
+    payload = json.load(response)
+for item in payload.get("assets", []):
+    if item.get("name") == asset and item.get("digest", "").startswith("sha256:"):
+        print(item["digest"].split(":", 1)[1])
+        break
+PY
+        )"
+    fi
+    [ -n "$digest" ] && printf '%s  %s\n' "$digest" "$archive" | sha256sum -c - >/dev/null 2>&1 || {
+        echo "sub2sing-box archive digest verification failed; set SUB2SING_BOX_SHA256 to the expected SHA-256." >&2
+        rm -rf "$workdir"
+        return 1
+    }
     tar -xzf "$archive" -C "$workdir"
     local binary_path
     binary_path="$(find "$workdir" -type f -name sub2sing-box | head -n 1)"
@@ -989,7 +1027,7 @@ xui_print_runtime_summary() {
     printf "\n"
     printf "3x-ui panel: %s\n" "${PROFILE_XUI_PANEL_URL:-unknown}"
     printf "3x-ui user: %s\n" "${PROFILE_XUI_USERNAME:-unknown}"
-    printf "3x-ui password: %s\n" "${PROFILE_XUI_PASSWORD:-unknown}"
+    printf "3x-ui password: stored in protected service configuration\n"
     printf "3x-ui status: %s\n" "${PROFILE_XUI_STATUS:-unknown}"
     printf "Web sub page: %s\n" "${PROFILE_XUI_WEBSUB_URL:-unknown}"
     printf "sub2sing-box: %s\n" "${PROFILE_XUI_SUB2SING_URL:-unknown}"

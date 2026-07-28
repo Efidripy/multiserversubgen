@@ -15,7 +15,7 @@ Usage::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, Optional
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

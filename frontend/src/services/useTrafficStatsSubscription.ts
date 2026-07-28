@@ -5,6 +5,7 @@
 import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { wsManager } from './webSocketManager';
 import { API_BASE } from '../api';
+import { devLog } from '../utils/devLogger';
 
 export interface TrafficUpdate {
   type: 'traffic_update' | 'client_update' | 'server_status' | 'inbound_update';
@@ -50,17 +51,33 @@ export function useTrafficStatsSubscription({
 }: TrafficStatsSubscriptionOptions) {
   const fallbackIntervalRef = useRef<number | null>(null);
   const [isConnected, setIsConnected] = useState(wsManager.isConnected());
-  const lastUpdateRef = useRef<number>(0);
-  const debounceMs = 100; // Debounce обновлений на 100ms
+  const lastUpdateRef = useRef<Record<string, number>>({});
+  const debounceMs = 100;
 
-  const normalizedChannels = useMemo(() => {
+  // Store callbacks in refs so effect deps stay stable even if callers pass inline functions
+  const onUpdateRef = useRef(onUpdate);
+  const onErrorRef = useRef(onError);
+  const fallbackRunRef = useRef(fallbackRun);
+  onUpdateRef.current = onUpdate;
+  onErrorRef.current = onError;
+  fallbackRunRef.current = fallbackRun;
+
+  // Stable channels key — only re-subscribe when the sorted channel list actually changes
+  const channelsKey = useMemo(() => {
     const source = Array.isArray(channels) && channels.length > 0
       ? channels
       : ['traffic', 'clients', 'server_status'];
     return source
       .map((c) => EVENT_TO_CHANNEL[c] || c)
-      .filter((c, idx, arr) => Boolean(c) && arr.indexOf(c) === idx);
-  }, [channels]);
+      .filter((c, idx, arr) => Boolean(c) && arr.indexOf(c) === idx)
+      .sort()
+      .join(',');
+  }, [channels.join(',')]);
+
+  const normalizedChannels = useMemo(
+    () => channelsKey.split(',').filter(Boolean),
+    [channelsKey],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -68,8 +85,9 @@ export function useTrafficStatsSubscription({
 
     const handleEvent = (eventType: TrafficUpdate['type']) => (message: unknown) => {
       const now = Date.now();
-      if (now - lastUpdateRef.current < debounceMs) return;
-      lastUpdateRef.current = now;
+      const lastUpdate = lastUpdateRef.current[eventType] || 0;
+      if (now - lastUpdate < debounceMs) return;
+      lastUpdateRef.current[eventType] = now;
 
       const payload = (message as Record<string, any>) || {};
       const data = payload.data && typeof payload.data === 'object' ? payload.data : payload;
@@ -80,7 +98,7 @@ export function useTrafficStatsSubscription({
         delta: Boolean((payload.data as any)?._delta || (payload as any)._delta),
       };
 
-      onUpdate(update);
+      onUpdateRef.current(update);
     };
 
     const connectAndSubscribe = async () => {
@@ -98,7 +116,7 @@ export function useTrafficStatsSubscription({
           wsManager.send({ type: 'subscribe', channel });
         });
       } catch (err) {
-        onError?.(err instanceof Error ? err : new Error(String(err)));
+        onErrorRef.current?.(err instanceof Error ? err : new Error(String(err)));
       }
     };
 
@@ -116,40 +134,38 @@ export function useTrafficStatsSubscription({
         wsManager.send({ type: 'unsubscribe', channel });
       });
     };
-  }, [normalizedChannels, onUpdate, onError]);
+  }, [normalizedChannels]); // stable: only re-runs when the channel list actually changes
 
   // Fallback на polling если нет WebSocket
   useEffect(() => {
     if (isConnected) {
-      // WebSocket подключен - отключить polling
       if (fallbackIntervalRef.current !== null) {
         window.clearInterval(fallbackIntervalRef.current);
         fallbackIntervalRef.current = null;
-        console.log('[TrafficStats] WebSocket подключен - polling отключен');
+        devLog('[TrafficStats] WebSocket подключен - polling отключен');
       }
       return;
     }
 
-    // WebSocket недоступен - использовать fallback polling
-    console.log('[TrafficStats] Offline/WS недоступен - используем fallback polling');
+    devLog('[TrafficStats] Offline/WS недоступен - используем fallback polling');
     fallbackIntervalRef.current = window.setInterval(async () => {
       try {
-        if (fallbackRun) {
-          await fallbackRun();
+        if (fallbackRunRef.current) {
+          await fallbackRunRef.current();
           return;
         }
 
         const response = await fetch(`${API_BASE}/clients/stats/traffic?period=day`);
         if (!response.ok) return;
         const data = await response.json();
-        onUpdate({
+        onUpdateRef.current({
           type: 'traffic_update',
           data,
           timestamp: Date.now(),
           delta: false,
         });
       } catch (err) {
-        onError?.(err instanceof Error ? err : new Error(String(err)));
+        onErrorRef.current?.(err instanceof Error ? err : new Error(String(err)));
       }
     }, fallbackPollIntervalMs);
 
@@ -159,7 +175,7 @@ export function useTrafficStatsSubscription({
         fallbackIntervalRef.current = null;
       }
     };
-  }, [isConnected, onUpdate, onError, fallbackPollIntervalMs, fallbackRun]);
+  }, [isConnected, fallbackPollIntervalMs]); // callbacks read via refs — no loop risk
 
   // Вернуть функцию для явной отписки
   return useCallback(() => {

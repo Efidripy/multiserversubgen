@@ -4,8 +4,24 @@ import logging
 import sqlite3
 
 
+def connect(db_path: str) -> sqlite3.Connection:
+    """Открыть соединение с SQLite с оптимальными настройками.
+
+    journal_mode=WAL персистентна (хранится в файле), synchronous=NORMAL — нет,
+    поэтому выставляем её на каждом новом соединении.
+
+    Используйте эту функцию везде вместо ``sqlite3.connect(db_path)`` напрямую.
+    """
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
 def init_db(db_path: str) -> None:
-    with sqlite3.connect(db_path) as conn:
+    with connect(db_path) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         columns = [r[1] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
         if columns and "role" not in columns:
             conn.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'viewer'")
@@ -36,7 +52,8 @@ def init_db(db_path: str) -> None:
                       api_base TEXT DEFAULT '',
                       ip TEXT DEFAULT '',
                       verify_tls INTEGER DEFAULT 1,
-                      scheme TEXT DEFAULT 'https')"""
+                      scheme TEXT DEFAULT 'https',
+                      tags TEXT DEFAULT '[]')"""
         )
 
         node_columns = [r[1] for r in conn.execute("PRAGMA table_info(nodes)").fetchall()]
@@ -55,6 +72,9 @@ def init_db(db_path: str) -> None:
                 ("port", "ALTER TABLE nodes ADD COLUMN port TEXT DEFAULT '443'"),
                 ("base_path", "ALTER TABLE nodes ADD COLUMN base_path TEXT DEFAULT ''"),
                 ("scheme", "ALTER TABLE nodes ADD COLUMN scheme TEXT DEFAULT 'https'"),
+                ("api_version", "ALTER TABLE nodes ADD COLUMN api_version TEXT DEFAULT NULL"),
+                ("panel_version", "ALTER TABLE nodes ADD COLUMN panel_version TEXT DEFAULT NULL"),
+                ("tags", "ALTER TABLE nodes ADD COLUMN tags TEXT DEFAULT '[]'"),
             ]
             for col_name, stmt in migrations:
                 if col_name not in node_columns:
@@ -108,6 +128,19 @@ def init_db(db_path: str) -> None:
                       details TEXT)"""
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS client_notes
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      node_id INTEGER NOT NULL,
+                      inbound_id INTEGER NOT NULL DEFAULT 0,
+                      client_identifier TEXT NOT NULL,
+                      email TEXT NOT NULL,
+                      notes TEXT DEFAULT '',
+                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      UNIQUE(node_id, inbound_id, client_identifier))"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_client_notes_email ON client_notes(email)")
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS subscription_groups
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       name TEXT UNIQUE NOT NULL,
@@ -138,8 +171,35 @@ def init_db(db_path: str) -> None:
                       traffic_total REAL NOT NULL,
                       poll_ms REAL NOT NULL)"""
         )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS node_snapshots
+                     (node_id INTEGER PRIMARY KEY,
+                      status_data TEXT NOT NULL,
+                      is_online INTEGER NOT NULL DEFAULT 0,
+                      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE)"""
+        )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_node_history_ts ON node_history(ts)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_node_history_node_ts ON node_history(node_id, ts)")
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS traffic_stats_snapshots
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      group_by TEXT NOT NULL,
+                      bucket_kind TEXT NOT NULL,
+                      bucket_start INTEGER NOT NULL,
+                      snapshot_ts INTEGER NOT NULL,
+                      stats_json TEXT NOT NULL,
+                      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                      UNIQUE(group_by, bucket_kind, bucket_start))"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_traffic_stats_snapshots_lookup "
+            "ON traffic_stats_snapshots(group_by, bucket_kind, snapshot_ts)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_traffic_stats_snapshots_bucket "
+            "ON traffic_stats_snapshots(group_by, bucket_kind, bucket_start)"
+        )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS adguard_sources
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -179,7 +239,7 @@ def init_db(db_path: str) -> None:
 
 
 def sync_node_history_names_with_nodes(db_path: str, logger: logging.Logger) -> None:
-    with sqlite3.connect(db_path) as conn:
+    with connect(db_path) as conn:
         result = conn.execute(
             """
             UPDATE node_history

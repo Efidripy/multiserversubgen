@@ -2,16 +2,7 @@
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-$(pwd)}"
-LOG_FILE="${LOG_FILE:-/opt/.sub_manager_install.log}"
 ROLLBACK_ON_FAIL="${ROLLBACK_ON_FAIL:-1}"
-
-if [[ ! -f "$LOG_FILE" ]]; then
-  echo "Install log not found: $LOG_FILE"
-  exit 1
-fi
-
-# shellcheck disable=SC1090
-source "$LOG_FILE"
 
 PROJECT_NAME="${PROJECT_NAME:-sub-manager}"
 PROJECT_DIR="${PROJECT_DIR:-/opt/${PROJECT_NAME}}"

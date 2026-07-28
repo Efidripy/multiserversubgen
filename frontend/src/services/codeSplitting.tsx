@@ -4,6 +4,7 @@
  */
 
 import React from 'react';
+import { devLog } from '../utils/devLogger';
 
 /**
  * Lazy load a component with fallback UI
@@ -111,7 +112,7 @@ export function usePredictivePreload(currentRoute: string) {
  * Monitor chunk loading performance
  */
 export function onChunkLoad(chunkName: string, duration: number) {
-  console.log(`[CodeSplit] Loaded chunk "${chunkName}" in ${duration.toFixed(2)}ms`);
+  devLog(`[CodeSplit] Loaded chunk "${chunkName}" in ${duration.toFixed(2)}ms`);
   // TODO: Send to analytics
 }
 

@@ -2,88 +2,153 @@ import base64
 import json
 import logging
 import os
+import sqlite3
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 from typing import Dict, List, Optional
 
-import requests
-
-from crypto import decrypt
+from services.db_bootstrap import connect
 from utils import parse_field_as_dict
-from xui_session import XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC, login_panel, xui_request
 
 logger = logging.getLogger("sub_manager")
 
 CACHE_TTL = int(os.getenv("CACHE_TTL", "30"))
-VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
-CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
 
-emails_cache = {"ts": 0.0, "emails": []}
+_SNAPSHOT_DB_PATH: Optional[str] = None
+_cache_lock = Lock()
+
+emails_cache = {"ts": 0.0, "emails": [], "items": {}}
 links_cache = {}
+_inbounds_cache = {}
 
 
-def _requests_verify_value():
-    if not VERIFY_TLS:
-        return False
-    if CA_BUNDLE_PATH:
-        return CA_BUNDLE_PATH
-    return True
+def configure_snapshot_db(db_path: str) -> None:
+    global _SNAPSHOT_DB_PATH
+    _SNAPSHOT_DB_PATH = db_path
 
 
 def invalidate_subscription_cache() -> None:
-    emails_cache["ts"] = 0.0
-    emails_cache["emails"] = []
-    links_cache.clear()
+    with _cache_lock:
+        emails_cache["ts"] = 0.0
+        emails_cache["emails"] = []
+        emails_cache["items"] = {}
+        links_cache.clear()
+        _inbounds_cache.clear()
+
+
+def _node_cache_key(node: Dict) -> str:
+    return "|".join(
+        [
+            str(_SNAPSHOT_DB_PATH or ""),
+            str(node.get("id") or ""),
+            str(node.get("name") or ""),
+            str(node.get("ip") or ""),
+            str(node.get("port") or ""),
+            str(node.get("base_path") or ""),
+        ]
+    )
+
+
+def _nodes_cache_key(nodes: List[Dict]) -> str:
+    return ";".join(_node_cache_key(node) for node in nodes)
+
+
+def _normalise_inbound_for_subscriptions(inbound: Dict, node: Dict) -> Dict:
+    normalised = dict(inbound)
+    normalised["streamSettings"] = parse_field_as_dict(
+        inbound.get("streamSettings"),
+        node_id=node.get("name"),
+        field_name="streamSettings",
+    )
+    normalised["settings"] = parse_field_as_dict(
+        inbound.get("settings"),
+        node_id=node.get("name"),
+        field_name="settings",
+    )
+    return normalised
 
 
 def fetch_inbounds(node: Dict) -> List[Dict]:
-    session = requests.Session()
-    session.verify = _requests_verify_value()
-    base_path = node.get("base_path", "").strip("/")
-    prefix = f"/{base_path}" if base_path else ""
-    base_url = f"https://{node['ip']}:{node['port']}{prefix}"
+    """Return subscription inbounds only from local persisted node snapshots."""
+    cache_key = _node_cache_key(node)
+    now = time.time()
+    with _cache_lock:
+        cached = _inbounds_cache.get(cache_key)
+        if cached and now - cached[0] < CACHE_TTL:
+            return cached[1]
+
+    inbounds = _fetch_inbounds_from_snapshot(node)
+    with _cache_lock:
+        _inbounds_cache[cache_key] = (now, inbounds)
+    return inbounds
+
+
+def _fetch_inbounds_from_snapshot(node: Dict) -> List[Dict]:
+    if not _SNAPSHOT_DB_PATH:
+        return []
+
+    row = None
+    try:
+        with connect(_SNAPSHOT_DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            node_id = node.get("id")
+            if node_id is not None:
+                row = conn.execute(
+                    "SELECT status_data FROM node_snapshots WHERE node_id = ?",
+                    (node_id,),
+                ).fetchone()
+            if row is None and node.get("name"):
+                row = conn.execute(
+                    """
+                    SELECT s.status_data
+                    FROM node_snapshots s
+                    INNER JOIN nodes n ON n.id = s.node_id
+                    WHERE n.name = ?
+                    """,
+                    (node.get("name"),),
+                ).fetchone()
+    except sqlite3.Error as exc:
+        logger.debug("Failed to read node snapshot for %s: %s", node.get("name"), exc)
+        return []
+
+    if row is None:
+        return []
 
     try:
-        if not login_panel(
-            session,
-            base_url,
-            node["user"],
-            decrypt(node.get("password", "")),
-            timeout=XUI_FAST_TIMEOUT_SEC,
-            retries=XUI_FAST_RETRIES,
-        ):
-            logger.warning("node panel login failed for node %s", node["name"])
-            return []
-
-        response = xui_request(
-            session,
-            "GET",
-            f"{base_url}/panel/api/inbounds/list",
-            timeout=XUI_FAST_TIMEOUT_SEC,
-            retries=XUI_FAST_RETRIES,
-        )
-        if response.status_code != 200:
-            logger.warning(
-                "node panel %s inbounds list returned status %s; response (first 200 chars): %r",
-                node["name"],
-                response.status_code,
-                response.text[:200],
-            )
-            return []
-        data = response.json()
-        return data.get("obj", []) if data.get("success", False) else []
+        snapshot = json.loads(row["status_data"] or "{}")
     except Exception as exc:
-        logger.warning("Failed to fetch inbounds from %s: %s", node["name"], exc)
+        logger.warning("Invalid persisted node snapshot for %s: %s", node.get("name"), exc)
         return []
+
+    if not isinstance(snapshot, dict):
+        return []
+
+    raw_inbounds = snapshot.get("inbounds")
+    if not isinstance(raw_inbounds, list):
+        inbounds_result = snapshot.get("inbounds_result")
+        if isinstance(inbounds_result, dict):
+            raw_inbounds = inbounds_result.get("inbounds")
+
+    if not isinstance(raw_inbounds, list):
+        return []
+
+    return [
+        _normalise_inbound_for_subscriptions(inbound, node)
+        for inbound in raw_inbounds
+        if isinstance(inbound, dict)
+    ]
 
 
 def get_emails(nodes: List[Dict]) -> List[str]:
     now = time.time()
-    if now - emails_cache["ts"] < CACHE_TTL:
-        return emails_cache["emails"]
+    cache_key = _nodes_cache_key(nodes)
+    with _cache_lock:
+        cached = emails_cache.get("items", {}).get(cache_key)
+        if cached and now - cached[0] < CACHE_TTL:
+            return cached[1]
 
-    def _collect_node_emails(node: Dict) -> set:
-        node_emails = set()
+    emails = set()
+    for node in nodes:
         for inbound in fetch_inbounds(node):
             clients = parse_field_as_dict(
                 inbound.get("settings"),
@@ -93,22 +158,13 @@ def get_emails(nodes: List[Dict]) -> List[str]:
             for client in clients:
                 email = client.get("email")
                 if email:
-                    node_emails.add(email)
-        return node_emails
-
-    emails = set()
-    if nodes:
-        workers = min(8, len(nodes))
-        with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(_collect_node_emails, node) for node in nodes]
-            for future in as_completed(futures):
-                try:
-                    emails.update(future.result())
-                except Exception as exc:
-                    logger.warning("Failed to collect emails: %s", exc)
+                    emails.add(email)
 
     emails_list = sorted(emails, key=lambda value: value.lower())
-    emails_cache.update({"ts": now, "emails": emails_list})
+    with _cache_lock:
+        emails_cache["ts"] = now
+        emails_cache["emails"] = emails_list
+        emails_cache.setdefault("items", {})[cache_key] = (now, emails_list)
     return emails_list
 
 
@@ -128,16 +184,32 @@ def _first_server_name(stream_settings: Dict) -> str:
     return ""
 
 
+def _fingerprint_from_stream_settings(stream_settings: Dict) -> str:
+    reality = stream_settings.get("realitySettings", {}) or {}
+    reality_settings = reality.get("settings") or {}
+    tls_settings = (stream_settings.get("tlsSettings", {}) or {}).get("settings") or {}
+
+    for value in (
+        reality_settings.get("fingerprint"),
+        reality.get("fingerprint"),
+        tls_settings.get("fingerprint"),
+    ):
+        if value:
+            return str(value)
+    return "chrome"
+
+
 def get_links_filtered(
     nodes: List[Dict],
     email: str,
     protocol_filter: Optional[str] = None,
 ) -> List[str]:
-    cache_key = f"{email}_{protocol_filter or 'all'}_{','.join([node['name'] for node in nodes])}"
+    cache_key = f"{email.lower()}|{protocol_filter or 'all'}|{_nodes_cache_key(nodes)}"
     now_link = time.time()
-    cached = links_cache.get(cache_key)
-    if cached and now_link - cached[0] < CACHE_TTL:
-        return cached[1]
+    with _cache_lock:
+        cached = links_cache.get(cache_key)
+        if cached and now_link - cached[0] < CACHE_TTL:
+            return cached[1]
 
     links = []
     for node in nodes:
@@ -167,7 +239,7 @@ def get_links_filtered(
             short_ids = reality.get("shortIds") or []
             short_id = short_ids[0] if short_ids else ""
             sni = _first_server_name(stream_settings)
-            fingerprint = reality.get("fingerprint", "chrome")
+            fingerprint = _fingerprint_from_stream_settings(stream_settings)
             network = stream_settings.get("network", "tcp")
 
             for client in settings.get("clients", []):
@@ -231,6 +303,6 @@ def get_links_filtered(
                             f"&sni={sni}&type={network}#{node['name']}"
                         )
 
-    links_cache[cache_key] = (now_link, links)
-    links_cache[email] = (now_link, links)
+    with _cache_lock:
+        links_cache[cache_key] = (now_link, links)
     return links

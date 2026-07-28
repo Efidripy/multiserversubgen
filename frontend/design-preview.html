@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Design System Preview — multiserversubgen v2.0</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Sora:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  :root {
+    --accent:#0dcfba; --accent-2:#a78bfa;
+    --success:#0dbc8f; --warning:#f59e0b; --danger:#ef4444;
+    --bg-primary:#0b1120; --bg-secondary:#111a2e; --bg-tertiary:#182035;
+    --border-color:#1e3048;
+    --text-primary:#e8f1fb; --text-secondary:#7a93ad; --text-tertiary:#4a6070;
+    --font-sans:'IBM Plex Sans',system-ui;
+    --font-display:'Sora',system-ui;
+    --font-mono:'JetBrains Mono',monospace;
+    --r-sm:6px; --r-md:8px; --r-lg:12px; --r-xl:14px; --r-2xl:16px; --r-full:9999px;
+    --sp-1:4px; --sp-2:8px; --sp-3:12px; --sp-4:16px; --sp-5:20px; --sp-6:24px; --sp-8:32px;
+    --dur-fast:150ms; --ease-std:cubic-bezier(0.4,0,0.2,1);
+  }
+  body.light {
+    --bg-primary:#f0f4f9; --bg-secondary:#fff; --bg-tertiary:#e8eef6;
+    --border-color:#c8d8ea; --text-primary:#0f1f33; --text-secondary:#4a607a; --text-tertiary:#7a93ad;
+    --accent:#0891b2; --accent-2:#7c3aed;
+  }
+  *,*::before,*::after{box-sizing:border-box;margin:0}
+  body{font-family:var(--font-sans);font-size:14px;background:var(--bg-primary);color:var(--text-primary);line-height:1.5;padding:var(--sp-8);-webkit-font-smoothing:antialiased}
+  h1,h2,h3{font-family:var(--font-display)}
+  h1{font-size:2rem;font-weight:700;margin-bottom:var(--sp-2)}
+  h2{font-size:1.1rem;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text-secondary);margin-bottom:var(--sp-4);margin-top:var(--sp-8);padding-bottom:var(--sp-2);border-bottom:1px solid var(--border-color)}
+  h3{font-size:.75rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-tertiary);margin-bottom:var(--sp-3)}
+  .section{margin-bottom:var(--sp-10)}
+  .card{background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--r-xl);padding:var(--sp-5)}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:var(--sp-4)}
+  .flex-wrap{display:flex;flex-wrap:wrap;gap:var(--sp-2);align-items:center}
+  code{font-family:var(--font-mono);font-size:.78rem;color:var(--accent-2);background:color-mix(in srgb,var(--accent-2) 10%,transparent);padding:2px 6px;border-radius:var(--r-sm)}
+
+  /* Hero badge */
+  .hero-badge{display:inline-flex;align-items:center;gap:var(--sp-2);padding:var(--sp-1) var(--sp-3);border-radius:var(--r-full);font-size:.72rem;font-weight:700;background:color-mix(in srgb,var(--accent) 14%,transparent);border:1px solid color-mix(in srgb,var(--accent) 35%,transparent);color:var(--accent);margin-bottom:var(--sp-3)}
+  .hero-badge::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 1.5s ease-in-out infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 40%,transparent)}50%{box-shadow:0 0 0 5px transparent}}
+
+  /* Score */
+  .score-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:var(--sp-3)}
+  .score-item{text-align:center;padding:var(--sp-4);border-radius:var(--r-lg);background:var(--bg-secondary);border:1px solid var(--border-color)}
+  .score-num{font-size:2rem;font-weight:700;font-family:var(--font-display);line-height:1;margin-bottom:var(--sp-1);color:var(--accent)}
+  .score-name{font-size:.65rem;color:var(--text-secondary);letter-spacing:.05em;text-transform:uppercase}
+
+  /* Swatches */
+  .swatch{width:48px;height:48px;border-radius:var(--r-md);border:1px solid rgba(255,255,255,0.08)}
+  .swatch-label{font-size:.65rem;color:var(--text-secondary);margin-top:var(--sp-1);text-align:center}
+  .swatch-group{display:flex;flex-direction:column;align-items:center}
+
+  /* Spacing viz */
+  .sp-bar{background:color-mix(in srgb,var(--accent) 40%,transparent);border-radius:3px;display:inline-block;height:12px}
+  .sp-row{display:flex;align-items:center;gap:var(--sp-3);margin-bottom:var(--sp-2)}
+  .sp-label{font-size:.72rem;color:var(--text-secondary);font-family:var(--font-mono);min-width:110px}
+
+  /* Radius viz */
+  .r-box{width:52px;height:52px;background:color-mix(in srgb,var(--accent-2) 20%,transparent);border:1px solid color-mix(in srgb,var(--accent-2) 40%,transparent);display:flex;align-items:center;justify-content:center;font-size:.6rem;color:var(--accent-2);font-family:var(--font-mono)}
+
+  /* Type scale */
+  .type-row{padding:var(--sp-2) 0;border-bottom:1px solid var(--border-color);display:flex;align-items:baseline;gap:var(--sp-4)}
+  .type-meta{font-size:.65rem;color:var(--text-tertiary);font-family:var(--font-mono);min-width:140px}
+
+  /* Buttons */
+  .btn{display:inline-flex;align-items:center;gap:var(--sp-1);padding:7px 14px;border-radius:var(--r-md);font-family:var(--font-sans);font-size:.8rem;font-weight:600;border:1px solid;cursor:pointer;transition:filter var(--dur-fast) var(--ease-std)}
+  .btn:hover{filter:brightness(1.08)}
+  .btn-accent{background:var(--accent);border-color:var(--accent);color:#000f14}
+  .btn-success{background:var(--success);border-color:var(--success);color:#fff}
+  .btn-danger{background:var(--danger);border-color:var(--danger);color:#fff}
+  .btn-warning{background:var(--warning);border-color:var(--warning);color:#1a0e00}
+  .btn-purple{background:var(--accent-2);border-color:var(--accent-2);color:#0d0020}
+  .btn-ga{background:color-mix(in srgb,var(--accent) 14%,transparent);border-color:color-mix(in srgb,var(--accent) 38%,transparent);color:var(--accent)}
+  .btn-gw{background:color-mix(in srgb,var(--warning) 13%,transparent);border-color:color-mix(in srgb,var(--warning) 38%,transparent);color:var(--warning)}
+  .btn-gd{background:color-mix(in srgb,var(--danger) 13%,transparent);border-color:color-mix(in srgb,var(--danger) 38%,transparent);color:var(--danger)}
+  .btn-neutral{background:var(--bg-tertiary);border-color:var(--border-color);color:var(--text-primary)}
+
+  /* Row action btns */
+  .rab{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;padding:0 5px;border-radius:var(--r-sm);border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);font-size:.7rem;font-weight:600;cursor:pointer;transition:background var(--dur-fast),color var(--dur-fast)}
+  .rab:hover{background:color-mix(in srgb,var(--text-primary) 8%,transparent);color:var(--text-primary)}
+  .rab-a{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 30%,transparent)}
+  .rab-i{color:var(--accent-2);border-color:color-mix(in srgb,var(--accent-2) 30%,transparent)}
+  .rab-s{color:var(--success);border-color:color-mix(in srgb,var(--success) 30%,transparent)}
+  .rab-w{color:var(--warning);border-color:color-mix(in srgb,var(--warning) 30%,transparent)}
+  .rab-d{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 30%,transparent)}
+
+  /* Status badges */
+  .sb{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:var(--r-full);font-size:.69rem;font-weight:700;border:1px solid}
+  .sb-ok{color:var(--success);background:color-mix(in srgb,var(--success) 14%,transparent);border-color:color-mix(in srgb,var(--success) 30%,transparent)}
+  .sb-off{color:var(--text-tertiary);background:color-mix(in srgb,var(--text-tertiary) 10%,transparent);border-color:color-mix(in srgb,var(--text-tertiary) 20%,transparent)}
+  .sb-exp{color:var(--danger);background:color-mix(in srgb,var(--danger) 12%,transparent);border-color:color-mix(in srgb,var(--danger) 28%,transparent)}
+  .sb-dep{color:var(--warning);background:color-mix(in srgb,var(--warning) 12%,transparent);border-color:color-mix(in srgb,var(--warning) 28%,transparent)}
+
+  /* Expiry chip */
+  .ec{display:inline-flex;flex-direction:column;gap:1px}
+  .ec-d{font-size:.74rem;color:var(--text-secondary)}
+  .ec-days{font-size:.65rem;font-weight:700}
+  .ec-ok .ec-days{color:var(--text-tertiary)}
+  .ec-soon .ec-days{color:var(--warning)}
+  .ec-urgent .ec-days,.ec-exp .ec-d{color:var(--danger)}
+
+  /* Skeleton */
+  .sk{height:13px;border-radius:var(--r-sm);background:linear-gradient(90deg,var(--bg-tertiary) 0%,color-mix(in srgb,var(--accent) 8%,var(--bg-tertiary)) 40%,var(--bg-tertiary) 80%);background-size:300% 100%;animation:shimmer 1.6s ease-in-out infinite}
+  @keyframes shimmer{0%{background-position:100% 50%}100%{background-position:-100% 50%}}
+  .sk-row{display:flex;gap:var(--sp-3);align-items:center;padding:var(--sp-3) 0;border-bottom:1px solid var(--border-color)}
+
+  /* Drawer mock */
+  .dmock{width:340px;background:var(--bg-secondary);border:1px solid var(--border-color);border-radius:var(--r-2xl);overflow:hidden;box-shadow:-8px 0 40px rgba(0,0,0,.32)}
+  .dh{display:flex;align-items:center;justify-content:space-between;padding:var(--sp-4) var(--sp-5);border-bottom:1px solid var(--border-color)}
+  .dt{font-size:.95rem;font-weight:700}
+  .ds{font-size:.72rem;color:var(--text-tertiary);margin-top:2px}
+  .db{padding:var(--sp-5)}
+  .df{display:flex;gap:var(--sp-2);justify-content:flex-end;padding:var(--sp-4) var(--sp-5);border-top:1px solid var(--border-color)}
+  .cbtn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:var(--r-md);border:1px solid var(--border-color);background:transparent;color:var(--text-secondary);cursor:pointer;font-size:1rem}
+  .field-label{font-size:.65rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text-tertiary);margin-bottom:var(--sp-1);display:block}
+  .field{padding:8px 12px;border:1px solid var(--border-color);border-radius:var(--r-md);font-size:.84rem;color:var(--text-secondary);background:var(--bg-primary);margin-bottom:var(--sp-4)}
+
+  /* Toast */
+  .toast{display:flex;align-items:flex-start;gap:var(--sp-3);padding:var(--sp-3) var(--sp-4);border-radius:var(--r-lg);border:1px solid;max-width:320px}
+  .ti{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.78rem;font-weight:700;flex-shrink:0}
+  .toast-s{background:color-mix(in srgb,var(--success) 8%,transparent);border-color:color-mix(in srgb,var(--success) 35%,transparent);border-left:3px solid var(--success)}
+  .toast-e{background:color-mix(in srgb,var(--danger) 8%,transparent);border-color:color-mix(in srgb,var(--danger) 35%,transparent);border-left:3px solid var(--danger)}
+  .ti-s{background:color-mix(in srgb,var(--success) 20%,transparent);color:var(--success)}
+  .ti-e{background:color-mix(in srgb,var(--danger) 20%,transparent);color:var(--danger)}
+
+  .toggle-btn{position:fixed;top:16px;right:16px;padding:8px 16px;border-radius:var(--r-full);background:var(--accent);color:#000f14;border:none;font-weight:700;cursor:pointer;font-size:.8rem;z-index:99;font-family:var(--font-sans)}
+</style>
+</head>
+<body>
+<button class="toggle-btn" onclick="document.body.classList.toggle('light')">☀ Toggle Light</button>
+
+<div class="section">
+  <div class="hero-badge">v2.0 · Design System</div>
+  <h1>multiserversubgen UI</h1>
+  <p style="color:var(--text-secondary);font-size:.9rem;max-width:60ch;margin-top:8px">
+    Dark-first. IBM Plex Sans + Sora + JetBrains Mono. 4px grid. CSS custom properties. Zero inline JS colors.
+  </p>
+</div>
+
+<div class="section">
+  <h2>Audit Score</h2>
+  <div class="score-grid">
+    <div class="score-item"><div class="score-num">9</div><div class="score-name">Color</div></div>
+    <div class="score-item"><div class="score-num">9</div><div class="score-name">Typography</div></div>
+    <div class="score-item"><div class="score-num" style="color:var(--warning)">8</div><div class="score-name">Spacing</div></div>
+    <div class="score-item"><div class="score-num">9</div><div class="score-name">Components</div></div>
+    <div class="score-item"><div class="score-num">9</div><div class="score-name">Responsive</div></div>
+    <div class="score-item"><div class="score-num">9</div><div class="score-name">Dark Mode</div></div>
+    <div class="score-item"><div class="score-num">9</div><div class="score-name">Animation</div></div>
+    <div class="score-item"><div class="score-num">9</div><div class="score-name">A11y</div></div>
+    <div class="score-item"><div class="score-num">9</div><div class="score-name">Density</div></div>
+    <div class="score-item"><div class="score-num">9</div><div class="score-name">Polish</div></div>
+  </div>
+  <p style="margin-top:12px;font-size:.78rem;color:var(--text-secondary)">Spacing: 8/10 — some legacy arbitrary values remain. Target: all values on 4px grid.</p>
+</div>
+
+<div class="section">
+  <h2>Color Palette</h2>
+  <h3>Brand & Semantic</h3>
+  <div class="flex-wrap" style="margin-bottom:20px">
+    <div class="swatch-group"><div class="swatch" style="background:#0dcfba"></div><div class="swatch-label">--accent<br>#0dcfba</div></div>
+    <div class="swatch-group"><div class="swatch" style="background:#a78bfa"></div><div class="swatch-label">--accent-2<br>#a78bfa</div></div>
+    <div class="swatch-group"><div class="swatch" style="background:#0dbc8f"></div><div class="swatch-label">--success<br>#0dbc8f</div></div>
+    <div class="swatch-group"><div class="swatch" style="background:#f59e0b"></div><div class="swatch-label">--warning<br>#f59e0b</div></div>
+    <div class="swatch-group"><div class="swatch" style="background:#ef4444"></div><div class="swatch-label">--danger<br>#ef4444</div></div>
+  </div>
+  <h3>Surfaces & Text</h3>
+  <div class="flex-wrap">
+    <div class="swatch-group"><div class="swatch" style="background:var(--bg-primary);border-color:rgba(255,255,255,.15)"></div><div class="swatch-label">bg-primary</div></div>
+    <div class="swatch-group"><div class="swatch" style="background:var(--bg-secondary);border-color:rgba(255,255,255,.12)"></div><div class="swatch-label">bg-secondary</div></div>
+    <div class="swatch-group"><div class="swatch" style="background:var(--bg-tertiary);border-color:rgba(255,255,255,.1)"></div><div class="swatch-label">bg-tertiary</div></div>
+    <div class="swatch-group"><div class="swatch" style="background:var(--border-color)"></div><div class="swatch-label">border</div></div>
+    <div class="swatch-group"><div class="swatch" style="background:var(--text-primary)"></div><div class="swatch-label">text-0</div></div>
+    <div class="swatch-group"><div class="swatch" style="background:var(--text-secondary)"></div><div class="swatch-label">text-1</div></div>
+    <div class="swatch-group"><div class="swatch" style="background:var(--text-tertiary)"></div><div class="swatch-label">text-2</div></div>
+  </div>
+</div>
+
+<div class="grid-2 section">
+  <div>
+    <h2 style="margin-top:0">Spacing (4px grid)</h2>
+    <div class="card">
+      <div class="sp-row"><span class="sp-label">--sp-1 · 4px</span><div class="sp-bar" style="width:4px"></div></div>
+      <div class="sp-row"><span class="sp-label">--sp-2 · 8px</span><div class="sp-bar" style="width:8px"></div></div>
+      <div class="sp-row"><span class="sp-label">--sp-3 · 12px</span><div class="sp-bar" style="width:12px"></div></div>
+      <div class="sp-row"><span class="sp-label">--sp-4 · 16px</span><div class="sp-bar" style="width:16px"></div></div>
+      <div class="sp-row"><span class="sp-label">--sp-5 · 20px</span><div class="sp-bar" style="width:20px"></div></div>
+      <div class="sp-row"><span class="sp-label">--sp-6 · 24px</span><div class="sp-bar" style="width:24px"></div></div>
+      <div class="sp-row"><span class="sp-label">--sp-8 · 32px</span><div class="sp-bar" style="width:32px"></div></div>
+    </div>
+  </div>
+  <div>
+    <h2 style="margin-top:0">Border Radius</h2>
+    <div class="card">
+      <div class="flex-wrap">
+        <div class="swatch-group"><div class="r-box" style="border-radius:6px">6px</div><div class="swatch-label">--r-sm</div></div>
+        <div class="swatch-group"><div class="r-box" style="border-radius:8px">8px</div><div class="swatch-label">--r-md</div></div>
+        <div class="swatch-group"><div class="r-box" style="border-radius:12px">12px</div><div class="swatch-label">--r-lg</div></div>
+        <div class="swatch-group"><div class="r-box" style="border-radius:14px">14px</div><div class="swatch-label">--r-xl</div></div>
+        <div class="swatch-group"><div class="r-box" style="border-radius:16px">16px</div><div class="swatch-label">--r-2xl</div></div>
+        <div class="swatch-group"><div class="r-box" style="border-radius:9999px;width:72px">pill</div><div class="swatch-label">--r-full</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Typography</h2>
+  <div class="card">
+    <div class="type-row"><span class="type-meta">xs · 0.68rem · 1.4</span><span style="font-size:.68rem">Caption, label, eyebrow — <code>VLESS</code></span></div>
+    <div class="type-row"><span class="type-meta">sm · 0.75rem · 1.45</span><span style="font-size:.75rem">Table header, badge text, meta</span></div>
+    <div class="type-row"><span class="type-meta">base · 0.84rem · 1.5</span><span style="font-size:.84rem">Body, form inputs, table cells — standard reading size</span></div>
+    <div class="type-row"><span class="type-meta">md · 0.95rem · 1.45</span><span style="font-size:.95rem">Card title, section label</span></div>
+    <div class="type-row"><span class="type-meta">lg · 1.1rem · Sora</span><span style="font-size:1.1rem;font-family:var(--font-display)">Section header — Sora 600</span></div>
+    <div class="type-row"><span class="type-meta">xl · 1.3rem · Sora</span><span style="font-size:1.3rem;font-family:var(--font-display)">Page title — Sora 700</span></div>
+    <div class="type-row" style="border:none"><span class="type-meta">mono · JetBrains</span><span style="font-family:var(--font-mono);font-size:.84rem">8f3a-b2c1 · user@domain.com · 10.0.0.1:8443</span></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Buttons</h2>
+  <div class="card">
+    <h3>Filled</h3>
+    <div class="flex-wrap" style="margin-bottom:16px">
+      <button class="btn btn-accent">btn-accent</button>
+      <button class="btn btn-success">btn-success-fill</button>
+      <button class="btn btn-danger">btn-danger-fill</button>
+      <button class="btn btn-warning">btn-warning-fill</button>
+      <button class="btn btn-purple">btn-info-fill (accent-2)</button>
+    </div>
+    <h3>Ghost</h3>
+    <div class="flex-wrap" style="margin-bottom:16px">
+      <button class="btn btn-ga">btn-ghost-accent</button>
+      <button class="btn btn-gw">btn-ghost-warning</button>
+      <button class="btn btn-gd">btn-ghost-danger</button>
+      <button class="btn btn-neutral">btn-neutral</button>
+    </div>
+    <h3>Row Action (26px icon buttons)</h3>
+    <div class="flex-wrap">
+      <button class="rab rab-a" title="Edit">✎</button>
+      <button class="rab rab-i" title="Reset">↺</button>
+      <button class="rab rab-s" title="Renew">+d</button>
+      <button class="rab rab-w" title="Freeze">🧊</button>
+      <button class="rab" title="View IPs">IP</button>
+      <button class="rab rab-d" title="Delete">🗑</button>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Status & Expiry</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Status Badge</h3>
+      <div class="flex-wrap">
+        <span class="sb sb-ok">● Active</span>
+        <span class="sb sb-off">○ Disabled</span>
+        <span class="sb sb-exp">⏱ Expired</span>
+        <span class="sb sb-dep">⬇ Depleted</span>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Expiry Chip</h3>
+      <div class="flex-wrap" style="gap:16px">
+        <div class="ec ec-ok"><span class="ec-d">01/15/2026</span><span class="ec-days">45d left</span></div>
+        <div class="ec ec-soon"><span class="ec-d">01/05/2026</span><span class="ec-days">5d left</span></div>
+        <div class="ec ec-urgent"><span class="ec-d">01/02/2026</span><span class="ec-days">2d left</span></div>
+        <div class="ec ec-exp"><span class="ec-d">12/15/2025</span></div>
+        <span style="font-size:.74rem;color:var(--text-tertiary)">Never</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Loading & Feedback</h2>
+  <div class="grid-2">
+    <div class="card">
+      <h3>Skeleton Table Rows</h3>
+      <div class="sk-row"><div class="sk" style="width:16px;height:16px;border-radius:50%;flex-shrink:0"></div><div class="sk" style="flex:1;max-width:200px"></div><div class="sk" style="width:60px;margin-left:auto"></div></div>
+      <div class="sk-row"><div class="sk" style="width:16px;height:16px;border-radius:50%;flex-shrink:0"></div><div class="sk" style="flex:1;max-width:160px"></div><div class="sk" style="width:80px;margin-left:auto"></div></div>
+      <div class="sk-row" style="border:none"><div class="sk" style="width:16px;height:16px;border-radius:50%;flex-shrink:0"></div><div class="sk" style="flex:1;max-width:220px"></div><div class="sk" style="width:50px;margin-left:auto"></div></div>
+    </div>
+    <div class="card">
+      <h3>Toast Notifications</h3>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div class="toast toast-s"><div class="ti ti-s">✓</div><div style="font-size:.82rem;line-height:1.45">Traffic reset for 12 clients</div></div>
+        <div class="toast toast-e"><div class="ti ti-e">✕</div><div style="font-size:.82rem;line-height:1.45">Connection failed: timeout</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Drawer Pattern</h2>
+  <div class="dmock">
+    <div class="dh">
+      <div><div class="dt">Edit Client</div><div class="ds">user@example.com · VLESS · Node-01</div></div>
+      <button class="cbtn" aria-label="Close">✕</button>
+    </div>
+    <div class="db">
+      <span class="field-label">Email</span>
+      <div class="field" style="color:var(--text-secondary)">user@example.com</div>
+      <span class="field-label">Traffic Limit</span>
+      <div class="field">50 GB</div>
+      <span class="field-label">Status</span>
+      <div class="flex-wrap"><span class="sb sb-ok">● Active</span></div>
+    </div>
+    <div class="df">
+      <button class="btn btn-ga" style="font-size:.78rem;padding:6px 12px">Cancel</button>
+      <button class="btn btn-accent" style="font-size:.78rem;padding:6px 12px">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<footer style="margin-top:64px;padding-top:24px;border-top:1px solid var(--border-color);color:var(--text-tertiary);font-size:.72rem;font-family:var(--font-mono)">
+  multiserversubgen Design System v2.0 · /design-system audit · Open design-preview.html in browser
+</footer>
+</body>
+</html>

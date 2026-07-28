@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import api from '../api';
-import { useTheme } from '../contexts/ThemeContext';
 import { getAuth } from '../auth';
 import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
@@ -28,7 +28,7 @@ const FLOW_OPTIONS = [
 ];
 
 export const AddClientMultiServer: React.FC = () => {
-  const { colors } = useTheme();
+  const { t } = useTranslation();
   const [email, setEmail] = useState('');
   const [flow, setFlow] = useState('');
   const [inboundId, setInboundId] = useState('1');
@@ -53,7 +53,7 @@ export const AddClientMultiServer: React.FC = () => {
       setNodes(nodeList);
       setSelectedNodeIds(new Set(nodeList.map((node) => node.id)));
     } catch {
-      setError('Failed to load node list');
+      setError(t('clients.addMulti.loadNodesFailed'));
     }
   };
 
@@ -69,13 +69,13 @@ export const AddClientMultiServer: React.FC = () => {
 
   const handleSubmit = async () => {
     if (!email.trim()) {
-      setError('Email is required');
+      setError(t('clients.addMulti.emailRequired'));
       return;
     }
 
     const inboundIdNum = parseInt(inboundId, 10);
     if (Number.isNaN(inboundIdNum) || inboundIdNum < 1) {
-      setError('A valid inbound ID is required');
+      setError(t('clients.addMulti.validInboundRequired'));
       return;
     }
 
@@ -106,23 +106,23 @@ export const AddClientMultiServer: React.FC = () => {
       setResult(res.data as AddResult);
       setShowResultModal(true);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to add client');
+      setError(err.response?.data?.detail || t('clients.addMulti.addFailed'));
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="card p-3 mb-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-      <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: colors.accent }}>
+    <div className="card p-3 mb-3" style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}>
+      <h6 className="mb-3 d-flex align-items-center gap-2" style={{ color: 'var(--accent)' }}>
         <UIIcon name="servers" size={15} />
-        Add Client to Multiple Servers
+        {t('clients.addMulti.title')}
       </h6>
 
       {error && (
         <div
           className="alert mb-3"
-          style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}
+          style={{ backgroundColor: 'color-mix(in srgb, var(--danger) 14%, transparent)', borderColor: 'var(--danger)', color: 'var(--danger)' }}
         >
           {error}
         </div>
@@ -132,30 +132,30 @@ export const AddClientMultiServer: React.FC = () => {
         <div className="panel-block panel-block--wide">
           <div className="panel-block__header">
             <div>
-              <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Client Profile</h6>
-              <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
-                Basic client settings in one place.
+              <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>{t('clients.addMulti.profileTitle')}</h6>
+              <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
+                {t('clients.addMulti.profileHint')}
               </p>
             </div>
           </div>
 
           <div className="panel-field-grid">
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>
-                Email
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
+                {t('clients.email')}
               </label>
               <input
                 type="email"
                 className="form-control form-control-sm"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="user@example.com"
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                placeholder={t('clients.addMulti.emailPlaceholder')}
+                style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>
-                Inbound ID
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
+                {t('clients.inboundIdLabel')}
               </label>
               <input
                 type="number"
@@ -163,12 +163,12 @@ export const AddClientMultiServer: React.FC = () => {
                 value={inboundId}
                 onChange={(e) => setInboundId(e.target.value)}
                 min={1}
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>
-                Total GB (0 = inf)
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
+                {t('clients.addMulti.totalGbLabel')}
               </label>
               <input
                 type="number"
@@ -176,47 +176,47 @@ export const AddClientMultiServer: React.FC = () => {
                 value={totalGB}
                 onChange={(e) => setTotalGB(e.target.value)}
                 min={0}
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
               />
             </div>
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>
-                Expiry Date
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
+                {t('clients.addMulti.expiryDate')}
               </label>
               <input
                 type="date"
                 className="form-control form-control-sm"
                 value={expiryTime}
                 onChange={(e) => setExpiryTime(e.target.value)}
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                style={{ backgroundColor: 'var(--bg-primary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
               />
             </div>
           </div>
 
           <div className="panel-grid panel-grid--compact mt-3">
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>
-                Flow
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
+                {t('clients.flowLabel')}
               </label>
               <ChoiceChips
                 options={FLOW_OPTIONS.map((option) => ({ value: option.value, label: option.label }))}
                 value={flow}
                 onChange={(value) => setFlow(value)}
-                colors={colors}
+                
               />
             </div>
             <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>
+              <label className="form-label small" style={{ color: 'var(--text-secondary)' }}>
                 Status
               </label>
               <ChoiceChips
                 options={[
-                  { value: true, label: 'Enabled' },
-                  { value: false, label: 'Disabled' },
+                  { value: true, label: t('clients.addMulti.enabled') },
+                  { value: false, label: t('clients.disabled') },
                 ]}
                 value={enable}
                 onChange={(value) => setEnable(value)}
-                colors={colors}
+                
               />
             </div>
           </div>
@@ -225,31 +225,31 @@ export const AddClientMultiServer: React.FC = () => {
         <div className="panel-block panel-block--wide">
           <div className="panel-block__header">
             <div>
-              <h6 className="panel-block__title" style={{ color: colors.text.primary }}>Target Servers</h6>
-              <p className="panel-block__hint" style={{ color: colors.text.secondary }}>
-                Select one, many or all servers for this client.
+              <h6 className="panel-block__title" style={{ color: 'var(--text-primary)' }}>{t('clients.addMulti.targetServers')}</h6>
+              <p className="panel-block__hint" style={{ color: 'var(--text-secondary)' }}>
+                {t('clients.addMulti.targetServersHint')}
               </p>
             </div>
             <div className="panel-inline-actions">
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 onClick={handleSelectAll}
               >
-                All
+                {t('common.all')}
               </button>
               <button
                 className="btn btn-sm"
-                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                style={{ backgroundColor: 'var(--bg-tertiary)', borderColor: 'var(--border-color)', color: 'var(--text-primary)' }}
                 onClick={handleSelectNone}
               >
-                None
+                {t('common.none')}
               </button>
             </div>
           </div>
 
-          <div className="small mb-2" style={{ color: colors.text.secondary }}>
-            {selectedNodeIds.size}/{nodes.length} selected
+          <div className="small mb-2" style={{ color: 'var(--text-secondary)' }}>
+            {t('clients.addMulti.selectedServers', { selected: selectedNodeIds.size, total: nodes.length })}
           </div>
           <div className="panel-selection-grid">
             {nodes.map((node) => {
@@ -261,9 +261,9 @@ export const AddClientMultiServer: React.FC = () => {
                   className="btn btn-sm text-start"
                   onClick={() => toggleNode(node.id)}
                   style={{
-                    backgroundColor: active ? colors.accent : colors.bg.tertiary,
-                    borderColor: active ? colors.accent : colors.border,
-                    color: active ? colors.accentText : colors.text.primary,
+                    backgroundColor: active ? 'var(--accent)' : 'var(--bg-tertiary)',
+                    borderColor: active ? 'var(--accent)' : 'var(--border-color)',
+                    color: active ? '#000f14' : 'var(--text-primary)',
                     justifyContent: 'flex-start',
                   }}
                 >
@@ -275,7 +275,7 @@ export const AddClientMultiServer: React.FC = () => {
               );
             })}
             {nodes.length === 0 && (
-              <span className="small" style={{ color: colors.text.secondary }}>No servers configured</span>
+              <span className="small" style={{ color: 'var(--text-secondary)' }}>{t('clients.addMulti.noServers')}</span>
             )}
           </div>
         </div>
@@ -284,13 +284,13 @@ export const AddClientMultiServer: React.FC = () => {
       <div className="panel-inline-actions">
         <button
           className="btn btn-sm"
-          style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+          style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
           onClick={handleSubmit}
           disabled={loading || selectedNodeIds.size === 0}
         >
           <span className="d-inline-flex align-items-center gap-1">
             <UIIcon name={loading ? 'spinner' : 'plus'} size={14} />
-            {loading ? 'Adding...' : `Add to ${selectedNodeIds.size} Server${selectedNodeIds.size !== 1 ? 's' : ''}`}
+            {loading ? t('clients.addMulti.adding') : t('clients.addMulti.addToServers', { count: selectedNodeIds.size })}
           </span>
         </button>
       </div>
@@ -300,11 +300,11 @@ export const AddClientMultiServer: React.FC = () => {
           <div className="modal-dialog modal-lg">
             <div
               className="modal-content"
-              style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}
+              style={{ backgroundColor: 'var(--bg-secondary)', borderColor: 'var(--border-color)' }}
             >
-              <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>
-                  Add Client Results
+              <div className="modal-header" style={{ borderColor: 'var(--border-color)' }}>
+                <h6 className="modal-title" style={{ color: 'var(--text-primary)' }}>
+                  {t('clients.addMulti.resultsTitle')}
                 </h6>
                 <button
                   type="button"
@@ -314,57 +314,57 @@ export const AddClientMultiServer: React.FC = () => {
               </div>
               <div className="modal-body">
                 <div className="d-flex gap-3 mb-3">
-                  <span className="badge fs-6" style={{ backgroundColor: colors.bg.tertiary, color: colors.text.primary }}>
-                    Total: {result.summary.total}
+                  <span className="badge fs-6" style={{ backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}>
+                    {t('common.total')}: {result.summary.total}
                   </span>
-                  <span className="badge fs-6" style={{ backgroundColor: colors.success }}>
+                  <span className="badge fs-6" style={{ backgroundColor: 'var(--success)' }}>
                     <span className="d-inline-flex align-items-center gap-1"><UIIcon name="check" size={12} />{result.summary.successful}</span>
                   </span>
-                  <span className="badge fs-6" style={{ backgroundColor: colors.danger }}>
+                  <span className="badge fs-6" style={{ backgroundColor: 'var(--danger)' }}>
                     <span className="d-inline-flex align-items-center gap-1"><UIIcon name="x" size={12} />{result.summary.failed}</span>
                   </span>
                 </div>
 
                 <div className="table-responsive">
-                  <table className="table table-sm" style={{ color: colors.text.primary }}>
+                  <table className="table table-sm" style={{ color: 'var(--text-primary)' }}>
                     <thead>
-                      <tr style={{ borderColor: colors.border }}>
-                        <th style={{ color: colors.text.secondary }}>Server</th>
-                        <th style={{ color: colors.text.secondary }}>Status</th>
-                        <th style={{ color: colors.text.secondary }}>Details</th>
+                      <tr style={{ borderColor: 'var(--border-color)' }}>
+                        <th style={{ color: 'var(--text-secondary)' }}>{t('common.server')}</th>
+                        <th style={{ color: 'var(--text-secondary)' }}>{t('common.status')}</th>
+                        <th style={{ color: 'var(--text-secondary)' }}>{t('common.details')}</th>
                       </tr>
                     </thead>
                     <tbody>
                       {result.results.map((item, index) => (
-                        <tr key={index} style={{ borderColor: colors.border }}>
+                        <tr key={index} style={{ borderColor: 'var(--border-color)' }}>
                           <td>{item.node}</td>
                           <td>
                             {item.success ? (
-                              <span className="d-inline-flex align-items-center gap-1" style={{ color: colors.success }}>
+                              <span className="d-inline-flex align-items-center gap-1" style={{ color: 'var(--success)' }}>
                                 <UIIcon name="check" size={13} />
-                                Success
+                                {t('common.success')}
                               </span>
                             ) : (
-                              <span className="d-inline-flex align-items-center gap-1" style={{ color: colors.danger }}>
+                              <span className="d-inline-flex align-items-center gap-1" style={{ color: 'var(--danger)' }}>
                                 <UIIcon name="x" size={13} />
-                                Failed
+                                {t('common.failed')}
                               </span>
                             )}
                           </td>
-                          <td>{item.error && <small style={{ color: colors.danger }}>{item.error}</small>}</td>
+                          <td>{item.error && <small style={{ color: 'var(--danger)' }}>{item.error}</small>}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               </div>
-              <div className="modal-footer" style={{ borderColor: colors.border }}>
+              <div className="modal-footer" style={{ borderColor: 'var(--border-color)' }}>
                 <button
                   className="btn btn-sm"
-                  style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
+                  style={{ backgroundColor: 'var(--accent)', borderColor: 'var(--accent)', color: '#000f14' }}
                   onClick={() => setShowResultModal(false)}
                 >
-                  Close
+                  {t('common.close')}
                 </button>
               </div>
             </div>

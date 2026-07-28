@@ -1,10 +1,10 @@
-import json
 import logging
 import re
 from collections import Counter
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
+from shared.security import validate_outbound_url
 
 import requests
 
@@ -66,9 +66,12 @@ class AdGuardMonitor:
         return prefixes
 
     def _verify_value(self, source: AdGuardSource):
-        return bool(source.verify_tls)
+        return True
 
     def _login(self, source: AdGuardSource) -> Tuple[Optional[requests.Session], Optional[str], Optional[str]]:
+        valid_url, url_error = validate_outbound_url(source.admin_url)
+        if not valid_url:
+            return None, None, url_error
         prefixes = self._candidate_prefixes(source.admin_url)
         if not prefixes:
             return None, None, "Empty admin URL"
@@ -80,7 +83,7 @@ class AdGuardMonitor:
             login_url = f"{prefix}/control/login"
             payload = {"name": source.username, "password": source.password}
             try:
-                res = session.post(login_url, json=payload, timeout=8, verify=self._verify_value(source))
+                res = session.post(login_url, json=payload, timeout=8, verify=self._verify_value(source), allow_redirects=False)
                 if res.status_code in (200, 204):
                     return session, prefix, None
                 errors.append(f"{prefix} login_status={res.status_code}")
@@ -95,6 +98,7 @@ class AdGuardMonitor:
                     f"{prefix}/control/status",
                     timeout=8,
                     verify=self._verify_value(source),
+                    allow_redirects=False,
                 )
                 if status_res.status_code == 200:
                     return session, prefix, None
@@ -108,7 +112,10 @@ class AdGuardMonitor:
 
     def _get_json(self, session: requests.Session, url: str, verify, timeout: int = 8) -> Optional[Dict]:
         try:
-            res = session.get(url, timeout=timeout, verify=verify)
+            valid, _ = validate_outbound_url(url, allow_private=False, require_https=urlparse(url).scheme == "https")
+            if not valid:
+                return None
+            res = session.get(url, timeout=timeout, verify=verify, allow_redirects=False)
             if res.status_code == 200:
                 return res.json()
         except Exception:
@@ -117,7 +124,10 @@ class AdGuardMonitor:
 
     def _get_text(self, session: requests.Session, url: str, verify, timeout: int = 8) -> Optional[str]:
         try:
-            res = session.get(url, timeout=timeout, verify=verify)
+            valid, _ = validate_outbound_url(url, allow_private=False, require_https=urlparse(url).scheme == "https")
+            if not valid:
+                return None
+            res = session.get(url, timeout=timeout, verify=verify, allow_redirects=False)
             if res.status_code == 200:
                 return res.text
         except Exception:
@@ -133,9 +143,15 @@ class AdGuardMonitor:
         for method, url, payload in candidates:
             try:
                 if method == "get":
-                    res = session.get(url, timeout=10, verify=verify)
+                    valid, _ = validate_outbound_url(url, allow_private=False, require_https=urlparse(url).scheme == "https")
+                    if not valid:
+                        continue
+                    res = session.get(url, timeout=10, verify=verify, allow_redirects=False)
                 else:
-                    res = session.post(url, json=payload, timeout=10, verify=verify)
+                    valid, _ = validate_outbound_url(url, allow_private=False, require_https=urlparse(url).scheme == "https")
+                    if not valid:
+                        continue
+                    res = session.post(url, json=payload, timeout=10, verify=verify, allow_redirects=False)
                 if res.status_code != 200:
                     continue
                 data = res.json()
@@ -173,8 +189,11 @@ class AdGuardMonitor:
     @staticmethod
     def _extract_query_fields(item: Dict) -> Tuple[str, str, bool]:
         # Works for multiple AGH querylog formats.
+        question = item.get("question") or {}
+        question_name = question.get("name") if isinstance(question, dict) else ""
         domain = (
-            item.get("question_host")
+            question_name
+            or item.get("question_host")
             or item.get("domain")
             or item.get("host")
             or item.get("QH")
@@ -187,11 +206,27 @@ class AdGuardMonitor:
             or item.get("ip")
             or ""
         )
+        reason_raw = str(item.get("reason") or "")
+        reason = reason_raw.lower()
+        status = str(item.get("status") or "").lower()
+        # AGH often returns reasons like "NotFiltered..." for allowed queries.
+        # We should only treat clearly blocked/filtered reasons as blocked.
+        reason_blocked = (
+            reason.startswith("filtered")
+            or reason.startswith("blocked")
+            or reason.startswith("safe")
+            or reason.startswith("parental")
+            or reason.startswith("rewrite")
+            or "deny" in reason
+            or "refus" in reason
+        ) and not reason.startswith("notfiltered")
+
         blocked = bool(
             item.get("blocked")
             or item.get("is_filtered")
-            or item.get("Result") in ("Filtered", "Blocked", "filtered", "blocked")
-            or item.get("reason") in ("filtered", "blocked")
+            or str(item.get("Result") or "").lower() in ("filtered", "blocked")
+            or reason_blocked
+            or status in ("refused", "nxdomain")
         )
         return str(domain), str(client), blocked
 

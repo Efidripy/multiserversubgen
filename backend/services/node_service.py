@@ -1,6 +1,9 @@
+import json
 import sqlite3
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
+
+from services.db_bootstrap import connect
 
 
 class NodeService:
@@ -43,7 +46,7 @@ class NodeService:
         return node
 
     def list_nodes(self) -> List[Dict]:
-        with sqlite3.connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             return [
                 self._normalize_node(dict(n))
@@ -53,7 +56,7 @@ class NodeService:
             ]
 
     def list_nodes_simple(self) -> List[Dict]:
-        with sqlite3.connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             return [
                 {"id": n["id"], "name": n["name"]}
@@ -63,7 +66,40 @@ class NodeService:
             ]
 
     def get_node(self, node_id: int) -> Optional[Dict]:
-        with sqlite3.connect(self.db_path) as conn:
+        with connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute("SELECT * FROM nodes WHERE id = ?", (node_id,)).fetchone()
             return self._normalize_node(dict(row)) if row else None
+
+    def update_node(self, node_id: int, updates: Dict) -> Optional[Dict]:
+        allowed = {"api_version", "panel_version", "name", "ip", "port", "user",
+                   "password", "base_path", "read_only", "enabled", "tags"}
+        fields = {k: v for k, v in updates.items() if k in allowed}
+        if not fields:
+            return self.get_node(node_id)
+        if "tags" in fields:
+            fields["tags"] = self._serialize_tags(fields["tags"])
+        set_clause = ", ".join(f"{k} = ?" for k in fields)
+        params = list(fields.values()) + [node_id]
+        with connect(self.db_path) as conn:
+            conn.execute(f"UPDATE nodes SET {set_clause} WHERE id = ?", params)
+        return self.get_node(node_id)
+
+    @staticmethod
+    def _serialize_tags(value) -> str:
+        if value is None or value == "":
+            return "[]"
+        if isinstance(value, list):
+            return json.dumps([str(tag).strip() for tag in value if str(tag).strip()], ensure_ascii=False)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return "[]"
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, list):
+                    return json.dumps([str(tag).strip() for tag in parsed if str(tag).strip()], ensure_ascii=False)
+            except json.JSONDecodeError:
+                pass
+            return json.dumps([tag.strip() for tag in stripped.split(",") if tag.strip()], ensure_ascii=False)
+        return "[]"

@@ -141,7 +141,7 @@ report_set_credential() {
     local service="$1"
     local key="$2"
     local value="${3:-}"
-    REPORT_CREDENTIALS["${service}.${key}"]="$value"
+    REPORT_CREDENTIALS["${service}.${key}"]="<redacted>"
 }
 
 report_add_file() {
@@ -278,11 +278,11 @@ report_finalize_env() {
         printf "XUI_URL=%q\n" "${REPORT_SERVICE_FIELDS[xui.url]:-}"
         printf "GRAFANA_URL=%q\n" "${REPORT_SERVICE_FIELDS[grafana.url]:-}"
         printf "XUI_USERNAME=%q\n" "${REPORT_CREDENTIALS[xui.username]:-}"
-        printf "XUI_PASSWORD=%q\n" "${REPORT_CREDENTIALS[xui.password]:-}"
+        printf "XUI_PASSWORD=<redacted>\n"
         printf "GRAFANA_USERNAME=%q\n" "${REPORT_CREDENTIALS[grafana.username]:-}"
-        printf "GRAFANA_PASSWORD=%q\n" "${REPORT_CREDENTIALS[grafana.password]:-}"
+        printf "GRAFANA_PASSWORD=<redacted>\n"
         printf "ADGUARD_USERNAME=%q\n" "${REPORT_CREDENTIALS[adguard.username]:-}"
-        printf "ADGUARD_PASSWORD=%q\n" "${REPORT_CREDENTIALS[adguard.password]:-}"
+        printf "ADGUARD_PASSWORD=<redacted>\n"
         printf "ADGUARD_PANEL_URL=%q\n" "${REPORT_SERVICE_FIELDS[adguard.panel_url]:-}"
         printf "ADGUARD_DOH_URL=%q\n" "${REPORT_SERVICE_FIELDS[adguard.doh_url]:-}"
         printf "ADGUARD_PANEL_PATH=%q\n" "${REPORT_SERVICE_FIELDS[adguard.panel_path]:-}"
@@ -304,7 +304,7 @@ report_print_summary() {
     if [ "${REPORT_META[preset_id]:-}" = "3.0" ]; then
         printf "${UI_GREEN}3x-ui URL:${UI_RESET} %s\n" "${REPORT_SERVICE_FIELDS[xui.url]:-unknown}"
         printf "${UI_GREEN}3x-ui Login:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[xui.username]:-unknown}"
-        printf "${UI_GREEN}3x-ui Password:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[xui.password]:-unknown}"
+        printf "${UI_GREEN}3x-ui Password:${UI_RESET} stored in protected service configuration\n"
         printf "${UI_GREEN}sub2sing-box:${UI_RESET} %s\n" "${REPORT_SERVICE_FIELDS[xui.sub2sing_url]:-unknown}"
         printf "${UI_GREEN}JSON Report:${UI_RESET} %s\n" "${REPORT_META[report_json_path]:-unknown}"
         printf "${UI_GREEN}ENV Report:${UI_RESET} %s\n" "${REPORT_META[report_env_path]:-unknown}"
@@ -318,12 +318,12 @@ report_print_summary() {
     if [ -n "${REPORT_SERVICE_FIELDS[xui.url]:-}" ]; then
         printf "${UI_GREEN}3x-ui URL:${UI_RESET} %s\n" "${REPORT_SERVICE_FIELDS[xui.url]}"
         printf "${UI_GREEN}3x-ui Login:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[xui.username]:-unknown}"
-        printf "${UI_GREEN}3x-ui Password:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[xui.password]:-unknown}"
+        printf "${UI_GREEN}3x-ui Password:${UI_RESET} stored in protected service configuration\n"
     fi
     if [ -n "${REPORT_SERVICE_FIELDS[grafana.url]:-}" ]; then
         printf "${UI_GREEN}Grafana URL:${UI_RESET} %s\n" "${REPORT_SERVICE_FIELDS[grafana.url]}"
         [ -n "${REPORT_CREDENTIALS[grafana.username]:-}" ] && printf "${UI_GREEN}Grafana Login:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[grafana.username]}"
-        [ -n "${REPORT_CREDENTIALS[grafana.password]:-}" ] && printf "${UI_GREEN}Grafana Password:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[grafana.password]}"
+        [ -n "${REPORT_CREDENTIALS[grafana.password]:-}" ] && printf "${UI_GREEN}Grafana Password:${UI_RESET} stored in protected service configuration\n"
     fi
     if [ "${REPORT_SERVICE_FIELDS[adguard.enabled]:-false}" = "true" ]; then
         [ -n "${REPORT_SERVICE_FIELDS[adguard.panel_url]:-}" ] && printf "${UI_GREEN}AdGuard Panel URL:${UI_RESET} %s\n" "${REPORT_SERVICE_FIELDS[adguard.panel_url]}"
@@ -332,7 +332,7 @@ report_print_summary() {
         [ -n "${REPORT_SERVICE_FIELDS[adguard.doh_path]:-}" ] && printf "${UI_GREEN}AdGuard DoH Path:${UI_RESET} /%s/\n" "${REPORT_SERVICE_FIELDS[adguard.doh_path]}"
         [ -n "${REPORT_SERVICE_FIELDS[adguard.dns_bind]:-}" ] && printf "${UI_GREEN}AdGuard DNS Bind:${UI_RESET} %s\n" "${REPORT_SERVICE_FIELDS[adguard.dns_bind]}"
         [ -n "${REPORT_CREDENTIALS[adguard.username]:-}" ] && printf "${UI_GREEN}AdGuard Login:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[adguard.username]}"
-        [ -n "${REPORT_CREDENTIALS[adguard.password]:-}" ] && printf "${UI_GREEN}AdGuard Password:${UI_RESET} %s\n" "${REPORT_CREDENTIALS[adguard.password]}"
+        [ -n "${REPORT_CREDENTIALS[adguard.password]:-}" ] && printf "${UI_GREEN}AdGuard Password:${UI_RESET} stored in protected service configuration\n"
     fi
     printf "${UI_GREEN}JSON Report:${UI_RESET} %s\n" "${REPORT_META[report_json_path]:-unknown}"
     printf "${UI_GREEN}ENV Report:${UI_RESET} %s\n" "${REPORT_META[report_env_path]:-unknown}"
@@ -1004,7 +1004,7 @@ show_xui_minimal_result() {
     installer_message "3x-ui Minimal Install" "nginx + 3x-ui installed successfully."
     printf "${UI_GREEN}3x-ui Panel:${UI_RESET} %s\n" "${PROFILE_XUI_PANEL_URL:-unknown}"
     printf "${UI_GREEN}3x-ui Login:${UI_RESET} %s\n" "${PROFILE_XUI_USERNAME:-unknown}"
-    printf "${UI_GREEN}3x-ui Password:${UI_RESET} %s\n" "${PROFILE_XUI_PASSWORD:-unknown}"
+    printf "${UI_GREEN}3x-ui Password:${UI_RESET} stored in protected service configuration\n"
     printf "${UI_GREEN}sub2sing-box:${UI_RESET} %s\n" "${PROFILE_XUI_SUB2SING_URL:-unknown}"
     printf "\n"
 }
@@ -1137,7 +1137,7 @@ show_install_summary() {
     if [ -n "${PROFILE_XUI_PANEL_URL:-}" ]; then
         printf "${UI_GREEN}3x-ui Panel:${UI_RESET} %s\n" "$PROFILE_XUI_PANEL_URL"
         printf "${UI_GREEN}3x-ui Username:${UI_RESET} %s\n" "${PROFILE_XUI_USERNAME:-unknown}"
-        printf "${UI_GREEN}3x-ui Password:${UI_RESET} %s\n" "${PROFILE_XUI_PASSWORD:-unknown}"
+        printf "${UI_GREEN}3x-ui Password:${UI_RESET} stored in protected service configuration\n"
         if [ -n "${PROFILE_XUI_WEBSUB_URL:-}" ]; then
             printf "${UI_GREEN}3x-ui Web Sub:${UI_RESET} %s\n" "${PROFILE_XUI_WEBSUB_URL}"
         fi

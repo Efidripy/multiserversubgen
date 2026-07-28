@@ -11,6 +11,7 @@ from server_monitor import ServerMonitor, ThreeXUIMonitor
 from services.adguard_monitor import AdGuardMonitor
 from services.adguard_runtime import AdGuardRuntime
 from services.clients_runtime import ClientsRuntime
+from services.inbounds_runtime import InboundsRuntime
 from services.collector import SnapshotCollector
 from services.metrics_runtime import MetricsRuntime
 from services.live_stats_runtime import LiveStatsRuntime
@@ -39,6 +40,7 @@ class AppRuntimeBundle:
     redis_json_cache: RedisJsonCache
     live_stats_runtime: LiveStatsRuntime
     clients_runtime: ClientsRuntime
+    inbounds_runtime: InboundsRuntime
     metrics_runtime: MetricsRuntime
 
 
@@ -51,6 +53,14 @@ def build_app_runtime_bundle(
     collector_base_interval_sec: int,
     collector_max_interval_sec: int,
     collector_max_parallel: int,
+    collector_warming_interval_1_sec: int,
+    collector_warming_interval_2_sec: int,
+    collector_warming_interval_3_sec: int,
+    collector_active_interval_sec: int,
+    collector_idle_interval_sec: int,
+    collector_ultra_idle_interval_sec: int,
+    collector_idle_after_sec: int,
+    collector_ultra_idle_after_sec: int,
     audit_queue_batch_size: int,
     audit_idle_sleep_sec: float,
     audit_active_sleep_sec: float,
@@ -71,6 +81,7 @@ def build_app_runtime_bundle(
     traffic_stats_cache: Dict,
     online_clients_cache: Dict,
     clients_cache: Dict,
+    inbounds_cache: Dict,
     cache_refresh_state: Dict,
     cache_refresh_lock: Lock,
     traffic_stats_cache_ttl: int,
@@ -107,10 +118,19 @@ def build_app_runtime_bundle(
         fetch_nodes=node_service.list_nodes,
         xui_monitor=xui_monitor,
         ws_manager=ws_manager,
+        db_path=db_path,
         on_snapshot=on_snapshot,
         base_interval_sec=collector_base_interval_sec,
         max_interval_sec=collector_max_interval_sec,
         max_parallel_polls=collector_max_parallel,
+        warming_interval_1_sec=collector_warming_interval_1_sec,
+        warming_interval_2_sec=collector_warming_interval_2_sec,
+        warming_interval_3_sec=collector_warming_interval_3_sec,
+        active_interval_sec=collector_active_interval_sec,
+        idle_interval_sec=collector_idle_interval_sec,
+        ultra_idle_interval_sec=collector_ultra_idle_interval_sec,
+        idle_after_sec=collector_idle_after_sec,
+        ultra_idle_after_sec=collector_ultra_idle_after_sec,
     )
     ws_manager.set_activity_callback(snapshot_collector.on_websocket_activity)
 
@@ -166,6 +186,7 @@ def build_app_runtime_bundle(
 
     live_stats_runtime = LiveStatsRuntime(
         client_mgr=client_mgr,
+        db_path=db_path,
         traffic_stats_cache=traffic_stats_cache,
         online_clients_cache=online_clients_cache,
         cache_refresh_state=cache_refresh_state,
@@ -185,6 +206,12 @@ def build_app_runtime_bundle(
         clients_cache=clients_cache,
         clients_cache_ttl=clients_cache_ttl,
         clients_cache_stale_ttl=clients_cache_stale_ttl,
+        start_cache_refresh=live_stats_runtime.start_cache_refresh,
+    )
+
+    inbounds_runtime = InboundsRuntime(
+        inbound_mgr=inbound_mgr,
+        inbounds_cache=inbounds_cache,
         start_cache_refresh=live_stats_runtime.start_cache_refresh,
     )
 
@@ -227,5 +254,6 @@ def build_app_runtime_bundle(
         redis_json_cache=redis_json_cache,
         live_stats_runtime=live_stats_runtime,
         clients_runtime=clients_runtime,
+        inbounds_runtime=inbounds_runtime,
         metrics_runtime=metrics_runtime,
     )

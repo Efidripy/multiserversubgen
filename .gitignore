@@ -13,6 +13,7 @@ frontend/dist/
 __pycache__/
 *.egg-info/
 .venv/
+.venv-wsl/
 venv/
 *.log
 .env
@@ -43,3 +44,16 @@ reset-adguard-pass.sh
 # Local template zip pools
 scripts/installer/templates/.local-randomfakehtml/
 !scripts/installer/templates/.local-randomfakehtml-sample/
+# Local/private operator state and generated artifacts
+.local_project_docs/
+.local_snapshots/
+.tmp/
+.venv/
+.venv-wsl/
+node_modules/
+*.tar.gz
+*.log
+admin.db
+*.db-shm
+*.db-wal
+.sub_manager_install.log

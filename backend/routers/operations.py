@@ -2,12 +2,14 @@ import base64
 import datetime
 import io
 import sqlite3
+from services.db_bootstrap import connect
 import time
 import zipfile
 from typing import Dict
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import ORJSONResponse, Response
+from shared.security import MAX_BACKUP_BYTES, MAX_BACKUP_B64_CHARS, safe_content_disposition_filename
 
 
 def build_operations_router(
@@ -18,6 +20,7 @@ def build_operations_router(
     client_mgr,
     server_monitor,
     get_node_or_404,
+    snapshot_collector,
 ):
     router = APIRouter()
 
@@ -30,6 +33,119 @@ def build_operations_router(
             node_id_set = {int(node_id) for node_id in node_ids}
             return [node for node in nodes if int(node.get("id")) in node_id_set]
         return nodes
+
+    def _latest_snapshot_payload() -> Dict:
+        payload = snapshot_collector.latest_snapshot() if snapshot_collector else {}
+        return payload if isinstance(payload, dict) else {"timestamp": None, "nodes": [], "count": 0}
+
+    def _snapshot_by_node(nodes: list) -> tuple[Dict[str, Dict], Dict[str, Dict], Dict]:
+        snapshot = _latest_snapshot_payload()
+        snapshot_nodes = snapshot.get("nodes") if isinstance(snapshot, dict) else []
+        by_id: Dict[str, Dict] = {}
+        by_name: Dict[str, Dict] = {}
+        if isinstance(snapshot_nodes, list):
+            for item in snapshot_nodes:
+                if not isinstance(item, dict):
+                    continue
+                node_id = item.get("node_id")
+                name = item.get("name") or item.get("node")
+                if node_id is not None:
+                    by_id[str(node_id)] = item
+                if name:
+                    by_name[str(name)] = item
+        return by_id, by_name, snapshot
+
+    def _snapshot_for_node(node: Dict, by_id: Dict[str, Dict], by_name: Dict[str, Dict]) -> Dict | None:
+        node_id = node.get("id")
+        if node_id is not None and str(node_id) in by_id:
+            return by_id[str(node_id)]
+        name = node.get("name")
+        if name and str(name) in by_name:
+            return by_name[str(name)]
+        return None
+
+    def _missing_cached_status(node: Dict) -> Dict:
+        return {
+            "node": node.get("name"),
+            "node_id": node.get("id"),
+            "available": False,
+            "status": "offline",
+            "reason": "snapshot_not_ready",
+            "error": "Status has not been collected yet",
+            "cached": True,
+        }
+
+    def _status_from_snapshot(node: Dict, cached: Dict | None) -> Dict:
+        if not isinstance(cached, dict):
+            return _missing_cached_status(node)
+
+        server_status = cached.get("server_status")
+        if isinstance(server_status, dict):
+            payload = dict(server_status)
+        else:
+            payload = {
+                "node": cached.get("name") or node.get("name"),
+                "node_id": cached.get("node_id") or node.get("id"),
+                "available": bool(cached.get("available")),
+                "status": cached.get("status") or ("online" if cached.get("available") else "offline"),
+                "reason": cached.get("reason") or ("ok" if cached.get("available") else "unknown"),
+                "error": cached.get("error", ""),
+                "xray": {"running": bool(cached.get("xray_running"))},
+                "system": {"cpu": cached.get("cpu", 0)},
+                "network": {"upload": 0, "download": cached.get("traffic_total", 0)},
+                "panel_version": cached.get("panel_version", ""),
+            }
+
+        payload.setdefault("node", cached.get("name") or node.get("name"))
+        payload.setdefault("available", bool(cached.get("available")))
+        payload.setdefault("status", cached.get("status") or ("online" if cached.get("available") else "offline"))
+        payload.setdefault("reason", cached.get("reason") or ("ok" if cached.get("available") else "unknown"))
+        payload.setdefault("error", cached.get("error", ""))
+        payload["node_id"] = cached.get("node_id") or node.get("id")
+        payload["cached"] = True
+        payload["snapshot_timestamp"] = cached.get("timestamp")
+        payload["snapshot_updated_at"] = cached.get("snapshot_updated_at")
+        payload["poll_ms"] = cached.get("poll_ms")
+        if cached.get("circuit_open_until"):
+            payload["circuit_open_until"] = cached.get("circuit_open_until")
+        return payload
+
+    def _availability_from_snapshot(node: Dict, cached: Dict | None) -> Dict:
+        if not isinstance(cached, dict):
+            return {
+                "node": node.get("name"),
+                "node_id": node.get("id"),
+                "available": False,
+                "latency_ms": None,
+                "status_code": 0,
+                "timestamp": None,
+                "reason": "snapshot_not_ready",
+                "error": "Status has not been collected yet",
+                "cached": True,
+            }
+        available = bool(cached.get("available"))
+        return {
+            "node": cached.get("name") or node.get("name"),
+            "node_id": cached.get("node_id") or node.get("id"),
+            "available": available,
+            "latency_ms": cached.get("poll_ms"),
+            "status_code": 200 if available else 0,
+            "timestamp": cached.get("timestamp"),
+            "reason": cached.get("reason") or ("ok" if available else "unknown"),
+            "error": cached.get("error", ""),
+            "cached": True,
+        }
+
+    @router.get("/api/v1/status")
+    async def app_status(request: Request):
+        """Public health + summary endpoint (no auth required)."""
+        nodes = _load_nodes()
+        return {
+            "status": "ok",
+            "version": "3.1",
+            "nodes_total": len(nodes),
+            "timestamp": int(__import__("time").time()),
+        }
 
     @router.post("/api/v1/automation/reset-all-traffic")
     async def reset_all_traffic(request: Request, data: Dict):
@@ -46,23 +162,35 @@ def build_operations_router(
         if not user:
             raise HTTPException(status_code=401)
 
-        statuses = server_monitor.get_all_servers_status(_load_nodes())
-        return {"servers": statuses, "count": len(statuses)}
+        nodes = _load_nodes()
+        by_id, by_name, _snapshot = _snapshot_by_node(nodes)
+        statuses = [
+            _status_from_snapshot(node, _snapshot_for_node(node, by_id, by_name))
+            for node in nodes
+        ]
+        return ORJSONResponse(content={"servers": statuses, "count": len(statuses)})
 
     @router.get("/api/v1/servers/{node_id}/status")
     async def get_server_status(request: Request, node_id: int):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        return server_monitor.get_server_status(_load_node(node_id))
+        node = _load_node(node_id)
+        by_id, by_name, _snapshot = _snapshot_by_node([node])
+        return _status_from_snapshot(node, _snapshot_for_node(node, by_id, by_name))
 
     @router.get("/api/v1/servers/availability")
     async def check_servers_availability(request: Request):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        availability = [server_monitor.check_server_availability(node) for node in _load_nodes()]
-        return {"availability": availability}
+        nodes = _load_nodes()
+        by_id, by_name, _snapshot = _snapshot_by_node(nodes)
+        availability = [
+            _availability_from_snapshot(node, _snapshot_for_node(node, by_id, by_name))
+            for node in nodes
+        ]
+        return ORJSONResponse(content={"availability": availability})
 
     @router.post("/api/v1/servers/{node_id}/restart-xray")
     async def restart_xray_on_server(request: Request, node_id: int):
@@ -106,7 +234,7 @@ def build_operations_router(
 
         filename = f"backup_{backup.get('node','node')}_{datetime.datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.db"
         headers = {
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": safe_content_disposition_filename(filename, "backup.db"),
             "Content-Encoding": "identity",
             "Cache-Control": "no-store",
         }
@@ -119,7 +247,7 @@ def build_operations_router(
             raise HTTPException(status_code=401)
 
         backup_data = data.get("backup_data")
-        if not backup_data:
+        if not isinstance(backup_data, str) or not backup_data or len(backup_data) > MAX_BACKUP_B64_CHARS:
             raise HTTPException(status_code=400, detail="backup_data required")
         success = server_monitor.import_database_backup(_load_node(node_id), backup_data)
         return {"success": success}
@@ -136,7 +264,9 @@ def build_operations_router(
         if upload is None:
             raise HTTPException(status_code=400, detail="file required")
 
-        content = await upload.read()
+        content = await upload.read(MAX_BACKUP_BYTES + 1)
+        if len(content) > MAX_BACKUP_BYTES:
+            raise HTTPException(status_code=413, detail="backup file is too large")
         if not content:
             raise HTTPException(status_code=400, detail="empty file")
 
@@ -195,7 +325,7 @@ def build_operations_router(
 
         get_node_or_404(node_id)
         ts_from = int(time.time()) - since_sec
-        with sqlite3.connect(db_path) as conn:
+        with connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             rows = conn.execute(
                 """

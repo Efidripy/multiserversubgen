@@ -80,7 +80,7 @@ if [[ -n "$PUBLIC_DOMAIN_INPUT" ]]; then
   LIVE_HTML="$(mktemp)"
   trap 'rm -f "$LIVE_HTML"' EXIT
 
-  curl -skf "$PANEL_URL" -o "$LIVE_HTML"
+  curl -fLsS "$PANEL_URL" -o "$LIVE_HTML"
 
   grep -Fq "$JS_PATH" "$LIVE_HTML" || {
     echo "Live index.html does not reference expected JS asset: $JS_PATH"
@@ -91,8 +91,8 @@ if [[ -n "$PUBLIC_DOMAIN_INPUT" ]]; then
     exit 1
   }
 
-  JS_CODE="$(curl -sk -o /dev/null -w '%{http_code}' "${PUBLIC_SCHEME_RESOLVED}://${PUBLIC_DOMAIN_INPUT}${JS_PATH}")"
-  CSS_CODE="$(curl -sk -o /dev/null -w '%{http_code}' "${PUBLIC_SCHEME_RESOLVED}://${PUBLIC_DOMAIN_INPUT}${CSS_PATH}")"
+  JS_CODE="$(curl -fLsS -o /dev/null -w '%{http_code}' "${PUBLIC_SCHEME_RESOLVED}://${PUBLIC_DOMAIN_INPUT}${JS_PATH}")"
+  CSS_CODE="$(curl -fLsS -o /dev/null -w '%{http_code}' "${PUBLIC_SCHEME_RESOLVED}://${PUBLIC_DOMAIN_INPUT}${CSS_PATH}")"
   if [[ "$JS_CODE" != "200" || "$CSS_CODE" != "200" ]]; then
     echo "Live frontend assets are not healthy: js=$JS_CODE css=$CSS_CODE"
     exit 1

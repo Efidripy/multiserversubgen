@@ -9,6 +9,7 @@ from routers.nodes import build_nodes_router
 from routers.observability import build_observability_router
 from routers.operations import build_operations_router
 from routers.realtime import build_realtime_router
+from routers.server_ops import build_server_ops_router
 from routers.subscriptions import build_subscriptions_router
 
 
@@ -21,6 +22,8 @@ def register_app_routers(
     check_auth,
     verify_totp_code,
     get_user_role,
+    issue_ws_ticket,
+    verify_ws_ticket,
     mfa_totp_enabled,
     get_node_or_404,
     get_cached_traffic_stats,
@@ -44,9 +47,11 @@ def register_app_routers(
     invalidate_live_stats_cache,
     client_mgr,
     get_cached_clients,
+    get_cached_inbounds,
     check_subscription_rate_limit,
     get_emails,
     get_links_filtered,
+    subscription_signing_secret,
     verify_tls_default,
     list_adguard_sources,
     collect_adguard_once,
@@ -85,6 +90,7 @@ def register_app_routers(
             check_auth=check_auth,
             verify_totp_code=verify_totp_code,
             get_user_role=get_user_role,
+            issue_ws_ticket=issue_ws_ticket,
             mfa_totp_enabled=mfa_totp_enabled,
             monitoring_enabled=monitoring_enabled,
         )
@@ -97,12 +103,14 @@ def register_app_routers(
             get_cached_online_clients=get_cached_online_clients,
             list_nodes=list_nodes,
             xui_monitor=xui_monitor,
+            get_latest_snapshot=snapshot_collector.latest_snapshot,
         )
     )
     app.include_router(
         build_nodes_router(
             check_auth=check_auth,
             node_service=node_service,
+            get_node_or_404=get_node_or_404,
             db_path=db_path,
             encrypt=encrypt,
             requests_verify=requests_verify,
@@ -121,6 +129,7 @@ def register_app_routers(
         build_inbounds_router(
             check_auth=check_auth,
             inbound_mgr=inbound_mgr,
+            get_cached_inbounds=get_cached_inbounds,
             node_service=node_service,
             get_node_or_404=get_node_or_404,
             invalidate_subscription_cache=invalidate_subscription_cache,
@@ -132,6 +141,7 @@ def register_app_routers(
         build_clients_router(
             check_auth=check_auth,
             client_mgr=client_mgr,
+            db_path=db_path,
             get_cached_clients=get_cached_clients,
             node_service=node_service,
             get_node_or_404=get_node_or_404,
@@ -148,6 +158,7 @@ def register_app_routers(
             check_subscription_rate_limit=check_subscription_rate_limit,
             get_emails=get_emails,
             get_links_filtered=get_links_filtered,
+            subscription_signing_secret=subscription_signing_secret,
             invalidate_subscription_cache=invalidate_subscription_cache,
             logger=logger,
         )
@@ -187,14 +198,23 @@ def register_app_routers(
             client_mgr=client_mgr,
             server_monitor=server_monitor,
             get_node_or_404=get_node_or_404,
+            snapshot_collector=snapshot_collector,
+        )
+    )
+    app.include_router(
+        build_server_ops_router(
+            check_auth=check_auth,
+            xui_monitor=xui_monitor,
+            server_monitor=server_monitor,
+            get_node_or_404=get_node_or_404,
         )
     )
     app.include_router(
         build_realtime_router(
             check_basic_auth_header=check_basic_auth_header,
             verify_totp_code=verify_totp_code,
-            mfa_totp_ws_strict=mfa_totp_ws_strict,
-            pam_authenticate=pam_authenticate,
+            verify_ws_ticket=verify_ws_ticket,
+            get_user_role=get_user_role,
             ws_manager=ws_manager,
             handle_websocket_message=handle_websocket_message,
             logger=logger,

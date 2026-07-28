@@ -1,21 +1,37 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { activityLog } from './services/activityLog';
+import { ActivityLogPanel } from './components/ActivityLogPanel';
 import { useTranslation } from 'react-i18next';
-import api, { API_BASE } from './api';
-import { NodeManager } from './components/NodeManager';
+import { API_BASE } from './api';
 import { ServerStatus } from './components/ServerStatus';
 import { SubscriptionManager } from './components/SubscriptionManager';
 import { InboundManager } from './components/InboundManager';
+import { NodeManager } from './components/NodeManager';
 import { ClientManager } from './components/ClientManager';
 import { TrafficStats } from './components/TrafficStats';
 import { BackupManager } from './components/BackupManager';
 import { MonitoringDashboard } from './components/MonitoringDashboard';
+import { DashboardSummary } from './components/DashboardSummary';
+import { RegisteredFleetPanel } from './components/RegisteredFleetPanel';
+import { ToastProvider } from './components/Toast';
 import { Sidebar, SidebarNavItem } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
 import { useWebSocket } from './hooks/useWebSocket';
-import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials } from './auth';
+import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials, setWsTicket } from './auth';
+import { getMfaStatus, verifyCurrentAuth, verifyLoginCredentials } from './api/authService';
+import {
+  getBackupHeaderSource,
+  getClientsHeaderSource,
+  getDashboardHeaderMetrics,
+  getInboundsHeaderSource,
+  getMonitoringHeaderSource,
+  getSubscriptionsHeaderSource,
+  getTrafficHeaderSource,
+} from './api/dashboard';
 import { IconName, UIIcon } from './components/UIIcon';
 import { requestActivityStore } from './services/requestActivity';
 import { readStaleCache, writeStaleCache } from './services/staleCache';
+import { AUTH_REQUIRED_EVENT } from './api/client';
 
 type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 type NoticeLevel = 'info' | 'success' | 'warning' | 'danger';
@@ -40,13 +56,15 @@ interface HeaderSummary {
   stats: HeaderStat[];
 }
 
-interface FeatureFlagsResponse {
-  monitoringEnabled?: boolean;
-}
+const normalizeHeaderSummary = (raw: Partial<HeaderSummary> | null | undefined, fallbackDescription: string): HeaderSummary => ({
+  description: typeof raw?.description === 'string' ? raw.description : fallbackDescription,
+  stats: Array.isArray(raw?.stats) ? raw.stats : [],
+});
 
 const HEADER_SUMMARY_CACHE_KEY = 'sub_manager_header_summary_cache_v1';
 const HEADER_SUMMARY_CACHE_MAX_AGE_MS = 15 * 60 * 1000;
 const ACTIVE_TAB_CACHE_KEY = 'sub_manager_active_tab_v1';
+const FLEET_RAIL_COLLAPSED_KEY = 'sub_manager_fleet_rail_collapsed_v1';
 
 const TAB_META: Record<TabType, { icon: IconName; labelKey: string; eyebrowKey: string; descriptionKey: string }> = {
   dashboard: {
@@ -112,7 +130,7 @@ const formatBytes = (bytes: number) => {
 const formatPercent = (value: number) => `${Number.isFinite(value) ? value.toFixed(value >= 10 ? 0 : 1) : '0'}%`;
 
 export const App: React.FC = () => {
-  const { themeMode, cycleThemeMode, colors } = useTheme();
+  const { colors } = useTheme();
   const { t } = useTranslation();
 
   const [user, setUser] = useState('');
@@ -142,22 +160,52 @@ export const App: React.FC = () => {
   });
   const [headerLoading, setHeaderLoading] = useState(false);
   const [pendingRequests, setPendingRequests] = useState(0);
-  const [monitoringEnabled, setMonitoringEnabled] = useState(true);
+  const [nodeIntakeOpenSignal, setNodeIntakeOpenSignal] = useState(0);
 
   const [notifications, setNotifications] = useState<UiNotification[]>([]);
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
   const [browserNotifySupported, setBrowserNotifySupported] = useState(false);
   const [browserNotifyPermission, setBrowserNotifyPermission] = useState<'default' | 'granted' | 'denied'>('default');
+  const [logPanelOpen, setLogPanelOpen] = useState(false);
+  const [registeredFleetCollapsed, setRegisteredFleetCollapsed] = useState(() => {
+    try {
+      const raw = localStorage.getItem(FLEET_RAIL_COLLAPSED_KEY);
+      if (raw === 'true') return true;
+      if (raw === 'false') return false;
+    } catch {
+      // Ignore localStorage read failures.
+    }
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 1400;
+    }
+    return false;
+  });
+  const [fleetSummary, setFleetSummary] = useState({
+    total: 0,
+    online: 0,
+    offline: 0,
+    checking: 0,
+    loading: true,
+  });
 
   const lastNotifyRef = useRef<Record<string, number>>({});
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(FLEET_RAIL_COLLAPSED_KEY, String(registeredFleetCollapsed));
+    } catch {
+      // Ignore localStorage write failures.
+    }
+  }, [registeredFleetCollapsed]);
   const updateHeaderSummary = (summary: HeaderSummary) => {
-    setHeaderSummary(summary);
+    const normalized = normalizeHeaderSummary(summary, t(TAB_META[activeTab].descriptionKey));
+    setHeaderSummary(normalized);
     const parsed = readStaleCache<Partial<Record<TabType, HeaderSummary>>>(
       HEADER_SUMMARY_CACHE_KEY,
       Number.MAX_SAFE_INTEGER,
     ).data || {};
-    parsed[activeTab] = summary;
+    parsed[activeTab] = normalized;
     writeStaleCache(HEADER_SUMMARY_CACHE_KEY, parsed);
   };
 
@@ -167,9 +215,7 @@ export const App: React.FC = () => {
       HEADER_SUMMARY_CACHE_MAX_AGE_MS,
     ).data;
     const cached = cachedStore?.[activeTab];
-    if (cached?.description && Array.isArray(cached.stats)) {
-      setHeaderSummary(cached);
-    }
+    setHeaderSummary(normalizeHeaderSummary(cached, t(TAB_META[activeTab].descriptionKey)));
   }, [activeTab]);
 
   useEffect(() => {
@@ -185,42 +231,32 @@ export const App: React.FC = () => {
   }, [activeTab]);
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      return;
-    }
-    let cancelled = false;
-    const loadFeatures = async () => {
-      try {
-        const auth = getAuth();
-        const res = await api.get('/v1/features', { auth });
-        const payload = (res.data || {}) as FeatureFlagsResponse;
-        if (!cancelled) {
-          setMonitoringEnabled(payload.monitoringEnabled !== false);
-        }
-      } catch {
-        if (!cancelled) {
-          setMonitoringEnabled(true);
-        }
-      }
-    };
-    loadFeatures();
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    if (!monitoringEnabled && activeTab === 'monitoring') {
-      setActiveTab('dashboard');
-    }
-  }, [monitoringEnabled, activeTab]);
-
-  useEffect(() => {
     const unsubscribe = requestActivityStore.subscribe((pending) => {
       setPendingRequests(pending);
     });
     return unsubscribe;
   }, []);
+
+  // Global keyboard shortcuts for tab navigation
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!user || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.altKey) {
+        const keyMap: Record<string, TabType> = {
+          '1': 'dashboard', '2': 'inbounds', '3': 'clients',
+          '4': 'traffic', '5': 'monitoring', '6': 'backup', '7': 'subscriptions',
+        };
+        const tab = keyMap[e.key];
+        if (tab && tab in TAB_META) {
+          e.preventDefault();
+          setActiveTab(tab);
+          setMountedTabs(prev => prev.includes(tab) ? prev : [...prev, tab]);
+        }
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [user]);
 
   useEffect(() => {
     const bootstrap = async () => {
@@ -228,8 +264,8 @@ export const App: React.FC = () => {
       setUser(remembered);
 
       try {
-        const mfaRes = await api.get('/v1/auth/mfa-status');
-        setMfaEnabled(Boolean(mfaRes.data?.enabled));
+        const mfaStatus = await getMfaStatus();
+        setMfaEnabled(mfaStatus.enabled);
       } catch {
         setMfaEnabled(false);
       }
@@ -237,14 +273,10 @@ export const App: React.FC = () => {
       const auth = getAuth();
       if (auth.username && auth.password) {
         try {
-          const headers: Record<string, string> = {};
-          if (auth.totpCode) headers['X-TOTP-Code'] = auth.totpCode;
-          const res = await api.get('/v1/auth/verify', {
-            auth: { username: auth.username, password: auth.password },
-            headers,
-          });
-          if (res.data?.user) {
+          const verified = await verifyCurrentAuth();
+          if (verified.user) {
             setUser(auth.username);
+            if (verified.ws_ticket) setWsTicket(verified.ws_ticket);
             setIsAuthenticated(true);
           }
         } catch {
@@ -263,6 +295,18 @@ export const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const handleAuthRequired = () => {
+      clearAuthCredentials();
+      setIsAuthenticated(false);
+      setPassword('');
+      setAuthError(t('auth.failed'));
+    };
+
+    window.addEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
+    return () => window.removeEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
+  }, [t]);
+
+  useEffect(() => {
     if (notificationPanelOpen) {
       setUnreadCount(0);
     }
@@ -274,51 +318,39 @@ export const App: React.FC = () => {
     let cancelled = false;
 
     const buildSummary = async () => {
-      const auth = getAuth();
       setHeaderLoading(true);
 
       try {
         switch (activeTab) {
           case 'dashboard': {
-            const [nodesRes, snapshotRes] = await Promise.all([
-              api.get('/v1/nodes', { auth }),
-              api.get('/v1/snapshots/latest', { auth }),
-            ]);
-            const nodes = Array.isArray(nodesRes.data) ? nodesRes.data : [];
-            const snapshotNodes = Array.isArray(snapshotRes.data?.nodes) ? snapshotRes.data.nodes : [];
-            const online = snapshotNodes.filter((node: any) => node.available).length;
-            const authBlocked = snapshotNodes.filter((node: any) => node.reason === 'auth_failed' || node.reason === 'two_factor_required').length;
-            const down = snapshotNodes.filter((node: any) => !node.available).length;
-            const xray = snapshotNodes.filter((node: any) => node.xray_running).length;
-            const onlineClients = snapshotNodes.reduce((sum: number, node: any) => sum + (node.online_clients || 0), 0);
+            const metrics = await getDashboardHeaderMetrics();
             if (!cancelled) {
               updateHeaderSummary({
-                description: authBlocked > 0
+                description: metrics.authIssues > 0
                   ? t('header.dashboard.descAuthIssue', {
-                      online,
-                      total: nodes.length || snapshotNodes.length || 0,
-                      authBlocked,
+                      online: metrics.reachableNow,
+                      total: metrics.registeredNodes,
+                      authBlocked: metrics.authIssues,
                     })
                   : t('header.dashboard.descHealthy', {
-                      online,
-                      total: nodes.length || snapshotNodes.length || 0,
-                      xray,
+                      online: metrics.reachableNow,
+                      total: metrics.registeredNodes,
+                      xray: metrics.xrayRunning,
                     }),
                 stats: [
-                  { label: t('header.dashboard.registeredNodes'), value: String(nodes.length || snapshotNodes.length || 0) },
-                  { label: t('header.dashboard.reachableNow'), value: String(online), tone: online > 0 ? 'success' : 'warning' },
-                  { label: t('header.dashboard.authIssues'), value: String(authBlocked), tone: authBlocked > 0 ? 'danger' : 'default' },
-                  { label: t('header.dashboard.offlineNodes'), value: String(down), tone: down > 0 ? 'warning' : 'default' },
-                  { label: t('header.dashboard.xrayRunning'), value: String(xray), tone: xray > 0 ? 'accent' : 'warning' },
-                  { label: t('header.dashboard.onlineClients'), value: formatCompactNumber(onlineClients) },
+                  { label: t('header.dashboard.registeredNodes'), value: String(metrics.registeredNodes) },
+                  { label: t('header.dashboard.reachableNow'), value: String(metrics.reachableNow), tone: metrics.reachableNow > 0 ? 'success' : 'warning' },
+                  { label: t('header.dashboard.authIssues'), value: String(metrics.authIssues), tone: metrics.authIssues > 0 ? 'danger' : 'default' },
+                  { label: t('header.dashboard.offlineNodes'), value: String(metrics.offlineNodes), tone: metrics.offlineNodes > 0 ? 'warning' : 'default' },
+                  { label: t('header.dashboard.xrayRunning'), value: String(metrics.xrayRunning), tone: metrics.xrayRunning > 0 ? 'accent' : 'warning' },
+                  { label: t('header.dashboard.onlineClients'), value: formatCompactNumber(metrics.onlineClients) },
                 ],
               });
             }
             break;
           }
           case 'inbounds': {
-            const res = await api.get('/v1/inbounds', { auth });
-            const inbounds = Array.isArray(res.data) ? res.data : [];
+            const inbounds = await getInboundsHeaderSource();
             const enabled = inbounds.filter((item: any) => item.enable).length;
             const protocols = new Set(inbounds.map((item: any) => item.protocol).filter(Boolean)).size;
             const nodesCovered = new Set(inbounds.map((item: any) => item.node_name).filter(Boolean)).size;
@@ -336,12 +368,7 @@ export const App: React.FC = () => {
             break;
           }
           case 'clients': {
-            const [clientsRes, nodesRes] = await Promise.all([
-              api.get('/v1/clients', { auth }),
-              api.get('/v1/nodes', { auth }),
-            ]);
-            const clients = Array.isArray(clientsRes.data) ? clientsRes.data : [];
-            const nodes = Array.isArray(nodesRes.data) ? nodesRes.data : [];
+            const { clients, nodes } = await getClientsHeaderSource();
             const enabled = clients.filter((item: any) => item.enable).length;
             const expiringSoon = clients.filter((item: any) => {
               const expiry = Number(item.expiryTime || 0);
@@ -361,12 +388,7 @@ export const App: React.FC = () => {
             break;
           }
           case 'traffic': {
-            const [onlineRes, trafficRes] = await Promise.all([
-              api.get('/v1/clients/online', { auth }),
-              api.get('/v1/traffic/stats', { auth, params: { group_by: 'client' } }),
-            ]);
-            const onlineClients = Array.isArray(onlineRes.data?.online_clients) ? onlineRes.data.online_clients : [];
-            const statsObj = trafficRes.data?.stats || {};
+            const { onlineClients, stats: statsObj } = await getTrafficHeaderSource();
             const trafficEntries = Object.entries(statsObj) as Array<[string, { up?: number; down?: number; total?: number }]>;
             const totalTraffic = trafficEntries.reduce((sum, [, value]) => sum + (value.total || value.up || 0) + (value.total ? 0 : value.down || 0), 0);
             const heaviest = trafficEntries
@@ -386,14 +408,7 @@ export const App: React.FC = () => {
             break;
           }
           case 'monitoring': {
-            const [depsRes, overviewRes, stackRes] = await Promise.allSettled([
-              api.get('/v1/health/deps', { auth }),
-              api.get('/v1/adguard/overview', { auth }),
-              api.get('/v1/monitoring/stack', { auth }),
-            ]);
-            const deps = depsRes.status === 'fulfilled' ? depsRes.value.data : null;
-            const overview = overviewRes.status === 'fulfilled' ? overviewRes.value.data : null;
-            const stack = stackRes.status === 'fulfilled' ? stackRes.value.data : null;
+            const { deps, overview, stack } = await getMonitoringHeaderSource();
             const services = stack?.services ? Object.values(stack.services) as any[] : [];
             const servicesUp = services.filter((service: any) => service.ok).length;
             const sourcesTotal = overview?.summary?.sources_total || 0;
@@ -412,8 +427,7 @@ export const App: React.FC = () => {
             break;
           }
           case 'backup': {
-            const res = await api.get('/v1/nodes', { auth });
-            const nodes = Array.isArray(res.data) ? res.data : [];
+            const { nodes } = await getBackupHeaderSource();
             const readOnly = nodes.filter((node: any) => Boolean(node.read_only)).length;
             if (!cancelled) {
               updateHeaderSummary({
@@ -429,12 +443,7 @@ export const App: React.FC = () => {
             break;
           }
           case 'subscriptions': {
-            const [emailsRes, nodesRes] = await Promise.all([
-              api.get('/v1/emails', { auth }),
-              api.get('/v1/nodes', { auth }),
-            ]);
-            const emails = Array.isArray(emailsRes.data?.emails) ? emailsRes.data.emails : [];
-            const stats = emailsRes.data?.stats || {};
+            const { emails, stats, nodes } = await getSubscriptionsHeaderSource();
             const domains = new Map<string, number>();
             let downloads = 0;
             let latest = 0;
@@ -445,7 +454,6 @@ export const App: React.FC = () => {
               latest = Math.max(latest, Date.parse(stats[email]?.last || '') || 0);
             });
             const groups = Array.from(domains.values()).filter((count) => count >= 2).length;
-            const nodes = Array.isArray(nodesRes.data) ? nodesRes.data : [];
             if (!cancelled) {
               updateHeaderSummary({
                 description: t('header.subscriptions.description'),
@@ -525,6 +533,14 @@ export const App: React.FC = () => {
     channels: ['inbounds', 'snapshot_delta'],
     enabled: isAuthenticated,
     onMessage: (msg) => {
+      if (msg.type === 'snapshot_delta') {
+        const node = msg.data?.data?.node || msg.data?.node || '';
+        const changes = msg.data?.data?.changes || msg.data?.changes || {};
+        const keys = Object.keys(changes);
+        if (keys.length > 0) {
+          activityLog.debug('WebSocket', `snapshot_delta: ${node}`, { changes: keys });
+        }
+      }
       if (msg.type === 'inbound_update') {
         const action = msg.data?.action || 'update';
         const successful = msg.data?.result?.successful ?? 0;
@@ -573,14 +589,9 @@ export const App: React.FC = () => {
   const handleLogin = async () => {
     setAuthError('');
     try {
-      const headers: Record<string, string> = {};
-      if (totpCode.trim()) headers['X-TOTP-Code'] = totpCode.trim();
-      const res = await api.get('/v1/auth/verify', {
-        auth: { username: user, password },
-        headers,
-      });
-      if (res.data.user) {
-        setAuthCredentials(user, password, totpCode.trim());
+      const verified = await verifyLoginCredentials(user, password, totpCode.trim());
+      if (verified.user) {
+        setAuthCredentials(user, password, totpCode.trim(), verified.ws_ticket || '');
         setIsAuthenticated(true);
         rememberUsername(user);
         setPassword('');
@@ -593,6 +604,7 @@ export const App: React.FC = () => {
 
   const handleLogout = () => {
     clearAuthCredentials();
+    window.dispatchEvent(new Event('sub-manager:cache-clear'));
     setUser('');
     setPassword('');
     setIsAuthenticated(false);
@@ -607,9 +619,10 @@ export const App: React.FC = () => {
 
   if (!authBootstrapDone) {
     return (
-      <div className="login-wrapper min-vh-100 d-flex align-items-center justify-content-center" style={{ backgroundColor: colors.bg.primary }}>
-        <div className="card p-4 text-center" style={{ maxWidth: '400px', width: '100%', backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-          <div style={{ color: colors.text.primary }}>{t('app.loading')}</div>
+      <div className="login-wrapper flex min-h-screen items-center justify-center bg-[#0a0e1a]">
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-7 w-7 animate-spin rounded-full border-2 border-cyan-500/20 border-t-cyan-300" />
+          <span className="text-xs text-slate-500">{t('app.loading')}</span>
         </div>
       </div>
     );
@@ -617,67 +630,115 @@ export const App: React.FC = () => {
 
   if (!isAuthenticated) {
     return (
-      <div className="login-wrapper min-vh-100 d-flex align-items-center justify-content-center" style={{ backgroundColor: colors.bg.primary }}>
-        <div className="card p-4" style={{ maxWidth: '400px', width: '100%', backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-          <div className="d-flex justify-content-between align-items-center mb-4">
-            <h5 className="mb-0 d-flex align-items-center gap-2" style={{ color: colors.text.primary }}>
-              <UIIcon name="logo" size={18} />
+      <div className="login-wrapper flex min-h-screen items-center justify-center bg-[#0a0e1a]">
+        <div style={{
+          width: '100%',
+          maxWidth: '380px',
+          padding: '0 16px',
+          animation: 'appFadeIn 0.3s ease both',
+        }}>
+          {/* Brand header */}
+          <div style={{ textAlign: 'center', marginBottom: '28px' }}>
+            <div style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '52px',
+              height: '52px',
+              borderRadius: '14px',
+              background: `linear-gradient(135deg, ${colors.accent}33, ${colors.accent}18)`,
+              border: `1px solid ${colors.accent}44`,
+              marginBottom: '14px',
+              color: colors.accent,
+            }}>
+              <UIIcon name="logo" size={24} />
+            </div>
+            <h4 style={{ margin: 0, fontWeight: 700, color: colors.text.primary, fontSize: '1.15rem' }}>
               {t('app.title')}
-            </h5>
-            <button
-              className="btn btn-sm btn-outline-secondary"
-              onClick={cycleThemeMode}
-              title={t('app.themeToggleTitle')}
-            >
-              {themeMode === '1' ? <UIIcon name="sun" size={16} /> : <UIIcon name="moon" size={16} />}
-            </button>
+            </h4>
+            <p style={{ margin: '6px 0 0', fontSize: '0.78rem', color: colors.text.tertiary }}>
+              Multi-server VPN panel manager
+            </p>
           </div>
-          <form onSubmit={(e) => { e.preventDefault(); handleLogin(); }}>
-            <div className="mb-3">
-              <label className="form-label" style={{ color: colors.text.secondary }}>{t('auth.username')}</label>
-              <input
-                type="text"
-                className="form-control"
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                value={user}
-                onChange={(e) => setUser(e.target.value)}
-                required
-                autoFocus
-                autoComplete="username"
-              />
-            </div>
-            <div className="mb-3">
-              <label className="form-label" style={{ color: colors.text.secondary }}>{t('auth.password')}</label>
-              <input
-                type="password"
-                className="form-control"
-                style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="current-password"
-              />
-            </div>
-            {mfaEnabled && (
+
+          {/* Login card */}
+          <div style={{
+            background: '#0f1420',
+            border: '1px solid rgba(34, 211, 238, 0.20)',
+            borderRadius: '16px',
+            padding: '24px',
+            boxShadow: `0 8px 32px rgba(0,0,0,0.18), 0 1px 0 rgba(255,255,255,0.04)`,
+          }}>
+            <form onSubmit={(e) => { e.preventDefault(); handleLogin(); }}>
               <div className="mb-3">
-                <label className="form-label" style={{ color: colors.text.secondary }}>{t('auth.totpCode')}</label>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-400">
+                  {t('auth.username')}
+                </label>
                 <input
                   type="text"
-                  className="form-control"
-                  style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                  value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
+                  value={user}
+                  onChange={(e) => setUser(e.target.value)}
                   required
-                  inputMode="numeric"
-                  placeholder="123456"
+                  autoFocus
+                  autoComplete="username"
                 />
               </div>
-            )}
-            {authError && <div className="alert alert-danger" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>{authError}</div>}
-            <button type="submit" className="btn w-100" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}>
-              {t('auth.signIn')}
-            </button>
-          </form>
+              <div className="mb-3">
+                <label className="mb-1.5 block text-xs font-semibold text-slate-400">
+                  {t('auth.password')}
+                </label>
+                <input
+                  type="password"
+                  className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  autoComplete="current-password"
+                />
+              </div>
+              {mfaEnabled && (
+                <div className="mb-3">
+                  <label className="mb-1.5 block text-xs font-semibold text-slate-400">
+                    {t('auth.totpCode')}
+                  </label>
+                  <input
+                    type="text"
+                    className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 font-mono text-sm tabular-nums text-slate-100 tracking-[0.2em] whitespace-nowrap outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
+                    value={totpCode}
+                    onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                    required
+                    inputMode="numeric"
+                    placeholder="000000"
+                  />
+                </div>
+              )}
+              {authError && (
+                <div style={{
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: `1px solid ${colors.danger}44`,
+                  borderLeft: `3px solid ${colors.danger}`,
+                  background: `${colors.danger}12`,
+                  color: colors.danger,
+                  fontSize: '0.8rem',
+                  marginBottom: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                }}>
+                  <span>X</span>
+                  <span>{authError}</span>
+                </div>
+              )}
+              <button
+                type="submit"
+                className="mt-1 flex h-10 w-full items-center justify-center rounded-md bg-cyan-300 px-4 text-sm font-medium tracking-wide text-[#06111f] transition hover:bg-cyan-200"
+              >
+                {t('auth.signIn')}
+              </button>
+            </form>
+          </div>
         </div>
       </div>
     );
@@ -695,40 +756,101 @@ export const App: React.FC = () => {
     ])
   ) as Record<TabType, { icon: IconName; labelKey: string; label: string; eyebrowKey: string; descriptionKey: string; eyebrow: string; description: string }>;
 
-  const visibleTabs: TabType[] = (monitoringEnabled
-    ? ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring', 'backup', 'subscriptions']
-    : ['dashboard', 'inbounds', 'clients', 'traffic', 'backup', 'subscriptions']);
+  const visibleTabs: TabType[] = ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring', 'backup', 'subscriptions'];
 
   const sidebarItems: SidebarNavItem[] = visibleTabs.map((tabId) => ({
     id: tabId,
     icon: TAB_META[tabId].icon,
     labelKey: TAB_META[tabId].labelKey,
   }));
+  const safeSidebarItems = Array.isArray(sidebarItems) ? sidebarItems : [];
+  const safeNotifications = Array.isArray(notifications) ? notifications : [];
+  const safeMountedTabs = Array.isArray(mountedTabs) ? mountedTabs : [];
 
   const renderTabContent = (tab: TabType) => {
     switch (tab) {
       case 'dashboard':
         return (
-          <div className="d-grid gap-3">
-            <NodeManager onReload={() => setKey((prev) => prev + 1)} showFleet={false} />
-            <div className="dashboard-main-grid">
-              <div className="dashboard-main-grid__status">
-                <ServerStatus />
-              </div>
-              <div className="dashboard-main-grid__fleet">
-                <NodeManager onReload={() => setKey((prev) => prev + 1)} showIntake={false} />
-              </div>
+          <div className="dashboard-command-grid min-w-0 overflow-hidden p-6 min-h-screen transition-all duration-300 ease-in-out xl:grid xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start xl:gap-6">
+            <div className="dashboard-command-grid__main min-w-0 overflow-hidden">
+              <DashboardSummary onNavigate={(tab) => {
+                const t = tab as TabType;
+                if (t in TAB_META) {
+                  setActiveTab(t);
+                  setMountedTabs(prev => prev.includes(t) ? prev : [...prev, t]);
+                }
+              }}
+              heroStats={headerSummary.stats}
+              fleetSummary={fleetSummary}
+              />
+              <section className="mb-6 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04)]">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h3 className="text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">{t('nodes.intakeTitle').toUpperCase()}</h3>
+                    <p className="mt-1 text-[10px] font-light leading-4 text-slate-500">{t('nodes.intakeHint')}</p>
+                  </div>
+                  <button
+                    className="flex items-center gap-1 rounded-md border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 px-3 py-1.5 text-xs font-medium tracking-wide text-white shadow-[0_10px_24px_rgba(34,211,238,0.16)]"
+                    type="button"
+                    onClick={() => setNodeIntakeOpenSignal((value) => value + 1)}
+                  >
+                    {`+ ${t('nodes.addNode')}`}
+                  </button>
+                </div>
+              </section>
+              <NodeManager
+                onReload={() => setKey((prev) => prev + 1)}
+                showIntake={false}
+                showFleet={false}
+                openIntakeSignal={nodeIntakeOpenSignal}
+              />
+              <section className="dashboard-server-deck min-w-0">
+                <ServerStatus
+                  dashboardMode
+                  includeCounts={false}
+                  includeCollectorStatus={false}
+                  includePanelUpdateChecks={false}
+                  fleetSummary={fleetSummary}
+                  fleetCollapsed={registeredFleetCollapsed}
+                  onToggleFleet={() => setRegisteredFleetCollapsed((value) => !value)}
+                />
+              </section>
             </div>
+            <RegisteredFleetPanel
+              collapsed={registeredFleetCollapsed}
+              setCollapsed={setRegisteredFleetCollapsed}
+              onSummaryChange={setFleetSummary}
+              onOpenNodes={() => {
+                setNodeIntakeOpenSignal((value) => value + 1);
+                setRegisteredFleetCollapsed(true);
+              }}
+            />
           </div>
         );
       case 'inbounds':
-        return <InboundManager onReload={() => setKey((prev) => prev + 1)} />;
+        return <InboundManager
+          onReload={() => setKey((prev) => prev + 1)}
+          onNavigateToClients={(inboundId, inboundRemark) => {
+            try { sessionStorage.setItem('sm_nav_inbound_filter', JSON.stringify({ id: inboundId, remark: inboundRemark })); } catch {}
+            setActiveTab('clients');
+            setMountedTabs(prev => prev.includes('clients') ? prev : [...prev, 'clients']);
+          }}
+          onAddClientToInbound={(inboundId, _nodeName) => {
+            try { sessionStorage.setItem('sm_nav_add_to_inbound', String(inboundId)); } catch {}
+            setActiveTab('clients');
+            setMountedTabs(prev => prev.includes('clients') ? prev : [...prev, 'clients']);
+          }}
+        />;
       case 'clients':
         return <ClientManager />;
       case 'traffic':
-        return <TrafficStats />;
+        return <TrafficStats onNavigateToClient={(email) => {
+          try { sessionStorage.setItem('sm_nav_client_search', email); } catch {}
+          setActiveTab('clients');
+          setMountedTabs(prev => prev.includes('clients') ? prev : [...prev, 'clients']);
+        }} />;
       case 'monitoring':
-        return monitoringEnabled ? <MonitoringDashboard /> : null;
+        return <MonitoringDashboard />;
       case 'backup':
         return <BackupManager />;
       case 'subscriptions':
@@ -746,49 +868,38 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div
-      className="app-layout"
-      style={{
-        backgroundColor: colors.bg.primary,
-        color: colors.text.primary,
-        fontFamily: 'var(--font-sans)',
-      }}
-    >
+    <div className="app-layout">
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        items={sidebarItems}
+        items={safeSidebarItems}
         user={user}
         onLogout={handleLogout}
+        onOpenLog={() => setLogPanelOpen(v => !v)}
         mobileOpen={mobileSidebarOpen}
         onMobileClose={() => setMobileSidebarOpen(false)}
       />
 
-      <div className="app-main" style={{ position: 'relative' }}>
-        <header
-          className="app-topbar"
-          style={{ backgroundColor: colors.bg.secondary, borderBottom: `1px solid ${colors.border}` }}
-        >
+      <div className="app-main min-w-0 flex-1 overflow-hidden">
+        <header className="app-topbar">
           <button
             className="app-topbar__menu-btn"
             onClick={() => setMobileSidebarOpen(true)}
-            aria-label="Open menu"
-            style={{ color: colors.text.primary, backgroundColor: colors.bg.tertiary, border: `1px solid ${colors.border}` }}
+            aria-label={t('main.openMenu')}
           >
             <UIIcon name="menu" size={16} />
           </button>
-          <h1 className="app-topbar__title" style={{ color: colors.text.primary }}>
-            <span className="d-inline-flex align-items-center gap-2">
+          <h1 className="app-topbar__title">
+            <span className="inline-flex items-center gap-2">
               <UIIcon name={tabMeta[activeTab].icon} size={16} />
               {tabMeta[activeTab].label}
             </span>
           </h1>
 
-          <div className="d-flex align-items-center gap-2">
+          <div className="app-topbar__actions flex items-center gap-2">
             {browserNotifySupported && browserNotifyPermission !== 'granted' && (
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                className="topbar-push-btn app-topbar__command-btn inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-medium tracking-wide"
                 onClick={requestBrowserNotifications}
               >
                 {t('push.enableBrowser')}
@@ -796,108 +907,89 @@ export const App: React.FC = () => {
             )}
 
             <button
-              className="btn btn-sm position-relative"
-              style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+              className="app-topbar__command-btn app-topbar__icon-command relative inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-medium tracking-wide"
               onClick={() => setNotificationPanelOpen((v) => !v)}
               title={t('push.title')}
             >
               <UIIcon name="bell" size={15} />
               {unreadCount > 0 && (
                 <span
-                  className="position-absolute top-0 start-100 translate-middle badge rounded-pill"
+                  className="absolute left-full top-0 -translate-x-1/2 -translate-y-1/2 rounded-full px-1.5 py-0.5 text-[10px] font-bold leading-none text-white"
                   style={{ backgroundColor: colors.danger }}
                 >
                   {unreadCount > 99 ? '99+' : unreadCount}
                 </span>
               )}
             </button>
+
+            <button
+              className={`app-topbar__command-btn inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-medium tracking-wide${logPanelOpen ? ' is-active' : ''}`}
+              onClick={() => setLogPanelOpen(v => !v)}
+              title="Activity Log"
+            >
+              LOG
+            </button>
+
+            {activeTab === 'dashboard' && (
+              <button
+                className={`app-topbar__fleet-pill${registeredFleetCollapsed ? '' : ' is-open'}`}
+                type="button"
+                onClick={() => setRegisteredFleetCollapsed((value) => !value)}
+                title={t('nodes.registeredFleet')}
+              >
+                <span className="app-topbar__fleet-kicker">{t('nodes.registeredFleet')}</span>
+                <span className="app-topbar__fleet-meta">
+                  {fleetSummary.loading
+                    ? t('nodes.statusSyncing')
+                    : `${fleetSummary.online}/${fleetSummary.total} ${t('nodes.online')}`}
+                </span>
+                <span className="app-topbar__fleet-count">{fleetSummary.total}</span>
+              </button>
+            )}
           </div>
         </header>
 
         {notificationPanelOpen && (
           <div
-            className="card"
-            style={{
-              position: 'absolute',
-              top: '56px',
-              right: '16px',
-              width: '360px',
-              maxHeight: '420px',
-              overflowY: 'auto',
-              zIndex: 50,
-              backgroundColor: colors.bg.secondary,
-              borderColor: colors.border,
-            }}
+            className="notif-panel absolute left-4 right-4 top-14 z-50 max-h-[420px] overflow-y-auto rounded-lg border border-cyan-500/20 bg-[#0f1420] shadow-2xl sm:left-auto sm:w-full sm:max-w-[22.5rem]"
           >
-            <div className="card-header d-flex justify-content-between align-items-center" style={{ borderColor: colors.border }}>
-              <strong style={{ color: colors.text.primary }}>{t('push.title')}</strong>
+            <div className="flex items-center justify-between border-b border-cyan-500/20 px-4 py-3">
+              <strong className="text-sm font-medium uppercase tracking-wider text-slate-300">{t('push.title')}</strong>
               <button
-                className="btn btn-sm"
-                style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
+                className="inline-flex h-8 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 text-xs font-medium text-slate-300 transition hover:text-cyan-200"
                 onClick={() => setNotifications([])}
               >
                 {t('push.clear')}
               </button>
             </div>
-            <div className="card-body p-2">
+            <div className="p-2">
               {notifications.length === 0 && (
-                <div className="small" style={{ color: colors.text.secondary }}>{t('push.empty')}</div>
+                <div className="text-xs text-slate-500">{t('push.empty')}</div>
               )}
-              {notifications.map((item) => (
+              {safeNotifications.map((item) => (
                 <div
                   key={item.id}
-                  className="p-2 mb-2 rounded"
-                  style={{ backgroundColor: colors.bg.primary, border: `1px solid ${colors.border}` }}
+                  className="mb-2 rounded-md border border-cyan-500/20 bg-[#0a0e1a] p-2"
                 >
-                  <div className="d-flex justify-content-between align-items-center">
-                    <strong style={{ color: levelColor(item.level) }}>{item.title}</strong>
-                    <small style={{ color: colors.text.secondary }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <strong className="min-w-0 truncate text-xs font-medium" style={{ color: levelColor(item.level) }}>{item.title}</strong>
+                    <span className="font-mono tabular-nums whitespace-nowrap text-[11px] text-slate-500">
                       {new Date(item.ts).toLocaleTimeString()}
-                    </small>
+                    </span>
                   </div>
-                  <div className="small" style={{ color: colors.text.primary }}>{item.message}</div>
+                  <div className="mt-1 text-xs text-slate-300">{item.message}</div>
                 </div>
               ))}
             </div>
           </div>
         )}
 
-        <main className="app-content">
-          <section className="app-shell-header">
-            <div className="app-shell-header__hero card p-4">
-              <div className="app-shell-header__main">
-                <div className="app-shell-header__intro">
-                  <div className="app-shell-header__eyebrow">{tabMeta[activeTab].eyebrow}</div>
-                  <h1 className="app-shell-header__title">
-                    <span className="d-inline-flex align-items-center gap-2">
-                      <UIIcon name={tabMeta[activeTab].icon} size={18} />
-                      {tabMeta[activeTab].label}
-                    </span>
-                  </h1>
-                  <p className="app-shell-header__copy">{headerSummary.description}</p>
-                  {(headerLoading || pendingRequests > 0) && <div className="app-shell-header__live-note">{t('header.updating')}</div>}
-                </div>
-
-                <div className="app-shell-header__stats">
-                  {headerSummary.stats.map((stat) => (
-                    <article key={stat.label} className={`app-shell-stat app-shell-stat--${stat.tone || 'default'}`}>
-                      <span className="app-shell-stat__label">{stat.label}</span>
-                      <span className="app-shell-stat__value">{stat.value}</span>
-                    </article>
-                  ))}
-                  {headerLoading && headerSummary.stats.length === 0 && (
-                    <article className="app-shell-stat app-shell-stat--default">
-                      <span className="app-shell-stat__label">{t('header.sync')}</span>
-                      <span className="app-shell-stat__value">{t('app.loading')}</span>
-                    </article>
-                  )}
-                </div>
-              </div>
-            </div>
-          </section>
-
+        <main
+          className="app-content min-w-0 overflow-hidden"
+          aria-busy={headerLoading || pendingRequests > 0}
+        >
           <div className="tab-panel">
-            {mountedTabs.map((tabId) => (
+            {safeMountedTabs.map((tabId) => (
               <section
                 key={tabId}
                 style={{ display: activeTab === tabId ? 'block' : 'none' }}
@@ -909,6 +1001,16 @@ export const App: React.FC = () => {
           </div>
         </main>
       </div>
+
+      <ActivityLogPanel open={logPanelOpen} onClose={() => setLogPanelOpen(false)} />
     </div>
   );
 };
+
+const AppWithToast: React.FC = () => (
+  <ToastProvider>
+    <App />
+  </ToastProvider>
+);
+
+export default AppWithToast;
