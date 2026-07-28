@@ -11,7 +11,7 @@ export type StaleCacheReadResult<T> = {
 
 export function readStaleCache<T>(key: string, maxAgeMs: number): StaleCacheReadResult<T> {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = sessionStorage.getItem(key);
     if (!raw) return { data: null, isFresh: false, ts: 0 };
 
     const parsed = JSON.parse(raw) as StaleCacheEnvelope<T>;
@@ -33,7 +33,7 @@ export function readStaleCache<T>(key: string, maxAgeMs: number): StaleCacheRead
 export function writeStaleCache<T>(key: string, data: T): void {
   try {
     const envelope: StaleCacheEnvelope<T> = { ts: Date.now(), data };
-    localStorage.setItem(key, JSON.stringify(envelope));
+    sessionStorage.setItem(key, JSON.stringify(envelope));
   } catch {
     // ignore localStorage write failures
   }

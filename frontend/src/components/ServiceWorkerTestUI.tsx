@@ -1,10 +1,10 @@
-/**
- * UI компонент для тестирования Service Worker
- */
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { ServiceWorkerTester, ServiceWorkerTestResult } from '../services/swTester';
+import { devLog } from '../utils/devLogger';
 
 export const ServiceWorkerTestUI: React.FC = () => {
+  const { t } = useTranslation();
   const [results, setResults] = useState<ServiceWorkerTestResult[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -15,9 +15,7 @@ export const ServiceWorkerTestUI: React.FC = () => {
     const testResults = await tester.runAllTests();
     setResults(testResults);
     setIsRunning(false);
-
-    // Вывести отчет в консоль
-    console.log(tester.getReport());
+    devLog(tester.getReport());
   };
 
   const passedCount = results.filter((r) => r.passed).length;
@@ -26,7 +24,7 @@ export const ServiceWorkerTestUI: React.FC = () => {
   return (
     <div style={{ padding: '1.5rem', fontFamily: 'system-ui', backgroundColor: '#f9fafb', borderRadius: '0.5rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <h3 style={{ margin: 0 }}>⚙️ Тестирование Service Worker</h3>
+        <h3 style={{ margin: 0 }}>⚙️ {t('serviceWorkerTest.title')}</h3>
         <button
           onClick={runTests}
           disabled={isRunning}
@@ -40,7 +38,7 @@ export const ServiceWorkerTestUI: React.FC = () => {
             fontWeight: 'bold',
           }}
         >
-          {isRunning ? '⏳ Тестирование...' : '▶️ Запустить тесты'}
+          {isRunning ? `⏳ ${t('serviceWorkerTest.running')}` : `▶️ ${t('serviceWorkerTest.runTests')}`}
         </button>
       </div>
 
@@ -58,9 +56,9 @@ export const ServiceWorkerTestUI: React.FC = () => {
             }}
           >
             <div>
-              <div style={{ fontSize: '0.875rem', color: '#666' }}>Результат:</div>
+              <div style={{ fontSize: '0.875rem', color: '#666' }}>{t('serviceWorkerTest.result')}</div>
               <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>
-                {passedCount}/{totalCount} пройдено
+                {t('serviceWorkerTest.passedCount', { passed: passedCount, total: totalCount })}
               </div>
             </div>
             <div style={{ flex: 1 }}>
@@ -124,12 +122,12 @@ export const ServiceWorkerTestUI: React.FC = () => {
                     <div style={{ padding: '0.75rem 1rem', borderTop: '1px solid #e5e7eb', backgroundColor: 'white' }}>
                       {result.message && (
                         <div style={{ marginBottom: '0.5rem', color: '#dc2626' }}>
-                          <strong>Сообщение:</strong> {result.message}
+                          <strong>{t('serviceWorkerTest.message')}</strong> {result.message}
                         </div>
                       )}
                       {result.details && (
                         <div style={{ marginBottom: '0.5rem' }}>
-                          <strong>Детали:</strong>
+                          <strong>{t('serviceWorkerTest.details')}</strong>
                           <pre
                             style={{
                               backgroundColor: '#f3f4f6',
@@ -155,7 +153,7 @@ export const ServiceWorkerTestUI: React.FC = () => {
 
       {results.length === 0 && !isRunning && (
         <div style={{ textAlign: 'center', color: '#999', padding: '2rem 0' }}>
-          📋 Щелкните "Запустить тесты" для проверки Service Worker функций
+          📋 {t('serviceWorkerTest.emptyHint')}
         </div>
       )}
     </div>

@@ -4,6 +4,8 @@
  */
 
 import React from 'react';
+import { getAuth } from '../auth';
+import { devLog } from '../utils/devLogger';
 
 export interface DeltaUpdate<T> {
   type: 'full' | 'partial' | 'delete';
@@ -28,8 +30,8 @@ class WebSocketManager {
     // Construct WebSocket URL from current location if not provided
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
     const host = window.location.host;
-    const path = window.location.pathname.split('/').slice(0, -1).join('/'); // Remove current route
-    this.url = wsUrl || `${protocol}://${host}${path}/ws`;
+    const basePath = import.meta.env.BASE_URL.replace(/\/$/, '');
+    this.url = wsUrl || `${protocol}://${host}${basePath}/ws`;
   }
 
   connect(): Promise<void> {
@@ -41,10 +43,26 @@ class WebSocketManager {
 
       this.isConnecting = true;
       try {
-        this.ws = new WebSocket(this.url);
+        const auth = getAuth();
+        if (!auth.wsTicket) {
+          this.isConnecting = false;
+          reject(new Error('WebSocket ticket is missing; waiting for authenticated session.'));
+          return;
+        }
+
+        const isSecurePage = window.location.protocol === 'https:';
+        const isLocalDevelopment = ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+        const allowInsecureWs = import.meta.env.VITE_ALLOW_INSECURE_WS === 'true';
+        if (!isSecurePage && !isLocalDevelopment && !allowInsecureWs) {
+          this.isConnecting = false;
+          reject(new Error('Refusing insecure WebSocket outside local development. Configure HTTPS/WSS.'));
+          return;
+        }
+
+        this.ws = new WebSocket(this.url, [`mssg-ticket.${auth.wsTicket}`]);
 
         this.ws.onopen = () => {
-          console.log('[WebSocket] Connected');
+          devLog('[WebSocket] Connected');
           this.isConnecting = false;
           this.reconnectDelay = 1000;
 
@@ -72,10 +90,13 @@ class WebSocketManager {
           reject(error);
         };
 
-        this.ws.onclose = () => {
-          console.log('[WebSocket] Disconnected');
+        this.ws.onclose = (event) => {
+          devLog('[WebSocket] Disconnected');
           this.isConnecting = false;
           this.ws = null;
+          if (event.code === 1008) {
+            return;
+          }
           this.attemptReconnect();
         };
       } catch (err) {
@@ -134,7 +155,7 @@ class WebSocketManager {
       try {
         handler(data);
       } catch (err) {
-        console.error(`[WebSocket] Handler error for '${type}':`, err);
+        console.error('[WebSocket] Handler error for event:', type, err);
       }
     });
   }
@@ -158,14 +179,17 @@ export const wsManager = new WebSocketManager();
  */
 export function useWebSocketSubscription<T>(event: string, onMessage: (data: T) => void) {
   const [isConnected, setIsConnected] = React.useState(wsManager.isConnected());
+  const onMessageRef = React.useRef(onMessage);
+  onMessageRef.current = onMessage;
 
   React.useEffect(() => {
-    // Ensure WebSocket is connected
     wsManager.connect().catch(() => {
       console.warn('[WebSocket] Failed to connect');
     });
 
-    const unsubscribe = wsManager.subscribe(event, onMessage);
+    // Stable wrapper so effect only re-runs when `event` changes, not when the callback changes
+    const stableHandler = (data: T) => onMessageRef.current(data);
+    const unsubscribe = wsManager.subscribe(event, stableHandler);
 
     const checkConnection = setInterval(() => {
       setIsConnected(wsManager.isConnected());
@@ -175,7 +199,7 @@ export function useWebSocketSubscription<T>(event: string, onMessage: (data: T) 
       unsubscribe();
       clearInterval(checkConnection);
     };
-  }, [event, onMessage]);
+  }, [event]); // stable: onMessage read via ref
 
   return isConnected;
 }

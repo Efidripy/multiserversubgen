@@ -46,7 +46,7 @@ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:666/health
 Публичная проверка:
 
 ```bash
-curl -k -s -o /dev/null -w '%{http_code}\n' https://<your-domain>/<web-path>/
+curl -fsSL -o /dev/null -w '%{http_code}\n' https://<your-domain>/<web-path>/
 ```
 
 ## Связанные документы

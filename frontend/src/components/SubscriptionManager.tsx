@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useToast } from './Toast';
+import { useTranslation } from 'react-i18next';
 import api from '../api';
-import { useTheme } from '../contexts/ThemeContext';
-import { getAuth } from '../auth';
+import { listNodes, type NodeRecord } from '../api/nodes';
 import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
 
@@ -10,117 +11,107 @@ interface Stats {
   last: string;
 }
 
-interface Node {
+interface SubscriptionGroup {
   id: number;
   name: string;
-  ip: string;
-  port: string;
+  identifier: string;
+  description: string;
+  email_patterns: string[];
+  node_filters: string[];
+  protocol_filter: string;
+  created_at: string;
+  updated_at: string;
+  subscription_token: string;
 }
 
-interface SubscriptionGroup {
-  identifier: string;
+interface SubscriptionGroupPreview extends SubscriptionGroup {
   emails: string[];
   count: number;
+  link: string;
 }
 
+interface SubscriptionGroupForm {
+  id: number | null;
+  name: string;
+  identifier: string;
+  description: string;
+  email_patterns: string;
+  node_filters: string;
+  protocol_filter: string;
+}
+
+type SortField = 'email' | 'downloads' | 'last';
+type GroupSortField = 'name' | 'count';
+
+const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
+
+const shellClass = 'min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6';
+const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]';
+const insetPanelClass = 'min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4';
+const titleClass = 'text-xs font-medium uppercase tracking-[0.14em] text-slate-300';
+const hintClass = 'mt-1 text-xs font-light leading-5 text-slate-500';
+const metricClass = 'font-mono tabular-nums whitespace-nowrap';
+const headerButtonClass = 'inline-flex whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500 transition hover:text-cyan-300';
+const primaryButtonClass = 'inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-lg border border-cyan-300/25 bg-gradient-to-r from-cyan-400 to-emerald-300 px-5 text-xs font-medium uppercase tracking-[0.14em] text-[#06111f] shadow-[0_14px_38px_rgba(34,211,238,0.18)] transition hover:from-cyan-300 hover:to-emerald-200 disabled:cursor-not-allowed disabled:opacity-45';
+const secondaryButtonClass = 'inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 text-xs font-medium uppercase tracking-[0.14em] text-slate-300 transition hover:bg-[#0f1420] hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-45';
+const iconButtonClass = 'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-cyan-500/20 bg-[#0a0e1a] text-slate-300 transition hover:bg-[#0f1420] hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-45';
+const inputClass = 'block w-full min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2.5 text-sm font-light text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10';
+const codeInputClass = 'block w-full min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2.5 font-mono text-xs font-light text-slate-200 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10';
+const metaLabelClass = 'text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500';
+const metaValueClass = 'mt-1 block min-w-0 truncate text-xs font-light text-slate-200';
+const cardMetaValueClass = 'mt-1 block min-w-0 truncate text-right text-xs font-light text-slate-200';
+
+const emptyGroupForm: SubscriptionGroupForm = {
+  id: null,
+  name: '',
+  identifier: '',
+  description: '',
+  email_patterns: '',
+  node_filters: '',
+  protocol_filter: '',
+};
+
+const listToCsv = (items: string[]) => items.join(', ');
+
+const csvToList = (value: string) => value
+  .split(',')
+  .map((item) => item.trim())
+  .filter(Boolean);
+
 export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) => {
-  const { colors } = useTheme();
+  const { toast } = useToast();
+  const { t } = useTranslation();
   const [emails, setEmails] = useState<string[]>([]);
+  const [emailTokens, setEmailTokens] = useState<Record<string, string>>({});
   const [stats, setStats] = useState<Record<string, Stats>>({});
-  const [nodes, setNodes] = useState<Node[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [viewMode, setViewMode] = useState<'individual' | 'grouped'>('individual');
+  const [nodes, setNodes] = useState<NodeRecord[]>([]);
   const [groups, setGroups] = useState<SubscriptionGroup[]>([]);
+  const [emailSearch, setEmailSearch] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [emailsLoading, setEmailsLoading] = useState(false);
+  const [groupsLoading, setGroupsLoading] = useState(false);
+  const [nodesLoading, setNodesLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<'individual' | 'grouped'>('individual');
   const [filterProtocol, setFilterProtocol] = useState('');
   const [selectedNodes, setSelectedNodes] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
-  const [individualSortField, setIndividualSortField] = useState<'email' | 'downloads' | 'last'>('email');
+  const [individualSortField, setIndividualSortField] = useState<SortField>('email');
   const [individualSortDir, setIndividualSortDir] = useState<'asc' | 'desc'>('asc');
-  const [groupSortField, setGroupSortField] = useState<'name' | 'count'>('count');
+  const [groupSortField, setGroupSortField] = useState<GroupSortField>('count');
   const [groupSortDir, setGroupSortDir] = useState<'asc' | 'desc'>('desc');
   const [deliveryTransport, setDeliveryTransport] = useState<'all' | 'ws' | 'grpc'>('all');
   const [deliveryFormat, setDeliveryFormat] = useState<'base64' | 'json' | 'raw'>('base64');
-
-  const loadEmails = async () => {
-    setLoading(true);
-    setError('');
-    setSuccessMessage('');
-    try {
-      const res = await api.get('/v1/emails', {
-        params: { _ts: Date.now() },
-        headers: { 'Cache-Control': 'no-cache' },
-        auth: { username: getAuth().user, password: getAuth().password }
-      });
-      setEmails(res.data.emails || []);
-      setStats(res.data.stats || {});
-      setSuccessMessage('Emails refreshed successfully');
-      setTimeout(() => setSuccessMessage(''), 3000);
-    } catch (err: any) {
-      console.error('Failed to load subscriptions:', err);
-      setError(err.response?.data?.detail || 'Failed to refresh emails');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadNodes = async () => {
-    try {
-      const res = await api.get('/v1/nodes', {
-        auth: { username: getAuth().user, password: getAuth().password }
-      });
-      setNodes(res.data || []);
-    } catch (err) {
-      console.error('Failed to load nodes:', err);
-    }
-  };
-
-  const analyzeGroups = () => {
-    const groupMap = new Map<string, string[]>();
-
-    emails.forEach((email) => {
-      const domain = email.split('@')[1] || 'unknown';
-      if (!groupMap.has(domain)) groupMap.set(domain, []);
-      groupMap.get(domain)!.push(email);
-
-      const match = email.match(/^([a-zA-Z]{3,})/);
-      if (match) {
-        const prefix = match[1].toLowerCase();
-        if (!groupMap.has(prefix)) groupMap.set(prefix, []);
-        groupMap.get(prefix)!.push(email);
-      }
-    });
-
-    const groupList: SubscriptionGroup[] = [];
-    groupMap.forEach((emailList, identifier) => {
-      if (emailList.length >= 2) {
-        groupList.push({
-          identifier,
-          emails: emailList,
-          count: emailList.length
-        });
-      }
-    });
-
-    groupList.sort((a, b) => b.count - a.count);
-    setGroups(groupList);
-  };
-
-  useEffect(() => {
-    loadEmails();
-    loadNodes();
-  }, []);
-
-  useEffect(() => {
-    if (viewMode === 'grouped') {
-      analyzeGroups();
-    }
-  }, [emails, viewMode]);
+  const [qrUrl, setQrUrl] = useState('');
+  const [showQr, setShowQr] = useState(false);
+  const [groupEditorOpen, setGroupEditorOpen] = useState(false);
+  const [groupForm, setGroupForm] = useState<SubscriptionGroupForm>(emptyGroupForm);
+  const [groupSaving, setGroupSaving] = useState(false);
 
   const copyToClipboard = async (text: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      alert('Copied!');
+      toast(t('subscriptions.copied'), 'info');
     } catch {
       const el = document.createElement('textarea');
       el.value = text;
@@ -131,8 +122,162 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     }
   };
 
-  const buildSubscriptionUrl = (email: string, isGrouped = false) => {
-    const baseUrl = isGrouped ? `${apiUrl}/v1/sub-grouped/${email}` : `${apiUrl}/v1/sub/${email}`;
+  const loadEmails = async () => {
+    setEmailsLoading(true);
+    setError('');
+    setSuccessMessage('');
+    try {
+      const res = await api.get('/v1/emails', {
+        params: { _ts: Date.now() },
+        headers: { 'Cache-Control': 'no-cache' },
+      });
+      setEmails(Array.isArray(res.data?.emails) ? res.data.emails : []);
+      setEmailTokens(res.data?.subscription_tokens && typeof res.data.subscription_tokens === 'object'
+        ? res.data.subscription_tokens
+        : {});
+      setStats(res.data?.stats || {});
+      setSuccessMessage(t('subscriptions.emailsRefreshed'));
+      window.setTimeout(() => setSuccessMessage(''), 3000);
+    } catch (err: any) {
+      console.error('Failed to load subscriptions:', err);
+      setError(err.response?.data?.detail || t('subscriptions.refreshEmailsFailed'));
+    } finally {
+      setEmailsLoading(false);
+    }
+  };
+
+  const loadGroups = async () => {
+    setGroupsLoading(true);
+    setError('');
+    try {
+      const res = await api.get('/v1/subscription-groups', {
+        params: { _ts: Date.now() },
+      });
+      const rawGroups = Array.isArray(res.data?.groups) ? res.data.groups : [];
+      setGroups(
+        rawGroups.map((group: any): SubscriptionGroup => ({
+          id: Number(group.id) || 0,
+          name: String(group.name || ''),
+          identifier: String(group.identifier || ''),
+          description: String(group.description || ''),
+          email_patterns: Array.isArray(group.email_patterns) ? group.email_patterns : [],
+          node_filters: Array.isArray(group.node_filters) ? group.node_filters : [],
+          protocol_filter: String(group.protocol_filter || ''),
+          created_at: String(group.created_at || ''),
+           updated_at: String(group.updated_at || ''),
+           subscription_token: String(group.subscription_token || ''),
+        })),
+      );
+    } catch (err: any) {
+      console.error('Failed to load subscription groups:', err);
+      setError(err.response?.data?.detail || t('subscriptions.refreshEmailsFailed'));
+      setGroups([]);
+    } finally {
+      setGroupsLoading(false);
+    }
+  };
+
+  const loadNodes = async () => {
+    setNodesLoading(true);
+    try {
+      setNodes(await listNodes());
+    } catch (err) {
+      console.error('Failed to load nodes:', err);
+    } finally {
+      setNodesLoading(false);
+    }
+  };
+
+  const refreshAll = async () => {
+    setLoading(true);
+    await Promise.all([loadEmails(), loadGroups(), loadNodes()]);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    void refreshAll();
+  }, []);
+
+  const openCreateGroup = () => {
+    setGroupForm(emptyGroupForm);
+    setGroupEditorOpen(true);
+    setViewMode('grouped');
+  };
+
+  const openEditGroup = (group: SubscriptionGroup) => {
+    setGroupForm({
+      id: group.id,
+      name: group.name,
+      identifier: group.identifier,
+      description: group.description || '',
+      email_patterns: listToCsv(group.email_patterns || []),
+      node_filters: listToCsv(group.node_filters || []),
+      protocol_filter: group.protocol_filter || '',
+    });
+    setGroupEditorOpen(true);
+    setViewMode('grouped');
+  };
+
+  const saveGroup = async () => {
+    const payload = {
+      name: groupForm.name.trim(),
+      identifier: groupForm.identifier.trim(),
+      description: groupForm.description.trim(),
+      email_patterns: csvToList(groupForm.email_patterns),
+      node_filters: csvToList(groupForm.node_filters),
+      protocol_filter: groupForm.protocol_filter.trim() || null,
+    };
+
+    if (!payload.name || !payload.identifier) {
+      toast(t('subscriptions.groupName'), 'warning');
+      return;
+    }
+
+    setGroupSaving(true);
+    setError('');
+    try {
+      if (groupForm.id) {
+        await api.put(`/v1/subscription-groups/${groupForm.id}`, payload);
+      } else {
+        await api.post('/v1/subscription-groups', payload);
+      }
+      toast(t('app.success'), 'success');
+      setGroupEditorOpen(false);
+      setGroupForm(emptyGroupForm);
+      await loadGroups();
+    } catch (err: any) {
+      const message = err.response?.data?.detail || t('common.failed');
+      setError(message);
+      toast(message, 'error');
+    } finally {
+      setGroupSaving(false);
+    }
+  };
+
+  const deleteGroup = async (group: SubscriptionGroup) => {
+    if (!window.confirm(`${t('subscriptions.deleteGroup')}: ${group.name || group.identifier}?`)) return;
+    setGroupSaving(true);
+    setError('');
+    try {
+      await api.delete(`/v1/subscription-groups/${group.id}`);
+      toast(t('app.success'), 'success');
+      await loadGroups();
+    } catch (err: any) {
+      const message = err.response?.data?.detail || t('common.failed');
+      setError(message);
+      toast(message, 'error');
+    } finally {
+      setGroupSaving(false);
+    }
+  };
+
+  const compareText = (a: string, b: string) =>
+    a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+
+  const buildSubscriptionUrl = (identifier: string, isGrouped = false, identifierIsToken = false) => {
+    const token = identifierIsToken ? identifier : (isGrouped ? '' : emailTokens[identifier] || '');
+    if (!token) return '';
+    const baseUrl = isGrouped ? `${apiUrl}/v1/sub-grouped/${token}` : `${apiUrl}/v1/sub/${token}`;
     const params = new URLSearchParams();
     if (filterProtocol) params.append('protocol', filterProtocol);
     if (selectedNodes.length > 0) params.append('nodes', selectedNodes.join(','));
@@ -141,14 +286,11 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     return params.toString() ? `${baseUrl}?${params.toString()}` : baseUrl;
   };
 
-  if (loading && emails.length === 0) {
-    return <div className="text-center py-5" style={{ color: colors.text.secondary }}>Loading...</div>;
-  }
+  const filteredEmails = emailSearch.trim()
+    ? emails.filter((email) => email.toLowerCase().includes(emailSearch.trim().toLowerCase()))
+    : emails;
 
-  const compareText = (a: string, b: string) =>
-    a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
-
-  const sortedEmails = [...emails].sort((a, b) => {
+  const sortedEmails = [...filteredEmails].sort((a, b) => {
     const factor = individualSortDir === 'asc' ? 1 : -1;
     const byEmail = compareText(a, b);
     const byDownloads = (stats[a]?.count || 0) - (stats[b]?.count || 0);
@@ -168,7 +310,21 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     return byEmail;
   });
 
-  const sortedGroups = [...groups].sort((a, b) => {
+  const groupPreviews = useMemo<SubscriptionGroupPreview[]>(() => {
+    return groups.map((group) => {
+      const patternMatches = group.email_patterns.length > 0
+        ? emails.filter((email) => group.email_patterns.some((pattern) => email.toLowerCase().includes(pattern.toLowerCase())))
+        : emails.filter((email) => email.toLowerCase().includes(group.identifier.toLowerCase()));
+      return {
+        ...group,
+        emails: patternMatches,
+        count: patternMatches.length,
+         link: buildSubscriptionUrl(group.subscription_token, true, true),
+      };
+    });
+  }, [buildSubscriptionUrl, emails, groups]);
+
+  const sortedGroups = [...groupPreviews].sort((a, b) => {
     const factor = groupSortDir === 'asc' ? 1 : -1;
     const byName = compareText(a.identifier, b.identifier);
     const byCount = a.count - b.count;
@@ -180,11 +336,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     return byName;
   });
 
-  const groupSortDirectionLabels = groupSortField === 'name'
-    ? { asc: 'A -> Z', desc: 'Z -> A' }
-    : { asc: 'Small -> Large', desc: 'Large -> Small' };
-
-  const applyIndividualSortFromHeader = (field: 'email' | 'downloads' | 'last') => {
+  const applyIndividualSortFromHeader = (field: SortField) => {
     if (individualSortField === field) {
       setIndividualSortDir((prev) => (prev === 'asc' ? 'desc' : 'asc'));
       return;
@@ -193,195 +345,319 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     setIndividualSortDir(field === 'downloads' || field === 'last' ? 'desc' : 'asc');
   };
 
-  const individualSortIndicator = (field: 'email' | 'downloads' | 'last') =>
-    individualSortField === field ? (individualSortDir === 'asc' ? ' ▲' : ' ▼') : '';
+  const individualSortIndicator = (field: SortField) =>
+    individualSortField === field ? (individualSortDir === 'asc' ? ' ^' : ' v') : '';
 
-  const toggleNodeSelection = (nodeName: string) => {
-    setSelectedNodes((prev) =>
-      prev.includes(nodeName) ? prev.filter((node) => node !== nodeName) : [...prev, nodeName]
+  const filtersActive = Boolean(
+    filterProtocol || selectedNodes.length > 0 || deliveryTransport !== 'all' || deliveryFormat !== 'base64',
+  );
+
+  const groupSortDirectionLabels = groupSortField === 'name'
+    ? { asc: t('subscriptions.sortAZ'), desc: t('subscriptions.sortZA') }
+    : { asc: t('subscriptions.sortSmallLarge'), desc: t('subscriptions.sortLargeSmall') };
+
+  const renderLoadingSkeleton = () => Array.from({ length: 4 }).map((_, index) => (
+    <div key={index} className="animate-pulse rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
+      <div className="h-3 w-1/3 rounded bg-slate-700/60" />
+      <div className="mt-3 h-3 w-2/3 rounded bg-slate-800" />
+      <div className="mt-3 h-8 rounded bg-slate-900/80" />
+    </div>
+  ));
+
+  const renderIndividualActions = (email: string) => {
+    const subscriptionUrl = buildSubscriptionUrl(email);
+    return (
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          className={iconButtonClass}
+          title={t('common.copy')}
+          aria-label={t('common.copy')}
+          onClick={() => void copyToClipboard(subscriptionUrl)}
+        >
+          <UIIcon name="copy" size={15} />
+        </button>
+        <button
+          type="button"
+          className={iconButtonClass}
+          title={t('subscriptions.showQrCode')}
+          aria-label={t('subscriptions.showQrCode')}
+          onClick={() => {
+            setQrUrl(subscriptionUrl);
+            setShowQr(true);
+          }}
+        >
+          <UIIcon name="subscriptions" size={15} />
+        </button>
+      </div>
     );
   };
 
+  const renderGroupActions = (group: SubscriptionGroupPreview) => (
+    <div className="flex shrink-0 items-center gap-2">
+      <button
+        type="button"
+        className={iconButtonClass}
+        title={t('common.copy')}
+        aria-label={t('common.copy')}
+        onClick={() => void copyToClipboard(group.link)}
+      >
+        <UIIcon name="copy" size={15} />
+      </button>
+      <button
+        type="button"
+        className={iconButtonClass}
+        title={t('subscriptions.copyGroupLinksTitle')}
+        aria-label={t('subscriptions.copyGroupLinksTitle')}
+        onClick={async () => {
+          const links = group.emails.map((email) => buildSubscriptionUrl(email)).join('\n');
+          await copyToClipboard(links);
+        }}
+      >
+        <UIIcon name="link" size={15} />
+      </button>
+      <button
+        type="button"
+        className={iconButtonClass}
+        title={t('subscriptions.editGroup')}
+        aria-label={t('subscriptions.editGroup')}
+        onClick={() => openEditGroup(group)}
+      >
+        <UIIcon name="edit" size={15} />
+      </button>
+      <button
+        type="button"
+        className={iconButtonClass}
+        title={t('subscriptions.deleteGroup')}
+        aria-label={t('subscriptions.deleteGroup')}
+        onClick={() => void deleteGroup(group)}
+        disabled={groupSaving}
+      >
+        <UIIcon name="trash" size={15} />
+      </button>
+    </div>
+  );
+
+  const showEmptyState = (label: string) => (
+    <p className="rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-8 text-center text-sm text-slate-500">
+      <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[10px] uppercase tracking-[0.14em] text-cyan-200">
+        <UIIcon name="subscriptions" size={12} />
+        {label}
+      </span>
+    </p>
+  );
+
+  const totalLoading = loading || emailsLoading || groupsLoading || nodesLoading;
+
   return (
-    <div className="subscription-manager">
-      <div className="panel-grid panel-grid--compact mb-3">
-        <section className="panel-block panel-block--wide">
-          <div className="panel-block__header">
-            <div>
-              <h6 className="panel-block__title">Subscription controls</h6>
-              <p className="panel-block__hint">Refresh source emails, switch delivery mode and narrow output by protocol or node.</p>
-            </div>
-            <div className="panel-inline-actions">
-              <button
-                className="btn btn-sm"
-                style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
-                onClick={loadEmails}
-                disabled={loading}
-              >
-                <span className="d-inline-flex align-items-center gap-1">
-                  <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
-                  Refresh Emails
-                </span>
-              </button>
-              <button
-                className="btn btn-sm"
-                style={{
-                  backgroundColor: viewMode === 'individual' ? colors.accent : colors.bg.tertiary,
-                  borderColor: colors.border,
-                  color: viewMode === 'individual' ? colors.accentText : colors.text.primary
-                }}
-                onClick={() => setViewMode('individual')}
-              >
-                <span className="d-inline-flex align-items-center gap-1">
-                  <UIIcon name="user" size={14} />
-                  Individual
-                </span>
-              </button>
-              <button
-                className="btn btn-sm"
-                style={{
-                  backgroundColor: viewMode === 'grouped' ? colors.accent : colors.bg.tertiary,
-                  borderColor: colors.border,
-                  color: viewMode === 'grouped' ? colors.accentText : colors.text.primary
-                }}
-                onClick={() => setViewMode('grouped')}
-              >
-                <span className="d-inline-flex align-items-center gap-1">
-                  <UIIcon name="folder" size={14} />
-                  Grouped
-                </span>
-              </button>
-            </div>
+    <div className={shellClass}>
+      <section className={cn(panelClass, 'mb-4')}>
+        <div className="mb-4 flex min-w-0 flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+          <div className="min-w-0">
+            <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">
+              <UIIcon name="subscriptions" size={16} />
+              {t('subscriptions.controlsTitle')}
+            </h2>
+            <p className={hintClass}>{t('subscriptions.controlsHint')}</p>
           </div>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <button type="button" className={primaryButtonClass} onClick={() => void refreshAll()} disabled={totalLoading}>
+              <UIIcon name={totalLoading ? 'spinner' : 'refresh'} size={15} />
+              <span className="whitespace-nowrap">{t('subscriptions.refreshEmails')}</span>
+            </button>
+            <button type="button" className={secondaryButtonClass} onClick={openCreateGroup} disabled={totalLoading || groupSaving}>
+              <UIIcon name="plus" size={15} />
+              <span className="whitespace-nowrap">{t('subscriptions.addGroup')}</span>
+            </button>
+            <button
+              type="button"
+              className={secondaryButtonClass}
+              title={t('subscriptions.copyAllLinksTitle')}
+              onClick={async () => {
+                const allLinks = filteredEmails.map((email) => buildSubscriptionUrl(email));
+                await copyToClipboard(allLinks.join('\n'));
+              }}
+              disabled={filteredEmails.length === 0 || totalLoading}
+            >
+              <UIIcon name="copy" size={15} />
+              <span className="whitespace-nowrap">{t('subscriptions.copyAllLinks', { count: filteredEmails.length })}</span>
+            </button>
+          </div>
+        </div>
 
-          {error && (
-            <div className="alert mb-2" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
-              {error}
-            </div>
-          )}
-          {successMessage && (
-            <div className="alert mb-2" style={{ backgroundColor: colors.success + '22', borderColor: colors.success, color: colors.success }}>
-              {successMessage}
-            </div>
-          )}
+        {error && (
+          <div className="mb-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+            {error}
+          </div>
+        )}
+        {successMessage && (
+          <div className="mb-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+            {successMessage}
+          </div>
+        )}
 
-          <div className="row g-2 mb-2">
-            <div className="col-12">
-              <label className="form-label small" style={{ color: colors.text.secondary }}>Node Filter</label>
-              <div className="panel-inline-actions">
-                {nodes.map((node) => (
-                  <button
-                    key={node.id}
-                    className="btn btn-sm"
-                    style={{
-                      backgroundColor: selectedNodes.includes(node.name) ? colors.accent : colors.bg.tertiary,
-                      borderColor: colors.border,
-                      color: selectedNodes.includes(node.name) ? colors.accentText : colors.text.primary
-                    }}
-                    onClick={() => toggleNodeSelection(node.name)}
-                  >
-                    <span className="d-inline-flex align-items-center gap-1">
-                      {selectedNodes.includes(node.name) && <UIIcon name="check" size={12} />}
-                      {node.name}
-                    </span>
-                  </button>
-                ))}
-                {selectedNodes.length > 0 && (
-                  <button
-                    className="btn btn-sm"
-                    style={{ backgroundColor: colors.warning, borderColor: colors.warning, color: colors.text.primary }}
-                    onClick={() => setSelectedNodes([])}
-                  >
-                    <span className="d-inline-flex align-items-center gap-1">
-                      <UIIcon name="x" size={12} />
-                      Clear
-                    </span>
-                  </button>
-                )}
+        <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+          <div className={insetPanelClass}>
+            <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="min-w-0">
+                <h3 className={titleClass}>{t('subscriptions.deliveryProfile')}</h3>
+                <p className={hintClass}>{t('subscriptions.deliveryHint')}</p>
+              </div>
+              <div className="flex min-w-0 flex-wrap gap-2">
+                <button
+                  type="button"
+                  className={cn(secondaryButtonClass, viewMode === 'individual' && 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200')}
+                  onClick={() => setViewMode('individual')}
+                >
+                  <UIIcon name="user" size={14} />
+                  <span className="whitespace-nowrap">{t('subscriptions.individual')}</span>
+                </button>
+                <button
+                  type="button"
+                  className={cn(secondaryButtonClass, viewMode === 'grouped' && 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200')}
+                  onClick={() => setViewMode('grouped')}
+                >
+                  <UIIcon name="folder" size={14} />
+                  <span className="whitespace-nowrap">{t('subscriptions.grouped')}</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-3">
+              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4">
+                <label className={titleClass}>{t('subscriptions.subscriptionProfile')}</label>
+                <div className="mt-3 min-w-0">
+                  <ChoiceChips
+                    options={[
+                      { value: '', label: t('common.all') },
+                      { value: 'vless', label: 'VLESS' },
+                      { value: 'vmess', label: 'VMess' },
+                      { value: 'trojan', label: 'Trojan' },
+                    ]}
+                    value={filterProtocol}
+                    onChange={(value) => setFilterProtocol(value)}
+                  />
+                </div>
+              </div>
+              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4">
+                <label className={titleClass}>{t('subscriptions.transportHint')}</label>
+                <div className="mt-3 min-w-0">
+                  <ChoiceChips
+                    options={[
+                      { value: 'all', label: t('common.all') },
+                      { value: 'ws', label: 'WS' },
+                      { value: 'grpc', label: 'gRPC' },
+                    ]}
+                    value={deliveryTransport}
+                    onChange={(value) => setDeliveryTransport(value)}
+                  />
+                </div>
+              </div>
+              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4">
+                <label className={titleClass}>{t('subscriptions.outputFormat')}</label>
+                <div className="mt-3 min-w-0">
+                  <ChoiceChips
+                    options={[
+                      { value: 'base64', label: 'Base64' },
+                      { value: 'json', label: 'JSON' },
+                      { value: 'raw', label: 'Raw' },
+                    ]}
+                    value={deliveryFormat}
+                    onChange={(value) => setDeliveryFormat(value)}
+                  />
+                </div>
               </div>
             </div>
           </div>
 
-          {(filterProtocol || selectedNodes.length > 0 || deliveryTransport !== 'all' || deliveryFormat !== 'base64') && (
-            <div className="alert mt-2 mb-0" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.text.primary }}>
-              <small>
-                <strong>Active filters:</strong>
-                {filterProtocol && ` Protocol: ${filterProtocol.toUpperCase()}`}
-                {selectedNodes.length > 0 && ` | Nodes: ${selectedNodes.join(', ')}`}
-                {deliveryTransport !== 'all' && ` | Transport: ${deliveryTransport.toUpperCase()}`}
-                {deliveryFormat !== 'base64' && ` | Format: ${deliveryFormat.toUpperCase()}`}
-              </small>
+          <aside className={insetPanelClass}>
+            <div className="min-w-0">
+              <h3 className={titleClass}>{t('subscriptions.nodeFilter')}</h3>
+              <p className={hintClass}>{t('subscriptions.searchEmailsPlaceholder')}</p>
             </div>
-          )}
-        </section>
 
-        <aside className="panel-block">
-          <div className="panel-block__header">
-            <div>
-              <h6 className="panel-block__title">Delivery profile</h6>
-              <p className="panel-block__hint">Choose what kind of subscription link you want to hand out.</p>
+            <div className="mt-4">
+              <div className="relative min-w-0">
+                <UIIcon name="search" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
+                <input
+                  type="text"
+                  className={cn(inputClass, 'pl-10')}
+                  placeholder={t('subscriptions.searchEmailsPlaceholder')}
+                  value={emailSearch}
+                  onChange={(e) => setEmailSearch(e.target.value)}
+                />
+              </div>
             </div>
-          </div>
-          <div className="panel-block__stack">
-            <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>Subscription profile</label>
-              <ChoiceChips
-                options={[
-                  { value: '', label: 'All' },
-                  { value: 'vless', label: 'VLESS' },
-                  { value: 'vmess', label: 'VMess' },
-                  { value: 'trojan', label: 'Trojan' },
-                ]}
-                value={filterProtocol}
-                onChange={(value) => setFilterProtocol(value)}
-                colors={colors}
-              />
-            </div>
-            <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>Transport hint</label>
-              <ChoiceChips
-                options={[
-                  { value: 'all', label: 'All' },
-                  { value: 'ws', label: 'WS' },
-                  { value: 'grpc', label: 'gRPC' },
-                ]}
-                value={deliveryTransport}
-                onChange={(value) => setDeliveryTransport(value)}
-                colors={colors}
-              />
-            </div>
-            <div>
-              <label className="form-label small" style={{ color: colors.text.secondary }}>Output format</label>
-              <ChoiceChips
-                options={[
-                  { value: 'base64', label: 'Base64' },
-                  { value: 'json', label: 'JSON' },
-                  { value: 'raw', label: 'Raw' },
-                ]}
-                value={deliveryFormat}
-                onChange={(value) => setDeliveryFormat(value)}
-                colors={colors}
-              />
-            </div>
-          </div>
-        </aside>
-      </div>
 
-      <section className="panel-block">
-        <div className="d-flex justify-content-between align-items-center mb-3 gap-2">
-          <h6 className="mb-0" style={{ color: colors.text.primary }}>
-            {viewMode === 'individual' ? `Individual Subscriptions (${emails.length})` : `Grouped Subscriptions (${groups.length} groups)`}
-          </h6>
-          {viewMode === 'grouped' ? (
-            <div className="d-flex gap-2">
+            <div className="mt-4 flex min-w-0 flex-wrap gap-2">
+              {nodes.map((node) => {
+                const active = selectedNodes.includes(node.name);
+                return (
+                  <button
+                    key={node.id}
+                    type="button"
+                    className={cn(
+                      secondaryButtonClass,
+                      'h-9 px-3 text-[11px]',
+                      active && 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200',
+                    )}
+                    onClick={() => {
+                      setSelectedNodes((prev) => (
+                        prev.includes(node.name) ? prev.filter((item) => item !== node.name) : [...prev, node.name]
+                      ));
+                    }}
+                  >
+                    {active && <UIIcon name="check" size={13} />}
+                    <span className="min-w-0 truncate">{node.name}</span>
+                  </button>
+                );
+              })}
+              {selectedNodes.length > 0 && (
+                <button type="button" className={secondaryButtonClass} onClick={() => setSelectedNodes([])}>
+                  <UIIcon name="clear" size={14} />
+                  <span className="whitespace-nowrap">{t('common.clear')}</span>
+                </button>
+              )}
+            </div>
+
+            {filtersActive && (
+              <div className="mt-4 rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-3 text-xs text-slate-300">
+                <span className="block text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
+                  {t('subscriptions.activeFilters')}
+                </span>
+                <div className="mt-2 flex min-w-0 flex-wrap gap-2 text-slate-400">
+                  {filterProtocol && <span className={metricClass}>{t('subscriptions.protocolFilter')}: {filterProtocol.toUpperCase()}</span>}
+                  {selectedNodes.length > 0 && <span className="min-w-0 truncate">{t('subscriptions.nodeFilters')}: {selectedNodes.join(', ')}</span>}
+                  {deliveryTransport !== 'all' && <span className={metricClass}>{t('subscriptions.transportHint')}: {deliveryTransport.toUpperCase()}</span>}
+                  {deliveryFormat !== 'base64' && <span className={metricClass}>{t('subscriptions.outputFormat')}: {deliveryFormat.toUpperCase()}</span>}
+                </div>
+              </div>
+            )}
+          </aside>
+        </div>
+      </section>
+
+      <section className={panelClass}>
+        <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-slate-100">
+              {viewMode === 'individual'
+                ? t('subscriptions.individualTitle', { count: emails.length })
+                : t('subscriptions.groupedTitle', { count: groups.length })}
+            </h3>
+            <p className={hintClass}>
+              {viewMode === 'grouped' ? t('subscriptions.copyGroupLinksTitle') : t('traffic.sortHint')}
+            </p>
+          </div>
+          {viewMode === 'grouped' && (
+            <div className="flex min-w-0 flex-wrap gap-2">
               <ChoiceChips
                 options={[
-                  { value: 'count', label: 'Count' },
-                  { value: 'name', label: 'Group' },
+                  { value: 'count', label: t('subscriptions.count') },
+                  { value: 'name', label: t('subscriptions.group') },
                 ]}
                 value={groupSortField}
                 onChange={(value) => setGroupSortField(value)}
-                colors={colors}
               />
               <ChoiceChips
                 options={[
@@ -390,132 +666,358 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
                 ]}
                 value={groupSortDir}
                 onChange={(value) => setGroupSortDir(value)}
-                colors={colors}
               />
             </div>
-          ) : (
-            <div className="small" style={{ color: colors.text.secondary }}>Click table headers to sort</div>
           )}
         </div>
 
-        {emails.length === 0 ? (
-          <p className="text-center py-3 mb-0" style={{ color: colors.text.secondary }}>No users found. Add panel nodes first.</p>
-        ) : viewMode === 'individual' ? (
-          <div className="table-responsive table-shell">
-            <table className="table table-hover small mb-0" style={{ color: colors.text.primary }}>
-              <thead>
-                <tr style={{ borderColor: colors.border }}>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('email')}>
-                      Email{individualSortIndicator('email')}
-                    </button>
-                  </th>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('downloads')}>
-                      Downloads{individualSortIndicator('downloads')}
-                    </button>
-                  </th>
-                  <th style={{ color: colors.text.secondary }}>
-                    <button className="btn btn-link btn-sm p-0 text-decoration-none" style={{ color: colors.text.secondary }} onClick={() => applyIndividualSortFromHeader('last')}>
-                      Last seen{individualSortIndicator('last')}
-                    </button>
-                  </th>
-                  <th style={{ color: colors.text.secondary }}>Link</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedEmails.map((email) => (
-                  <tr key={email} style={{ borderColor: colors.border }}>
-                    <td className="align-middle">
-                      <strong style={{ color: colors.text.primary }}>{email}</strong>
-                    </td>
-                    <td className="align-middle">
-                      <span className="badge" style={{ backgroundColor: colors.info }}>
-                        {stats[email]?.count || 0}
-                      </span>
-                    </td>
-                    <td className="align-middle">
-                      <small style={{ color: colors.text.secondary }}>{stats[email]?.last || '--'}</small>
-                    </td>
-                    <td className="align-middle">
-                      <div className="input-group input-group-sm">
-                        <input
-                          type="text"
-                          id={`sub-${email}`}
-                          className="form-control form-control-sm"
-                          readOnly
-                          value={buildSubscriptionUrl(email)}
-                          style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                        />
-                        <button
-                          className="btn"
-                          style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
-                          onClick={() => copyToClipboard(buildSubscriptionUrl(email))}
-                        >
-                          Copy
-                        </button>
-                      </div>
-                    </td>
+        {viewMode === 'individual' ? (
+          emailsLoading && emails.length === 0 ? (
+            <div className="grid min-w-0 grid-cols-1 gap-3">{renderLoadingSkeleton()}</div>
+          ) : emails.length === 0 ? (
+            showEmptyState(t('subscriptions.noActiveSubscriptionsFound', 'No active subscriptions found'))
+          ) : (
+          <div className="min-w-0">
+            <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 lg:block">
+              <table className="w-full table-fixed border-collapse text-left text-xs">
+                <thead className="bg-[#0a0e1a] text-[10px] uppercase tracking-wider text-slate-500">
+                  <tr className="border-b border-cyan-500/20">
+                    <th className="px-4 py-3">
+                      <button type="button" className={headerButtonClass} onClick={() => applyIndividualSortFromHeader('email')}>
+                        {t('clients.email')}{individualSortIndicator('email')}
+                      </button>
+                    </th>
+                    <th className="w-32 px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        className={cn(headerButtonClass, 'justify-end')}
+                        onClick={() => applyIndividualSortFromHeader('downloads')}
+                      >
+                        {t('subscriptions.downloads')}{individualSortIndicator('downloads')}
+                      </button>
+                    </th>
+                    <th className="w-40 px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        className={cn(headerButtonClass, 'justify-end')}
+                        onClick={() => applyIndividualSortFromHeader('last')}
+                      >
+                        {t('subscriptions.lastSeen')}{individualSortIndicator('last')}
+                      </button>
+                    </th>
+                    <th className="px-4 py-3">{t('subscriptions.link')}</th>
+                    <th className="w-28 px-4 py-3 text-right">{t('common.actions')}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="row g-3">
-            {sortedGroups.map((group, idx) => (
-              <div className="col-md-6" key={idx}>
-                <div className="panel-block h-100">
-                  <div className="d-flex justify-content-between align-items-center mb-2">
-                    <div>
-                      <h6 className="mb-0" style={{ color: colors.accent }}>
-                        <span className="d-inline-flex align-items-center gap-1">
-                          <UIIcon name="folder" size={13} />
-                          {group.identifier}
-                        </span>
-                      </h6>
-                      <small style={{ color: colors.text.secondary }}>{group.count} clients</small>
-                    </div>
-                    <span className="badge" style={{ backgroundColor: colors.accent }}>{group.count}</span>
-                  </div>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60 text-slate-200">
+                  {sortedEmails.map((email) => {
+                    const subscriptionUrl = buildSubscriptionUrl(email);
+                    return (
+                      <tr key={email} className="bg-[#0f1420] transition hover:bg-cyan-400/5">
+                        <td className="min-w-0 px-4 py-3">
+                          <div className="min-w-0">
+                            <strong className="block truncate text-sm text-slate-100" title={email}>{email}</strong>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className={cn(metricClass, 'inline-flex rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2 py-1 text-cyan-200')}>
+                            {stats[email]?.count || 0}
+                          </span>
+                        </td>
+                        <td className={cn(metricClass, 'px-4 py-3 text-right text-slate-400')}>
+                          {stats[email]?.last || '--'}
+                        </td>
+                        <td className="min-w-0 px-4 py-3">
+                          <div className="min-w-0">
+                            <input
+                              type="text"
+                              readOnly
+                              value={subscriptionUrl}
+                              className={cn(codeInputClass, 'truncate whitespace-nowrap')}
+                            />
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <div className="flex items-center justify-end gap-2">
+                            {renderIndividualActions(email)}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
 
-                  <div className="mb-2" style={{ maxHeight: '120px', overflowY: 'auto' }}>
-                    {group.emails.map((email, i) => (
-                      <div key={i} className="small" style={{ color: colors.text.secondary }}>
-                        • {email}
+            <div className="grid min-w-0 grid-cols-1 gap-3 lg:hidden">
+              {sortedEmails.map((email) => {
+                const subscriptionUrl = buildSubscriptionUrl(email);
+                return (
+                  <article key={email} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
+                    <div className="flex min-w-0 items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <strong className="block truncate text-sm text-slate-100" title={email}>{email}</strong>
+                        <div className="mt-3 grid min-w-0 grid-cols-2 gap-3">
+                          <div className="min-w-0">
+                            <span className={metaLabelClass}>{t('subscriptions.downloads')}</span>
+                            <span className={cn(metaValueClass, metricClass)}>{stats[email]?.count || 0}</span>
+                          </div>
+                          <div className="min-w-0 text-right">
+                            <span className={metaLabelClass}>{t('subscriptions.lastSeen')}</span>
+                            <span className={cn(cardMetaValueClass, metricClass)}>{stats[email]?.last || '--'}</span>
+                          </div>
+                          <div className="min-w-0 col-span-2">
+                            <span className={metaLabelClass}>{t('subscriptions.link')}</span>
+                            <div className="mt-2 min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] px-3 py-2">
+                              <span className="block min-w-0 truncate font-mono text-xs text-slate-300" title={subscriptionUrl}>
+                                {subscriptionUrl}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
                       </div>
-                    ))}
+                      <div className="flex shrink-0 flex-col gap-2">
+                        {renderIndividualActions(email)}
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+          )
+        ) : groupsLoading && groups.length === 0 ? (
+          <div className="grid min-w-0 grid-cols-1 gap-3">{renderLoadingSkeleton()}</div>
+        ) : sortedGroups.length === 0 ? (
+          showEmptyState(t('subscriptions.noGroupsFound'))
+        ) : (
+          <div className="grid min-w-0 grid-cols-1 gap-6 md:grid-cols-3">
+            {sortedGroups.map((group) => (
+              <article
+                key={group.id || group.identifier}
+                className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.22)]"
+              >
+                <div className="mb-4 flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
+                      <UIIcon name="folder" size={12} />
+                      <span className="whitespace-nowrap">{t('subscriptions.group')}</span>
+                    </div>
+                    <h4 className="mt-3 truncate text-base font-semibold text-slate-100" title={group.identifier}>
+                      {group.name || group.identifier}
+                    </h4>
+                    <p className="mt-2 text-sm text-slate-400">
+                      <span className={metricClass}>{t('subscriptions.clientCount', { count: group.count })}</span>
+                      {group.emails.length > 0 && (
+                        <span className={cn(metricClass, 'ml-2 text-slate-500')}>
+                          {t('subscriptions.emailCount', { count: group.emails.length })}
+                        </span>
+                      )}
+                    </p>
                   </div>
+                  <span className="rounded-full border border-cyan-400/20 bg-cyan-400/10 px-2.5 py-1 font-mono text-xs tabular-nums text-cyan-200 whitespace-nowrap">
+                    {group.count}
+                  </span>
+                </div>
 
-                  <div className="input-group input-group-sm">
-                    <input
-                      type="text"
-                      className="form-control form-control-sm"
-                      readOnly
-                      value={buildSubscriptionUrl(group.identifier, true)}
-                      style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                    />
-                    <button
-                      className="btn"
-                      style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
-                      onClick={() => copyToClipboard(buildSubscriptionUrl(group.identifier, true))}
-                    >
-                      Copy
-                    </button>
+                <div className="space-y-3 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3">
+                  <div className="min-w-0">
+                    <span className={titleClass}>{t('subscriptions.link')}</span>
+                    <div className="mt-2 min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] px-3 py-2">
+                      <span className="block min-w-0 truncate font-mono text-xs text-slate-300" title={group.link}>
+                        {group.link}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="grid min-w-0 grid-cols-2 gap-3 text-xs text-slate-400">
+                    <div className="min-w-0">
+                      <span className={metaLabelClass}>{t('subscriptions.protocolFilter')}</span>
+                      <span className={cn(metaValueClass, metricClass)} title={group.protocol_filter || '-'}>
+                        {group.protocol_filter || '-'}
+                      </span>
+                    </div>
+                    <div className="min-w-0 text-right">
+                      <span className={metaLabelClass}>{t('subscriptions.nodeFilters')}</span>
+                      <span className={cn(cardMetaValueClass, metricClass)} title={group.node_filters.join(', ') || '-'}>
+                        {group.node_filters.length > 0 ? group.node_filters.join(', ') : '-'}
+                      </span>
+                    </div>
+                    <div className="min-w-0 col-span-2">
+                      <span className={metaLabelClass}>{t('subscriptions.identifier')}</span>
+                      <span className={cn(metaValueClass, metricClass)} title={group.identifier}>
+                        {group.identifier}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
+
+                <div className="mt-4 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <span className={titleClass}>{t('clients.email')}</span>
+                    <span className={cn(metricClass, 'text-[11px] text-slate-500')}>{group.emails.length}</span>
+                  </div>
+                  <div className="max-h-32 space-y-2 overflow-y-auto pr-1">
+                    {group.emails.length > 0 ? group.emails.map((email) => (
+                      <div key={email} className="min-w-0 rounded-lg border border-cyan-500/15 bg-[#0f1420] px-3 py-2">
+                        <span className="block min-w-0 truncate font-mono text-xs text-slate-300" title={email}>
+                          {email}
+                        </span>
+                      </div>
+                    )) : (
+                      <div className="rounded-lg border border-cyan-500/15 bg-[#0f1420] px-3 py-3 text-xs text-slate-500">
+                        {t('subscriptions.noUsersFound')}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 flex items-center justify-end gap-2">
+                  {renderGroupActions(group)}
+                </div>
+              </article>
             ))}
-            {groups.length === 0 && (
-              <div className="col-12">
-                <p className="text-center py-3 mb-0" style={{ color: colors.text.secondary }}>
-                  No groups found. Groups require at least two clients with similar identifiers.
-                </p>
-              </div>
-            )}
           </div>
         )}
       </section>
+
+      {groupEditorOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setGroupEditorOpen(false);
+          }}
+        >
+          <div className="w-full max-w-2xl overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+            <div className="flex items-center justify-between border-b border-cyan-500/20 px-5 py-4">
+              <div className="min-w-0">
+                <h4 className="flex items-center gap-2 text-sm font-medium uppercase tracking-[0.14em] text-slate-100">
+                  <UIIcon name="folder" size={15} />
+                  {groupForm.id ? t('subscriptions.editGroup') : t('subscriptions.addGroup')}
+                </h4>
+                <p className="mt-1 truncate text-xs text-slate-500">{groupForm.identifier || t('subscriptions.identifier')}</p>
+              </div>
+              <button
+                type="button"
+                className={iconButtonClass}
+                aria-label={t('common.close', 'Close')}
+                onClick={() => setGroupEditorOpen(false)}
+              >
+                <UIIcon name="x" size={15} />
+              </button>
+            </div>
+            <div className="grid min-w-0 grid-cols-1 gap-4 px-5 py-5 sm:grid-cols-2">
+              <label className="min-w-0">
+                <span className={metaLabelClass}>{t('subscriptions.groupName')}</span>
+                <input
+                  className={cn(inputClass, 'mt-2')}
+                  value={groupForm.name}
+                  onChange={(e) => setGroupForm((current) => ({ ...current, name: e.target.value }))}
+                />
+              </label>
+              <label className="min-w-0">
+                <span className={metaLabelClass}>{t('subscriptions.identifier')}</span>
+                <input
+                  className={cn(codeInputClass, 'mt-2')}
+                  value={groupForm.identifier}
+                  onChange={(e) => setGroupForm((current) => ({ ...current, identifier: e.target.value }))}
+                />
+              </label>
+              <label className="min-w-0 sm:col-span-2">
+                <span className={metaLabelClass}>{t('common.description')}</span>
+                <textarea
+                  className={cn(inputClass, 'mt-2 min-h-20')}
+                  value={groupForm.description}
+                  onChange={(e) => setGroupForm((current) => ({ ...current, description: e.target.value }))}
+                />
+              </label>
+              <label className="min-w-0 sm:col-span-2">
+                <span className={metaLabelClass}>{t('subscriptions.emailPatterns')}</span>
+                <input
+                  className={cn(codeInputClass, 'mt-2')}
+                  value={groupForm.email_patterns}
+                  onChange={(e) => setGroupForm((current) => ({ ...current, email_patterns: e.target.value }))}
+                />
+              </label>
+              <label className="min-w-0">
+                <span className={metaLabelClass}>{t('subscriptions.nodeFilters')}</span>
+                <input
+                  className={cn(codeInputClass, 'mt-2')}
+                  value={groupForm.node_filters}
+                  onChange={(e) => setGroupForm((current) => ({ ...current, node_filters: e.target.value }))}
+                />
+              </label>
+              <label className="min-w-0">
+                <span className={metaLabelClass}>{t('subscriptions.protocolFilter')}</span>
+                <select
+                  className={cn(inputClass, 'mt-2')}
+                  value={groupForm.protocol_filter}
+                  onChange={(e) => setGroupForm((current) => ({ ...current, protocol_filter: e.target.value }))}
+                >
+                  <option value="">{t('common.all')}</option>
+                  <option value="vless">VLESS</option>
+                  <option value="vmess">VMess</option>
+                  <option value="trojan">Trojan</option>
+                </select>
+              </label>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 border-t border-cyan-500/20 px-5 py-4">
+              <button type="button" className={secondaryButtonClass} onClick={() => setGroupEditorOpen(false)}>
+                {t('common.cancel')}
+              </button>
+              <button type="button" className={primaryButtonClass} onClick={() => void saveGroup()} disabled={groupSaving}>
+                <UIIcon name={groupSaving ? 'spinner' : 'check'} size={15} />
+                {t('common.save')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showQr && qrUrl && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowQr(false);
+          }}
+        >
+          <div className="w-full max-w-md rounded-lg border border-cyan-500/20 bg-[#0f1420] shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+            <div className="flex items-center justify-between border-b border-cyan-500/20 px-5 py-4">
+              <div className="min-w-0">
+                <h4 className="flex items-center gap-2 text-sm font-medium uppercase tracking-[0.14em] text-slate-100">
+                  <UIIcon name="subscriptions" size={15} />
+                  {t('subscriptions.qrCodeTitle')}
+                </h4>
+                <p className="mt-1 text-xs text-slate-500">{t('subscriptions.qrCodeAlt')}</p>
+              </div>
+              <button
+                type="button"
+                className={iconButtonClass}
+                aria-label={t('common.close', 'Close')}
+                onClick={() => setShowQr(false)}
+              >
+                <UIIcon name="x" size={15} />
+              </button>
+            </div>
+            <div className="space-y-4 px-5 py-5">
+              <div className="flex justify-center rounded-lg border border-cyan-500/20 bg-white p-4">
+                <div className="max-w-[280px] text-center text-sm text-slate-600">
+                  {t('subscriptions.qrCodeUnavailable', 'QR generation is kept local to avoid sending subscription links to third parties.')}
+                </div>
+              </div>
+              <div className="min-w-0">
+                <label className={titleClass}>{t('subscriptions.link')}</label>
+                <div className="mt-2 flex min-w-0 items-center gap-2">
+                  <input type="text" readOnly value={qrUrl} className={cn(codeInputClass, 'truncate whitespace-nowrap')} />
+                  <button type="button" className={secondaryButtonClass} onClick={() => void copyToClipboard(qrUrl)}>
+                    <UIIcon name="copy" size={15} />
+                    <span className="whitespace-nowrap">{t('common.copy')}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

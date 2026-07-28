@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Optional
-from pydantic import BaseModel
+from typing import List, Optional
+from pydantic import BaseModel, Field
 
 
 class NodeCreate(BaseModel):
@@ -13,6 +13,7 @@ class NodeCreate(BaseModel):
     user: str
     password: str
     base_path: Optional[str] = ""
+    tags: Optional[List[str]] = None
 
 
 class NodeUpdate(BaseModel):
@@ -22,6 +23,7 @@ class NodeUpdate(BaseModel):
     user: Optional[str] = None
     password: Optional[str] = None
     base_path: Optional[str] = None
+    tags: Optional[List[str]] = None
 
 
 class NodeResponse(BaseModel):
@@ -31,3 +33,4 @@ class NodeResponse(BaseModel):
     port: str
     user: str
     base_path: str = ""
+    tags: List[str] = Field(default_factory=list)

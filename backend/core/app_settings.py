@@ -46,6 +46,7 @@ def _detect_grafana_url(project_dir: str) -> str:
         try:
             addr = "127.0.0.1"
             port = "3000"
+            wildcard_hosts = {".".join(("0", "0", "0", "0")), "::"}
             in_server = False
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 for raw in fh:
@@ -60,7 +61,7 @@ def _detect_grafana_url(project_dir: str) -> str:
 
                     if line.lower().startswith("http_addr") and "=" in line:
                         candidate = line.split("=", 1)[1].strip()
-                        if candidate and candidate not in ("0.0.0.0", "::"):
+                        if candidate and candidate not in wildcard_hosts:
                             addr = candidate
                     elif line.lower().startswith("http_port") and "=" in line:
                         candidate = line.split("=", 1)[1].strip()
@@ -126,6 +127,14 @@ class AppSettings:
     collector_base_interval_sec: int
     collector_max_interval_sec: int
     collector_max_parallel: int
+    collector_warming_interval_1_sec: int
+    collector_warming_interval_2_sec: int
+    collector_warming_interval_3_sec: int
+    collector_active_interval_sec: int
+    collector_idle_interval_sec: int
+    collector_ultra_idle_interval_sec: int
+    collector_idle_after_sec: int
+    collector_ultra_idle_after_sec: int
     node_history_enabled: bool
     node_history_min_interval_sec: int
     node_history_retention_days: int
@@ -134,9 +143,12 @@ class AppSettings:
     audit_active_sleep_sec: float
     role_viewers: Set[str]
     role_operators: Set[str]
+    role_admins: Set[str]
     mfa_totp_enabled: bool
     mfa_totp_users: Dict[str, str]
     mfa_totp_ws_strict: bool
+    ws_auth_secret: str
+    subscription_signing_secret: str
     adguard_collect_interval_sec: int
     prometheus_url: str
     loki_url: str
@@ -165,7 +177,7 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         root_path=f"/{web_path}" if web_path else "",
         cache_ttl=int(os.getenv("CACHE_TTL", "30")),
         allow_origins=[origin.strip() for origin in allow_origins_raw.split(",") if origin.strip()],
-        verify_tls=_env_bool("VERIFY_TLS", "false"),
+        verify_tls=_env_bool("VERIFY_TLS", "true"),
         ca_bundle_path=os.getenv("CA_BUNDLE_PATH", "").strip(),
         read_only_mode=_env_bool("READ_ONLY_MODE", "false"),
         sub_rate_limit_count=int(os.getenv("SUB_RATE_LIMIT_COUNT", "30")),
@@ -178,8 +190,16 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         clients_cache_stale_ttl=int(os.getenv("CLIENTS_CACHE_STALE_TTL", "180")),
         redis_url=os.getenv("REDIS_URL", "").strip(),
         collector_base_interval_sec=int(os.getenv("COLLECTOR_BASE_INTERVAL_SEC", "5")),
-        collector_max_interval_sec=int(os.getenv("COLLECTOR_MAX_INTERVAL_SEC", "86400")),
+        collector_max_interval_sec=int(os.getenv("COLLECTOR_MAX_INTERVAL_SEC", "300")),
         collector_max_parallel=int(os.getenv("COLLECTOR_MAX_PARALLEL", "4")),
+        collector_warming_interval_1_sec=int(os.getenv("COLLECTOR_WARMING_INTERVAL_1_SEC", "30")),
+        collector_warming_interval_2_sec=int(os.getenv("COLLECTOR_WARMING_INTERVAL_2_SEC", "60")),
+        collector_warming_interval_3_sec=int(os.getenv("COLLECTOR_WARMING_INTERVAL_3_SEC", "60")),
+        collector_active_interval_sec=int(os.getenv("COLLECTOR_ACTIVE_INTERVAL_SEC", "60")),
+        collector_idle_interval_sec=int(os.getenv("COLLECTOR_IDLE_INTERVAL_SEC", "60")),
+        collector_ultra_idle_interval_sec=int(os.getenv("COLLECTOR_ULTRA_IDLE_INTERVAL_SEC", "86400")),
+        collector_idle_after_sec=int(os.getenv("COLLECTOR_IDLE_AFTER_SEC", "900")),
+        collector_ultra_idle_after_sec=int(os.getenv("COLLECTOR_ULTRA_IDLE_AFTER_SEC", "86400")),
         node_history_enabled=_env_bool("NODE_HISTORY_ENABLED", "true"),
         node_history_min_interval_sec=int(os.getenv("NODE_HISTORY_MIN_INTERVAL_SEC", "30")),
         node_history_retention_days=int(os.getenv("NODE_HISTORY_RETENTION_DAYS", "30")),
@@ -188,9 +208,16 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         audit_active_sleep_sec=float(os.getenv("AUDIT_ACTIVE_SLEEP_SEC", "0.2")),
         role_viewers=_env_csv_set("ROLE_VIEWERS"),
         role_operators=_env_csv_set("ROLE_OPERATORS"),
+        role_admins=_env_csv_set("ROLE_ADMINS") or {"admin"},
         mfa_totp_enabled=_env_bool("MFA_TOTP_ENABLED", "false"),
         mfa_totp_users=parse_mfa_users(os.getenv("MFA_TOTP_USERS", "").strip()),
-        mfa_totp_ws_strict=_env_bool("MFA_TOTP_WS_STRICT", "false"),
+        mfa_totp_ws_strict=_env_bool("MFA_TOTP_WS_STRICT", "true"),
+        ws_auth_secret=os.getenv("WS_AUTH_SECRET", "").strip() or os.urandom(32).hex(),
+        subscription_signing_secret=(
+            os.getenv("SUBSCRIPTION_SIGNING_SECRET", "").strip()
+            or os.getenv("WS_AUTH_SECRET", "").strip()
+            or os.urandom(32).hex()
+        ),
         adguard_collect_interval_sec=int(os.getenv("ADGUARD_COLLECT_INTERVAL_SEC", "60")),
         prometheus_url=os.getenv("PROMETHEUS_URL", "http://127.0.0.1:9090").strip(),
         loki_url=os.getenv("LOKI_URL", "http://127.0.0.1:3100").strip(),

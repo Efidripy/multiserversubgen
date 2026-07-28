@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 from contextlib import contextmanager
-from typing import Generator, Optional
+from typing import Generator
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +39,25 @@ _SCHEMA_STATEMENTS = [
         password     TEXT,
         base_path    TEXT DEFAULT '',
         read_only    INTEGER DEFAULT 0,
-        scheme       TEXT DEFAULT 'https'
+        scheme       TEXT DEFAULT 'https',
+        tags         TEXT DEFAULT '[]'
     )
     """,
+    # Client notes are local metadata for clients that physically live on x-ui nodes.
+    """
+    CREATE TABLE IF NOT EXISTS client_notes (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        node_id           INTEGER NOT NULL,
+        inbound_id        INTEGER NOT NULL DEFAULT 0,
+        client_identifier TEXT NOT NULL,
+        email             TEXT NOT NULL,
+        notes             TEXT DEFAULT '',
+        created_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at        TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(node_id, inbound_id, client_identifier)
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_client_notes_email ON client_notes(email)",
     # Subscription groups
     """
     CREATE TABLE IF NOT EXISTS subscription_groups (
@@ -117,6 +133,7 @@ _SCHEMA_STATEMENTS = [
 _MIGRATIONS = [
     "ALTER TABLE nodes ADD COLUMN base_path TEXT DEFAULT ''",
     "ALTER TABLE nodes ADD COLUMN read_only INTEGER DEFAULT 0",
+    "ALTER TABLE nodes ADD COLUMN tags TEXT DEFAULT '[]'",
 ]
 
 
@@ -132,13 +149,14 @@ def init_db(db_path: str) -> None:
     Args:
         db_path: Absolute path to the SQLite database file.
     """
-    with sqlite3.connect(db_path) as conn:
+    with _open(db_path) as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
         for stmt in _SCHEMA_STATEMENTS:
             conn.execute(stmt)
         conn.commit()
 
     # Run optional migrations (ignore errors for existing columns etc.)
-    with sqlite3.connect(db_path) as conn:
+    with _open(db_path) as conn:
         for stmt in _MIGRATIONS:
             try:
                 conn.execute(stmt)
@@ -147,6 +165,15 @@ def init_db(db_path: str) -> None:
                 pass  # Column already exists or other benign error
 
     logger.debug("Database initialized at %s", db_path)
+
+
+def _open(db_path: str) -> sqlite3.Connection:
+    """Raw connection with per-session performance settings."""
+    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
 
 
 @contextmanager
@@ -162,7 +189,7 @@ def get_connection(db_path: str) -> Generator[sqlite3.Connection, None, None]:
     Yields:
         An open connection that is committed and closed on exit.
     """
-    conn = sqlite3.connect(db_path)
+    conn = _open(db_path)
     conn.row_factory = sqlite3.Row
     try:
         yield conn

@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { BookOpen, ChevronLeft, ChevronRight, ClipboardList, Home, Keyboard, LogOut } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { ChoiceChips } from './ChoiceChips';
 import { IconName, UIIcon } from './UIIcon';
-import { MSM_ASCII_VARIANTS } from './msmAsciiVariants';
+import { API_BASE } from '../api/client';
 
 type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 
@@ -19,6 +20,7 @@ interface SidebarProps {
   items: SidebarNavItem[];
   user: string;
   onLogout: () => void;
+  onOpenLog: () => void;
   mobileOpen: boolean;
   onMobileClose: () => void;
 }
@@ -29,167 +31,194 @@ export const Sidebar: React.FC<SidebarProps> = ({
   items,
   user,
   onLogout,
+  onOpenLog,
   mobileOpen,
   onMobileClose,
 }) => {
-  const { colors, themeMode, stylePreset, setThemeMode } = useTheme();
+  const { colors } = useTheme();
   const { t, i18n } = useTranslation();
   const currentLang = (i18n.resolvedLanguage || i18n.language || 'en').toLowerCase();
-  const asciiVariants = useMemo(() => MSM_ASCII_VARIANTS, []);
-  const [asciiIndex, setAsciiIndex] = useState(() => Math.floor(Math.random() * asciiVariants.length));
-  const [themeMenuOpen, setThemeMenuOpen] = useState(false);
+  const safeItems = Array.isArray(items) ? items : [];
+  const [collapsed, setCollapsed] = useState(false);
+  const effectiveCollapsed = collapsed && !mobileOpen;
+  const renderExpandedFooter = !effectiveCollapsed;
+  const renderCollapsedFooter = effectiveCollapsed;
 
   const handleNav = (tab: TabType) => {
     setActiveTab(tab);
     onMobileClose();
   };
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setAsciiIndex(prev => (prev + 1) % asciiVariants.length);
-    }, 2600);
-    return () => clearInterval(timer);
-  }, [asciiVariants.length]);
+  const handleHome = () => {
+    setActiveTab('dashboard');
+    onMobileClose();
+  };
+
+  const handleCollapseClick = () => {
+    if (mobileOpen && window.matchMedia('(max-width: 1024px)').matches) {
+      onMobileClose();
+      return;
+    }
+    setCollapsed((value) => !value);
+  };
+
+  const shortcutText = [
+    'Tab navigation:',
+    '  Alt+1 -> Dashboard',
+    '  Alt+2 -> Inbounds',
+    '  Alt+3 -> Clients',
+    '  Alt+4 -> Traffic',
+    '  Alt+5 -> Monitoring',
+    '  Alt+6 -> Backup',
+    '  Alt+7 -> Subscriptions',
+    '',
+    'Dashboard:',
+    '  Click stat tiles -> go to relevant tab',
+    '  Click top client email -> filter clients',
+  ].join('\n');
 
   return (
     <>
       {mobileOpen && (
         <div
-          className="sidebar-overlay"
+          className={`sidebar-overlay${mobileOpen ? ' is-visible' : ''}`}
           onClick={onMobileClose}
           aria-hidden="true"
         />
       )}
 
       <aside
-        className={`sidebar${mobileOpen ? ' sidebar--open' : ''}${stylePreset === '3' ? ' sidebar--preset-3' : ''}`}
-        style={{ backgroundColor: colors.bg.secondary, borderRight: `1px solid ${colors.border}` }}
+        className={`sidebar${mobileOpen ? ' sidebar--open' : ''}${effectiveCollapsed ? ' sidebar--collapsed' : ''}`}
       >
-        <div className="sidebar__logo" style={{ borderBottom: `1px solid ${colors.border}` }}>
-          <pre className="sidebar__ascii-logo mb-0" aria-label={t('sidebar.logoAria')}>
-            {asciiVariants[asciiIndex]}
-          </pre>
-          <span className="sidebar__version-badge">v3.1</span>
+        <div className="sidebar__logo">
+          <div className="sidebar__brand-lockup" aria-label={t('sidebar.logoAria')}>
+            <span className="sidebar__version-badge">v3.1</span>
+          </div>
+          <button
+            className="sidebar__collapse-btn"
+            type="button"
+            onClick={handleCollapseClick}
+            title={effectiveCollapsed ? t('common.expand', 'Expand') : t('common.close')}
+            aria-label={effectiveCollapsed ? t('common.expand', 'Expand') : t('common.close')}
+          >
+            {effectiveCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+          </button>
         </div>
 
         <nav className="sidebar__nav" role="navigation" aria-label={t('sidebar.navAria')}>
-          {items.map(item => (
+          {safeItems.map((item) => (
             <button
               key={item.id}
               className={`sidebar__nav-item${activeTab === item.id ? ' sidebar__nav-item--active' : ''}`}
               onClick={() => handleNav(item.id)}
-              style={{
-                color: activeTab === item.id ? colors.accent : colors.text.secondary,
-                backgroundColor: activeTab === item.id ? colors.accent + '18' : 'transparent',
-                borderLeft: activeTab === item.id
-                  ? `3px solid ${colors.accent}`
-                  : '3px solid transparent',
-              }}
+              aria-current={activeTab === item.id ? 'page' : undefined}
+              title={effectiveCollapsed ? t(item.labelKey) : undefined}
             >
-              <span className="sidebar__nav-icon"><UIIcon name={item.icon} size={17} /></span>
-              <span>{t(item.labelKey)}</span>
+              <span className="sidebar__nav-icon"><UIIcon name={item.icon} size={16} /></span>
+              <span className="sidebar__nav-label">{t(item.labelKey)}</span>
             </button>
           ))}
         </nav>
 
         <div className="sidebar__spacer" />
 
-        <div className="sidebar__footer" style={{ borderTop: `1px solid ${colors.border}` }}>
-          <div className="sidebar__user" style={{ color: colors.text.secondary }}>
-            <span style={{ fontSize: '1.1rem' }}><UIIcon name="user" size={16} /></span>
-            <span
-              className="sidebar__username"
-              style={{ color: colors.text.primary, fontWeight: 600 }}
-            >
-              {user}
-            </span>
-          </div>
-
-          <div className="mt-2">
-            <label className="form-label small mb-1" style={{ color: colors.text.secondary }}>
-              {t('language.title')}
-            </label>
-            <ChoiceChips
-              options={[
-                { value: 'en', label: t('language.en') },
-                { value: 'ru', label: t('language.ru') },
-              ]}
-              value={currentLang.startsWith('ru') ? 'ru' : 'en'}
-              onChange={(value) => i18n.changeLanguage(value)}
-              colors={colors}
-            />
-          </div>
-
-          <div className="mt-2">
-            <label className="form-label small mb-1" style={{ color: colors.text.secondary }}>
-              {t('sidebar.themeLabel')}
-            </label>
-            <div style={{ position: 'relative' }}>
-              <button
-                className="sidebar__footer-btn w-100"
-                onClick={() => setThemeMenuOpen((prev) => !prev)}
-                title={t('sidebar.themeChoose')}
-                style={{
-                  backgroundColor: colors.bg.tertiary,
-                  border: `1px solid ${colors.border}`,
-                  color: colors.text.primary,
-                }}
-              >
-                <span className="d-inline-flex align-items-center gap-2">
-                  <UIIcon name={themeMode === '1' ? 'sun' : 'moon'} size={14} />
-                  {t('sidebar.themeCurrent', { mode: themeMode })}
+        <div className="sidebar__footer">
+          {renderExpandedFooter && (
+            <div className="sidebar__footer-expanded">
+              <div className="sidebar__user" style={{ color: colors.text.secondary }}>
+                <span className="sidebar__user-icon"><UIIcon name="user" size={16} /></span>
+                <span className="sidebar__username" style={{ color: colors.text.primary, fontWeight: 600 }}>
+                  {user}
                 </span>
-              </button>
+              </div>
 
-              {themeMenuOpen && (
-                <div
-                  className="mt-2 p-2 rounded"
-                  style={{
-                    border: `1px solid ${colors.border}`,
-                    backgroundColor: colors.bg.secondary,
-                    display: 'grid',
-                    gap: 6,
-                  }}
+              <div className="sidebar__language">
+                <label className="sidebar__language-label" style={{ color: colors.text.secondary }}>
+                  {t('language.title')}
+                </label>
+                <ChoiceChips
+                  className="sidebar__language-tabs"
+                  options={[
+                    { value: 'en', label: t('language.en') },
+                    { value: 'ru', label: t('language.ru') },
+                  ]}
+                  value={currentLang.startsWith('ru') ? 'ru' : 'en'}
+                  onChange={(value) => i18n.changeLanguage(value)}
+                />
+              </div>
+
+              <div className="sidebar__footer-actions">
+                <button
+                  className="sidebar__footer-btn"
+                  title={t('sidebar.keyboardShortcutsTitle')}
+                  onClick={() => alert(shortcutText)}
                 >
-                  {([
-                    { value: '1', label: t('sidebar.theme1') },
-                    { value: '2', label: t('sidebar.theme2') },
-                    { value: '3', label: t('sidebar.theme3') },
-                  ] as const).map((mode) => (
-                    <button
-                      key={mode.value}
-                      className="btn btn-sm"
-                      onClick={() => {
-                        setThemeMode(mode.value);
-                        setThemeMenuOpen(false);
-                      }}
-                      style={{
-                        backgroundColor: themeMode === mode.value ? colors.accent : colors.bg.tertiary,
-                        borderColor: themeMode === mode.value ? colors.accent : colors.border,
-                        color: themeMode === mode.value ? colors.accentText : colors.text.primary,
-                      }}
-                    >
-                      {mode.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
+                  <span className="sidebar__footer-icon"><Keyboard className="w-3.5 h-3.5 opacity-60" /></span>
+                  <span className="sidebar__footer-label">{t('sidebar.shortcuts')}</span>
+                </button>
+                <button
+                  className="sidebar__footer-btn"
+                  onClick={onOpenLog}
+                  title={t('sidebar.activityLog')}
+                >
+                  <span className="sidebar__footer-icon"><ClipboardList className="w-3.5 h-3.5 opacity-60" /></span>
+                  <span className="sidebar__footer-label">{t('sidebar.activityLog', 'Activity Log')}</span>
+                </button>
+                <a
+                  href={`${API_BASE}/docs`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="sidebar__footer-btn"
+                  title={t('sidebar.apiDocsTitle')}
+                >
+                  <span className="sidebar__footer-icon"><BookOpen className="w-3.5 h-3.5 opacity-60" /></span>
+                  <span className="sidebar__footer-label">{t('sidebar.apiDocs')}</span>
+                </a>
+                <button
+                  className="sidebar__footer-btn sidebar__logout"
+                  onClick={onLogout}
+                >
+                  <span className="sidebar__footer-icon"><LogOut className="w-3.5 h-3.5 opacity-60" /></span>
+                  <span className="sidebar__footer-label">{t('auth.logout')}</span>
+                </button>
+              </div>
 
-          <div className="sidebar__footer-actions mt-2">
-            <button
-              className="sidebar__footer-btn sidebar__logout"
-              onClick={onLogout}
-              style={{
-                backgroundColor: colors.danger + '18',
-                border: `1px solid ${colors.danger}40`,
-                color: colors.danger,
-              }}
-            >
-              {t('auth.logout')}
-            </button>
-          </div>
+              <button
+                className="sidebar__back-selector"
+                type="button"
+                title={t('sidebar.backToSelector')}
+                onClick={handleHome}
+              >
+                <Home className="w-3.5 h-3.5" />
+                <span>{t('sidebar.backToSelector')}</span>
+              </button>
+            </div>
+          )}
+
+          {renderCollapsedFooter && (
+            <div className="sidebar__footer-collapsed">
+              <div className="sidebar__collapsed-card sidebar__collapsed-card--user" title={user} aria-label={user}>
+                <UIIcon name="user" size={18} />
+              </div>
+              <button
+                className="sidebar__collapsed-card sidebar__collapsed-card--logout"
+                onClick={onLogout}
+                title={t('auth.logout')}
+                aria-label={t('auth.logout')}
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+              <button
+                className="sidebar__collapsed-back"
+                type="button"
+                title={t('sidebar.backToSelector')}
+                aria-label={t('sidebar.backToSelector')}
+                onClick={handleHome}
+              >
+                <Home className="w-4 h-4" />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
     </>

@@ -5,8 +5,10 @@ import json
 import sqlite3
 import time
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import requests
+from shared.security import validate_outbound_url
 
 
 class AdGuardRuntime:
@@ -199,7 +201,10 @@ class AdGuardRuntime:
             return {"enabled": False, "url": "", "ok": False, "status_code": None, "error": "disabled"}
         full = f"{url.rstrip('/')}{path}"
         try:
-            resp = requests.get(full, timeout=timeout, verify=self.requests_verify, auth=basic_auth)
+            valid, error = validate_outbound_url(url, allow_private=False, require_https=urlparse(url).scheme == "https")
+            if not valid:
+                return {"enabled": True, "url": url, "ok": False, "status_code": None, "error": error}
+            resp = requests.get(full, timeout=timeout, verify=self.requests_verify, auth=basic_auth, allow_redirects=False)
             return {
                 "enabled": True,
                 "url": url,
@@ -214,12 +219,16 @@ class AdGuardRuntime:
         if not prom_url:
             return None
         try:
+            valid, _ = validate_outbound_url(prom_url, allow_private=False, require_https=urlparse(prom_url).scheme == "https")
+            if not valid:
+                return None
             resp = requests.get(
                 f"{prom_url.rstrip('/')}/api/v1/query",
                 params={"query": query},
                 timeout=5,
                 verify=self.requests_verify,
                 auth=basic_auth,
+                allow_redirects=False,
             )
             if resp.status_code != 200:
                 return None

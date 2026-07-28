@@ -15,6 +15,7 @@ Usage::
 from __future__ import annotations
 
 import os
+import secrets
 from dataclasses import dataclass, field
 from typing import List, Optional, Set
 
@@ -151,6 +152,9 @@ class Settings:
     role_operators: Set[str] = field(
         default_factory=lambda: _parse_user_set(os.getenv("ROLE_OPERATORS", ""))
     )
+    role_admins: Set[str] = field(
+        default_factory=lambda: _parse_user_set(os.getenv("ROLE_ADMINS", "admin"))
+    )
 
     # ------------------------------------------------------------------
     # MFA / TOTP
@@ -162,7 +166,10 @@ class Settings:
         default_factory=lambda: os.getenv("MFA_TOTP_USERS", "").strip()
     )
     mfa_totp_ws_strict: bool = field(
-        default_factory=lambda: _bool(os.getenv("MFA_TOTP_WS_STRICT", "false"))
+        default_factory=lambda: _bool(os.getenv("MFA_TOTP_WS_STRICT", "true"))
+    )
+    ws_auth_secret: str = field(
+        default_factory=lambda: os.getenv("WS_AUTH_SECRET", "").strip() or secrets.token_urlsafe(32)
     )
 
     # ------------------------------------------------------------------
@@ -203,8 +210,6 @@ class Settings:
 
     def requests_verify(self):
         """Return the value to pass as ``verify=`` to :mod:`requests`."""
-        if not self.verify_tls:
-            return False
         if self.ca_bundle_path:
             return self.ca_bundle_path
         return True

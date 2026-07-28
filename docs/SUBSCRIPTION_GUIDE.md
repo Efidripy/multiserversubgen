@@ -38,67 +38,90 @@
 
 ## 🔌 API Endpoints
 
+### Security contract
+
+Публичные endpoints `/api/v1/sub/{token}` и `/api/v1/sub-grouped/{token}` не требуют отдельного login-запроса от subscription-клиента, но `{token}` обязан быть подписан сервером HMAC. Сырые email, домены и group identifiers больше не принимаются и возвращают `404`.
+
+Администратор получает подписанные токены через authenticated API:
+
+```bash
+# Ответ содержит subscription_tokens для email и subscription_token для групп.
+curl -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+  https://your-domain/api/v1/emails
+curl -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+  https://your-domain/api/v1/subscription-groups
+```
+
+Используйте выданные значения без изменения и не передавайте их сторонним QR/API-сервисам:
+
+```bash
+SUBSCRIPTION_TOKEN='<token-from-authenticated-api>'
+curl "https://your-domain/api/v1/sub/$SUBSCRIPTION_TOKEN?protocol=vless"
+```
+
+Токены имеют ограниченный срок действия. После ротации `SUBSCRIPTION_SIGNING_SECRET` ранее выданные токены становятся недействительными.
+
 ### 1. Индивидуальная подписка
 
-#### `GET /api/v1/sub/{email}`
+#### `GET /api/v1/sub/{token}`
 
 **Без фильтров:**
 ```bash
-curl https://your-domain/api/v1/sub/user@example.com
+curl "https://your-domain/api/v1/sub/$EMAIL_TOKEN"
 ```
 
 **С фильтром протокола:**
 ```bash
 # Только VLESS
-curl "https://your-domain/api/v1/sub/user@example.com?protocol=vless"
+curl "https://your-domain/api/v1/sub/$EMAIL_TOKEN?protocol=vless"
 
 # Только VMess
-curl "https://your-domain/api/v1/sub/user@example.com?protocol=vmess"
+curl "https://your-domain/api/v1/sub/$EMAIL_TOKEN?protocol=vmess"
 
 # Только Trojan
-curl "https://your-domain/api/v1/sub/user@example.com?protocol=trojan"
+curl "https://your-domain/api/v1/sub/$EMAIL_TOKEN?protocol=trojan"
 ```
 
 **С фильтром узлов:**
 ```bash
 # Только из узлов US и UK
-curl "https://your-domain/api/v1/sub/user@example.com?nodes=US,UK"
+curl "https://your-domain/api/v1/sub/$EMAIL_TOKEN?nodes=US,UK"
 ```
 
 **Комбинация фильтров:**
 ```bash
 # VLESS только с узлов NL и DE
-curl "https://your-domain/api/v1/sub/user@example.com?protocol=vless&nodes=NL,DE"
+curl "https://your-domain/api/v1/sub/$EMAIL_TOKEN?protocol=vless&nodes=NL,DE"
 ```
 
 ---
 
 ### 2. Групповая подписка
 
-#### `GET /api/v1/sub-grouped/{identifier}`
+#### `GET /api/v1/sub-grouped/{token}`
 
 **По домену:**
 ```bash
 # Все клиенты с доменом @company.com
-curl "https://your-domain/api/v1/sub-grouped/company.com"
+curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN"
 ```
 
 **По префиксу:**
 ```bash
 # Все email начинающиеся с "admin"
-curl "https://your-domain/api/v1/sub-grouped/admin"
+curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN"
 
 # Все email содержащие "user"
-curl "https://your-domain/api/v1/sub-grouped/user"
+curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN"
 ```
 
 **С фильтрами:**
 ```bash
 # Все admin* только VLESS
-curl "https://your-domain/api/v1/sub-grouped/admin?protocol=vless"
+curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN?protocol=vless"
 
 # Все company.com только с узлов US и UK
-curl "https://your-domain/api/v1/sub-grouped/company.com?nodes=US,UK"
+curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN?nodes=US,UK"
 ```
 
 ---
@@ -154,7 +177,7 @@ curl "https://your-domain/api/v1/sub-grouped/company.com?nodes=US,UK"
 ```
 Режим: Grouped
 Идентификатор: company.com
-Ссылка: https://your-domain/api/v1/sub-grouped/company.com
+Ссылка: https://your-domain/api/v1/sub-grouped/<signed-group-token>
 ```
 
 Одна ссылка для всех сотрудников! При добавлении нового email @company.com он автоматически попадет в подписку.
@@ -170,7 +193,7 @@ curl "https://your-domain/api/v1/sub-grouped/company.com?nodes=US,UK"
 Режим: Individual
 Email: vip@example.com
 Protocol Filter: VLESS
-Ссылка: https://your-domain/api/v1/sub/vip@example.com?protocol=vless
+Ссылка: https://your-domain/api/v1/sub/<signed-email-token>?protocol=vless
 ```
 
 ---
@@ -184,7 +207,7 @@ Protocol Filter: VLESS
 Режим: Grouped
 Идентификатор: eu
 Node Filter: NL, DE, UK
-Ссылка: https://your-domain/api/v1/sub-grouped/eu?nodes=NL,DE,UK
+Ссылка: https://your-domain/api/v1/sub-grouped/<signed-group-token>?nodes=NL,DE,UK
 ```
 
 ---
@@ -199,7 +222,7 @@ Node Filter: NL, DE, UK
 Идентификатор: test
 Node Filter: TestServer
 Protocol Filter: vmess
-Ссылка: https://your-domain/api/v1/sub-grouped/test?protocol=vmess&nodes=TestServer
+Ссылка: https://your-domain/api/v1/sub-grouped/<signed-group-token>?protocol=vmess&nodes=TestServer
 ```
 
 ---
@@ -274,8 +297,8 @@ Content: "Not found" или "No matching clients found"
 /api/v1/sub-grouped/sales?nodes=US,EU
 
 # ❌ Плохо - 20 индивидуальных ссылок
-/api/v1/sub/sales1@... 
-/api/v1/sub/sales2@...
+/api/v1/sub/<signed-email-token-1>
+/api/v1/sub/<signed-email-token-2>
 ...
 ```
 
@@ -283,20 +306,20 @@ Content: "Not found" или "No matching clients found"
 
 ```bash
 # ✅ Хорошо - только нужные серверы
-/api/v1/sub/user@example.com?nodes=FastServer
+/api/v1/sub/<signed-email-token>?nodes=FastServer
 
 # ❌ Плохо - все серверы, включая медленные
-/api/v1/sub/user@example.com
+/api/v1/sub/<signed-email-token>
 ```
 
 ### 3. Используйте протокол фильтр для совместимости
 
 ```bash
 # ✅ Хорошо - для старых клиентов
-/api/v1/sub/legacy@example.com?protocol=vmess
+/api/v1/sub/<signed-email-token>?protocol=vmess
 
 # ✅ Хорошо - для новых клиентов
-/api/v1/sub/new@example.com?protocol=vless
+/api/v1/sub/<signed-email-token>?protocol=vless
 ```
 
 ### 4. Структурируйте email для группировки
@@ -325,12 +348,12 @@ Content: "Not found" или "No matching clients found"
 
 ### Публичный доступ
 
-Эндпоинты `/sub/` и `/sub-grouped/` **НЕ ТРЕБУЮТ авторизации** по дизайну.
+Эндпоинты `/sub/` и `/sub-grouped/` доступны subscription-клиентам без интерактивной авторизации, но требуют подписанный HMAC-токен. Email, домен или произвольный group identifier в URL не являются секретом и не должны использоваться как credential.
 
 **Рекомендации:**
-- Используйте сложные email как секрет
-- Периодически меняйте email для критичных аккаунтов
-- Мониторьте статистику на подозрительную активность
+- Получайте токены только через authenticated API.
+- Передавайте ссылки только по HTTPS и не вставляйте их во внешние QR/API-сервисы.
+- При компрометации токенов ротируйте `SUBSCRIPTION_SIGNING_SECRET` и выдайте новые ссылки.
 
 ### Защита от брутфорса
 
@@ -342,19 +365,19 @@ Content: "Not found" или "No matching clients found"
 
 ## 📈 Миграция с v3.0
 
-Старые ссылки **полностью совместимы**:
+Старые ссылки с raw email/identifier больше не совместимы: это намеренное security-изменение.
 
 ```bash
-# v3.0 (работает как раньше)
-/api/v1/sub/user@example.com
+# Получите новые значения через authenticated API.
+# Individual:
+/api/v1/sub/<signed-email-token>
+/api/v1/sub/<signed-email-token>?protocol=vless
 
-# v3.1 (те же ссылки + новые возможности)
-/api/v1/sub/user@example.com
-/api/v1/sub/user@example.com?protocol=vless
-/api/v1/sub-grouped/company
+# Grouped:
+/api/v1/sub-grouped/<signed-group-token>
 ```
 
-**Никаких изменений в существующих ссылках не требуется!**
+Старые raw-ссылки должны быть заменены на токены из `/api/v1/emails` и `/api/v1/subscription-groups`.
 
 ---
 
@@ -408,19 +431,19 @@ curl -u admin:pass https://your-domain/api/v1/emails
 
 ```bash
 # Базовая подписка
-curl "https://your-domain/api/v1/sub/user@example.com"
+curl "https://your-domain/api/v1/sub/$EMAIL_TOKEN"
 
 # С протоколом
-curl "https://your-domain/api/v1/sub/user@example.com?protocol=vless"
+curl "https://your-domain/api/v1/sub/$EMAIL_TOKEN?protocol=vless"
 
 # С узлами
-curl "https://your-domain/api/v1/sub/user@example.com?nodes=US,EU"
+curl "https://your-domain/api/v1/sub/$EMAIL_TOKEN?nodes=US,EU"
 
 # Групповая
-curl "https://your-domain/api/v1/sub-grouped/company"
+curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN"
 
 # Групповая с фильтрами
-curl "https://your-domain/api/v1/sub-grouped/admin?protocol=trojan&nodes=SecureNode"
+curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN?protocol=trojan&nodes=SecureNode"
 ```
 
 ---

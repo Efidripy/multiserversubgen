@@ -6,6 +6,7 @@ from typing import Dict, Optional, TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import ORJSONResponse
 
 if TYPE_CHECKING:
     from core.event_bus import EventBus
@@ -31,13 +32,13 @@ def build_nodes_router(
     async def list_nodes(request: Request):
         _check_auth(request)
         nodes = await run_in_threadpool(nodes_service.list_nodes)
-        return {"nodes": nodes, "count": len(nodes)}
+        return ORJSONResponse(content={"nodes": nodes, "count": len(nodes)})
 
     @router.get("/list")
     async def list_nodes_simple(request: Request):
         _check_auth(request)
         nodes = await run_in_threadpool(nodes_service.list_nodes)
-        return [{"id": n["id"], "name": n["name"]} for n in nodes]
+        return ORJSONResponse(content=[{"id": n["id"], "name": n["name"]} for n in nodes])
 
     @router.post("")
     async def create_node(request: Request, data: Dict):

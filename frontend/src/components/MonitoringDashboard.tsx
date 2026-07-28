@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { useTheme } from '../contexts/ThemeContext';
+import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { getAuth } from '../auth';
-import { useTheme } from '../contexts/ThemeContext';
 import { ChoiceChips } from './ChoiceChips';
 import { registerPollingTask } from '../services/pollingScheduler';
 import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
@@ -78,6 +79,13 @@ type TrafficMode = 'history' | 'live';
 type TrafficSource = 'nodes' | 'people' | 'inbounds';
 type TrafficVisualStyle = 'stepped' | 'bars' | 'smooth';
 type TrafficSmoothing = 'raw' | 'sma3' | 'sma5';
+type NullableNumberSeries = (number | null)[];
+interface BucketedNodeHistory {
+  nodeId: number;
+  nodeName: string;
+  points: (HistoryPoint | null)[];
+  bucketsRaw: Map<number, HistoryPoint[]>;
+}
 
 interface SnapshotNode {
   name: string;
@@ -185,6 +193,49 @@ interface StackStatusResponse {
   prometheus_metrics: Record<string, number | null>;
 }
 
+interface ResourceMetric {
+  current?: number;
+  total?: number;
+  percent?: number;
+}
+
+interface ServerResourceStatus {
+  node: string;
+  available: boolean;
+  timestamp?: string;
+  error?: string;
+  reason?: string;
+  system?: {
+    cpu?: number;
+    mem?: ResourceMetric;
+    disk?: ResourceMetric;
+    swap?: ResourceMetric;
+    uptime?: number;
+    loads?: number[];
+  };
+  xray?: {
+    running?: boolean;
+    uptime?: number;
+    version?: string;
+  };
+  network?: {
+    upload?: number;
+    download?: number;
+  };
+}
+
+interface ServerStatusResponse {
+  servers?: ServerResourceStatus[];
+  count?: number;
+}
+
+interface CollectorStatus {
+  mode?: string;
+  running?: boolean;
+  ws_connections?: number;
+  timestamp?: number;
+}
+
 const RANGE_OPTIONS = [
   { value: 3600, label: '1h' },
   { value: 6 * 3600, label: '6h' },
@@ -232,6 +283,32 @@ function buildGrafanaUrl(runtimePath?: string): string {
 const bytesToMb = (bytes: number) => bytes / (1024 * 1024);
 const bytesToGb = (bytes: number) => bytes / (1024 * 1024 * 1024);
 const CHART_PALETTE = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#e11d48', '#84cc16', '#f97316', '#14b8a6'];
+const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
+const toFiniteNumber = (value: unknown): number => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const clampPercent = (value: unknown): number => Math.max(0, Math.min(100, Math.round(toFiniteNumber(value))));
+
+const formatBytes = (bytes: number): string => {
+  const value = Math.max(0, Number(bytes) || 0);
+  if (value === 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / Math.pow(1024, index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+};
+
+const formatUptime = (seconds?: number): string => {
+  const value = Math.max(0, Number(seconds) || 0);
+  if (value === 0) return '-';
+  const days = Math.floor(value / 86400);
+  const hours = Math.floor((value % 86400) / 3600);
+  const minutes = Math.floor((value % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+};
 
 function getBucketSec(rangeSec: number, preferredStepSec?: number): number {
   if (preferredStepSec && preferredStepSec > 0) return preferredStepSec;
@@ -241,7 +318,7 @@ function getBucketSec(rangeSec: number, preferredStepSec?: number): number {
   return 900;
 }
 
-function buildUsageFromCumulative(points: Array<number | null>): Array<number | null> {
+function buildUsageFromCumulative(points: NullableNumberSeries): NullableNumberSeries {
   let prev: number | null = null;
   return points.map((cur) => {
     if (cur === null || Number.isNaN(cur)) return null;
@@ -258,7 +335,7 @@ function buildUsageFromCumulative(points: Array<number | null>): Array<number | 
   });
 }
 
-function smoothSeries(values: Array<number | null>, mode: TrafficSmoothing): Array<number | null> {
+function smoothSeries(values: NullableNumberSeries, mode: TrafficSmoothing): NullableNumberSeries {
   const windowSize = mode === 'sma3' ? 3 : mode === 'sma5' ? 5 : 1;
   if (windowSize <= 1) return values;
 
@@ -274,31 +351,37 @@ function smoothSeries(values: Array<number | null>, mode: TrafficSmoothing): Arr
   });
 }
 
-function buildTrafficUsageSeries(points: Array<HistoryPoint | null>): Array<number | null> {
+function buildTrafficConsumptionSeries(points: (HistoryPoint | null)[]): NullableNumberSeries {
+  let baseTotal: number | null = null;
   let prevTotal: number | null = null;
+  let accumulated = 0;
   return points.map((point) => {
     if (!point) return null;
     const curTotal = Number(point.traffic_total || 0);
-    if (prevTotal === null) {
+    if (baseTotal === null) {
+      baseTotal = curTotal;
       prevTotal = curTotal;
       return 0;
     }
-    let delta = curTotal - prevTotal;
-    // If node counter has reset, treat current total as usage since reset.
+    const prev = prevTotal ?? curTotal;
+    let delta = curTotal - prev;
+    // If node counter has reset, treat current total as new-cycle usage.
     if (delta < 0) {
       delta = curTotal;
     }
     prevTotal = curTotal;
-    return Math.max(0, delta);
+    accumulated += Math.max(0, delta);
+    return accumulated;
   });
 }
 
-function buildBucketTrafficUsageSeries(
-  perNode: Array<{ nodeId: number; nodeName: string; points: Array<HistoryPoint | null>; bucketsRaw: Map<number, HistoryPoint[]> }>,
+function buildBucketTrafficConsumptionSeries(
+  perNode: BucketedNodeHistory[],
   buckets: number[]
-): Array<number | null> {
+): NullableNumberSeries {
+  let cumulative = 0;
   return buckets.map((bucketTs) => {
-    let totalUsage = 0;
+    let intervalUsage = 0;
     for (const nodeData of perNode) {
       const pointsInBucket = nodeData.bucketsRaw.get(bucketTs) || [];
       if (pointsInBucket.length === 0) continue;
@@ -312,19 +395,20 @@ function buildBucketTrafficUsageSeries(
       const firstTotal = Number(first?.traffic_total || 0);
       
       let delta = lastTotal - firstTotal;
-      // Handle counter reset: if delta is negative, treat last total as the usage
+      // Handle counter reset: if delta is negative, treat last total as new-cycle usage.
       if (delta < 0) {
         delta = lastTotal;
       }
-      totalUsage += Math.max(0, delta);
+      intervalUsage += Math.max(0, delta);
     }
-    return totalUsage;
+    cumulative += intervalUsage;
+    return cumulative;
   });
 }
 
 function bucketizeAllNodesHistory(points: HistoryPoint[], rangeSec: number, preferredStepSec?: number): {
   buckets: number[];
-  perNode: Array<{ nodeId: number; nodeName: string; points: Array<HistoryPoint | null>; bucketsRaw: Map<number, HistoryPoint[]> }>;
+  perNode: BucketedNodeHistory[];
 } {
   const bucketSec = getBucketSec(rangeSec, preferredStepSec);
 
@@ -376,7 +460,8 @@ function formatTickLabel(tsSec: number, rangeSec: number): string {
 }
 
 export const MonitoringDashboard: React.FC = () => {
-  const { colors, stylePreset, theme } = useTheme();
+  const { stylePreset } = useTheme();
+  const { t } = useTranslation();
 
   const [nodes, setNodes] = useState<NodeItem[]>([]);
   const [selectedScope, setSelectedScope] = useState<string>('all'); // "all" | node id as string
@@ -399,9 +484,17 @@ export const MonitoringDashboard: React.FC = () => {
   const [adguardOverview, setAdguardOverview] = useState<AdGuardOverview | null>(null);
   const [adguardHistory, setAdguardHistory] = useState<AdGuardHistoryResponse | null>(null);
   const [stackStatus, setStackStatus] = useState<StackStatusResponse | null>(null);
+  const [serverStatuses, setServerStatuses] = useState<ServerResourceStatus[]>([]);
+  const [collectorStatus, setCollectorStatus] = useState<CollectorStatus | null>(null);
   const [adguardLoading, setAdguardLoading] = useState(false);
   const [adguardError, setAdguardError] = useState('');
+  const [resourceLoading, setResourceLoading] = useState(false);
+  const [resourceError, setResourceError] = useState('');
+  const [blockedSourceFilter, setBlockedSourceFilter] = useState<string>('all');
+  const [blockedSearch, setBlockedSearch] = useState('');
+  const [blockedShowCount, setBlockedShowCount] = useState<number>(25);
   const realtimeRefreshRef = useRef(0);
+  const [editingAdguardSourceId, setEditingAdguardSourceId] = useState<number | null>(null);
   const [adguardForm, setAdguardForm] = useState({
     name: '',
     admin_url: '',
@@ -464,7 +557,7 @@ export const MonitoringDashboard: React.FC = () => {
 
         const failed = allResults.length - allResults.filter((result) => result.status === 'fulfilled').length;
         if (failed > 0 && successful.length === 0) {
-          setError('Failed to load node history for all servers');
+          setError(t('monitoringDashboard.loadAllHistoryFailed'));
         }
       } else {
         const nodeId = Number(scope);
@@ -474,7 +567,7 @@ export const MonitoringDashboard: React.FC = () => {
       }
       setError('');
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Failed to load node history');
+      setError(err.response?.data?.detail || t('monitoringDashboard.loadHistoryFailed'));
     } finally {
       setLoadingHistory(false);
     }
@@ -527,7 +620,7 @@ export const MonitoringDashboard: React.FC = () => {
       setAdguardOverview(res.data as AdGuardOverview);
       setAdguardError('');
     } catch (err: any) {
-      setAdguardError(err?.response?.data?.detail || 'Failed to load AdGuard overview');
+      setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.loadAdguardOverviewFailed'));
       setAdguardOverview(null);
     } finally {
       setAdguardLoading(false);
@@ -556,6 +649,33 @@ export const MonitoringDashboard: React.FC = () => {
     }
   };
 
+  const loadServerStatuses = async () => {
+    try {
+      setResourceLoading(true);
+      const res = await api.get('/v1/servers/status', { auth: getAuth() });
+      const payload = res.data as ServerStatusResponse;
+      const parsed = Array.isArray(payload?.servers) ? payload.servers : [];
+      setServerStatuses(parsed);
+      setResourceError('');
+      return parsed;
+    } catch (err: any) {
+      setServerStatuses([]);
+      setResourceError(err?.response?.data?.detail || t('serverStatus.loadFailed'));
+      return [];
+    } finally {
+      setResourceLoading(false);
+    }
+  };
+
+  const loadCollectorStatus = async () => {
+    try {
+      const res = await api.get('/v1/collector/status', { auth: getAuth() });
+      setCollectorStatus(res.data as CollectorStatus);
+    } catch {
+      setCollectorStatus(null);
+    }
+  };
+
 
   const collectAdguardNow = async () => {
     try {
@@ -564,7 +684,66 @@ export const MonitoringDashboard: React.FC = () => {
       await Promise.all([loadAdguardOverview(), loadAdguardSources(), loadAdguardHistory(), loadStackStatus()]);
       setAdguardError('');
     } catch (err: any) {
-      setAdguardError(err?.response?.data?.detail || 'Failed to collect AdGuard data');
+      setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.collectAdguardFailed'));
+    } finally {
+      setAdguardLoading(false);
+    }
+  };
+
+  const resetAdguardForm = () => {
+    setEditingAdguardSourceId(null);
+    setAdguardForm({
+      name: '',
+      admin_url: '',
+      dns_url: '',
+      username: '',
+      password: '',
+      verify_tls: true,
+      enabled: true,
+    });
+  };
+
+  const editAdguardSource = (source: AdGuardSource) => {
+    setEditingAdguardSourceId(source.id);
+    setAdguardForm({
+      name: source.name || '',
+      admin_url: source.admin_url || '',
+      dns_url: source.dns_url || '',
+      username: source.username || '',
+      password: '',
+      verify_tls: source.verify_tls !== false,
+      enabled: source.enabled !== false,
+    });
+  };
+
+  const saveAdguardSource = async () => {
+    try {
+      setAdguardLoading(true);
+      if (editingAdguardSourceId !== null) {
+        await api.put(`/v1/adguard/sources/${editingAdguardSourceId}`, adguardForm, { auth: getAuth() });
+      } else {
+        await api.post('/v1/adguard/sources', adguardForm, { auth: getAuth() });
+      }
+      resetAdguardForm();
+      await Promise.all([loadAdguardSources(), collectAdguardNow()]);
+    } catch (err: any) {
+      setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.addAdguardSourceFailed'));
+    } finally {
+      setAdguardLoading(false);
+    }
+  };
+
+  const deleteAdguardSource = async (source: AdGuardSource) => {
+    if (!window.confirm(`${t('common.delete')} ${source.name}?`)) return;
+    try {
+      setAdguardLoading(true);
+      await api.delete(`/v1/adguard/sources/${source.id}`, { auth: getAuth() });
+      if (editingAdguardSourceId === source.id) {
+        resetAdguardForm();
+      }
+      await Promise.all([loadAdguardSources(), loadAdguardOverview(), loadAdguardHistory()]);
+    } catch (err: any) {
+      setAdguardError(err?.response?.data?.detail || t('common.failed'));
     } finally {
       setAdguardLoading(false);
     }
@@ -580,6 +759,8 @@ export const MonitoringDashboard: React.FC = () => {
     loadAdguardOverview().catch(() => undefined);
     loadAdguardHistory().catch(() => undefined);
     loadStackStatus().catch(() => undefined);
+    loadServerStatuses().catch(() => undefined);
+    loadCollectorStatus().catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -679,6 +860,8 @@ export const MonitoringDashboard: React.FC = () => {
       loadLatestSnapshot();
       loadDepsHealth();
       loadStackStatus();
+      loadServerStatuses();
+      loadCollectorStatus();
     },
     [selectedScope, rangeSec],
   );
@@ -695,6 +878,8 @@ export const MonitoringDashboard: React.FC = () => {
       loadAdguardOverview();
       loadAdguardHistory();
       loadStackStatus();
+      loadServerStatuses();
+      loadCollectorStatus();
     },
   });
 
@@ -711,6 +896,51 @@ export const MonitoringDashboard: React.FC = () => {
     const onlineClients = latestSnapshotNodes.reduce((sum, n) => sum + Number(n.online_clients || 0), 0);
     return { total, online, onlineClients };
   }, [latestSnapshotNodes]);
+
+  const selectedServerStatus = useMemo(
+    () =>
+      isAllScope
+        ? null
+        : serverStatuses.find((status) => status.node === selectedNodeName) || null,
+    [isAllScope, serverStatuses, selectedNodeName],
+  );
+
+  const activeServerStatuses = useMemo(
+    () => serverStatuses.filter((status) => status.available && status.system),
+    [serverStatuses],
+  );
+
+  const resourceSource = useMemo(
+    () => (isAllScope ? activeServerStatuses : selectedServerStatus ? [selectedServerStatus] : []),
+    [activeServerStatuses, isAllScope, selectedServerStatus],
+  );
+
+  const resourceSummary = useMemo(() => {
+    if (!resourceSource.length) return null;
+    const count = resourceSource.length;
+    const cpuValues = resourceSource.map((status) => Number(status.system?.cpu || 0));
+    const memCurrent = resourceSource.reduce((sum, status) => sum + Number(status.system?.mem?.current || 0), 0);
+    const memTotal = resourceSource.reduce((sum, status) => sum + Number(status.system?.mem?.total || 0), 0);
+    const diskCurrent = resourceSource.reduce((sum, status) => sum + Number(status.system?.disk?.current || 0), 0);
+    const diskTotal = resourceSource.reduce((sum, status) => sum + Number(status.system?.disk?.total || 0), 0);
+    const uptimeValues = resourceSource.map((status) => Number(status.system?.uptime || status.xray?.uptime || 0));
+    const cpuAvg = cpuValues.reduce((sum, value) => sum + value, 0) / count;
+    const memPercent = memTotal > 0 ? (memCurrent / memTotal) * 100 : 0;
+    const diskPercent = diskTotal > 0 ? (diskCurrent / diskTotal) * 100 : 0;
+    const uptimeAvg = uptimeValues.reduce((sum, value) => sum + value, 0) / count;
+    return {
+      count,
+      cpuAvg,
+      memCurrent,
+      memTotal,
+      memPercent,
+      diskCurrent,
+      diskTotal,
+      diskPercent,
+      uptimeAvg,
+      uptimeMax: uptimeValues.reduce((max, value) => Math.max(max, value), 0),
+    };
+  }, [resourceSource]);
 
   const selectedLiveSnapshotPoint = useMemo(() => {
     if (isAllScope) return null;
@@ -785,7 +1015,7 @@ export const MonitoringDashboard: React.FC = () => {
   const convertBytes = (bytes: number) => (trafficUnit === 'GB' ? bytesToGb(bytes) : bytesToMb(bytes));
   const toTrafficUnit = (value: number | null) => (value === null ? null : Number(convertBytes(value).toFixed(2)));
   const smoothTrafficSeries = (series: Array<number | null>) => smoothSeries(series, trafficSmoothing);
-  const trafficUnitPerIntervalLabel = `${trafficUnitLabel}/interval`;
+  const trafficConsumptionLabel = `${trafficUnitLabel}`;
   const trafficModeLabel = effectiveTrafficMode === 'live' ? 'Live' : 'History';
   const trafficSourceLabel = effectiveTrafficSource === 'nodes' ? 'Nodes' : effectiveTrafficSource === 'people' ? 'People' : 'Inbounds';
   const trafficSmoothingLabel = trafficSmoothing === 'raw' ? 'raw' : trafficSmoothing === 'sma3' ? 'SMA-3' : 'SMA-5';
@@ -818,10 +1048,10 @@ export const MonitoringDashboard: React.FC = () => {
         })
       : [
           {
-            label: 'CPU %',
+            label: t('monitoringDashboard.cpuPercent'),
             data: effectiveHistory.map((p) => Number((p.cpu || 0).toFixed(2))),
-            borderColor: colors.warning,
-            backgroundColor: colors.warning + '33',
+            borderColor: 'var(--warning)',
+            backgroundColor: 'color-mix(in srgb, var(--warning) 20%, transparent)',
             borderWidth: 2.2,
             tension: 0.25,
             pointRadius: 0,
@@ -849,10 +1079,10 @@ export const MonitoringDashboard: React.FC = () => {
         })
       : [
           {
-            label: 'Online clients',
+            label: t('monitoringDashboard.onlineClients'),
             data: effectiveHistory.map((p) => Number(p.online_clients || 0)),
-            borderColor: colors.accent,
-            backgroundColor: colors.accent + '33',
+            borderColor: 'var(--accent)',
+            backgroundColor: 'color-mix(in srgb, var(--accent) 20%, transparent)',
             borderWidth: 2.2,
             tension: 0.25,
             pointRadius: 0,
@@ -868,14 +1098,14 @@ export const MonitoringDashboard: React.FC = () => {
           labels: trafficHistoryLabels,
           datasets: [
             {
-              label: 'All servers usage',
+              label: t('monitoringDashboard.allServersUsage'),
               data: smoothTrafficSeries(
-                buildBucketTrafficUsageSeries(trafficHistorySeries.perNode, trafficHistorySeries.buckets).map((bytes) =>
+                buildBucketTrafficConsumptionSeries(trafficHistorySeries.perNode, trafficHistorySeries.buckets).map((bytes) =>
                   toTrafficUnit(Number(bytes || 0))
                 )
               ),
-              borderColor: colors.info,
-              backgroundColor: colors.info + '44',
+              borderColor: 'var(--info)',
+              backgroundColor: 'color-mix(in srgb, var(--info) 27%, transparent)',
               borderWidth: 2.8,
               pointRadius: 0,
               pointHoverRadius: 4,
@@ -884,7 +1114,7 @@ export const MonitoringDashboard: React.FC = () => {
             },
             ...trafficHistorySeries.perNode.map((node, idx) => {
               const c = chartPalette[idx % chartPalette.length];
-              const usageSeries = buildTrafficUsageSeries(node.points);
+              const usageSeries = buildTrafficConsumptionSeries(node.points);
               const convertedSeries = usageSeries.map((bytes) => toTrafficUnit(bytes));
               return {
                 label: node.nodeName,
@@ -906,10 +1136,10 @@ export const MonitoringDashboard: React.FC = () => {
         labels,
         datasets: [
           {
-            label: `Traffic usage (${trafficUnitPerIntervalLabel})`,
-            data: smoothTrafficSeries(buildTrafficUsageSeries(effectiveHistory).map((bytes) => toTrafficUnit(Number(bytes || 0)))),
-            borderColor: colors.info,
-            backgroundColor: colors.info + '33',
+            label: `Traffic consumption (${trafficConsumptionLabel})`,
+            data: smoothTrafficSeries(buildTrafficConsumptionSeries(effectiveHistory).map((bytes) => toTrafficUnit(Number(bytes || 0)))),
+            borderColor: 'var(--info)',
+            backgroundColor: 'color-mix(in srgb, var(--info) 20%, transparent)',
             borderWidth: 2.2,
             pointRadius: 0,
             pointHoverRadius: 3,
@@ -930,10 +1160,10 @@ export const MonitoringDashboard: React.FC = () => {
         labels: liveTrafficLabels,
         datasets: [
           {
-            label: `People usage (${trafficUnitPerIntervalLabel})`,
+            label: `People usage (${trafficConsumptionLabel})`,
             data: smoothTrafficSeries(usage.map((v) => toTrafficUnit(v))),
-            borderColor: colors.success,
-            backgroundColor: colors.success + '33',
+            borderColor: 'var(--success)',
+            backgroundColor: 'color-mix(in srgb, var(--success) 20%, transparent)',
             borderWidth: 2.3,
             pointRadius: 0,
             pointHoverRadius: 3,
@@ -949,10 +1179,10 @@ export const MonitoringDashboard: React.FC = () => {
         labels: liveTrafficLabels,
         datasets: [
           {
-            label: `Inbound usage (${trafficUnitPerIntervalLabel})`,
+            label: `Inbound usage (${trafficConsumptionLabel})`,
             data: smoothTrafficSeries(usage.map((v) => toTrafficUnit(v))),
-            borderColor: colors.warning,
-            backgroundColor: colors.warning + '33',
+            borderColor: 'var(--warning)',
+            backgroundColor: 'color-mix(in srgb, var(--warning) 20%, transparent)',
             borderWidth: 2.3,
             pointRadius: 0,
             pointHoverRadius: 3,
@@ -990,10 +1220,10 @@ export const MonitoringDashboard: React.FC = () => {
         labels: liveTrafficLabels,
         datasets: [
           {
-            label: `All servers live usage (${trafficUnitPerIntervalLabel})`,
+            label: `All servers live usage (${trafficConsumptionLabel})`,
             data: smoothTrafficSeries(totalUsage.map((v) => toTrafficUnit(v))),
-            borderColor: colors.info,
-            backgroundColor: colors.info + '44',
+            borderColor: 'var(--info)',
+            backgroundColor: 'color-mix(in srgb, var(--info) 27%, transparent)',
             borderWidth: 2.8,
             pointRadius: 0,
             pointHoverRadius: 4,
@@ -1012,10 +1242,10 @@ export const MonitoringDashboard: React.FC = () => {
       labels: liveTrafficLabels,
       datasets: [
         {
-          label: `${selectedNodeName} live usage (${trafficUnitPerIntervalLabel})`,
+          label: `${selectedNodeName} live usage (${trafficConsumptionLabel})`,
           data: smoothTrafficSeries(selectedUsage.map((v) => toTrafficUnit(v))),
-          borderColor: colors.info,
-          backgroundColor: colors.info + '33',
+          borderColor: 'var(--info)',
+          backgroundColor: 'color-mix(in srgb, var(--info) 20%, transparent)',
           borderWidth: 2.4,
           pointRadius: 0,
           pointHoverRadius: 3,
@@ -1035,14 +1265,11 @@ export const MonitoringDashboard: React.FC = () => {
     liveTrafficWindow,
     liveTrafficLabels,
     selectedNodeName,
-    trafficUnitPerIntervalLabel,
+    trafficConsumptionLabel,
     chartPalette,
     nodes,
     trafficLineShape,
     trafficSmoothing,
-    colors.info,
-    colors.success,
-    colors.warning,
   ]);
 
   const chartOptions = {
@@ -1050,32 +1277,28 @@ export const MonitoringDashboard: React.FC = () => {
     maintainAspectRatio: false,
     plugins: {
       legend: {
+        position: 'bottom' as const,
+        align: 'start' as const,
+        maxHeight: 84,
         labels: {
-          color: colors.text.primary,
+          color: '#e2e8f0',
           usePointStyle: true,
           pointStyle: 'circle' as const,
+          boxWidth: 10,
+          boxHeight: 10,
+          padding: 12,
           font: {
-            size: 12,
+            size: 11,
             weight: 600 as const,
           },
         },
       },
       tooltip: {
-        backgroundColor:
-          theme === 'light'
-            ? 'rgba(255, 255, 255, 0.98)'
-            : stylePreset === '3'
-            ? 'rgba(8, 8, 8, 0.96)'
-            : 'rgba(8, 17, 32, 0.96)',
-        borderColor:
-          theme === 'light'
-            ? 'rgba(148, 163, 184, 0.5)'
-            : stylePreset === '3'
-            ? 'rgba(255, 255, 255, 0.18)'
-            : 'rgba(125, 211, 252, 0.45)',
+        backgroundColor: '#0f1420',
+        borderColor: 'rgba(30, 41, 59, 0.6)',
         borderWidth: 1,
-        titleColor: theme === 'light' ? '#0f172a' : stylePreset === '3' ? '#fafafa' : '#e2e8f0',
-        bodyColor: theme === 'light' ? '#334155' : stylePreset === '3' ? '#d4d4d8' : '#bae6fd',
+        titleColor: '#e2e8f0',
+        bodyColor: '#cbd5e1',
         padding: 10,
         cornerRadius: 10,
         displayColors: true,
@@ -1093,28 +1316,28 @@ export const MonitoringDashboard: React.FC = () => {
       point: {
         hoverRadius: 4,
         hoverBorderWidth: 1.5,
-        hoverBorderColor: theme === 'light' ? '#1d4ed8' : stylePreset === '3' ? '#ffffff' : '#e0f2fe',
+        hoverBorderColor: '#ffffff',
       },
     },
     scales: {
       x: {
         ticks: {
-          color: colors.text.secondary,
+          color: '#94a3b8',
           maxTicksLimit: 10,
           font: {
             weight: 600 as const,
           },
         },
-        grid: { color: colors.border + '55' },
+        grid: { color: 'rgba(30, 41, 59, 0.6)' },
       },
       y: {
         ticks: {
-          color: colors.text.secondary,
+          color: '#94a3b8',
           font: {
             weight: 600 as const,
           },
         },
-        grid: { color: colors.border + '55' },
+        grid: { color: 'rgba(30, 41, 59, 0.6)' },
       },
     },
   };
@@ -1129,11 +1352,11 @@ export const MonitoringDashboard: React.FC = () => {
           label: (context: any) => {
             const datasetLabel = context?.dataset?.label || '';
             const y = Number(context?.parsed?.y || 0);
-            return `${datasetLabel}: ${y.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${trafficUnitPerIntervalLabel}`;
+            return `${datasetLabel}: ${y.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${trafficConsumptionLabel}`;
           },
           title: (items: any[]) => {
             const base = items?.[0]?.label || '';
-            return `${base} • ${trafficModeLabel} • step ${effectiveTrafficStepSec}s • ${trafficSourceLabel} • ${trafficSmoothingLabel}`;
+            return `${base} â€¢ ${trafficModeLabel} â€¢ step ${effectiveTrafficStepSec}s â€¢ ${trafficSourceLabel} â€¢ ${trafficSmoothingLabel}`;
           },
         },
       },
@@ -1144,7 +1367,7 @@ export const MonitoringDashboard: React.FC = () => {
         ...chartOptions.scales.y,
         ticks: {
           ...chartOptions.scales.y.ticks,
-          callback: (value: any) => `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${trafficUnitPerIntervalLabel}`,
+          callback: (value: any) => `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })} ${trafficConsumptionLabel}`,
         },
       },
     },
@@ -1152,16 +1375,20 @@ export const MonitoringDashboard: React.FC = () => {
 
   const topBlockedDomains = useMemo(() => {
     const agg = new Map<string, number>();
-    (adguardOverview?.sources || []).forEach((s) => {
+    (adguardOverview?.sources || [])
+      .filter((s) => blockedSourceFilter === 'all' || String(s.source_id) === blockedSourceFilter)
+      .forEach((s) => {
       (s.top_blocked_domains || []).forEach((it) => {
         agg.set(it.name, (agg.get(it.name) || 0) + Number(it.count || 0));
       });
-    });
+      });
+    const needle = blockedSearch.trim().toLowerCase();
     return Array.from(agg.entries())
+      .filter(([name]) => !needle || name.toLowerCase().includes(needle))
       .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
+      .slice(0, blockedShowCount)
       .map(([name, count]) => ({ name, count }));
-  }, [adguardOverview]);
+  }, [adguardOverview, blockedSourceFilter, blockedSearch, blockedShowCount]);
 
   const topClients = useMemo(() => {
     const agg = new Map<string, number>();
@@ -1257,353 +1484,465 @@ export const MonitoringDashboard: React.FC = () => {
     };
   }, [adguardHistory, adguardTrendLabels]);
 
+  const inputClass =
+    'min-w-0 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-xs font-light text-slate-100 outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10 placeholder:text-slate-600';
+  const selectClass = `${inputClass} pr-8`;
+  const primaryButtonClass =
+    'inline-flex h-9 min-w-0 items-center justify-center rounded-md border border-cyan-300/25 bg-gradient-to-r from-cyan-500 to-blue-500 px-3 text-xs font-medium tracking-wide text-white transition hover:from-cyan-400 hover:to-blue-400 disabled:cursor-not-allowed disabled:opacity-45';
+  const secondaryButtonClass =
+    'inline-flex h-9 min-w-0 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 text-xs font-medium text-slate-100 transition hover:border-cyan-300/40 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-45';
+  const sectionTitleClass = 'text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400';
+  const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420]';
+  const subtlePanelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a]';
+  const metricValueClass = 'font-mono tabular-nums whitespace-nowrap text-sm font-medium text-slate-100';
+  const compactMetricClass = 'font-mono tabular-nums whitespace-nowrap text-xs font-medium text-slate-100';
+  const chartCardClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4';
+  const renderChartSkeleton = () => (
+    <div className="relative h-full min-w-0 overflow-hidden rounded-lg bg-[#0a0e1a] p-4">
+      <div className="absolute inset-x-4 top-10 h-px bg-cyan-500/10" />
+      <div className="absolute inset-x-4 top-1/3 h-px bg-cyan-500/10" />
+      <div className="absolute inset-x-4 top-2/3 h-px bg-cyan-500/10" />
+      <div className="absolute inset-x-4 bottom-8 h-px bg-cyan-500/10" />
+      <div className="flex h-full items-end gap-3 pt-12">
+        {[38, 56, 44, 70, 62, 82, 52, 66].map((height, idx) => (
+          <div key={idx} className="flex min-w-0 flex-1 items-end">
+            <div
+              className="w-full animate-pulse rounded-t-md bg-cyan-300/20"
+              style={{ height: `${height}%`, animationDelay: `${idx * 85}ms` }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+  const toneClass = (ok: boolean) => (ok ? 'text-emerald-300' : 'text-rose-300');
+  const gaugeTone = (value: number) =>
+    value >= 85
+      ? { fill: 'from-rose-500 to-red-600', text: 'text-rose-300' }
+      : value >= 60
+      ? { fill: 'from-amber-400 to-orange-500', text: 'text-amber-300' }
+      : { fill: 'from-cyan-500 to-blue-500', text: 'text-cyan-300' };
+  const usageCards = [
+    {
+      label: 'Collector',
+      value: collectorStatus?.running ? t('serverStatus.running') : t('serverStatus.stopped'),
+      percent: collectorStatus?.running ? 100 : 0,
+      helper: `${collectorStatus?.mode || 'unknown'} | WS ${collectorStatus?.ws_connections ?? 0}`,
+    },
+    {
+      label: 'Redis',
+      value: depsHealth?.redis?.enabled ? (depsHealth?.redis?.ok ? 'ok' : 'degraded') : 'disabled',
+      percent: depsHealth?.redis?.enabled ? (depsHealth?.redis?.ok ? 100 : 62) : 0,
+      helper: depsHealth?.redis?.enabled ? (depsHealth?.redis?.error || 'cache layer') : 'cache off',
+    },
+    {
+      label: isAllScope ? t('monitoringDashboard.nodesOnline') : t('monitoringDashboard.nodeStatus'),
+      value: isAllScope
+        ? `${allNodesStatus.online}/${allNodesStatus.total}`
+        : latestForSelected?.available
+        ? t('nodes.online')
+        : t('nodes.offline'),
+      percent: isAllScope
+        ? allNodesStatus.total > 0
+          ? Math.round((allNodesStatus.online / allNodesStatus.total) * 100)
+          : 0
+        : latestForSelected?.available
+        ? 100
+        : 0,
+      helper: isAllScope ? 'available fleet' : selectedNodeName,
+    },
+    {
+      label: isAllScope ? t('monitoringDashboard.currentOnlineClients') : t('monitoringDashboard.currentOnlineClients'),
+      value: String(isAllScope ? allNodesStatus.onlineClients : latestForSelected?.online_clients ?? 0),
+      percent: Math.min(100, (isAllScope ? allNodesStatus.onlineClients : latestForSelected?.online_clients ?? 0) * 5),
+      helper: isAllScope ? 'active sessions' : 'node sessions',
+    },
+  ];
+  const resourceScopeHelper = isAllScope
+    ? `${resourceSummary?.count || 0}/${serverStatuses.length || nodes.length} ${t('serverStatus.online').toLowerCase()}`
+    : selectedNodeName;
+  const resourceCards = [
+    {
+      label: t('serverStatus.cpu'),
+      value: resourceSummary ? `${resourceSummary.cpuAvg.toFixed(1)}%` : '-',
+      percent: clampPercent(resourceSummary?.cpuAvg),
+      helper: resourceScopeHelper,
+      detail: '',
+    },
+    {
+      label: t('serverStatus.ram'),
+      value: resourceSummary ? `${resourceSummary.memPercent.toFixed(1)}%` : '-',
+      percent: clampPercent(resourceSummary?.memPercent),
+      helper: resourceSummary ? `${formatBytes(resourceSummary.memCurrent)} / ${formatBytes(resourceSummary.memTotal)}` : resourceScopeHelper,
+      detail: resourceScopeHelper,
+    },
+    {
+      label: t('serverStatus.disk'),
+      value: resourceSummary ? `${resourceSummary.diskPercent.toFixed(1)}%` : '-',
+      percent: clampPercent(resourceSummary?.diskPercent),
+      helper: resourceSummary ? `${formatBytes(resourceSummary.diskCurrent)} / ${formatBytes(resourceSummary.diskTotal)}` : resourceScopeHelper,
+      detail: resourceScopeHelper,
+    },
+    {
+      label: 'Uptime',
+      value: formatUptime(isAllScope ? resourceSummary?.uptimeMax : resourceSummary?.uptimeAvg),
+      percent: resourceSummary?.uptimeMax || resourceSummary?.uptimeAvg ? 100 : 0,
+      helper: isAllScope ? 'max uptime' : selectedNodeName,
+      detail: resourceScopeHelper,
+    },
+  ];
+  const stackCards = [
+    {
+      label: 'Prometheus',
+      ok: Boolean(stackStatus?.services?.prometheus?.ok),
+      value: stackStatus?.services?.prometheus?.ok ? t('nodes.online') : t('nodes.offline'),
+      percent: stackStatus?.services?.prometheus?.ok ? 100 : 0,
+    },
+    {
+      label: 'Loki',
+      ok: Boolean(stackStatus?.services?.loki?.ok),
+      value: stackStatus?.services?.loki?.ok ? t('nodes.online') : t('nodes.offline'),
+      percent: stackStatus?.services?.loki?.ok ? 100 : 0,
+    },
+    {
+      label: 'Grafana',
+      ok: Boolean(stackStatus?.services?.grafana?.ok),
+      value: stackStatus?.services?.grafana?.ok ? t('nodes.online') : t('nodes.offline'),
+      percent: stackStatus?.services?.grafana?.ok ? 100 : 0,
+    },
+  ];
+
   return (
-    <div className="monitoring-panel panel-block" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-      <div className="monitoring-panel__header mb-3">
-        <h4 className="mb-0" style={{ color: colors.text.primary }}>
-          Monitoring
-        </h4>
-        <a
-          className="btn btn-sm"
-          href={grafanaUrl}
-          target="_blank"
-          rel="noreferrer"
-          style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }}
-        >
-          Открыть Grafana
+    <div className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6">
+      <div className="mb-6 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">{t('nav.monitoring')}</h2>
+        </div>
+        <a className={primaryButtonClass} href={grafanaUrl} target="_blank" rel="noreferrer">
+          {t('monitoringDashboard.openGrafana')}
         </a>
       </div>
 
       {error && (
-        <div className="alert mb-3" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+        <div className="mb-4 rounded-lg border border-rose-500/45 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
           {error}
         </div>
       )}
 
-      <div className="row g-2 mb-3">
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Сервер
-          </label>
-          <ChoiceChips
-            options={[
-              { value: 'all', label: 'Все' },
-              ...nodes.map((n) => ({ value: String(n.id), label: n.name })),
-            ]}
-            value={selectedScope}
-            onChange={(value) => setSelectedScope(value)}
-            colors={colors}
-          />
+      <section className="mb-4 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('common.server')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={[
+                { value: 'all', label: t('common.all') },
+                ...nodes.map((n) => ({ value: String(n.id), label: n.name })),
+              ]}
+              value={selectedScope}
+              onChange={(value) => setSelectedScope(value)}
+            />
+          </div>
         </div>
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Диапазон
-          </label>
-          <ChoiceChips
-            options={RANGE_OPTIONS.map((range) => ({ value: range.value, label: range.label }))}
-            value={rangeSec}
-            onChange={(value) => setRangeSec(value)}
-            colors={colors}
-          />
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('monitoringDashboard.range')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={RANGE_OPTIONS.map((range) => ({ value: range.value, label: range.label }))}
+              value={rangeSec}
+              onChange={(value) => setRangeSec(value)}
+            />
+          </div>
         </div>
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Трафик
-          </label>
-          <ChoiceChips
-            options={[
-              { value: 'MB', label: 'MB' },
-              { value: 'GB', label: 'GB' },
-            ]}
-            value={trafficUnit}
-            onChange={(value) => setTrafficUnit(value as 'MB' | 'GB')}
-            colors={colors}
-          />
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('traffic.title')}</div>
+          </div>
+          <div className="flex min-w-0 flex-col gap-3 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={[
+                { value: 'MB', label: 'MB' },
+                { value: 'GB', label: 'GB' },
+              ]}
+              value={trafficUnit}
+              onChange={(value) => setTrafficUnit(value as 'MB' | 'GB')}
+            />
+            <button
+              className={secondaryButtonClass}
+              onClick={() => {
+                loadHistory(selectedScope, rangeSec);
+                loadLatestSnapshot();
+                loadDepsHealth();
+                loadAdguardOverview();
+                loadAdguardHistory();
+                loadStackStatus();
+                loadServerStatuses();
+                loadCollectorStatus();
+              }}
+              disabled={loadingHistory || resourceLoading}
+            >
+              {loadingHistory || resourceLoading ? t('header.updating') : t('common.refresh')}
+            </button>
+          </div>
         </div>
-        <div className="col-md-3 d-flex align-items-end">
-          <button
-            className="btn btn-sm w-100"
-            style={{ backgroundColor: colors.bg.tertiary, borderColor: colors.border, color: colors.text.primary }}
-            onClick={() => {
-              loadHistory(selectedScope, rangeSec);
-              loadLatestSnapshot();
-              loadDepsHealth();
-              loadAdguardOverview();
-              loadAdguardHistory();
-              loadStackStatus();
-            }}
-            disabled={loadingHistory}
-          >
-            {loadingHistory ? 'Обновление...' : 'Обновить'}
-          </button>
-        </div>
-      </div>
+      </section>
 
-      <div className="row g-2 mb-3">
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Режим трафика
-          </label>
-          <ChoiceChips
-            options={[
-              { value: 'history', label: 'History' },
-              { value: 'live', label: 'Live' },
-            ]}
-            value={trafficMode}
-            onChange={(value) => setTrafficMode(value as TrafficMode)}
-            colors={colors}
-          />
+      <section className="mb-6 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-5">
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('monitoringDashboard.trafficMode')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={[
+                { value: 'history', label: 'History' },
+                { value: 'live', label: 'Live' },
+              ]}
+              value={trafficMode}
+              onChange={(value) => setTrafficMode(value as TrafficMode)}
+            />
+          </div>
         </div>
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Источник
-          </label>
-          <ChoiceChips
-            options={[
-              { value: 'nodes', label: 'Nodes' },
-              { value: 'people', label: 'Люди' },
-              { value: 'inbounds', label: 'Инбаунды' },
-            ]}
-            value={trafficSource}
-            onChange={(value) => setTrafficSource(value as TrafficSource)}
-            colors={colors}
-          />
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('monitoringDashboard.source')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={[
+                { value: 'nodes', label: 'Nodes' },
+                { value: 'people', label: t('monitoringDashboard.people') },
+                { value: 'inbounds', label: t('nav.inbounds') },
+              ]}
+              value={trafficSource}
+              onChange={(value) => setTrafficSource(value as TrafficSource)}
+            />
+          </div>
         </div>
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Шаг
-          </label>
-          <ChoiceChips
-            options={TRAFFIC_STEP_OPTIONS.map((step) => ({ value: step.value, label: step.label }))}
-            value={trafficStepSec}
-            onChange={(value) => setTrafficStepSec(Number(value))}
-            colors={colors}
-          />
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('monitoringDashboard.step')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={TRAFFIC_STEP_OPTIONS.map((step) => ({ value: step.value, label: step.label }))}
+              value={trafficStepSec}
+              onChange={(value) => setTrafficStepSec(Number(value))}
+            />
+          </div>
         </div>
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Стиль
-          </label>
-          <ChoiceChips
-            options={[
-              { value: 'stepped', label: 'Stepped' },
-              { value: 'bars', label: 'Bars' },
-              { value: 'smooth', label: 'Smooth' },
-            ]}
-            value={trafficVisualStyle}
-            onChange={(value) => setTrafficVisualStyle(value as TrafficVisualStyle)}
-            colors={colors}
-          />
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('monitoringDashboard.style')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={[
+                { value: 'stepped', label: 'Stepped' },
+                { value: 'bars', label: 'Bars' },
+                { value: 'smooth', label: 'Smooth' },
+              ]}
+              value={trafficVisualStyle}
+              onChange={(value) => setTrafficVisualStyle(value as TrafficVisualStyle)}
+            />
+          </div>
         </div>
-        <div className="col-md-3">
-          <label className="form-label small" style={{ color: colors.text.secondary }}>
-            Сглаживание
-          </label>
-          <ChoiceChips
-            options={[
-              { value: 'raw', label: 'Raw' },
-              { value: 'sma3', label: 'SMA-3' },
-              { value: 'sma5', label: 'SMA-5' },
-            ]}
-            value={trafficSmoothing}
-            onChange={(value) => setTrafficSmoothing(value as TrafficSmoothing)}
-            colors={colors}
-          />
+        <div className={panelClass}>
+          <div className="border-b border-cyan-500/20 px-4 py-3">
+            <div className={sectionTitleClass}>{t('monitoringDashboard.smoothing')}</div>
+          </div>
+          <div className="min-w-0 p-4">
+            <ChoiceChips
+              className="min-w-0"
+              options={[
+                { value: 'raw', label: 'Raw' },
+                { value: 'sma3', label: 'SMA-3' },
+                { value: 'sma5', label: 'SMA-5' },
+              ]}
+              value={trafficSmoothing}
+              onChange={(value) => setTrafficSmoothing(value as TrafficSmoothing)}
+            />
+          </div>
         </div>
-      </div>
+      </section>
 
-      <div className="row g-2 mb-3">
-        <div className="col-md-3">
-          <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>Collector</div>
-            <strong style={{ color: depsHealth?.collector_running ? colors.success : colors.danger }}>
-              {depsHealth?.collector_running ? 'running' : 'stopped'}
-            </strong>
-          </div>
-        </div>
-        <div className="col-md-3">
-          <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>Redis</div>
-            <strong style={{ color: depsHealth?.redis?.ok ? colors.success : colors.warning }}>
-              {depsHealth?.redis?.enabled ? (depsHealth?.redis?.ok ? 'ok' : 'degraded') : 'disabled'}
-            </strong>
-          </div>
-        </div>
-        <div className="col-md-3">
-          <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>
-              {isAllScope ? 'Nodes online' : 'Node status'}
-            </div>
-            <strong style={{ color: isAllScope ? colors.success : latestForSelected?.available ? colors.success : colors.danger }}>
-              {isAllScope
-                ? `${allNodesStatus.online}/${allNodesStatus.total}`
-                : latestForSelected?.available
-                ? 'online'
-                : 'offline'}
-            </strong>
-          </div>
-        </div>
-        <div className="col-md-3">
-          <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <div className="small" style={{ color: colors.text.secondary }}>
-              {isAllScope ? 'Online clients (all)' : 'Current online clients'}
-            </div>
-            <strong style={{ color: colors.accent }}>
-              {isAllScope ? allNodesStatus.onlineClients : latestForSelected?.online_clients ?? 0}
-            </strong>
-          </div>
-        </div>
-      </div>
+      <section className="mb-6 grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-3">
+        {usageCards.map((card) => {
+          const tone = gaugeTone(card.percent);
+          return (
+            <article key={card.label} className={chartCardClass}>
+              <div className="flex items-center justify-between gap-3">
+                <span className={sectionTitleClass}>{card.label}</span>
+                <span className={cn('font-mono tabular-nums whitespace-nowrap text-xs font-medium', tone.text)}>
+                  {card.percent}%
+                </span>
+              </div>
+              <div className="mt-3 flex items-baseline justify-between gap-3">
+                <strong className={metricValueClass}>{card.value}</strong>
+                <span className="truncate text-right text-[11px] text-slate-500">{card.helper}</span>
+              </div>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#0a0e1a]">
+                <div className={cn('h-full rounded-full bg-gradient-to-r', tone.fill)} style={{ width: `${card.percent}%` }} />
+              </div>
+            </article>
+          );
+        })}
+      </section>
 
-      <div className="row g-3">
+      {resourceError && (
+        <div className="mb-4 rounded-lg border border-rose-500/45 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+          {resourceError}
+        </div>
+      )}
+
+      <section className="mb-6 grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-4">
+        {resourceCards.map((card) => {
+          const tone = gaugeTone(card.percent);
+          const isSkeleton = resourceLoading && !resourceSummary;
+          return (
+            <article key={card.label} className={chartCardClass}>
+              <div className="flex items-center justify-between gap-3">
+                <span className={sectionTitleClass}>{card.label}</span>
+                <span className={cn('font-mono tabular-nums whitespace-nowrap text-xs font-medium', tone.text)}>
+                  {isSkeleton ? '...' : `${card.percent}%`}
+                </span>
+              </div>
+              <div className="mt-3 flex items-baseline justify-between gap-3">
+                {isSkeleton ? (
+                  <div className="h-6 w-24 animate-pulse rounded-md bg-cyan-300/10" />
+                ) : (
+                  <strong className={metricValueClass}>{card.value}</strong>
+                )}
+                <span className="truncate text-right text-[11px] text-slate-500">
+                  {isSkeleton ? t('serverStatus.loadingLiveMetrics') : card.helper}
+                </span>
+              </div>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#0a0e1a]">
+                <div
+                  className={cn('h-full rounded-full bg-gradient-to-r', tone.fill, isSkeleton && 'animate-pulse')}
+                  style={{ width: isSkeleton ? '72%' : `${card.percent}%` }}
+                />
+              </div>
+            </article>
+          );
+        })}
+      </section>
+
+      <div className="grid min-w-0 grid-cols-1 gap-6">
         {trafficSource !== 'nodes' && (
-          <div className="col-12">
-            <div className="alert mb-0" style={{ backgroundColor: colors.info + '22', borderColor: colors.info, color: colors.info }}>
-              Источник «Люди/Инбаунды» работает в live-режиме (исторические серии per-client/per-inbound сейчас не хранятся).
-            </div>
+          <div className="rounded-lg border border-cyan-500/35 bg-cyan-500/10 px-4 py-3 text-sm text-cyan-200">
+              {t('monitoringDashboard.liveSourceHint')}
           </div>
         )}
         {!isAllScope && trafficSource !== 'nodes' && (
-          <div className="col-12">
-            <div className="alert mb-0" style={{ backgroundColor: colors.warning + '22', borderColor: colors.warning, color: colors.warning }}>
-              Для отдельного сервера включён fallback на source=Nodes (агрегация «Люди» корректна только для scope=All servers).
-            </div>
+          <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+              {t('monitoringDashboard.singleServerFallbackHint')}
           </div>
         )}
         {liveTrafficError && (
-          <div className="col-12">
-            <div className="alert mb-0" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+          <div className="rounded-lg border border-rose-500/45 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
               {liveTrafficError}
-            </div>
           </div>
         )}
         {showingLiveSnapshotFallback && (
-          <div className="col-12">
-            <div className="alert mb-0" style={{ backgroundColor: colors.warning + '22', borderColor: colors.warning, color: colors.warning }}>
-              История пока пустая — отображается текущий live snapshot.
-            </div>
+          <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-sm text-amber-200">
+              {t('monitoringDashboard.liveSnapshotFallbackHint')}
           </div>
         )}
-        <div className="col-12" style={{ order: 100 }}>
-          <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-              <h6 className="mb-0" style={{ color: colors.text.primary }}>AdGuard DNS Monitoring</h6>
-              <button
-                className="btn btn-sm"
-                style={{ backgroundColor: colors.info, borderColor: colors.info, color: colors.infoText }}
-                onClick={collectAdguardNow}
-                disabled={adguardLoading}
-              >
-                {adguardLoading ? 'Сбор...' : 'Собрать сейчас'}
-              </button>
+        <section className={chartCardClass}>
+          <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-cyan-300">{t('monitoringDashboard.adguardTitle')}</h3>
             </div>
+            <button className={primaryButtonClass} onClick={collectAdguardNow} disabled={adguardLoading}>
+              {adguardLoading ? t('monitoringDashboard.collecting') : t('monitoringDashboard.collectNow')}
+            </button>
+          </div>
 
             {adguardError && (
-              <div className="alert mb-3" style={{ backgroundColor: colors.danger + '22', borderColor: colors.danger, color: colors.danger }}>
+              <div className="mb-4 rounded-lg border border-rose-500/45 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
                 {adguardError}
               </div>
             )}
 
-            <div className="row g-2 mb-3">
-              <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Sources</div>
-                  <strong style={{ color: colors.text.primary }}>{adguardOverview?.summary?.sources_online || 0}/{adguardOverview?.summary?.sources_total || 0}</strong>
-                </div>
-              </div>
-              <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Queries</div>
-                  <strong style={{ color: stylePreset === '3' ? colors.text.primary : colors.accent }}>{Math.round(adguardOverview?.summary?.queries_total || 0).toLocaleString()}</strong>
-                </div>
-              </div>
-              <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Block rate</div>
-                  <strong style={{ color: colors.warning }}>{(adguardOverview?.summary?.blocked_rate || 0).toFixed(2)}%</strong>
-                </div>
-              </div>
-              <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Latency</div>
-                  <strong style={{ color: colors.success }}>{(adguardOverview?.summary?.avg_latency_ms || 0).toFixed(1)} ms</strong>
-                </div>
-              </div>
-              <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Cache hit</div>
-                  <strong style={{ color: stylePreset === '3' ? colors.text.primary : colors.info }}>{(adguardOverview?.summary?.cache_hit_ratio || 0).toFixed(2)}%</strong>
-                </div>
-              </div>
-              <div className="col-md-2">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Upstream errors</div>
-                  <strong style={{ color: colors.danger }}>{Math.round(adguardOverview?.summary?.upstream_errors || 0).toLocaleString()}</strong>
-                </div>
-              </div>
+            <div className="mb-5 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
+              {[
+                { label: t('monitoringDashboard.sources'), value: `${adguardOverview?.summary?.sources_online || 0}/${adguardOverview?.summary?.sources_total || 0}`, tone: 'text-slate-100' },
+                { label: t('monitoringDashboard.queries'), value: Math.round(adguardOverview?.summary?.queries_total || 0).toLocaleString(), tone: stylePreset === '3' ? 'text-slate-100' : 'text-cyan-300' },
+                { label: t('monitoringDashboard.blockRate'), value: `${(adguardOverview?.summary?.blocked_rate || 0).toFixed(2)}%`, tone: 'text-amber-300' },
+                { label: t('monitoringDashboard.latency'), value: `${(adguardOverview?.summary?.avg_latency_ms || 0).toFixed(1)} ms`, tone: 'text-emerald-300' },
+                { label: t('monitoringDashboard.cacheHit'), value: `${(adguardOverview?.summary?.cache_hit_ratio || 0).toFixed(2)}%`, tone: stylePreset === '3' ? 'text-slate-100' : 'text-cyan-300' },
+                { label: t('monitoringDashboard.upstreamErrors'), value: Math.round(adguardOverview?.summary?.upstream_errors || 0).toLocaleString(), tone: 'text-rose-300' },
+              ].map((item) => (
+                <article key={item.label} className={subtlePanelClass}>
+                  <div className="px-4 py-3">
+                    <div className={sectionTitleClass}>{item.label}</div>
+                    <strong className={cn('mt-2 block font-mono tabular-nums whitespace-nowrap text-sm font-medium', item.tone)}>{item.value}</strong>
+                  </div>
+                </article>
+              ))}
             </div>
 
-            <div className="row g-2 mb-3">
-              <div className="col-md-3">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Prometheus</div>
-                  <strong style={{ color: stackStatus?.services?.prometheus?.ok ? colors.success : colors.warning }}>
-                    {stackStatus?.services?.prometheus?.ok ? 'online' : 'offline'}
-                  </strong>
-                </div>
-              </div>
-              <div className="col-md-3">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Loki</div>
-                  <strong style={{ color: stackStatus?.services?.loki?.ok ? colors.success : colors.warning }}>
-                    {stackStatus?.services?.loki?.ok ? 'online' : 'offline'}
-                  </strong>
-                </div>
-              </div>
-              <div className="col-md-3">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Grafana</div>
-                  <strong style={{ color: stackStatus?.services?.grafana?.ok ? colors.success : colors.warning }}>
-                    {stackStatus?.services?.grafana?.ok ? 'online' : 'offline'}
-                  </strong>
-                </div>
-              </div>
-              <div className="col-md-3">
-                <div className="card kpi-card p-2" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                  <div className="small" style={{ color: colors.text.secondary }}>Prom up</div>
-                  <strong style={{ color: colors.text.primary }}>
-                    {Math.round(Number(stackStatus?.prometheus_metrics?.up_sum || 0))}
-                  </strong>
-                </div>
-              </div>
+            <div className="mb-5 grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-3">
+              {stackCards.map((card) => {
+                const tone = gaugeTone(card.percent);
+                return (
+                  <article key={card.label} className={chartCardClass}>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className={sectionTitleClass}>{card.label}</span>
+                      <span className={cn('font-mono tabular-nums whitespace-nowrap text-xs font-medium', tone.text)}>{card.percent}%</span>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between gap-3">
+                      <strong className={cn(metricValueClass, toneClass(card.ok))}>{card.value}</strong>
+                    </div>
+                    <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#0a0e1a]">
+                      <div className={cn('h-full rounded-full bg-gradient-to-r', tone.fill)} style={{ width: `${card.percent}%` }} />
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            <div className="mb-5 flex items-center justify-between rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-3">
+              <span className={sectionTitleClass}>{t('monitoringDashboard.promUp')}</span>
+              <strong className={metricValueClass}>{Math.round(Number(stackStatus?.prometheus_metrics?.up_sum || 0))}</strong>
             </div>
 
             {!!(adguardHistory?.series || []).length && (
-              <div className="row g-3 mb-3">
-                <div className="col-12">
-                  <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                    <div className="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
-                      <h6 className="mb-0" style={{ color: colors.text.primary }}>AdGuard Queries/sec (per source)</h6>
-                      <small style={{ color: colors.text.secondary }}>
-                        Δqueries: {Math.round(adguardHistory?.summary?.queries_delta || 0).toLocaleString()} | QPS: {(adguardHistory?.summary?.queries_per_sec || 0).toFixed(3)}
-                      </small>
+              <div className="mb-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+                <div className="lg:col-span-2">
+                  <div className={chartCardClass}>
+                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                      <h6 className="mb-0 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.adguardQpsTitle')}</h6>
+                      <span className="font-mono tabular-nums whitespace-nowrap text-[11px] text-slate-500">
+                        Î”queries: {Math.round(adguardHistory?.summary?.queries_delta || 0).toLocaleString()} | QPS: {(adguardHistory?.summary?.queries_per_sec || 0).toFixed(3)}
+                      </span>
                     </div>
                     <div style={{ height: 220 }}>
                       <Line data={adguardQpsData} options={chartOptions} />
                     </div>
                   </div>
                 </div>
-                <div className="col-md-6">
-                  <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                    <h6 className="mb-2" style={{ color: colors.text.primary }}>AdGuard Block rate %</h6>
+                <div>
+                  <div className={chartCardClass}>
+                    <h6 className="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.adguardBlockRateTitle')}</h6>
                     <div style={{ height: 220 }}>
                       <Line data={adguardBlockRateData} options={chartOptions} />
                     </div>
                   </div>
                 </div>
-                <div className="col-md-6">
-                  <div className="card p-3" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
-                    <h6 className="mb-2" style={{ color: colors.text.primary }}>AdGuard Latency ms</h6>
+                <div>
+                  <div className={chartCardClass}>
+                    <h6 className="mb-2 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.adguardLatencyTitle')}</h6>
                     <div style={{ height: 220 }}>
                       <Line data={adguardLatencyData} options={chartOptions} />
                     </div>
@@ -1612,191 +1951,244 @@ export const MonitoringDashboard: React.FC = () => {
               </div>
             )}
 
-            <div className="table-responsive mb-3">
-              <table className="table table-sm align-middle mb-0" style={{ color: colors.text.primary }}>
-                <thead>
-                  <tr>
-                    <th>Source</th>
-                    <th>Status</th>
-                    <th>Queries</th>
-                    <th>Blocked</th>
-                    <th>Block %</th>
-                    <th>Latency</th>
-                    <th>Cache %</th>
-                    <th>Errors</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {(adguardOverview?.sources || []).map((s) => (
-                    <tr key={s.source_id}>
-                      <td>{s.source_name}</td>
-                      <td style={{ color: s.available ? colors.success : colors.danger }}>{s.available ? 'online' : 'offline'}</td>
-                      <td>{Math.round(s.queries_total || 0).toLocaleString()}</td>
-                      <td>{Math.round(s.blocked_total || 0).toLocaleString()}</td>
-                      <td>{(s.blocked_rate || 0).toFixed(2)}%</td>
-                      <td>{(s.avg_latency_ms || 0).toFixed(1)} ms</td>
-                      <td>{(s.cache_hit_ratio || 0).toFixed(2)}%</td>
-                      <td>{Math.round(s.upstream_errors || 0).toLocaleString()}</td>
-                    </tr>
-                  ))}
-                  {!(adguardOverview?.sources || []).length && (
-                    <tr>
-                      <td colSpan={8} style={{ color: colors.text.secondary }}>Нет данных AdGuard. Добавьте источник ниже и нажмите «Собрать сейчас».</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <section className="mb-5">
+              <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 lg:block">
+                <div className="min-w-0 overflow-x-auto">
+                  <table className="w-full min-w-[980px] table-fixed border-collapse text-left text-sm">
+                    <thead className="bg-[#0a0e1a] text-[10px] uppercase tracking-wider text-slate-500">
+                      <tr className="border-b border-cyan-500/20">
+                        <th className="px-4 py-3">{t('monitoringDashboard.source')}</th>
+                        <th className="px-4 py-3">{t('common.status')}</th>
+                        <th className="px-4 py-3 text-right">{t('monitoringDashboard.queries')}</th>
+                        <th className="px-4 py-3 text-right">{t('monitoringDashboard.blocked')}</th>
+                        <th className="px-4 py-3 text-right">{t('monitoringDashboard.blockPercent')}</th>
+                        <th className="px-4 py-3 text-right">{t('monitoringDashboard.latency')}</th>
+                        <th className="px-4 py-3 text-right">{t('monitoringDashboard.cachePercent')}</th>
+                        <th className="px-4 py-3 text-right">{t('monitoringDashboard.errors')}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800/50">
+                      {(adguardOverview?.sources || []).map((s) => (
+                        <tr key={s.source_id} className="hover:bg-cyan-400/5">
+                          <td className="px-4 py-3 font-mono whitespace-nowrap text-slate-100">{s.source_name}</td>
+                          <td className={cn('px-4 py-3 font-mono whitespace-nowrap', s.available ? 'text-emerald-300' : 'text-rose-300')}>{s.available ? t('nodes.online') : t('nodes.offline')}</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap">{Math.round(s.queries_total || 0).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap">{Math.round(s.blocked_total || 0).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap">{(s.blocked_rate || 0).toFixed(2)}%</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap">{(s.avg_latency_ms || 0).toFixed(1)} ms</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap">{(s.cache_hit_ratio || 0).toFixed(2)}%</td>
+                          <td className="px-4 py-3 text-right font-mono tabular-nums whitespace-nowrap">{Math.round(s.upstream_errors || 0).toLocaleString()}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+              <div className="grid min-w-0 grid-cols-1 gap-2 lg:hidden">
+                {(adguardOverview?.sources || []).map((s) => (
+                  <article key={s.source_id} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate font-mono text-sm font-medium text-slate-100">{s.source_name}</div>
+                        <div className={cn('mt-1 font-mono text-xs whitespace-nowrap', s.available ? 'text-emerald-300' : 'text-rose-300')}>{s.available ? t('nodes.online') : t('nodes.offline')}</div>
+                      </div>
+                      <div className="text-right font-mono tabular-nums whitespace-nowrap text-xs text-slate-400">{(s.blocked_rate || 0).toFixed(2)}%</div>
+                    </div>
+                    <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
+                      <div className="flex items-center justify-between rounded-md bg-[#0f1420] px-3 py-2"><span className="text-slate-500">{t('monitoringDashboard.queries')}</span><span className={compactMetricClass}>{Math.round(s.queries_total || 0).toLocaleString()}</span></div>
+                      <div className="flex items-center justify-between rounded-md bg-[#0f1420] px-3 py-2"><span className="text-slate-500">{t('monitoringDashboard.blocked')}</span><span className={compactMetricClass}>{Math.round(s.blocked_total || 0).toLocaleString()}</span></div>
+                      <div className="flex items-center justify-between rounded-md bg-[#0f1420] px-3 py-2"><span className="text-slate-500">{t('monitoringDashboard.latency')}</span><span className={compactMetricClass}>{(s.avg_latency_ms || 0).toFixed(1)} ms</span></div>
+                      <div className="flex items-center justify-between rounded-md bg-[#0f1420] px-3 py-2"><span className="text-slate-500">{t('monitoringDashboard.cachePercent')}</span><span className={compactMetricClass}>{(s.cache_hit_ratio || 0).toFixed(2)}%</span></div>
+                    </div>
+                  </article>
+                ))}
+                {!(adguardOverview?.sources || []).length && (
+                  <div className="rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-3 text-sm text-slate-500">{t('monitoringDashboard.noAdguardData')}</div>
+                )}
+              </div>
+            </section>
 
-            <div className="row g-3 mb-2">
-              <div className="col-md-6">
-                <h6 style={{ color: colors.text.primary }}>Top blocked domains</h6>
-                <ul className="list-group">
+            <div className="mb-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className={chartCardClass}>
+                <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.topBlockedDomains')}</h6>
+                <div className="mb-3 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[180px_minmax(0,1fr)_110px]">
+                  <select className={selectClass} value={blockedSourceFilter} onChange={(e) => setBlockedSourceFilter(e.target.value)}>
+                    <option value="all">{t('monitoringDashboard.allSources')}</option>
+                    {(adguardOverview?.sources || []).map((s) => (
+                      <option key={s.source_id} value={String(s.source_id)}>{s.source_name}</option>
+                    ))}
+                  </select>
+                  <input
+                    className={inputClass}
+                    placeholder={t('monitoringDashboard.searchDomainPlaceholder')}
+                    value={blockedSearch}
+                    onChange={(e) => setBlockedSearch(e.target.value)}
+                  />
+                  <select className={selectClass} value={String(blockedShowCount)} onChange={(e) => setBlockedShowCount(Number(e.target.value))}>
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </select>
+                </div>
+                <div className="max-h-[360px] overflow-x-auto rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-2">
+                <ul className="space-y-2">
                   {topBlockedDomains.map((it) => (
-                    <li key={it.name} className="list-group-item d-flex justify-content-between" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}>
-                      <span>{it.name}</span>
-                      <strong>{it.count}</strong>
+                    <li key={it.name} className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-[#0f1420] px-3 py-2">
+                      <span className="truncate font-mono text-sm text-slate-200">{it.name}</span>
+                      <strong className={compactMetricClass}>{it.count}</strong>
                     </li>
                   ))}
                   {!topBlockedDomains.length && (
-                    <li className="list-group-item" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.secondary }}>
-                      Пока нет данных
+                    <li className="rounded-md bg-[#0f1420] px-3 py-2 text-sm text-slate-500">
+                      {t('monitoringDashboard.noDataYet')}
                     </li>
                   )}
                 </ul>
+                </div>
               </div>
-              <div className="col-md-6">
-                <h6 style={{ color: colors.text.primary }}>Top clients</h6>
-                <ul className="list-group">
+              <div className={chartCardClass}>
+                <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.topClients')}</h6>
+                <div className="max-h-[360px] overflow-x-auto rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-2">
+                <ul className="space-y-2">
                   {topClients.map((it) => (
-                    <li key={it.name} className="list-group-item d-flex justify-content-between" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}>
-                      <span>{it.name}</span>
-                      <strong>{it.count}</strong>
+                    <li key={it.name} className="flex min-w-0 items-center justify-between gap-3 rounded-md bg-[#0f1420] px-3 py-2">
+                      <span className="truncate font-mono text-sm text-slate-200">{it.name}</span>
+                      <strong className={compactMetricClass}>{it.count}</strong>
                     </li>
                   ))}
                   {!topClients.length && (
-                    <li className="list-group-item" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.secondary }}>
-                      Пока нет данных
+                    <li className="rounded-md bg-[#0f1420] px-3 py-2 text-sm text-slate-500">
+                      {t('monitoringDashboard.noDataYet')}
                     </li>
                   )}
                 </ul>
+                </div>
               </div>
             </div>
 
-            <hr style={{ borderColor: colors.border }} />
-            <h6 className="mb-2" style={{ color: colors.text.primary }}>Добавить источник AdGuard</h6>
-            <div className="row g-2">
-              <div className="col-md-2">
+            <div className="mb-4 border-t border-cyan-500/20 pt-4">
+            <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">
+              {editingAdguardSourceId === null ? t('monitoringDashboard.addAdguardSource') : t('common.edit')}
+            </h6>
+            <div className="grid min-w-0 grid-cols-1 gap-2 lg:grid-cols-[1fr_1.4fr_1fr_1fr_1fr_auto_auto]">
                 <input
-                  className="form-control form-control-sm"
-                  placeholder="Name"
+                  className={inputClass}
+                  placeholder={t('common.name')}
                   value={adguardForm.name}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, name: e.target.value }))}
-                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
                 />
-              </div>
-              <div className="col-md-3">
                 <input
-                  className="form-control form-control-sm"
-                  placeholder="Admin URL"
+                  className={inputClass}
+                  placeholder={t('monitoringDashboard.adminUrl')}
                   value={adguardForm.admin_url}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, admin_url: e.target.value }))}
-                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
                 />
-              </div>
-              <div className="col-md-2">
                 <input
-                  className="form-control form-control-sm"
-                  placeholder="DNS URL (optional)"
+                  className={inputClass}
+                  placeholder={t('monitoringDashboard.dnsUrlOptional')}
                   value={adguardForm.dns_url}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, dns_url: e.target.value }))}
-                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
                 />
-              </div>
-              <div className="col-md-2">
                 <input
-                  className="form-control form-control-sm"
-                  placeholder="Username"
+                  className={inputClass}
+                  placeholder={t('auth.username')}
                   value={adguardForm.username}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, username: e.target.value }))}
-                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
                 />
-              </div>
-              <div className="col-md-2">
                 <input
-                  className="form-control form-control-sm"
+                  className={inputClass}
                   type="password"
-                  placeholder="Password"
+                  placeholder={t('auth.password')}
                   value={adguardForm.password}
                   onChange={(e) => setAdguardForm((s) => ({ ...s, password: e.target.value }))}
-                  style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border, color: colors.text.primary }}
                 />
-              </div>
-              <div className="col-md-1 d-grid">
+                <label className="inline-flex h-9 items-center gap-2 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 text-xs text-slate-300">
+                  <input
+                    type="checkbox"
+                    checked={adguardForm.enabled}
+                    onChange={(e) => setAdguardForm((s) => ({ ...s, enabled: e.target.checked }))}
+                  />
+                  {t('common.enabled')}
+                </label>
                 <button
-                  className="btn btn-sm"
-                  style={{ backgroundColor: colors.success, borderColor: colors.success, color: colors.successText }}
-                  onClick={async () => {
-                    try {
-                      await api.post('/v1/adguard/sources', adguardForm, { auth: getAuth() });
-                      setAdguardForm({
-                        name: '',
-                        admin_url: '',
-                        dns_url: '',
-                        username: '',
-                        password: '',
-                        verify_tls: true,
-                        enabled: true,
-                      });
-                      await Promise.all([loadAdguardSources(), collectAdguardNow()]);
-                    } catch (err: any) {
-                      setAdguardError(err?.response?.data?.detail || 'Failed to add AdGuard source');
-                    }
-                  }}
+                  className={primaryButtonClass}
+                  onClick={() => void saveAdguardSource()}
+                  disabled={adguardLoading}
                 >
-                  Add
+                  {editingAdguardSourceId === null ? t('common.add') : t('common.save')}
                 </button>
-              </div>
+                {editingAdguardSourceId !== null && (
+                  <button className={secondaryButtonClass} onClick={resetAdguardForm} disabled={adguardLoading}>
+                    {t('common.cancel')}
+                  </button>
+                )}
+            </div>
+            <label className="mt-2 inline-flex items-center gap-2 text-xs text-slate-400">
+              <input
+                type="checkbox"
+                checked={adguardForm.verify_tls}
+                onChange={(e) => setAdguardForm((s) => ({ ...s, verify_tls: e.target.checked }))}
+              />
+              {t('monitoringDashboard.verifyTls', { defaultValue: 'verify TLS' })}
+            </label>
             </div>
             {!!adguardSources.length && (
-              <div className="small mt-2" style={{ color: colors.text.secondary }}>
-                Sources configured: {adguardSources.map((s) => s.name).join(', ')}
+              <div className="space-y-2 text-xs text-slate-500">
+                <div>{t('monitoringDashboard.sourcesConfigured', { sources: adguardSources.map((s) => s.name).join(', ') })}</div>
+                <div className="grid min-w-0 grid-cols-1 gap-2 lg:grid-cols-2">
+                  {adguardSources.map((source) => (
+                    <div key={source.id} className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="truncate font-mono text-xs text-slate-200" title={source.name}>{source.name}</div>
+                        <div className="mt-0.5 truncate font-mono text-[11px] text-slate-500" title={source.admin_url}>{source.admin_url}</div>
+                      </div>
+                      <div className="flex shrink-0 gap-2">
+                        <button className={secondaryButtonClass} type="button" onClick={() => editAdguardSource(source)} disabled={adguardLoading}>
+                          {t('common.edit')}
+                        </button>
+                        <button
+                          className={`${secondaryButtonClass} border-rose-400/30 text-rose-200 hover:border-rose-300/50 hover:text-rose-100`}
+                          type="button"
+                          onClick={() => void deleteAdguardSource(source)}
+                          disabled={adguardLoading}
+                        >
+                          {t('common.delete')}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
-          </div>
-        </div>
+        </section>
 
-        <div className="col-12" style={{ order: 10 }}>
-          <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <h6 style={{ color: colors.text.primary }}>CPU ({selectedNodeName})</h6>
+        <section className={chartCardClass}>
+            <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">CPU <span className="font-mono tabular-nums whitespace-nowrap text-slate-500">({selectedNodeName})</span></h6>
             <div style={{ height: 260 }}>
-              <Line data={cpuData} options={chartOptions} />
+              {loadingHistory && !(isAllScope ? allScopeLabels.length : labels.length) ? renderChartSkeleton() : <Line data={cpuData} options={chartOptions} />}
             </div>
-          </div>
-        </div>
-        <div className="col-12" style={{ order: 20 }}>
-          <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <h6 style={{ color: colors.text.primary }}>Online clients ({selectedNodeName})</h6>
+        </section>
+        <section className={chartCardClass}>
+            <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.onlineClientsChart', { node: selectedNodeName })}</h6>
             <div style={{ height: 260 }}>
-              <Line data={onlineData} options={chartOptions} />
+              {loadingHistory && !(isAllScope ? allScopeLabels.length : labels.length) ? renderChartSkeleton() : <Line data={onlineData} options={chartOptions} />}
             </div>
-          </div>
-        </div>
-        <div className="col-12" style={{ order: 30 }}>
-          <div className="card p-3" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border }}>
-            <h6 style={{ color: colors.text.primary }}>
-              Traffic usage {trafficUnitPerIntervalLabel} ({selectedNodeName}) • {trafficModeLabel} • {trafficSourceLabel} • step {effectiveTrafficStepSec}s • {trafficSmoothingLabel}
+        </section>
+        <section className={chartCardClass}>
+            <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">
+              {t('monitoringDashboard.trafficConsumptionTitle', { label: trafficConsumptionLabel, node: selectedNodeName, mode: trafficModeLabel, source: trafficSourceLabel, step: effectiveTrafficStepSec, smoothing: trafficSmoothingLabel })}
             </h6>
             <div style={{ height: 260 }}>
-              {renderTrafficAsBars ? (
+              {loadingHistory && !trafficData.labels.length ? (
+                renderChartSkeleton()
+              ) : renderTrafficAsBars ? (
                 <Bar data={trafficData} options={trafficChartOptions as any} />
               ) : (
                 <Line data={trafficData} options={trafficChartOptions} />
               )}
             </div>
-          </div>
-        </div>
-
+        </section>
       </div>
     </div>
   );

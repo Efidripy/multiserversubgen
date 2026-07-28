@@ -1,10 +1,14 @@
 // Public Service Worker (sw.js)
-// Place this file in public/sw.js
-
-const CACHE_NAME = 'sub-manager-v1';
+// CACHE_VER is stamped at build time by build-and-publish-frontend.sh
+// so every deploy gets a fresh cache name and stale assets are evicted.
+const CACHE_VER = '__CACHE_VER__';
+const CACHE_NAME = `sub-manager-${CACHE_VER}`;
+const scopeUrl = new URL(self.registration.scope);
+const basePath = scopeUrl.pathname.replace(/\/$/, '');
+const withBase = (path) => `${basePath}${path}`;
 const ASSETS_TO_CACHE = [
-  '/',
-  '/index.html',
+  withBase('/'),
+  withBase('/index.html'),
 ];
 
 // Install: cache critical assets
@@ -40,49 +44,52 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+/**
+ * Returns true when the response content-type matches what the URL implies.
+ * Prevents caching nginx's HTML SPA-fallback when an asset file is temporarily
+ * missing after a deploy (root cause of the white-screen-on-first-visit bug).
+ */
+function isResponseTypeValid(request, response) {
+  const ct = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  const url = request.url.toLowerCase();
+  if (url.includes('.css')) return ct === 'text/css';
+  if (url.includes('.js') || url.includes('.mjs')) {
+    return ct === 'application/javascript' || ct === 'text/javascript';
+  }
+  return true;
+}
+
 // Fetch: network-first strategy for API, cache-first for assets
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
+  const apiPrefix = withBase('/api/');
 
   // Skip non-GET requests
   if (request.method !== 'GET') {
     return;
   }
 
-  // API calls: network first, fallback to nearest stale cache
-  if (url.pathname.startsWith('/api/')) {
+  // Never cache authenticated API responses. Browser Cache Storage is shared
+  // by all tabs under the origin and is not an identity boundary.
+  if (url.pathname.startsWith(apiPrefix)) {
     event.respondWith(
       fetch(request)
-        .then((response) => {
-          // Cache successful API responses
-          if (response.ok) {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => {
-              cache.put(request, clone);
-            });
-          }
-          return response;
-        })
-        .catch(() => {
-          // Return cached response if offline
-          return caches.match(request).then((cachedResponse) => {
-            return cachedResponse || new Response('Offline - no cache available', {
-              status: 503,
-              statusText: 'Service Unavailable',
-            });
-          });
-        })
+        .catch(() => new Response('Offline - API unavailable', {
+          status: 503,
+          statusText: 'Service Unavailable',
+        }))
     );
     return;
   }
 
-  // Static assets: cache first, fallback to network
+  // Static assets: cache-first, but only cache responses whose content-type
+  // actually matches the resource type — never cache an HTML fallback as CSS/JS.
   event.respondWith(
-    caches.match(request).then((response) => {
-      return response || fetch(request).then((networkResponse) => {
-        // Cache new responses
-        if (networkResponse.ok) {
+    caches.match(request).then((cached) => {
+      if (cached) return cached;
+      return fetch(request).then((networkResponse) => {
+        if (networkResponse.ok && isResponseTypeValid(request, networkResponse)) {
           const clone = networkResponse.clone();
           caches.open(CACHE_NAME).then((cache) => {
             cache.put(request, clone);
@@ -90,7 +97,6 @@ self.addEventListener('fetch', (event) => {
         }
         return networkResponse;
       }).catch(() => {
-        // Return a fallback response
         return new Response('Not found', { status: 404 });
       });
     })

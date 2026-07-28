@@ -13,7 +13,7 @@ param(
 
     [string]$HostKey,
 
-    [string]$RemoteDir = "~/multiserversubgen-remote"
+    [string]$RemoteDir = "/opt/multiserversubgen-remote"
 )
 
 $ErrorActionPreference = "Stop"

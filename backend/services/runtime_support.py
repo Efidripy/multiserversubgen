@@ -5,6 +5,8 @@ import json
 import sqlite3
 from typing import Dict
 
+from shared.sql import delete_by_ids_query
+
 
 class RedisJsonCache:
     def __init__(self, *, redis_module, redis_url: str, logger) -> None:
@@ -93,8 +95,10 @@ class AuditQueueRuntime:
                 except Exception:
                     payload = {"event": "audit", "raw": row["payload"]}
                 self.logger.info(json.dumps({"event": "audit_log", "payload": payload}, ensure_ascii=False))
-            placeholders = ",".join("?" * len(ids))
-            conn.execute(f"DELETE FROM audit_events WHERE id IN ({placeholders})", ids)
+            conn.execute(
+                delete_by_ids_query("audit_events", "id", ids),
+                ids,
+            )
             conn.commit()
             return len(ids)
 
