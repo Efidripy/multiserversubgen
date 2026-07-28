@@ -2,6 +2,7 @@
  * Service Worker Registration & Management
  * Handles offline support, asset caching, and background sync
  */
+import { devLog } from '../utils/devLogger';
 
 export interface ServiceWorkerOptions {
   workerPath?: string;
@@ -20,10 +21,13 @@ class ServiceWorkerManager {
       return;
     }
 
-    const workerPath = options.workerPath || '/sw.js';
+    const baseUrl = import.meta.env.BASE_URL || '/';
+    const workerPath = options.workerPath || `${baseUrl.replace(/\/?$/, '/')}sw.js`;
 
     try {
-      this.registration = await navigator.serviceWorker.register(workerPath);
+      this.registration = await navigator.serviceWorker.register(workerPath, {
+        scope: baseUrl,
+      });
 
       // Check for updates periodically
       setInterval(() => {
@@ -35,13 +39,13 @@ class ServiceWorkerManager {
         const newWorker = this.registration!.installing;
         newWorker?.addEventListener('statechange', () => {
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            console.log('[SW] Update available');
+            devLog('[SW] Update available');
             options.onUpdate?.();
           }
         });
       });
 
-      console.log('[SW] Registered successfully');
+      devLog('[SW] Registered successfully');
       options.onReady?.();
     } catch (error) {
       console.error('[SW] Registration failed:', error);
@@ -50,12 +54,12 @@ class ServiceWorkerManager {
     // Monitor online/offline state
     window.addEventListener('online', () => {
       this.isOnline = true;
-      console.log('[SW] Back online');
+      devLog('[SW] Back online');
     });
 
     window.addEventListener('offline', () => {
       this.isOnline = false;
-      console.log('[SW] Offline');
+      devLog('[SW] Offline');
       options.onOffline?.();
     });
   }
@@ -64,6 +68,12 @@ class ServiceWorkerManager {
     if (this.registration) {
       await this.registration.unregister();
       this.registration = null;
+      return;
+    }
+
+    if ('serviceWorker' in navigator && navigator.serviceWorker.getRegistrations) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
     }
   }
 
@@ -185,7 +195,6 @@ self.addEventListener('sync', (event) => {
           });
 
           // Process pending mutations here
-          console.log('[SW] Background sync completed');
         } catch (err) {
           console.error('[SW] Background sync failed:', err);
           throw err;

@@ -47,7 +47,6 @@ try:
         Counter as _PrometheusCounter,
         Gauge as _PrometheusGauge,
         Histogram as _PrometheusHistogram,
-        REGISTRY as _REGISTRY,
     )
     _PROMETHEUS_AVAILABLE = True
 except ImportError:

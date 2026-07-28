@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from typing import Dict, List, Optional
+
+from shared.sql import update_by_id_query
 
 logger = logging.getLogger(__name__)
 
@@ -91,8 +94,8 @@ class NodesService:
         with sqlite3.connect(self._db_path) as conn:
             cur = conn.execute(
                 """
-                INSERT INTO nodes (name, ip, port, user, password, base_path)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO nodes (name, ip, port, user, password, base_path, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     data["name"],
@@ -101,6 +104,7 @@ class NodesService:
                     data["user"],
                     encrypted_password,
                     data.get("base_path", ""),
+                    self._serialize_tags(data.get("tags")),
                 ),
             )
             if data.get("read_only") is not None:
@@ -123,26 +127,35 @@ class NodesService:
         fields = []
         params = []
         if "name" in updates:
-            fields.append("name = ?")
+            fields.append("name")
             params.append(updates["name"])
         if "ip" in updates:
-            fields.append("ip = ?")
+            fields.append("ip")
             params.append(updates["ip"])
         if "port" in updates:
-            fields.append("port = ?")
+            fields.append("port")
             params.append(updates["port"])
         if "user" in updates:
-            fields.append("user = ?")
+            fields.append("user")
             params.append(updates["user"])
         if "password" in updates:
-            fields.append("password = ?")
+            fields.append("password")
             params.append(self._encrypt(updates["password"]))
         if "base_path" in updates:
-            fields.append("base_path = ?")
+            fields.append("base_path")
             params.append(updates["base_path"])
         if "read_only" in updates:
-            fields.append("read_only = ?")
+            fields.append("read_only")
             params.append(1 if bool(updates["read_only"]) else 0)
+        if "api_version" in updates:
+            fields.append("api_version")
+            params.append(updates["api_version"])
+        if "panel_version" in updates:
+            fields.append("panel_version")
+            params.append(updates["panel_version"])
+        if "tags" in updates:
+            fields.append("tags")
+            params.append(self._serialize_tags(updates["tags"]))
 
         if not fields:
             return self.get_node(node_id)
@@ -150,10 +163,30 @@ class NodesService:
         params.append(node_id)
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
-                f"UPDATE nodes SET {', '.join(fields)} WHERE id = ?", params
+                update_by_id_query("nodes", fields),
+                params,
             )
             conn.commit()
         return self.get_node(node_id)
+
+    @staticmethod
+    def _serialize_tags(value) -> str:
+        if value is None or value == "":
+            return "[]"
+        if isinstance(value, list):
+            return json.dumps([str(tag).strip() for tag in value if str(tag).strip()], ensure_ascii=False)
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return "[]"
+            try:
+                parsed = json.loads(stripped)
+                if isinstance(parsed, list):
+                    return json.dumps([str(tag).strip() for tag in parsed if str(tag).strip()], ensure_ascii=False)
+            except json.JSONDecodeError:
+                pass
+            return json.dumps([tag.strip() for tag in stripped.split(",") if tag.strip()], ensure_ascii=False)
+        return "[]"
 
     def delete_node(self, node_id: int) -> bool:
         """Delete a node by *node_id*.

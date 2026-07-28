@@ -2,6 +2,7 @@
  * Performance Monitoring & Analytics
  * Tracks Web Vitals, API latency, and sends metrics to Sentry
  */
+import { devLog } from '../utils/devLogger';
 
 export interface PerformanceMetrics {
   fcp?: number; // First Contentful Paint
@@ -36,7 +37,7 @@ class PerformanceMonitor {
           const fcpEntry = entries[0];
           if (fcpEntry) {
             this.metrics.fcp = fcpEntry.startTime;
-            console.log('[Vitals] FCP:', this.metrics.fcp.toFixed(2), 'ms');
+            devLog('[Vitals] FCP:', this.metrics.fcp.toFixed(2), 'ms');
           }
         });
         fcpObserver.observe({ entryTypes: ['paint'] });
@@ -48,7 +49,7 @@ class PerformanceMonitor {
           if (lcpEntry) {
             this.metrics.lcp = lcpEntry.renderTime || lcpEntry.loadTime;
             if (this.metrics.lcp) {
-              console.log('[Vitals] LCP:', this.metrics.lcp.toFixed(2), 'ms');
+              devLog('[Vitals] LCP:', this.metrics.lcp.toFixed(2), 'ms');
             }
           }
         });
@@ -63,7 +64,7 @@ class PerformanceMonitor {
             }
           }
           this.metrics.cls = clsValue;
-          console.log('[Vitals] CLS:', this.metrics.cls.toFixed(3));
+          devLog('[Vitals] CLS:', this.metrics.cls.toFixed(3));
         });
         clsObserver.observe({ entryTypes: ['layout-shift'] });
       } catch (err) {
@@ -101,7 +102,7 @@ class PerformanceMonitor {
         performance.measure(label, `${label}-start`);
         const measure = performance.getEntriesByName(label)[0];
         duration = measure?.duration || 0;
-        console.log(`[Measure] ${label}: ${duration.toFixed(2)}ms`);
+        devLog(`[Measure] ${label}: ${duration.toFixed(2)}ms`);
       } catch (err) {
         // Fallback if mark not found
         const startTime = this.waterMark.get(label) || Date.now();
@@ -136,7 +137,7 @@ class PerformanceMonitor {
         sampleCount: this.metrics.apiLatency[endpoint]?.length || 0,
       })),
     };
-    console.log('[Metrics Export]', exports);
+    devLog('[Metrics Export]', exports);
     // TODO: Send to Sentry/analytics here
     return exports;
   }

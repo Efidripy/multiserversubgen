@@ -5,7 +5,6 @@ import sys
 import tempfile
 from types import SimpleNamespace
 
-import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.setdefault("PROJECT_DIR", tempfile.gettempdir())

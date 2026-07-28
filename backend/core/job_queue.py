@@ -200,7 +200,7 @@ class JobQueue:
 
     async def _job_loop(self, job: _ScheduledJob) -> None:
         """Run *job* repeatedly according to its interval."""
-        record = self._records.setdefault(job.name, JobRecord(name=job.name))
+        self._records.setdefault(job.name, JobRecord(name=job.name))
         while self._running:
             await asyncio.sleep(job._interval_sec)
             if not self._running:

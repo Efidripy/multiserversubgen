@@ -61,7 +61,7 @@ curl -s -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1:666/health
 Публичная проверка панели:
 
 ```bash
-curl -k -s -o /dev/null -w 'panel=%{http_code}\n' https://<your-domain>/<web-path>/
+curl -fsSL -o /dev/null -w 'panel=%{http_code}\n' https://<your-domain>/<web-path>/
 ```
 
 ### 3) Обновление
@@ -114,7 +114,7 @@ flowchart LR
 ## Практичные заметки для production
 
 - Минимум: Ubuntu 20.04+ (рекомендуется 24.04), root, домен/поддомен.
-- Аутентификация: Basic Auth (рекомендуется HTTPS и ограничения в `nginx`).
+- Аутентификация: защищённая сессия/API-аутентификация для панели и административных API; публичные subscription URLs используют подписанные HMAC-токены и должны обслуживаться только по HTTPS.
 - Для subpath-сценария фронтенд должен быть собран с корректным `VITE_BASE`.
 
 ## Лицензия

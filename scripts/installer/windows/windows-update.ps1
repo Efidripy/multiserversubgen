@@ -16,7 +16,7 @@ param(
     [ValidateRange(1, 5)]
     [int]$UpdateChoice = 1,
 
-    [string]$RemoteDir = "~/multiserversubgen-remote"
+    [string]$RemoteDir = "/opt/multiserversubgen-remote"
 )
 
 $ErrorActionPreference = "Stop"

@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 def build_lifespan(
     *,
     sync_node_history_names_with_nodes,
+    backfill_traffic_history_snapshots=None,
     audit_worker_loop,
     snapshot_collector,
     adguard_collector_loop,
@@ -14,6 +15,8 @@ def build_lifespan(
     @asynccontextmanager
     async def lifespan(app):
         await asyncio_module.to_thread(sync_node_history_names_with_nodes)
+        if backfill_traffic_history_snapshots is not None:
+            await asyncio_module.to_thread(backfill_traffic_history_snapshots)
         state["audit_worker_task"] = asyncio_module.create_task(audit_worker_loop())
         await snapshot_collector.start()
         state["adguard_collector_task"] = asyncio_module.create_task(adguard_collector_loop())

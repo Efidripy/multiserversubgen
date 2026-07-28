@@ -1,25 +1,12 @@
-import requests
-import json
-import base64
-import io
-import zipfile
 import pam
-import datetime
 import os
-import logging
 import asyncio
 from functools import partial
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from threading import Lock, Thread
 from pathlib import Path
-from typing import List, Dict, Optional, Tuple
-from fastapi import FastAPI, Request, HTTPException, Depends
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from urllib.parse import urlparse
 import urllib3
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-import pyotp
 try:
     import redis
 except Exception:
@@ -35,14 +22,10 @@ from core.main_facades import (
 )
 from core.request_middleware import build_request_controls_and_audit_middleware
 from modules.auth.service import AuthService, parse_mfa_users
-from services.adguard_runtime import AdGuardRuntime
-from services.clients_runtime import ClientsRuntime
 from services.db_bootstrap import (
     init_db as bootstrap_db,
     sync_node_history_names_with_nodes as sync_node_history_names_with_nodes_db,
 )
-from services.live_stats_runtime import LiveStatsRuntime
-from services.metrics_runtime import MetricsRuntime
 from services.node_access import get_node_or_404
 from core.app_runtime_bundle import build_app_runtime_bundle
 from core.router_registration import register_app_routers
@@ -52,10 +35,12 @@ from shared.http_config import get_requests_verify_value
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from crypto import encrypt, decrypt
-from xui_session import XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC, login_panel, xui_request
-from utils import parse_field_as_dict
+from xui_session import login_panel, xui_request, seed_node_api_versions
 from websocket_manager import manager as ws_manager, handle_websocket_message
 import services.subscription_links as subscription_links_service
+
+from shared.logging import configure_logging
+configure_logging()
 
 SETTINGS = load_app_settings(parse_mfa_users=parse_mfa_users)
 PROJECT_DIR = SETTINGS.project_dir
@@ -80,6 +65,14 @@ REDIS_URL = SETTINGS.redis_url
 COLLECTOR_BASE_INTERVAL_SEC = SETTINGS.collector_base_interval_sec
 COLLECTOR_MAX_INTERVAL_SEC = SETTINGS.collector_max_interval_sec
 COLLECTOR_MAX_PARALLEL = SETTINGS.collector_max_parallel
+COLLECTOR_WARMING_INTERVAL_1_SEC = SETTINGS.collector_warming_interval_1_sec
+COLLECTOR_WARMING_INTERVAL_2_SEC = SETTINGS.collector_warming_interval_2_sec
+COLLECTOR_WARMING_INTERVAL_3_SEC = SETTINGS.collector_warming_interval_3_sec
+COLLECTOR_ACTIVE_INTERVAL_SEC = SETTINGS.collector_active_interval_sec
+COLLECTOR_IDLE_INTERVAL_SEC = SETTINGS.collector_idle_interval_sec
+COLLECTOR_ULTRA_IDLE_INTERVAL_SEC = SETTINGS.collector_ultra_idle_interval_sec
+COLLECTOR_IDLE_AFTER_SEC = SETTINGS.collector_idle_after_sec
+COLLECTOR_ULTRA_IDLE_AFTER_SEC = SETTINGS.collector_ultra_idle_after_sec
 NODE_HISTORY_ENABLED = SETTINGS.node_history_enabled
 NODE_HISTORY_MIN_INTERVAL_SEC = SETTINGS.node_history_min_interval_sec
 NODE_HISTORY_RETENTION_DAYS = SETTINGS.node_history_retention_days
@@ -88,9 +81,12 @@ AUDIT_IDLE_SLEEP_SEC = SETTINGS.audit_idle_sleep_sec
 AUDIT_ACTIVE_SLEEP_SEC = SETTINGS.audit_active_sleep_sec
 ROLE_VIEWERS = SETTINGS.role_viewers
 ROLE_OPERATORS = SETTINGS.role_operators
+ROLE_ADMINS = SETTINGS.role_admins
 MFA_TOTP_ENABLED = SETTINGS.mfa_totp_enabled
 MFA_TOTP_USERS = SETTINGS.mfa_totp_users
 MFA_TOTP_WS_STRICT = SETTINGS.mfa_totp_ws_strict
+WS_AUTH_SECRET = SETTINGS.ws_auth_secret
+SUBSCRIPTION_SIGNING_SECRET = SETTINGS.subscription_signing_secret
 ADGUARD_COLLECT_INTERVAL_SEC = SETTINGS.adguard_collect_interval_sec
 PROMETHEUS_URL = SETTINGS.prometheus_url
 LOKI_URL = SETTINGS.loki_url
@@ -106,6 +102,8 @@ if REQUESTS_VERIFY is False:
 auth_service = AuthService(
     role_viewers=ROLE_VIEWERS,
     role_operators=ROLE_OPERATORS,
+    role_admins=ROLE_ADMINS,
+    ws_auth_secret=WS_AUTH_SECRET,
     mfa_totp_enabled=MFA_TOTP_ENABLED,
     mfa_totp_users=MFA_TOTP_USERS,
 )
@@ -158,6 +156,20 @@ node_metric_labels_state = runtime_state.node_metric_labels_state
 node_metric_labels_lock = runtime_state.node_metric_labels_lock
 
 metrics_runtime = None
+live_stats_runtime = None
+
+
+def _on_snapshot(snapshot: dict) -> None:
+    _record_node_snapshot(snapshot)
+    _persist_node_version(snapshot)
+    if live_stats_runtime is None:
+        return
+    try:
+        live_stats_runtime.ensure_current_period_snapshots(node_service.list_nodes())
+    except Exception as exc:
+        logger.warning("Traffic snapshot auto-seed failed: %s", exc)
+
+
 bundle = build_app_runtime_bundle(
     db_path=DB_PATH,
     decrypt=decrypt,
@@ -166,6 +178,14 @@ bundle = build_app_runtime_bundle(
     collector_base_interval_sec=COLLECTOR_BASE_INTERVAL_SEC,
     collector_max_interval_sec=COLLECTOR_MAX_INTERVAL_SEC,
     collector_max_parallel=COLLECTOR_MAX_PARALLEL,
+    collector_warming_interval_1_sec=COLLECTOR_WARMING_INTERVAL_1_SEC,
+    collector_warming_interval_2_sec=COLLECTOR_WARMING_INTERVAL_2_SEC,
+    collector_warming_interval_3_sec=COLLECTOR_WARMING_INTERVAL_3_SEC,
+    collector_active_interval_sec=COLLECTOR_ACTIVE_INTERVAL_SEC,
+    collector_idle_interval_sec=COLLECTOR_IDLE_INTERVAL_SEC,
+    collector_ultra_idle_interval_sec=COLLECTOR_ULTRA_IDLE_INTERVAL_SEC,
+    collector_idle_after_sec=COLLECTOR_IDLE_AFTER_SEC,
+    collector_ultra_idle_after_sec=COLLECTOR_ULTRA_IDLE_AFTER_SEC,
     audit_queue_batch_size=AUDIT_QUEUE_BATCH_SIZE,
     audit_idle_sleep_sec=AUDIT_IDLE_SLEEP_SEC,
     audit_active_sleep_sec=AUDIT_ACTIVE_SLEEP_SEC,
@@ -186,6 +206,7 @@ bundle = build_app_runtime_bundle(
     traffic_stats_cache=traffic_stats_cache,
     online_clients_cache=online_clients_cache,
     clients_cache=clients_cache,
+    inbounds_cache=runtime_state.inbounds_cache,
     cache_refresh_state=cache_refresh_state,
     cache_refresh_lock=cache_refresh_lock,
     traffic_stats_cache_ttl=TRAFFIC_STATS_CACHE_TTL,
@@ -205,7 +226,7 @@ bundle = build_app_runtime_bundle(
     adguard_latest=adguard_latest,
     adguard_latest_lock=adguard_latest_lock,
     ws_manager=ws_manager,
-    on_snapshot=lambda snapshot: _record_node_snapshot(snapshot),
+    on_snapshot=_on_snapshot,
 )
 inbound_mgr = bundle.inbound_mgr
 client_mgr = bundle.client_mgr
@@ -224,6 +245,7 @@ request_runtime = bundle.request_runtime
 redis_json_cache = bundle.redis_json_cache
 live_stats_runtime = bundle.live_stats_runtime
 clients_runtime = bundle.clients_runtime
+inbounds_runtime = bundle.inbounds_runtime
 metrics_runtime = bundle.metrics_runtime
 
 HTTP_REQUEST_COUNT = metrics.http_request_count
@@ -243,13 +265,27 @@ HTTP_REQUEST_LATENCY = metrics.http_request_latency
 )
 
 bootstrap_db(DB_PATH)
+seed_node_api_versions(node_service.list_nodes())
+
+
+def _persist_node_version(snapshot: dict) -> None:
+    node_id = snapshot.get("node_id")
+    api_version = snapshot.get("api_version") or ""
+    panel_version = snapshot.get("panel_version") or ""
+    if not node_id or not api_version or not snapshot.get("available"):
+        return
+    node = node_service.get_node(node_id)
+    if node and (node.get("api_version") != api_version or node.get("panel_version") != panel_version):
+        node_service.update_node(node_id, {"api_version": api_version, "panel_version": panel_version})
+        logger.info("Node %s version updated: api=%s panel=%s", node.get("name"), api_version, panel_version)
+
 
 collect_adguard_once = adguard_runtime.collect_once
 adguard_collector_loop = adguard_runtime.collector_loop
 
 (
-    get_user_role,
-    has_min_role,
+    _facade_get_user_role,
+    _facade_has_min_role,
     check_basic_auth_header,
     verify_totp_code,
     extract_basic_auth_username,
@@ -271,15 +307,16 @@ adguard_collector_loop = adguard_runtime.collector_loop
 def _sync_auth_service_roles() -> None:
     auth_service.role_viewers = ROLE_VIEWERS
     auth_service.role_operators = ROLE_OPERATORS
+    auth_service.role_admins = ROLE_ADMINS
 
 
 def get_user_role(username: str) -> str:
     _sync_auth_service_roles()
-    return auth_service.get_user_role(username)
+    return _facade_get_user_role(username)
 
 
 def has_min_role(user_role: str, min_role: str) -> bool:
-    return auth_service.has_min_role(user_role, min_role)
+    return _facade_has_min_role(user_role, min_role)
 
 (
     invalidate_live_stats_cache,
@@ -301,7 +338,7 @@ def has_min_role(user_role: str, min_role: str) -> bool:
     get_emails,
     get_links,
     get_links_filtered,
-) = build_subscription_links_facade(subscription_links_service=subscription_links_service)
+) = build_subscription_links_facade(subscription_links_service=subscription_links_service, db_path=DB_PATH)
 
 
 app.middleware("http")(
@@ -319,6 +356,7 @@ app.middleware("http")(
         get_client_ip=_get_client_ip,
         extract_basic_auth_username=extract_basic_auth_username,
         enqueue_audit_event=enqueue_audit_event,
+        allowed_origins=ALLOW_ORIGINS,
     )
 )
 
@@ -331,6 +369,8 @@ register_app_routers(
     check_auth=check_auth,
     verify_totp_code=verify_totp_code,
     get_user_role=get_user_role,
+    issue_ws_ticket=auth_service.issue_ws_ticket,
+    verify_ws_ticket=auth_service.verify_ws_ticket,
     mfa_totp_enabled=MFA_TOTP_ENABLED,
     monitoring_enabled=MONITORING_ENABLED,
     get_node_or_404=partial(get_node_or_404, node_service),
@@ -355,9 +395,11 @@ register_app_routers(
     invalidate_live_stats_cache=invalidate_live_stats_cache,
     client_mgr=client_mgr,
     get_cached_clients=get_cached_clients,
+    get_cached_inbounds=inbounds_runtime.get_cached_inbounds,
     check_subscription_rate_limit=_check_subscription_rate_limit,
     get_emails=get_emails,
     get_links_filtered=get_links_filtered,
+    subscription_signing_secret=SUBSCRIPTION_SIGNING_SECRET,
     verify_tls_default=VERIFY_TLS,
     list_adguard_sources=adguard_runtime.list_sources,
     collect_adguard_once=collect_adguard_once,
@@ -385,6 +427,7 @@ register_app_routers(
 )
 app.router.lifespan_context = build_lifespan(
     sync_node_history_names_with_nodes=sync_node_history_names_with_nodes,
+    backfill_traffic_history_snapshots=live_stats_runtime.backfill_node_history_snapshots,
     audit_worker_loop=audit_worker_loop,
     snapshot_collector=snapshot_collector,
     adguard_collector_loop=adguard_collector_loop,

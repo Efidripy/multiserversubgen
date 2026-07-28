@@ -20,6 +20,7 @@ import logging
 import time
 from threading import Lock
 from typing import Any, Dict, List, Optional, Tuple
+from shared.security import redact_url
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +184,7 @@ def create_cache(redis_url: str = "", **kwargs: Any) -> CacheBase:
             import redis  # type: ignore[import-untyped]
             client = redis.from_url(redis_url)
             client.ping()
-            logger.info("Cache: using Redis at %s", redis_url)
+            logger.info("Cache: using Redis at %s", redact_url(redis_url))
             return RedisCache(client, **kwargs)
         except Exception as exc:
             logger.warning(

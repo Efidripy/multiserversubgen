@@ -15,7 +15,7 @@ param(
 
     [string]$AnswersFile = ".\scripts\installer\windows\install-answers.example.txt",
 
-    [string]$RemoteDir = "~/multiserversubgen-remote"
+    [string]$RemoteDir = "/opt/multiserversubgen-remote"
 )
 
 $ErrorActionPreference = "Stop"

@@ -51,24 +51,31 @@ def encrypt_password(password: str, fernet: Fernet) -> str:
 
 
 def decrypt_password(encrypted_password: str, fernet: Fernet) -> str:
-    """Расшифровать пароль"""
+    """Расшифровать пароль.
+
+    Raises:
+        ValueError: если строка не является корректным зашифрованным значением.
+    """
     if not encrypted_password:
         return ""
     try:
         encrypted = base64.urlsafe_b64decode(encrypted_password.encode())
         return fernet.decrypt(encrypted).decode()
-    except (InvalidToken, ValueError):
-        # Если не удается расшифровать, возможно это не зашифрованный пароль (старый формат)
-        # В этом случае возвращаем как есть (для миграции)
-        return encrypted_password
+    except (InvalidToken, ValueError) as exc:
+        raise ValueError(
+            "Failed to decrypt value — encryption key may have changed or value is corrupt"
+        ) from exc
 
 
 def is_encrypted(value: str) -> bool:
-    """Проверить, является ли значение зашифрованным"""
+    """Проверить, является ли значение Fernet-зашифрованным токеном."""
+    if not value:
+        return False
     try:
-        base64.urlsafe_b64decode(value.encode())
-        return True
-    except:
+        raw = base64.urlsafe_b64decode(value.encode())
+        # Fernet-токены начинаются с версии 0x80
+        return len(raw) > 0 and raw[0] == 0x80
+    except Exception:
         return False
 
 

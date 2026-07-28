@@ -27,6 +27,7 @@ export const useWebSocket = ({
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
+  const isMountedRef = useRef(true);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const channelsRef = useRef<string[]>(channels);
   const onMessageRef = useRef<typeof onMessage>(onMessage);
@@ -75,16 +76,20 @@ export const useWebSocket = ({
       const auth = getAuth();
       const wsPath = `${basePath}/ws`;
       let wsUrl = url || `${protocol}//${host}${wsPath}`;
-      if (!url && auth.username && auth.password) {
-        const token = btoa(`${auth.username}:${auth.password}`);
-        const params = new URLSearchParams({ token });
-        if (auth.totpCode) {
-          params.set('totp', auth.totpCode);
-        }
-        wsUrl += `?${params.toString()}`;
+
+      const allowInsecureWs = import.meta.env.VITE_ALLOW_INSECURE_WS === 'true';
+      if (protocol === 'ws:' && !allowInsecureWs && !['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)) {
+        console.error('Refusing insecure WebSocket outside local development. Configure HTTPS/WSS.');
+        reconnectBlockedRef.current = true;
+        return;
+      }
+      if (!auth.wsTicket) {
+        console.warn('WebSocket ticket is missing; waiting for authenticated session.');
+        reconnectBlockedRef.current = true;
+        return;
       }
 
-      wsRef.current = new WebSocket(wsUrl);
+      wsRef.current = new WebSocket(wsUrl, [`mssg-ticket.${auth.wsTicket}`]);
 
       wsRef.current.onopen = () => {
         setIsConnected(true);
@@ -167,12 +172,12 @@ export const useWebSocket = ({
         }
 
         // Attempt to reconnect
-        if (enabled) {
+        if (enabled && isMountedRef.current) {
           reconnectAttemptsRef.current += 1;
           const backoff = Math.min(30000, reconnectInterval * (2 ** Math.min(reconnectAttemptsRef.current, 5)));
           const jitter = Math.floor(Math.random() * 500);
           reconnectTimeoutRef.current = setTimeout(() => {
-            connect();
+            if (isMountedRef.current) connect();
           }, backoff + jitter);
         }
       };
@@ -221,11 +226,13 @@ export const useWebSocket = ({
   }, [isConnected, safeSend]);
 
   useEffect(() => {
+    isMountedRef.current = true;
     if (enabled) {
       connect();
     }
 
     return () => {
+      isMountedRef.current = false;
       disconnect();
     };
   }, [enabled, connect, disconnect]);
