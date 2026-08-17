@@ -25,6 +25,9 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'staged runtime database backup integrity check failed' in script
     assert 'install -m 0600 "$PROJECT_DIR/.encryption_key" "$STAGE_DIR/.encryption_key"' in script
     assert 'FRONTEND_NODE_OPTIONS="${FRONTEND_NODE_OPTIONS:---max-old-space-size=512}"' in script
+    assert 'wait_for_health()' in script
+    assert 'for attempt in {1..30}; do' in script
+    assert 'health check did not become ready within 30 seconds' in script
     frontend_build = (REPO / "scripts/deploy/build-and-publish-frontend.sh").read_text(encoding="utf-8")
     assert 'export NODE_OPTIONS="$FRONTEND_NODE_OPTIONS"' in frontend_build
     assert "umask 077" in script
