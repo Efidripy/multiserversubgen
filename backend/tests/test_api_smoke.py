@@ -707,6 +707,8 @@ def test_clients_search_with_auth(monkeypatch):
     """GET /clients/search returns paginated results."""
     monkeypatch.setenv("SM_API_USER", "admin")
     monkeypatch.setenv("SM_API_PASS", "secret")
+    main.auth_cache.clear()
+    monkeypatch.setattr(main.p, "authenticate", lambda u, p: u == "admin" and p == "secret")
     client = TestClient(_build_test_app(monitoring_enabled=False))
     resp = client.get("/api/v1/clients/search?q=test&limit=10&offset=0", auth=("admin", "secret"))
     assert resp.status_code == 200

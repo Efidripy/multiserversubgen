@@ -1,7 +1,10 @@
 # Multi-Server Manager API Documentation v3.1
 
 ## Аутентификация
-Все API endpoints требуют Basic Auth (PAM авторизация).
+Защищённые management endpoints требуют Basic Auth (PAM авторизация).
+Исключения: health (`/health`, `/api/v1/health`), MFA status
+(`/api/v1/auth/mfa-status`) и subscription delivery endpoints. Последние
+принимают только краткоживущий HMAC-signed token, а не raw email или group id.
 
 ```bash
 Authorization: Basic base64(username:password)
@@ -412,9 +415,26 @@ Authorization: Basic base64(username:password)
 }
 ```
 
-### `GET /api/v1/sub/{email}`
-Получить подписку для email'а (без авторизации, base64 encoded)
+`GET /api/v1/emails` is a protected management endpoint. Its
+`subscription_tokens` map is the only supported way to obtain an email token.
+Do not expose or construct subscription links from a raw email address.
 
+### `GET /api/v1/sub/{token}`
+
+Public subscription delivery endpoint. The token is short-lived and HMAC-signed;
+an invalid or expired token deliberately receives `404`. Optional `protocol`
+and `nodes` filters apply before the base64-encoded response is returned.
+Requests are rate-limited and include no-cache headers.
+
+### `GET /api/v1/sub-grouped/{token}`
+
+Public grouped-subscription delivery endpoint. Its token is returned only by the
+protected `GET /api/v1/subscription-groups` management endpoint.
+
+### `/api/v1/subscription-groups`
+
+`GET`, `POST`, `PUT /{group_id}` and `DELETE /{group_id}` require Basic Auth.
+The `GET` response includes each group's signed `subscription_token`.
 ---
 
 ## Коды ошибок

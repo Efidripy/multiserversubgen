@@ -167,6 +167,8 @@ main() {
     systemctl stop "$PROJECT_NAME" >/dev/null 2>&1 || true
     systemctl disable "$PROJECT_NAME" >/dev/null 2>&1 || true
     rm -f "/etc/systemd/system/${PROJECT_NAME}.service"
+    rm -f "/etc/${PROJECT_NAME}/runtime-secrets.env"
+    rmdir "/etc/${PROJECT_NAME}" 2>/dev/null || true
     systemctl daemon-reload
 
     backup_databases_if_requested

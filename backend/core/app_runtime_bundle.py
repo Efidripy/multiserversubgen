@@ -62,6 +62,7 @@ def build_app_runtime_bundle(
     collector_idle_after_sec: int,
     collector_ultra_idle_after_sec: int,
     audit_queue_batch_size: int,
+    audit_memory_queue_max_size: int,
     audit_idle_sleep_sec: float,
     audit_active_sleep_sec: float,
     auth_cache: Dict,
@@ -78,6 +79,9 @@ def build_app_runtime_bundle(
     pam_client,
     redis_module,
     redis_url: str | None,
+    redis_socket_connect_timeout_sec: float,
+    redis_socket_timeout_sec: float,
+    redis_failure_cooldown_sec: float,
     traffic_stats_cache: Dict,
     online_clients_cache: Dict,
     clients_cache: Dict,
@@ -140,6 +144,7 @@ def build_app_runtime_bundle(
     audit_runtime = AuditQueueRuntime(
         db_path=db_path,
         batch_size=audit_queue_batch_size,
+        memory_queue_max_size=audit_memory_queue_max_size,
         idle_sleep_sec=audit_idle_sleep_sec,
         active_sleep_sec=audit_active_sleep_sec,
         logger=logger,
@@ -182,6 +187,9 @@ def build_app_runtime_bundle(
         redis_module=redis_module,
         redis_url=redis_url,
         logger=logger,
+        socket_connect_timeout_sec=redis_socket_connect_timeout_sec,
+        socket_timeout_sec=redis_socket_timeout_sec,
+        failure_cooldown_sec=redis_failure_cooldown_sec,
     )
 
     live_stats_runtime = LiveStatsRuntime(

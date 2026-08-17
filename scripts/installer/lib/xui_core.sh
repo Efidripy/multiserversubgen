@@ -2,6 +2,7 @@
 set -euo pipefail
 
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/locale.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/artifact_manifest.sh"
 
 xui_arch() {
     case "$(uname -m)" in
@@ -30,17 +31,7 @@ PY
 }
 
 xui_pick_release_tag() {
-    if [ -n "${XUI_VERSION:-}" ]; then
-        printf "%s" "${XUI_VERSION}"
-        return 0
-    fi
-
-    local tag
-    tag="$(curl -fsSL https://api.github.com/repos/MHSanaei/3x-ui/releases/latest 2>/dev/null | python3 -c "import json,sys; print(json.load(sys.stdin).get('tag_name',''))" 2>/dev/null || true)"
-    if [ -z "$tag" ]; then
-        tag="v2.6.6"
-    fi
-    printf "%s" "$tag"
+    printf "%s" "$ARTIFACT_XUI_VERSION"
 }
 
 xui_download_release() {
@@ -51,23 +42,8 @@ xui_download_release() {
     arch="$(xui_arch)" || return 1
     local asset="x-ui-linux-${arch}.tar.gz"
     curl -fsSL "https://github.com/MHSanaei/3x-ui/releases/download/${tag}/${asset}" -o "$target_archive"
-    local digest="${XUI_SHA256:-}"
-    if [ -z "$digest" ]; then
-        digest="$(python3 - "$asset" "$tag" <<'PY'
-import json, sys, urllib.request
-asset = sys.argv[1]
-tag = sys.argv[2]
-with urllib.request.urlopen(f"https://api.github.com/repos/MHSanaei/3x-ui/releases/tags/{tag}", timeout=20) as response:
-    payload = json.load(response)
-for item in payload.get("assets", []):
-    if item.get("name") == asset and item.get("digest", "").startswith("sha256:"):
-        print(item["digest"].split(":", 1)[1])
-        break
-PY
-        )"
-    fi
-    [ -n "$digest" ] && printf '%s  %s\n' "$digest" "$target_archive" | sha256sum -c - >/dev/null 2>&1 || {
-        echo "XUI archive digest verification failed; set XUI_SHA256 to the expected SHA-256." >&2
+    [[ "$tag" == "$ARTIFACT_XUI_VERSION" ]] && artifact_verify_file XUI "$arch" "$target_archive" || {
+        echo "XUI archive digest verification failed." >&2
         return 1
     }
 }
@@ -395,7 +371,8 @@ xui_collect_summary() {
 }
 
 xui_install_sub2sing_box() {
-    local version="${SUB2SING_BOX_VERSION:-0.0.9}"
+    local version="${SUB2SING_BOX_VERSION:-$ARTIFACT_SUB2SING_VERSION}"
+    [[ "$version" == "$ARTIFACT_SUB2SING_VERSION" ]] || { echo "Unsupported sub2sing-box version." >&2; return 1; }
     local arch
     local asset_name
     local asset_url
@@ -422,23 +399,8 @@ xui_install_sub2sing_box() {
 
     sudo apt-get install -y -q tar >/dev/null
     curl -fsSL "$asset_url" -o "$archive"
-    local digest="${SUB2SING_BOX_SHA256:-}"
-    if [ -z "$digest" ]; then
-        digest="$(python3 - "$asset_name" "$version" <<'PY'
-import json, sys, urllib.request
-asset = sys.argv[1]
-version = sys.argv[2]
-with urllib.request.urlopen(f"https://api.github.com/repos/legiz-ru/sub2sing-box/releases/tags/v{version}", timeout=20) as response:
-    payload = json.load(response)
-for item in payload.get("assets", []):
-    if item.get("name") == asset and item.get("digest", "").startswith("sha256:"):
-        print(item["digest"].split(":", 1)[1])
-        break
-PY
-        )"
-    fi
-    [ -n "$digest" ] && printf '%s  %s\n' "$digest" "$archive" | sha256sum -c - >/dev/null 2>&1 || {
-        echo "sub2sing-box archive digest verification failed; set SUB2SING_BOX_SHA256 to the expected SHA-256." >&2
+    artifact_verify_file SUB2SING "$arch" "$archive" || {
+        echo "sub2sing-box archive digest verification failed." >&2
         rm -rf "$workdir"
         return 1
     }

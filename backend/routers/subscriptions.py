@@ -114,8 +114,11 @@ def build_subscriptions_router(
         )
         conn.commit()
 
+    # These handlers intentionally remain synchronous: FastAPI runs sync route
+    # functions in its worker thread pool, keeping SQLite and panel I/O out of
+    # the event loop as one coherent transaction boundary.
     @router.get("/api/v1/emails")
-    async def list_emails(request: Request):
+    def list_emails(request: Request):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -139,7 +142,7 @@ def build_subscriptions_router(
         )
 
     @router.get("/api/v1/sub/{email}")
-    async def get_sub(request: Request, email: str, protocol: Optional[str] = None, nodes: Optional[str] = None):
+    def get_sub(request: Request, email: str, protocol: Optional[str] = None, nodes: Optional[str] = None):
         resolved_email = _verify_subscription_token(email, "email")
         if not resolved_email:
             return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
@@ -178,7 +181,7 @@ def build_subscriptions_router(
         return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
 
     @router.get("/api/v1/sub-grouped/{identifier}")
-    async def get_sub_grouped(
+    def get_sub_grouped(
         request: Request,
         identifier: str,
         protocol: Optional[str] = None,
@@ -260,7 +263,7 @@ def build_subscriptions_router(
         return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
 
     @router.get("/api/v1/subscription-groups")
-    async def list_subscription_groups(request: Request):
+    def list_subscription_groups(request: Request):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -281,7 +284,7 @@ def build_subscriptions_router(
         return {"groups": groups, "count": len(groups)}
 
     @router.post("/api/v1/subscription-groups")
-    async def create_subscription_group(request: Request, data: Dict):
+    def create_subscription_group(request: Request, data: Dict):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -317,7 +320,7 @@ def build_subscriptions_router(
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.put("/api/v1/subscription-groups/{group_id}")
-    async def update_subscription_group(request: Request, group_id: int, data: Dict):
+    def update_subscription_group(request: Request, group_id: int, data: Dict):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -365,7 +368,7 @@ def build_subscriptions_router(
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.delete("/api/v1/subscription-groups/{group_id}")
-    async def delete_subscription_group(request: Request, group_id: int):
+    def delete_subscription_group(request: Request, group_id: int):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")

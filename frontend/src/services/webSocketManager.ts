@@ -23,6 +23,8 @@ class WebSocketManager {
   private reconnectDelay = 1000;
   private reconnectMaxDelay = 30000;
   private isConnecting = false;
+  private reconnectTimer: number | null = null;
+  private closedByOwner = false;
   private handlers: Map<string, Set<WebSocketMessageHandler>> = new Map();
   private messageQueue: any[] = [];
 
@@ -36,6 +38,11 @@ class WebSocketManager {
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
+      this.closedByOwner = false;
+      if (this.reconnectTimer !== null) {
+        window.clearTimeout(this.reconnectTimer);
+        this.reconnectTimer = null;
+      }
       if (this.isConnecting || (this.ws && this.ws.readyState === WebSocket.OPEN)) {
         resolve();
         return;
@@ -94,7 +101,7 @@ class WebSocketManager {
           devLog('[WebSocket] Disconnected');
           this.isConnecting = false;
           this.ws = null;
-          if (event.code === 1008) {
+          if (event.code === 1008 || this.closedByOwner) {
             return;
           }
           this.attemptReconnect();
@@ -107,8 +114,11 @@ class WebSocketManager {
   }
 
   private attemptReconnect() {
+    if (this.closedByOwner || this.reconnectTimer !== null) return;
     const delay = Math.min(this.reconnectDelay, this.reconnectMaxDelay);
-    setTimeout(() => {
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.closedByOwner) return;
       this.reconnectDelay = Math.min(this.reconnectDelay * 1.5, this.reconnectMaxDelay);
       this.connect().catch(() => {
         // Silently fail and retry
@@ -117,6 +127,7 @@ class WebSocketManager {
   }
 
   send(message: any) {
+    if (this.closedByOwner) return;
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       this.messageQueue.push(message);
       if (!this.isConnecting) {
@@ -158,6 +169,14 @@ class WebSocketManager {
         console.error('[WebSocket] Handler error for event:', type, err);
       }
     });
+    const allHandlers = this.handlers.get('*') || new Set();
+    allHandlers.forEach((handler) => {
+      try {
+        handler(message);
+      } catch (err) {
+        console.error('[WebSocket] Generic handler error:', err);
+      }
+    });
   }
 
   isConnected(): boolean {
@@ -165,6 +184,12 @@ class WebSocketManager {
   }
 
   close() {
+    this.closedByOwner = true;
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.messageQueue = [];
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -173,6 +198,35 @@ class WebSocketManager {
 }
 
 export const wsManager = new WebSocketManager();
+
+export interface WebSocketMessagesOptions {
+  channels?: string[];
+  enabled: boolean;
+  onMessage: (message: any) => void;
+}
+
+export function useWebSocketMessages({ channels = [], enabled, onMessage }: WebSocketMessagesOptions) {
+  const onMessageRef = React.useRef(onMessage);
+  onMessageRef.current = onMessage;
+  const channelsKey = channels.slice().sort().join(',');
+
+  React.useEffect(() => {
+    if (!enabled) return undefined;
+    let cancelled = false;
+    const handler = (message: any) => onMessageRef.current(message);
+    const unsubscribe = wsManager.subscribe('*', handler);
+    wsManager.connect().then(() => {
+      if (cancelled) return;
+      channels.forEach((channel) => wsManager.send({ type: 'subscribe', channel }));
+    }).catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      channels.forEach((channel) => wsManager.send({ type: 'unsubscribe', channel }));
+    };
+  }, [enabled, channelsKey]);
+}
 
 /**
  * Hook to use WebSocket subscriptions
@@ -203,4 +257,3 @@ export function useWebSocketSubscription<T>(event: string, onMessage: (data: T) 
 
   return isConnected;
 }
-

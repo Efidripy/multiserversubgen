@@ -15,13 +15,21 @@ Usage::
 from __future__ import annotations
 
 import os
-import secrets
 from dataclasses import dataclass, field
 from typing import List, Optional, Set
 
 
 def _bool(val: str) -> bool:
     return val.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _persistent_secret(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    if _bool(os.getenv("REQUIRE_PERSISTENT_SECRETS", "false")):
+        raise RuntimeError(f"{name} must be provisioned before starting the service")
+    return os.urandom(32).hex()
 
 
 def _parse_user_set(raw: str) -> Set[str]:
@@ -169,7 +177,7 @@ class Settings:
         default_factory=lambda: _bool(os.getenv("MFA_TOTP_WS_STRICT", "true"))
     )
     ws_auth_secret: str = field(
-        default_factory=lambda: os.getenv("WS_AUTH_SECRET", "").strip() or secrets.token_urlsafe(32)
+        default_factory=lambda: _persistent_secret("WS_AUTH_SECRET")
     )
 
     # ------------------------------------------------------------------
