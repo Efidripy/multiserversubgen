@@ -38,7 +38,7 @@ if [[ "$PYTHON_BIN" == *.exe && -n "$(command -v wslpath 2>/dev/null)" ]]; then
   done
 fi
 
-"$PYTHON_BIN" -m pip install -r "$REQ_FILE"
+"$PYTHON_BIN" -m pip install --require-hashes -r "$REQ_FILE"
 "$PYTHON_BIN" -m pytest \
   "${TEST_FILES[@]}" \
   -q

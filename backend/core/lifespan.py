@@ -6,6 +6,7 @@ def build_lifespan(
     sync_node_history_names_with_nodes,
     backfill_traffic_history_snapshots=None,
     audit_worker_loop,
+    audit_flush=None,
     snapshot_collector,
     adguard_collector_loop,
     asyncio_module,
@@ -30,6 +31,8 @@ def build_lifespan(
                 except asyncio_module.CancelledError:
                     pass
                 state["audit_worker_task"] = None
+            if audit_flush is not None:
+                await asyncio_module.to_thread(audit_flush)
             if state["adguard_collector_task"]:
                 state["adguard_collector_task"].cancel()
                 try:

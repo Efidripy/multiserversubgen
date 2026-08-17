@@ -7,9 +7,10 @@ from urllib.parse import urlparse
 
 import requests
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
 
-from xui_session import invalidate_auth_method_cache
+from xui_session import invalidate_auth_method_cache, invalidate_session_cache, make_node_key
 from shared.security import redact_url, validate_outbound_url
 
 
@@ -61,7 +62,7 @@ def build_nodes_router(
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
 
-        nodes = node_service.list_nodes()
+        nodes = await run_in_threadpool(node_service.list_nodes)
         result = []
         for node_dict in nodes:
             node_dict.pop("password", None)
@@ -75,12 +76,14 @@ def build_nodes_router(
             raise HTTPException(status_code=401, detail="Unauthorized")
 
         return ORJSONResponse(
-            content=node_service.list_nodes_simple(),
+            content=await run_in_threadpool(node_service.list_nodes_simple),
             headers={"Cache-Control": "private, max-age=300"},
         )
 
+    # These CRUD handlers perform SQLite work only. Keeping them sync lets
+    # FastAPI run the complete transaction in its worker thread pool.
     @router.post("/api/v1/nodes")
-    async def add_node(request: Request, data: Dict):
+    def add_node(request: Request, data: Dict):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -207,7 +210,9 @@ def build_nodes_router(
             if bearer_token:
                 # Для bearer-токена: один запрос валидирует токен И считает инбаунды
                 session.headers.update({"Authorization": f"Bearer {bearer_token}"})
-                probe = xui_request(session, "GET", f"{base_url}/panel/api/inbounds/list", timeout=15)
+                probe = await run_in_threadpool(
+                    xui_request, session, "GET", f"{base_url}/panel/api/inbounds/list", timeout=15
+                )
                 if probe.status_code != 200:
                     return {"success": False, "message": f"Bearer token rejected (HTTP {probe.status_code})", "base_url": base_url}
                 try:
@@ -225,13 +230,15 @@ def build_nodes_router(
                     "details": "",
                 }
             else:
-                if not login_panel(session, base_url, node_user, password):
+                if not await run_in_threadpool(login_panel, session, base_url, node_user, password):
                     return {"success": False, "message": "Login failed", "base_url": base_url}
 
             inbounds_count = None
             details = ""
             try:
-                probe = xui_request(session, "GET", f"{base_url}/panel/api/inbounds/list", timeout=15)
+                probe = await run_in_threadpool(
+                    xui_request, session, "GET", f"{base_url}/panel/api/inbounds/list", timeout=15
+                )
                 if probe.status_code == 200:
                     payload = probe.json()
                     if isinstance(payload, dict) and payload.get("success"):
@@ -257,7 +264,7 @@ def build_nodes_router(
             return {"success": False, "message": "Connection check failed", "base_url": base_url}
 
     @router.put("/api/v1/nodes/{node_id}")
-    async def update_node(node_id: int, request: Request, data: Dict):
+    def update_node(node_id: int, request: Request, data: Dict):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -367,6 +374,7 @@ def build_nodes_router(
         if has_bearer or has_credentials:
             # Сбрасываем кешированный метод авторизации — credentials изменились
             invalidate_auth_method_cache(node_panel_url)  # None → сбрасывает весь кеш
+            invalidate_session_cache(make_node_key(node_panel_url or "", 443))
 
         try:
             invalidate_subscription_cache()
@@ -375,7 +383,7 @@ def build_nodes_router(
         return {"status": "success"}
 
     @router.delete("/api/v1/nodes/{node_id}")
-    async def delete_node(node_id: int, request: Request):
+    def delete_node(node_id: int, request: Request):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -411,9 +419,9 @@ def build_nodes_router(
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
         # Try via the panel API first
-        node = get_node_or_404(node_id)
+        node = await run_in_threadpool(get_node_or_404, node_id)
         try:
-            result = node_service.call_node_api(node, "POST", "/api/node/keypair", {})
+            result = await run_in_threadpool(node_service.call_node_api, node, "POST", "/api/node/keypair", {})
             if result and result.get("privateKey"):
                 return {"privateKey": result["privateKey"], "publicKey": result.get("publicKey", "")}
         except Exception:
@@ -441,7 +449,7 @@ def build_nodes_router(
         }
 
     @router.get("/api/v1/collector/status")
-    async def get_collector_status(request: Request):
+    def get_collector_status(request: Request):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")

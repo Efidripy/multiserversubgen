@@ -4,9 +4,11 @@ on:
   push:
     paths:
       - 'frontend/**'
+      - '.github/workflows/frontend-api-routing.yml'
   pull_request:
     paths:
       - 'frontend/**'
+      - '.github/workflows/frontend-api-routing.yml'
 
 jobs:
   check-api-base:
@@ -29,9 +31,25 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Run unit tests
+        working-directory: frontend
+        run: npm test
+
       - name: TypeScript check
         working-directory: frontend
         run: npx --no-install tsc --noEmit
+
+      - name: Check i18n baseline
+        working-directory: frontend
+        run: npm run i18n:check
+
+      - name: Production dependency audit
+        working-directory: frontend
+        run: npm audit --omit=dev
 
       - name: Build with subpath base (/my-panel/)
         working-directory: frontend

@@ -15,12 +15,13 @@ from requests.cookies import extract_cookies_to_jar
 from requests.utils import select_proxy
 from typing import Any, Dict
 from urllib3 import connection as urllib3_connection
-from urllib3.connection import HTTPConnection as Urllib3HTTPConnection
-from urllib3.connection import HTTPSConnection as Urllib3HTTPSConnection
 from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 from shared.security import redact_url, validate_and_resolve_outbound_url, validate_outbound_url
 
 logger = logging.getLogger("sub_manager")
+
+Urllib3HTTPConnection = urllib3_connection.HTTPConnection
+Urllib3HTTPSConnection = urllib3_connection.HTTPSConnection
 
 
 class _PinnedHTTPConnection(Urllib3HTTPConnection):
@@ -284,7 +285,7 @@ XUI_HTTP_RETRY_BACKOFF_SEC = max(0.0, _env_float("XUI_HTTP_RETRY_BACKOFF_SEC", 0
 XUI_HTTP_RETRY_STATUSES = {429, 500, 502, 503, 504}
 XUI_FAST_TIMEOUT_SEC = min(XUI_READ_TIMEOUT_SEC, max(1.0, _env_float("XUI_FAST_TIMEOUT_SEC", XUI_READ_TIMEOUT_SEC)))
 XUI_FAST_RETRIES = max(0, _env_int("XUI_FAST_RETRIES", 0))
-XUI_SESSION_TTL_SEC = max(0, _env_int("XUI_SESSION_TTL_SEC", 0))
+XUI_SESSION_TTL_SEC = max(60, _env_int("XUI_SESSION_TTL_SEC", 900))
 
 
 def bounded_xui_timeout(timeout: float | tuple | list | None = None) -> tuple[float, float]:
@@ -335,13 +336,24 @@ def _node_lock(node_key: str) -> Lock:
 
 
 def invalidate_session_cache(node_key: str | None = None) -> None:
+    sessions_to_close: list[requests.Session] = []
     with _SESSION_CACHE_LOCK:
         if node_key is None:
+            entries = list(_SESSION_CACHE.values())
             _SESSION_CACHE.clear()
-            return
-        for key in list(_SESSION_CACHE):
-            if key == node_key or key.startswith(str(node_key) + ":"):
-                _SESSION_CACHE.pop(key, None)
+        else:
+            entries = []
+            for key in list(_SESSION_CACHE):
+                if key == node_key or key.startswith(str(node_key) + ":"):
+                    entry = _SESSION_CACHE.pop(key, None)
+                    if entry:
+                        entries.append(entry)
+        sessions_to_close = [entry["session"] for entry in entries if entry.get("session")]
+    for session in sessions_to_close:
+        try:
+            session.close()
+        except Exception:
+            pass
 
 
 def _is_cached_session_usable(cached: Dict[str, Any] | None, now: float) -> bool:
@@ -353,13 +365,30 @@ def _is_cached_session_usable(cached: Dict[str, Any] | None, now: float) -> bool
 
 
 def _cache_session(node_key: str, session: requests.Session, base_url: str) -> None:
+    evicted: requests.Session | None = None
     with _SESSION_CACHE_LOCK:
         if len(_SESSION_CACHE) >= _SESSION_CACHE_MAX:
             try:
-                _SESSION_CACHE.pop(next(iter(_SESSION_CACHE)))
+                old = _SESSION_CACHE.pop(next(iter(_SESSION_CACHE)))
+                evicted = old.get("session")
             except StopIteration:
                 pass
-    _SESSION_CACHE[node_key] = {"session": session, "base_url": base_url, "ts": time.time()}
+        _SESSION_CACHE[node_key] = {"session": session, "base_url": base_url, "ts": time.time()}
+    if evicted is not None:
+        try:
+            evicted.close()
+        except Exception:
+            pass
+
+
+def _clone_session(source: requests.Session) -> requests.Session:
+    """Return an independent cookie/header container for concurrent callers."""
+    clone = requests.Session()
+    clone.verify = source.verify
+    clone.headers.update(source.headers)
+    clone.cookies.update(source.cookies)
+    clone.auth = source.auth
+    return clone
 
 
 def get_authenticated_session(
@@ -390,7 +419,7 @@ def get_authenticated_session(
             if _is_cached_session_usable(cached, now):
                 return {
                     "ok": True,
-                    "session": cached["session"],
+                    "session": _clone_session(cached["session"]),
                     "base_url": cached["base_url"],
                     "cached": True,
                     "reason": "ok",
@@ -406,12 +435,15 @@ def get_authenticated_session(
                 if _is_cached_session_usable(cached, now):
                     return {
                         "ok": True,
-                        "session": cached["session"],
+                    "session": _clone_session(cached["session"]),
                         "base_url": cached["base_url"],
                         "cached": True,
                         "reason": "ok",
                         "error": "",
                     }
+
+        if force_reauth:
+            invalidate_session_cache(cache_key)
 
         session = requests.Session()
         session.verify = verify_value
@@ -437,7 +469,7 @@ def get_authenticated_session(
         _cache_session(cache_key, session, base_url)
         return {
             "ok": True,
-            "session": session,
+            "session": _clone_session(session),
             "base_url": base_url,
             "cached": False,
             "reason": "ok",

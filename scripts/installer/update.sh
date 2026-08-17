@@ -6,6 +6,7 @@ INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_DIR="$(cd "${INSTALLER_DIR}/../.." && pwd)"
 source "${INSTALLER_DIR}/lib/locale.sh"
 source "${INSTALLER_DIR}/lib/resource_guard.sh"
+source "${INSTALLER_DIR}/lib/runtime_secrets.sh"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
 apt_update() {
@@ -310,11 +311,19 @@ write_install_log() {
         SECURITY_MTLS_ENABLED SECURITY_MTLS_CA_PATH SECURITY_IP_ALLOWLIST
         MFA_TOTP_ENABLED MFA_TOTP_USERS MFA_TOTP_WS_STRICT
     )
-    : > "$LOG_FILE"
+    (umask 077; : > "$LOG_FILE")
+    chmod 0600 "$LOG_FILE"
     local key value
     for key in "${keys[@]}"; do
         value="${!key-}"
-        printf '%s=%q\n' "$key" "$value" >> "$LOG_FILE"
+        case "$key" in
+            *PASS*|*PASSWORD*|*SECRET*|*TOKEN*|MFA_TOTP_USERS|REDIS_URL)
+                printf '%s=%q\n' "$key" "<redacted>" >> "$LOG_FILE"
+                ;;
+            *)
+                printf '%s=%q\n' "$key" "$value" >> "$LOG_FILE"
+                ;;
+        esac
     done
 }
 
@@ -945,6 +954,11 @@ if [ ! -f "$LOG_FILE" ]; then
 fi
 
 source "$LOG_FILE"
+runtime_secrets_load
+if [ "${REDIS_URL:-}" = "<redacted>" ] || [ "${MFA_TOTP_USERS:-}" = "<redacted>" ]; then
+    echo "❌ Runtime secrets are missing. Re-enter Redis/TOTP settings before updating."
+    exit 1
+fi
 if ! command -v cpulimit >/dev/null 2>&1; then
     apt_install cpulimit >/dev/null 2>&1 || true
 fi
@@ -989,6 +1003,7 @@ normalize_public_access_vars
 heal_public_domain_from_selected_cfg
 
 # Обновить сохранённые параметры (добавляет новые поля на старых установках)
+runtime_secrets_write
 write_install_log
 
 # Compute VITE_BASE from stored WEB_PATH
@@ -1023,7 +1038,7 @@ echo "TRAFFIC_MAX_WORKERS: $TRAFFIC_MAX_WORKERS"
 echo "COLLECTOR_BASE_INTERVAL_SEC: $COLLECTOR_BASE_INTERVAL_SEC"
 echo "COLLECTOR_MAX_INTERVAL_SEC: $COLLECTOR_MAX_INTERVAL_SEC"
 echo "COLLECTOR_MAX_PARALLEL: $COLLECTOR_MAX_PARALLEL"
-echo "REDIS_URL: ${REDIS_URL:-<none>}"
+echo "REDIS_URL: <redacted>"
 echo "AUDIT_QUEUE_BATCH_SIZE: $AUDIT_QUEUE_BATCH_SIZE"
 echo "ROLE_VIEWERS: ${ROLE_VIEWERS:-<none>}"
 echo "ROLE_OPERATORS: ${ROLE_OPERATORS:-<none>}"
@@ -1160,6 +1175,7 @@ resource_guard_apply_runtime_defaults
 resource_guard_print_summary "update"
 
 # Сохранить параметры после возможного изменения hardening-настроек
+runtime_secrets_write
 write_install_log
 
 echo "Выберите режим обновления:"
@@ -1220,14 +1236,8 @@ case $update_choice in
         echo "[3/5] Обновление Python-зависимостей..."
         resource_guard_export_build_env
         resource_guard_require_free_mb "${UPDATE_PYTHON_MIN_FREE_MB:-700}" "before Python dependency refresh" "/" || exit 1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade pip > /dev/null 2>&1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements-dev.txt" > /dev/null 2>&1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pytest \
-            "$SCRIPT_DIR/backend/tests/test_runtime_controls.py" \
-            "$SCRIPT_DIR/backend/tests/test_security_hardening.py" \
-            "$SCRIPT_DIR/backend/tests/test_api_smoke.py" \
-            -q > /dev/null
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --require-hashes -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"
         echo "  ✓ Зависимости обновлены"
         
         echo "[4/5] Пересборка Frontend..."
@@ -1239,8 +1249,11 @@ case $update_choice in
         echo "  ✓ Frontend пересобран"
         
         echo "[5/5] Перезапуск сервиса..."
+        runtime_secrets_write
+        runtime_ensure_service_user
         cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
             sed "s|/opt/sub-manager|$PROJECT_DIR|g" | \
+            sed "s|__PROJECT_NAME__|$PROJECT_NAME|g" | \
             sed "s|666|$APP_PORT|g" | \
             sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH\"|g" | \
             sed "s|GRAFANA_WEB_PATH=.*|GRAFANA_WEB_PATH=$GRAFANA_WEB_PATH\"|g" | \
@@ -1261,12 +1274,10 @@ case $update_choice in
             sed "s|COLLECTOR_BASE_INTERVAL_SEC=.*|COLLECTOR_BASE_INTERVAL_SEC=$COLLECTOR_BASE_INTERVAL_SEC\"|g" | \
             sed "s|COLLECTOR_MAX_INTERVAL_SEC=.*|COLLECTOR_MAX_INTERVAL_SEC=$COLLECTOR_MAX_INTERVAL_SEC\"|g" | \
             sed "s|COLLECTOR_MAX_PARALLEL=.*|COLLECTOR_MAX_PARALLEL=$COLLECTOR_MAX_PARALLEL\"|g" | \
-            sed "s|REDIS_URL=.*|REDIS_URL=$REDIS_URL\"|g" | \
             sed "s|AUDIT_QUEUE_BATCH_SIZE=.*|AUDIT_QUEUE_BATCH_SIZE=$AUDIT_QUEUE_BATCH_SIZE\"|g" | \
             sed "s|ROLE_VIEWERS=.*|ROLE_VIEWERS=$ROLE_VIEWERS\"|g" | \
             sed "s|ROLE_OPERATORS=.*|ROLE_OPERATORS=$ROLE_OPERATORS\"|g" | \
             sed "s|MFA_TOTP_ENABLED=.*|MFA_TOTP_ENABLED=$MFA_TOTP_ENABLED\"|g" | \
-            sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS\"|g" | \
             sed "s|MFA_TOTP_WS_STRICT=.*|MFA_TOTP_WS_STRICT=$MFA_TOTP_WS_STRICT\"|g" > \
             "/etc/systemd/system/$PROJECT_NAME.service"
         resource_guard_restart_services_sequentially "$PROJECT_NAME"
@@ -1290,17 +1301,15 @@ case $update_choice in
         echo "  → Обновление зависимостей..."
         resource_guard_export_build_env
         resource_guard_require_free_mb "${UPDATE_PYTHON_MIN_FREE_MB:-700}" "before backend dependency refresh" "/" || exit 1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements-dev.txt" > /dev/null 2>&1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pytest \
-            "$SCRIPT_DIR/backend/tests/test_runtime_controls.py" \
-            "$SCRIPT_DIR/backend/tests/test_security_hardening.py" \
-            "$SCRIPT_DIR/backend/tests/test_api_smoke.py" \
-            -q > /dev/null
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --require-hashes -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"
 
         echo "[3/3] Перезапуск сервиса..."
+        runtime_secrets_write
+        runtime_ensure_service_user
         cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
             sed "s|/opt/sub-manager|$PROJECT_DIR|g" | \
+            sed "s|__PROJECT_NAME__|$PROJECT_NAME|g" | \
             sed "s|666|$APP_PORT|g" | \
             sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH\"|g" | \
             sed "s|GRAFANA_WEB_PATH=.*|GRAFANA_WEB_PATH=$GRAFANA_WEB_PATH\"|g" | \
@@ -1321,12 +1330,10 @@ case $update_choice in
             sed "s|COLLECTOR_BASE_INTERVAL_SEC=.*|COLLECTOR_BASE_INTERVAL_SEC=$COLLECTOR_BASE_INTERVAL_SEC\"|g" | \
             sed "s|COLLECTOR_MAX_INTERVAL_SEC=.*|COLLECTOR_MAX_INTERVAL_SEC=$COLLECTOR_MAX_INTERVAL_SEC\"|g" | \
             sed "s|COLLECTOR_MAX_PARALLEL=.*|COLLECTOR_MAX_PARALLEL=$COLLECTOR_MAX_PARALLEL\"|g" | \
-            sed "s|REDIS_URL=.*|REDIS_URL=$REDIS_URL\"|g" | \
             sed "s|AUDIT_QUEUE_BATCH_SIZE=.*|AUDIT_QUEUE_BATCH_SIZE=$AUDIT_QUEUE_BATCH_SIZE\"|g" | \
             sed "s|ROLE_VIEWERS=.*|ROLE_VIEWERS=$ROLE_VIEWERS\"|g" | \
             sed "s|ROLE_OPERATORS=.*|ROLE_OPERATORS=$ROLE_OPERATORS\"|g" | \
             sed "s|MFA_TOTP_ENABLED=.*|MFA_TOTP_ENABLED=$MFA_TOTP_ENABLED\"|g" | \
-            sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS\"|g" | \
             sed "s|MFA_TOTP_WS_STRICT=.*|MFA_TOTP_WS_STRICT=$MFA_TOTP_WS_STRICT\"|g" > \
             "/etc/systemd/system/$PROJECT_NAME.service"
         resource_guard_restart_services_sequentially "$PROJECT_NAME"

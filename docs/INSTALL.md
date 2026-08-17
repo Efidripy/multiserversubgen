@@ -40,7 +40,8 @@ sudo ./install.sh
 
 ```bash
 systemctl is-active sub-manager
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:666/health
+APP_PORT="${APP_PORT:-666}"
+curl -s -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:${APP_PORT}/health"
 ```
 
 Публичная проверка:

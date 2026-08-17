@@ -5,6 +5,12 @@ Project: `multiserversubgen`
 Branch observed: `feature/admin-redesign-sprint2`
 Mode: audit / baseline fixation
 
+> Historical snapshot. The current API/security contract is maintained in
+> [`API.md`](API.md) and the remediation record
+> [`REMEDIATION-ROADMAP-2026-08-10.md`](REMEDIATION-ROADMAP-2026-08-10.md).
+> The raw-email subscription links recorded below are superseded and must not
+> be implemented or exposed.
+
 ## Why This Chapter Exists
 
 This file starts a separate project chapter for the new admin/dashboard stack.
@@ -302,8 +308,11 @@ Optional next layer after services:
 ### Subscriptions
 
 - `GET /v1/emails`
-- link builder: `/v1/sub/{email}`
-- link builder: `/v1/sub-grouped/{email}`
+- historic link builder: `/v1/sub/{email}`
+- historic link builder: `/v1/sub-grouped/{email}`
+
+Current delivery links require signed tokens: `/api/v1/sub/{token}` and
+`/api/v1/sub-grouped/{token}`.
 
 ### External Utility
 
@@ -398,4 +407,3 @@ Not ready for implementation freeze:
 
 - no fresh build/lint/smoke from this run;
 - worktree state must be handled carefully before committing or broad refactoring.
-

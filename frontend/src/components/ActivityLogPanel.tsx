@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { activityLog, LogEntry, LogLevel, LEVEL_RANK } from '../services/activityLog';
+import { useTranslation } from 'react-i18next';
 
 const LEVELS: LogLevel[] = ['debug', 'info', 'warning', 'error'];
 
@@ -27,7 +28,9 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
   const [minLevel, setMinLevel] = useState<LogLevel>('info');
   const [autoScroll, setAutoScroll] = useState(true);
   const [filter, setFilter] = useState('');
+  const { t } = useTranslation();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => activityLog.subscribe(setEntries), []);
@@ -42,6 +45,16 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
     }
   }, [visible.length, autoScroll]);
 
+  useEffect(() => {
+    if (!open) return;
+    closeRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [open, onClose]);
+
   const copy = () => {
     navigator.clipboard.writeText(activityLog.exportText(minLevel));
   };
@@ -49,8 +62,8 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
   if (!open) return null;
 
   return (
-    <div style={{
-      position: 'fixed', bottom: 0, right: 0, width: 520, height: 360,
+    <div role="dialog" aria-modal="true" aria-labelledby="activity-log-title" style={{
+      position: 'fixed', bottom: 0, right: 0, width: 'min(520px, 100vw)', maxWidth: '100vw', height: 360,
       background: '#0d1117', border: '1px solid #30363d', borderRadius: '10px 0 0 0',
       boxShadow: '0 -4px 24px rgba(0,0,0,0.5)', zIndex: 9999,
       display: 'flex', flexDirection: 'column', fontFamily: 'monospace', fontSize: '0.72rem',
@@ -61,7 +74,7 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
         borderBottom: '1px solid #30363d', background: '#161b22', borderRadius: '10px 0 0 0',
         flexShrink: 0,
       }}>
-        <span style={{ color: '#e6edf3', fontWeight: 700, fontSize: '0.75rem' }}>Activity Log v2</span>
+        <span id="activity-log-title" style={{ color: '#e6edf3', fontWeight: 700, fontSize: '0.75rem' }}>Activity Log v2</span>
         <div style={{ display: 'flex', gap: 3, marginLeft: 4 }}>
           {LEVELS.map(l => (
             <button key={l} onClick={() => setMinLevel(l)} style={{
@@ -82,16 +95,16 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
           padding: '1px 6px', borderRadius: 4, border: '1px solid #30363d',
           background: autoScroll ? '#1f6feb' : '#21262d', color: '#e6edf3', cursor: 'pointer', fontSize: '0.68rem',
           flexShrink: 0,
-        }} title="Auto-scroll">v</button>
+          }} title={t('common.activityAutoScroll')} aria-label={t('common.activityAutoScroll')}>v</button>
         <button onClick={copy} style={{
           padding: '1px 6px', borderRadius: 4, border: '1px solid #30363d',
           background: '#21262d', color: '#e6edf3', cursor: 'pointer', fontSize: '0.68rem', flexShrink: 0,
-        }} title="Copy to clipboard">CP</button>
+        }} title={t('common.activityCopy')} aria-label={t('common.activityCopy')}>CP</button>
         <button onClick={() => activityLog.clear()} style={{
           padding: '1px 6px', borderRadius: 4, border: '1px solid #30363d',
           background: '#21262d', color: '#f87171', cursor: 'pointer', fontSize: '0.68rem', flexShrink: 0,
-        }} title="Clear">X</button>
-        <button onClick={onClose} style={{
+        }} title={t('common.activityClear')} aria-label={t('common.activityClear')}>X</button>
+        <button ref={closeRef} onClick={onClose} aria-label={t('common.activityClose')} style={{
           padding: '1px 6px', borderRadius: 4, border: 'none',
           background: 'transparent', color: '#6c757d', cursor: 'pointer', fontSize: '0.85rem', flexShrink: 0,
         }}>X</button>
