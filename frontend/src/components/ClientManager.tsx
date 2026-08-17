@@ -502,9 +502,9 @@ export const ClientManager: React.FC = () => {
     try {
       // Fire both requests in parallel; backend serves from cache (20s fresh / 180s stale).
       const [nodeList, clientsPayload, rawInbounds] = await Promise.all([
-        listNodes(),
+        listNodes({ signal: controller.signal }),
         listClientsBySource(sourceFilter, controller.signal),
-        getInboundsHeaderSource(),
+        getInboundsHeaderSource({ signal: controller.signal }),
       ]);
 
       if (requestIdRef.current !== requestId) return;
