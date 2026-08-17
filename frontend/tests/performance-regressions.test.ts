@@ -27,4 +27,25 @@ describe('navigation performance regressions', () => {
     expect(inbounds).toContain('inboundsAbortRef.current?.abort();');
     expect(inbounds).toContain('signal: controller.signal');
   });
+
+  it('leaves remote cold-path projections to the active tab instead of the shared header', () => {
+    const app = read('src/App.tsx');
+    const clients = read('src/components/ClientManager.tsx');
+    expect(app).not.toContain('getClientsHeaderSource');
+    expect(app).not.toContain('getInboundsHeaderSource');
+    expect(app).not.toContain('getTrafficHeaderSource');
+    expect(app).toContain("case 'inbounds':\n          case 'clients':\n          case 'traffic':");
+    expect(clients).toContain('listNodes({ signal: controller.signal })');
+    expect(clients).toContain('getInboundsHeaderSource({ signal: controller.signal })');
+  });
+
+  it('coalesces realtime traffic bursts without delaying explicit navigation controls', () => {
+    const traffic = read('src/components/TrafficStats.tsx');
+    expect(traffic).toContain('REALTIME_TRAFFIC_REFRESH_MIN_INTERVAL_MS = 60 * 1000');
+    expect(traffic).toContain('const scheduleRealtimeTrafficRefresh = useCallback');
+    expect(traffic).toContain('if (realtimeTrafficRefreshTimerRef.current === null)');
+    expect(traffic).toContain("reason: 'group'");
+    expect(traffic).toContain("reason: 'period'");
+    expect(traffic).toContain('window.clearTimeout(realtimeTrafficRefreshTimerRef.current)');
+  });
 });

@@ -38,6 +38,7 @@ receipt is an external prerequisite; code work can continue independently.
 | DOC-01 | P2 | Entry points and API/ops documentation match runtime contracts. | Link and contract checks. |
 | PERF-01 | P1 | Section navigation avoids duplicate cold fetches, per-node history fan-out and synchronous audit commits. | Focused backend/frontend performance regressions plus package checks. |
 | PERF-02 | P1 | Traffic/Client cold paths defer remote fan-out, viewer UI avoids denied work and WebSocket reconnect observes RBAC/ticket lifecycle. | Focused frontend regressions, package checks and authenticated production waterfall. |
+| PERF-03 | P1 | Cold section rendering has one owner per remote projection, and repeated realtime/cache-miss callers do not multiply a fleet fan-out. | Focused concurrency/component regressions, package checks and authenticated production waterfall. |
 
 ## Initial evidence
 
@@ -70,7 +71,8 @@ remains a historical snapshot.
 | QLT-01 | implemented | CI uses Python hash locks, Ruff, full backend tests and ShellCheck error gate; frontend CI runs lint, Vitest, typecheck, i18n, build and production audit. |
 | DOC-01 | implemented | `PROJECT.md`, `AGENTS.md`, roadmap, ADR, API auth/subscription contract and dynamic-port documentation are aligned. |
 | PERF-01 | deployed with public latency receipt | `docs/PERF-01-NAVIGATION-CACHING-2026-08-17.md` is the detailed record. Frontend GET requests coalesce before cache warm-up; monitoring uses one bounded fleet-history read and defers auxiliary probes. Audit enqueue is bounded in memory with batch SQLite persistence; Redis has short timeout/circuit fallback; clients/inbounds cold fetches single-flight and client notes use a filtered projection. Production public panel, health and main asset have 20-request p50/p95 receipts; authenticated dashboard/API waterfall remains a separate read-only evidence gate. |
-| PERF-02 | implemented locally; production proof pending | `docs/PERF-02-PRODUCTION-UI-COLD-PATH-2026-08-17.md` records the production waterfall findings and the narrowly scoped deferred-loading, cancellation, role-aware and WebSocket remediation. Deployment remains gated by a fresh verified backup and post-release authenticated browser receipt. |
+| PERF-02 | deployed with authenticated production receipt | `docs/PERF-02-PRODUCTION-UI-COLD-PATH-2026-08-17.md` records the production waterfall findings and the deferred-loading, cancellation, role-aware and WebSocket remediation. The 2026-08-17 rollout passed service/Nginx/SQLite backup/integrity gates and authenticated panel checks; PERF-03 closes the residual duplicate header projection and concurrent cold-cache fan-out found by that proof. |
+| PERF-03 | implemented locally; production proof pending | `docs/PERF-03-FANOUT-CONTROL-2026-08-17.md` defines the final duplicate-request, realtime-throttle and cache single-flight controls. No schema, migration, DDL or SQLite data operation is included; rollout remains gated by the standard verified-backup and browser waterfall receipt. |
 
 Current validation receipt: backend `228 passed`, Ruff and compileall pass;
 frontend Vitest `9 passed`, ESLint, TypeScript, i18n, Vite build and production
