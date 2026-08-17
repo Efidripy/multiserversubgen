@@ -30,6 +30,8 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'health check did not become ready within 30 seconds' in script
     assert '[[ -x "$STAGE_DIR/venv/bin/uvicorn" ]]' in script
     assert '"$STAGE_DIR/venv/bin/uvicorn" --version >/dev/null' in script
+    assert 'sed -i "1s|^#!.*$|#!${PROJECT_DIR}/venv/bin/python|" "$PROJECT_DIR/venv/bin/uvicorn"' in script
+    assert '"$PROJECT_DIR/venv/bin/uvicorn" --version >/dev/null' in script
     assert 'rollback_and_exit' in script
     frontend_build = (REPO / "scripts/deploy/build-and-publish-frontend.sh").read_text(encoding="utf-8")
     assert 'export NODE_OPTIONS="$FRONTEND_NODE_OPTIONS"' in frontend_build
