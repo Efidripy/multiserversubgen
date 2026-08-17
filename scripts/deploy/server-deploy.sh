@@ -63,6 +63,13 @@ restore_previous() {
   systemctl reload nginx || true
 }
 
+rollback_and_exit() {
+  cleanup_stage
+  [[ "$ROLLBACK_ON_FAIL" == "1" ]] && restore_previous
+  trap - ERR
+  exit 1
+}
+
 on_error() {
   local status=$?
   cleanup_stage
@@ -98,6 +105,8 @@ done
 python3 -m venv "$STAGE_DIR/venv"
 "$STAGE_DIR/venv/bin/pip" install --require-hashes -r "$REPO_DIR/backend/requirements.txt" >/dev/null
 PYTHONPATH="$STAGE_DIR" "$STAGE_DIR/venv/bin/python" -m compileall -q "$STAGE_DIR"
+[[ -x "$STAGE_DIR/venv/bin/uvicorn" ]] || fail "staged uvicorn executable is missing"
+"$STAGE_DIR/venv/bin/uvicorn" --version >/dev/null
 
 FRONTEND_NODE_OPTIONS="${FRONTEND_NODE_OPTIONS:---max-old-space-size=512}" \
   PROJECT_DIR="$STAGE_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" \
@@ -130,9 +139,7 @@ systemctl reload nginx
 
 if ! wait_for_health; then
   printf 'Deploy failed: health check did not become ready within 30 seconds\n' >&2
-  cleanup_stage
-  [[ "$ROLLBACK_ON_FAIL" == "1" ]] && restore_previous
-  exit 1
+  rollback_and_exit
 fi
 
 trap - ERR
