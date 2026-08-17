@@ -1,6 +1,6 @@
 # PERF-01 — ускорение навигации и доступов к данным
 
-**Статус:** implemented locally, pending production measurement
+**Статус:** deployed and measured on `dev.kleva.ru` (2026-08-17)
 **Task:** `TASK-20260817-MSSG-PERF-01`
 **Каноническая связь:** дополняет `REMEDIATION-ROADMAP-2026-08-10.md`; не заменяет её.
 
@@ -55,13 +55,35 @@ SQLite остаётся основной локальной БД. Миграци
 
 Параметры не следует менять без `Server-Timing`, browser waterfall и фактических p95/p99. Особенно нельзя повышать `TRAFFIC_MAX_WORKERS` вслепую: на малом хосте он может быть выставлен installer resource guard в `1`.
 
+## Production receipt — 2026-08-17
+
+В production развёрнут commit `6f6b5ef12e0595a2e41c4de4e8ad5c5d85f46fe6`.
+
+- Независимый pre-deploy backup SQLite и полного runtime-каталога проверен
+  SHA-256; финальный deploy archive также прошёл SHA-256 verification.
+- `PRAGMA integrity_check = ok`; `nodes=10`, `node_snapshots=10`,
+  `adguard_sources=2` и другие durable-таблицы не уменьшились.
+- `node_history` — retention-managed 30-day time series. Во время rollout
+  сокращались только записи у moving retention cutoff; максимальная `ts`
+  продолжала расти. Это не трактуется как потеря control-plane данных.
+- `sub-manager` active, Nginx syntax valid, local `/health` около 1.7 ms;
+  после финального deploy в service journal нет ошибок.
+- Внешний 20-request receipt с рабочей станции: panel HTML p50/p95
+  `612/920 ms`, health `484/872 ms`, main JS `1442/1879 ms`.
+  На самом хосте через HTTPS Nginx p50/p95: panel `38/43 ms`, health
+  `36/42 ms`, main JS `37/46 ms`; `Server-Timing: app;dur=0.64 ms`.
+  Следовательно, измеренная внешняя задержка в основном лежит за пределами
+  FastAPI/SQLite (сеть/TLS между клиентом и dev-хостом).
+
 ## Проверка и дальнейшие TODO
 
 Локальная регрессия PERF-01 покрывает memory-only audit enqueue, Redis circuit breaker, single-flight cold miss, filtered client notes, fleet-history bound и frontend GET coalescing.
 
-До production-вывода остаются внешние, неавторизованные в этой задаче действия:
+Остаются внешние действия, которые не были авторизованы этой задачей:
 
-1. Снять read-only browser waterfall и p50/p95 по реальному URL.
+1. Получить отдельную авторизованную panel-сессию и снять browser waterfall
+   для `/api/v1/nodes` и `/api/v1/history/nodes`; текущий receipt не
+   заявляет p95 закрытых API.
 2. Проверить активные `TRAFFIC_MAX_WORKERS` и `COLLECTOR_MAX_PARALLEL` без restart/change.
 3. При подтверждённом Redis включить его health/timeout метрики; при нескольких uvicorn workers не полагаться на process-local cache.
 4. Решить retention/drop policy для audit queue: PERF-01 сохраняет отзывчивость HTTP, поэтому при заполнении bounded queue события могут быть потеряны при overload или аварийном завершении процесса.
