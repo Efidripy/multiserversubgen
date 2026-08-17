@@ -1,6 +1,6 @@
 # PERF-02 — cold-path production UI
 
-**Статус:** implemented locally; production verification pending
+**Статус:** deployed with authenticated production receipt; остаточные источники fan-out вынесены в PERF-03
 **Task:** `MSSG-PROD-PERF-REMEDIATION-20260817`
 **Связь:** дополняет `PERF-01-NAVIGATION-CACHING-2026-08-17.md` и не заменяет его.
 
@@ -35,9 +35,12 @@ Browser waterfall на `dev.kleva.ru` показал, что задержку р
 - Данные в deferred panels могут быть устаревшими до явного refresh; это
   намеренно и безопаснее, чем скрытый fleet scan. UI сохраняет обычную кнопку
   refresh.
-- Нужна production-проверка: service/Nginx/SQLite backup gate, authenticated
-  waterfall всех разделов, WebSocket `101` без повторяющихся `404/1008` и
-  сравнение `Server-Timing` до/после.
+- Production-проверка rollout PERF-02 пройдена: штатный deploy helper создал и
+  проверил backup SQLite, `integrity_check` вернул `ok`, сервис/Nginx/health
+  были доступны, а authenticated browser не зафиксировал console errors.
+- Этот замер выявил следующий узкий остаток: shared header повторно запускал
+  remote projection активной вкладки. Его устранение и отдельная повторная
+  production-проверка описаны в `PERF-03-FANOUT-CONTROL-2026-08-17.md`.
 
 ## Локальная проверка
 

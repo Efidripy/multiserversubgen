@@ -1,7 +1,7 @@
 import os
 import sys
 from copy import deepcopy
-from threading import Lock
+from threading import Event, Lock, Thread
 from types import SimpleNamespace
 
 
@@ -222,3 +222,44 @@ def test_ensure_current_period_snapshots_seeds_buckets_without_ui_request(monkey
 
     seeded_again = runtime.ensure_current_period_snapshots([{"id": 1, "name": "alpha"}], ["client"], now_ts=now_ts + 6)
     assert seeded_again == {}
+
+
+def test_concurrent_cold_traffic_requests_share_one_fleet_fetch(tmp_path):
+    class BlockingClientManager(DummyClientManager):
+        def __init__(self, stats):
+            super().__init__(stats)
+            self.calls = 0
+            self.started = Event()
+            self.release = Event()
+
+        def get_traffic_stats(self, nodes, group_by):
+            self.calls += 1
+            self.started.set()
+            assert self.release.wait(timeout=2)
+            return super().get_traffic_stats(nodes, group_by)
+
+    runtime = _build_runtime(
+        tmp_path,
+        {"alpha@example.com": {"up": 10, "down": 20, "total": 30, "count": 1}},
+    )
+    manager = BlockingClientManager(runtime.client_mgr._stats)
+    runtime.client_mgr = manager
+    results = []
+
+    def fetch():
+        results.append(runtime.get_cached_traffic_stats([{"id": 1, "name": "alpha"}], "client"))
+
+    first = Thread(target=fetch)
+    second = Thread(target=fetch)
+    first.start()
+    assert manager.started.wait(timeout=1)
+    second.start()
+    manager.release.set()
+    first.join(timeout=2)
+    second.join(timeout=2)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert manager.calls == 1
+    assert len(results) == 2
+    assert results[0]["stats"] == results[1]["stats"]
