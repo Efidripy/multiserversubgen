@@ -37,6 +37,7 @@ receipt is an external prerequisite; code work can continue independently.
 | QLT-01 | P2 | CI exercises full tests/lint/type/build/shell/dependency gates. | Workflow checks. |
 | DOC-01 | P2 | Entry points and API/ops documentation match runtime contracts. | Link and contract checks. |
 | PERF-01 | P1 | Section navigation avoids duplicate cold fetches, per-node history fan-out and synchronous audit commits. | Focused backend/frontend performance regressions plus package checks. |
+| PERF-02 | P1 | Traffic/Client cold paths defer remote fan-out, viewer UI avoids denied work and WebSocket reconnect observes RBAC/ticket lifecycle. | Focused frontend regressions, package checks and authenticated production waterfall. |
 
 ## Initial evidence
 
@@ -69,9 +70,10 @@ remains a historical snapshot.
 | QLT-01 | implemented | CI uses Python hash locks, Ruff, full backend tests and ShellCheck error gate; frontend CI runs lint, Vitest, typecheck, i18n, build and production audit. |
 | DOC-01 | implemented | `PROJECT.md`, `AGENTS.md`, roadmap, ADR, API auth/subscription contract and dynamic-port documentation are aligned. |
 | PERF-01 | deployed with public latency receipt | `docs/PERF-01-NAVIGATION-CACHING-2026-08-17.md` is the detailed record. Frontend GET requests coalesce before cache warm-up; monitoring uses one bounded fleet-history read and defers auxiliary probes. Audit enqueue is bounded in memory with batch SQLite persistence; Redis has short timeout/circuit fallback; clients/inbounds cold fetches single-flight and client notes use a filtered projection. Production public panel, health and main asset have 20-request p50/p95 receipts; authenticated dashboard/API waterfall remains a separate read-only evidence gate. |
+| PERF-02 | implemented locally; production proof pending | `docs/PERF-02-PRODUCTION-UI-COLD-PATH-2026-08-17.md` records the production waterfall findings and the narrowly scoped deferred-loading, cancellation, role-aware and WebSocket remediation. Deployment remains gated by a fresh verified backup and post-release authenticated browser receipt. |
 
-Current validation receipt: backend `221 passed`, Ruff and compileall pass;
-frontend Vitest `5 passed`, ESLint, TypeScript, i18n, Vite build and production
+Current validation receipt: backend `228 passed`, Ruff and compileall pass;
+frontend Vitest `9 passed`, ESLint, TypeScript, i18n, Vite build and production
 `npm audit` pass (`0 vulnerabilities`). Full tracked-shell `shellcheck -S error`
 and `git diff --check` pass. Workspace mix-gate: `21 PASS / 0 WARN / 0 FAIL`.
 At validation time BHM health was healthy with native MCP attached; repository

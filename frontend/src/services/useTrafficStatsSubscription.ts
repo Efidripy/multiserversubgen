@@ -5,6 +5,7 @@
 import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { wsManager } from './webSocketManager';
 import { API_BASE } from '../api';
+import { getAuth } from '../auth';
 import { devLog } from '../utils/devLogger';
 
 export interface TrafficUpdate {
@@ -39,6 +40,13 @@ const EVENT_TO_CHANNEL: Record<string, string> = {
   inbound_update: 'inbounds',
 };
 
+export const filterRealtimeChannelsForRole = (channels: string[], role = getAuth().role): string[] => {
+  return channels.filter((channel) => {
+  if (role === 'admin' || role === 'operator') return true;
+  return channel === 'traffic' || channel === 'server_status' || channel === 'snapshot_delta';
+  });
+};
+
 /**
  * Хук для подписки на обновления трафика через WebSocket
  */
@@ -67,7 +75,7 @@ export function useTrafficStatsSubscription({
     const source = Array.isArray(channels) && channels.length > 0
       ? channels
       : ['traffic', 'clients', 'server_status'];
-    return source
+    return filterRealtimeChannelsForRole(source)
       .map((c) => EVENT_TO_CHANNEL[c] || c)
       .filter((c, idx, arr) => Boolean(c) && arr.indexOf(c) === idx)
       .sort()
