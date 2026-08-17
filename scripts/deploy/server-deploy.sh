@@ -40,6 +40,7 @@ STAMP="$(date -u +%Y%m%dT%H%M%SZ)-${DEPLOY_COMMIT:0:12}"
 BACKUP_ROOT="/var/backups/${PROJECT_NAME}_deploy"
 BACKUP_TAR="${BACKUP_ROOT}/project_${STAMP}.tgz"
 BACKUP_SHA="${BACKUP_TAR}.sha256"
+BACKUP_CONTENTS="${BACKUP_TAR}.contents"
 STAGE_DIR="${PROJECT_PARENT}/.${PROJECT_BASENAME}.next-${STAMP}"
 QUARANTINE_DIR="${PROJECT_PARENT}/.${PROJECT_BASENAME}.previous-${STAMP}"
 HAD_PREVIOUS=0
@@ -96,9 +97,10 @@ if [[ "$HAD_PREVIOUS" == "1" ]]; then
   sqlite3 "$STATE_DB" 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null
   [[ "$(sqlite3 "$STATE_DB" 'PRAGMA integrity_check;' | tr -d '\r')" == "ok" ]] || fail "runtime database integrity check failed"
   tar -C "$PROJECT_PARENT" -czf "$BACKUP_TAR" -- "$PROJECT_BASENAME"
-  tar -tzf "$BACKUP_TAR" | grep -qx "${PROJECT_BASENAME}/" || fail "backup layout is invalid"
+  tar -tzf "$BACKUP_TAR" > "$BACKUP_CONTENTS"
+  grep -qx "${PROJECT_BASENAME}/" "$BACKUP_CONTENTS" || fail "backup layout is invalid"
   sha256sum "$BACKUP_TAR" > "$BACKUP_SHA"
-  chmod 0600 "$BACKUP_TAR" "$BACKUP_SHA"
+  chmod 0600 "$BACKUP_TAR" "$BACKUP_SHA" "$BACKUP_CONTENTS"
   sqlite3 "$STATE_DB" ".backup '$STAGE_DIR/admin.db'"
   [[ "$(sqlite3 "$STAGE_DIR/admin.db" 'PRAGMA integrity_check;' | tr -d '\r')" == "ok" ]] || fail "staged runtime database backup integrity check failed"
   if [[ -f "$PROJECT_DIR/.encryption_key" ]]; then

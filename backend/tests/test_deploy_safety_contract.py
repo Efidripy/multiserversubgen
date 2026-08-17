@@ -12,6 +12,8 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert "checkout must already be at immutable DEPLOY_REF" in script
     assert '[[ "$PROJECT_DIR" == /opt/* && "$PROJECT_DIR" != /opt ]]' in script
     assert 'tar -C "$PROJECT_PARENT" -czf "$BACKUP_TAR" -- "$PROJECT_BASENAME"' in script
+    assert 'tar -tzf "$BACKUP_TAR" > "$BACKUP_CONTENTS"' in script
+    assert 'grep -qx "${PROJECT_BASENAME}/" "$BACKUP_CONTENTS"' in script
     assert 'tar -xzf "$BACKUP_TAR" -C /' not in script
     assert 'sha256sum "$BACKUP_TAR" > "$BACKUP_SHA"' in script
     assert 'mv -- "$STAGE_DIR" "$PROJECT_DIR"' in script
