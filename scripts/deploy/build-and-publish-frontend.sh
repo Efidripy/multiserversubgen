@@ -31,6 +31,9 @@ PREV_BUILD_DIR="${PROJECT_DIR}/.build-prev"
 
 resource_guard_detect_profile
 resource_guard_export_build_env
+if [[ -n "${FRONTEND_NODE_OPTIONS:-}" ]]; then
+  export NODE_OPTIONS="$FRONTEND_NODE_OPTIONS"
+fi
 rm -rf "$FRONTEND_DIR/node_modules" "$FRONTEND_DIR/.vite" "$TMP_BUILD_DIR" "$PREV_BUILD_DIR"
 resource_guard_require_free_mb "${FRONTEND_BUILD_MIN_FREE_MB:-900}" "before frontend dependency install/build" "/"
 
