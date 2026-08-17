@@ -88,7 +88,8 @@ python3 -m venv "$STAGE_DIR/venv"
 "$STAGE_DIR/venv/bin/pip" install --require-hashes -r "$REPO_DIR/backend/requirements.txt" >/dev/null
 PYTHONPATH="$STAGE_DIR" "$STAGE_DIR/venv/bin/python" -m compileall -q "$STAGE_DIR"
 
-PROJECT_DIR="$STAGE_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" \
+NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=1024}" \
+  PROJECT_DIR="$STAGE_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" \
   SKIP_LIVE_VERIFY=1 bash "$REPO_DIR/scripts/deploy/build-and-publish-frontend.sh"
 
 if [[ "$HAD_PREVIOUS" == "1" ]]; then
