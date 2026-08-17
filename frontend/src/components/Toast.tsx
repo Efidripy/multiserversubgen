@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
+import { useTranslation } from 'react-i18next';
 
 export type ToastLevel = 'success' | 'error' | 'warning' | 'info';
 
@@ -39,6 +40,7 @@ function ToastItem({ item, onDismiss, colors }: {
 }) {
   const [progress, setProgress] = useState(100);
   const [leaving, setLeaving] = useState(false);
+  const { t } = useTranslation();
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -112,6 +114,7 @@ function ToastItem({ item, onDismiss, colors }: {
         </span>
         <button
           onClick={handleDismiss}
+          aria-label={t('common.dismissNotification')}
           style={{
             background: 'none',
             border: 'none',
@@ -182,7 +185,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         pointerEvents: 'none',
       }}>
         {items.map(item => (
-          <div key={item.id} style={{ pointerEvents: 'auto' }}>
+          <div key={item.id} role={item.level === 'error' ? 'alert' : 'status'} aria-live={item.level === 'error' ? 'assertive' : 'polite'} style={{ pointerEvents: 'auto' }}>
             <ToastItem item={item} onDismiss={dismiss} colors={colors} />
           </div>
         ))}

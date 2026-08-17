@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from threading import Lock
 from typing import Dict, List, Optional
 
 
@@ -19,6 +20,7 @@ class ClientsRuntime:
         self.clients_cache_ttl = clients_cache_ttl
         self.clients_cache_stale_ttl = clients_cache_stale_ttl
         self.start_cache_refresh = start_cache_refresh
+        self._cold_load_lock = Lock()
 
     def get_cached_clients(self, nodes: List[Dict], email_filter: Optional[str] = None) -> List[Dict]:
         now = time.time()
@@ -42,7 +44,15 @@ class ClientsRuntime:
             self.start_cache_refresh("clients", _refresh)
             return _apply_filter(full_list)
 
-        fresh = self.client_mgr.get_all_clients(nodes, email_filter=None)
-        self.clients_cache["ts"] = now
-        self.clients_cache["data"] = fresh
-        return _apply_filter(fresh)
+        # A simultaneous cold navigation and header request must share one
+        # fleet fetch. The second caller rechecks the cache after the first
+        # loader leaves the critical section.
+        with self._cold_load_lock:
+            now = time.time()
+            full_list = self.clients_cache["data"] if isinstance(self.clients_cache["data"], list) else []
+            if full_list and now - self.clients_cache["ts"] < self.clients_cache_ttl:
+                return _apply_filter(full_list)
+            fresh = self.client_mgr.get_all_clients(nodes, email_filter=None)
+            self.clients_cache["ts"] = time.time()
+            self.clients_cache["data"] = fresh
+            return _apply_filter(fresh)

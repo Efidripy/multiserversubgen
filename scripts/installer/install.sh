@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "${INSTALLER_DIR}/../.." && pwd)"
 source "${INSTALLER_DIR}/lib/locale.sh"
 source "${INSTALLER_DIR}/lib/ui.sh"
 source "${INSTALLER_DIR}/lib/resource_guard.sh"
+source "${INSTALLER_DIR}/lib/runtime_secrets.sh"
+source "${INSTALLER_DIR}/lib/artifact_manifest.sh"
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
@@ -111,7 +113,11 @@ install_loki_promtail_with_fallback_binaries() {
         return 1
     fi
 
-    local version="${LOKI_STACK_VERSION:-3.6.7}"
+    local version="${LOKI_STACK_VERSION:-$ARTIFACT_LOKI_VERSION}"
+    if [[ "$version" != "$ARTIFACT_LOKI_VERSION" ]]; then
+        echo "Unsupported LOKI_STACK_VERSION; update artifact_manifest.sh with reviewed digests first."
+        return 1
+    fi
     local tmp_dir
     tmp_dir="$(mktemp -d)"
     local loki_zip="${tmp_dir}/loki.zip"
@@ -125,6 +131,11 @@ install_loki_promtail_with_fallback_binaries() {
         return 1
     fi
     if ! curl -fL --retry 3 --retry-all-errors -A "Mozilla/5.0" "$promtail_url" -o "$promtail_zip"; then
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+    if ! artifact_verify_file LOKI amd64 "$loki_zip" || ! artifact_verify_file PROMTAIL amd64 "$promtail_zip"; then
+        echo "Loki/promtail archive digest verification failed."
         rm -rf "$tmp_dir"
         return 1
     fi
@@ -476,12 +487,13 @@ write_install_log() {
         PREEXISTING_NGINX_INSTALLED PREEXISTING_PROMETHEUS_INSTALLED
         PREEXISTING_GRAFANA_INSTALLED PREEXISTING_LOKI_INSTALLED PREEXISTING_PROMTAIL_INSTALLED
     )
-    : > "$LOG_FILE"
+    (umask 077; : > "$LOG_FILE")
+    chmod 0600 "$LOG_FILE"
     local key value
     for key in "${keys[@]}"; do
         value="${!key-}"
         case "$key" in
-            *PASS*|*PASSWORD*|*SECRET*|*TOKEN*|*TOTP*|REDIS_URL) value="<redacted>" ;;
+            *PASS*|*PASSWORD*|*SECRET*|*TOKEN*|MFA_TOTP_USERS|REDIS_URL) value="<redacted>" ;;
         esac
         printf '%s=%q\n' "$key" "$value" >> "$LOG_FILE"
     done
@@ -927,68 +939,18 @@ install_adguard_home_binary() {
     local tmp_dir
     local archive_path
     local download_url
-    local download_ok="false"
-    local -a download_urls
     tmp_dir="$(mktemp -d)"
     archive_path="${tmp_dir}/AdGuardHome.tar.gz"
-    download_urls=(
-        "https://static.adguard.com/adguardhome/release/AdGuardHome_linux_${arch}.tar.gz"
-        "https://github.com/AdguardTeam/AdGuardHome/releases/latest/download/AdGuardHome_linux_${arch}.tar.gz"
-    )
-
-    for download_url in "${download_urls[@]}"; do
-        echo "Скачивание AdGuard Home: ${download_url}"
-        if curl -fL \
-            --retry 3 \
-            --retry-all-errors \
-            --retry-delay 2 \
-            --connect-timeout 15 \
-            --max-time 300 \
-            --speed-time 30 \
-            --speed-limit 10240 \
-            -A "Mozilla/5.0" \
-            "$download_url" \
-            -o "$archive_path"; then
-            download_ok="true"
-            break
-        fi
-
-        echo "⚠️ curl download failed or timed out for ${download_url}. Trying wget fallback..."
-        if wget \
-            --tries=3 \
-            --timeout=30 \
-            --read-timeout=120 \
-            --user-agent="Mozilla/5.0" \
-            -O "$archive_path" \
-            "$download_url"; then
-            download_ok="true"
-            break
-        fi
-    done
-
-    if [ "$download_ok" != "true" ]; then
-        echo "❌ Не удалось скачать AdGuard Home архив (all mirrors failed)."
+    download_url="https://github.com/AdguardTeam/AdGuardHome/releases/download/${ARTIFACT_ADGUARD_VERSION}/AdGuardHome_linux_${arch}.tar.gz"
+    echo "Скачивание AdGuard Home: ${download_url}"
+    if ! curl -fL --retry 3 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 300 --speed-time 30 --speed-limit 10240 -A "Mozilla/5.0" "$download_url" -o "$archive_path"; then
+        echo "❌ Не удалось скачать зафиксированный архив AdGuard Home."
         rm -rf "$tmp_dir"
         return 1
     fi
 
-    local digest="${ADGUARD_SHA256:-}"
-    if [ -z "$digest" ]; then
-        digest="$(python3 - "$arch" <<'PY'
-import json, sys, urllib.request
-arch = sys.argv[1]
-asset = f"AdGuardHome_linux_{arch}.tar.gz"
-with urllib.request.urlopen("https://api.github.com/repos/AdguardTeam/AdGuardHome/releases/latest", timeout=20) as response:
-    payload = json.load(response)
-for item in payload.get("assets", []):
-    if item.get("name") == asset and item.get("digest", "").startswith("sha256:"):
-        print(item["digest"].split(":", 1)[1])
-        break
-PY
-        )"
-    fi
-    if [ -z "$digest" ] || ! printf '%s  %s\n' "$digest" "$archive_path" | sha256sum -c - >/dev/null 2>&1; then
-        echo "❌ AdGuard Home archive digest verification failed. Set ADGUARD_SHA256 to the expected SHA-256."
+    if ! artifact_verify_file ADGUARD "$arch" "$archive_path"; then
+        echo "❌ AdGuard Home archive digest verification failed."
         rm -rf "$tmp_dir"
         return 1
     fi
@@ -1785,6 +1747,8 @@ uninstall() {
     systemctl stop "$PROJECT_NAME" 2>/dev/null
     systemctl disable "$PROJECT_NAME" 2>/dev/null
     rm -f "/etc/systemd/system/$PROJECT_NAME.service"
+    rm -f "$(runtime_secrets_file)"
+    rmdir "$(dirname "$(runtime_secrets_file)")" 2>/dev/null || true
     rm -f "/etc/fail2ban/jail.d/multi-manager.local"
     rm -f "/etc/fail2ban/filter.d/multi-manager.conf"
     rm -f "/etc/fail2ban/filter.d/multi-manager-api.conf"
@@ -1847,6 +1811,8 @@ uninstall_nuke() {
     systemctl stop "$project_name" 2>/dev/null || true
     systemctl disable "$project_name" 2>/dev/null || true
     rm -f "/etc/systemd/system/${project_name}.service"
+    rm -f "/etc/${project_name}/runtime-secrets.env"
+    rmdir "/etc/${project_name}" 2>/dev/null || true
     systemctl daemon-reload
 
     rm -f "/etc/nginx/snippets/${project_name}.conf"
@@ -1965,14 +1931,8 @@ update_project() {
     echo "Обновление Python-зависимостей..."
     resource_guard_export_build_env
     resource_guard_require_free_mb "${INSTALL_PYTHON_MIN_FREE_MB:-900}" "before Python dependency refresh" "/" || exit 1
-    resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade pip wheel setuptools
-    resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements.txt"
-    resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade -r "$SCRIPT_DIR/backend/requirements-dev.txt"
-    resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pytest \
-        "$SCRIPT_DIR/backend/tests/test_runtime_controls.py" \
-        "$SCRIPT_DIR/backend/tests/test_security_hardening.py" \
-        "$SCRIPT_DIR/backend/tests/test_api_smoke.py" \
-        -q
+    resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --require-hashes -r "$SCRIPT_DIR/backend/requirements.txt"
+    resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"
     
     echo "Пересборка React фронтенда..."
     resource_guard_require_free_mb "${INSTALL_FRONTEND_MIN_FREE_MB:-900}" "before frontend rebuild" "/" || exit 1
@@ -1982,8 +1942,11 @@ update_project() {
     fi
     
     echo "Запуск сервиса..."
+    runtime_secrets_write
+    runtime_ensure_service_user
     cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
         sed "s|/opt/sub-manager|$PROJECT_DIR|g" | \
+        sed "s|__PROJECT_NAME__|$PROJECT_NAME|g" | \
         sed "s|666|$APP_PORT|g" | \
         sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH\"|g" | \
         sed "s|GRAFANA_WEB_PATH=.*|GRAFANA_WEB_PATH=$GRAFANA_WEB_PATH\"|g" | \
@@ -2004,12 +1967,10 @@ update_project() {
         sed "s|COLLECTOR_BASE_INTERVAL_SEC=.*|COLLECTOR_BASE_INTERVAL_SEC=$COLLECTOR_BASE_INTERVAL_SEC\"|g" | \
         sed "s|COLLECTOR_MAX_INTERVAL_SEC=.*|COLLECTOR_MAX_INTERVAL_SEC=$COLLECTOR_MAX_INTERVAL_SEC\"|g" | \
         sed "s|COLLECTOR_MAX_PARALLEL=.*|COLLECTOR_MAX_PARALLEL=$COLLECTOR_MAX_PARALLEL\"|g" | \
-        sed "s|REDIS_URL=.*|REDIS_URL=$REDIS_URL\"|g" | \
         sed "s|AUDIT_QUEUE_BATCH_SIZE=.*|AUDIT_QUEUE_BATCH_SIZE=$AUDIT_QUEUE_BATCH_SIZE\"|g" | \
         sed "s|ROLE_VIEWERS=.*|ROLE_VIEWERS=$ROLE_VIEWERS\"|g" | \
         sed "s|ROLE_OPERATORS=.*|ROLE_OPERATORS=$ROLE_OPERATORS\"|g" | \
         sed "s|MFA_TOTP_ENABLED=.*|MFA_TOTP_ENABLED=$MFA_TOTP_ENABLED\"|g" | \
-        sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS\"|g" | \
         sed "s|MFA_TOTP_WS_STRICT=.*|MFA_TOTP_WS_STRICT=$MFA_TOTP_WS_STRICT\"|g" > \
         "/etc/systemd/system/$PROJECT_NAME.service"
     systemctl daemon-reload
@@ -2379,14 +2340,8 @@ echo "Установка Python-зависимостей..."
 resource_guard_export_build_env
 resource_guard_require_free_mb "${INSTALL_PYTHON_MIN_FREE_MB:-900}" "before Python virtualenv and dependency install" "/" || exit 1
 python3 -m venv "$PROJECT_DIR/venv"
-resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --upgrade pip wheel setuptools
-resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/backend/requirements.txt"
-resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/backend/requirements-dev.txt"
-resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pytest \
-    "$SCRIPT_DIR/backend/tests/test_runtime_controls.py" \
-    "$SCRIPT_DIR/backend/tests/test_security_hardening.py" \
-    "$SCRIPT_DIR/backend/tests/test_api_smoke.py" \
-    -q
+resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --require-hashes -r "$SCRIPT_DIR/backend/requirements.txt"
+resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"
 
 # Сборка React фронтенда
 echo "Сборка React фронтенда..."
@@ -2399,8 +2354,11 @@ echo "✓ Frontend собран: $PROJECT_DIR/build"
 
 # Создание systemd сервиса
 echo "Настройка systemd..."
+runtime_secrets_write
+runtime_ensure_service_user
 cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
     sed "s|/opt/sub-manager|$PROJECT_DIR|g" | \
+    sed "s|__PROJECT_NAME__|$PROJECT_NAME|g" | \
     sed "s|666|$APP_PORT|g" | \
     sed "s|WEB_PATH=.*|WEB_PATH=$WEB_PATH\"|g" | \
     sed "s|GRAFANA_WEB_PATH=.*|GRAFANA_WEB_PATH=$GRAFANA_WEB_PATH\"|g" | \
@@ -2421,12 +2379,10 @@ cat "$SCRIPT_DIR/systemd/sub-manager.service" | \
     sed "s|COLLECTOR_BASE_INTERVAL_SEC=.*|COLLECTOR_BASE_INTERVAL_SEC=$COLLECTOR_BASE_INTERVAL_SEC\"|g" | \
     sed "s|COLLECTOR_MAX_INTERVAL_SEC=.*|COLLECTOR_MAX_INTERVAL_SEC=$COLLECTOR_MAX_INTERVAL_SEC\"|g" | \
     sed "s|COLLECTOR_MAX_PARALLEL=.*|COLLECTOR_MAX_PARALLEL=$COLLECTOR_MAX_PARALLEL\"|g" | \
-    sed "s|REDIS_URL=.*|REDIS_URL=$REDIS_URL\"|g" | \
     sed "s|AUDIT_QUEUE_BATCH_SIZE=.*|AUDIT_QUEUE_BATCH_SIZE=$AUDIT_QUEUE_BATCH_SIZE\"|g" | \
     sed "s|ROLE_VIEWERS=.*|ROLE_VIEWERS=$ROLE_VIEWERS\"|g" | \
     sed "s|ROLE_OPERATORS=.*|ROLE_OPERATORS=$ROLE_OPERATORS\"|g" | \
     sed "s|MFA_TOTP_ENABLED=.*|MFA_TOTP_ENABLED=$MFA_TOTP_ENABLED\"|g" | \
-    sed "s|MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS\"|g" | \
     sed "s|MFA_TOTP_WS_STRICT=.*|MFA_TOTP_WS_STRICT=$MFA_TOTP_WS_STRICT\"|g" > \
     "/etc/systemd/system/$PROJECT_NAME.service"
 

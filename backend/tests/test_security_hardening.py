@@ -47,6 +47,7 @@ def _basic_header(username: str, password: str) -> str:
 
 
 def test_check_basic_auth_header_accepts_valid_credentials(monkeypatch):
+    main.auth_cache.clear()
     monkeypatch.setattr(main.p, "authenticate", lambda u, p: u == "admin" and p == "secret")
     user = main.check_basic_auth_header(_basic_header("admin", "secret"))
     assert user == "admin"

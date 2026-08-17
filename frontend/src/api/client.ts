@@ -1,10 +1,29 @@
-import axios, { InternalAxiosRequestConfig } from 'axios';
+import axios, { AxiosResponse, InternalAxiosRequestConfig } from 'axios';
 import { activityLog } from '../services/activityLog';
 import { cacheService } from '../services/cacheService';
 import { getAuth } from '../auth';
 import { requestActivityStore } from '../services/requestActivity';
 
 export const AUTH_REQUIRED_EVENT = 'sub-manager:auth-required';
+let authRequiredEventSent = false;
+
+export const resetAuthRequiredEventGuard = () => {
+  authRequiredEventSent = false;
+};
+
+const inFlightGetRequests = new Map<string, Promise<AxiosResponse>>();
+
+export const resetInFlightGetRequests = () => {
+  inFlightGetRequests.clear();
+};
+
+const dispatchAuthRequired = (url: string, method: string) => {
+  if (authRequiredEventSent || typeof window === 'undefined') return;
+  authRequiredEventSent = true;
+  window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT, {
+    detail: { url, method },
+  }));
+};
 
 /**
  * API base URL used by all frontend requests.
@@ -175,6 +194,29 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
         // Short-circuit the HTTP request by returning the cached response via a
         // custom adapter.  This keeps callers' .then()/.catch() chains intact.
         config.adapter = () => Promise.resolve(cached as any);
+      } else if (!config.signal) {
+        // Cache is populated only after the first response.  Coalesce equal
+        // cold requests so a header and a lazily mounted page cannot create a
+        // duplicate full-fleet API fetch before that cache entry exists.
+        const sourceAdapter = config.adapter;
+        config.adapter = async (requestConfig) => {
+          const active = inFlightGetRequests.get(key);
+          if (active) {
+            const response = await active;
+            return { ...response, config: requestConfig };
+          }
+
+          const adapter = axios.getAdapter(sourceAdapter ?? api.defaults.adapter);
+          const request = Promise.resolve(adapter(requestConfig));
+          inFlightGetRequests.set(key, request);
+          try {
+            return await request;
+          } finally {
+            if (inFlightGetRequests.get(key) === request) {
+              inFlightGetRequests.delete(key);
+            }
+          }
+        };
       }
     }
   }
@@ -187,11 +229,6 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const errUrl = error.config?.url ?? '';
   const errStatus = error.response?.status ?? 0;
   const errMethod = error.config?.method?.toUpperCase() ?? '';
-  if (errStatus === 401 && !errUrl.includes('/auth/verify') && typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(AUTH_REQUIRED_EVENT, {
-      detail: { url: errUrl, method: errMethod },
-    }));
-  }
   if (!errUrl.includes('/auth/')) {
     activityLog.error('API', `✕ ${errMethod} ${errUrl} ${errStatus}`, { msg: error.response?.data?.detail ?? error.message });
   }
@@ -235,6 +272,9 @@ api.interceptors.response.use((response) => {
   const errUrl = error.config?.url ?? '';
   const errStatus = error.response?.status ?? 0;
   const errMethod = error.config?.method?.toUpperCase() ?? '';
+  if (errStatus === 401 && !errUrl.includes('/auth/verify')) {
+    dispatchAuthRequired(errUrl, errMethod);
+  }
   if (!errUrl.includes('/auth/')) {
     activityLog.error('API', `✕ ${errMethod} ${errUrl} ${errStatus}`, { msg: error.response?.data?.detail ?? error.message });
   }
@@ -242,7 +282,5 @@ api.interceptors.response.use((response) => {
 });
 
 export default api;
-
-
 
 

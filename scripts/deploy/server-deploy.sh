@@ -1,73 +1,127 @@
 #!/usr/bin/env bash
+# Internal, authorised deployment helper. It never pulls or selects a remote ref.
 set -euo pipefail
+umask 077
 
 REPO_DIR="${REPO_DIR:-$(pwd)}"
 ROLLBACK_ON_FAIL="${ROLLBACK_ON_FAIL:-1}"
-
 PROJECT_NAME="${PROJECT_NAME:-sub-manager}"
 PROJECT_DIR="${PROJECT_DIR:-/opt/${PROJECT_NAME}}"
 APP_PORT="${APP_PORT:-666}"
 WEB_PATH="${WEB_PATH:-my-panel}"
 GRAFANA_WEB_PATH="${GRAFANA_WEB_PATH:-grafana}"
+DEPLOY_REF="${DEPLOY_REF:-HEAD}"
 
+fail() {
+  printf 'Deploy refused: %s\n' "$*" >&2
+  exit 1
+}
+
+require_safe_target() {
+  [[ "$PROJECT_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail "invalid PROJECT_NAME"
+  [[ "$PROJECT_DIR" == /* ]] || fail "PROJECT_DIR must be absolute"
+  PROJECT_DIR="$(realpath -m -- "$PROJECT_DIR")"
+  [[ "$PROJECT_DIR" == /opt/* && "$PROJECT_DIR" != /opt ]] || fail "PROJECT_DIR must stay below /opt"
+  PROJECT_PARENT="$(dirname -- "$PROJECT_DIR")"
+  PROJECT_BASENAME="$(basename -- "$PROJECT_DIR")"
+  [[ "$PROJECT_BASENAME" == "$PROJECT_NAME" ]] || fail "PROJECT_DIR basename must match PROJECT_NAME"
+  [[ "$APP_PORT" =~ ^[0-9]+$ ]] && (( APP_PORT >= 1 && APP_PORT <= 65535 )) || fail "invalid APP_PORT"
+}
+
+require_safe_target
+REPO_DIR="$(realpath -e -- "$REPO_DIR")"
+git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null || fail "REPO_DIR is not a Git worktree"
+DEPLOY_COMMIT="$(git -C "$REPO_DIR" rev-parse --verify "${DEPLOY_REF}^{commit}")" || fail "DEPLOY_REF is not a commit"
+CURRENT_COMMIT="$(git -C "$REPO_DIR" rev-parse HEAD)"
+[[ "$DEPLOY_COMMIT" == "$CURRENT_COMMIT" ]] || fail "checkout must already be at immutable DEPLOY_REF"
+[[ -z "$(git -C "$REPO_DIR" status --porcelain)" ]] || fail "refuse dirty source worktree"
+
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)-${DEPLOY_COMMIT:0:12}"
 BACKUP_ROOT="/var/backups/${PROJECT_NAME}_deploy"
-STAMP="$(date +%Y%m%d_%H%M%S)"
 BACKUP_TAR="${BACKUP_ROOT}/project_${STAMP}.tgz"
-mkdir -p "$BACKUP_ROOT"
+BACKUP_SHA="${BACKUP_TAR}.sha256"
+STAGE_DIR="${PROJECT_PARENT}/.${PROJECT_BASENAME}.next-${STAMP}"
+QUARANTINE_DIR="${PROJECT_PARENT}/.${PROJECT_BASENAME}.previous-${STAMP}"
+HAD_PREVIOUS=0
+SERVICE_STOPPED=0
+STATE_DB="${PROJECT_DIR}/admin.db"
 
-rollback() {
-  echo "Deploy failed, starting rollback..."
-  if [[ -f "$BACKUP_TAR" ]]; then
-    rm -rf "$PROJECT_DIR"
-    mkdir -p "$PROJECT_DIR"
-    tar -xzf "$BACKUP_TAR" -C /
+cleanup_stage() {
+  [[ -d "$STAGE_DIR" ]] && rm -rf -- "$STAGE_DIR"
+}
+
+restore_previous() {
+  [[ "$HAD_PREVIOUS" == "1" ]] || return 0
+  systemctl stop "$PROJECT_NAME" || true
+  if [[ -d "$QUARANTINE_DIR" ]]; then
+    printf 'Deploy failed; restoring previous release.\n' >&2
+    [[ -d "$PROJECT_DIR" ]] && rm -rf -- "$PROJECT_DIR"
+    mv -- "$QUARANTINE_DIR" "$PROJECT_DIR"
   fi
-  systemctl restart "$PROJECT_NAME" || true
+  systemctl start "$PROJECT_NAME" || true
   systemctl reload nginx || true
 }
 
-trap '[[ "$ROLLBACK_ON_FAIL" == "1" ]] && rollback' ERR
+on_error() {
+  local status=$?
+  cleanup_stage
+  [[ "$ROLLBACK_ON_FAIL" == "1" ]] && restore_previous
+  exit "$status"
+}
+trap on_error ERR
 
+mkdir -p -m 0700 -- "$BACKUP_ROOT" "$PROJECT_PARENT"
 if [[ -d "$PROJECT_DIR" ]]; then
-  tar -czf "$BACKUP_TAR" "$PROJECT_DIR"
+  HAD_PREVIOUS=1
+  [[ -f "$STATE_DB" ]] || fail "required runtime database is missing: $STATE_DB"
+  command -v sqlite3 >/dev/null || fail "sqlite3 is required for a consistent runtime database backup"
 fi
 
-cd "$REPO_DIR"
-git pull --ff-only
-
-if [[ ! -x "$PROJECT_DIR/venv/bin/pip" ]]; then
-  python3 -m venv "$PROJECT_DIR/venv"
-fi
-"$PROJECT_DIR/venv/bin/pip" install -U pip >/dev/null
-"$PROJECT_DIR/venv/bin/pip" install -r backend/requirements.txt >/dev/null
-"$PROJECT_DIR/venv/bin/pip" install -r backend/requirements-dev.txt >/dev/null
-"$PROJECT_DIR/venv/bin/python" -m pytest \
-  backend/tests/test_runtime_controls.py \
-  backend/tests/test_security_hardening.py \
-  backend/tests/test_api_smoke.py \
-  -q >/dev/null
-
-mkdir -p "$PROJECT_DIR"
-cp backend/*.py "$PROJECT_DIR/"
+mkdir -m 0700 -- "$STAGE_DIR"
+cp "$REPO_DIR"/backend/*.py "$STAGE_DIR/"
 for pkg in core modules integrations routers services shared; do
-  if [[ -d "backend/$pkg" ]]; then
-    rm -rf "${PROJECT_DIR:?}/$pkg"
-    cp -r "backend/$pkg" "$PROJECT_DIR/$pkg"
-  fi
+  [[ -d "$REPO_DIR/backend/$pkg" ]] && cp -a "$REPO_DIR/backend/$pkg" "$STAGE_DIR/$pkg"
 done
 
-bash "$REPO_DIR/scripts/deploy/build-and-publish-frontend.sh"
+python3 -m venv "$STAGE_DIR/venv"
+"$STAGE_DIR/venv/bin/pip" install --require-hashes -r "$REPO_DIR/backend/requirements.txt" >/dev/null
+PYTHONPATH="$STAGE_DIR" "$STAGE_DIR/venv/bin/python" -m compileall -q "$STAGE_DIR"
+
+PROJECT_DIR="$STAGE_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" \
+  SKIP_LIVE_VERIFY=1 bash "$REPO_DIR/scripts/deploy/build-and-publish-frontend.sh"
+
+if [[ "$HAD_PREVIOUS" == "1" ]]; then
+  systemctl stop "$PROJECT_NAME"
+  SERVICE_STOPPED=1
+  sqlite3 "$STATE_DB" 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null
+  [[ "$(sqlite3 "$STATE_DB" 'PRAGMA integrity_check;' | tr -d '\r')" == "ok" ]] || fail "runtime database integrity check failed"
+  tar -C "$PROJECT_PARENT" -czf "$BACKUP_TAR" -- "$PROJECT_BASENAME"
+  tar -tzf "$BACKUP_TAR" | grep -qx "${PROJECT_BASENAME}/" || fail "backup layout is invalid"
+  sha256sum "$BACKUP_TAR" > "$BACKUP_SHA"
+  chmod 0600 "$BACKUP_TAR" "$BACKUP_SHA"
+  sqlite3 "$STATE_DB" ".backup '$STAGE_DIR/admin.db'"
+  [[ "$(sqlite3 "$STAGE_DIR/admin.db" 'PRAGMA integrity_check;' | tr -d '\r')" == "ok" ]] || fail "staged runtime database backup integrity check failed"
+  if [[ -f "$PROJECT_DIR/.encryption_key" ]]; then
+    install -m 0600 "$PROJECT_DIR/.encryption_key" "$STAGE_DIR/.encryption_key"
+  fi
+  mv -- "$PROJECT_DIR" "$QUARANTINE_DIR"
+fi
+mv -- "$STAGE_DIR" "$PROJECT_DIR"
 
 systemctl daemon-reload
 systemctl restart "$PROJECT_NAME"
+SERVICE_STOPPED=0
 nginx -t >/dev/null
 systemctl reload nginx
 
-code="$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:${APP_PORT}/health")"
+code="$(curl --fail --silent --show-error --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${APP_PORT}/health")"
 if [[ "$code" != "200" ]]; then
-  echo "Health check failed: $code"
+  printf 'Deploy failed: health check returned %s\n' "$code" >&2
+  cleanup_stage
+  [[ "$ROLLBACK_ON_FAIL" == "1" ]] && restore_previous
   exit 1
 fi
 
 trap - ERR
-echo "Deploy completed successfully."
+[[ -d "$QUARANTINE_DIR" ]] && rm -rf -- "$QUARANTINE_DIR"
+printf 'Deploy completed: commit=%s backup=%s\n' "$DEPLOY_COMMIT" "${BACKUP_TAR:-none}"

@@ -2,9 +2,11 @@
 // CACHE_VER is stamped at build time by build-and-publish-frontend.sh
 // so every deploy gets a fresh cache name and stale assets are evicted.
 const CACHE_VER = '__CACHE_VER__';
-const CACHE_NAME = `sub-manager-${CACHE_VER}`;
 const scopeUrl = new URL(self.registration.scope);
 const basePath = scopeUrl.pathname.replace(/\/$/, '');
+const scopeKey = (basePath || 'root').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '') || 'root';
+const CACHE_PREFIX = `sub-manager-${scopeKey}-`;
+const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VER}`;
 const withBase = (path) => `${basePath}${path}`;
 const ASSETS_TO_CACHE = [
   withBase('/'),
@@ -33,7 +35,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
+          if (cacheName.startsWith(CACHE_PREFIX) && cacheName !== CACHE_NAME) {
             console.log('[SW] Deleting old cache:', cacheName);
             return caches.delete(cacheName);
           }
@@ -86,7 +88,7 @@ self.addEventListener('fetch', (event) => {
   // Static assets: cache-first, but only cache responses whose content-type
   // actually matches the resource type — never cache an HTML fallback as CSS/JS.
   event.respondWith(
-    caches.match(request).then((cached) => {
+    caches.open(CACHE_NAME).then((cache) => cache.match(request)).then((cached) => {
       if (cached) return cached;
       return fetch(request).then((networkResponse) => {
         if (networkResponse.ok && isResponseTypeValid(request, networkResponse)) {

@@ -1,5 +1,6 @@
 from typing import Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
 
 
@@ -16,8 +17,8 @@ def build_inbounds_router(
 ):
     router = APIRouter()
 
-    def _load_nodes(node_ids=None, exclude_node_id=None):
-        nodes = node_service.list_nodes()
+    async def _load_nodes(node_ids=None, exclude_node_id=None):
+        nodes = await run_in_threadpool(node_service.list_nodes)
         if node_ids:
             node_id_set = {int(node_id) for node_id in node_ids}
             return [node for node in nodes if int(node.get("id")) in node_id_set]
@@ -31,8 +32,8 @@ def build_inbounds_router(
         if not user:
             raise HTTPException(status_code=401)
 
-        nodes = node_service.list_nodes()
-        inbounds = get_cached_inbounds(nodes)
+        nodes = await run_in_threadpool(node_service.list_nodes)
+        inbounds = await run_in_threadpool(get_cached_inbounds, nodes)
 
         if protocol:
             inbounds = [ib for ib in inbounds if ib.get("protocol") == protocol]
@@ -50,8 +51,8 @@ def build_inbounds_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        nodes = node_service.list_nodes()
-        inbounds = get_cached_inbounds(nodes)
+        nodes = await run_in_threadpool(node_service.list_nodes)
+        inbounds = await run_in_threadpool(get_cached_inbounds, nodes)
         by_protocol: dict = {}
         by_security: dict = {}
         enabled = sum(1 for ib in inbounds if ib.get("enable"))
@@ -76,16 +77,16 @@ def build_inbounds_router(
 
         config = dict(config)
         node_ids = config.pop("node_ids", None)
-        nodes = _load_nodes(node_ids=node_ids)
+        nodes = await _load_nodes(node_ids=node_ids)
 
         results = []
         for node in nodes:
-            success = inbound_mgr.add_inbound(node, config)
+            success = await run_in_threadpool(inbound_mgr.add_inbound, node, config)
             results.append({"node": node["name"], "success": success})
 
         if any(r.get("success") for r in results):
-            invalidate_subscription_cache()
-            invalidate_live_stats_cache()
+            await run_in_threadpool(invalidate_subscription_cache)
+            await run_in_threadpool(invalidate_live_stats_cache)
 
         return {"results": results}
 
@@ -103,17 +104,19 @@ def build_inbounds_router(
         if not source_node_id or not source_inbound_id:
             raise HTTPException(status_code=400, detail="source_node_id and source_inbound_id required")
 
-        source_node = get_node_or_404(source_node_id)
+        source_node = await run_in_threadpool(get_node_or_404, source_node_id)
 
         if target_node_ids:
-            target_nodes = _load_nodes(node_ids=target_node_ids)
+            target_nodes = await _load_nodes(node_ids=target_node_ids)
         else:
-            target_nodes = _load_nodes(exclude_node_id=source_node_id)
+            target_nodes = await _load_nodes(exclude_node_id=source_node_id)
 
-        result = inbound_mgr.clone_inbound(source_node, source_inbound_id, target_nodes, modifications)
+        result = await run_in_threadpool(
+            inbound_mgr.clone_inbound, source_node, source_inbound_id, target_nodes, modifications
+        )
         if any(r.get("success") for r in result.get("results", [])):
-            invalidate_subscription_cache()
-            invalidate_live_stats_cache()
+            await run_in_threadpool(invalidate_subscription_cache)
+            await run_in_threadpool(invalidate_live_stats_cache)
         return result
 
     @router.delete("/api/v1/inbounds/{inbound_id}")
@@ -122,12 +125,12 @@ def build_inbounds_router(
         if not user:
             raise HTTPException(status_code=401)
 
-        node = get_node_or_404(node_id)
+        node = await run_in_threadpool(get_node_or_404, node_id)
 
-        success = inbound_mgr.delete_inbound(node, inbound_id)
+        success = await run_in_threadpool(inbound_mgr.delete_inbound, node, inbound_id)
         if success:
-            invalidate_subscription_cache()
-            invalidate_live_stats_cache()
+            await run_in_threadpool(invalidate_subscription_cache)
+            await run_in_threadpool(invalidate_live_stats_cache)
         return {"success": success}
 
     @router.post("/api/v1/inbounds/batch-enable")
@@ -143,12 +146,12 @@ def build_inbounds_router(
         if not inbound_ids:
             raise HTTPException(status_code=400, detail="inbound_ids required")
 
-        nodes = _load_nodes(node_ids=node_ids)
-        result = inbound_mgr.batch_enable_inbounds(nodes, inbound_ids, enable)
+        nodes = await _load_nodes(node_ids=node_ids)
+        result = await run_in_threadpool(inbound_mgr.batch_enable_inbounds, nodes, inbound_ids, enable)
 
         if result.get("successful", 0) > 0:
-            invalidate_subscription_cache()
-            invalidate_live_stats_cache()
+            await run_in_threadpool(invalidate_subscription_cache)
+            await run_in_threadpool(invalidate_live_stats_cache)
 
         await ws_manager.broadcast_inbound_update({"action": "batch_enable", "result": result})
         return result
@@ -166,12 +169,12 @@ def build_inbounds_router(
         if not inbound_ids:
             raise HTTPException(status_code=400, detail="inbound_ids required")
 
-        nodes = _load_nodes(node_ids=node_ids)
-        result = inbound_mgr.batch_update_inbounds(nodes, inbound_ids, updates)
+        nodes = await _load_nodes(node_ids=node_ids)
+        result = await run_in_threadpool(inbound_mgr.batch_update_inbounds, nodes, inbound_ids, updates)
 
         if result.get("successful", 0) > 0:
-            invalidate_subscription_cache()
-            invalidate_live_stats_cache()
+            await run_in_threadpool(invalidate_subscription_cache)
+            await run_in_threadpool(invalidate_live_stats_cache)
 
         await ws_manager.broadcast_inbound_update({"action": "batch_update", "result": result})
         return result
@@ -188,12 +191,12 @@ def build_inbounds_router(
         if not inbound_ids:
             raise HTTPException(status_code=400, detail="inbound_ids required")
 
-        nodes = _load_nodes(node_ids=node_ids)
-        result = inbound_mgr.batch_delete_inbounds(nodes, inbound_ids)
+        nodes = await _load_nodes(node_ids=node_ids)
+        result = await run_in_threadpool(inbound_mgr.batch_delete_inbounds, nodes, inbound_ids)
 
         if result.get("successful", 0) > 0:
-            invalidate_subscription_cache()
-            invalidate_live_stats_cache()
+            await run_in_threadpool(invalidate_subscription_cache)
+            await run_in_threadpool(invalidate_live_stats_cache)
 
         await ws_manager.broadcast_inbound_update({"action": "batch_delete", "result": result})
         return result
@@ -203,11 +206,11 @@ def build_inbounds_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        node = get_node_or_404(node_id)
+        node = await run_in_threadpool(get_node_or_404, node_id)
         enable = bool(data.get("enable", True))
-        success = inbound_mgr.set_inbound_enable(node, inbound_id, enable)
+        success = await run_in_threadpool(inbound_mgr.set_inbound_enable, node, inbound_id, enable)
         if success:
-            invalidate_live_stats_cache()
+            await run_in_threadpool(invalidate_live_stats_cache)
         return {"success": success}
 
     @router.post("/api/v1/inbounds/{node_id}/{inbound_id}/reset-traffic")
@@ -215,10 +218,10 @@ def build_inbounds_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        node = get_node_or_404(node_id)
-        success = inbound_mgr.reset_inbound_traffic(node, inbound_id)
+        node = await run_in_threadpool(get_node_or_404, node_id)
+        success = await run_in_threadpool(inbound_mgr.reset_inbound_traffic, node, inbound_id)
         if success:
-            invalidate_live_stats_cache()
+            await run_in_threadpool(invalidate_live_stats_cache)
         return {"success": success}
 
     @router.post("/api/v1/inbounds/{node_id}/{inbound_id}/del-all-clients")
@@ -226,11 +229,11 @@ def build_inbounds_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        node = get_node_or_404(node_id)
-        result = inbound_mgr.del_all_inbound_clients(node, inbound_id)
+        node = await run_in_threadpool(get_node_or_404, node_id)
+        result = await run_in_threadpool(inbound_mgr.del_all_inbound_clients, node, inbound_id)
         if "error" not in result:
-            invalidate_subscription_cache()
-            invalidate_live_stats_cache()
+            await run_in_threadpool(invalidate_subscription_cache)
+            await run_in_threadpool(invalidate_live_stats_cache)
         return result
 
     @router.post("/api/v1/inbounds/{node_id}/reset-all-traffics")
@@ -238,10 +241,10 @@ def build_inbounds_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        node = get_node_or_404(node_id)
-        success = inbound_mgr.reset_all_inbound_traffics(node)
+        node = await run_in_threadpool(get_node_or_404, node_id)
+        success = await run_in_threadpool(inbound_mgr.reset_all_inbound_traffics, node)
         if success:
-            invalidate_live_stats_cache()
+            await run_in_threadpool(invalidate_live_stats_cache)
         return {"success": success}
 
     @router.put("/api/v1/inbounds/{node_id}/{inbound_id}")
@@ -250,13 +253,13 @@ def build_inbounds_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        node = get_node_or_404(node_id)
+        node = await run_in_threadpool(get_node_or_404, node_id)
         updates = {k: v for k, v in data.items() if k != "node_id"}
         if not updates:
             raise HTTPException(status_code=400, detail="No updates provided")
-        success = inbound_mgr.update_inbound(node, inbound_id, updates)
+        success = await run_in_threadpool(inbound_mgr.update_inbound, node, inbound_id, updates)
         if success:
-            invalidate_live_stats_cache()
+            await run_in_threadpool(invalidate_live_stats_cache)
         return {"success": success}
 
     return router

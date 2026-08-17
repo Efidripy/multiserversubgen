@@ -94,7 +94,9 @@ def build_request_controls_and_audit_middleware(
 
         response.headers["X-Request-ID"] = request_id
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
-        path_label = path if path.startswith("/api/v1/") else path
+        route = request.scope.get("route")
+        path_label = getattr(route, "path", None) or path
+        response.headers["Server-Timing"] = f"app;dur={duration_ms}"
         http_request_count.labels(request.method, path_label, str(response.status_code)).inc()
         http_request_latency.labels(request.method, path_label).observe(duration_ms / 1000.0)
         audit_payload = {
