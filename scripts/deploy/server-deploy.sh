@@ -130,6 +130,7 @@ if [[ "$HAD_PREVIOUS" == "1" ]]; then
   mv -- "$PROJECT_DIR" "$QUARANTINE_DIR"
 fi
 mv -- "$STAGE_DIR" "$PROJECT_DIR"
+chmod 0755 "$PROJECT_DIR"
 sed -i "1s|^#!.*$|#!${PROJECT_DIR}/venv/bin/python|" "$PROJECT_DIR/venv/bin/uvicorn"
 [[ -x "$PROJECT_DIR/venv/bin/uvicorn" ]] || fail "deployed uvicorn executable is missing"
 "$PROJECT_DIR/venv/bin/uvicorn" --version >/dev/null
