@@ -4,7 +4,8 @@
  */
 
 import React from 'react';
-import { getAuth } from '../auth';
+import { getAuth, setWsTicket } from '../auth';
+import { verifyCurrentAuth } from '../api/authService';
 import { devLog } from '../utils/devLogger';
 
 export interface DeltaUpdate<T> {
@@ -25,6 +26,9 @@ class WebSocketManager {
   private isConnecting = false;
   private reconnectTimer: number | null = null;
   private closedByOwner = false;
+  private policyRefreshAttempted = false;
+  private terminalPolicyFailure = false;
+  private ticketRefreshPromise: Promise<boolean> | null = null;
   private handlers: Map<string, Set<WebSocketMessageHandler>> = new Map();
   private messageQueue: any[] = [];
 
@@ -39,6 +43,10 @@ class WebSocketManager {
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.closedByOwner = false;
+      if (this.terminalPolicyFailure) {
+        reject(new Error('WebSocket reconnect is paused after an authentication/policy failure.'));
+        return;
+      }
       if (this.reconnectTimer !== null) {
         window.clearTimeout(this.reconnectTimer);
         this.reconnectTimer = null;
@@ -72,6 +80,7 @@ class WebSocketManager {
           devLog('[WebSocket] Connected');
           this.isConnecting = false;
           this.reconnectDelay = 1000;
+          this.policyRefreshAttempted = false;
 
           // Flush queued messages
           while (this.messageQueue.length > 0) {
@@ -92,7 +101,9 @@ class WebSocketManager {
         };
 
         this.ws.onerror = (error) => {
-          console.error('[WebSocket] Error:', error);
+          // The close handler owns recovery.  Browser error events do not
+          // include a safe diagnostic and logging each one caused console spam.
+          devLog('[WebSocket] transport error', error);
           this.isConnecting = false;
           reject(error);
         };
@@ -101,7 +112,16 @@ class WebSocketManager {
           devLog('[WebSocket] Disconnected');
           this.isConnecting = false;
           this.ws = null;
-          if (event.code === 1008 || this.closedByOwner) {
+          if (this.closedByOwner) {
+            return;
+          }
+          if (event.code === 1008) {
+            if (!this.policyRefreshAttempted) {
+              this.policyRefreshAttempted = true;
+              void this.refreshTicketAndReconnect();
+            } else {
+              this.terminalPolicyFailure = true;
+            }
             return;
           }
           this.attemptReconnect();
@@ -111,6 +131,25 @@ class WebSocketManager {
         reject(err);
       }
     });
+  }
+
+  private async refreshTicketAndReconnect(): Promise<void> {
+    if (this.closedByOwner || this.terminalPolicyFailure) return;
+    if (!this.ticketRefreshPromise) {
+      this.ticketRefreshPromise = verifyCurrentAuth()
+        .then((verified) => {
+          if (!verified.ws_ticket) return false;
+          setWsTicket(verified.ws_ticket);
+          return true;
+        })
+        .catch(() => false)
+        .finally(() => { this.ticketRefreshPromise = null; });
+    }
+    if (await this.ticketRefreshPromise) {
+      this.attemptReconnect();
+    } else {
+      this.terminalPolicyFailure = true;
+    }
   }
 
   private attemptReconnect() {
@@ -183,8 +222,16 @@ class WebSocketManager {
     return this.ws !== null && this.ws.readyState === WebSocket.OPEN;
   }
 
+  resumeAfterAuth() {
+    this.closedByOwner = false;
+    this.terminalPolicyFailure = false;
+    this.policyRefreshAttempted = false;
+  }
+
   close() {
     this.closedByOwner = true;
+    this.terminalPolicyFailure = false;
+    this.policyRefreshAttempted = false;
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

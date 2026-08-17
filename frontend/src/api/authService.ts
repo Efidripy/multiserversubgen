@@ -12,6 +12,7 @@ export interface MfaStatusResponse {
 export interface VerifyAuthResponse {
   user?: string;
   ws_ticket?: string;
+  role?: 'viewer' | 'operator' | 'admin' | string;
 }
 
 export async function getFeatureFlags(): Promise<FeatureFlagsResponse> {

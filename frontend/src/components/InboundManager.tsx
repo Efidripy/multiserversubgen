@@ -354,6 +354,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   const [batchRemark, setBatchRemark] = useState('');
   const [batchEnableMode, setBatchEnableMode] = useState<'none' | 'enable' | 'disable'>('none');
   const requestIdRef = useRef(0);
+  const inboundsAbortRef = useRef<AbortController | null>(null);
 
   // Inbound config viewer modal
   const [showConfigModal, setShowConfigModal] = useState(false);
@@ -389,6 +390,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
     // Refresh silently if cache is fresh enough, otherwise show spinner.
     loadInbounds(cached.isFresh ? true : false);
+    return () => inboundsAbortRef.current?.abort();
   }, []);
 
   useEffect(() => {
@@ -522,6 +524,9 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   ]);
 
   const loadInbounds = async (silent = false) => {
+    inboundsAbortRef.current?.abort();
+    const controller = new AbortController();
+    inboundsAbortRef.current = controller;
     if (!silent) setPageLoading(true);
     setError('');
 
@@ -531,13 +536,13 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     try {
       // Single parallel fetch â€” backend returns from cache (30s fresh / 300s stale).
       const inboundStatsPromise = api
-        .get('/v1/inbounds/stats', { auth: getAuth() })
+        .get('/v1/inbounds/stats', { auth: getAuth(), signal: controller.signal })
         .then((res) => normalizeInboundStats(res.data))
         .catch(() => null);
 
       const [nodes, rawInbounds, stats] = await Promise.all([
-        listNodes(),
-        getInboundsHeaderSource(),
+        listNodes({ signal: controller.signal }),
+        getInboundsHeaderSource({ signal: controller.signal }),
         inboundStatsPromise,
       ]);
 
@@ -559,6 +564,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       if (!silent) setPageLoading(false);
 
     } catch (err: any) {
+      if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return;
       setError(err.response?.data?.detail || t('messages.operationFailed'));
       if (!silent) setPageLoading(false);
     }

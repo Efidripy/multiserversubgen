@@ -23,6 +23,8 @@ installer, updater, systemd unit and deployment helpers.
   [`docs/REMEDIATION-ROADMAP-2026-08-10.md`](docs/REMEDIATION-ROADMAP-2026-08-10.md).
 - Navigation/cache performance record:
   [`docs/PERF-01-NAVIGATION-CACHING-2026-08-17.md`](docs/PERF-01-NAVIGATION-CACHING-2026-08-17.md).
+- Production UI cold-path record:
+  [`docs/PERF-02-PRODUCTION-UI-COLD-PATH-2026-08-17.md`](docs/PERF-02-PRODUCTION-UI-COLD-PATH-2026-08-17.md).
 - Historical improvement snapshot:
   [`docs/IMPROVEMENTS.md`](docs/IMPROVEMENTS.md). It is not the current
   remediation authority.

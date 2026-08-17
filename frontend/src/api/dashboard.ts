@@ -143,8 +143,8 @@ export async function getDashboardHeaderMetrics(): Promise<DashboardHeaderMetric
   };
 }
 
-export async function getInboundsHeaderSource(): Promise<any[]> {
-  const res = await api.get('/v1/inbounds', { auth: getAuth() });
+export async function getInboundsHeaderSource(options: { signal?: AbortSignal } = {}): Promise<any[]> {
+  const res = await api.get('/v1/inbounds', { auth: getAuth(), signal: options.signal });
   return Array.isArray(res.data?.inbounds) ? res.data.inbounds
     : Array.isArray(res.data) ? res.data : [];
 }
