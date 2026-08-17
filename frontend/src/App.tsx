@@ -15,12 +15,9 @@ import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername
 import { getMfaStatus, verifyCurrentAuth, verifyLoginCredentials } from './api/authService';
 import {
   getBackupHeaderSource,
-  getClientsHeaderSource,
   getDashboardHeaderMetrics,
-  getInboundsHeaderSource,
   getMonitoringHeaderSource,
   getSubscriptionsHeaderSource,
-  getTrafficHeaderSource,
 } from './api/dashboard';
 import { IconName, UIIcon } from './components/UIIcon';
 import { requestActivityStore } from './services/requestActivity';
@@ -114,19 +111,6 @@ const TAB_META: Record<TabType, { icon: IconName; labelKey: string; eyebrowKey: 
 
 const formatCompactNumber = (value: number) =>
   new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: value >= 100 ? 0 : 1 }).format(value);
-
-const formatBytes = (bytes: number) => {
-  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
-  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let value = bytes;
-  let unitIndex = 0;
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-  const digits = value >= 100 ? 0 : value >= 10 ? 1 : 2;
-  return `${value.toFixed(digits)} ${units[unitIndex]}`;
-};
 
 const formatPercent = (value: number) => `${Number.isFinite(value) ? value.toFixed(value >= 10 ? 0 : 1) : '0'}%`;
 
@@ -362,64 +346,18 @@ export const App: React.FC = () => {
             }
             break;
           }
-          case 'inbounds': {
-            const inbounds = await getInboundsHeaderSource();
-            const enabled = inbounds.filter((item: any) => item.enable).length;
-            const protocols = new Set(inbounds.map((item: any) => item.protocol).filter(Boolean)).size;
-            const nodesCovered = new Set(inbounds.map((item: any) => item.node_name).filter(Boolean)).size;
+          case 'inbounds':
+          case 'clients':
+          case 'traffic':
+            // The active tab owns its projection. Do not issue a second
+            // remote fetch merely to decorate the shared header.
             if (!cancelled) {
               updateHeaderSummary({
-                description: t('header.inbounds.description'),
-                stats: [
-                  { label: t('header.inbounds.totalInbounds'), value: String(inbounds.length) },
-                  { label: t('header.inbounds.enabled'), value: String(enabled), tone: enabled > 0 ? 'success' : 'warning' },
-                  { label: t('header.inbounds.protocols'), value: String(protocols) },
-                  { label: t('header.inbounds.coveredNodes'), value: String(nodesCovered) },
-                ],
+                description: t(TAB_META[activeTab].descriptionKey),
+                stats: [],
               });
             }
             break;
-          }
-          case 'clients': {
-            const { clients, nodes } = await getClientsHeaderSource();
-            const enabled = clients.filter((item: any) => item.enable).length;
-            const expiringSoon = clients.filter((item: any) => {
-              const expiry = Number(item.expiryTime || 0);
-              return expiry > Date.now() && expiry - Date.now() <= 7 * 24 * 60 * 60 * 1000;
-            }).length;
-            if (!cancelled) {
-              updateHeaderSummary({
-                description: t('header.clients.description'),
-                stats: [
-                  { label: t('header.clients.clientRecords'), value: formatCompactNumber(clients.length) },
-                  { label: t('header.clients.enabled'), value: formatCompactNumber(enabled), tone: enabled > 0 ? 'success' : 'warning' },
-                  { label: t('header.clients.expiringIn7d'), value: String(expiringSoon), tone: expiringSoon > 0 ? 'warning' : 'default' },
-                  { label: t('header.clients.availableNodes'), value: String(nodes.length) },
-                ],
-              });
-            }
-            break;
-          }
-          case 'traffic': {
-            const { onlineClients, stats: statsObj } = await getTrafficHeaderSource();
-            const trafficEntries = Object.entries(statsObj) as Array<[string, { up?: number; down?: number; total?: number }]>;
-            const totalTraffic = trafficEntries.reduce((sum, [, value]) => sum + (value.total || value.up || 0) + (value.total ? 0 : value.down || 0), 0);
-            const heaviest = trafficEntries
-              .map(([name, value]) => ({ name, total: value.total || (value.up || 0) + (value.down || 0) }))
-              .sort((a, b) => b.total - a.total)[0];
-            if (!cancelled) {
-              updateHeaderSummary({
-                description: t('header.traffic.description'),
-                stats: [
-                  { label: t('header.traffic.onlineNow'), value: formatCompactNumber(onlineClients.length), tone: onlineClients.length > 0 ? 'success' : 'default' },
-                  { label: t('header.traffic.trackedEntries'), value: formatCompactNumber(trafficEntries.length) },
-                  { label: t('header.traffic.totalTraffic'), value: formatBytes(totalTraffic), tone: 'accent' },
-                  { label: t('header.traffic.heaviestClient'), value: heaviest ? heaviest.name : t('header.common.none') },
-                ],
-              });
-            }
-            break;
-          }
           case 'monitoring': {
             const { deps, overview, stack } = await getMonitoringHeaderSource();
             const services = stack?.services ? Object.values(stack.services) as any[] : [];

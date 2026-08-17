@@ -74,6 +74,7 @@ type TrafficStatsValue = {
 const normalizeEmailKey = (email: string): string => email.trim().toLowerCase();
 const TRAFFIC_STATS_CACHE_KEY = 'sub_manager_traffic_stats_cache_v2';
 const TRAFFIC_STATS_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
+const REALTIME_TRAFFIC_REFRESH_MIN_INTERVAL_MS = 60 * 1000;
 
 type TrafficGroupBy = 'client' | 'inbound' | 'node';
 type TrafficPeriod = 'day' | 'week' | 'month' | 'year' | 'all_time';
@@ -130,6 +131,8 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   const trafficAbortRef = useRef<AbortController | null>(null);
   const onlineAbortRef = useRef<AbortController | null>(null);
   const onlineTotalsAbortRef = useRef<AbortController | null>(null);
+  const realtimeTrafficRefreshTimerRef = useRef<number | null>(null);
+  const lastRealtimeTrafficRefreshRef = useRef(0);
   const chartAccent = stylePreset === '3' ? '#e2e8f0' : '#22d3ee';
 
   useEffect(() => {
@@ -155,6 +158,9 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     trafficAbortRef.current?.abort();
     onlineAbortRef.current?.abort();
     onlineTotalsAbortRef.current?.abort();
+    if (realtimeTrafficRefreshTimerRef.current !== null) {
+      window.clearTimeout(realtimeTrafficRefreshTimerRef.current);
+    }
   }, []);
 
   const loadTrafficStats = async (
@@ -289,13 +295,38 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     }
   };
 
+  const scheduleRealtimeTrafficRefresh = useCallback(() => {
+    const refresh = () => {
+      realtimeTrafficRefreshTimerRef.current = null;
+      lastRealtimeTrafficRefreshRef.current = Date.now();
+      loadTrafficStats(groupBy, period, { silent: true });
+    };
+
+    const remaining = REALTIME_TRAFFIC_REFRESH_MIN_INTERVAL_MS - (Date.now() - lastRealtimeTrafficRefreshRef.current);
+    if (remaining <= 0) {
+      refresh();
+      return;
+    }
+
+    if (realtimeTrafficRefreshTimerRef.current === null) {
+      realtimeTrafficRefreshTimerRef.current = window.setTimeout(refresh, remaining);
+    }
+  }, [groupBy, period]);
+
+  useEffect(() => {
+    if (realtimeTrafficRefreshTimerRef.current !== null) {
+      window.clearTimeout(realtimeTrafficRefreshTimerRef.current);
+      realtimeTrafficRefreshTimerRef.current = null;
+    }
+  }, [groupBy, period]);
+
   const handleRealtimeUpdate = useCallback(
     (update: TrafficUpdate) => {
       if (update.data?.source === 'snapshot_collector') {
         if (update.type !== 'client_update') {
           return;
         }
-        loadTrafficStats(groupBy, period, { silent: true });
+        scheduleRealtimeTrafficRefresh();
         if (onlineDetailsRequested) {
           loadOnlineClients(true);
           loadOnlineTrafficTotals(period);
@@ -303,7 +334,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
         return;
       }
       if (update.type === 'traffic_update') {
-        loadTrafficStats(groupBy, period, { silent: true });
+        scheduleRealtimeTrafficRefresh();
         if (onlineDetailsRequested) loadOnlineTrafficTotals(period);
         return;
       }
@@ -312,10 +343,10 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
         return;
       }
       if (update.type === 'server_status') {
-        loadTrafficStats(groupBy, period, { silent: true });
+        scheduleRealtimeTrafficRefresh();
       }
     },
-    [groupBy, onlineDetailsRequested, period],
+    [onlineDetailsRequested, period, scheduleRealtimeTrafficRefresh],
   );
 
   useTrafficStatsSubscription({
@@ -324,7 +355,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     onError: (err) => console.warn('[TrafficStats] realtime error:', err),
     fallbackPollIntervalMs: 60_000,
     fallbackRun: () => {
-      loadTrafficStats(groupBy, period, { silent: true });
+      scheduleRealtimeTrafficRefresh();
       if (onlineDetailsRequested) {
         loadOnlineClients(true);
         loadOnlineTrafficTotals(period);

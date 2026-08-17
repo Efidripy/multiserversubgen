@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from threading import Thread
+from threading import Lock, Thread
 from typing import Dict, List, Optional
 
 from services.db_bootstrap import connect
@@ -59,6 +59,15 @@ class LiveStatsRuntime:
         self._memory_snapshots: Dict[str, dict] = {}
         self._snapshot_cleanup_ts = 0.0
         self._snapshot_seed_check_ts = 0.0
+        self._traffic_cold_load_locks: Dict[str, Lock] = {}
+
+    def _get_traffic_cold_load_lock(self, group_by: str) -> Lock:
+        with self.state_lock:
+            lock = self._traffic_cold_load_locks.get(group_by)
+            if lock is None:
+                lock = Lock()
+                self._traffic_cold_load_locks[group_by] = lock
+            return lock
 
     def invalidate(self) -> None:
         self.traffic_stats_cache.clear()
@@ -119,11 +128,36 @@ class LiveStatsRuntime:
             self._save_period_snapshots(group_by, cached[1].get("stats", {}), now)
             return cached[1]
 
-        data = self.client_mgr.get_traffic_stats(nodes, group_by)
-        self.traffic_stats_cache[group_by] = (now, data)
-        self.redis_set_json(redis_key, data, self.traffic_stats_cache_ttl)
-        self._save_period_snapshots(group_by, data.get("stats", {}), now)
-        return data
+        # A cold navigation, header summary, or realtime retry can reach this
+        # point concurrently. Coalesce the remote fleet fan-out per grouping.
+        with self._get_traffic_cold_load_lock(group_by):
+            redis_data = self.redis_get_json(redis_key)
+            if isinstance(redis_data, dict):
+                self._save_period_snapshots(group_by, redis_data.get("stats", {}), time.time())
+                return redis_data
+
+            now = time.time()
+            cached = self.traffic_stats_cache.get(group_by)
+            if cached and now - cached[0] < self.traffic_stats_cache_ttl:
+                self._save_period_snapshots(group_by, cached[1].get("stats", {}), now)
+                return cached[1]
+
+            if cached and now - cached[0] < self.traffic_stats_stale_ttl:
+                def _refresh():
+                    fresh = self.client_mgr.get_traffic_stats(nodes, group_by)
+                    self.traffic_stats_cache[group_by] = (time.time(), fresh)
+                    self.redis_set_json(redis_key, fresh, self.traffic_stats_cache_ttl)
+                    self._save_period_snapshots(group_by, fresh.get("stats", {}), time.time())
+
+                self.start_cache_refresh("traffic", _refresh, worker_key=group_by)
+                self._save_period_snapshots(group_by, cached[1].get("stats", {}), now)
+                return cached[1]
+
+            data = self.client_mgr.get_traffic_stats(nodes, group_by)
+            self.traffic_stats_cache[group_by] = (time.time(), data)
+            self.redis_set_json(redis_key, data, self.traffic_stats_cache_ttl)
+            self._save_period_snapshots(group_by, data.get("stats", {}), time.time())
+            return data
 
     def _snapshot_key(self, group_by: str, bucket_kind: str, bucket_id: int) -> str:
         return f"traffic_snapshot:{group_by}:{bucket_kind}:{bucket_id}"
