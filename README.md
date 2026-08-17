@@ -55,7 +55,8 @@ sudo ./install.sh
 
 ```bash
 systemctl is-active sub-manager
-curl -s -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1:666/health
+APP_PORT="${APP_PORT:-666}"
+curl -s -o /dev/null -w 'health=%{http_code}\n' "http://127.0.0.1:${APP_PORT}/health"
 ```
 
 Публичная проверка панели:
@@ -109,7 +110,8 @@ flowchart LR
 - [Полная API-документация](./docs/API_DOCUMENTATION.md)
 - [Гайд по компонентам](./docs/COMPONENTS_GUIDE.md)
 - [Гайд по подпискам](./docs/SUBSCRIPTION_GUIDE.md)
-- [Статус улучшений](./docs/IMPROVEMENTS.md)
+- [Текущий remediation roadmap](./docs/REMEDIATION-ROADMAP-2026-08-10.md)
+- [Исторический снимок улучшений](./docs/IMPROVEMENTS.md)
 
 ## Практичные заметки для production
 

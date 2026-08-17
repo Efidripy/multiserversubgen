@@ -12,7 +12,8 @@ journalctl -u sub-manager -f
 ### Проверки
 
 ```bash
-curl -s -o /dev/null -w 'health=%{http_code}\n' http://127.0.0.1:666/health
+APP_PORT="${APP_PORT:-666}"
+curl -s -o /dev/null -w 'health=%{http_code}\n' "http://127.0.0.1:${APP_PORT}/health"
 curl -fsSL -o /dev/null -w 'panel=%{http_code}\n' https://<your-domain>/<web-path>/
 ```
 

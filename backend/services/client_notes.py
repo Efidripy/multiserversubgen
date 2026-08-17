@@ -57,13 +57,29 @@ def enrich_clients_with_notes(db_path: str, clients: Iterable[Dict], *, nodes: O
             client.setdefault("notes", "")
         return result
 
+    # Query only notes for the clients returned by this request. The composite
+    # unique key already supports this lookup; scanning every historical note
+    # on each clients refresh becomes increasingly expensive over time.
+    rows = []
+    unique_identities = list(dict.fromkeys(identities))
     with connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT node_id, inbound_id, client_identifier, notes
-            FROM client_notes
-            """
-        ).fetchall()
+        for offset in range(0, len(unique_identities), 300):
+            chunk = unique_identities[offset:offset + 300]
+            predicates = " OR ".join(
+                "(node_id = ? AND inbound_id = ? AND client_identifier = ?)"
+                for _ in chunk
+            )
+            parameters = [value for identity in chunk for value in identity]
+            rows.extend(
+                conn.execute(
+                    f"""
+                    SELECT node_id, inbound_id, client_identifier, notes
+                    FROM client_notes
+                    WHERE {predicates}
+                    """,
+                    parameters,
+                ).fetchall()
+            )
 
     notes_by_key = {
         (int(row[0]), int(row[1] or 0), str(row[2])): str(row[3] or "")

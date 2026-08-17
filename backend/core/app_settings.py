@@ -28,6 +28,15 @@ def _env_optional_bool(name: str) -> bool | None:
     return _parse_bool(os.getenv(name))
 
 
+def _persistent_secret(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if value:
+        return value
+    if _env_bool("REQUIRE_PERSISTENT_SECRETS", "false"):
+        raise RuntimeError(f"{name} must be provisioned before starting the service")
+    return os.urandom(32).hex()
+
+
 def _detect_grafana_url(project_dir: str) -> str:
     env_value = os.getenv("GRAFANA_URL", "").strip()
     if env_value:
@@ -124,6 +133,9 @@ class AppSettings:
     clients_cache_ttl: int
     clients_cache_stale_ttl: int
     redis_url: str
+    redis_socket_connect_timeout_sec: float
+    redis_socket_timeout_sec: float
+    redis_failure_cooldown_sec: float
     collector_base_interval_sec: int
     collector_max_interval_sec: int
     collector_max_parallel: int
@@ -139,6 +151,7 @@ class AppSettings:
     node_history_min_interval_sec: int
     node_history_retention_days: int
     audit_queue_batch_size: int
+    audit_memory_queue_max_size: int
     audit_idle_sleep_sec: float
     audit_active_sleep_sec: float
     role_viewers: Set[str]
@@ -189,6 +202,9 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         clients_cache_ttl=int(os.getenv("CLIENTS_CACHE_TTL", "20")),
         clients_cache_stale_ttl=int(os.getenv("CLIENTS_CACHE_STALE_TTL", "180")),
         redis_url=os.getenv("REDIS_URL", "").strip(),
+        redis_socket_connect_timeout_sec=float(os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT_SEC", "0.2")),
+        redis_socket_timeout_sec=float(os.getenv("REDIS_SOCKET_TIMEOUT_SEC", "0.2")),
+        redis_failure_cooldown_sec=float(os.getenv("REDIS_FAILURE_COOLDOWN_SEC", "30")),
         collector_base_interval_sec=int(os.getenv("COLLECTOR_BASE_INTERVAL_SEC", "5")),
         collector_max_interval_sec=int(os.getenv("COLLECTOR_MAX_INTERVAL_SEC", "300")),
         collector_max_parallel=int(os.getenv("COLLECTOR_MAX_PARALLEL", "4")),
@@ -204,6 +220,7 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         node_history_min_interval_sec=int(os.getenv("NODE_HISTORY_MIN_INTERVAL_SEC", "30")),
         node_history_retention_days=int(os.getenv("NODE_HISTORY_RETENTION_DAYS", "30")),
         audit_queue_batch_size=int(os.getenv("AUDIT_QUEUE_BATCH_SIZE", "200")),
+        audit_memory_queue_max_size=int(os.getenv("AUDIT_MEMORY_QUEUE_MAX", "2000")),
         audit_idle_sleep_sec=float(os.getenv("AUDIT_IDLE_SLEEP_SEC", "2.0")),
         audit_active_sleep_sec=float(os.getenv("AUDIT_ACTIVE_SLEEP_SEC", "0.2")),
         role_viewers=_env_csv_set("ROLE_VIEWERS"),
@@ -212,12 +229,8 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         mfa_totp_enabled=_env_bool("MFA_TOTP_ENABLED", "false"),
         mfa_totp_users=parse_mfa_users(os.getenv("MFA_TOTP_USERS", "").strip()),
         mfa_totp_ws_strict=_env_bool("MFA_TOTP_WS_STRICT", "true"),
-        ws_auth_secret=os.getenv("WS_AUTH_SECRET", "").strip() or os.urandom(32).hex(),
-        subscription_signing_secret=(
-            os.getenv("SUBSCRIPTION_SIGNING_SECRET", "").strip()
-            or os.getenv("WS_AUTH_SECRET", "").strip()
-            or os.urandom(32).hex()
-        ),
+        ws_auth_secret=_persistent_secret("WS_AUTH_SECRET"),
+        subscription_signing_secret=_persistent_secret("SUBSCRIPTION_SIGNING_SECRET"),
         adguard_collect_interval_sec=int(os.getenv("ADGUARD_COLLECT_INTERVAL_SEC", "60")),
         prometheus_url=os.getenv("PROMETHEUS_URL", "http://127.0.0.1:9090").strip(),
         loki_url=os.getenv("LOKI_URL", "http://127.0.0.1:3100").strip(),

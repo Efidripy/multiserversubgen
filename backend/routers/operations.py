@@ -8,6 +8,7 @@ import zipfile
 from typing import Dict
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse, Response
 from shared.security import MAX_BACKUP_BYTES, MAX_BACKUP_B64_CHARS, safe_content_disposition_filename
 
@@ -24,11 +25,14 @@ def build_operations_router(
 ):
     router = APIRouter()
 
-    def _load_node(node_id: int) -> Dict:
-        return get_node_or_404(node_id)
+    async def _run(method, *args, **kwargs):
+        return await run_in_threadpool(method, *args, **kwargs)
 
-    def _load_nodes(node_ids=None):
-        nodes = node_service.list_nodes()
+    async def _load_node(node_id: int) -> Dict:
+        return await _run(get_node_or_404, node_id)
+
+    async def _load_nodes(node_ids=None):
+        nodes = await _run(node_service.list_nodes)
         if node_ids:
             node_id_set = {int(node_id) for node_id in node_ids}
             return [node for node in nodes if int(node.get("id")) in node_id_set]
@@ -139,7 +143,7 @@ def build_operations_router(
     @router.get("/api/v1/status")
     async def app_status(request: Request):
         """Public health + summary endpoint (no auth required)."""
-        nodes = _load_nodes()
+        nodes = await _load_nodes()
         return {
             "status": "ok",
             "version": "3.1",
@@ -153,7 +157,11 @@ def build_operations_router(
         if not user:
             raise HTTPException(status_code=401)
 
-        results = client_mgr.reset_all_traffic(_load_nodes(node_ids=data.get("node_ids")), data.get("inbound_id"))
+        results = await _run(
+            client_mgr.reset_all_traffic,
+            await _load_nodes(node_ids=data.get("node_ids")),
+            data.get("inbound_id"),
+        )
         return results
 
     @router.get("/api/v1/servers/status")
@@ -162,7 +170,7 @@ def build_operations_router(
         if not user:
             raise HTTPException(status_code=401)
 
-        nodes = _load_nodes()
+        nodes = await _load_nodes()
         by_id, by_name, _snapshot = _snapshot_by_node(nodes)
         statuses = [
             _status_from_snapshot(node, _snapshot_for_node(node, by_id, by_name))
@@ -175,7 +183,7 @@ def build_operations_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        node = _load_node(node_id)
+        node = await _load_node(node_id)
         by_id, by_name, _snapshot = _snapshot_by_node([node])
         return _status_from_snapshot(node, _snapshot_for_node(node, by_id, by_name))
 
@@ -184,7 +192,7 @@ def build_operations_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        nodes = _load_nodes()
+        nodes = await _load_nodes()
         by_id, by_name, _snapshot = _snapshot_by_node(nodes)
         availability = [
             _availability_from_snapshot(node, _snapshot_for_node(node, by_id, by_name))
@@ -197,7 +205,7 @@ def build_operations_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        success = server_monitor.restart_xray(_load_node(node_id))
+        success = await _run(server_monitor.restart_xray, await _load_node(node_id))
         return {"success": success}
 
     @router.get("/api/v1/servers/{node_id}/logs")
@@ -205,14 +213,14 @@ def build_operations_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        return server_monitor.get_server_logs(_load_node(node_id), count, level)
+        return await _run(server_monitor.get_server_logs, await _load_node(node_id), count, level)
 
     @router.get("/api/v1/backup/database/{node_id}")
     async def get_database_backup(request: Request, node_id: int):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
-        return server_monitor.get_database_backup(_load_node(node_id))
+        return await _run(server_monitor.get_database_backup, await _load_node(node_id))
 
     @router.get("/api/v1/backup/node/{node_id}")
     async def get_database_backup_legacy(request: Request, node_id: int):
@@ -220,7 +228,7 @@ def build_operations_router(
         if not user:
             raise HTTPException(status_code=401)
 
-        backup = server_monitor.get_database_backup(_load_node(node_id))
+        backup = await _run(server_monitor.get_database_backup, await _load_node(node_id))
         if backup.get("error"):
             raise HTTPException(status_code=502, detail=backup["error"])
 
@@ -249,7 +257,7 @@ def build_operations_router(
         backup_data = data.get("backup_data")
         if not isinstance(backup_data, str) or not backup_data or len(backup_data) > MAX_BACKUP_B64_CHARS:
             raise HTTPException(status_code=400, detail="backup_data required")
-        success = server_monitor.import_database_backup(_load_node(node_id), backup_data)
+        success = await _run(server_monitor.import_database_backup, await _load_node(node_id), backup_data)
         return {"success": success}
 
     @router.post("/api/v1/backup/node/{node_id}/import")
@@ -258,7 +266,7 @@ def build_operations_router(
         if not user:
             raise HTTPException(status_code=401)
 
-        node = _load_node(node_id)
+        node = await _load_node(node_id)
         form = await request.form()
         upload = form.get("file")
         if upload is None:
@@ -271,7 +279,7 @@ def build_operations_router(
             raise HTTPException(status_code=400, detail="empty file")
 
         backup_data = base64.b64encode(content).decode("ascii")
-        success = server_monitor.import_database_backup(node, backup_data)
+        success = await _run(server_monitor.import_database_backup, node, backup_data)
         return {"success": success}
 
     @router.get("/api/v1/backup/all")
@@ -280,7 +288,8 @@ def build_operations_router(
         if not user:
             raise HTTPException(status_code=401)
 
-        backups = [server_monitor.get_database_backup(node) for node in _load_nodes()]
+        nodes = await _load_nodes()
+        backups = [await _run(server_monitor.get_database_backup, node) for node in nodes]
         if request.query_params.get("format", "").lower() == "json":
             return {"backups": backups, "count": len(backups)}
 
@@ -308,6 +317,43 @@ def build_operations_router(
         }
         return Response(content=mem.getvalue(), media_type="application/zip", headers=headers)
 
+    @router.get("/api/v1/history/nodes")
+    async def all_nodes_history(request: Request, since_sec: int = 86400, limit_per_node: int = 1200):
+        """Return bounded fleet history in one SQLite read for monitoring."""
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401)
+
+        since_sec = min(max(int(since_sec), 60), 30 * 86400)
+        limit_per_node = min(max(int(limit_per_node), 100), 5000)
+        ts_from = int(time.time()) - since_sec
+
+        def _read_history():
+            with connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                return conn.execute(
+                    """
+                    SELECT ts, node_id, node_name, available, xray_running, cpu, online_clients, traffic_total, poll_ms
+                    FROM (
+                        SELECT ts, node_id, node_name, available, xray_running, cpu, online_clients, traffic_total, poll_ms,
+                               ROW_NUMBER() OVER (PARTITION BY node_id ORDER BY ts DESC) AS row_number
+                        FROM node_history
+                        WHERE ts >= ?
+                    )
+                    WHERE row_number <= ?
+                    ORDER BY ts ASC, node_id ASC
+                    """,
+                    (ts_from, limit_per_node),
+                ).fetchall()
+
+        points = [dict(row) for row in await _run(_read_history)]
+        return {
+            "since_sec": since_sec,
+            "limit_per_node": limit_per_node,
+            "count": len(points),
+            "points": points,
+        }
+
     @router.get("/api/v1/history/nodes/{node_id}")
     async def node_history(request: Request, node_id: int, since_sec: int = 86400, limit: int = 2000):
         user = check_auth(request)
@@ -323,20 +369,23 @@ def build_operations_router(
         if limit > 5000:
             limit = 5000
 
-        get_node_or_404(node_id)
+        await _load_node(node_id)
         ts_from = int(time.time()) - since_sec
-        with connect(db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute(
-                """
-                SELECT ts, node_id, node_name, available, xray_running, cpu, online_clients, traffic_total, poll_ms
-                FROM node_history
-                WHERE node_id = ? AND ts >= ?
-                ORDER BY ts DESC
-                LIMIT ?
-                """,
-                (node_id, ts_from, limit),
-            ).fetchall()
+        def _read_history():
+            with connect(db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                return conn.execute(
+                    """
+                    SELECT ts, node_id, node_name, available, xray_running, cpu, online_clients, traffic_total, poll_ms
+                    FROM node_history
+                    WHERE node_id = ? AND ts >= ?
+                    ORDER BY ts DESC
+                    LIMIT ?
+                    """,
+                    (node_id, ts_from, limit),
+                ).fetchall()
+
+        rows = await _run(_read_history)
         points = [dict(r) for r in reversed(rows)]
         return {"node_id": node_id, "since_sec": since_sec, "count": len(points), "points": points}
 

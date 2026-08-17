@@ -7,6 +7,9 @@ on:
       - "install.sh"
       - "update.sh"
       - "scripts/**"
+      - "systemd/**"
+      - "docs/**"
+      - "PROJECT.md"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     paths:
@@ -14,6 +17,9 @@ on:
       - "install.sh"
       - "update.sh"
       - "scripts/**"
+      - "systemd/**"
+      - "docs/**"
+      - "PROJECT.md"
       - ".github/workflows/backend-ci.yml"
 
 jobs:
@@ -31,13 +37,15 @@ jobs:
 
       - name: Install backend deps
         run: |
-          python -m pip install --upgrade pip
-          pip install -r backend/requirements-dev.txt
+          python -m pip install --require-hashes -r backend/requirements-dev.txt
 
-      - name: Run backend tests
+      - name: Lint backend
+        run: ruff check backend
+
+      - name: Run full backend tests
         env:
           PYTHONPATH: backend
-        run: pytest -q backend/tests
+        run: python -m pytest -q backend/tests
 
   shellcheck:
     runs-on: ubuntu-latest
@@ -51,4 +59,4 @@ jobs:
 
       - name: Shellcheck scripts
         run: |
-          shellcheck install.sh update.sh scripts/ops/*.sh scripts/deploy/*.sh
+          git ls-files -z '*.sh' | xargs -0r shellcheck -S error

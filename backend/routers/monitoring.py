@@ -36,8 +36,10 @@ def build_monitoring_router(
 ):
     router = APIRouter()
 
+    # These handlers use SQLite or blocking monitoring HTTP clients. FastAPI
+    # dispatches sync endpoints through its worker thread pool.
     @router.get("/api/v1/adguard/sources")
-    async def list_adguard_sources_route(request: Request):
+    def list_adguard_sources_route(request: Request):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -47,7 +49,7 @@ def build_monitoring_router(
         )
 
     @router.post("/api/v1/adguard/sources")
-    async def add_adguard_source(request: Request, data: Dict):
+    def add_adguard_source(request: Request, data: Dict):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -95,7 +97,7 @@ def build_monitoring_router(
         return {"status": "success"}
 
     @router.put("/api/v1/adguard/sources/{source_id}")
-    async def update_adguard_source(source_id: int, request: Request, data: Dict):
+    def update_adguard_source(source_id: int, request: Request, data: Dict):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -154,7 +156,7 @@ def build_monitoring_router(
         return {"status": "success"}
 
     @router.delete("/api/v1/adguard/sources/{source_id}")
-    async def delete_adguard_source(source_id: int, request: Request):
+    def delete_adguard_source(source_id: int, request: Request):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -173,7 +175,7 @@ def build_monitoring_router(
         return {"status": "success", "count": len(snapshots), "sources": snapshots}
 
     @router.get("/api/v1/adguard/overview")
-    async def adguard_overview(request: Request):
+    def adguard_overview(request: Request):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -232,14 +234,14 @@ def build_monitoring_router(
         return {"ts": int(time.time()), "sources": sources, "summary": build_adguard_summary(sources)}
 
     @router.get("/api/v1/adguard/history")
-    async def adguard_history(request: Request, range_sec: int = 24 * 3600, bucket_sec: int = 300, source_id: Optional[int] = None):
+    def adguard_history(request: Request, range_sec: int = 24 * 3600, bucket_sec: int = 300, source_id: Optional[int] = None):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
         return build_adguard_history(range_sec=range_sec, bucket_sec=bucket_sec, source_id=source_id)
 
     @router.get("/api/v1/monitoring/stack")
-    async def monitoring_stack(request: Request):
+    def monitoring_stack(request: Request):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")

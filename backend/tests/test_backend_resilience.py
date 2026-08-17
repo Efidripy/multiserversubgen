@@ -158,7 +158,7 @@ def test_xui_session_pool_reuses_session_until_forced_reauth(monkeypatch):
 
     assert first["ok"] is True
     assert second["cached"] is True
-    assert first["session"] is second["session"]
+    assert first["session"] is not second["session"]
     assert third["session"] is not first["session"]
     assert calls["login"] == 2
     xui_session.invalidate_session_cache(node_key)

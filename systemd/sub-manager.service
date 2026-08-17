@@ -3,8 +3,12 @@ Description=Multi-Server Sub Manager Service
 After=network.target
 
 [Service]
-User=root
+User=__PROJECT_NAME__
+Group=__PROJECT_NAME__
+UMask=0077
 WorkingDirectory=/opt/sub-manager
+EnvironmentFile=/etc/__PROJECT_NAME__/runtime-secrets.env
+Environment="REQUIRE_PERSISTENT_SECRETS=true"
 Environment="PROJECT_DIR=/opt/sub-manager"
 Environment="APP_PORT=666"
 Environment="CACHE_TTL=30"
@@ -39,16 +43,23 @@ Environment="COLLECTOR_IDLE_INTERVAL_SEC=60"
 Environment="COLLECTOR_ULTRA_IDLE_INTERVAL_SEC=86400"
 Environment="COLLECTOR_IDLE_AFTER_SEC=900"
 Environment="COLLECTOR_ULTRA_IDLE_AFTER_SEC=86400"
-Environment="REDIS_URL="
 Environment="AUDIT_QUEUE_BATCH_SIZE=200"
 Environment="ROLE_VIEWERS="
 Environment="ROLE_OPERATORS="
 Environment="MFA_TOTP_ENABLED=false"
-Environment="MFA_TOTP_USERS="
 Environment="MFA_TOTP_WS_STRICT=false"
-Environment="LOG_LEVEL=DEBUG"
+Environment="LOG_LEVEL=INFO"
 Environment="LOG_FILE=/opt/sub-manager/logs/app.log"
-ExecStartPre=/usr/bin/bash -c "/usr/bin/fuser -k 666/tcp || true"
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=true
+ProtectSystem=full
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/opt/sub-manager
+ExecStartPre=/bin/sh -ec 'if /usr/bin/ss -ltnH "sport = :666" | /usr/bin/grep -q .; then echo "Refusing to start: APP_PORT 666 is already in use" >&2; exit 1; fi'
 ExecStart=/opt/sub-manager/venv/bin/uvicorn main:app --host 127.0.0.1 --port 666 --log-level warning
 Restart=always
 RestartSec=5

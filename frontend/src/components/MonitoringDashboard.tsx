@@ -494,6 +494,7 @@ export const MonitoringDashboard: React.FC = () => {
   const [blockedSearch, setBlockedSearch] = useState('');
   const [blockedShowCount, setBlockedShowCount] = useState<number>(25);
   const realtimeRefreshRef = useRef(0);
+  const historyLoadIdRef = useRef(0);
   const [editingAdguardSourceId, setEditingAdguardSourceId] = useState<number | null>(null);
   const [adguardForm, setAdguardForm] = useState({
     name: '',
@@ -533,43 +534,43 @@ export const MonitoringDashboard: React.FC = () => {
     return (res.data?.points || []) as HistoryPoint[];
   };
 
+  const fetchAllNodesHistory = async (sinceSec: number, limitPerNode: number): Promise<HistoryPoint[]> => {
+    const res = await api.get('/v1/history/nodes', {
+      auth: getAuth(),
+      params: { since_sec: sinceSec, limit_per_node: limitPerNode },
+    });
+    return (res.data?.points || []) as HistoryPoint[];
+  };
+
   const loadHistory = async (scope: string, sinceSec: number) => {
+    const loadId = ++historyLoadIdRef.current;
     setLoadingHistory(true);
     try {
       if (scope === 'all') {
         if (nodes.length === 0) {
-          setHistory([]);
-          setAllScopeHistory([]);
-          setLoadingHistory(false);
           return;
         }
         const perNodeLimit = sinceSec >= 7 * 24 * 3600 ? 900 : 1200;
-        const allResults = await Promise.allSettled(
-          nodes.map((n) => fetchNodeHistory(n.id, sinceSec, perNodeLimit))
-        );
-        const successful = allResults
-          .filter((result): result is PromiseFulfilledResult<HistoryPoint[]> => result.status === 'fulfilled')
-          .map((result) => result.value)
-          .flat();
-
-        setAllScopeHistory(successful);
+        const allHistory = await fetchAllNodesHistory(sinceSec, perNodeLimit);
+        if (loadId !== historyLoadIdRef.current) return;
+        setAllScopeHistory(allHistory);
         setHistory([]);
-
-        const failed = allResults.length - allResults.filter((result) => result.status === 'fulfilled').length;
-        if (failed > 0 && successful.length === 0) {
-          setError(t('monitoringDashboard.loadAllHistoryFailed'));
-        }
       } else {
         const nodeId = Number(scope);
         const data = await fetchNodeHistory(nodeId, sinceSec, 2000);
+        if (loadId !== historyLoadIdRef.current) return;
         setHistory(data);
         setAllScopeHistory([]);
       }
+      if (loadId !== historyLoadIdRef.current) return;
       setError('');
     } catch (err: any) {
+      if (loadId !== historyLoadIdRef.current) return;
       setError(err.response?.data?.detail || t('monitoringDashboard.loadHistoryFailed'));
     } finally {
-      setLoadingHistory(false);
+      if (loadId === historyLoadIdRef.current) {
+        setLoadingHistory(false);
+      }
     }
   };
 
@@ -750,17 +751,27 @@ export const MonitoringDashboard: React.FC = () => {
   };
 
   useEffect(() => {
+    let cancelled = false;
     loadNodes().catch((err: any) => {
-      setError(err?.response?.data?.detail || 'Failed to load nodes');
+      if (!cancelled) setError(err?.response?.data?.detail || 'Failed to load nodes');
     });
     loadLatestSnapshot();
     loadDepsHealth();
-    loadAdguardSources().catch(() => undefined);
-    loadAdguardOverview().catch(() => undefined);
-    loadAdguardHistory().catch(() => undefined);
-    loadStackStatus().catch(() => undefined);
     loadServerStatuses().catch(() => undefined);
     loadCollectorStatus().catch(() => undefined);
+    // AdGuard history and stack probes are auxiliary panels.  Let the core
+    // status cards render first instead of competing with their initial burst.
+    const detailTimer = window.setTimeout(() => {
+      if (cancelled) return;
+      loadAdguardSources().catch(() => undefined);
+      loadAdguardOverview().catch(() => undefined);
+      loadAdguardHistory().catch(() => undefined);
+      loadStackStatus().catch(() => undefined);
+    }, 750);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(detailTimer);
+    };
   }, []);
 
   useEffect(() => {
@@ -843,8 +854,8 @@ export const MonitoringDashboard: React.FC = () => {
     };
   }, [effectiveTrafficMode, effectiveTrafficSource, effectiveTrafficStepSec, selectedScope, rangeSec]);
 
-  useEffect(() => {
-    return () => undefined;
+  useEffect(() => () => {
+    historyLoadIdRef.current += 1;
   }, []);
 
   const handleRealtimeUpdate = useCallback(
@@ -875,8 +886,6 @@ export const MonitoringDashboard: React.FC = () => {
       loadHistory(selectedScope, rangeSec);
       loadLatestSnapshot();
       loadDepsHealth();
-      loadAdguardOverview();
-      loadAdguardHistory();
       loadStackStatus();
       loadServerStatuses();
       loadCollectorStatus();

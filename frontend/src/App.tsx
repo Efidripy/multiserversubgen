@@ -4,19 +4,13 @@ import { ActivityLogPanel } from './components/ActivityLogPanel';
 import { useTranslation } from 'react-i18next';
 import { API_BASE } from './api';
 import { ServerStatus } from './components/ServerStatus';
-import { SubscriptionManager } from './components/SubscriptionManager';
-import { InboundManager } from './components/InboundManager';
 import { NodeManager } from './components/NodeManager';
-import { ClientManager } from './components/ClientManager';
-import { TrafficStats } from './components/TrafficStats';
-import { BackupManager } from './components/BackupManager';
-import { MonitoringDashboard } from './components/MonitoringDashboard';
 import { DashboardSummary } from './components/DashboardSummary';
 import { RegisteredFleetPanel } from './components/RegisteredFleetPanel';
 import { ToastProvider } from './components/Toast';
 import { Sidebar, SidebarNavItem } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
-import { useWebSocket } from './hooks/useWebSocket';
+import { useWebSocketMessages, wsManager } from './services/webSocketManager';
 import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials, setWsTicket } from './auth';
 import { getMfaStatus, verifyCurrentAuth, verifyLoginCredentials } from './api/authService';
 import {
@@ -31,7 +25,14 @@ import {
 import { IconName, UIIcon } from './components/UIIcon';
 import { requestActivityStore } from './services/requestActivity';
 import { readStaleCache, writeStaleCache } from './services/staleCache';
-import { AUTH_REQUIRED_EVENT } from './api/client';
+import { AUTH_REQUIRED_EVENT, resetAuthRequiredEventGuard } from './api/client';
+
+const LazySubscriptionManager = React.lazy(() => import('./components/SubscriptionManager').then((module) => ({ default: module.SubscriptionManager })));
+const LazyInboundManager = React.lazy(() => import('./components/InboundManager').then((module) => ({ default: module.InboundManager })));
+const LazyClientManager = React.lazy(() => import('./components/ClientManager').then((module) => ({ default: module.ClientManager })));
+const LazyTrafficStats = React.lazy(() => import('./components/TrafficStats').then((module) => ({ default: module.TrafficStats })));
+const LazyMonitoringDashboard = React.lazy(() => import('./components/MonitoringDashboard').then((module) => ({ default: module.MonitoringDashboard })));
+const LazyBackupManager = React.lazy(() => import('./components/BackupManager').then((module) => ({ default: module.BackupManager })));
 
 type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
 type NoticeLevel = 'info' | 'success' | 'warning' | 'danger';
@@ -151,7 +152,6 @@ export const App: React.FC = () => {
     }
     return 'dashboard';
   });
-  const [mountedTabs, setMountedTabs] = useState<TabType[]>(() => [activeTab]);
   const [key, setKey] = useState(0);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [headerSummary, setHeaderSummary] = useState<HeaderSummary>({
@@ -227,10 +227,6 @@ export const App: React.FC = () => {
   }, [activeTab]);
 
   useEffect(() => {
-    setMountedTabs((prev) => (prev.includes(activeTab) ? prev : [...prev, activeTab]));
-  }, [activeTab]);
-
-  useEffect(() => {
     const unsubscribe = requestActivityStore.subscribe((pending) => {
       setPendingRequests(pending);
     });
@@ -250,7 +246,6 @@ export const App: React.FC = () => {
         if (tab && tab in TAB_META) {
           e.preventDefault();
           setActiveTab(tab);
-          setMountedTabs(prev => prev.includes(tab) ? prev : [...prev, tab]);
         }
       }
     };
@@ -294,11 +289,19 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  const endSession = () => {
+    wsManager.close();
+    clearAuthCredentials();
+    window.dispatchEvent(new Event('sub-manager:cache-clear'));
+    setUser('');
+    setPassword('');
+    setTotpCode('');
+    setIsAuthenticated(false);
+  };
+
   useEffect(() => {
     const handleAuthRequired = () => {
-      clearAuthCredentials();
-      setIsAuthenticated(false);
-      setPassword('');
+      endSession();
       setAuthError(t('auth.failed'));
     };
 
@@ -528,8 +531,7 @@ export const App: React.FC = () => {
     }
   };
 
-  useWebSocket({
-    url: '',
+  useWebSocketMessages({
     channels: ['inbounds', 'snapshot_delta'],
     enabled: isAuthenticated,
     onMessage: (msg) => {
@@ -592,6 +594,7 @@ export const App: React.FC = () => {
       const verified = await verifyLoginCredentials(user, password, totpCode.trim());
       if (verified.user) {
         setAuthCredentials(user, password, totpCode.trim(), verified.ws_ticket || '');
+        resetAuthRequiredEventGuard();
         setIsAuthenticated(true);
         rememberUsername(user);
         setPassword('');
@@ -603,11 +606,8 @@ export const App: React.FC = () => {
   };
 
   const handleLogout = () => {
-    clearAuthCredentials();
-    window.dispatchEvent(new Event('sub-manager:cache-clear'));
-    setUser('');
-    setPassword('');
-    setIsAuthenticated(false);
+    endSession();
+    resetAuthRequiredEventGuard();
   };
 
   const getApiUrl = () => {
@@ -669,12 +669,13 @@ export const App: React.FC = () => {
             padding: '24px',
             boxShadow: `0 8px 32px rgba(0,0,0,0.18), 0 1px 0 rgba(255,255,255,0.04)`,
           }}>
-            <form onSubmit={(e) => { e.preventDefault(); handleLogin(); }}>
+            <form aria-label={t('auth.signIn')} onSubmit={(e) => { e.preventDefault(); handleLogin(); }}>
               <div className="mb-3">
-                <label className="mb-1.5 block text-xs font-semibold text-slate-400">
+                <label htmlFor="login-username" className="mb-1.5 block text-xs font-semibold text-slate-400">
                   {t('auth.username')}
                 </label>
                 <input
+                  id="login-username"
                   type="text"
                   className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
                   value={user}
@@ -685,10 +686,11 @@ export const App: React.FC = () => {
                 />
               </div>
               <div className="mb-3">
-                <label className="mb-1.5 block text-xs font-semibold text-slate-400">
+                <label htmlFor="login-password" className="mb-1.5 block text-xs font-semibold text-slate-400">
                   {t('auth.password')}
                 </label>
                 <input
+                  id="login-password"
                   type="password"
                   className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
                   value={password}
@@ -699,10 +701,11 @@ export const App: React.FC = () => {
               </div>
               {mfaEnabled && (
                 <div className="mb-3">
-                  <label className="mb-1.5 block text-xs font-semibold text-slate-400">
+                  <label htmlFor="login-totp" className="mb-1.5 block text-xs font-semibold text-slate-400">
                     {t('auth.totpCode')}
                   </label>
                   <input
+                    id="login-totp"
                     type="text"
                     className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 font-mono text-sm tabular-nums text-slate-100 tracking-[0.2em] whitespace-nowrap outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
                     value={totpCode}
@@ -714,7 +717,7 @@ export const App: React.FC = () => {
                 </div>
               )}
               {authError && (
-                <div style={{
+                <div role="alert" aria-live="assertive" style={{
                   padding: '10px 12px',
                   borderRadius: '8px',
                   border: `1px solid ${colors.danger}44`,
@@ -765,7 +768,6 @@ export const App: React.FC = () => {
   }));
   const safeSidebarItems = Array.isArray(sidebarItems) ? sidebarItems : [];
   const safeNotifications = Array.isArray(notifications) ? notifications : [];
-  const safeMountedTabs = Array.isArray(mountedTabs) ? mountedTabs : [];
 
   const renderTabContent = (tab: TabType) => {
     switch (tab) {
@@ -777,7 +779,6 @@ export const App: React.FC = () => {
                 const t = tab as TabType;
                 if (t in TAB_META) {
                   setActiveTab(t);
-                  setMountedTabs(prev => prev.includes(t) ? prev : [...prev, t]);
                 }
               }}
               heroStats={headerSummary.stats}
@@ -828,33 +829,30 @@ export const App: React.FC = () => {
           </div>
         );
       case 'inbounds':
-        return <InboundManager
+        return <LazyInboundManager
           onReload={() => setKey((prev) => prev + 1)}
           onNavigateToClients={(inboundId, inboundRemark) => {
             try { sessionStorage.setItem('sm_nav_inbound_filter', JSON.stringify({ id: inboundId, remark: inboundRemark })); } catch {}
             setActiveTab('clients');
-            setMountedTabs(prev => prev.includes('clients') ? prev : [...prev, 'clients']);
           }}
           onAddClientToInbound={(inboundId, _nodeName) => {
             try { sessionStorage.setItem('sm_nav_add_to_inbound', String(inboundId)); } catch {}
             setActiveTab('clients');
-            setMountedTabs(prev => prev.includes('clients') ? prev : [...prev, 'clients']);
           }}
         />;
       case 'clients':
-        return <ClientManager />;
+        return <LazyClientManager />;
       case 'traffic':
-        return <TrafficStats onNavigateToClient={(email) => {
+        return <LazyTrafficStats onNavigateToClient={(email) => {
           try { sessionStorage.setItem('sm_nav_client_search', email); } catch {}
           setActiveTab('clients');
-          setMountedTabs(prev => prev.includes('clients') ? prev : [...prev, 'clients']);
         }} />;
       case 'monitoring':
-        return <MonitoringDashboard />;
+        return <LazyMonitoringDashboard />;
       case 'backup':
-        return <BackupManager />;
+        return <LazyBackupManager />;
       case 'subscriptions':
-        return <SubscriptionManager key={key} apiUrl={getApiUrl()} />;
+        return <LazySubscriptionManager key={key} apiUrl={getApiUrl()} />;
       default:
         return null;
     }
@@ -989,15 +987,11 @@ export const App: React.FC = () => {
           aria-busy={headerLoading || pendingRequests > 0}
         >
           <div className="tab-panel">
-            {safeMountedTabs.map((tabId) => (
-              <section
-                key={tabId}
-                style={{ display: activeTab === tabId ? 'block' : 'none' }}
-                aria-hidden={activeTab !== tabId}
-              >
-                {renderTabContent(tabId)}
+            <React.Suspense fallback={<div className="p-6 text-sm text-slate-400">{t('app.loading')}</div>}>
+              <section key={activeTab} aria-label={TAB_META[activeTab].labelKey}>
+                {renderTabContent(activeTab)}
               </section>
-            ))}
+            </React.Suspense>
           </div>
         </main>
       </div>
