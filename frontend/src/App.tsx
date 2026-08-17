@@ -139,6 +139,7 @@ export const App: React.FC = () => {
   const [totpCode, setTotpCode] = useState('');
   const [mfaEnabled, setMfaEnabled] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [role, setRole] = useState('viewer');
   const [authBootstrapDone, setAuthBootstrapDone] = useState(false);
   const [authError, setAuthError] = useState('');
   const [activeTab, setActiveTab] = useState<TabType>(() => {
@@ -272,6 +273,8 @@ export const App: React.FC = () => {
           if (verified.user) {
             setUser(auth.username);
             if (verified.ws_ticket) setWsTicket(verified.ws_ticket);
+            setRole(verified.role || 'viewer');
+            wsManager.resumeAfterAuth();
             setIsAuthenticated(true);
           }
         } catch {
@@ -296,6 +299,7 @@ export const App: React.FC = () => {
     setUser('');
     setPassword('');
     setTotpCode('');
+    setRole('viewer');
     setIsAuthenticated(false);
   };
 
@@ -308,6 +312,12 @@ export const App: React.FC = () => {
     window.addEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
     return () => window.removeEventListener(AUTH_REQUIRED_EVENT, handleAuthRequired);
   }, [t]);
+
+  useEffect(() => {
+    if (role !== 'admin' && (activeTab === 'backup' || activeTab === 'subscriptions')) {
+      setActiveTab('dashboard');
+    }
+  }, [activeTab, role]);
 
   useEffect(() => {
     if (notificationPanelOpen) {
@@ -532,7 +542,7 @@ export const App: React.FC = () => {
   };
 
   useWebSocketMessages({
-    channels: ['inbounds', 'snapshot_delta'],
+    channels: role === 'viewer' ? ['snapshot_delta'] : ['inbounds', 'snapshot_delta'],
     enabled: isAuthenticated,
     onMessage: (msg) => {
       if (msg.type === 'snapshot_delta') {
@@ -593,7 +603,9 @@ export const App: React.FC = () => {
     try {
       const verified = await verifyLoginCredentials(user, password, totpCode.trim());
       if (verified.user) {
-        setAuthCredentials(user, password, totpCode.trim(), verified.ws_ticket || '');
+        setAuthCredentials(user, password, totpCode.trim(), verified.ws_ticket || '', verified.role || 'viewer');
+        setRole(verified.role || 'viewer');
+        wsManager.resumeAfterAuth();
         resetAuthRequiredEventGuard();
         setIsAuthenticated(true);
         rememberUsername(user);
@@ -759,7 +771,9 @@ export const App: React.FC = () => {
     ])
   ) as Record<TabType, { icon: IconName; labelKey: string; label: string; eyebrowKey: string; descriptionKey: string; eyebrow: string; description: string }>;
 
-  const visibleTabs: TabType[] = ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring', 'backup', 'subscriptions'];
+  const visibleTabs: TabType[] = role === 'admin'
+    ? ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring', 'backup', 'subscriptions']
+    : ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring'];
 
   const sidebarItems: SidebarNavItem[] = visibleTabs.map((tabId) => ({
     id: tabId,

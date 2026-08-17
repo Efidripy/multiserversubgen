@@ -279,7 +279,7 @@ export const ClientManager: React.FC = () => {
   const [filterExpiringSoon, setFilterExpiringSoon] = useState<boolean>(_savedFilters.filterExpiringSoon ?? false);
   const [expiringSoonDays, setExpiringSoonDays] = useState<number>(_savedFilters.expiringSoonDays ?? 7);
   // Online clients map: email -> true.
-  const [onlineEmails, setOnlineEmails] = useState<Set<string>>(new Set());
+  const [onlineEmails] = useState<Set<string>>(() => new Set());
   const [sortField, setSortField] = useState<'email' | 'node' | 'download' | 'total' | 'expiry' | 'lastOnline' | 'usedPct' | 'health'>(_savedFilters.sortField ?? 'email');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(_savedFilters.sortDirection ?? 'asc');
   const [onlineFirst, setOnlineFirst] = useState<boolean>(false);
@@ -306,7 +306,7 @@ export const ClientManager: React.FC = () => {
   const [delDepletedLoading, setDelDepletedLoading] = useState(false);
 
   // Last online map: email -> ISO string.
-  const [lastOnlineMap, setLastOnlineMap] = useState<Record<string, string>>({});
+  const [lastOnlineMap] = useState<Record<string, string>>(() => ({}));
 
   // Bulk Adjust Modal
   const [showBulkAdjust, setShowBulkAdjust] = useState(false);
@@ -335,7 +335,7 @@ export const ClientManager: React.FC = () => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
-  const [, setExpandedKey] = useState<string | null>(null);
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
   // IP Search modal
   const [showIpSearch, setShowIpSearch] = useState(false);
@@ -414,24 +414,9 @@ export const ClientManager: React.FC = () => {
 
     loadClients(cached.isFresh);
 
-    // Load online clients
-    const { user, password } = getAuth();
-    api.get('/v1/clients/online', { auth: { username: user, password } })
-      .then(res => {
-        const list: Array<{email: string}> = res.data?.online || [];
-        setOnlineEmails(new Set(list.map(x => x.email)));
-      })
-      .catch(() => {});
-
-    // Load last-online timestamps
-    api.post('/v1/clients/last-online', {}, { auth: { username: user, password } })
-      .then(res => {
-        const map: Record<string, string> = {};
-        const results: Array<{email: string; last_online?: string}> = res.data?.results || [];
-        results.forEach(r => { if (r.last_online) map[r.email] = r.last_online; });
-        setLastOnlineMap(map);
-      })
-      .catch(() => {});
+    // Live presence and last-online are fleet fan-out endpoints.  They are
+    // intentionally not requested on mount: a viewer previously generated a
+    // denied POST here, while every role paid for an extra cold fleet scan.
 
     return () => {
       clientsLoadAbortRef.current?.abort();
@@ -471,7 +456,7 @@ export const ClientManager: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!ENABLE_LIVE_CLIENT_TRAFFIC || filteredClients.length === 0) return;
+    if (!ENABLE_LIVE_CLIENT_TRAFFIC || !expandedKey || filteredClients.length === 0) return;
 
     const visibleSlice = filteredClients.slice(0, TRAFFIC_FETCH_MAX_CLIENTS);
     const missing = visibleSlice.filter((client) => {
@@ -496,7 +481,7 @@ export const ClientManager: React.FC = () => {
         trafficRefreshTimerRef.current = null;
       }
     };
-  }, [filteredClients, trafficCache]);
+  }, [expandedKey, filteredClients, trafficCache]);
   
   const loadClients = async (silent = false, sourceFilter: ClientSourceFilter = clientSourceFilterRef.current) => {
     if (refreshInFlightRef.current) {
