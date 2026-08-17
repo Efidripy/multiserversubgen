@@ -71,6 +71,17 @@ on_error() {
 }
 trap on_error ERR
 
+wait_for_health() {
+  local attempt code
+  for attempt in {1..30}; do
+    if code="$(curl --fail --silent --show-error --max-time 2 --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${APP_PORT}/health")"; then
+      [[ "$code" == "200" ]] && return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 mkdir -p -m 0700 -- "$BACKUP_ROOT" "$PROJECT_PARENT"
 if [[ -d "$PROJECT_DIR" ]]; then
   HAD_PREVIOUS=1
@@ -117,9 +128,8 @@ SERVICE_STOPPED=0
 nginx -t >/dev/null
 systemctl reload nginx
 
-code="$(curl --fail --silent --show-error --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:${APP_PORT}/health")"
-if [[ "$code" != "200" ]]; then
-  printf 'Deploy failed: health check returned %s\n' "$code" >&2
+if ! wait_for_health; then
+  printf 'Deploy failed: health check did not become ready within 30 seconds\n' >&2
   cleanup_stage
   [[ "$ROLLBACK_ON_FAIL" == "1" ]] && restore_previous
   exit 1
