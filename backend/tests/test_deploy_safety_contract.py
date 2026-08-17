@@ -25,3 +25,13 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'staged runtime database backup integrity check failed' in script
     assert 'install -m 0600 "$PROJECT_DIR/.encryption_key" "$STAGE_DIR/.encryption_key"' in script
     assert "umask 077" in script
+
+
+def test_linux_only_uvloop_extra_is_pinned_and_hashed_for_require_hashes_deploys():
+    expected = 'uvloop==0.22.1 ; sys_platform != "win32"'
+    expected_hash = "--hash=sha256:7b5b1ac819a3f946d3b2ee07f09149578ae76066d70b44df3fa990add49a82e4"
+
+    for relative_path in ("backend/requirements.txt", "backend/requirements-dev.txt"):
+        lockfile = (REPO / relative_path).read_text(encoding="utf-8")
+        assert expected in lockfile
+        assert expected_hash in lockfile
