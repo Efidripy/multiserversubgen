@@ -1,6 +1,6 @@
 # PERF-03 — единый владелец cold-path и защита от fan-out
 
-**Статус:** implemented locally; production verification pending
+**Статус:** deployed with authenticated production receipt
 **Task:** `MSSG-PROD-PERF-REMEDIATION-20260817`
 **Связь:** продолжает `PERF-02-PRODUCTION-UI-COLD-PATH-2026-08-17.md`.
 
@@ -41,10 +41,22 @@ fan-out выполняется внешними node adapters; отмена HTTP
   течение throttle window. Это намеренный компромисс: управление остаётся
   мгновенным, скрытый повторный fleet scan исключён.
 
-## Production acceptance
+## Production receipt
 
-Перед rollout: чистый immutable checkout, backup receipt SHA-256, SQLite
-`integrity_check`, текущие счётчики и disk space. После rollout: exact source
-commit, service/Nginx/health, повторная SQLite integrity/count check и чистый
-authenticated browser waterfall всех доступных разделов. Результат заполняется
-только по фактическому post-deploy receipt.
+Rollout exact commit `17274e2de10a80dba04d2e69e397f1498b0a8bea` прошёл через
+штатный `server-deploy.sh` после clean source/service/Nginx/SQLite preflight.
+Helper создал backup, его SHA-256 прошёл проверку, а archive manifest содержит
+`admin.db`. До и после deploy SQLite `integrity_check` вернул `ok`; счётчики
+`nodes/users/node_snapshots` остались `10/0/10`.
+
+После rollout runtime `main.py` совпал с exact source commit, `sub-manager`
+active, `nginx -t` успешен, localhost health вернул `200` за ~5 ms, public
+panel — `200` за ~37 ms. Authenticated browser проверил все доступные
+root-сессии разделы: Dashboard, Inbounds, Clients, Traffic и Monitoring.
+
+Cold navigation зафиксировала единственный владеющий projection: Inbounds
+выполнил `/v1/inbounds` и `/v1/inbounds/stats`, Clients — один `/v1/clients`,
+Traffic — один `/v1/traffic/stats-by-period`. В Traffic и Monitoring после
+ожидания completion ошибок приложения не было. Ранние отменённые HTTP при
+искусственно быстром переходе между вкладками исключены из результата: они
+проверяют cancellation path, а не отказ панели.
