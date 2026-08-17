@@ -3,6 +3,7 @@ type RuntimeAuth = {
   password: string;
   totpCode: string;
   wsTicket: string;
+  role: string;
 };
 
 function clearLegacyRuntimeAuth(): void {
@@ -12,10 +13,10 @@ function clearLegacyRuntimeAuth(): void {
 
 // Credentials and short-lived WebSocket tickets stay memory-only.
 clearLegacyRuntimeAuth();
-let runtimeAuth: RuntimeAuth = { username: '', password: '', totpCode: '', wsTicket: '' };
+let runtimeAuth: RuntimeAuth = { username: '', password: '', totpCode: '', wsTicket: '', role: 'viewer' };
 
-export function setAuthCredentials(username: string, password: string, totpCode: string = '', wsTicket = ''): void {
-  runtimeAuth = { username, password, totpCode, wsTicket };
+export function setAuthCredentials(username: string, password: string, totpCode: string = '', wsTicket = '', role = 'viewer'): void {
+  runtimeAuth = { username, password, totpCode, wsTicket, role };
 }
 
 export function setWsTicket(wsTicket: string): void {
@@ -23,17 +24,18 @@ export function setWsTicket(wsTicket: string): void {
 }
 
 export function clearAuthCredentials(): void {
-  runtimeAuth = { username: '', password: '', totpCode: '', wsTicket: '' };
+  runtimeAuth = { username: '', password: '', totpCode: '', wsTicket: '', role: 'viewer' };
   clearLegacyRuntimeAuth();
 }
 
-export function getAuth(): { username: string; password: string; user: string; totpCode: string; wsTicket: string } {
+export function getAuth(): { username: string; password: string; user: string; totpCode: string; wsTicket: string; role: string } {
   return {
     username: runtimeAuth.username,
     password: runtimeAuth.password,
     user: runtimeAuth.username,
     totpCode: runtimeAuth.totpCode,
     wsTicket: runtimeAuth.wsTicket,
+    role: runtimeAuth.role,
   };
 }
 

@@ -81,6 +81,11 @@ type TrafficLoadReason = 'bootstrap' | 'manual' | 'group' | 'period';
 
 type TrafficStatsCache = {
   onlineClients?: OnlineClient[];
+  trafficData?: TrafficData[];
+  onlineTrafficTotals?: Record<string, number>;
+  groupBy?: TrafficGroupBy;
+  period?: TrafficPeriod;
+  periodNote?: string;
 };
 
 const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
@@ -120,6 +125,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   const [trafficSortDir, setTrafficSortDir] = useState<'asc' | 'desc'>('desc');
   const [onlineSortField, setOnlineSortField] = useState<'email' | 'node' | 'traffic'>('email');
   const [onlineSortDir, setOnlineSortDir] = useState<'asc' | 'desc'>('asc');
+  const [onlineDetailsRequested, setOnlineDetailsRequested] = useState(false);
   const trafficRequestRef = useRef(0);
   const trafficAbortRef = useRef<AbortController | null>(null);
   const onlineAbortRef = useRef<AbortController | null>(null);
@@ -130,11 +136,19 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     const cached = readStaleCache<TrafficStatsCache>(TRAFFIC_STATS_CACHE_KEY, TRAFFIC_STATS_CACHE_MAX_AGE_MS);
     if (cached.data) {
       if (Array.isArray(cached.data.onlineClients)) setOnlineClients(cached.data.onlineClients);
+      if (cached.data.groupBy === groupBy && cached.data.period === period) {
+        if (Array.isArray(cached.data.trafficData)) setTrafficData(cached.data.trafficData);
+        if (cached.data.onlineTrafficTotals) setOnlineTrafficTotals(cached.data.onlineTrafficTotals);
+        if (cached.data.periodNote) setPeriodNote(cached.data.periodNote);
+      }
     }
 
-    loadTrafficStats(groupBy, period, { reason: 'bootstrap' });
-    loadOnlineClients(cached.isFresh);
-    loadOnlineTrafficTotals(period);
+    // Let the controls and any stale projection render before starting the
+    // remote-backed period query.  Full online details remain opt-in.
+    const bootstrapTimer = window.setTimeout(() => {
+      loadTrafficStats(groupBy, period, { reason: 'bootstrap' });
+    }, cached.isFresh ? 2_000 : 750);
+    return () => window.clearTimeout(bootstrapTimer);
   }, []);
 
   useEffect(() => () => {
@@ -196,6 +210,12 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
       if (requestId !== trafficRequestRef.current) return;
       setTrafficData(parsed);
       setPeriodNote(res.data?.note || '');
+      mergeStaleCacheRecord<TrafficStatsCache>(TRAFFIC_STATS_CACHE_KEY, {
+        trafficData: parsed,
+        groupBy: nextGroupBy,
+        period: nextPeriod,
+        periodNote: res.data?.note || '',
+      });
     } catch (err: any) {
       if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return;
       if (requestId !== trafficRequestRef.current) return;
@@ -262,6 +282,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
         totals[key] = (totals[key] || 0) + value;
       });
       setOnlineTrafficTotals(totals);
+      mergeStaleCacheRecord<TrafficStatsCache>(TRAFFIC_STATS_CACHE_KEY, { onlineTrafficTotals: totals });
     } catch (err: any) {
       if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return;
       console.error('Failed to load online traffic totals:', err);
@@ -275,24 +296,26 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
           return;
         }
         loadTrafficStats(groupBy, period, { silent: true });
-        loadOnlineClients(true);
-        loadOnlineTrafficTotals(period);
+        if (onlineDetailsRequested) {
+          loadOnlineClients(true);
+          loadOnlineTrafficTotals(period);
+        }
         return;
       }
       if (update.type === 'traffic_update') {
         loadTrafficStats(groupBy, period, { silent: true });
-        loadOnlineTrafficTotals(period);
+        if (onlineDetailsRequested) loadOnlineTrafficTotals(period);
         return;
       }
       if (update.type === 'client_update') {
-        loadOnlineClients(true);
+        if (onlineDetailsRequested) loadOnlineClients(true);
         return;
       }
       if (update.type === 'server_status') {
         loadTrafficStats(groupBy, period, { silent: true });
       }
     },
-    [groupBy, period],
+    [groupBy, onlineDetailsRequested, period],
   );
 
   useTrafficStatsSubscription({
@@ -302,10 +325,18 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     fallbackPollIntervalMs: 60_000,
     fallbackRun: () => {
       loadTrafficStats(groupBy, period, { silent: true });
-      loadOnlineClients(true);
-      loadOnlineTrafficTotals(period);
+      if (onlineDetailsRequested) {
+        loadOnlineClients(true);
+        loadOnlineTrafficTotals(period);
+      }
     },
   });
+
+  const loadOnlineDetails = () => {
+    setOnlineDetailsRequested(true);
+    loadOnlineClients();
+    loadOnlineTrafficTotals(period);
+  };
 
   const formatBytes = (bytes: number) => {
     const value = Math.max(0, Number(bytes) || 0);
@@ -595,11 +626,11 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
             <h6 className={titleClass}>{t('common.actions')}</h6>
             <p className={hintClass}>{t('traffic.refreshHint')}</p>
             <div className="mt-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
-              <button type="button" className={accentButtonClass} disabled={loading} onClick={() => { loadTrafficStats(groupBy, period, { reason: 'manual' }); loadOnlineClients(); loadOnlineTrafficTotals(period); }}>
+              <button type="button" className={accentButtonClass} disabled={loading} onClick={() => { loadTrafficStats(groupBy, period, { reason: 'manual' }); if (onlineDetailsRequested) loadOnlineDetails(); }}>
                 <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} className={loading ? 'animate-spin' : undefined} />
                 <span className="whitespace-nowrap">{loading ? t('messages.loadingData') : t('common.refresh')}</span>
               </button>
-              <button type="button" className={controlButtonClass} title={t('traffic.clearCacheTitle')} onClick={() => { try { localStorage.removeItem(TRAFFIC_STATS_CACHE_KEY); } catch {} setTrafficData([]); setOnlineTrafficTotals({}); loadTrafficStats(groupBy, period, { reason: 'manual' }); loadOnlineClients(); loadOnlineTrafficTotals(period); }}><UIIcon name="clear" size={14} /><span className="whitespace-nowrap">{t('traffic.clearCache')}</span></button>
+              <button type="button" className={controlButtonClass} title={t('traffic.clearCacheTitle')} onClick={() => { try { localStorage.removeItem(TRAFFIC_STATS_CACHE_KEY); } catch {} setTrafficData([]); setOnlineTrafficTotals({}); loadTrafficStats(groupBy, period, { reason: 'manual' }); if (onlineDetailsRequested) loadOnlineDetails(); }}><UIIcon name="clear" size={14} /><span className="whitespace-nowrap">{t('traffic.clearCache')}</span></button>
               <button type="button" className={controlButtonClass} title={t('traffic.exportCsvTitle')} disabled={trafficData.length === 0} onClick={() => { const rows = trafficData.map(d => [d.email || d.node_name || '', d.node_name || '', d.protocol || '', (d.upload / 1073741824).toFixed(3), (d.download / 1073741824).toFixed(3), (d.total / 1073741824).toFixed(3)].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')); const csv = ['name,node,protocol,upload_gb,download_gb,total_gb', ...rows].join('\n'); const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `traffic_${groupBy}_${period}_${new Date().toISOString().slice(0,10)}.csv`; a.click(); URL.revokeObjectURL(url); }}><UIIcon name="download" size={14} /><span className="whitespace-nowrap">{t('traffic.csv')}</span></button>
               <div className="flex h-9 min-w-0 items-center rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-3 text-xs text-slate-500"><span className="mr-2 h-2 w-2 rounded-full bg-emerald-300" /><span className="truncate">{t('traffic.onlineClients')}</span><span className="ml-2 min-w-[2.5rem] whitespace-nowrap text-right font-mono text-slate-200">{onlineClients.length}</span></div>
             </div>
@@ -622,7 +653,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
             <h6 className={titleClass}>{t('traffic.period')}</h6>
             <p className={hintClass}>{t('traffic.periodHint')}</p>
             <div className="mt-4 min-w-0">
-              <ChoiceChips options={[{ value: 'day', label: t('traffic.periodDay') }, { value: 'week', label: t('traffic.periodWeek') }, { value: 'month', label: t('traffic.periodMonth') }, { value: 'year', label: t('traffic.periodYear') }, { value: 'all_time', label: t('traffic.periodAllTime') }]} value={period} disabled={loading} onChange={(value) => { const nextPeriod = value as TrafficPeriod; setPeriod(nextPeriod); loadTrafficStats(groupBy, nextPeriod, { reason: 'period' }); loadOnlineTrafficTotals(nextPeriod); }} />
+              <ChoiceChips options={[{ value: 'day', label: t('traffic.periodDay') }, { value: 'week', label: t('traffic.periodWeek') }, { value: 'month', label: t('traffic.periodMonth') }, { value: 'year', label: t('traffic.periodYear') }, { value: 'all_time', label: t('traffic.periodAllTime') }]} value={period} disabled={loading} onChange={(value) => { const nextPeriod = value as TrafficPeriod; setPeriod(nextPeriod); loadTrafficStats(groupBy, nextPeriod, { reason: 'period' }); if (onlineDetailsRequested) loadOnlineTrafficTotals(nextPeriod); }} />
               {isPeriodSwitchLoading && (
                 <div className="mt-3 space-y-2">
                   <div className="h-1 overflow-hidden rounded-full bg-[#0a0e1a]"><div className="h-full w-1/2 animate-pulse rounded-full bg-cyan-300" /></div>
@@ -647,7 +678,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
         </section>
 
         <section className={panelClass}>
-          <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><h6 className={titleClass}>{t('traffic.onlineClients')} ({onlineClients.length})</h6><div className="text-xs text-slate-500">{onlineLoading ? t('traffic.loadingOnline') : t('traffic.sortHint')}</div></div>
+          <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><h6 className={titleClass}>{t('traffic.onlineClients')} ({onlineClients.length})</h6><div className="flex items-center gap-2"><div className="text-xs text-slate-500">{onlineLoading ? t('traffic.loadingOnline') : t('traffic.sortHint')}</div>{!onlineDetailsRequested && <button type="button" className={controlButtonClass} onClick={loadOnlineDetails}>{t('common.refresh')}</button>}</div></div>
           {onlineLoading && <div className="mb-4 h-1 overflow-hidden rounded-full bg-[#0a0e1a]"><div className="h-full w-1/2 animate-pulse rounded-full bg-cyan-300" /></div>}
           {onlineLoading && onlineClients.length === 0 ? <div className="grid gap-2 py-2">{Array.from({ length: 4 }).map((_, idx) => <div key={idx} className="h-12 animate-pulse rounded-lg border border-cyan-500/10 bg-[#0a0e1a]" style={{ animationDelay: `${idx * 90}ms` }} />)}</div> : onlineClients.length === 0 ? <div className="flex justify-center py-10 text-sm text-slate-500">{t('traffic.noClientsOnline')}</div> : <>
             <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 lg:block"><table className="w-full table-fixed border-collapse text-sm"><thead><tr className="border-b border-cyan-500/20 bg-cyan-500/5"><th className="px-4 py-3 text-left"><button type="button" className={headerButtonClass} onClick={() => applyOnlineSortFromHeader('email')}>Email{onlineSortIndicator('email')}</button></th><th className="w-48 px-4 py-3 text-left"><button type="button" className={headerButtonClass} onClick={() => applyOnlineSortFromHeader('node')}>{t('traffic.node')}{onlineSortIndicator('node')}</button></th><th className="w-40 px-4 py-3 text-right"><button type="button" className={cn(headerButtonClass, 'justify-end')} onClick={() => applyOnlineSortFromHeader('traffic')}>{t('traffic.total')}{onlineSortIndicator('traffic')}</button></th></tr></thead><tbody>{sortedOnlineClients.map(client => <tr key={`${client.node_name}:${client.email}`} className="border-b border-cyan-500/10 hover:bg-cyan-400/5"><td className="min-w-0 px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="h-2 w-2 shrink-0 rounded-full bg-emerald-300" /><strong className="truncate text-slate-100" title={client.email}>{client.email}</strong></div></td><td className="px-4 py-3"><span className="inline-flex max-w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-2 py-1 text-xs font-medium text-slate-300"><span className="truncate">{client.node_name}</span></span></td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-slate-300')}>{formatBytes(onlineTrafficTotals[normalizeEmailKey(client.email)] || 0)}</span></td></tr>)}</tbody></table></div>
