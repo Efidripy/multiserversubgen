@@ -64,6 +64,8 @@ if [[ -d "$TARGET_BUILD_DIR" ]]; then
   mv "$TARGET_BUILD_DIR" "$PREV_BUILD_DIR"
 fi
 mv "$TMP_BUILD_DIR" "$TARGET_BUILD_DIR"
+find "$TARGET_BUILD_DIR" -type d -exec chmod 0755 {} +
+find "$TARGET_BUILD_DIR" -type f -exec chmod 0644 {} +
 rm -rf "$PREV_BUILD_DIR"
 # Post-build: remove npm deps (not needed at runtime, frees ~120MB)
 rm -rf "$FRONTEND_DIR/node_modules" "$FRONTEND_DIR/.vite"

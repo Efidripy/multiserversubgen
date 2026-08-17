@@ -35,6 +35,8 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'rollback_and_exit' in script
     frontend_build = (REPO / "scripts/deploy/build-and-publish-frontend.sh").read_text(encoding="utf-8")
     assert 'export NODE_OPTIONS="$FRONTEND_NODE_OPTIONS"' in frontend_build
+    assert 'find "$TARGET_BUILD_DIR" -type d -exec chmod 0755 {} +' in frontend_build
+    assert 'find "$TARGET_BUILD_DIR" -type f -exec chmod 0644 {} +' in frontend_build
     assert "umask 077" in script
 
 
