@@ -235,7 +235,7 @@ class AuthService:
                 "/reset-all-traffics", "/del-all-clients", "/batch-delete", "/batch-del",
                 "/bulkdel", "/bulkreset", "/resetclienttraffic", "/backup/", "/api-tokens",
                 "/install-xray/", "/update-panel", "/update-geofile", "/backup-telegram",
-                "/generate-", "/automation/reset-all-traffic",
+                "/generate-", "/automation/reset-all-traffic", "/subscription-tokens/",
             )
             if any(p in path for p in admin_paths) or path.endswith("/backup"):
                 return "admin"
