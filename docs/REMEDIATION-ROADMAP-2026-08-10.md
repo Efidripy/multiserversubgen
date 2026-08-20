@@ -39,6 +39,7 @@ receipt is an external prerequisite; code work can continue independently.
 | PERF-01 | P1 | Section navigation avoids duplicate cold fetches, per-node history fan-out and synchronous audit commits. | Focused backend/frontend performance regressions plus package checks. |
 | PERF-02 | P1 | Traffic/Client cold paths defer remote fan-out, viewer UI avoids denied work and WebSocket reconnect observes RBAC/ticket lifecycle. | Focused frontend regressions, package checks and authenticated production waterfall. |
 | PERF-03 | P1 | Cold section rendering has one owner per remote projection, and repeated realtime/cache-miss callers do not multiply a fleet fan-out. | Focused concurrency/component regressions, package checks and authenticated production waterfall. |
+| SUB-01 | P1 | Subscription URLs are stable, legacy named URLs redirect safely, manual rotation is explicit, and QR generation stays local. | Token persistence/redirect tests, admin RBAC test, frontend build and local QR rendering. |
 
 ## Initial evidence
 
@@ -73,6 +74,7 @@ remains a historical snapshot.
 | PERF-01 | deployed with public latency receipt | `docs/PERF-01-NAVIGATION-CACHING-2026-08-17.md` is the detailed record. Frontend GET requests coalesce before cache warm-up; monitoring uses one bounded fleet-history read and defers auxiliary probes. Audit enqueue is bounded in memory with batch SQLite persistence; Redis has short timeout/circuit fallback; clients/inbounds cold fetches single-flight and client notes use a filtered projection. Production public panel, health and main asset have 20-request p50/p95 receipts; authenticated dashboard/API waterfall remains a separate read-only evidence gate. |
 | PERF-02 | deployed with authenticated production receipt | `docs/PERF-02-PRODUCTION-UI-COLD-PATH-2026-08-17.md` records the production waterfall findings and the deferred-loading, cancellation, role-aware and WebSocket remediation. The 2026-08-17 rollout passed service/Nginx/SQLite backup/integrity gates and authenticated panel checks; PERF-03 closes the residual duplicate header projection and concurrent cold-cache fan-out found by that proof. |
 | PERF-03 | deployed with authenticated production receipt | `docs/PERF-03-FANOUT-CONTROL-2026-08-17.md` records the duplicate-request, realtime-throttle and cache single-flight controls and their post-deploy proof. No schema, migration, DDL or SQLite data operation was made; verified backup, SQLite integrity/count and browser waterfall gates passed. |
+| SUB-01 | implemented locally; production rollout pending | Added idempotent `subscription_tokens` SQLite table, stable opaque tokens, admin-only manual regeneration, redirects from legacy named/HMAC URLs, and client-side QR generation via `qrcode`. Focused backend tests and frontend lint/typecheck/i18n/build pass. Production deployment is intentionally separate and requires backup/integrity/read-only smoke proof. |
 
 Current validation receipt: backend `228 passed`, Ruff and compileall pass;
 frontend Vitest `9 passed`, ESLint, TypeScript, i18n, Vite build and production
