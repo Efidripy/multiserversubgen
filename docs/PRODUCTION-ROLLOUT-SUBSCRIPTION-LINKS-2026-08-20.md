@@ -1,8 +1,8 @@
 # Production rollout: stable subscription links
 
-Дата: 2026-08-20 19:55 UTC  
-Хост: `example.invalid`  
-Сервис: `sub-manager`  
+Дата: 2026-08-20 19:55 UTC<br>
+Хост: `example.invalid`<br>
+Сервис: `sub-manager`<br>
 Путь панели: `/<panel-base-path>/`
 
 ## Релиз
