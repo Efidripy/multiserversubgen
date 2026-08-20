@@ -852,24 +852,48 @@ def _do_credential_login(
     """Единая реализация авторизации по credentials (CSRF → legacy).
 
     Возвращает детальный result-dict. Используется обеими публичными функциями.
+
+    Если ранее успешный legacy-метод перестал иметь login endpoint, нода могла
+    обновиться на CSRF-авторизацию. В этом случае сбрасываем только cache
+    конкретного URL и повторно проверяем CSRF в том же запросе.
     """
     credentials = {"username": username, "password": password}
     with _AUTH_METHOD_CACHE_LOCK:
         known_method = _AUTH_METHOD_CACHE.get(base_url)
 
-    if known_method != "legacy":
+    if known_method == "legacy":
+        legacy_result = _try_legacy_login(session, base_url, credentials, timeout, retries)
+        if legacy_result.get("ok"):
+            return legacy_result
+
+        if legacy_result.get("reason") != "login_endpoint_not_found":
+            return legacy_result
+
+        # Панель могла обновиться с legacy login на CSRF. Не держим URL в
+        # устаревшем режиме до перезапуска процесса и сразу делаем re-probe.
+        invalidate_auth_method_cache(base_url)
+        logger.info("Cached legacy login endpoints disappeared for %s; retrying CSRF authentication", base_url)
+
         csrf_result = _try_csrf_login(session, base_url, credentials, timeout, retries)
         if csrf_result is not None:
             if csrf_result.get("ok"):
                 _cache_auth_method(base_url, "csrf")
-                return csrf_result
-            # CSRF endpoint ответил, но credentials неверны (success=false).
-            # Сервер явно отклонил пароль — legacy не поможет с теми же credentials.
-            # Возвращаем ошибку только если статус был явным auth-failure, иначе пробуем legacy.
-            reason = csrf_result.get("reason", "")
-            if reason in ("auth_failed", "two_factor_required"):
-                return csrf_result
-            # Для прочих ошибок (сетевые, временные) — даём legacy шанс
+            return csrf_result
+
+        return legacy_result
+
+    csrf_result = _try_csrf_login(session, base_url, credentials, timeout, retries)
+    if csrf_result is not None:
+        if csrf_result.get("ok"):
+            _cache_auth_method(base_url, "csrf")
+            return csrf_result
+        # CSRF endpoint ответил, но credentials неверны (success=false).
+        # Сервер явно отклонил пароль — legacy не поможет с теми же credentials.
+        # Возвращаем ошибку только если статус был явным auth-failure, иначе пробуем legacy.
+        reason = csrf_result.get("reason", "")
+        if reason in ("auth_failed", "two_factor_required"):
+            return csrf_result
+        # Для прочих ошибок (сетевые, временные) — даём legacy шанс
 
     result = _try_legacy_login(session, base_url, credentials, timeout, retries)
     if result.get("ok"):

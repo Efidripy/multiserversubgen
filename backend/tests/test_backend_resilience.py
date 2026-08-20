@@ -89,6 +89,51 @@ def test_xui_login_requests_keep_base_url_prefix(monkeypatch):
     ]
 
 
+def test_xui_legacy_auth_cache_reprobes_csrf_after_panel_upgrade(monkeypatch):
+    """A node upgrade must not leave a process pinned to removed legacy endpoints."""
+    import xui_session
+
+    base_url = "https://panel.example.test/secret-path"
+    requests_seen = []
+
+    def response(status_code, body=None):
+        payload = body or {}
+        return SimpleNamespace(
+            status_code=status_code,
+            text=json.dumps(payload),
+            headers={},
+            url="",
+            json=lambda: payload,
+        )
+
+    def fake_xui_request(_session, method, url, **kwargs):
+        headers = kwargs.get("headers") or {}
+        requests_seen.append((method, url, "X-CSRF-Token" in headers))
+        if url.endswith("/csrf-token"):
+            return response(200, {"success": True, "obj": "csrf-token"})
+        if headers.get("X-CSRF-Token"):
+            return response(200, {"success": True})
+        return response(404)
+
+    xui_session.invalidate_auth_method_cache(base_url)
+    xui_session._cache_auth_method(base_url, "legacy")
+    monkeypatch.setattr(xui_session, "xui_request", fake_xui_request)
+
+    try:
+        result = xui_session.login_panel_detailed(requests.Session(), base_url, "admin", "pass")
+
+        assert result["ok"] is True
+        assert requests_seen == [
+            ("POST", f"{base_url}/panel/login", False),
+            ("POST", f"{base_url}/login", False),
+            ("GET", f"{base_url}/csrf-token", False),
+            ("POST", f"{base_url}/login", True),
+        ]
+        assert xui_session._AUTH_METHOD_CACHE[base_url] == "csrf"
+    finally:
+        xui_session.invalidate_auth_method_cache(base_url)
+
+
 def test_xui_panel_api_404_is_auth_failure():
     import xui_session
 
