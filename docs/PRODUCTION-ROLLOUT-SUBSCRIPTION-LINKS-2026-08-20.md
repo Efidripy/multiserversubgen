@@ -1,8 +1,8 @@
 # Production rollout: stable subscription links
 
-Дата: 2026-08-20 19:55 UTC  
-Хост: `dev.kleva.ru`  
-Сервис: `sub-manager`  
+Дата: 2026-08-20 19:55 UTC<br>
+Хост: `dev.kleva.ru`<br>
+Сервис: `sub-manager`<br>
 Путь панели: `/y4cooovh/`
 
 ## Релиз
