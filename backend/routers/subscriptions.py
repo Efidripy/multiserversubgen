@@ -3,6 +3,7 @@ import datetime
 import hashlib
 import hmac
 import json
+import re
 import sqlite3
 import time
 from threading import Lock
@@ -85,21 +86,51 @@ def build_subscriptions_router(
             subscription_response_cache.clear()
 
     def _verify_subscription_token(token: str, expected_kind: str) -> Optional[str]:
+        decoded = _decode_subscription_payload(token, expected_kind)
+        if not decoded:
+            return None
+        encoded, signature, identifier = decoded
+        payload = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        expected = hmac.new(subscription_signing_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return None
+        return identifier
+
+    def _decode_subscription_payload(token: str, expected_kind: str):
+        """Decode the historical signed format without trusting its signature.
+
+        The pre-opaque-token implementation generated HMAC URLs from an
+        ephemeral secret. Some of those URLs can outlive a process restart,
+        so their original secret is unavailable. We only use this decoder for
+        migration: callers must still resolve the identifier against the live
+        node/group inventory before redirecting to the current opaque token.
+        """
         if not token or "." not in token:
             return None
         encoded, signature = token.rsplit(".", 1)
+        if not re.fullmatch(r"[0-9a-f]{64}", signature):
+            return None
         try:
             padded = encoded + "=" * (-len(encoded) % 4)
             payload = base64.urlsafe_b64decode(padded.encode("ascii"))
-            expected = hmac.new(subscription_signing_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(signature, expected):
-                return None
             kind, identifier, expires = payload.decode("utf-8").split("|", 2)
             if kind != expected_kind or int(expires) < int(time.time()) or not identifier:
                 return None
-            return identifier
+            return encoded, signature, identifier
         except (ValueError, TypeError, UnicodeError):
             return None
+
+    def _resolve_legacy_signed_email(token: str) -> Optional[str]:
+        decoded = _decode_subscription_payload(token, "email")
+        if not decoded:
+            return None
+        return _resolve_legacy_email(decoded[2])
+
+    def _resolve_legacy_signed_group(token: str) -> Optional[str]:
+        decoded = _decode_subscription_payload(token, "group")
+        if not decoded:
+            return None
+        return _resolve_legacy_group(decoded[2])
 
     def _redirect_to_current_token(request: Request, token: str) -> RedirectResponse:
         query = f"?{request.url.query}" if request.url.query else ""
@@ -173,6 +204,8 @@ def build_subscriptions_router(
         if not resolved_email:
             legacy_email = _verify_subscription_token(email, "email")
             if not legacy_email:
+                legacy_email = _resolve_legacy_signed_email(email)
+            if not legacy_email:
                 legacy_email = _resolve_legacy_email(email)
             if not legacy_email:
                 return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
@@ -222,6 +255,8 @@ def build_subscriptions_router(
         resolved_identifier = resolve_token(db_path, "group", identifier)
         if not resolved_identifier:
             legacy_identifier = _verify_subscription_token(identifier, "group")
+            if not legacy_identifier:
+                legacy_identifier = _resolve_legacy_signed_group(identifier)
             if not legacy_identifier:
                 legacy_identifier = _resolve_legacy_group(identifier)
             if not legacy_identifier:
