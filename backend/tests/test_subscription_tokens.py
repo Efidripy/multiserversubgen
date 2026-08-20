@@ -1,6 +1,9 @@
 import base64
+import hashlib
+import hmac
 import os
 import sys
+import time
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -84,3 +87,19 @@ def test_emails_endpoint_returns_only_stable_tokens(tmp_path):
     payload = response.json()
     assert set(payload["subscription_tokens"]) == {"D632-IOS", "D700-ANDROID"}
     assert all("." not in token for token in payload["subscription_tokens"].values())
+
+
+def test_expired_secret_hmac_format_migrates_by_known_identifier(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    client = TestClient(_build_app(db_path, ["D632-IOS"]))
+
+    payload = base64.urlsafe_b64encode(
+        f"email|D632-IOS|{int(time.time()) + 3600}".encode()
+    ).decode().rstrip("=")
+    # Simulate an HMAC URL from a previous process whose ephemeral secret is gone.
+    signature = hmac.new(b"old-process-secret", payload.encode(), hashlib.sha256).hexdigest()
+    response = client.get(f"/api/v1/sub/{payload}.{signature}", follow_redirects=False)
+
+    assert response.status_code == 302
+    assert "." not in response.headers["location"].removeprefix("./")
