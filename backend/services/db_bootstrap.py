@@ -153,6 +153,19 @@ def init_db(db_path: str) -> None:
                       updated_at TEXT DEFAULT CURRENT_TIMESTAMP)"""
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS subscription_tokens
+                     (kind TEXT NOT NULL,
+                      identifier TEXT NOT NULL,
+                      token TEXT NOT NULL UNIQUE,
+                      created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                      PRIMARY KEY (kind, identifier))"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_tokens_token "
+            "ON subscription_tokens(token)"
+        )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS audit_events
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       created_at TEXT DEFAULT CURRENT_TIMESTAMP,

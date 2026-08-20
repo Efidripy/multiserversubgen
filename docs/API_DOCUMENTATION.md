@@ -4,7 +4,8 @@
 Защищённые management endpoints требуют Basic Auth (PAM авторизация).
 Исключения: health (`/health`, `/api/v1/health`), MFA status
 (`/api/v1/auth/mfa-status`) и subscription delivery endpoints. Последние
-принимают только краткоживущий HMAC-signed token, а не raw email или group id.
+принимают постоянный opaque token, сохранённый сервером, а не raw email или
+group id.
 
 ```bash
 Authorization: Basic base64(username:password)
@@ -421,10 +422,12 @@ Do not expose or construct subscription links from a raw email address.
 
 ### `GET /api/v1/sub/{token}`
 
-Public subscription delivery endpoint. The token is short-lived and HMAC-signed;
-an invalid or expired token deliberately receives `404`. Optional `protocol`
-and `nodes` filters apply before the base64-encoded response is returned.
-Requests are rate-limited and include no-cache headers.
+Public subscription delivery endpoint. The opaque token is created once and
+remains valid until an administrator explicitly regenerates it. Optional
+`protocol` and `nodes` filters apply before the base64-encoded response is
+returned. Requests are rate-limited and include no-cache headers. A legacy raw
+email URL and a previously issued HMAC URL receive a temporary `302` redirect
+to the current token URL when the matching active subscription exists.
 
 ### `GET /api/v1/sub-grouped/{token}`
 
@@ -434,7 +437,13 @@ protected `GET /api/v1/subscription-groups` management endpoint.
 ### `/api/v1/subscription-groups`
 
 `GET`, `POST`, `PUT /{group_id}` and `DELETE /{group_id}` require Basic Auth.
-The `GET` response includes each group's signed `subscription_token`.
+The `GET` response includes each group's stable `subscription_token`.
+
+### `POST /api/v1/subscription-tokens/{kind}/{identifier}/regenerate`
+
+Admin-only manual rotation for `kind=email` or `kind=group`. It returns a new
+opaque token and invalidates the prior URL immediately. The panel asks for
+confirmation before calling it; token refreshes never rotate links.
 ---
 
 ## Коды ошибок
