@@ -553,7 +553,13 @@
     "allLinks": "All links",
     "noGroupsFound": "No groups found. Groups require at least two clients with similar identifiers.",
     "qrCodeTitle": "Subscription QR Code",
-    "qrCodeAlt": "Subscription QR"
+    "qrCodeAlt": "Subscription QR",
+    "qrCodePreparing": "Generating QR locally…",
+    "qrCodeGenerationFailed": "QR generation failed",
+    "regenerateLink": "Regenerate subscription link",
+    "regenerateLinkConfirm": "Regenerate this link? The previous link will stop working.",
+    "tokenRegenerated": "Subscription link regenerated",
+    "tokenRegenerationFailed": "Token regeneration failed"
   },
   "backup": {
     "title": "Backup Manager",

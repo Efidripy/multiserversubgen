@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import QRCode from 'qrcode';
 import { useToast } from './Toast';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
@@ -103,10 +104,41 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   const [deliveryTransport, setDeliveryTransport] = useState<'all' | 'ws' | 'grpc'>('all');
   const [deliveryFormat, setDeliveryFormat] = useState<'base64' | 'json' | 'raw'>('base64');
   const [qrUrl, setQrUrl] = useState('');
+  const [qrDataUrl, setQrDataUrl] = useState('');
+  const [qrError, setQrError] = useState('');
   const [showQr, setShowQr] = useState(false);
   const [groupEditorOpen, setGroupEditorOpen] = useState(false);
   const [groupForm, setGroupForm] = useState<SubscriptionGroupForm>(emptyGroupForm);
   const [groupSaving, setGroupSaving] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!showQr || !qrUrl) {
+      setQrDataUrl('');
+      setQrError('');
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setQrDataUrl('');
+    setQrError('');
+    QRCode.toDataURL(qrUrl, {
+      width: 280,
+      margin: 2,
+      errorCorrectionLevel: 'M',
+    })
+      .then((dataUrl) => {
+        if (!cancelled) setQrDataUrl(dataUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setQrError(t('subscriptions.qrCodeGenerationFailed', 'QR generation failed'));
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [qrUrl, showQr, t]);
 
   const copyToClipboard = async (text: string) => {
     try {
@@ -174,6 +206,29 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       setGroups([]);
     } finally {
       setGroupsLoading(false);
+    }
+  };
+
+  const regenerateSubscriptionToken = async (kind: 'email' | 'group', identifier: string) => {
+    if (!window.confirm(t('subscriptions.regenerateLinkConfirm', 'Regenerate this link? The previous link will stop working.'))) {
+      return;
+    }
+    try {
+      const res = await api.post(`/v1/subscription-tokens/${kind}/${encodeURIComponent(identifier)}/regenerate`);
+      const token = String(res.data?.subscription_token || '');
+      if (!token) throw new Error(t('subscriptions.tokenRegenerationFailed', 'Token regeneration failed'));
+      if (kind === 'email') {
+        setEmailTokens((current) => ({ ...current, [identifier]: token }));
+      } else {
+        setGroups((current) => current.map((group) => (
+          group.identifier === identifier ? { ...group, subscription_token: token } : group
+        )));
+      }
+      toast(t('subscriptions.tokenRegenerated', 'Subscription link regenerated'), 'success');
+    } catch (err: any) {
+      const message = err.response?.data?.detail || err.message || t('subscriptions.tokenRegenerationFailed', 'Token regeneration failed');
+      setError(message);
+      toast(message, 'error');
     }
   };
 
@@ -389,6 +444,15 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         >
           <UIIcon name="subscriptions" size={15} />
         </button>
+        <button
+          type="button"
+          className={iconButtonClass}
+          title={t('subscriptions.regenerateLink', 'Regenerate subscription link')}
+          aria-label={t('subscriptions.regenerateLink', 'Regenerate subscription link')}
+          onClick={() => void regenerateSubscriptionToken('email', email)}
+        >
+          <UIIcon name="refresh" size={15} />
+        </button>
       </div>
     );
   };
@@ -415,6 +479,15 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         }}
       >
         <UIIcon name="link" size={15} />
+      </button>
+      <button
+        type="button"
+        className={iconButtonClass}
+        title={t('subscriptions.regenerateLink', 'Regenerate subscription link')}
+        aria-label={t('subscriptions.regenerateLink', 'Regenerate subscription link')}
+        onClick={() => void regenerateSubscriptionToken('group', group.identifier)}
+      >
+        <UIIcon name="refresh" size={15} />
       </button>
       <button
         type="button"
@@ -1000,9 +1073,19 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
             </div>
             <div className="space-y-4 px-5 py-5">
               <div className="flex justify-center rounded-lg border border-cyan-500/20 bg-white p-4">
-                <div className="max-w-[280px] text-center text-sm text-slate-600">
-                  {t('subscriptions.qrCodeUnavailable', 'QR generation is kept local to avoid sending subscription links to third parties.')}
-                </div>
+                {qrDataUrl ? (
+                  <img
+                    src={qrDataUrl}
+                    alt={t('subscriptions.qrCodeAlt')}
+                    width={280}
+                    height={280}
+                    className="h-auto w-full max-w-[280px]"
+                  />
+                ) : (
+                  <div className="max-w-[280px] text-center text-sm text-slate-600">
+                    {qrError || t('subscriptions.qrCodePreparing', 'Generating QR locally…')}
+                  </div>
+                )}
               </div>
               <div className="min-w-0">
                 <label className={titleClass}>{t('subscriptions.link')}</label>

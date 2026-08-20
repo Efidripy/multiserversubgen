@@ -6,12 +6,19 @@ import json
 import sqlite3
 import time
 from threading import Lock
+from urllib.parse import quote
 from services.db_bootstrap import connect
+from services.subscription_tokens import (
+    ensure_tokens,
+    get_token,
+    regenerate_token,
+    resolve_token,
+)
 from shared.sql import update_by_id_query
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 
 
 def build_subscriptions_router(
@@ -31,7 +38,6 @@ def build_subscriptions_router(
     subscription_response_cache_lock = Lock()
     subscription_response_cache_ttl = 300
     subscription_response_cache_max_size = 1024
-    subscription_token_ttl_sec = 30 * 24 * 60 * 60
 
     def _no_cache_headers():
         return {
@@ -78,13 +84,6 @@ def build_subscriptions_router(
         with subscription_response_cache_lock:
             subscription_response_cache.clear()
 
-    def _issue_subscription_token(kind: str, identifier: str) -> str:
-        expires = int(time.time()) + subscription_token_ttl_sec
-        payload = f"{kind}|{identifier}|{expires}".encode("utf-8")
-        signature = hmac.new(subscription_signing_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
-        encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
-        return f"{encoded}.{signature}"
-
     def _verify_subscription_token(token: str, expected_kind: str) -> Optional[str]:
         if not token or "." not in token:
             return None
@@ -101,6 +100,33 @@ def build_subscriptions_router(
             return identifier
         except (ValueError, TypeError, UnicodeError):
             return None
+
+    def _redirect_to_current_token(request: Request, token: str) -> RedirectResponse:
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(
+            url=f"./{quote(token, safe='')}{query}",
+            status_code=302,
+            headers=_no_cache_headers(),
+        )
+
+    def _resolve_legacy_email(identifier: str) -> Optional[str]:
+        try:
+            emails = get_emails(node_service.list_nodes())
+        except Exception:
+            return None
+        return next(
+            (email for email in emails if email.lower() == identifier.lower()),
+            None,
+        )
+
+    def _resolve_legacy_group(identifier: str) -> Optional[str]:
+        with connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT identifier FROM subscription_groups "
+                "WHERE identifier = ? COLLATE NOCASE",
+                (identifier,),
+            ).fetchone()
+        return str(row[0]) if row else None
 
     def _ensure_stats_table(conn: sqlite3.Connection) -> None:
         conn.execute(
@@ -136,16 +162,22 @@ def build_subscriptions_router(
             content={
                 "emails": emails,
                 "stats": stats,
-                "subscription_tokens": {email: _issue_subscription_token("email", email) for email in emails},
+                "subscription_tokens": ensure_tokens(db_path, "email", emails),
             },
             headers=_no_cache_headers(),
         )
 
     @router.get("/api/v1/sub/{email}")
     def get_sub(request: Request, email: str, protocol: Optional[str] = None, nodes: Optional[str] = None):
-        resolved_email = _verify_subscription_token(email, "email")
+        resolved_email = resolve_token(db_path, "email", email)
         if not resolved_email:
-            return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
+            legacy_email = _verify_subscription_token(email, "email")
+            if not legacy_email:
+                legacy_email = _resolve_legacy_email(email)
+            if not legacy_email:
+                return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
+            current_token = ensure_tokens(db_path, "email", [legacy_email])[legacy_email]
+            return _redirect_to_current_token(request, current_token)
         allowed, retry_after = check_subscription_rate_limit(request, f"sub:{hashlib.sha256(email.encode()).hexdigest()}")
         if not allowed:
             return PlainTextResponse(
@@ -187,9 +219,15 @@ def build_subscriptions_router(
         protocol: Optional[str] = None,
         nodes: Optional[str] = None,
     ):
-        resolved_identifier = _verify_subscription_token(identifier, "group")
+        resolved_identifier = resolve_token(db_path, "group", identifier)
         if not resolved_identifier:
-            return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
+            legacy_identifier = _verify_subscription_token(identifier, "group")
+            if not legacy_identifier:
+                legacy_identifier = _resolve_legacy_group(identifier)
+            if not legacy_identifier:
+                return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
+            current_token = ensure_tokens(db_path, "group", [legacy_identifier])[legacy_identifier]
+            return _redirect_to_current_token(request, current_token)
         allowed, retry_after = check_subscription_rate_limit(request, f"sub-grouped:{hashlib.sha256(identifier.encode()).hexdigest()}")
         if not allowed:
             return PlainTextResponse(
@@ -279,9 +317,36 @@ def build_subscriptions_router(
             for group in groups:
                 group["email_patterns"] = json.loads(group.get("email_patterns", "[]"))
                 group["node_filters"] = json.loads(group.get("node_filters", "[]"))
-                group["subscription_token"] = _issue_subscription_token("group", group["identifier"])
+            group_tokens = ensure_tokens(db_path, "group", [group["identifier"] for group in groups])
+            for group in groups:
+                group["subscription_token"] = group_tokens[group["identifier"]]
 
         return {"groups": groups, "count": len(groups)}
+
+    @router.post("/api/v1/subscription-tokens/{kind}/{identifier}/regenerate")
+    def regenerate_subscription_token(request: Request, kind: str, identifier: str):
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        if kind not in {"email", "group"} or not identifier:
+            raise HTTPException(status_code=400, detail="Unsupported subscription token kind")
+
+        if get_token(db_path, kind, identifier) is None:
+            if kind == "email":
+                resolved = _resolve_legacy_email(identifier)
+            else:
+                resolved = _resolve_legacy_group(identifier)
+            if not resolved:
+                raise HTTPException(status_code=404, detail="Subscription not found")
+            ensure_tokens(db_path, kind, [resolved])
+            identifier = resolved
+
+        token = regenerate_token(db_path, kind, identifier)
+        if not token:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+        invalidate_subscription_cache()
+        _clear_subscription_response_cache()
+        return {"kind": kind, "identifier": identifier, "subscription_token": token}
 
     @router.post("/api/v1/subscription-groups")
     def create_subscription_group(request: Request, data: Dict):
