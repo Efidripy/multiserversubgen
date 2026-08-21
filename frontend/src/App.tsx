@@ -609,7 +609,7 @@ export const App: React.FC = () => {
               {t('app.title')}
             </h4>
             <p style={{ margin: '6px 0 0', fontSize: '0.78rem', color: colors.text.tertiary }}>
-              Multi-server VPN panel manager
+              {t('app.subtitle')}
             </p>
           </div>
 
