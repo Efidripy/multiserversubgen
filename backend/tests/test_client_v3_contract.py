@@ -179,3 +179,40 @@ def test_v3_reset_client_traffic_does_not_downgrade_on_reachable_route_failure()
     )
     assert get_node_api_version(base_url) == "v3"
     invalidate_node_api_version(base_url)
+
+
+def test_v3_delete_resolves_uuid_to_current_encoded_email_before_write():
+    from client_manager import ClientManager
+    from xui_session import invalidate_node_api_version, set_node_api_version
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    set_node_api_version(base_url, "v3")
+    listed = _response(200, {"success": True, "obj": [{"uuid": "client-uuid", "email": "old+name@example.test"}]})
+    deleted = _response(200, {"success": True})
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", side_effect=[listed, deleted]
+    ) as request:
+        assert manager.delete_client(_node(), inbound_id=17, client_uuid="client-uuid") is True
+
+    list_call, delete_call = request.call_args_list
+    assert list_call.args[1:] == ("GET", f"{base_url}/panel/api/clients/list")
+    assert delete_call.args[1:] == ("POST", f"{base_url}/panel/api/clients/del/old%2Bname%40example.test")
+    invalidate_node_api_version(base_url)
+
+
+def test_v3_delete_does_not_write_when_uuid_resolution_fails():
+    from client_manager import ClientManager
+    from xui_session import invalidate_node_api_version, set_node_api_version
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    set_node_api_version(base_url, "v3")
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", return_value=_response(503)
+    ) as request:
+        assert manager.delete_client(_node(), inbound_id=17, client_uuid="client-uuid") is False
+
+    assert request.call_count == 1
+    assert request.call_args.args[1:] == ("GET", f"{base_url}/panel/api/clients/list")
+    invalidate_node_api_version(base_url)
