@@ -45,3 +45,13 @@
 ## Rollback
 
 Последний архив и `.sha256` сохранены в `/var/backups/sub-manager_deploy/`. База и `.encryption_key` не удалялись и не перегенерировались.
+
+## Дополнение: browser session — 2026-08-21
+
+- Source commit: `65c0428` (`mssg-browser-session-20260821`).
+- Панель теперь выдаёт серверную signed session сроком 8 часов: `HttpOnly`, `Secure`, `SameSite=Strict`; пароль не сохраняется в Web Storage.
+- Перед release: `sub-manager=active`, local health `200`, `admin.db integrity_check=ok`.
+- Штатный atomic deploy создал `/var/backups/sub-manager_deploy/project_20260821T001647Z-00bf120b8042.tgz`; его `.sha256` проверен. База перенесена через SQLite `.backup`, без DDL/миграций.
+- После release: `sub-manager=active`, local health `200`, `admin.db integrity_check=ok`, public panel `200`; `/api/v1/auth/verify` и `/api/v1/auth/session` без credentials дают `401`.
+- Runtime SHA-256 для изменённых auth/middleware/router/main файлов совпал с `65c0428` source tree. Временный remote bundle удалён.
+- Неавторизованный browser smoke показал штатную форму Sign In. Authenticated F5/logout live-browser сценарий не выполнялся без передачи panel password в automation; он остаётся отдельной ручной проверкой оператора.
