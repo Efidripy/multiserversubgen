@@ -1,0 +1,3 @@
+# Keep the established backend lint contract explicit across Ruff releases.
+# Broader rule families are adopted only through a dedicated remediation task.
+lint.select = ["E4", "E7", "E9", "F"]
