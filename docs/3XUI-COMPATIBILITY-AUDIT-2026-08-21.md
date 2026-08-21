@@ -138,6 +138,20 @@ only after v3 responds `404` or `405`; a transport or server failure is not
 misclassified as an old panel. Mock-only tests cover the modern route and the
 route-absence fallback. No traffic counter was reset on a live node.
 
+## P2 — bulk-client traffic reset
+
+Current 3x-ui exposes `POST /panel/api/clients/bulkResetTraffic` with an
+`emails` JSON array.  The control-plane accepts that operation only when the
+response is `200` with `success: true`. A `503`, malformed payload or explicit
+failure is reported as failed and cannot trigger a second reset request.
+
+Only a `404` or `405` for the bulk route permits adaptation to the documented
+v3 `POST /panel/api/clients/resetTraffic/{email}` route; each email segment is
+encoded. The bulk call has no inbound IDs, therefore it never guesses the
+legacy inbound reset contract. If that individual v3 route is also absent, the
+email is reported failed. Proof is mock-only; no live traffic counters were
+reset.
+
 ## P2 — client deletion identity safety
 
 The v3 delete route is email-addressed, while normal control-plane UI records
