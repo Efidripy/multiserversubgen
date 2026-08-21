@@ -422,9 +422,14 @@ Authorization: Basic base64(username:password)
 **Request:**
 ```json
 {
-  "backup_data": "base64_or_sql_data"
+  "backup_data": "base64_sqlite_db_or_sqlite_migration_dump"
 }
 ```
+
+Перед удалённым restore API принимает только SQLite database с сигнатурой
+`SQLite format 3` или SQLite migration dump, который после BOM/пробелов
+начинается с `PRAGMA` либо `BEGIN TRANSACTION`. Полная integrity-проверка
+остаётся обязанностью целевой панели перед заменой её БД.
 
 ### `GET /api/v1/backup/node/{node_id}`
 
@@ -435,8 +440,10 @@ Authorization: Basic base64(username:password)
 
 Импортировать загруженный multipart-файл в поле `file`. Операция заменяет базу
 ноды и требует явного подтверждения в UI. UI ограничивает file picker
-расширениями `.db`, `.sqlite` и `.sqlite3`; текущий API принимает непустое тело
-до 8 MiB и пока не валидирует filename, MIME type или SQLite signature.
+расширениями `.db`, `.sqlite` и `.sqlite3`; сервер не доверяет filename и MIME
+type, а проверяет первые 64 байта. Принимаются SQLite database или совместимый
+SQLite migration dump (`PRAGMA`/`BEGIN TRANSACTION` после BOM/пробелов) размером
+до 8 MiB; неподдерживаемый формат отклоняется до вызова restore на ноде.
 
 ### `GET /api/v1/backup/all`
 Скачать ZIP с резервными копиями всех серверов. По умолчанию ответ — binary
