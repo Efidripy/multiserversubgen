@@ -21,6 +21,8 @@ MAX_LOG_COUNT = 500
 MAX_BACKUP_BYTES = 8 * 1024 * 1024
 MAX_BACKUP_B64_CHARS = MAX_BACKUP_BYTES * 2
 MAX_REQUEST_ID_LENGTH = 96
+_SQLITE_DATABASE_SIGNATURE = b"SQLite format 3\x00"
+_SQLITE_DUMP_PREFIXES = (b"PRAGMA", b"BEGIN TRANSACTION")
 _SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,96}$")
 
@@ -154,6 +156,24 @@ def validate_path_segment(value: object, *, field: str = "value") -> str:
 def safe_request_id(value: object) -> str:
     candidate = str(value or "").strip()
     return candidate if _SAFE_REQUEST_ID.fullmatch(candidate) else ""
+
+
+def is_supported_sqlite_backup(content: object) -> bool:
+    """Match the current 3x-ui SQLite restore-file type discriminator.
+
+    A full database integrity check belongs to the remote panel before it
+    replaces its database.  The control plane must still reject arbitrary
+    uploads before forwarding them to that destructive remote endpoint.
+    """
+    if not isinstance(content, (bytes, bytearray)):
+        return False
+    header = bytes(content[:64])
+    if header.startswith(_SQLITE_DATABASE_SIGNATURE):
+        return True
+    if header.startswith(b"\xef\xbb\xbf"):
+        header = header[3:]
+    header = header.lstrip(b" \t\r\n")
+    return header.startswith(_SQLITE_DUMP_PREFIXES)
 
 
 def safe_content_disposition_filename(value: object, fallback: str = "download.bin") -> str:

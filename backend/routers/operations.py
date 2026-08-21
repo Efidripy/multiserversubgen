@@ -10,7 +10,12 @@ from typing import Dict
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse, Response
-from shared.security import MAX_BACKUP_BYTES, MAX_BACKUP_B64_CHARS, safe_content_disposition_filename
+from shared.security import (
+    MAX_BACKUP_BYTES,
+    MAX_BACKUP_B64_CHARS,
+    is_supported_sqlite_backup,
+    safe_content_disposition_filename,
+)
 
 
 def build_operations_router(
@@ -37,6 +42,13 @@ def build_operations_router(
             node_id_set = {int(node_id) for node_id in node_ids}
             return [node for node in nodes if int(node.get("id")) in node_id_set]
         return nodes
+
+    def _is_supported_backup_data(backup_data: str) -> bool:
+        try:
+            content = base64.b64decode(backup_data, validate=True)
+        except (ValueError, TypeError):
+            content = backup_data.encode("utf-8")
+        return is_supported_sqlite_backup(content)
 
     def _latest_snapshot_payload() -> Dict:
         payload = snapshot_collector.latest_snapshot() if snapshot_collector else {}
@@ -257,6 +269,8 @@ def build_operations_router(
         backup_data = data.get("backup_data")
         if not isinstance(backup_data, str) or not backup_data or len(backup_data) > MAX_BACKUP_B64_CHARS:
             raise HTTPException(status_code=400, detail="backup_data required")
+        if not _is_supported_backup_data(backup_data):
+            raise HTTPException(status_code=400, detail="unsupported backup format")
         success = await _run(server_monitor.import_database_backup, await _load_node(node_id), backup_data)
         return {"success": success}
 
@@ -277,6 +291,8 @@ def build_operations_router(
             raise HTTPException(status_code=413, detail="backup file is too large")
         if not content:
             raise HTTPException(status_code=400, detail="empty file")
+        if not is_supported_sqlite_backup(content):
+            raise HTTPException(status_code=400, detail="unsupported backup format")
 
         backup_data = base64.b64encode(content).decode("ascii")
         success = await _run(server_monitor.import_database_backup, node, backup_data)
