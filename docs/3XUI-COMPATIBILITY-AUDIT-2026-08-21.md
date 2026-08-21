@@ -1,8 +1,7 @@
 # Совместимость с 3x-ui — 2026-08-21
 
 **Задача:** `MSSG-20260821-3XUI-COMPAT`  
-**Статус:** P0 реализован локально; production rollout ожидает package gates и
-backup-first release.  
+**Статус:** P0 deployed with production receipt.  
 **Границы:** API/auth adapter control-plane, безопасные authenticated GET/POST
 read-only probes. Не входят изменение конфигураций нод, токенов, inbound/client
 данных, миграции или DDL.
@@ -38,6 +37,25 @@ inbounds или список клиентов.
 - `backend/tests/test_backend_resilience.py`: regression для JSON CSRF-login.
 - `backend/tests/test_server_monitor_and_traffic.py`: modern endpoint и
   fallback-контракты.
+
+## Production rollout
+
+- Source: merged `origin/main` commit `f10b153a455e6bd20d24726a874f2fab30eda32d`.
+- Deployment: штатный immutable checkout и `scripts/deploy/server-deploy.sh`;
+  rollback включён helper-ом.
+- Rollback artifact:
+  `/var/backups/sub-manager_deploy/project_20260821T113110Z-f10b153a455e.tgz`;
+  SHA-256 проверен на production.
+- После deployment: `sub-manager=active`, local health `200`, `nginx -t` OK;
+  `admin.db integrity_check=ok`; counts сохранены (`nodes=9`,
+  `node_snapshots=9`, `subscription_tokens=87`).
+- SHA-256 deployed `xui_session.py` и `server_monitor.py` совпали с immutable
+  source checkout.
+- Authenticated browser smoke: dashboard и Monitoring отобразили `9/9` нод
+  online и `39` current online clients. Публичная панель пять раз вернула
+  HTTP 200 (p50 около 394 ms).
+- Ноды, inbounds, clients, API tokens и записи БД не изменялись вручную;
+  единственная работа с БД — штатный SQLite backup внутри deploy helper.
 
 ## Оставшиеся границы
 
