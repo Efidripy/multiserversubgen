@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.3.3",
-    "axios": "^1.18.1",
+    "axios": "^1.19.0",
     "chart.js": "^4.5.1",
     "i18next": "^25.8.13",
     "i18next-browser-languagedetector": "^8.2.1",
