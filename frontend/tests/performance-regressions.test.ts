@@ -39,6 +39,17 @@ describe('navigation performance regressions', () => {
     expect(clients).toContain('getInboundsHeaderSource({ signal: controller.signal })');
   });
 
+  it('does not fetch complete node databases just to render Backup Manager', () => {
+    const backupManager = read('src/components/BackupManager.tsx');
+
+    expect(backupManager).toContain('void loadNodes();');
+    expect(backupManager).not.toContain("api.get('/v1/backup/all'");
+    expect(backupManager).not.toContain('format: \'json\'');
+    expect(backupManager).not.toContain('await refreshBackups()');
+    expect(backupManager).toContain('downloadAllBackupsBlob()');
+    expect(backupManager).toContain('downloadNodeBackup(nodeId)');
+  });
+
   it('coalesces realtime traffic bursts without delaying explicit navigation controls', () => {
     const traffic = read('src/components/TrafficStats.tsx');
     expect(traffic).toContain('REALTIME_TRAFFIC_REFRESH_MIN_INTERVAL_MS = 60 * 1000');

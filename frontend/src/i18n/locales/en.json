@@ -611,7 +611,14 @@
     "selectedFile": "Selected file",
     "automatedBackups": "Automated Backups",
     "automatedBackupsHint": "For automated backup scheduling, you can set up a cron job on your server:",
-    "automatedBackupsExampleHint": "This example runs daily at 3 AM and saves all backups to /backups directory."
+    "automatedBackupsExampleHint": "This example runs daily at 3 AM and saves all backups to /backups directory.",
+    "connection": "Connection",
+    "transferMode": "Transfer",
+    "preloaded": "Preloaded",
+    "onDemand": "On demand",
+    "onDemandHint": "Opening this section does not download node databases. A full backup is requested only after an explicit download, Telegram delivery, or restore action.",
+    "downloadOnDemandHint": "The full database is requested only after selecting download.",
+    "downloading": "Downloading"
   },
   "nodes": {
     "title": "Node Manager",
