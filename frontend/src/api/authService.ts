@@ -31,13 +31,13 @@ export async function verifyCurrentAuth(): Promise<VerifyAuthResponse> {
   if (auth.totpCode) headers['X-TOTP-Code'] = auth.totpCode;
 
   const res = await api.get('/v1/auth/verify', {
-    auth: { username: auth.username, password: auth.password },
+    ...(auth.username && auth.password ? { auth: { username: auth.username, password: auth.password } } : {}),
     headers,
   });
   return (res.data || {}) as VerifyAuthResponse;
 }
 
-export async function verifyLoginCredentials(
+export async function createBrowserSession(
   username: string,
   password: string,
   totpCode = '',
@@ -45,9 +45,13 @@ export async function verifyLoginCredentials(
   const headers: Record<string, string> = {};
   if (totpCode.trim()) headers['X-TOTP-Code'] = totpCode.trim();
 
-  const res = await api.get('/v1/auth/verify', {
+  const res = await api.post('/v1/auth/session', undefined, {
     auth: { username, password },
     headers,
   });
   return (res.data || {}) as VerifyAuthResponse;
+}
+
+export async function clearBrowserSession(): Promise<void> {
+  await api.post('/v1/auth/logout');
 }

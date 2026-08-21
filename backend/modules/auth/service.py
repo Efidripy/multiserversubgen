@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import logging
 import secrets
 import time
@@ -25,6 +26,8 @@ _auth_cache: Dict[str, Tuple[float, str]] = {}
 _AUTH_CACHE_SECRET = secrets.token_bytes(32)
 AUTH_CACHE_TTL_SEC = 30
 AUTH_CACHE_NEGATIVE_TTL_SEC = 5
+WEB_SESSION_TTL_SEC = 8 * 60 * 60
+WEB_SESSION_COOKIE_NAME = "sub_manager_session"
 
 
 def parse_mfa_users(raw: str) -> Dict[str, str]:
@@ -211,6 +214,55 @@ class AuthService:
         except (ValueError, TypeError, UnicodeError):
             return None
 
+    def _web_session_signing_key(self) -> bytes:
+        """Derive a distinct signing key for browser sessions."""
+        return hmac.new(
+            self.ws_auth_secret.encode("utf-8"),
+            b"sub-manager-web-session-v1",
+            hashlib.sha256,
+        ).digest()
+
+    def issue_web_session(self, username: str, ttl_sec: int = WEB_SESSION_TTL_SEC) -> str:
+        """Issue an opaque signed browser session without credentials."""
+        expires = int(time.time()) + max(60, min(ttl_sec, WEB_SESSION_TTL_SEC))
+        payload = json.dumps(
+            {"v": 1, "sub": username, "exp": expires, "nonce": secrets.token_urlsafe(12)},
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+        signature = hmac.new(self._web_session_signing_key(), payload, hashlib.sha256).hexdigest()
+        return f"{encoded}.{signature}"
+
+    def verify_web_session(self, token: Optional[str]) -> Optional[str]:
+        """Return the session username only for an authentic, unexpired token."""
+        if not token or "." not in token:
+            return None
+        encoded, signature = token.rsplit(".", 1)
+        try:
+            padded = encoded + "=" * (-len(encoded) % 4)
+            payload = base64.urlsafe_b64decode(padded.encode("ascii"))
+            expected = hmac.new(self._web_session_signing_key(), payload, hashlib.sha256).hexdigest()
+            if not hmac.compare_digest(signature, expected):
+                return None
+            claims = json.loads(payload.decode("utf-8"))
+            username = claims.get("sub")
+            expires = claims.get("exp")
+            nonce = claims.get("nonce")
+            if (
+                claims.get("v") != 1
+                or not isinstance(username, str)
+                or not username
+                or not isinstance(expires, int)
+                or expires <= int(time.time())
+                or not isinstance(nonce, str)
+                or not nonce
+            ):
+                return None
+            return username
+        except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
+            return None
+
     # ------------------------------------------------------------------
     # Route-level RBAC policy
     # ------------------------------------------------------------------
@@ -227,6 +279,8 @@ class AuthService:
         """
         method = method.upper()
         path = path.lower()
+        if path in {"/api/v1/auth/session", "/api/v1/auth/logout"}:
+            return "viewer"
         if method == "DELETE":
             return "admin"
         if method == "POST":
