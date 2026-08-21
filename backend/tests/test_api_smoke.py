@@ -39,6 +39,7 @@ def _build_test_app(*, monitoring_enabled: bool) -> FastAPI:
         monitoring_enabled=monitoring_enabled,
         get_node_or_404=main.partial(main.get_node_or_404, main.node_service),
         get_cached_traffic_stats=main.get_cached_traffic_stats,
+        get_cached_traffic_stats_projection=main.get_cached_traffic_stats_projection,
         get_traffic_stats_by_period=main.get_traffic_stats_by_period,
         get_cached_online_clients=main.get_cached_online_clients,
         list_nodes=main.node_service.list_nodes,
@@ -261,6 +262,11 @@ def test_dashboard_summary_uses_snapshot_cache_without_xui_fetch(monkeypatch):
         "get_cached_online_clients",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("online fetch must not run")),
     )
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats_projection",
+        lambda _group_by: {"stats": {}, "cache_source": "empty"},
+    )
     main.snapshot_collector._latest = {
         "timestamp": 1234567890.0,
         "nodes": {
@@ -297,6 +303,55 @@ def test_dashboard_summary_uses_snapshot_cache_without_xui_fetch(monkeypatch):
     assert payload["online_clients_total"] == 3
     assert payload["traffic"]["total"] == 1000
     assert payload["cache"]["source"] == "snapshot_collector"
+
+
+def test_dashboard_summary_returns_sorted_cached_top_clients_without_fleet_fetch(monkeypatch):
+    nodes = [{"id": 1, "name": "alpha"}]
+    monkeypatch.setattr(main.node_service, "list_nodes", lambda: nodes)
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("dashboard must not trigger a fleet fetch")),
+    )
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats_projection",
+        lambda _group_by: {
+            "stats": {
+                "least@example.test": {"up": 2, "down": 3},
+                "highest@example.test": {"up": 400, "down": 600, "total": 1000},
+                "middle@example.test": {"up": 30, "down": 70, "total": 100},
+                "bad@example.test": None,
+            },
+            "cache_source": "memory",
+            "cache_timestamp": 1234567890.0,
+        },
+    )
+    main.snapshot_collector._latest = {"timestamp": 1234567890.0, "nodes": {}}
+    app = _build_test_app(monitoring_enabled=False)
+
+    @app.middleware("http")
+    async def _inject_auth_user(request, call_next):
+        request.state.auth_user = "admin"
+        return await call_next(request)
+
+    response = TestClient(app).get("/api/v1/dashboard/summary")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["clients_total"] == 4
+    assert [client["email"] for client in payload["top_clients"]] == [
+        "highest@example.test",
+        "middle@example.test",
+        "least@example.test",
+    ]
+    assert payload["top_clients"][0] == {
+        "email": "highest@example.test",
+        "upload": 400,
+        "download": 600,
+        "total": 1000,
+    }
+    assert payload["cache"]["client_traffic_source"] == "memory"
 
 
 def test_node_server_status_uses_snapshot_cache_without_xui_fetch(monkeypatch):

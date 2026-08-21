@@ -1,0 +1,57 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { describe, expect, it, vi } from 'vitest';
+
+const { summary } = vi.hoisted(() => ({
+  summary: {
+    nodes_total: 1,
+    clients_total: 3,
+    online_clients_total: 1,
+    online_by_node: { alpha: 1 },
+    traffic: { upload: 400, download: 1600, total: 2000 },
+    top_clients: [
+      { email: 'highest@example.test', upload: 400, download: 600, total: 1000 },
+      { email: 'middle@example.test', upload: 30, download: 70, total: 100 },
+      { email: 'least@example.test', upload: 2, download: 3, total: 5 },
+    ],
+  },
+}));
+
+const mocks = vi.hoisted(() => ({
+  getDashboardSummary: vi.fn(),
+  listNodes: vi.fn(),
+}));
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({ t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? key }),
+}));
+
+vi.mock('../src/api/dashboard', () => ({
+  getDashboardSummary: mocks.getDashboardSummary,
+  normalizeDashboardSummary: (value: unknown) => value,
+}));
+
+vi.mock('../src/api/nodes', () => ({
+  listNodes: mocks.listNodes,
+  NODES_CHANGED_EVENT: 'nodes-changed',
+}));
+
+import { DashboardSummary } from '../src/components/DashboardSummary';
+
+describe('DashboardSummary traffic projection', () => {
+  it('renders cached top traffic rows and opens the selected client', async () => {
+    const onNavigate = vi.fn();
+    mocks.getDashboardSummary.mockResolvedValue(summary);
+    mocks.listNodes.mockResolvedValue([{ id: 1, name: 'alpha', enabled: true }]);
+    render(<DashboardSummary onNavigate={onNavigate} />);
+
+    await waitFor(() => expect(screen.getByText('highest@example.test')).toBeTruthy());
+
+    expect(screen.queryByText('No traffic records found')).toBeNull();
+    expect(screen.getByText('middle@example.test')).toBeTruthy();
+    expect(screen.getByText('least@example.test')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('highest@example.test'));
+    expect(sessionStorage.getItem('sm_nav_client_search')).toBe('highest@example.test');
+    expect(onNavigate).toHaveBeenCalledWith('clients');
+  });
+});
