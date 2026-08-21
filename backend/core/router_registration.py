@@ -30,6 +30,7 @@ def register_app_routers(
     mfa_totp_enabled,
     get_node_or_404,
     get_cached_traffic_stats,
+    get_cached_traffic_stats_projection,
     get_traffic_stats_by_period,
     get_cached_online_clients,
     list_nodes,
@@ -106,6 +107,7 @@ def register_app_routers(
         build_live_data_router(
             get_node_or_404=get_node_or_404,
             get_cached_traffic_stats=get_cached_traffic_stats,
+            get_cached_traffic_stats_projection=get_cached_traffic_stats_projection,
             get_traffic_stats_by_period=get_traffic_stats_by_period,
             get_cached_online_clients=get_cached_online_clients,
             list_nodes=list_nodes,
