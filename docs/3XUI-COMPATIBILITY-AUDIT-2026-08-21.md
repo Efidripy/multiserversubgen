@@ -129,6 +129,15 @@ panel, disposable node, client, inbound or production data was changed. A
 live mutation check remains a separate authorised maintenance action with a
 disposable node/client and an explicit cleanup receipt.
 
+## P2 — single-client traffic reset
+
+Current 3x-ui exposes `POST /panel/api/clients/resetTraffic/{email}`. The
+control-plane now uses that route first, URL-encodes the email path segment and
+accepts the normal `success` response shape. Its legacy inbound route is tried
+only after v3 responds `404` or `405`; a transport or server failure is not
+misclassified as an old panel. Mock-only tests cover the modern route and the
+route-absence fallback. No traffic counter was reset on a live node.
+
 ## P1 — read-only Xray 26 configuration audit
 
 The audit consumes only the normalized result of `GET /panel/api/inbounds/list`
