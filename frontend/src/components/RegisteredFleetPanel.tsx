@@ -17,6 +17,7 @@ interface RegisteredFleetPanelProps {
   collapsed: boolean;
   setCollapsed: (value: boolean) => void;
   onOpenNodes?: () => void;
+  onEditNode?: (node: FleetNode) => void;
   onSummaryChange?: (summary: FleetSummary) => void;
 }
 
@@ -29,6 +30,7 @@ type UiFleetNode = {
   sourceType: string;
   status: 'online' | 'offline' | 'error';
   access: 'RW' | 'RO';
+  record: FleetNode;
   error?: string;
 };
 
@@ -70,6 +72,7 @@ const toUiNode = (node: FleetNode, index: number): UiFleetNode => {
     latency: node.latency ? `${node.latency}ms` : '-',
     status: node.available === true ? 'online' : node.available === false ? 'offline' : 'error',
     access: isReadOnly(node.read_only) ? 'RO' : 'RW',
+    record: node,
     error: node.error,
   };
 };
@@ -78,6 +81,7 @@ export function RegisteredFleetPanel({
   collapsed,
   setCollapsed,
   onOpenNodes,
+  onEditNode,
   onSummaryChange,
 }: RegisteredFleetPanelProps) {
   const { t } = useTranslation();
@@ -360,7 +364,18 @@ export function RegisteredFleetPanel({
                       <button className={fleetActionButtonClass} type="button" title="Refresh" onClick={load}>
                         <RefreshCw className="w-3.5 h-3.5 opacity-60" />
                       </button>
-                      <button className={fleetActionButtonClass} type="button" title="Edit" onClick={onOpenNodes}>
+                      <button
+                        className={fleetActionButtonClass}
+                        type="button"
+                        title="Edit"
+                        onClick={() => {
+                          if (onEditNode) {
+                            onEditNode(node.record);
+                            return;
+                          }
+                          onOpenNodes?.();
+                        }}
+                      >
                         <Edit3 className="w-3.5 h-3.5 opacity-60" />
                       </button>
                       <button

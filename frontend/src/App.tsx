@@ -23,6 +23,7 @@ import { IconName, UIIcon } from './components/UIIcon';
 import { requestActivityStore } from './services/requestActivity';
 import { readStaleCache, writeStaleCache } from './services/staleCache';
 import { AUTH_REQUIRED_EVENT, resetAuthRequiredEventGuard } from './api/client';
+import type { NodeRecord } from './api/nodes';
 
 const LazySubscriptionManager = React.lazy(() => import('./components/SubscriptionManager').then((module) => ({ default: module.SubscriptionManager })));
 const LazyInboundManager = React.lazy(() => import('./components/InboundManager').then((module) => ({ default: module.InboundManager })));
@@ -146,6 +147,8 @@ export const App: React.FC = () => {
   const [headerLoading, setHeaderLoading] = useState(false);
   const [pendingRequests, setPendingRequests] = useState(0);
   const [nodeIntakeOpenSignal, setNodeIntakeOpenSignal] = useState(0);
+  const [nodeEditOpenSignal, setNodeEditOpenSignal] = useState(0);
+  const [nodeEditTarget, setNodeEditTarget] = useState<NodeRecord | null>(null);
 
   const [notifications, setNotifications] = useState<UiNotification[]>([]);
   const [notificationPanelOpen, setNotificationPanelOpen] = useState(false);
@@ -758,6 +761,8 @@ export const App: React.FC = () => {
                 showIntake={false}
                 showFleet={false}
                 openIntakeSignal={nodeIntakeOpenSignal}
+                editNode={nodeEditTarget}
+                openEditSignal={nodeEditOpenSignal}
               />
               <section className="dashboard-server-deck min-w-0">
                 <ServerStatus
@@ -777,6 +782,11 @@ export const App: React.FC = () => {
               onSummaryChange={setFleetSummary}
               onOpenNodes={() => {
                 setNodeIntakeOpenSignal((value) => value + 1);
+                setRegisteredFleetCollapsed(true);
+              }}
+              onEditNode={(node) => {
+                setNodeEditTarget(node);
+                setNodeEditOpenSignal((value) => value + 1);
                 setRegisteredFleetCollapsed(true);
               }}
             />
