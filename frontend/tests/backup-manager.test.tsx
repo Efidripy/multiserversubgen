@@ -102,4 +102,20 @@ describe('BackupManager cold path', () => {
     await waitFor(() => expect(mocks.sendNodeBackupToTelegram).toHaveBeenCalledTimes(2));
     expect(mocks.toast).toHaveBeenCalledWith('backup.telegramAllResult', 'success');
   });
+
+  it('shows a returned Telegram error instead of a false success for one node', async () => {
+    mocks.listNodes.mockResolvedValue([
+      { id: 1, name: 'alpha', ip: '203.0.113.1', port: '443' },
+    ]);
+    mocks.sendNodeBackupToTelegram.mockResolvedValue({ error: 'panel unavailable' });
+
+    render(<BackupManager />);
+
+    await waitFor(() => expect(screen.getAllByText('alpha').length).toBeGreaterThan(0));
+    fireEvent.click(screen.getAllByLabelText('backup.telegramNodeTitle')[0]);
+
+    await waitFor(() => expect(mocks.sendNodeBackupToTelegram).toHaveBeenCalledWith(1));
+    expect(mocks.toast).toHaveBeenCalledWith('common.failed', 'error');
+    expect(screen.getByText('panel unavailable')).toBeTruthy();
+  });
 });
