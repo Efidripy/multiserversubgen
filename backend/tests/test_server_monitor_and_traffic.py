@@ -510,8 +510,8 @@ class TestThreeXUIMonitor:
         assert mock_gs.call_args_list[0] == call(self._node())
         assert mock_gs.call_args_list[1] == call(self._node(), force_reauth=True)
         assert mock_invalidate.called
-        assert mock_xui.call_args_list[0] == call(sess1, "POST", "https://1.2.3.4:443/panel/api/inbounds/onlines")
-        assert mock_xui.call_args_list[1] == call(sess2, "POST", "https://1.2.3.4:443/panel/api/inbounds/onlines")
+        assert mock_xui.call_args_list[0] == call(sess1, "POST", "https://1.2.3.4:443/panel/api/clients/onlines")
+        assert mock_xui.call_args_list[1] == call(sess2, "POST", "https://1.2.3.4:443/panel/api/clients/onlines")
 
     def test_get_traffic_aggregates_inbounds(self):
         monitor = self._build_monitor()
@@ -531,7 +531,7 @@ class TestThreeXUIMonitor:
         assert result["traffic"][0]["total"] == 3000
         assert result["traffic"][1]["total"] == 1300
 
-    def test_get_online_clients_uses_post(self):
+    def test_get_online_clients_prefers_modern_clients_endpoint(self):
         monitor = self._build_monitor()
         body = {"success": True, "obj": ["user@a.com", "user@b.com"]}
         with patch.object(monitor, '_get_session') as mock_gs:
@@ -540,11 +540,34 @@ class TestThreeXUIMonitor:
             with patch("server_monitor.xui_request", return_value=_make_response(200, body)) as mock_xui:
                 result = monitor.get_online_clients(self._node())
 
-        mock_xui.assert_called_once_with(sess, "POST", "https://1.2.3.4:443/panel/api/inbounds/onlines")
+        mock_xui.assert_called_once_with(sess, "POST", "https://1.2.3.4:443/panel/api/clients/onlines")
         assert result["available"] is True
         assert result["online_clients"] == ["user@a.com", "user@b.com"]
 
-    def test_get_client_traffic_uses_get_with_email(self):
+    def test_get_online_clients_falls_back_to_legacy_inbounds_endpoint(self):
+        monitor = self._build_monitor()
+        body = {"success": True, "obj": ["user@a.com"]}
+        unavailable = _make_response(404, {"success": False})
+        available = _make_response(200, body)
+        successful_login = {"ok": True, "reason": "ok", "error": ""}
+        with patch.object(
+            monitor,
+            "_request_with_reauth",
+            side_effect=[
+                (unavailable, "https://1.2.3.4:443", successful_login),
+                (available, "https://1.2.3.4:443", successful_login),
+            ],
+        ) as request:
+            result = monitor.get_online_clients(self._node())
+
+        assert result["available"] is True
+        assert result["online_clients"] == ["user@a.com"]
+        assert [call.args[2] for call in request.call_args_list] == [
+            "/panel/api/clients/onlines",
+            "/panel/api/inbounds/onlines",
+        ]
+
+    def test_get_client_traffic_prefers_modern_clients_endpoint(self):
         monitor = self._build_monitor()
         body = {"success": True, "obj": {"up": 123, "down": 456, "enable": True, "expiryTime": 0}}
         with patch.object(monitor, '_get_session') as mock_gs:
@@ -554,7 +577,7 @@ class TestThreeXUIMonitor:
                 result = monitor.get_client_traffic(self._node(), "user@test.com")
 
         mock_xui.assert_called_once_with(
-            sess, "GET", "https://1.2.3.4:443/panel/api/inbounds/getClientTraffics/user%40test.com"
+            sess, "GET", "https://1.2.3.4:443/panel/api/clients/traffic/user%40test.com"
         )
         assert result["available"] is True
         assert result["upload"] == 123
