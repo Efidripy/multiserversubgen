@@ -16,6 +16,13 @@ import { useTheme } from '../contexts/ThemeContext';
 import { UIIcon } from './UIIcon';
 import { useToast } from './Toast';
 import EmptyState from './EmptyState';
+import {
+  buildNodeEditPayload,
+  buildPanelUrl,
+  emptyNodeConnectionForm,
+  nodeToEditForm,
+  type NodeConnectionFormData,
+} from './nodeEditForm';
 
 type Node = NodeRecord;
 
@@ -81,28 +88,6 @@ const getNodePanelUrl = (node: Node): string => {
   return `${scheme}://${host}${port}${basePath ? `/${basePath}/` : '/'}`;
 };
 
-const emptyFormData = () => ({ name: '', url: '', port: '', user: '', password: '', bearer_token: '' });
-
-const buildPanelUrl = (rawUrl: string, rawPort: string): string | null => {
-  const trimmedUrl = rawUrl.trim();
-  if (!trimmedUrl) return null;
-  const withScheme = /^https?:\/\//i.test(trimmedUrl) ? trimmedUrl : `https://${trimmedUrl}`;
-
-  try {
-    const url = new URL(withScheme);
-    const trimmedPort = rawPort.trim();
-    if (trimmedPort) {
-      url.port = trimmedPort;
-    }
-    url.search = '';
-    url.hash = '';
-    const path = url.pathname === '/' ? '' : url.pathname.replace(/\/$/, '');
-    return `${url.protocol}//${url.host}${path}`;
-  } catch {
-    return null;
-  }
-};
-
 export const NodeManager: React.FC<NodeManagerProps> = ({
   onReload,
   showIntake = true,
@@ -149,7 +134,7 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [addMode, setAddMode] = useState<'form' | 'batch'>('form');
-  const [formData, setFormData] = useState(emptyFormData);
+  const [formData, setFormData] = useState<NodeConnectionFormData>(emptyNodeConnectionForm);
   const [batchText, setBatchText] = useState('');
   const [batchPreview, setBatchPreview] = useState<BatchPreviewRow[]>([]);
   const [batchAdded, setBatchAdded] = useState(false);
@@ -171,7 +156,7 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
   }, []);
 
   const resetIntake = useCallback(() => {
-    setFormData(emptyFormData());
+    setFormData(emptyNodeConnectionForm());
     setBatchText('');
     setBatchPreview([]);
     setBatchAdded(false);
@@ -184,7 +169,7 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
   }, []);
 
   const [editingNode, setEditingNode] = useState<Node | null>(null);
-  const [editingName, setEditingName] = useState('');
+  const [editingForm, setEditingForm] = useState<NodeConnectionFormData>(emptyNodeConnectionForm);
   const [showEditModal, setShowEditModal] = useState(false);
   const [checkingConnection, setCheckingConnection] = useState(false);
   const [readOnlyUpdating, setReadOnlyUpdating] = useState<Record<number, boolean>>({});
@@ -421,7 +406,7 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
 
   const handleModeSwitch = (mode: 'form' | 'batch') => {
     setAddMode(mode);
-    setFormData(emptyFormData());
+    setFormData(emptyNodeConnectionForm());
     setBatchText('');
     setBatchPreview([]);
     setBatchAdded(false);
@@ -468,26 +453,43 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
 
   const handleEditClick = (node: Node) => {
     setEditingNode(node);
-    setEditingName(node.name);
+    setEditingForm(nodeToEditForm(node));
+    setError('');
+    setSuccess('');
     setShowEditModal(true);
   };
 
-  const handleSaveName = async () => {
+  const closeEditModal = () => {
+    setShowEditModal(false);
+    setEditingNode(null);
+    setEditingForm(emptyNodeConnectionForm());
+    setError('');
+  };
+
+  const handleSaveNode = async () => {
     if (!editingNode) return;
-    const trimmed = editingName.trim();
-    if (!trimmed) {
-      setError(t('nodes.nameEmpty'));
+    const result = buildNodeEditPayload(editingNode, editingForm);
+    if ('error' in result) {
+      setError(
+        result.error === 'name'
+          ? t('nodes.nameEmpty')
+          : result.error === 'url'
+            ? t('nodes.fillConnectionFields')
+            : t('nodes.credentialsIncomplete'),
+      );
       return;
     }
+
     setLoading(true);
     setError('');
     try {
-      await updateNode(editingNode.id, { name: trimmed });
-      setShowEditModal(false);
-      setEditingNode(null);
+      await updateNode(editingNode.id, result.payload);
+      closeEditModal();
       invalidateSharedSnapshot();
       loadNodes();
       onReload();
+      setSuccess(t('nodes.updateSuccess'));
+      toast(t('nodes.updateSuccess'), 'success');
     } catch (err: any) {
       setError(err.response?.data?.detail || t('nodes.updateFailed'));
     } finally {
@@ -1184,35 +1186,99 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
 
       {showEditModal && editingNode && (
         <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}>
-          <div className="modal-dialog modal-dialog-centered">
+          <div className="modal-dialog modal-dialog-centered modal-lg">
             <div className="modal-content" style={{ backgroundColor: colors.bg.secondary, borderColor: colors.border }}>
               <div className="modal-header" style={{ borderColor: colors.border }}>
-                <h6 className="modal-title" style={{ color: colors.text.primary }}>{t('nodes.renameNode')}</h6>
-                <button type="button" className="btn-close" aria-label={t('common.close')} onClick={() => setShowEditModal(false)} />
+                <h6 className="modal-title" style={{ color: colors.text.primary }}>{t('nodes.editNode')}</h6>
+                <button type="button" className="btn-close" aria-label={t('common.close')} onClick={closeEditModal} />
               </div>
-              <div className="modal-body">
+              <form onSubmit={(event) => { event.preventDefault(); handleSaveNode(); }}>
+              <div className="modal-body panel-block__stack">
                 {error && <div className="alert alert-danger">{error}</div>}
-                <p className="small mb-1" style={{ color: colors.text.secondary }}>
-                  {t('nodes.currentName')}: <strong style={{ color: colors.text.primary }}>{editingNode.name}</strong>
-                </p>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder={t('nodes.newNodeName')}
-                  value={editingName}
-                  onChange={(e) => setEditingName(e.target.value)}
-                  style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
-                  autoFocus
-                />
+                <div className="panel-field-grid">
+                  <input
+                    type="text"
+                    name="edit-name"
+                    className="form-control"
+                    aria-label={t('nodes.nodeLabel')}
+                    placeholder={t('nodes.nodeLabel')}
+                    value={editingForm.name}
+                    onChange={(e) => setEditingForm({ ...editingForm, name: e.target.value })}
+                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                    autoFocus
+                    required
+                  />
+                  <input
+                    type="text"
+                    name="edit-url"
+                    className="form-control"
+                    aria-label={t('nodes.nodeUrl')}
+                    placeholder={t('nodes.nodeUrlPlaceholder')}
+                    value={editingForm.url}
+                    onChange={(e) => setEditingForm({ ...editingForm, url: e.target.value })}
+                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                    required
+                  />
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    name="edit-port"
+                    className="form-control"
+                    aria-label={t('inbounds.port')}
+                    placeholder={t('inbounds.port')}
+                    value={editingForm.port}
+                    onChange={(e) => setEditingForm({ ...editingForm, port: e.target.value })}
+                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                  />
+                  <input
+                    type="text"
+                    name="edit-user"
+                    className="form-control"
+                    aria-label={t('auth.username')}
+                    placeholder={t('auth.username')}
+                    value={editingForm.user}
+                    onChange={(e) => setEditingForm({ ...editingForm, user: e.target.value })}
+                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                  />
+                  <input
+                    type="password"
+                    name="edit-password"
+                    className="form-control"
+                    aria-label={t('nodes.newPasswordOptional')}
+                    placeholder={t('nodes.newPasswordOptional')}
+                    value={editingForm.password}
+                    onChange={(e) => setEditingForm({ ...editingForm, password: e.target.value })}
+                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                  />
+                </div>
+                <div>
+                  <label className="form-label small" htmlFor="edit-node-bearer-token" style={{ color: colors.text.secondary }}>
+                    {t('nodes.bearerTokenLabel')}
+                  </label>
+                  <input
+                    id="edit-node-bearer-token"
+                    type="password"
+                    name="edit-bearer_token"
+                    className="form-control"
+                    placeholder={t('nodes.newBearerTokenOptional')}
+                    value={editingForm.bearer_token}
+                    onChange={(e) => setEditingForm({ ...editingForm, bearer_token: e.target.value })}
+                    style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }}
+                  />
+                  <div className="form-text small mt-1" style={{ color: colors.text.secondary }}>
+                    {t('nodes.editCredentialsHint')}
+                  </div>
+                </div>
               </div>
               <div className="modal-footer" style={{ borderColor: colors.border }}>
-                <button className="btn btn-sm" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }} onClick={() => setShowEditModal(false)}>
+                <button type="button" className="btn btn-sm" style={{ backgroundColor: colors.bg.primary, borderColor: colors.border, color: colors.text.primary }} onClick={closeEditModal}>
                   {t('common.cancel')}
                 </button>
-                <button className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }} onClick={handleSaveName} disabled={loading}>
-                  {loading ? t('nodes.saving') : t('common.save')}
+                <button type="submit" className="btn btn-sm" style={{ backgroundColor: colors.accent, borderColor: colors.accent, color: colors.accentText }} disabled={loading}>
+                  {loading ? t('nodes.saving') : t('nodes.saveChanges')}
                 </button>
               </div>
+              </form>
             </div>
           </div>
         </div>
