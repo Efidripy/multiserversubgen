@@ -3,7 +3,7 @@ import os
 import asyncio
 from functools import partial
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 import urllib3
@@ -21,7 +21,7 @@ from core.main_facades import (
     build_subscription_links_facade,
 )
 from core.request_middleware import build_request_controls_and_audit_middleware
-from modules.auth.service import AuthService, parse_mfa_users
+from modules.auth.service import AuthService, WEB_SESSION_COOKIE_NAME, WEB_SESSION_TTL_SEC, parse_mfa_users
 from services.db_bootstrap import (
     init_db as bootstrap_db,
     sync_node_history_names_with_nodes as sync_node_history_names_with_nodes_db,
@@ -326,6 +326,10 @@ def get_user_role(username: str) -> str:
 def has_min_role(user_role: str, min_role: str) -> bool:
     return _facade_has_min_role(user_role, min_role)
 
+
+def check_web_session(request: Request):
+    return auth_service.verify_web_session(request.cookies.get(WEB_SESSION_COOKIE_NAME))
+
 (
     invalidate_live_stats_cache,
     get_cached_traffic_stats,
@@ -353,6 +357,7 @@ app.middleware("http")(
     build_request_controls_and_audit_middleware(
         is_public_endpoint=_is_public_endpoint,
         check_basic_auth_header=check_basic_auth_header,
+        check_web_session=check_web_session,
         get_user_role=get_user_role,
         verify_totp_code=verify_totp_code,
         required_role_for_request=_required_role_for_request,
@@ -378,6 +383,9 @@ register_app_routers(
     verify_totp_code=verify_totp_code,
     get_user_role=get_user_role,
     issue_ws_ticket=auth_service.issue_ws_ticket,
+    issue_web_session=auth_service.issue_web_session,
+    web_session_cookie_name=WEB_SESSION_COOKIE_NAME,
+    web_session_ttl_sec=WEB_SESSION_TTL_SEC,
     verify_ws_ticket=auth_service.verify_ws_ticket,
     mfa_totp_enabled=MFA_TOTP_ENABLED,
     monitoring_enabled=MONITORING_ENABLED,

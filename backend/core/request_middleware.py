@@ -13,6 +13,7 @@ def build_request_controls_and_audit_middleware(
     *,
     is_public_endpoint,
     check_basic_auth_header,
+    check_web_session,
     get_user_role,
     verify_totp_code,
     required_role_for_request,
@@ -49,20 +50,26 @@ def build_request_controls_and_audit_middleware(
         request.state.auth_user = None
         request.state.auth_role = None
         request.state.auth_mfa_ok = False
+        request.state.auth_via = None
 
         response = None
 
         protected_path = path.startswith("/api/v1/") or path == "/metrics"
         if protected_path and not is_public_endpoint(path):
             auth_user = check_basic_auth_header(request.headers.get("Authorization"))
+            auth_via = "basic" if auth_user else None
+            if not auth_user:
+                auth_user = check_web_session(request)
+                auth_via = "session" if auth_user else None
             if not auth_user:
                 response = JSONResponse(status_code=401, content={"detail": "Unauthorized"})
             else:
                 auth_role = get_user_role(auth_user)
                 request.state.auth_user = auth_user
                 request.state.auth_role = auth_role
-                mfa_code = request.headers.get("X-TOTP-Code")
-                if not verify_totp_code(auth_user, mfa_code):
+                request.state.auth_via = auth_via
+                mfa_ok = auth_via == "session" or verify_totp_code(auth_user, request.headers.get("X-TOTP-Code"))
+                if not mfa_ok:
                     response = JSONResponse(status_code=401, content={"detail": "MFA required"})
                     request.state.auth_mfa_ok = False
                 else:
