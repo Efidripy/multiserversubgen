@@ -747,7 +747,11 @@ def _try_csrf_login(
         try:
             resp = xui_request(
                 session, "POST", url,
-                data=credentials,
+                # 3x-ui v3.6+ declares /login as application/json.  Sending
+                # form data makes a modern panel reject the login even though
+                # the CSRF probe itself succeeded.  Legacy panels are still
+                # covered by _try_legacy_login below when CSRF is unavailable.
+                json=credentials,
                 headers={"X-CSRF-Token": csrf_token},
                 timeout=timeout, retries=retries,
             )

@@ -242,6 +242,23 @@ class ThreeXUIMonitor:
             self._invalidate_cached_session(node)
         return res, base_url, {"ok": True, "reason": "ok", "error": ""}
 
+    def _request_first_supported(self, node: Dict, method: str, paths: tuple[str, ...], **kwargs) -> tuple:
+        """Call the first API route supported by a node panel.
+
+        3x-ui v3.6 documents clients/* routes while older panels keep several
+        equivalents under inbounds/*.  Route support is probed at runtime:
+        a 404/405 advances to the next documented compatibility path, whereas
+        an authentication or application response keeps its original meaning.
+        """
+        last_result = (None, None, {"ok": False, "reason": "route_not_found", "error": "No compatible API route"})
+        for path in paths:
+            result = self._request_with_reauth(node, method, path, **kwargs)
+            response = result[0]
+            last_result = result
+            if response is None or response.status_code not in (404, 405):
+                return result
+        return last_result
+
     def get_server_status(self, node: Dict) -> Dict:
         """GET /panel/api/server/status — статус CPU, RAM, диска, core service, сети."""
         res, _base_url, login_result = self._request_with_reauth(
@@ -342,11 +359,14 @@ class ThreeXUIMonitor:
         }
 
     def get_online_clients(self, node: Dict) -> Dict:
-        """POST /panel/api/inbounds/onlines — список активных клиентов."""
-        res, _base_url, login_result = self._request_with_reauth(
+        """List online clients via modern 3x-ui API with a legacy fallback."""
+        res, _base_url, login_result = self._request_first_supported(
             node,
             "POST",
-            "/panel/api/inbounds/onlines",
+            (
+                "/panel/api/clients/onlines",
+                "/panel/api/inbounds/onlines",
+            ),
         )
         if res is None:
             return {
@@ -374,12 +394,15 @@ class ThreeXUIMonitor:
             return {"node": node["name"], "available": False, "error": str(exc), "online_clients": []}
 
     def get_client_traffic(self, node: Dict, email: str) -> Dict:
-        """GET /panel/api/inbounds/getClientTraffics/{email} — трафик клиента."""
+        """Read client traffic via modern 3x-ui API with a legacy fallback."""
         safe_email = quote(email, safe="")
-        res, _base_url, login_result = self._request_with_reauth(
+        res, _base_url, login_result = self._request_first_supported(
             node,
             "GET",
-            f"/panel/api/inbounds/getClientTraffics/{safe_email}",
+            (
+                f"/panel/api/clients/traffic/{safe_email}",
+                f"/panel/api/inbounds/getClientTraffics/{safe_email}",
+            ),
         )
         if res is None:
             return {
