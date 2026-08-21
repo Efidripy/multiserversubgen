@@ -54,4 +54,4 @@
 - Штатный atomic deploy создал `/var/backups/sub-manager_deploy/project_20260821T001647Z-00bf120b8042.tgz`; его `.sha256` проверен. База перенесена через SQLite `.backup`, без DDL/миграций.
 - После release: `sub-manager=active`, local health `200`, `admin.db integrity_check=ok`, public panel `200`; `/api/v1/auth/verify` и `/api/v1/auth/session` без credentials дают `401`.
 - Runtime SHA-256 для изменённых auth/middleware/router/main файлов совпал с `65c0428` source tree. Временный remote bundle удалён.
-- Неавторизованный browser smoke показал штатную форму Sign In. Authenticated F5/logout live-browser сценарий не выполнялся без передачи panel password в automation; он остаётся отдельной ручной проверкой оператора.
+- Неавторизованный browser smoke показал штатную форму Sign In. Live HTTPS cookie flow без сохранения token/пароля в receipt: session `200`, атрибуты cookie подтверждены, `verify_after_refresh=200`, mutation без Origin `403`, logout `200`, `verify_after_logout=401`.
