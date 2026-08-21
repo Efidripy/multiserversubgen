@@ -159,6 +159,60 @@ class LiveStatsRuntime:
             self._save_period_snapshots(group_by, data.get("stats", {}), time.time())
             return data
 
+    def get_cached_traffic_stats_projection(self, group_by: str) -> Dict:
+        """Return an existing traffic projection without triggering a fleet fetch.
+
+        Dashboard summary must stay on its lightweight snapshot path.  The
+        normal cache API intentionally refreshes or cold-loads data; this
+        read-model is for surfaces that may show the last known client traffic
+        but must never make a remote XUI request just to render.
+        """
+        redis_key = f"traffic_stats:{group_by}"
+        redis_data = self.redis_get_json(redis_key)
+        if isinstance(redis_data, dict):
+            return {
+                "stats": redis_data.get("stats", {}),
+                "group_by": group_by,
+                "cache_source": "redis",
+            }
+
+        cached = self.traffic_stats_cache.get(group_by)
+        if cached and isinstance(cached[1], dict):
+            return {
+                "stats": cached[1].get("stats", {}),
+                "group_by": group_by,
+                "cache_source": "memory",
+                "cache_timestamp": cached[0],
+            }
+
+        if not self.db_path:
+            return {"stats": {}, "group_by": group_by, "cache_source": "empty"}
+
+        try:
+            with connect(self.db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT snapshot_ts, stats_json
+                    FROM traffic_stats_snapshots
+                    WHERE group_by = ?
+                    ORDER BY snapshot_ts DESC
+                    LIMIT 1
+                    """,
+                    (group_by,),
+                ).fetchone()
+            stats = json.loads(row[1]) if row and row[1] else {}
+            if isinstance(stats, dict) and stats:
+                return {
+                    "stats": stats,
+                    "group_by": group_by,
+                    "cache_source": "sqlite_snapshot",
+                    "cache_timestamp": row[0] if row else None,
+                }
+        except Exception as exc:
+            self.logger.warning("Failed to load cached traffic projection (%s): %s", group_by, exc)
+
+        return {"stats": {}, "group_by": group_by, "cache_source": "empty"}
+
     def _snapshot_key(self, group_by: str, bucket_kind: str, bucket_id: int) -> str:
         return f"traffic_snapshot:{group_by}:{bucket_kind}:{bucket_id}"
 

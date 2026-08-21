@@ -263,3 +263,46 @@ def test_concurrent_cold_traffic_requests_share_one_fleet_fetch(tmp_path):
     assert manager.calls == 1
     assert len(results) == 2
     assert results[0]["stats"] == results[1]["stats"]
+
+
+def test_cached_traffic_projection_never_starts_fleet_fetch(tmp_path):
+    class CountingClientManager(DummyClientManager):
+        def __init__(self, stats):
+            super().__init__(stats)
+            self.calls = 0
+
+        def get_traffic_stats(self, nodes, group_by):
+            self.calls += 1
+            return super().get_traffic_stats(nodes, group_by)
+
+    runtime = _build_runtime(
+        tmp_path,
+        {"alpha@example.com": {"up": 10, "down": 20, "total": 30, "count": 1}},
+    )
+    manager = CountingClientManager(runtime.client_mgr._stats)
+    runtime.client_mgr = manager
+
+    empty = runtime.get_cached_traffic_stats_projection("client")
+    runtime.traffic_stats_cache["client"] = (
+        123.0,
+        {"stats": {"alpha@example.com": {"up": 10, "down": 20, "total": 30}}},
+    )
+    cached = runtime.get_cached_traffic_stats_projection("client")
+
+    runtime._save_period_snapshots(
+        "client",
+        {"persisted@example.com": {"up": 40, "down": 60, "total": 100}},
+        456.0,
+    )
+    restarted = _build_runtime(tmp_path, manager._stats)
+    restarted_manager = CountingClientManager(manager._stats)
+    restarted.client_mgr = restarted_manager
+    persisted = restarted.get_cached_traffic_stats_projection("client")
+
+    assert empty == {"stats": {}, "group_by": "client", "cache_source": "empty"}
+    assert cached["stats"]["alpha@example.com"]["total"] == 30
+    assert cached["cache_source"] == "memory"
+    assert manager.calls == 0
+    assert persisted["stats"]["persisted@example.com"]["total"] == 100
+    assert persisted["cache_source"] == "sqlite_snapshot"
+    assert restarted_manager.calls == 0
