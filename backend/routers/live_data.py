@@ -10,6 +10,7 @@ def build_live_data_router(
     *,
     get_node_or_404: Callable[[int], Dict],
     get_cached_traffic_stats: Callable[[list, str], Dict],
+    get_cached_traffic_stats_projection: Callable[[str], Dict] = None,
     get_cached_online_clients: Callable[[list], list],
     list_nodes: Callable[[], list],
     xui_monitor,
@@ -18,6 +19,32 @@ def build_live_data_router(
 ):
     router = APIRouter()
     period_stats_handler = get_traffic_stats_by_period
+
+    def _top_clients_from_projection(projection: Dict, limit: int = 5) -> list[Dict]:
+        stats = projection.get("stats") if isinstance(projection, dict) else None
+        if not isinstance(stats, dict):
+            return []
+
+        def _metric(value) -> int:
+            try:
+                return max(0, int(float(value or 0)))
+            except (TypeError, ValueError, OverflowError):
+                return 0
+
+        clients = []
+        for email, item in stats.items():
+            if not isinstance(item, dict):
+                continue
+            upload = _metric(item.get("up", item.get("upload", 0)))
+            download = _metric(item.get("down", item.get("download", 0)))
+            total = _metric(item.get("total")) or upload + download
+            clients.append({
+                "email": str(email),
+                "upload": upload,
+                "download": download,
+                "total": total,
+            })
+        return sorted(clients, key=lambda client: (-client["total"], client["email"]))[:limit]
 
     def _apply_limit(payload: Dict, limit: int) -> Dict:
         if limit <= 0:
@@ -101,6 +128,12 @@ def build_live_data_router(
             raise HTTPException(status_code=401)
         nodes = await run_in_threadpool(list_nodes)
         by_id, by_name, snapshot = _snapshot_by_node(nodes)
+        traffic_projection = (
+            await run_in_threadpool(get_cached_traffic_stats_projection, "client")
+            if get_cached_traffic_stats_projection
+            else {"stats": {}, "cache_source": "unavailable"}
+        )
+        top_clients = _top_clients_from_projection(traffic_projection)
         online_by_node: Dict[str, int] = {}
         total_traffic = 0
         online_total = 0
@@ -120,7 +153,7 @@ def build_live_data_router(
         return ORJSONResponse(content={
             "nodes_total": len(nodes),
             "nodes_online": online_nodes,
-            "clients_total": 0,
+            "clients_total": len(traffic_projection.get("stats", {})) if isinstance(traffic_projection.get("stats"), dict) else 0,
             "online_clients_total": online_total,
             "online_by_node": online_by_node,
             "traffic": {
@@ -128,12 +161,14 @@ def build_live_data_router(
                 "download": 0,
                 "total": total_traffic,
             },
-            "top_clients": [],
+            "top_clients": top_clients,
             "cache": {
                 "source": "snapshot_collector",
                 "timestamp": snapshot.get("timestamp"),
                 "age_sec": round(time.time() - snapshot["timestamp"], 2) if snapshot.get("timestamp") else None,
                 "ready": bool(snapshot.get("nodes")),
+                "client_traffic_source": traffic_projection.get("cache_source"),
+                "client_traffic_timestamp": traffic_projection.get("cache_timestamp"),
             },
         })
 
