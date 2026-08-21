@@ -120,3 +120,62 @@ def test_v3_update_does_not_write_when_the_read_contract_fails():
     assert request.call_count == 1
     assert request.call_args.args[1:] == ("GET", f"{base_url}/panel/api/clients/list")
     invalidate_node_api_version(base_url)
+
+
+def test_v3_reset_client_traffic_uses_documented_encoded_email_route():
+    from client_manager import ClientManager
+    from xui_session import invalidate_node_api_version, set_node_api_version
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    set_node_api_version(base_url, "v3")
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", return_value=_response(200, {"success": True})
+    ) as request:
+        assert manager.reset_client_traffic(_node(), inbound_id=17, client_email="first+name@example.test") is True
+
+    assert request.call_args.args[1:] == (
+        "POST", f"{base_url}/panel/api/clients/resetTraffic/first%2Bname%40example.test"
+    )
+    assert request.call_args.kwargs == {}
+    invalidate_node_api_version(base_url)
+
+
+def test_v3_reset_client_traffic_uses_v2_only_when_modern_route_is_absent():
+    from client_manager import ClientManager
+    from xui_session import get_node_api_version, invalidate_node_api_version, set_node_api_version
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    set_node_api_version(base_url, "v3")
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", side_effect=[_response(404), _response(200, {"success": True})]
+    ) as request:
+        assert manager.reset_client_traffic(_node(), inbound_id=17, client_email="user@example.test") is True
+
+    modern_call, legacy_call = request.call_args_list
+    assert modern_call.args[1:] == ("POST", f"{base_url}/panel/api/clients/resetTraffic/user%40example.test")
+    assert legacy_call.args[1:] == ("POST", f"{base_url}/panel/api/inbounds/resetClientTraffic/user%40example.test")
+    assert legacy_call.kwargs["json"] == {"id": 17, "email": "user@example.test"}
+    assert get_node_api_version(base_url) == "v2"
+    invalidate_node_api_version(base_url)
+
+
+def test_v3_reset_client_traffic_does_not_downgrade_on_reachable_route_failure():
+    from client_manager import ClientManager
+    from xui_session import get_node_api_version, invalidate_node_api_version, set_node_api_version
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    set_node_api_version(base_url, "v3")
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", return_value=_response(503)
+    ) as request:
+        assert manager.reset_client_traffic(_node(), inbound_id=17, client_email="user@example.test") is False
+
+    assert request.call_count == 1
+    assert request.call_args.args[1:] == (
+        "POST", f"{base_url}/panel/api/clients/resetTraffic/user%40example.test"
+    )
+    assert get_node_api_version(base_url) == "v3"
+    invalidate_node_api_version(base_url)

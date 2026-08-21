@@ -351,6 +351,21 @@ class ClientManager:
             logger.debug("v3 traffic failed: %s", exc)
             return "failed", {}
 
+    def _reset_client_traffic_v3(self, s, base_url: str, email: str) -> Optional[bool]:
+        """POST /panel/api/clients/resetTraffic/{email} — v3."""
+        try:
+            res = xui_request(
+                s,
+                "POST",
+                f"{base_url}/panel/api/clients/resetTraffic/{quote(str(email), safe='')}",
+            )
+            if res.status_code in (404, 405):
+                return None  # v2 fallback only when the v3 route is absent
+            return self._xui_success(res)
+        except Exception as exc:
+            logger.warning("v3 reset_client_traffic failed: %s", exc)
+            return False
+
     def get_all_clients(self, nodes: List[Dict], email_filter: Optional[str] = None) -> List[Dict]:
         """Получить всех клиентов со всех узлов
         
@@ -901,6 +916,13 @@ class ClientManager:
             return False
         
         try:
+            if get_node_api_version(base_url) != "v2":
+                result = self._reset_client_traffic_v3(s, base_url, client_email)
+                if result is not None:
+                    set_node_api_version(base_url, "v3")
+                    return result
+                set_node_api_version(base_url, "v2")
+
             payload = {
                 "id": inbound_id,
                 "email": client_email
@@ -911,7 +933,7 @@ class ClientManager:
                 f"{base_url}/panel/api/inbounds/resetClientTraffic/{quote(str(client_email), safe='')}",
                 json=payload,
             )
-            return res.status_code == 200
+            return self._xui_success(res)
         except Exception as exc:
             logger.warning(f"Failed to reset client traffic on {node['name']}: {exc}")
             return False
