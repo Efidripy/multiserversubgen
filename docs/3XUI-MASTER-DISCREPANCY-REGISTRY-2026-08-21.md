@@ -67,9 +67,9 @@ receipt; это граница доказательства, а не откры�
 
 | ID | Priority | Текущее состояние | Что осталось, чтобы считать работу закрытой |
 | --- | --- | --- | --- |
-| 3X-03 … 3X-06 | P2 | Код и mock contracts реализованы локально. | Отдельно авторизованный disposable node/client suite: update, reset, delete и bulk reset; rollback/cleanup receipt. Не использовать production clients или traffic counters. |
+| 3X-03 … 3X-06 | P2 | Код, mock contracts и disposable live suite реализованы. | Закрыто для текущего v3 runtime; повторять только при изменении upstream contract. |
 | PERF-05 | P2 | Backup Manager metadata-first реализован локально и прошёл package gates. | Rollback-first production rollout и authenticated browser waterfall: mount запрашивает только nodes metadata, bytes — только после явного действия. |
-| BKP-01 | P2 | Формат restore валидируется до remote import; локальные contracts есть. | Отдельно авторизованный disposable node/database restore, backup и cleanup receipt. |
+| BKP-01 | P2 | Формат restore валидируется до remote import; local contracts и disposable live restore pass. | Закрыто для текущего v3 runtime; повторять на новом upstream/runtime. |
 | OPS-01 | P2 | Unit, systemd/template и installer guards реализованы. | Реальный Ubuntu install/update smoke до объявления least-privilege flow production-proven. |
 
 Эта таблица намеренно не повышает приоритет реализации: это доказательные
@@ -112,8 +112,8 @@ endpoint.
   имеет приоритет над advertised OpenAPI.
 - Нынешняя installed-panel documentation была ранее изучена authenticated;
   этот реестр не делает нового remote probe.
-- Live proof для mutation intentionally отсутствует. Это не разрешение на
-  production test и не основание менять node/database data.
+- Live proof ограничен явно авторизованным `cholera.kleva.ru/x7LaBlIoh2` и не
+  распространяется на production `dev.kleva.ru`.
 
 ## Closure update — 2026-08-21
 
@@ -168,5 +168,11 @@ ESLint, TypeScript, i18n и Vite build прошли. ShellCheck и workspace mix
 
 Receipt: `E:\GitHub\workspace\runtime\logs\projects\multiserversubgen\cholera-live-acceptance.json`.
 Global reset всех inbound’ов, `delDepleted` и destructive database restore не
-запускались, поскольку они затрагивают существующие данные ноды и требуют
-отдельного scope; это не снижает доказательство временного-object suite.
+запускались в этом временном-object suite. После отдельного разрешения они
+выполнены и восстановлены из свежего backup: baseline и final содержат 4
+inbound и 6 клиентов, global reset дал нулевые counters, `delDepleted` — `0`,
+restore — `success`, identity set и counters совпали с baseline за одну
+попытку.
+
+Destructive closure receipt:
+`E:\GitHub\workspace\runtime\logs\projects\multiserversubgen\cholera-destructive-acceptance-20260821T173941Z.json`.
