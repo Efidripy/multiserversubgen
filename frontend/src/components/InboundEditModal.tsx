@@ -249,6 +249,10 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
       result.grpcSettings = { serviceName: grpcService, multiMode: grpcMultiMode };
     } else if (network === 'xhttp') {
       result.xhttpSettings = {
+        // Current Xray adds session-ID/XMUX fields faster than the form can
+        // expose them.  Preserve unknown values on a form save; only the
+        // fields represented by this UI are intentionally overwritten.
+        ...xhttpS0,
         host: xhttpHost ? xhttpHost.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
         path: xhttpPath,
         mode: xhttpMode,
@@ -295,7 +299,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
 
     return result;
   }, [network, security, wsHost, wsPath, wsHeartbeat, grpcService, grpcMultiMode,
-    xhttpHost, xhttpPath, xhttpMode, xhttpNoSSE, xhttpMaxBuf, xhttpMaxUpload, xhttpPadMin, xhttpPadMax,
+    xhttpHost, xhttpPath, xhttpMode, xhttpNoSSE, xhttpMaxBuf, xhttpMaxUpload, xhttpPadMin, xhttpPadMax, xhttpS0,
     huHost, huPath, realShow, realDest, realXver, realServerNames, realPrivateKey, realShortIds,
     realPublicKey, realFingerprint, realSpiderX, tlsServerName, tlsAllowInsecure,
     sockEnabled, tcpFastOpen, multiPath, domainStrategy, tcpCongestion, tproxy, v6Only]);
