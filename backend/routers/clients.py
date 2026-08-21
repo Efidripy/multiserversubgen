@@ -452,7 +452,10 @@ def build_clients_router(
         for node in nodes:
             r = await _run(client_mgr.get_client_ips, node, email)
             if r.get("ips"):
-                results.append({"node": node["name"], "ips": r["ips"]})
+                item = {"node": node["name"], "ips": r["ips"]}
+                if r.get("ip_details"):
+                    item["ip_details"] = r["ip_details"]
+                results.append(item)
         return {"email": email, "results": results}
 
     @router.post("/api/v1/clients/{email}/clear-ips")

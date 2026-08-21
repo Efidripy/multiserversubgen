@@ -31,6 +31,11 @@ TRAFFIC_MAX_WORKERS = max(1, int(os.getenv("TRAFFIC_MAX_WORKERS", "8")))
 _shared_executor = ThreadPoolExecutor(max_workers=TRAFFIC_MAX_WORKERS, thread_name_prefix="client_mgr")
 
 
+def _path_segment(value: object) -> str:
+    """Encode one opaque 3x-ui path segment without changing route delimiters."""
+    return quote(str(value), safe="")
+
+
 def _requests_verify_value():
     if not VERIFY_TLS:
         return False
@@ -62,9 +67,12 @@ class ClientManager:
             data = res.json()
             if isinstance(data, dict) and "success" in data:
                 return bool(data.get("success"))
+            # A successful HTTP status without a JSON body is not proof that
+            # a mutation was applied.  Keep compatibility with wrappers that
+            # omit ``success``, but fail closed on malformed/non-JSON bodies.
+            return isinstance(data, dict)
         except Exception:
-            pass
-        return True
+            return False
     
     def _get_session(self, node: Dict) -> tuple:
         """Создать авторизованную сессию для узла
@@ -169,25 +177,32 @@ class ClientManager:
         }
 
     def _add_client_v3(self, s, base_url: str, email: str,
-                       inbound_ids: List[int], config: Dict) -> bool:
+                       inbound_ids: List[int], config: Dict) -> Optional[bool]:
         """POST /panel/api/clients/add — v3 single call."""
-        payload = {
-            "client": {
-                "email": email,
-                "enable": config.get("enable", True),
-                "totalGB": config.get("totalGB", 0),
-                "expiryTime": config.get("expiryTime", 0),
-                "limitIp": config.get("limitIp", 0),
-                "tgId": config.get("tgId", 0),
-            },
-            "inboundIds": inbound_ids,
-        }
+        # Keep the client contract explicit.  Passing a hand-picked minimum
+        # silently discarded valid 3x-ui fields such as subId, flow and
+        # protocol-specific credentials before the panel ever saw them.
+        supported_fields = (
+            "id", "email", "enable", "totalGB", "expiryTime", "limitIp",
+            "tgId", "subId", "flow", "password", "security", "comment",
+            "group", "reset", "reverse", "auth", "privateKey", "publicKey",
+            "allowedIPs", "preSharedKey", "keepAlive", "secret", "adTag",
+        )
+        client = {field: config[field] for field in supported_fields if field in config}
+        client.update({
+            "email": email,
+            "enable": config.get("enable", True),
+            "totalGB": config.get("totalGB", 0),
+            "expiryTime": config.get("expiryTime", 0),
+            "limitIp": config.get("limitIp", 0),
+            "tgId": config.get("tgId", 0),
+        })
+        payload = {"client": client, "inboundIds": inbound_ids}
         try:
             res = xui_request(s, "POST", f"{base_url}/panel/api/clients/add", json=payload)
-            if res.status_code == 404:
+            if res.status_code in (404, 405):
                 return None  # type: ignore  # v2 fallback needed
-            data = res.json()
-            return bool(data.get("success"))
+            return self._xui_success(res)
         except Exception as exc:
             logger.warning("v3 add_client failed: %s", exc)
             return False
@@ -279,7 +294,7 @@ class ClientManager:
             payload = self._v3_update_payload(existing, updates)
             if not payload.get("email"):
                 return False
-            url = f"{base_url}/panel/api/clients/update/{quote(email, safe='')}"
+            url = f"{base_url}/panel/api/clients/update/{_path_segment(email)}"
             if inbound_id:
                 url += f"?inboundIds={int(inbound_id)}"
             res = xui_request(s, "POST", url, json=payload)
@@ -325,7 +340,7 @@ class ClientManager:
             if not existing or not existing.get("email"):
                 return False
             email = str(existing["email"])
-            url = f"{base_url}/panel/api/clients/del/{quote(str(email), safe='')}"
+            url = f"{base_url}/panel/api/clients/del/{_path_segment(email)}"
             if keep_traffic:
                 url += "?keepTraffic=1"
             res = xui_request(s, "POST", url)
@@ -337,18 +352,28 @@ class ClientManager:
             return False
 
     def _bulk_delete_v3(self, s, base_url: str, emails: List[str],
-                        keep_traffic: bool = False) -> Optional[Dict]:
-        """POST /panel/api/clients/bulkDel — v3 batch delete."""
+                        keep_traffic: bool = False) -> tuple[str, Dict]:
+        """POST /panel/api/clients/bulkDel — v3 batch delete.
+
+        ``unsupported`` is exclusively a documented route-absence signal.
+        A completed request with an operational/API error is ``failed`` and
+        must never be replayed through a second mutation path.
+        """
         try:
             res = xui_request(s, "POST", f"{base_url}/panel/api/clients/bulkDel",
                               json={"emails": emails, "keepTraffic": keep_traffic})
-            if res.status_code == 404:
-                return None  # v2 fallback
+            if res.status_code in (404, 405):
+                return "unsupported", {}
+            if res.status_code != 200:
+                return "failed", {}
             data = res.json()
-            return data.get("obj") if data.get("success") else None
+            if not isinstance(data, dict) or data.get("success") is not True:
+                return "failed", {}
+            obj = data.get("obj") or {}
+            return ("supported", obj) if isinstance(obj, dict) else ("failed", {})
         except Exception as exc:
             logger.warning("v3 bulkDel failed: %s", exc)
-            return None
+            return "failed", {}
 
     def _get_online_v3(self, s, base_url: str) -> tuple[str, List[str]]:
         """POST /panel/api/clients/onlines — v3."""
@@ -369,7 +394,7 @@ class ClientManager:
     def _get_traffic_v3(self, s, base_url: str, email: str) -> tuple[str, Dict]:
         """GET /panel/api/clients/traffic/{email} — v3."""
         try:
-            res = xui_request(s, "GET", f"{base_url}/panel/api/clients/traffic/{email}")
+            res = xui_request(s, "GET", f"{base_url}/panel/api/clients/traffic/{_path_segment(email)}")
             if res.status_code in (404, 405):
                 return "unsupported", {}
             if res.status_code != 200:
@@ -382,13 +407,50 @@ class ClientManager:
             logger.debug("v3 traffic failed: %s", exc)
             return "failed", {}
 
+    def _resolve_v3_client_email(self, s, base_url: str, client_identifier: str) -> tuple[str, str]:
+        """Resolve a v3 UUID/id to the panel's email-addressed client route."""
+        try:
+            listed = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/clients/list",
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
+            if listed.status_code in (404, 405):
+                return "unsupported", ""
+            if listed.status_code != 200:
+                return "failed", ""
+            data = listed.json()
+            clients = data.get("obj") if isinstance(data, dict) and data.get("success") is True else None
+            if not isinstance(clients, list):
+                return "failed", ""
+            identifier = str(client_identifier)
+            match = next(
+                (
+                    client for client in clients
+                    if isinstance(client, dict)
+                    and identifier in {
+                        str(client.get("uuid") or ""),
+                        str(client.get("id") or ""),
+                        str(client.get("email") or ""),
+                    }
+                ),
+                None,
+            )
+            email = str(match.get("email") or "") if match else ""
+            return ("supported", email) if email else ("failed", "")
+        except Exception as exc:
+            logger.debug("v3 client identity resolution failed for %s: %s", base_url, exc)
+            return "failed", ""
+
     def _reset_client_traffic_v3(self, s, base_url: str, email: str) -> Optional[bool]:
         """POST /panel/api/clients/resetTraffic/{email} — v3."""
         try:
             res = xui_request(
                 s,
                 "POST",
-                f"{base_url}/panel/api/clients/resetTraffic/{quote(str(email), safe='')}",
+                f"{base_url}/panel/api/clients/resetTraffic/{_path_segment(email)}",
             )
             if res.status_code in (404, 405):
                 return None  # v2 fallback only when the v3 route is absent
@@ -535,9 +597,12 @@ class ClientManager:
             }
             res = xui_request(s, "POST", f"{base_url}/panel/api/inbounds/addClient", json=payload)
 
-            # 404 on v2 endpoint → node is actually v3, retry with v3 API and update cache
-            if res.status_code == 404:
-                logger.info("add_client: v2 /addClient 404, upgrading node=%r to v3", node["name"])
+            # A missing legacy route means the node is actually v3.  Do not
+            # replay after an operational failure (5xx/timeout/malformed
+            # response), because the legacy request may already have reached
+            # the panel.
+            if res.status_code in (404, 405):
+                logger.info("add_client: v2 /addClient %s, upgrading node=%r to v3", res.status_code, node["name"])
                 result = self._add_client_v3(s, base_url, email=email, inbound_ids=[inbound_id], config=client_config)
                 if result is not None:
                     set_node_api_version(base_url, "v3")
@@ -667,7 +732,7 @@ class ClientManager:
                 "settings": json.dumps({"clients": [{"id": client_uuid, **updates}]})
             }
             res = xui_request(s, "POST",
-                              f"{base_url}/panel/api/inbounds/updateClient/{client_uuid}",
+                              f"{base_url}/panel/api/inbounds/updateClient/{_path_segment(client_uuid)}",
                               json=payload)
             return self._xui_success(res)
         except Exception as exc:
@@ -694,7 +759,7 @@ class ClientManager:
 
             # v2 fallback: delete by UUID
             res = xui_request(s, "POST",
-                              f"{base_url}/panel/api/inbounds/{quote(str(inbound_id), safe='')}/delClient/{quote(str(client_uuid), safe='')}")
+                              f"{base_url}/panel/api/inbounds/{_path_segment(inbound_id)}/delClient/{_path_segment(client_uuid)}")
             return self._xui_success(res)
         except Exception as exc:
             logger.warning(f"Failed to delete client from {node['name']}: {exc}")
@@ -759,12 +824,19 @@ class ClientManager:
                 # v3: bulkDel — один запрос вместо N
                 s, base_url = self._get_session(node)
                 if s and get_node_api_version(base_url) == "v3":
-                    bulk_result = self._bulk_delete_v3(s, base_url, emails_to_delete)
-                    if bulk_result is not None:
+                    bulk_state, bulk_result = self._bulk_delete_v3(s, base_url, emails_to_delete)
+                    if bulk_state == "supported":
                         deleted_count = bulk_result.get("deleted", len(emails_to_delete))
                         skipped = [sk.get("email", "") for sk in (bulk_result.get("skipped") or [])]
                         errors = skipped
                         results.append({"node": node["name"], "deleted_count": deleted_count, "errors": errors})
+                        continue
+                    if bulk_state == "failed":
+                        results.append({
+                            "node": node["name"],
+                            "deleted_count": 0,
+                            "errors": ["v3 bulkDel failed; legacy fallback skipped"],
+                        })
                         continue
 
                 # v2 fallback: delete one by one
@@ -806,9 +878,31 @@ class ClientManager:
             return {}
 
         try:
-            # v3: GET /panel/api/clients/traffic/{email}
-            if "@" in str(client_uuid) or get_node_api_version(base_url) == "v3":
-                v3_state, result = self._get_traffic_v3(s, base_url, str(client_uuid))
+            # v3 traffic is email-addressed while control-plane callers often
+            # carry the UUID.  Resolve only in an already-confirmed v3 mode;
+            # an operational failure is terminal and cannot fall through to a
+            # second (legacy) read with a different identity.
+            api_version = get_node_api_version(base_url)
+            identifier = str(client_uuid)
+            if api_version == "v3":
+                resolve_state, email = self._resolve_v3_client_email(s, base_url, identifier)
+                if resolve_state == "supported":
+                    v3_state, result = self._get_traffic_v3(s, base_url, email)
+                elif resolve_state == "unsupported":
+                    set_node_api_version(base_url, "v2")
+                    v3_state, result = "unsupported", {}
+                else:
+                    return {}
+                if v3_state == "supported":
+                    set_node_api_version(base_url, "v3")
+                    return result if isinstance(result, dict) else {}
+                if v3_state == "unsupported":
+                    set_node_api_version(base_url, "v2")
+                else:
+                    return {}
+
+            elif "@" in identifier:
+                v3_state, result = self._get_traffic_v3(s, base_url, identifier)
                 if v3_state == "supported":
                     set_node_api_version(base_url, "v3")
                     return result if isinstance(result, dict) else {}
@@ -819,9 +913,9 @@ class ClientManager:
 
             # v2 fallback: endpoint depends on protocol
             if protocol in ("vless", "vmess"):
-                endpoint = f"{base_url}/panel/api/inbounds/getClientTrafficsById/{client_uuid}"
+                endpoint = f"{base_url}/panel/api/inbounds/getClientTrafficsById/{_path_segment(client_uuid)}"
             else:
-                endpoint = f"{base_url}/panel/api/inbounds/getClientTraffics/{client_uuid}"
+                endpoint = f"{base_url}/panel/api/inbounds/getClientTraffics/{_path_segment(client_uuid)}"
             res = xui_request(s, "GET", endpoint)
             if res.status_code == 200:
                 data = res.json()
@@ -962,7 +1056,7 @@ class ClientManager:
             res = xui_request(
                 s,
                 "POST",
-                f"{base_url}/panel/api/inbounds/resetClientTraffic/{quote(str(client_email), safe='')}",
+                f"{base_url}/panel/api/inbounds/resetClientTraffic/{_path_segment(client_email)}",
                 json=payload,
             )
             return self._xui_success(res)
@@ -991,29 +1085,20 @@ class ClientManager:
                 })
                 continue
             reset_count = 0
-            
             try:
-                inbounds = self._fetch_inbounds_from_node(node)
-                
-                # Фильтровать по inbound_id если указан
-                if inbound_id:
-                    inbounds = [ib for ib in inbounds if ib.get("id") == inbound_id]
-                
-                for inbound in inbounds:
-                    s, base_url = self._get_session(node)
-                    if not s:
-                        continue
-                    
-                    try:
-                        res = xui_request(
-                            s,
-                            "POST",
-                            f"{base_url}/panel/api/inbounds/resetAllTraffics/{inbound['id']}",
-                        )
-                        if res.status_code == 200:
-                            reset_count += 1
-                    except Exception as exc:
-                        logger.warning(f"Failed to reset inbound {inbound['id']} on {node['name']}: {exc}")
+                s, base_url = self._get_session(node)
+                if not s:
+                    results.append({"node": node["name"], "reset_count": 0, "error": "login failed"})
+                    continue
+                if inbound_id is not None:
+                    endpoint = f"{base_url}/panel/api/inbounds/{_path_segment(inbound_id)}/resetTraffic"
+                else:
+                    endpoint = f"{base_url}/panel/api/inbounds/resetAllTraffics"
+                res = xui_request(s, "POST", endpoint)
+                if self._xui_success(res):
+                    reset_count = 1
+                else:
+                    logger.warning("Failed to reset traffic on %s: status=%s", node["name"], res.status_code)
             except Exception as exc:
                 logger.warning(f"Failed reset operation on {node['name']}: {exc}")
             
@@ -1161,13 +1246,25 @@ class ClientManager:
             try:
                 if get_node_api_version(base_url) != "v2":
                     res = xui_request(s, "POST", f"{base_url}/panel/api/clients/delDepleted")
-                    if res.status_code != 404:
+                    if res.status_code in (404, 405):
+                        set_node_api_version(base_url, "v2")
+                    elif res.status_code == 200:
                         data = res.json()
-                        if data.get("success"):
+                        if isinstance(data, dict) and data.get("success") is True:
                             set_node_api_version(base_url, "v3")
-                            obj = data.get("obj") or {}
+                            obj = data.get("obj")
+                            if obj is None:
+                                obj = {}
+                            if not isinstance(obj, dict):
+                                results.append({"node": node["name"], "deleted": 0, "error": "v3 delDepleted malformed response"})
+                                continue
                             results.append({"node": node["name"], "deleted": obj.get("deleted", 0)})
                             continue
+                        results.append({"node": node["name"], "deleted": 0, "error": "v3 delDepleted failed"})
+                        continue
+                    else:
+                        results.append({"node": node["name"], "deleted": 0, "error": f"v3 delDepleted failed ({res.status_code})"})
+                        continue
                 # v2 fallback
                 fallback = self.batch_delete_clients([node], depleted_only=True)
                 deleted = sum(r.get("deleted_count", 0) for r in fallback.get("results", []))
@@ -1209,17 +1306,29 @@ class ClientManager:
                     res = xui_request(s, "POST",
                                       f"{base_url}/panel/api/clients/bulkAdjust",
                                       json=payload)
-                    if res.status_code != 404:
+                    if res.status_code in (404, 405):
+                        set_node_api_version(base_url, "v2")
+                    elif res.status_code == 200:
                         data = res.json()
-                        if data.get("success"):
+                        if isinstance(data, dict) and data.get("success") is True:
                             set_node_api_version(base_url, "v3")
-                            obj = data.get("obj") or {}
+                            obj = data.get("obj")
+                            if obj is None:
+                                obj = {}
+                            if not isinstance(obj, dict):
+                                results.append({"node": node["name"], "adjusted": 0, "error": "v3 bulkAdjust malformed response"})
+                                continue
                             results.append({
                                 "node": node["name"],
                                 "adjusted": obj.get("adjusted", 0),
                                 "skipped": obj.get("skipped", []),
                             })
                             continue
+                        results.append({"node": node["name"], "adjusted": 0, "error": "v3 bulkAdjust failed"})
+                        continue
+                    else:
+                        results.append({"node": node["name"], "adjusted": 0, "error": f"v3 bulkAdjust failed ({res.status_code})"})
+                        continue
                 # v2 fallback: update each client individually
                 adjusted = 0
                 now_ms = int(__import__("time").time() * 1000)
@@ -1264,10 +1373,13 @@ class ClientManager:
         try:
             if get_node_api_version(base_url) != "v2":
                 res = xui_request(s, "GET",
-                                  f"{base_url}/panel/api/clients/links/{email}")
-                if res.status_code != 404:
+                                  f"{base_url}/panel/api/clients/links/{_path_segment(email)}")
+                if res.status_code in (404, 405):
+                    set_node_api_version(base_url, "v2")
+                    return []
+                if res.status_code == 200:
                     data = res.json()
-                    if data.get("success"):
+                    if isinstance(data, dict) and data.get("success") is True:
                         set_node_api_version(base_url, "v3")
                         return data.get("obj") or []
         except Exception as exc:
@@ -1284,13 +1396,30 @@ class ClientManager:
         if not s:
             return {"ips": []}
         try:
-            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/ips/{email}")
+            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/ips/{_path_segment(email)}")
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
                     obj = data.get("obj") or ""
-                    ips = [ip.strip() for ip in obj.split("\n") if ip.strip()] if isinstance(obj, str) else (obj if isinstance(obj, list) else [])
-                    return {"ips": ips}
+                    if isinstance(obj, str):
+                        return {"ips": [ip.strip() for ip in obj.split("\n") if ip.strip()]}
+                    if isinstance(obj, list):
+                        ips: List[str] = []
+                        details: List[Dict] = []
+                        for item in obj:
+                            if isinstance(item, str):
+                                value = item.strip()
+                                if value:
+                                    ips.append(value)
+                            elif isinstance(item, dict):
+                                value = str(item.get("ip") or "").strip()
+                                if value:
+                                    ips.append(value)
+                                    details.append({key: item[key] for key in ("ip", "time", "node") if key in item})
+                        result: Dict = {"ips": ips}
+                        if details:
+                            result["ip_details"] = details
+                        return result
         except Exception as exc:
             logger.debug("get_client_ips failed for %s/%s: %s", node["name"], email, exc)
         return {"ips": []}
@@ -1301,7 +1430,7 @@ class ClientManager:
         if not s:
             return False
         try:
-            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/clearIps/{email}")
+            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/clearIps/{_path_segment(email)}")
             return res.status_code == 200 and res.json().get("success", False)
         except Exception as exc:
             logger.debug("clear_client_ips failed for %s/%s: %s", node["name"], email, exc)
@@ -1313,12 +1442,17 @@ class ClientManager:
         if not s:
             return {"data": {}}
         try:
-            body = {"emails": emails} if emails else {}
-            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/lastOnline", json=body)
+            # v3 accepts no filter body; retain our public filtering contract
+            # locally rather than transmitting an ignored remote filter.
+            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/lastOnline")
             if res.status_code == 200:
                 data = res.json()
-                if data.get("success"):
-                    return {"data": data.get("obj") or {}}
+                obj = data.get("obj") if isinstance(data, dict) and data.get("success") is True else None
+                if isinstance(obj, dict):
+                    if emails is not None:
+                        requested = {str(email) for email in emails}
+                        obj = {email: value for email, value in obj.items() if email in requested}
+                    return {"data": obj}
         except Exception as exc:
             logger.debug("get_last_online failed for %s: %s", node["name"], exc)
         return {"data": {}}
@@ -1383,7 +1517,7 @@ class ClientManager:
         if not s:
             return False
         try:
-            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/{email}/attach", json={"inboundIds": inbound_ids})
+            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/{_path_segment(email)}/attach", json={"inboundIds": inbound_ids})
             return res.status_code == 200 and res.json().get("success", False)
         except Exception as exc:
             logger.debug("attach_client failed for %s/%s: %s", node["name"], email, exc)
@@ -1397,7 +1531,7 @@ class ClientManager:
         if not s:
             return False
         try:
-            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/{email}/detach", json={"inboundIds": inbound_ids})
+            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/{_path_segment(email)}/detach", json={"inboundIds": inbound_ids})
             return res.status_code == 200 and res.json().get("success", False)
         except Exception as exc:
             logger.debug("detach_client failed for %s/%s: %s", node["name"], email, exc)
@@ -1500,7 +1634,7 @@ class ClientManager:
         if not s:
             return {"emails": []}
         try:
-            res = xui_request(s, "GET", f"{base_url}/panel/api/clients/groups/{group_name}/emails")
+            res = xui_request(s, "GET", f"{base_url}/panel/api/clients/groups/{_path_segment(group_name)}/emails")
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
@@ -1519,7 +1653,7 @@ class ClientManager:
         if not s:
             return []
         try:
-            res = xui_request(s, "GET", f"{base_url}/panel/api/clients/subLinks/{sub_id}")
+            res = xui_request(s, "GET", f"{base_url}/panel/api/clients/subLinks/{_path_segment(sub_id)}")
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):

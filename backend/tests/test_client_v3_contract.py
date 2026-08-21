@@ -1,5 +1,11 @@
 """Client-manager compatibility decisions must not confuse outages with v2."""
-from unittest.mock import MagicMock, patch
+import json
+import os
+import sys
+from unittest.mock import MagicMock, call, patch
+
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 
 def _node():
@@ -318,3 +324,252 @@ def test_v3_delete_does_not_write_when_uuid_resolution_fails():
     assert request.call_count == 1
     assert request.call_args.args[1:] == ("GET", f"{base_url}/panel/api/clients/list")
     invalidate_node_api_version(base_url)
+
+
+class TestClientV3Contracts:
+    base_url = "https://panel.example.test"
+
+    @staticmethod
+    def node():
+        return {"name": "node-1", "ip": "panel.example.test", "port": 443, "read_only": False}
+
+    @staticmethod
+    def manager():
+        from client_manager import ClientManager
+        return ClientManager(decrypt_func=lambda value: value)
+
+    def test_legacy_add_route_405_is_the_only_upgrade_signal(self):
+        manager = self.manager()
+        session = MagicMock()
+        config = {"email": "alice@example.test", "enable": True}
+        with (
+            patch.object(manager, "_get_session", return_value=(session, self.base_url)),
+            patch("client_manager.get_node_api_version", return_value="v2"),
+            patch("client_manager.xui_request", side_effect=[_response(405), _response(200, {"success": True})]) as request,
+            patch.object(manager, "_add_client_v3", return_value=True) as modern_add,
+        ):
+            assert manager.add_client(self.node(), 7, config) is True
+
+        assert request.call_count == 1
+        modern_add.assert_called_once_with(session, self.base_url, email="alice@example.test", inbound_ids=[7], config=config)
+
+    def test_client_links_treats_405_as_route_absence_without_json_parse(self):
+        manager = self.manager()
+        session = MagicMock()
+        with (
+            patch.object(manager, "_get_session", return_value=(session, self.base_url)),
+            patch("client_manager.get_node_api_version", return_value="v3"),
+            patch("client_manager.xui_request", return_value=_response(405)) as request,
+        ):
+            assert manager.get_client_links(self.node(), "name/tag?#") == []
+
+        request.assert_called_once_with(
+            session,
+            "GET",
+            f"{self.base_url}/panel/api/clients/links/name%2Ftag%3F%23",
+        )
+
+    def test_bulk_delete_503_never_replays_legacy_mutation(self):
+        manager = self.manager()
+        session = MagicMock()
+        with (
+            patch.object(manager, "get_all_clients", return_value=[{"email": "alice"}]),
+            patch.object(manager, "_get_session", return_value=(session, self.base_url)),
+            patch("client_manager.get_node_api_version", return_value="v3"),
+            patch("client_manager.xui_request", return_value=_response(503)) as request,
+            patch.object(manager, "delete_client") as legacy_delete,
+        ):
+            result = manager.batch_delete_clients([self.node()])
+
+        assert request.call_count == 1
+        legacy_delete.assert_not_called()
+        assert result["results"][0]["deleted_count"] == 0
+        assert "fallback skipped" in result["results"][0]["errors"][0]
+
+    def test_bulk_delete_405_can_use_legacy_fallback(self):
+        manager = self.manager()
+        session = MagicMock()
+        client = {"email": "alice", "id": "legacy-id", "inbound_id": 2}
+        with (
+            patch.object(manager, "get_all_clients", return_value=[client]),
+            patch.object(manager, "_get_session", return_value=(session, self.base_url)),
+            patch("client_manager.get_node_api_version", return_value="v3"),
+            patch("client_manager.xui_request", return_value=_response(405)) as request,
+            patch.object(manager, "delete_client", return_value=True) as legacy_delete,
+        ):
+            result = manager.batch_delete_clients([self.node()])
+
+        assert request.call_count == 1
+        legacy_delete.assert_called_once_with(self.node(), 2, "legacy-id")
+        assert result["results"][0]["deleted_count"] == 1
+
+    def test_del_depleted_success_false_never_falls_back(self):
+        manager = self.manager()
+        with (
+            patch.object(manager, "_get_session", return_value=(MagicMock(), self.base_url)),
+            patch("client_manager.get_node_api_version", return_value="v3"),
+            patch("client_manager.xui_request", return_value=_response(200, {"success": False})),
+            patch.object(manager, "batch_delete_clients") as legacy_delete,
+        ):
+            result = manager.del_depleted([self.node()])
+
+        legacy_delete.assert_not_called()
+        assert result["results"][0]["deleted"] == 0
+        assert result["results"][0]["error"] == "v3 delDepleted failed"
+
+    def test_bulk_adjust_malformed_response_never_falls_back(self):
+        manager = self.manager()
+        with (
+            patch.object(manager, "_get_session", return_value=(MagicMock(), self.base_url)),
+            patch("client_manager.get_node_api_version", return_value="v3"),
+            patch("client_manager.xui_request", return_value=_response(200, {"success": True, "obj": []})),
+            patch.object(manager, "get_all_clients") as legacy_clients,
+        ):
+            result = manager.bulk_adjust([self.node()], ["alice"], add_days=1)
+
+        legacy_clients.assert_not_called()
+        assert result["results"][0]["adjusted"] == 0
+        assert result["results"][0]["error"] == "v3 bulkAdjust malformed response"
+
+    def test_v3_traffic_resolves_uuid_to_encoded_email(self):
+        manager = self.manager()
+        session = MagicMock()
+        listed = _response(200, {"success": True, "obj": [{"uuid": "uuid-1", "email": "name+tag/one?#"}]})
+        traffic = _response(200, {"success": True, "obj": {"up": 1, "down": 2}})
+        with (
+            patch.object(manager, "_get_session", return_value=(session, self.base_url)),
+            patch("client_manager.get_node_api_version", return_value="v3"),
+            patch("client_manager.set_node_api_version"),
+            patch("client_manager.xui_request", side_effect=[listed, traffic]) as request,
+        ):
+            result = manager.get_client_traffic(self.node(), "uuid-1", "vless")
+
+        assert result == {"up": 1, "down": 2}
+        assert request.call_args_list[1] == call(
+            session, "GET", f"{self.base_url}/panel/api/clients/traffic/name%2Btag%2Fone%3F%23"
+        )
+
+    def test_v3_traffic_identity_503_does_not_issue_second_read(self):
+        manager = self.manager()
+        with (
+            patch.object(manager, "_get_session", return_value=(MagicMock(), self.base_url)),
+            patch("client_manager.get_node_api_version", return_value="v3"),
+            patch("client_manager.xui_request", return_value=_response(503)) as request,
+        ):
+            assert manager.get_client_traffic(self.node(), "uuid-1", "vless") == {}
+        assert request.call_count == 1
+
+    def test_ip_dto_keeps_legacy_strings_and_exposes_details(self):
+        manager = self.manager()
+        session = MagicMock()
+        response = _response(200, {"success": True, "obj": [
+            {"ip": "203.0.113.1", "time": 123, "node": "edge-a"},
+            "198.51.100.2",
+        ]})
+        with (
+            patch.object(manager, "_get_session", return_value=(session, self.base_url)),
+            patch("client_manager.xui_request", return_value=response) as request,
+        ):
+            result = manager.get_client_ips(self.node(), "name/tag?#")
+
+        assert result == {
+            "ips": ["203.0.113.1", "198.51.100.2"],
+            "ip_details": [{"ip": "203.0.113.1", "time": 123, "node": "edge-a"}],
+        }
+        assert request.call_args == call(session, "POST", f"{self.base_url}/panel/api/clients/ips/name%2Ftag%3F%23")
+
+    def test_last_online_filters_locally_without_ignored_remote_body(self):
+        manager = self.manager()
+        session = MagicMock()
+        response = _response(200, {"success": True, "obj": {"alice": 1, "bob": 2}})
+        with (
+            patch.object(manager, "_get_session", return_value=(session, self.base_url)),
+            patch("client_manager.xui_request", return_value=response) as request,
+        ):
+            result = manager.get_last_online(self.node(), ["bob"])
+
+        assert result == {"data": {"bob": 2}}
+        request.assert_called_once_with(session, "POST", f"{self.base_url}/panel/api/clients/lastOnline")
+
+    def test_add_client_preserves_supported_v3_fields_and_405_is_only_fallback(self):
+        manager = self.manager()
+        session = MagicMock()
+        config = {
+            "id": "uuid-1", "enable": False, "totalGB": 1024, "expiryTime": 99,
+            "flow": "none", "subId": "sub-1", "group": "team-a", "comment": "note",
+            "reset": 3, "password": "protocol-password", "security": "auto",
+            "reverse": {"enabled": True, "tag": "reverse-a"}, "auth": "hy2-auth",
+            "privateKey": "private", "publicKey": "public", "allowedIPs": ["0.0.0.0/0"],
+            "preSharedKey": "psk", "keepAlive": 20, "secret": "tuic-secret", "adTag": "ad-tag",
+        }
+        with patch("client_manager.xui_request", return_value=_response(200, {"success": True})) as request:
+            assert manager._add_client_v3(session, self.base_url, "alice", [1], config) is True
+        payload = request.call_args.kwargs["json"]["client"]
+        for field in (
+            "id", "flow", "subId", "group", "comment", "reset", "password", "security",
+            "reverse", "auth", "privateKey", "publicKey", "allowedIPs", "preSharedKey",
+            "keepAlive", "secret", "adTag",
+        ):
+            assert payload[field] == config[field]
+        assert payload["flow"] == "none"
+
+        with patch("client_manager.xui_request", return_value=_response(405)):
+            assert manager._add_client_v3(session, self.base_url, "alice", [1], config) is None
+        with patch("client_manager.xui_request", return_value=_response(200, {"success": False})):
+            assert manager._add_client_v3(session, self.base_url, "alice", [1], config) is False
+
+    def test_special_path_segments_remain_one_segment(self):
+        manager = self.manager()
+        session = MagicMock()
+        success = _response(200, {"success": True, "obj": []})
+        identifier = "name+part/one?#"
+        with (
+            patch.object(manager, "_get_session", return_value=(session, self.base_url)),
+            patch("client_manager.xui_request", return_value=success) as request,
+        ):
+            assert manager.attach_client(self.node(), identifier, [2]) is True
+            assert manager.detach_client(self.node(), identifier, [2]) is True
+            assert manager.get_group_emails(self.node(), identifier) == {"emails": []}
+            assert manager.get_sub_links(self.node(), identifier) == []
+
+        encoded = "name%2Bpart%2Fone%3F%23"
+        assert request.call_args_list == [
+            call(session, "POST", f"{self.base_url}/panel/api/clients/{encoded}/attach", json={"inboundIds": [2]}),
+            call(session, "POST", f"{self.base_url}/panel/api/clients/{encoded}/detach", json={"inboundIds": [2]}),
+            call(session, "GET", f"{self.base_url}/panel/api/clients/groups/{encoded}/emails"),
+            call(session, "GET", f"{self.base_url}/panel/api/clients/subLinks/{encoded}"),
+        ]
+
+    def test_legacy_update_client_encodes_opaque_identifier(self):
+        manager = self.manager()
+        session = MagicMock()
+        identifier = "uuid/with?#"
+        with (
+            patch.object(manager, "_get_session", return_value=(session, self.base_url)),
+            patch("client_manager.get_node_api_version", return_value="v2"),
+            patch("client_manager.xui_request", return_value=_response(200, {"success": True})) as request,
+        ):
+            assert manager.update_client(self.node(), 3, identifier, {"enable": False}) is True
+
+        assert request.call_args == call(
+            session,
+            "POST",
+            f"{self.base_url}/panel/api/inbounds/updateClient/uuid%2Fwith%3F%23",
+            json={"id": 3, "settings": json.dumps({"clients": [{"id": identifier, "enable": False}]})},
+        )
+
+    def test_reset_all_traffic_uses_documented_global_and_per_inbound_routes(self):
+        manager = self.manager()
+        session = MagicMock()
+        success = _response(200, {"success": True})
+        with (
+            patch.object(manager, "_get_session", return_value=(session, self.base_url)),
+            patch("client_manager.xui_request", return_value=success) as request,
+        ):
+            assert manager.reset_all_traffic([self.node()])["results"][0]["reset_count"] == 1
+            assert manager.reset_all_traffic([self.node()], inbound_id=7)["results"][0]["reset_count"] == 1
+
+        assert request.call_args_list == [
+            call(session, "POST", f"{self.base_url}/panel/api/inbounds/resetAllTraffics"),
+            call(session, "POST", f"{self.base_url}/panel/api/inbounds/7/resetTraffic"),
+        ]

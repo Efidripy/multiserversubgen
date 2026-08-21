@@ -877,6 +877,9 @@ export const ClientManager: React.FC = () => {
           .map((entry) => ({
             node: entry.node,
             ips: Array.isArray(entry.ips) ? entry.ips.filter(Boolean) : [],
+            ip_details: Array.isArray(entry.ip_details)
+              ? entry.ip_details.filter((detail) => detail && typeof detail.ip === 'string' && detail.ip.length > 0)
+              : undefined,
           }))
           .filter((entry) => entry.ips.length > 0),
       );
@@ -2693,6 +2696,17 @@ export const ClientManager: React.FC = () => {
                             <span key={`${entry.node}:${ip}`} className={cn(badgeBaseClass, 'bg-[#0f1420] font-mono text-slate-300')}>{ip}</span>
                           ))}
                         </div>
+                        {entry.ip_details && entry.ip_details.length > 0 && (
+                          <div className="mt-2 space-y-1 text-[11px] text-slate-500">
+                            {entry.ip_details.map((detail, index) => (
+                              <div key={`${entry.node}:${detail.ip}:${index}`} className="flex min-w-0 flex-wrap gap-x-2 gap-y-1 font-mono">
+                                <span className="text-slate-300">{detail.ip}</span>
+                                {detail.time != null && <span>time={detail.time}</span>}
+                                {detail.node && <span>source={detail.node}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

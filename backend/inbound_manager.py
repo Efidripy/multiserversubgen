@@ -7,6 +7,7 @@ import json
 import logging
 import sys
 import os
+import copy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict, Optional
@@ -22,6 +23,8 @@ INBOUND_MAX_WORKERS = max(1, int(os.getenv("INBOUND_MAX_WORKERS", "8")))
 
 _shared_executor = ThreadPoolExecutor(max_workers=INBOUND_MAX_WORKERS, thread_name_prefix="inbound_mgr")
 
+_NESTED_INBOUND_FIELDS = frozenset({"settings", "streamSettings", "sniffing", "allocate"})
+
 
 def _requests_verify_value():
     if not VERIFY_TLS:
@@ -29,6 +32,31 @@ def _requests_verify_value():
     if CA_BUNDLE_PATH:
         return CA_BUNDLE_PATH
     return True
+
+
+def _decode_inbound_object(value):
+    """Return a detached nested inbound object, accepting v3 object/string forms."""
+    if isinstance(value, dict):
+        return copy.deepcopy(value)
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return None
+        if isinstance(decoded, dict):
+            return decoded
+    return None
+
+
+def _deep_merge_inbound_object(current: Dict, updates: Dict) -> Dict:
+    """Overlay recognised edits without dropping future nested 3x-ui fields."""
+    merged = copy.deepcopy(current)
+    for key, value in updates.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge_inbound_object(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
+    return merged
 
 
 class InboundManager:
@@ -45,6 +73,36 @@ class InboundManager:
     @staticmethod
     def _is_read_only(node: Dict) -> bool:
         return bool(node.get("read_only"))
+
+    @staticmethod
+    def _merge_inbound_updates(current: Dict, updates: Dict) -> Dict:
+        """Prepare a full v3 update payload while retaining unknown nested fields.
+
+        The current 3x-ui update endpoint replaces an inbound rather than
+        applying a JSON patch.  Preserve any current fields we do not own,
+        including newer XHTTP and Reality settings, before applying a partial
+        control-plane update.
+        """
+        payload = copy.deepcopy(current)
+        for key, value in updates.items():
+            if key not in _NESTED_INBOUND_FIELDS:
+                payload[key] = copy.deepcopy(value)
+                continue
+
+            current_object = _decode_inbound_object(payload.get(key))
+            update_object = _decode_inbound_object(value)
+            if current_object is None or update_object is None:
+                # An explicit scalar/invalid replacement remains the caller's
+                # responsibility; do not silently manufacture configuration.
+                payload[key] = copy.deepcopy(value)
+                continue
+
+            merged = _deep_merge_inbound_object(current_object, update_object)
+            # Keep the remote representation stable.  Current 3x-ui accepts
+            # both forms, while older panels commonly return JSON strings.
+            payload[key] = json.dumps(merged, ensure_ascii=False) if isinstance(payload.get(key), str) else merged
+
+        return payload
     
     def get_all_inbounds(self, nodes: List[Dict]) -> List[Dict]:
         """Получить все инбаунды со всех узлов
@@ -310,14 +368,16 @@ class InboundManager:
                 logger.warning(f"Inbound {inbound_id} not found on {node['name']}")
                 return False
             
-            # Обновить конфигурацию
-            current.update(updates)
+            # v3 replaces the inbound payload.  A shallow ``dict.update``
+            # loses unmodelled XHTTP/Reality fields when the UI edits only one
+            # nested property, so merge the partial edit into the remote DTO.
+            payload = self._merge_inbound_updates(current, updates)
             
             res = xui_request(
                 s,
                 "POST",
                 f"{base_url}/panel/api/inbounds/update/{inbound_id}",
-                json=current,
+                json=payload,
             )
             return self._xui_success(res)
         except Exception as exc:
@@ -439,9 +499,10 @@ class InboundManager:
             res = xui_request(s, "POST",
                               f"{base_url}/panel/api/inbounds/setEnable/{inbound_id}",
                               json={"enable": enable})
-            if res.status_code != 404:
+            if res.status_code not in (404, 405):
                 return self._xui_success(res)
-            # v2 fallback — full update
+            # Only an absent modern route may use the full-update adapter.
+            # A reachable error can have applied the change already.
             return self.update_inbound(node, inbound_id, {"enable": enable})
         except Exception as exc:
             logger.warning("set_inbound_enable failed for %s: %s", node["name"], exc)
@@ -520,14 +581,11 @@ class InboundManager:
 
     @staticmethod
     def _xui_success(res) -> bool:
-        """x-ui may return HTTP 200 with {"success": false}; treat it as failure."""
+        """Accept only the documented v3 success envelope for mutations."""
         if res.status_code != 200:
             return False
         try:
             data = res.json()
-            if isinstance(data, dict) and "success" in data:
-                return bool(data.get("success"))
+            return isinstance(data, dict) and data.get("success") is True
         except Exception:
-            # Some endpoints may return non-JSON on older forks; keep backward compatibility.
-            pass
-        return True
+            return False

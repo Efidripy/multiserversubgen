@@ -2,6 +2,8 @@ import api from './client';
 import { getAuth } from '../auth';
 
 export type NodeLogKind = 'panel' | 'xray';
+export type ServerHistoryMetric = 'cpu' | 'mem' | 'netUp' | 'netDown' | 'online' | 'load1' | 'load5' | 'load15';
+export type ServerHistoryBucket = 2 | 30 | 60 | 180 | 360 | 720 | 1440 | 2880 | 10080;
 
 export interface X25519KeyPair {
   privateKey?: string;
@@ -171,7 +173,11 @@ export async function getXrayConfig(nodeId: number): Promise<any> {
   return res.data;
 }
 
-export async function getServerHistory(nodeId: number, metric: string, bucket: string): Promise<Array<{t: number; v: number}>> {
+export async function getServerHistory(
+  nodeId: number,
+  metric: ServerHistoryMetric,
+  bucket: ServerHistoryBucket = 360,
+): Promise<Array<{t: number; v: number}>> {
   const res = await api.get(`/v1/nodes/${nodeId}/server-history/${metric}`, {
     params: { bucket },
     auth: getAuth(),
