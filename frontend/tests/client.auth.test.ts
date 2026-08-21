@@ -1,6 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import api, { AUTH_REQUIRED_EVENT, resetAuthRequiredEventGuard } from '../src/api/client';
+import { verifyCurrentAuth } from '../src/api/authService';
 
 const unauthorizedAdapter = async (config: any) => {
   throw new AxiosError('Unauthorized', 'ERR_BAD_REQUEST', config, undefined, {
@@ -43,5 +44,23 @@ describe('API authentication lifecycle', () => {
 
     window.removeEventListener(AUTH_REQUIRED_EVENT, listener);
     expect(events).toHaveLength(0);
+  });
+
+  it('uses the HttpOnly browser session on refresh instead of sending empty Basic credentials', async () => {
+    let captured: any;
+    api.defaults.adapter = async (config: any) => {
+      captured = config;
+      return {
+        data: { user: 'admin', role: 'admin', ws_ticket: 'ticket' },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+    };
+
+    await expect(verifyCurrentAuth()).resolves.toMatchObject({ user: 'admin' });
+    expect(captured.auth).toBeUndefined();
+    expect(captured.withCredentials).toBe(true);
   });
 });
