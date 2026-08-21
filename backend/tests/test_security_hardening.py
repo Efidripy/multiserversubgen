@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.setdefault("PROJECT_DIR", tempfile.gettempdir())
 import main
 import xui_session
+from routers.auth import build_auth_router
 from routers.realtime import build_realtime_router
 from shared.security import bounded_log_count, redact_mapping, safe_content_disposition_filename, validate_outbound_url, validate_path_segment
 
@@ -56,6 +57,128 @@ def test_check_basic_auth_header_accepts_valid_credentials(monkeypatch):
 def test_check_basic_auth_header_rejects_non_basic_scheme(monkeypatch):
     monkeypatch.setattr(main.p, "authenticate", lambda u, p: True)
     assert main.check_basic_auth_header("Bearer token-value") is None
+
+
+def _issue_browser_session(client, monkeypatch):
+    monkeypatch.setattr(main.p, "authenticate", lambda u, p: u == "admin" and p == "secret")
+    response = client.post(
+        "/api/v1/auth/session",
+        headers={
+            "Authorization": _basic_header("admin", "secret"),
+            "Origin": "https://testserver",
+        },
+    )
+    assert response.status_code == 200
+    return response
+
+
+def test_browser_session_cookie_is_signed_secure_and_expires_in_eight_hours(monkeypatch):
+    client = TestClient(main.app, base_url="https://testserver")
+    response = _issue_browser_session(client, monkeypatch)
+
+    cookie = response.headers["set-cookie"]
+    expected_path = f"/{main.WEB_PATH.strip('/')}/" if main.WEB_PATH.strip("/") else "/"
+    assert f"{main.WEB_SESSION_COOKIE_NAME}=" in cookie
+    assert "Max-Age=28800" in cookie
+    assert "HttpOnly" in cookie
+    assert "Secure" in cookie
+    assert "SameSite=strict" in cookie
+    assert f"Path={expected_path}" in cookie
+    assert "secret" not in cookie
+
+
+def test_browser_session_survives_without_basic_auth_and_rejects_tampering(monkeypatch):
+    client = TestClient(main.app, base_url="https://testserver")
+    _issue_browser_session(client, monkeypatch)
+
+    verified = client.get("/api/v1/auth/verify")
+    assert verified.status_code == 200
+    assert verified.json()["user"] == "admin"
+    assert verified.json()["role"] == "admin"
+    assert verified.json()["ws_ticket"]
+
+    token = client.cookies.get(main.WEB_SESSION_COOKIE_NAME)
+    assert token
+    tampered = f"{token[:-1]}{'0' if token[-1] != '0' else '1'}"
+    response = client.get(
+        "/api/v1/auth/verify",
+        headers={"Cookie": f"{main.WEB_SESSION_COOKIE_NAME}={tampered}"},
+    )
+    assert response.status_code == 401
+
+
+def test_browser_session_is_issued_only_after_mfa_and_does_not_replay_totp(monkeypatch):
+    monkeypatch.setattr(main.p, "authenticate", lambda u, p: u == "admin" and p == "secret")
+    monkeypatch.setattr(main, "MFA_TOTP_ENABLED", True)
+    monkeypatch.setattr(main.request_runtime, "verify_totp_code", lambda _user, code: code == "246810")
+    client = TestClient(main.app, base_url="https://testserver")
+
+    missing_mfa = client.post(
+        "/api/v1/auth/session",
+        headers={"Authorization": _basic_header("admin", "secret"), "Origin": "https://testserver"},
+    )
+    assert missing_mfa.status_code == 401
+    assert missing_mfa.json()["detail"] == "MFA required"
+
+    issued = client.post(
+        "/api/v1/auth/session",
+        headers={
+            "Authorization": _basic_header("admin", "secret"),
+            "X-TOTP-Code": "246810",
+            "Origin": "https://testserver",
+        },
+    )
+    assert issued.status_code == 200
+    assert client.get("/api/v1/auth/verify").status_code == 200
+
+
+def test_browser_session_cookie_preserves_csrf_gate_and_logout_clears_browser_cookie(monkeypatch):
+    client = TestClient(main.app, base_url="https://testserver")
+    _issue_browser_session(client, monkeypatch)
+
+    rejected = client.post("/api/v1/nodes/check-connection", json={})
+    assert rejected.status_code == 403
+    allowed = client.post(
+        "/api/v1/nodes/check-connection",
+        headers={"Origin": "https://testserver"},
+        json={},
+    )
+    assert allowed.status_code == 400
+    assert allowed.json()["detail"] == "URL is required"
+
+    logout = client.post("/api/v1/auth/logout", headers={"Origin": "https://testserver"})
+    assert logout.status_code == 200
+    assert "Max-Age=0" in logout.headers["set-cookie"]
+    assert client.get("/api/v1/auth/verify").status_code == 401
+
+
+def test_browser_session_cookie_uses_external_subpath(monkeypatch):
+    app = FastAPI()
+
+    @app.middleware("http")
+    async def inject_basic_auth(request, call_next):
+        request.state.auth_user = "admin"
+        request.state.auth_role = "admin"
+        request.state.auth_mfa_ok = True
+        request.state.auth_via = "basic"
+        return await call_next(request)
+
+    app.include_router(
+        build_auth_router(
+            check_auth=lambda request: request.state.auth_user,
+            verify_totp_code=lambda _user, _code: True,
+            get_user_role=lambda _user: "admin",
+            issue_ws_ticket=lambda _user: "ticket",
+            issue_web_session=lambda _user: "signed-session",
+            web_session_cookie_name="session",
+            web_session_ttl_sec=28_800,
+            web_path="panel",
+            mfa_totp_enabled=False,
+            monitoring_enabled=False,
+        )
+    )
+    response = TestClient(app, base_url="https://testserver").post("/api/v1/auth/session")
+    assert "Path=/panel/" in response.headers["set-cookie"]
 
 
 def test_list_nodes_does_not_return_password(monkeypatch):

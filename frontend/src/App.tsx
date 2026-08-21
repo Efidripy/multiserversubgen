@@ -11,8 +11,8 @@ import { ToastProvider } from './components/Toast';
 import { Sidebar, SidebarNavItem } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
 import { useWebSocketMessages, wsManager } from './services/webSocketManager';
-import { clearAuthCredentials, getAuth, loadRememberedUsername, rememberUsername, setAuthCredentials, setWsTicket } from './auth';
-import { getMfaStatus, verifyCurrentAuth, verifyLoginCredentials } from './api/authService';
+import { clearAuthCredentials, loadRememberedUsername, rememberUsername, setAuthCredentials, setWsTicket } from './auth';
+import { clearBrowserSession, createBrowserSession, getMfaStatus, verifyCurrentAuth } from './api/authService';
 import {
   getBackupHeaderSource,
   getDashboardHeaderMetrics,
@@ -250,20 +250,18 @@ export const App: React.FC = () => {
         setMfaEnabled(false);
       }
 
-      const auth = getAuth();
-      if (auth.username && auth.password) {
-        try {
-          const verified = await verifyCurrentAuth();
-          if (verified.user) {
-            setUser(auth.username);
-            if (verified.ws_ticket) setWsTicket(verified.ws_ticket);
-            setRole(verified.role || 'viewer');
-            wsManager.resumeAfterAuth();
-            setIsAuthenticated(true);
-          }
-        } catch {
-          clearAuthCredentials();
+      try {
+        const verified = await verifyCurrentAuth();
+        if (verified.user) {
+          setAuthCredentials(verified.user, '', '', verified.ws_ticket || '', verified.role || 'viewer');
+          setUser(verified.user);
+          if (verified.ws_ticket) setWsTicket(verified.ws_ticket);
+          setRole(verified.role || 'viewer');
+          wsManager.resumeAfterAuth();
+          setIsAuthenticated(true);
         }
+      } catch {
+        clearAuthCredentials();
       }
       setAuthBootstrapDone(true);
     };
@@ -539,9 +537,9 @@ export const App: React.FC = () => {
   const handleLogin = async () => {
     setAuthError('');
     try {
-      const verified = await verifyLoginCredentials(user, password, totpCode.trim());
+      const verified = await createBrowserSession(user, password, totpCode.trim());
       if (verified.user) {
-        setAuthCredentials(user, password, totpCode.trim(), verified.ws_ticket || '', verified.role || 'viewer');
+        setAuthCredentials(verified.user, '', '', verified.ws_ticket || '', verified.role || 'viewer');
         setRole(verified.role || 'viewer');
         wsManager.resumeAfterAuth();
         resetAuthRequiredEventGuard();
@@ -555,9 +553,13 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleLogout = () => {
-    endSession();
-    resetAuthRequiredEventGuard();
+  const handleLogout = async () => {
+    try {
+      await clearBrowserSession();
+    } finally {
+      endSession();
+      resetAuthRequiredEventGuard();
+    }
   };
 
   const getApiUrl = () => {
