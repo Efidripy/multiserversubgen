@@ -138,6 +138,15 @@ only after v3 responds `404` or `405`; a transport or server failure is not
 misclassified as an old panel. Mock-only tests cover the modern route and the
 route-absence fallback. No traffic counter was reset on a live node.
 
+## P2 — client deletion identity safety
+
+The v3 delete route is email-addressed, while normal control-plane UI records
+carry the remote UUID. The adapter now resolves UUID, id or email through the
+authenticated v3 client list before it can issue `clients/del/{email}`. A list
+error or malformed record stops with no delete request; only a missing list or
+delete route (`404/405`) selects the v2 adapter. The proof is mock-only and no
+live client was deleted.
+
 ## P1 — read-only Xray 26 configuration audit
 
 The audit consumes only the normalized result of `GET /panel/api/inbounds/list`

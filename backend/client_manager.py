@@ -290,17 +290,48 @@ class ClientManager:
             logger.warning("v3 update_client failed: %s", exc)
             return False
 
-    def _delete_client_v3(self, s, base_url: str, email: str,
+    def _delete_client_v3(self, s, base_url: str, client_identifier: str,
                           keep_traffic: bool = False) -> Optional[bool]:
-        """POST /panel/api/clients/del/{email} — v3."""
+        """Resolve a v3 UUID/email then POST /panel/api/clients/del/{email}."""
         try:
+            listed = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/clients/list",
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
+            if listed.status_code in (404, 405):
+                return None  # v2 fallback
+            if listed.status_code != 200:
+                return False
+            listing = listed.json()
+            clients = listing.get("obj") if isinstance(listing, dict) and listing.get("success") else None
+            if not isinstance(clients, list):
+                return False
+            identifier = str(client_identifier)
+            existing = next(
+                (
+                    client for client in clients
+                    if isinstance(client, dict)
+                    and identifier in {
+                        str(client.get("uuid") or ""),
+                        str(client.get("id") or ""),
+                        str(client.get("email") or ""),
+                    }
+                ),
+                None,
+            )
+            if not existing or not existing.get("email"):
+                return False
+            email = str(existing["email"])
             url = f"{base_url}/panel/api/clients/del/{quote(str(email), safe='')}"
             if keep_traffic:
                 url += "?keepTraffic=1"
             res = xui_request(s, "POST", url)
-            if res.status_code == 404:
+            if res.status_code in (404, 405):
                 return None  # v2 fallback
-            return bool(res.json().get("success"))
+            return self._xui_success(res)
         except Exception as exc:
             logger.warning("v3 delete_client failed: %s", exc)
             return False
@@ -650,10 +681,8 @@ class ClientManager:
             return False
 
         try:
-            # v3: delete by email — client_uuid may actually be an email string
-            # Если передан email (содержит @) или нода точно v3 — пробуем v3
-            is_email = "@" in str(client_uuid) or "." in str(client_uuid)
-            if (is_email or get_node_api_version(base_url) != "v2"):
+            # v3 deletes by email; local callers normally carry the UUID.
+            if client_uuid and get_node_api_version(base_url) != "v2":
                 result = self._delete_client_v3(s, base_url, str(client_uuid))
                 if result is not None:
                     set_node_api_version(base_url, "v3")
