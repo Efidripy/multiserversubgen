@@ -192,15 +192,100 @@ class ClientManager:
             logger.warning("v3 add_client failed: %s", exc)
             return False
 
-    def _update_client_v3(self, s, base_url: str, email: str, updates: Dict) -> Optional[bool]:
-        """POST /panel/api/clients/update/{email} — v3."""
-        payload = {"email": email, **updates}
+    @staticmethod
+    def _v3_update_payload(existing: Dict, updates: Dict) -> Dict:
+        """Convert the v3 list record to the full object required by update.
+
+        Current 3x-ui binds ``model.Client`` and replaces the stored row.  A
+        control-plane update is normally partial, so send the existing fields
+        back unchanged and overlay only recognised caller changes.  The list
+        endpoint exposes ``uuid`` while the mutation contract expects ``id``.
+        """
+        payload: Dict = {}
+        preserved_fields = (
+            "security", "password", "flow", "auth", "privateKey", "publicKey",
+            "preSharedKey", "keepAlive", "secret", "adTag", "email", "limitIp",
+            "totalGB", "expiryTime", "enable", "tgId", "subId", "group",
+            "comment", "reset",
+        )
+        for field in preserved_fields:
+            if field in existing:
+                payload[field] = existing[field]
+
+        if existing.get("uuid"):
+            payload["id"] = existing["uuid"]
+        elif existing.get("id"):
+            payload["id"] = existing["id"]
+
+        for field in ("reverse", "allowedIPs"):
+            value = existing.get(field)
+            if isinstance(value, str):
+                try:
+                    value = json.loads(value)
+                except json.JSONDecodeError:
+                    value = None
+            if isinstance(value, (dict, list)):
+                payload[field] = value
+
+        for field, value in updates.items():
+            if field in {*preserved_fields, "id", "reverse", "allowedIPs"}:
+                payload[field] = value
+        return payload
+
+    def _update_client_v3(self, s, base_url: str, client_identifier: str,
+                          inbound_id: int, updates: Dict) -> Optional[bool]:
+        """Read, merge and scoped-update a client through the v3 contract.
+
+        The caller only carries a local client UUID for many v3 panels.  Match
+        it against the authenticated list response to recover the *current*
+        email and full client object before issuing the write.
+        """
         try:
-            res = xui_request(s, "POST", f"{base_url}/panel/api/clients/update/{quote(str(email), safe='')}",
-                              json=payload)
-            if res.status_code == 404:
+            listed = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/clients/list",
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
+            if listed.status_code in (404, 405):
                 return None  # v2 fallback
-            return bool(res.json().get("success"))
+            if listed.status_code != 200:
+                return False
+            listing = listed.json()
+            if not isinstance(listing, dict) or not listing.get("success"):
+                return False
+            clients = listing.get("obj")
+            if not isinstance(clients, list):
+                return False
+
+            identifier = str(client_identifier)
+            existing = next(
+                (
+                    client for client in clients
+                    if isinstance(client, dict)
+                    and identifier in {
+                        str(client.get("uuid") or ""),
+                        str(client.get("id") or ""),
+                        str(client.get("email") or ""),
+                    }
+                ),
+                None,
+            )
+            if not existing or not existing.get("email"):
+                return False
+
+            email = str(existing["email"])
+            payload = self._v3_update_payload(existing, updates)
+            if not payload.get("email"):
+                return False
+            url = f"{base_url}/panel/api/clients/update/{quote(email, safe='')}"
+            if inbound_id:
+                url += f"?inboundIds={int(inbound_id)}"
+            res = xui_request(s, "POST", url, json=payload)
+            if res.status_code in (404, 405):
+                return None  # v2 fallback
+            return self._xui_success(res)
         except Exception as exc:
             logger.warning("v3 update_client failed: %s", exc)
             return False
@@ -518,10 +603,10 @@ class ClientManager:
             return False
 
         try:
-            # v3: update by email, no UUID or inbound_id needed
-            email = updates.get("email") or ""
-            if email and get_node_api_version(base_url) != "v2":
-                result = self._update_client_v3(s, base_url, email, updates)
+            # v3 replaces a full client record.  The helper uses the original
+            # UUID/email to read it first and scopes the write to this inbound.
+            if client_uuid and get_node_api_version(base_url) != "v2":
+                result = self._update_client_v3(s, base_url, str(client_uuid), inbound_id, updates)
                 if result is not None:
                     set_node_api_version(base_url, "v3")
                     return result
