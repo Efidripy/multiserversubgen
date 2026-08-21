@@ -71,8 +71,7 @@ inbounds или список клиентов.
 
 ## P1 — runtime capability registry и полный adapter contract audit
 
-**Статус:** implemented locally; production rollout receipt follows the P1
-release.  Проверка контрактов не использует номер версии как feature gate:
+**Статус:** deployed with production receipt.  Проверка контрактов не использует номер версии как feature gate:
 одна установленная панель уже показала drift между OpenAPI и runtime.
 
 ### Capability registry
@@ -155,3 +154,26 @@ The long Backup Manager response is the next optimization candidate: list
 metadata must not require loading a whole backup body.  It is recorded here as
 a P2 design change because changing that API contract must retain restore
 semantics and gets a separate migration/rollback review.
+
+## P1 production rollout receipt
+
+- Merged source: `d293c2e050361b427daf7c5f9d5216586df78114` (PR #71).
+- The deployment used an immutable detached source checkout and the existing
+  `scripts/deploy/server-deploy.sh`; it did not run DDL or manually alter the
+  database, node panel, inbound, client, subscription or token data.
+- Rollback artifact:
+  `/var/backups/sub-manager_deploy/project_20260821T121800Z-d293c2e05036.tgz`.
+  Its SHA-256 sidecar validated on the production host before post-release
+  checks.
+- `sub-manager=active`, local health `200` and `nginx -t` succeeded. SQLite
+  integrity remained `ok`; durable counts stayed `nodes=9`, `node_snapshots=9`
+  and `subscription_tokens=87`.
+- SHA-256 of deployed `xui_session.py` and
+  `services/xray_compatibility.py` matched the immutable merged source.
+- The first collector cycle evaluated all nine existing node snapshots without
+  reading config dump/key-generator endpoints: eight were `ok`; one aggregate
+  `xray_xhttp_legacy_session_keys` warning was recorded. This is a manual
+  migration signal only—no configuration was changed.
+- Public panel five-request check returned HTTP `200` each time, with a local
+  host-side p50 about 43 ms (38.7–57.2 ms range). It measures reverse-proxy
+  delivery, not a browser/API SLA.
