@@ -122,22 +122,27 @@ class ClientManager:
     # v3 API helpers — 3x-ui >= 3.x first-class client endpoints
     # ------------------------------------------------------------------
 
-    def _probe_v3(self, s, base_url: str) -> Optional[List[Dict]]:
+    def _probe_v3(self, s, base_url: str) -> tuple[str, List[Dict]]:
         """Попробовать GET /panel/api/clients/list (v3).
-        Возвращает список объектов клиентов, или None если endpoint недоступен (v2 нода).
+
+        Возвращает ``(supported|unsupported|failed, clients)``.  Только
+        explicit 404/405 означает legacy capability; timeout, TLS/auth и
+        malformed responses never permanently downgrade a node to v2.
         """
         try:
             res = xui_request(s, "GET", f"{base_url}/panel/api/clients/list",
                               timeout=XUI_FAST_TIMEOUT_SEC, retries=XUI_FAST_RETRIES)
-            if res.status_code == 404:
-                return None  # v2 нода
+            if res.status_code in (404, 405):
+                return "unsupported", []
             if res.status_code != 200:
-                return []
+                return "failed", []
             data = res.json()
-            return data.get("obj") or [] if data.get("success") else []
+            if not isinstance(data, dict) or not data.get("success") or not isinstance(data.get("obj"), list):
+                return "failed", []
+            return "supported", data.get("obj") or []
         except Exception as exc:
             logger.debug("v3 clients list probe failed for %s: %s", base_url, exc)
-            return None
+            return "failed", []
 
     def _map_v3_client(self, c: Dict, node: Dict) -> Dict:
         """Конвертировать v3 client object в наш внутренний формат."""
@@ -229,29 +234,37 @@ class ClientManager:
             logger.warning("v3 bulkDel failed: %s", exc)
             return None
 
-    def _get_online_v3(self, s, base_url: str) -> Optional[List[str]]:
+    def _get_online_v3(self, s, base_url: str) -> tuple[str, List[str]]:
         """POST /panel/api/clients/onlines — v3."""
         try:
             res = xui_request(s, "POST", f"{base_url}/panel/api/clients/onlines")
-            if res.status_code == 404:
-                return None
+            if res.status_code in (404, 405):
+                return "unsupported", []
+            if res.status_code != 200:
+                return "failed", []
             data = res.json()
-            return data.get("obj") or [] if data.get("success") else None
+            if not isinstance(data, dict) or not data.get("success") or not isinstance(data.get("obj"), list):
+                return "failed", []
+            return "supported", data.get("obj") or []
         except Exception as exc:
             logger.debug("v3 onlines failed: %s", exc)
-            return None
+            return "failed", []
 
-    def _get_traffic_v3(self, s, base_url: str, email: str) -> Optional[Dict]:
+    def _get_traffic_v3(self, s, base_url: str, email: str) -> tuple[str, Dict]:
         """GET /panel/api/clients/traffic/{email} — v3."""
         try:
             res = xui_request(s, "GET", f"{base_url}/panel/api/clients/traffic/{email}")
-            if res.status_code == 404:
-                return None
+            if res.status_code in (404, 405):
+                return "unsupported", {}
+            if res.status_code != 200:
+                return "failed", {}
             data = res.json()
-            return data.get("obj") if data.get("success") else None
+            if not isinstance(data, dict) or not data.get("success") or not isinstance(data.get("obj"), dict):
+                return "failed", {}
+            return "supported", data.get("obj") or {}
         except Exception as exc:
             logger.debug("v3 traffic failed: %s", exc)
-            return None
+            return "failed", {}
 
     def get_all_clients(self, nodes: List[Dict], email_filter: Optional[str] = None) -> List[Dict]:
         """Получить всех клиентов со всех узлов
@@ -279,8 +292,8 @@ class ClientManager:
                 api_version = get_node_api_version(base_url)
                 if api_version != "v2":
                     # Пробуем v3
-                    v3_obj = self._probe_v3(s, base_url)
-                    if v3_obj is not None:
+                    v3_state, v3_obj = self._probe_v3(s, base_url)
+                    if v3_state == "supported":
                         set_node_api_version(base_url, "v3")
                         for c in v3_obj:
                             email = c.get("email", "")
@@ -288,8 +301,11 @@ class ClientManager:
                                 continue
                             node_clients.append(self._map_v3_client(c, node))
                         return node_clients
-                    # v3 вернул None → нода v2
-                    set_node_api_version(base_url, "v2")
+                    if v3_state == "unsupported":
+                        set_node_api_version(base_url, "v2")
+                    else:
+                        logger.warning("v3 clients list failed for %s; legacy route was not assumed", node["name"])
+                        return node_clients
 
                 # v2 fallback: извлекаем клиентов из инбаундов
                 try:
@@ -660,11 +676,14 @@ class ClientManager:
         try:
             # v3: GET /panel/api/clients/traffic/{email}
             if "@" in str(client_uuid) or get_node_api_version(base_url) == "v3":
-                result = self._get_traffic_v3(s, base_url, str(client_uuid))
-                if result is not None:
+                v3_state, result = self._get_traffic_v3(s, base_url, str(client_uuid))
+                if v3_state == "supported":
                     set_node_api_version(base_url, "v3")
                     return result if isinstance(result, dict) else {}
-                set_node_api_version(base_url, "v2")
+                if v3_state == "unsupported":
+                    set_node_api_version(base_url, "v2")
+                else:
+                    return {}
 
             # v2 fallback: endpoint depends on protocol
             if protocol in ("vless", "vmess"):
@@ -957,11 +976,14 @@ class ClientManager:
             try:
                 # v3: POST /panel/api/clients/onlines
                 if get_node_api_version(base_url) != "v2":
-                    emails = self._get_online_v3(s, base_url)
-                    if emails is not None:
+                    v3_state, emails = self._get_online_v3(s, base_url)
+                    if v3_state == "supported":
                         set_node_api_version(base_url, "v3")
                         return [{"email": e, "node": node["name"]} for e in emails]
-                    set_node_api_version(base_url, "v2")
+                    if v3_state == "unsupported":
+                        set_node_api_version(base_url, "v2")
+                    else:
+                        return []
 
                 # v2 fallback: POST /panel/api/inbounds/onlines
                 res = xui_request(s, "POST", f"{base_url}/panel/api/inbounds/onlines")

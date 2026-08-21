@@ -46,6 +46,13 @@ export interface DashboardServerStatus {
   network?: any;
   panel_version?: string;
   api_version?: string;
+  xray_compatibility?: XrayCompatibilitySummary;
+}
+
+export interface XrayCompatibilitySummary {
+  status: 'ok' | 'warning' | 'unknown';
+  checked_inbounds: number;
+  findings: Array<{ code: string; severity: 'warning' | 'error' | 'critical'; count: number }>;
 }
 
 interface SnapshotNode {
@@ -66,6 +73,7 @@ interface SnapshotNode {
   network?: any;
   panel_version?: string;
   api_version?: string;
+  xray_compatibility?: XrayCompatibilitySummary;
 }
 
 export interface DashboardServerDeck {
@@ -230,6 +238,7 @@ function buildBaseStatuses(nodes: NodeRecord[], snapshotNodes: SnapshotNode[]): 
       network: snapshot?.network,
       panel_version: snapshot?.panel_version,
       api_version: snapshot?.api_version,
+      xray_compatibility: snapshot?.xray_compatibility,
     };
   });
 }
