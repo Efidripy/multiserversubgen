@@ -9,6 +9,7 @@ from enum import Enum
 
 from services.db_bootstrap import connect
 from services.snapshot_push import build_snapshot_push_payload
+from services.xray_compatibility import summarize_node_inbounds
 
 
 logger = logging.getLogger("sub_manager")
@@ -522,6 +523,7 @@ class SnapshotCollector:
                 for inbound in inbounds
                 if isinstance(inbound, dict)
             )
+            xray_compatibility = summarize_node_inbounds(inbounds)
 
             panel_version = status.get("panel_version", "") if isinstance(status, dict) else ""
             api_version = _detect_api_version(panel_version)
@@ -546,6 +548,7 @@ class SnapshotCollector:
                 "server_status": status,
                 "inbounds": inbounds,
                 "inbounds_result": inbounds_result,
+                "xray_compatibility": xray_compatibility,
             }
         except Exception as exc:
             logger.warning(f"Collector failed for node {name}: {exc}")
@@ -600,6 +603,7 @@ class SnapshotCollector:
                 "traffic_total",
                 "panel_version",
                 "api_version",
+                "xray_compatibility",
                 "reason",
                 "error",
             ):
@@ -640,6 +644,7 @@ class SnapshotCollector:
                     "xray_running": snapshot.get("xray_running"),
                     "panel_version": snapshot.get("panel_version"),
                     "api_version": snapshot.get("api_version"),
+                    "xray_compatibility": snapshot.get("xray_compatibility"),
                     "online_clients": snapshot.get("online_clients"),
                     "traffic_total": snapshot.get("traffic_total"),
                     "poll_ms": snapshot.get("poll_ms"),

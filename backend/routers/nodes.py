@@ -10,7 +10,13 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
 
-from xui_session import invalidate_auth_method_cache, invalidate_session_cache, make_node_key
+from xui_session import (
+    diagnose_xui_failure,
+    invalidate_auth_method_cache,
+    invalidate_node_capabilities,
+    invalidate_session_cache,
+    make_node_key,
+)
 from shared.security import redact_url, validate_outbound_url
 
 
@@ -214,13 +220,29 @@ def build_nodes_router(
                     xui_request, session, "GET", f"{base_url}/panel/api/inbounds/list", timeout=15
                 )
                 if probe.status_code != 200:
-                    return {"success": False, "message": f"Bearer token rejected (HTTP {probe.status_code})", "base_url": base_url}
+                    diagnostic = diagnose_xui_failure(response=probe)
+                    return {
+                        "success": False,
+                        "message": diagnostic["message"],
+                        "reason": diagnostic["code"],
+                        "base_url": base_url,
+                    }
                 try:
                     payload = probe.json()
                 except Exception:
-                    return {"success": False, "message": "Bearer token: invalid JSON response", "base_url": base_url}
+                    return {
+                        "success": False,
+                        "message": "Panel response is not the expected JSON API format",
+                        "reason": "response_schema_changed",
+                        "base_url": base_url,
+                    }
                 if not payload.get("success"):
-                    return {"success": False, "message": "Bearer token rejected by panel", "base_url": base_url}
+                    return {
+                        "success": False,
+                        "message": "Panel rejected the configured authentication",
+                        "reason": "auth_failed",
+                        "base_url": base_url,
+                    }
                 inbounds = payload.get("obj") or []
                 return {
                     "success": True,
@@ -231,7 +253,12 @@ def build_nodes_router(
                 }
             else:
                 if not await run_in_threadpool(login_panel, session, base_url, node_user, password):
-                    return {"success": False, "message": "Login failed", "base_url": base_url}
+                    return {
+                        "success": False,
+                        "message": "Panel rejected the configured authentication",
+                        "reason": "auth_failed",
+                        "base_url": base_url,
+                    }
 
             inbounds_count = None
             details = ""
@@ -260,8 +287,14 @@ def build_nodes_router(
                 "details": details,
             }
         except Exception as exc:
-            logger.warning("Node connection check failed for %s: %s", redact_url(base_url), exc)
-            return {"success": False, "message": "Connection check failed", "base_url": base_url}
+            logger.warning("Node connection check failed for %s: %s", redact_url(base_url), type(exc).__name__)
+            diagnostic = diagnose_xui_failure(error=exc)
+            return {
+                "success": False,
+                "message": diagnostic["message"],
+                "reason": diagnostic["code"],
+                "base_url": base_url,
+            }
 
     @router.put("/api/v1/nodes/{node_id}")
     def update_node(node_id: int, request: Request, data: Dict):
@@ -422,9 +455,11 @@ def build_nodes_router(
             # Сбрасываем кешированный метод авторизации и сессии старого endpoint.
             invalidate_auth_method_cache(node_panel_url)
             invalidate_session_cache(make_node_key(node_panel_url or "", 443))
+            invalidate_node_capabilities(make_node_key(node_panel_url or "", 443))
             if updated_connection and updated_connection["panel_url"] != node_panel_url:
                 invalidate_auth_method_cache(updated_connection["panel_url"])
                 invalidate_session_cache(make_node_key(updated_connection["panel_url"], 443))
+                invalidate_node_capabilities(make_node_key(updated_connection["panel_url"], 443))
 
         try:
             invalidate_subscription_cache()

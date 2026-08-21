@@ -205,6 +205,29 @@ def test_xui_plain_404_is_not_auth_failure():
     assert xui_session.is_auth_failure_response(resp) is False
 
 
+def test_xui_capability_registry_is_per_node_ttl_bound_and_redacted(monkeypatch):
+    import xui_session
+
+    node_key = "capability-test:443:"
+    operation = "online_clients"
+    paths = ("/panel/api/clients/onlines", "/panel/api/inbounds/onlines")
+    response = response = SimpleNamespace(
+        status_code=200,
+        json=lambda: {"success": True, "obj": ["not-stored-as-a-value"]},
+    )
+
+    xui_session.invalidate_node_capabilities(node_key)
+    monkeypatch.setattr(xui_session, "XUI_CAPABILITY_TTL_SEC", 60)
+    xui_session.record_capability_route(node_key, operation, paths[1], response)
+
+    assert xui_session.get_capability_route(node_key, operation, paths) == paths[1]
+    stored = xui_session._NODE_CAPABILITIES[node_key][operation]
+    assert stored["shape"] == "success=bool;obj=list"
+    assert "not-stored-as-a-value" not in str(stored)
+    xui_session.invalidate_node_capabilities(node_key)
+    assert xui_session.get_capability_route(node_key, operation, paths) is None
+
+
 def test_xui_session_pool_reuses_session_until_forced_reauth(monkeypatch):
     import xui_session
 
