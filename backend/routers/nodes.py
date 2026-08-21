@@ -271,17 +271,52 @@ def build_nodes_router(
 
         has_name = "name" in data
         has_read_only = "read_only" in data
+        has_url = "url" in data
         has_bearer = "bearer_token" in data
-        has_credentials = "user" in data or "password" in data
+        has_user = "user" in data
+        has_password = "password" in data
+        has_credentials = has_user or has_password
         has_tags = "tags" in data
-        if not has_name and not has_read_only and not has_bearer and not has_credentials and not has_tags:
+        if not has_name and not has_read_only and not has_url and not has_bearer and not has_credentials and not has_tags:
             raise HTTPException(status_code=400, detail="No updatable fields provided")
+        if has_bearer and has_credentials:
+            raise HTTPException(status_code=400, detail="bearer_token cannot be combined with user or password")
 
         new_name = None
         if has_name:
             new_name = str(data.get("name", "")).strip()
             if not new_name:
                 raise HTTPException(status_code=400, detail="Name cannot be empty")
+
+        updated_connection = None
+        if has_url:
+            raw_url = str(data.get("url") or "").strip()
+            if not raw_url:
+                raise HTTPException(status_code=400, detail="URL cannot be empty")
+            if not raw_url.startswith(("http://", "https://")):
+                raw_url = "https://" + raw_url
+            try:
+                parsed_url = urlparse(raw_url)
+                if not parsed_url.hostname:
+                    raise ValueError("missing hostname")
+                parsed_port = parsed_url.port
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid URL")
+            valid_url, url_error = validate_outbound_url(raw_url)
+            if not valid_url:
+                raise HTTPException(status_code=400, detail=url_error)
+            scheme = parsed_url.scheme or "https"
+            port = str(parsed_port) if parsed_port else "443"
+            base_path = parsed_url.path.strip("/")
+            prefix = f"/{base_path}" if base_path else ""
+            updated_connection = {
+                "panel_url": f"{scheme}://{parsed_url.hostname}:{port}{prefix}",
+                "ip": parsed_url.hostname,
+                "port": port,
+                "base_path": base_path,
+                "access_path": base_path,
+                "scheme": scheme,
+            }
 
         def _coerce_bool(value) -> bool:
             if isinstance(value, bool):
@@ -302,13 +337,14 @@ def build_nodes_router(
         try:
             with connect(db_path) as conn:
                 existing = conn.execute(
-                    "SELECT name, panel_url FROM nodes WHERE id = ?", (node_id,)
+                    "SELECT name, panel_url, username FROM nodes WHERE id = ?", (node_id,)
                 ).fetchone()
                 if not existing:
                     raise HTTPException(status_code=404, detail="Node not found")
 
                 old_name = str(existing[0] or "")
                 node_panel_url = existing[1]
+                uses_bearer_auth = str(existing[2] or "") == "bearer_token"
                 update_fields = []
                 update_values = []
 
@@ -324,6 +360,11 @@ def build_nodes_router(
                     update_fields.append("tags")
                     update_values.append(_serialize_tags(data.get("tags")))
 
+                if updated_connection:
+                    for field, value in updated_connection.items():
+                        update_fields.append(field)
+                        update_values.append(value)
+
                 if has_bearer:
                     new_bearer = str(data.get("bearer_token") or "").strip()
                     if new_bearer:
@@ -336,16 +377,22 @@ def build_nodes_router(
                     else:
                         raise HTTPException(status_code=400, detail="bearer_token cannot be empty")
                 elif has_credentials:
-                    new_user = str(data.get("user") or "").strip()
-                    new_pass = str(data.get("password") or "").strip()
-                    if not new_user or not new_pass:
-                        raise HTTPException(status_code=400, detail="user and password cannot be empty")
-                    update_fields.append("password")
-                    update_values.append(encrypt(new_pass))
-                    update_fields.append("username")
-                    update_values.append(new_user)
-                    update_fields.append("user")
-                    update_values.append(new_user)
+                    new_user = str(data.get("user") or "").strip() if has_user else None
+                    new_pass = str(data.get("password") or "") if has_password else None
+                    if has_user and not new_user:
+                        raise HTTPException(status_code=400, detail="user cannot be empty")
+                    if has_password and not new_pass:
+                        raise HTTPException(status_code=400, detail="password cannot be empty")
+                    if uses_bearer_auth and (not has_user or not has_password):
+                        raise HTTPException(status_code=400, detail="user and password are required to replace bearer_token")
+                    if has_password:
+                        update_fields.append("password")
+                        update_values.append(encrypt(new_pass))
+                    if has_user:
+                        update_fields.append("username")
+                        update_values.append(new_user)
+                        update_fields.append("user")
+                        update_values.append(new_user)
 
                 update_values.append(node_id)
                 result = conn.execute(
@@ -371,10 +418,13 @@ def build_nodes_router(
             if has_name:
                 node_metric_labels_state[node_id_str] = new_name
 
-        if has_bearer or has_credentials:
-            # Сбрасываем кешированный метод авторизации — credentials изменились
-            invalidate_auth_method_cache(node_panel_url)  # None → сбрасывает весь кеш
+        if has_bearer or has_credentials or has_url:
+            # Сбрасываем кешированный метод авторизации и сессии старого endpoint.
+            invalidate_auth_method_cache(node_panel_url)
             invalidate_session_cache(make_node_key(node_panel_url or "", 443))
+            if updated_connection and updated_connection["panel_url"] != node_panel_url:
+                invalidate_auth_method_cache(updated_connection["panel_url"])
+                invalidate_session_cache(make_node_key(updated_connection["panel_url"], 443))
 
         try:
             invalidate_subscription_cache()
