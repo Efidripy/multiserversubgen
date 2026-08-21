@@ -14,6 +14,12 @@ boundaries first, then runtime reliability, frontend lifecycle, operational
 hardening and quality/documentation. A finding is marked complete only with a
 focused regression check plus the owning subsystem's checks.
 
+Для всех оставшихся расхождений control-plane с актуальным 3x-ui использовать
+единый реестр [`3XUI-MASTER-DISCREPANCY-REGISTRY-2026-08-21.md`](3XUI-MASTER-DISCREPANCY-REGISTRY-2026-08-21.md).
+Он разделяет confirmed defects, high-risk unverified contracts и product
+feature gaps; новые 3X-ui задачи выбираются только из его dependency-ordered
+waves.
+
 ## Immediate operational gate
 
 Before any Git-history rewrite, the credential formerly reachable from
