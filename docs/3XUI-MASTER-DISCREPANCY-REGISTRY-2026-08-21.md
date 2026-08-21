@@ -114,3 +114,37 @@ endpoint.
   этот реестр не делает нового remote probe.
 - Live proof для mutation intentionally отсутствует. Это не разрешение на
   production test и не основание менять node/database data.
+
+## Closure update — 2026-08-21
+
+Волны A–D закрыты локально в одной change stream. Реализованы и покрыты
+контрактными тестами:
+
+- **3X-07** — reset all traffic теперь использует только документированные
+  global/per-inbound routes через `ClientManager`/`InboundManager`.
+- **3X-08** — bulk delete, depleted delete, bulk adjust, bulk reset и restart
+  используют strict `supported/unsupported/failed`; второй write разрешён
+  только после `404/405`.
+- **3X-09** — IP history принимает v3 `{ip,time,node}` и legacy strings,
+  отдаёт backward-compatible `ips` плюс `ip_details`; UI и find-by-ip работают
+  по нормализованному IP.
+- **3X-10** — server config, API tokens и outbound traffic переведены на
+  current `/panel/api/...` routes с no-store для одноразового token response.
+- **3X-11** — restart fallback ограничен отсутствием modern route (`404/405`).
+- **3X-12** — opaque path segments кодируются единым helper, включая legacy
+  update и links/группы/attach/detach/IP/sub-links.
+- **3X-13** — `lastOnline` получает полный map и фильтрует локально.
+- **3X-14** — inbound update выполняет deep merge nested DTO и сохраняет
+  неизвестные XHTTP/Reality поля; failed read не приводит к write.
+- **3X-15** — add/update client передают и сохраняют protocol-specific v3
+  fields (`reverse`, `auth`, key material, `allowedIPs`, `preSharedKey`,
+  `keepAlive`, `secret`, `adTag` и др.).
+- **3X-16** — history metric/bucket валидируются до remote call; ops routes
+  покрыты current v3 contract tests, logs учитывают `405` как route absence.
+- **3X-17** — traffic lookup разрешает UUID/id в email до v3 request.
+- **3X-19** — stale POST status facade делегирует canonical GET monitor.
+
+Проверки closure: backend `306 passed`, Ruff, compileall, frontend Vitest,
+ESLint, TypeScript, i18n и Vite build прошли. ShellCheck и workspace mix-gate
+остаются финальными release gates. Все mutation/live/disposable-node receipts
+намеренно вынесены за отдельное разрешение; production не использовался.

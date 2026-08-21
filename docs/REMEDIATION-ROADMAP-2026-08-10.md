@@ -115,3 +115,21 @@ for the dirty remediation worktree. The later MCP transport detached while
 closing the session; coverage endpoint timed out and graph freshness must be
 treated as separate evidence. No deploy or live-host rollback proof was
 performed.
+
+## 3X parity closure — 2026-08-21
+
+The dependency-ordered Wave A–D implementation from
+[`3XUI-MASTER-DISCREPANCY-REGISTRY-2026-08-21.md`](3XUI-MASTER-DISCREPANCY-REGISTRY-2026-08-21.md)
+is complete locally. The adapters now use current v3 routes/DTOs, preserve
+unknown nested inbound fields, encode opaque path segments, resolve client
+identity before email-addressed traffic operations, and never replay a
+mutation after an operational failure. History parameters are validated before
+node access and token creation responses are explicitly `no-store`.
+
+Local evidence: focused v3 contracts, full backend suite (`306 passed`), Ruff,
+compileall, frontend Vitest, ESLint, TypeScript, i18n and Vite production build
+all pass. Remaining evidence gates are intentionally external: ShellCheck and
+workspace mix-gate before publication, then an explicitly authorised
+disposable-node mutation suite with backup/cleanup receipt. No production
+deployment, node/client/inbound mutation, token creation or SQLite operation
+was performed in this stream.
