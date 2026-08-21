@@ -133,3 +133,20 @@ workspace mix-gate before publication, then an explicitly authorised
 disposable-node mutation suite with backup/cleanup receipt. No production
 deployment, node/client/inbound mutation, token creation or SQLite operation
 was performed in this stream.
+
+## Disposable live acceptance receipt — 2026-08-21
+
+The explicitly authorised disposable-only suite ran against
+`cholera.kleva.ru/x7LaBlIoh2` after the `ea5bf217` merge. A pre-mutation 3x-ui
+SQLite backup was captured (`229376` bytes,
+SHA-256 `da1686560b2fc340deccddbe2c844c11d81738c5ad9b41b0458b18aa61aa0e8c`).
+Current v3 read routes and temporary token, inbound and client mutation flows
+passed, including client email rename, full-object preservation, single/bulk
+traffic reset, finite-expiry `bulkAdjust`, nested inbound preservation,
+setEnable and cleanup. The receipt confirms no marker remained and no error was
+reported:
+`E:\GitHub\workspace\runtime\logs\projects\multiserversubgen\cholera-live-acceptance.json`.
+
+The suite deliberately did not run global traffic reset, depleted-client bulk
+delete or destructive database restore because those operations can affect
+pre-existing data on the panel; they remain separately scoped operations.
