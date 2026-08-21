@@ -1,7 +1,17 @@
-# Multi-Server Manager API Documentation v3.1
+# Multi-Server Manager API Documentation v3.2
+
+**Contract status:** production control-plane contract, verified against the
+current production composition root on 2026-08-21. The experimental
+`backend/modules/*` tree is not the production router authority.
 
 ## Аутентификация
-Защищённые management endpoints требуют Basic Auth (PAM авторизация).
+Защищённые management endpoints принимают Basic Auth (PAM авторизация). Для
+browser-панели Basic Auth используется только для bootstrap: успешный
+`POST /api/v1/auth/session` создаёт восьмичасовую подписанную cookie с
+`HttpOnly`, `Secure` и `SameSite=Strict`; после этого same-origin запросы
+используют сессию без хранения пароля в browser storage. `POST
+/api/v1/auth/logout` удаляет cookie.
+
 Исключения: health (`/health`, `/api/v1/health`), MFA status
 (`/api/v1/auth/mfa-status`) и subscription delivery endpoints. Последние
 принимают постоянный opaque token, сохранённый сервером, а не raw email или
@@ -33,6 +43,9 @@ Authorization: Basic base64(username:password)
 ### `GET /api/v1/nodes`
 Получить список всех серверов
 
+Ответ — JSON-массив. Пароль, bearer token и расшифрованные секреты намеренно
+не возвращаются.
+
 **Response:**
 ```json
 [
@@ -41,9 +54,11 @@ Authorization: Basic base64(username:password)
     "name": "Server-NL",
     "ip": "123.45.67.89",
     "port": "443",
-    "user": "admin",
-    "password": "decrypted_password",
-    "base_path": ""
+    "username": "admin",
+    "panel_url": "https://123.45.67.89:443/path",
+    "base_path": "path",
+    "read_only": false,
+    "tags": []
   }
 ]
 ```
@@ -60,6 +75,22 @@ Authorization: Basic base64(username:password)
   "password": "password123"
 }
 ```
+
+Нужен либо `bearer_token`, либо пара `user` + `password`. Одновременно
+передавать bearer и credential-пару нельзя.
+
+### `PUT /api/v1/nodes/{node_id}`
+
+Частично обновить узел. Разрешены `name`, `url`, `user`, `password`,
+`bearer_token`, `read_only` и `tags`.
+
+- Пустые secret-поля означают ошибку, а отсутствующие secret-поля сохраняют
+  текущие значения.
+- `password` можно заменить без повторной передачи `user` для credential-node.
+- Для замены bearer-а на credential-пару нужны одновременно `user` и
+  `password`.
+- При смене URL или способа аутентификации сбрасываются session/auth и
+  capability cache этой ноды.
 
 ### `DELETE /api/v1/nodes/{node_id}`
 Удалить сервер
@@ -372,13 +403,15 @@ Authorization: Basic base64(username:password)
 ## 💾 Backup & Restore
 
 ### `GET /api/v1/backup/database/{node_id}`
-Получить резервную копию базы данных с сервера
+Получить резервную копию базы данных с сервера в JSON-обёртке с base64 body.
+Это management/API-контракт, не лёгкий metadata endpoint.
 
 **Response:**
 ```json
 {
   "node": "Server-NL",
-  "backup": "base64_encoded_data",
+  "backup_b64": "base64_encoded_data",
+  "encoding": "base64",
   "timestamp": "2026-02-20T22:52:00"
 }
 ```
@@ -393,8 +426,23 @@ Authorization: Basic base64(username:password)
 }
 ```
 
+### `GET /api/v1/backup/node/{node_id}`
+
+Скачать один backup как binary SQLite-файл. Этот путь используется UI для
+явного download и отдаёт `Cache-Control: no-store`.
+
+### `POST /api/v1/backup/node/{node_id}/import`
+
+Импортировать загруженный multipart-файл в поле `file`. Операция заменяет базу
+ноды и требует явного подтверждения в UI. UI ограничивает file picker
+расширениями `.db`, `.sqlite` и `.sqlite3`; текущий API принимает непустое тело
+до 8 MiB и пока не валидирует filename, MIME type или SQLite signature.
+
 ### `GET /api/v1/backup/all`
-Получить резервные копии баз данных со всех серверов
+Скачать ZIP с резервными копиями всех серверов. По умолчанию ответ — binary
+ZIP. `?format=json` — legacy management режим, который содержит полные base64
+database bodies для всех нод; он не должен использоваться для initial render
+или списка в UI.
 
 ---
 
@@ -509,5 +557,5 @@ response = requests.post(f"{BASE_URL}/api/v1/clients/batch-add", json=data, auth
 
 ---
 
-**Версия:** 3.1  
-**Дата:** 20.02.2026
+**Версия:** 3.2
+**Дата контракта:** 21.08.2026
