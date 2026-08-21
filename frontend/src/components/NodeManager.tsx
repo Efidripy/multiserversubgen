@@ -42,6 +42,8 @@ interface NodeManagerProps {
   dashboardMode?: boolean;
   includeCounts?: boolean;
   openIntakeSignal?: number;
+  editNode?: NodeRecord | null;
+  openEditSignal?: number;
 }
 
 const NODE_STATUS_CACHE_KEY = 'sub_manager_node_status_cache_v1';
@@ -96,6 +98,8 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
   dashboardMode = false,
   includeCounts,
   openIntakeSignal,
+  editNode,
+  openEditSignal,
 }) => {
   const { colors } = useTheme();
   const { toast } = useToast();
@@ -187,6 +191,15 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
     setError('');
     setShowForm(true);
   }, [openIntakeSignal, resetIntake, setError, setSuccess]);
+
+  useEffect(() => {
+    if (openEditSignal === undefined || openEditSignal <= 0 || !editNode) return;
+    setEditingNode(editNode);
+    setEditingForm(nodeToEditForm(editNode));
+    setError('');
+    setSuccess('');
+    setShowEditModal(true);
+  }, [editNode, openEditSignal, setError, setSuccess]);
 
   useEffect(() => {
     try {
