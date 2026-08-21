@@ -110,6 +110,25 @@ subscription links and all DB/backup/import/update routes are feature-specific
 contracts. They remain version-agnostic and must be tested only through an
 explicit mutation-capable maintenance plan; P1 does not execute them remotely.
 
+## P2 — client update mutation safety
+
+The upstream v3.6.0 controller binds `model.Client` for
+`POST /panel/api/clients/update/{email}`. It is a replacement contract, not a
+PATCH. It also accepts optional `?inboundIds=<id>` to restrict a change to one
+attachment; omitting it applies the update across the client's attachments.
+
+The control-plane therefore performs a read-before-write within one existing
+authenticated session: it obtains the v3 list record, maps its `uuid` to the
+write-model `id`, preserves the current client fields and overlays only known
+requested updates. A single-inbound edit includes `inboundIds`; bulk enable
+keeps its intentional global scope. An absent v3 list route (`404/405`) still
+uses the v2 adapter; malformed/error responses stop before any write.
+
+The proof is mock-only in `backend/tests/test_client_v3_contract.py`. No live
+panel, disposable node, client, inbound or production data was changed. A
+live mutation check remains a separate authorised maintenance action with a
+disposable node/client and an explicit cleanup receipt.
+
 ## P1 — read-only Xray 26 configuration audit
 
 The audit consumes only the normalized result of `GET /panel/api/inbounds/list`

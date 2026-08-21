@@ -45,6 +45,7 @@ receipt is an external prerequisite; code work can continue independently.
 | UX-01 | P1 | Russian locale renders as UTF-8, and node editing can safely update an endpoint and credentials without exposing stored secrets. | Locale-integrity and node-edit unit tests; router contract tests; frontend/backend package gates and authenticated browser smoke after rollout. |
 | 3X-01 | P0 | The control-plane authenticates against current 3x-ui and reads online/traffic data through supported API routes. | CSRF JSON-login regression, modern-first route regressions, upstream/live OpenAPI audit and production read-only smoke. |
 | 3X-02 | P1 | Per-node runtime capabilities, redacted diagnostics and a read-only Xray 26 compatibility audit prevent panel-version drift from creating silent failures. | Capability cache/fallback/invalidation regressions, Xray analyzer regression, UI build and production snapshot/UI receipt. |
+| 3X-03 | P2 | Current 3x-ui client updates preserve the complete remote client object and scope a one-inbound change instead of accidentally replacing unrelated fields or attachments. | Isolated v3 mock contract tests, backend package gates and a separately authorised disposable-node mutation test. |
 
 ## Initial evidence
 
@@ -86,11 +87,14 @@ remains a historical snapshot.
 | UX-01 | deployed with read-only production proof | Repaired the damaged `ru.json` selectively from Windows-1252 mojibake, replaced the unrecoverable `?` runs, and added locale parity/integrity tests. The node edit dialog now pre-fills only non-secret connection data; it updates URL, port, username, password or bearer token through partial `PUT`, and empty secret fields preserve stored credentials. The router validates canonical endpoint fields, permits password-only rotation for credential-based nodes, rejects empty/mixed auth updates and invalidates both old and new endpoint caches. The `Registered fleet` Edit action now passes the selected node to that dialog instead of incorrectly opening the add-node form. Atomic rollout of `4bbfa1d` created `/var/backups/sub-manager_deploy/project_20260821T110452Z-4bbfa1de1b80.tgz`; service, health, Nginx, SQLite integrity/count (`9` nodes, `9` snapshots, `87` tokens) and backup SHA-256 matched. Authenticated browser proof opened `185-RF-E` with populated label, URL, port and username; password remained blank and no node was saved or changed. |
 | 3X-01 | deployed with production receipt | `docs/3XUI-COMPATIBILITY-AUDIT-2026-08-21.md` records the upstream v3.6.0 and installed-panel contract evidence. CSRF login sends JSON credentials, and monitoring prefers `clients/onlines` / `clients/traffic` with a bounded legacy fallback. `f10b153` was released through the rollback-first helper; backup SHA-256, service/health/Nginx, SQLite integrity/counts, deployed source hashes and authenticated browser Monitoring proof passed. No node/panel data or schema was changed. |
 | 3X-02 | deployed with production receipt | Adds an ephemeral per-node capability registry with TTL and edit invalidation, treats probe `404/405` as endpoint absence rather than forced re-auth, emits redacted actionable failure codes, and scans existing inbound-list snapshots for Xray 26 compatibility. The scanner stores only aggregate finding codes/counts in existing snapshot JSON and preserves unknown current XHTTP fields in the form editor. Atomic `d293c2e` rollout validated its backup SHA, service/health/Nginx, SQLite integrity/counts and deployed source hashes; first read-only collector pass found eight `ok` snapshots and one XHTTP legacy-key migration warning. No config write, node mutation, DDL or schema migration occurred; detailed evidence is in `docs/3XUI-COMPATIBILITY-AUDIT-2026-08-21.md`. |
+| 3X-03 | implemented locally; production rollout pending | Current 3x-ui binds a full `model.Client` to `clients/update/{email}` rather than applying a PATCH. The adapter now reads the authenticated v3 client list, preserves the complete current client object (including protocol-specific material), overlays recognised control-plane fields and scopes an individual update with `?inboundIds=<id>`. Read failure causes no write; missing v3 routes retain the v2 fallback. Mock-only contract tests cover retained fields, email rename, inbound scope and no-write failure. Live validation requires an explicitly authorised disposable node and client. |
 
-Current validation receipt: backend `228 passed`, Ruff and compileall pass;
-frontend Vitest `9 passed`, ESLint, TypeScript, i18n, Vite build and production
-`npm audit` pass (`0 vulnerabilities`). Full tracked-shell `shellcheck -S error`
-and `git diff --check` pass. Workspace mix-gate: `21 PASS / 0 WARN / 0 FAIL`.
+P2-C validation receipt: backend `258 passed`, Ruff and compileall pass;
+frontend Vitest `9 files / 22 tests`, ESLint, TypeScript, i18n and Vite build
+pass. Full tracked-shell `shellcheck -S error` and `git diff --check` pass.
+Workspace mix-gate is also required before merge. The earlier production
+`npm audit` receipt remains historical and is not re-claimed by this local-only
+change.
 At validation time BHM health was healthy with native MCP attached; repository
 index status reported fresh snapshot `snapshot_bhm_151e0a4d75cd31946722f1aa`
 for the dirty remediation worktree. The later MCP transport detached while
