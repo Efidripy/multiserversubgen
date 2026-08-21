@@ -148,3 +148,25 @@ endpoint.
 ESLint, TypeScript, i18n и Vite build прошли. ShellCheck и workspace mix-gate
 остаются финальными release gates. Все mutation/live/disposable-node receipts
 намеренно вынесены за отдельное разрешение; production не использовался.
+
+## Disposable live acceptance — 2026-08-21
+
+После явного разрешения пользователя выполнен disposable-only прогон на
+`cholera.kleva.ru/x7LaBlIoh2`. Production `dev.kleva.ru` не использовался.
+
+- Backup до mutation: `229376` bytes,
+  SHA-256 `da1686560b2fc340deccddbe2c844c11d81738c5ad9b41b0458b18aa61aa0e8c`.
+- Read contracts: config, history (`cpu/360`), logs, outbound traffic, API
+  token list, client links, IP history и `lastOnline` — pass.
+- Mutation contracts: temporary API token create/enable/disable/delete;
+  inbound add/update/setEnable/reset/delete; client add/update/email rename,
+  single reset, bulk reset, finite-expiry bulk adjust и delete — pass.
+- Inbound unknown nested marker сохранён после full update; runtime API version
+  подтверждён как `v3`.
+- Cleanup: temporary token/client/inbound удалены, `marker_remaining=false`,
+  ошибок нет.
+
+Receipt: `E:\GitHub\workspace\runtime\logs\projects\multiserversubgen\cholera-live-acceptance.json`.
+Global reset всех inbound’ов, `delDepleted` и destructive database restore не
+запускались, поскольку они затрагивают существующие данные ноды и требуют
+отдельного scope; это не снижает доказательство временного-object suite.
