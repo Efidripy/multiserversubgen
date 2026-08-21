@@ -392,7 +392,10 @@ class ClientManager:
             )
             if res.status_code in (404, 405):
                 return None  # v2 fallback only when the v3 route is absent
-            return self._xui_success(res)
+            if res.status_code != 200:
+                return False
+            data = res.json()
+            return isinstance(data, dict) and data.get("success") is True
         except Exception as exc:
             logger.warning("v3 reset_client_traffic failed: %s", exc)
             return False
@@ -1325,7 +1328,12 @@ class ClientManager:
     # ---------------------------------------------------------------------------
 
     def bulk_reset_traffic(self, nodes: List[Dict], emails: List[str]) -> Dict:
-        """POST /panel/api/clients/bulkResetTraffic — reset traffic for specific emails."""
+        """Reset specific clients via the current 3x-ui bulk-reset contract.
+
+        Only a missing bulk route (404/405) permits the documented v3
+        single-client route.  This method has no inbound IDs, so it must never
+        guess or call the legacy inbound reset endpoint.
+        """
         successful = 0
         failed = 0
         for node in nodes:
@@ -1337,19 +1345,27 @@ class ClientManager:
                 continue
             try:
                 res = xui_request(s, "POST", f"{base_url}/panel/api/clients/bulkResetTraffic", json={"emails": emails})
-                if res.status_code == 200 and res.json().get("success"):
-                    successful += len(emails)
-                else:
-                    # Fall back: reset individually
-                    for email in emails:
-                        try:
-                            r2 = xui_request(s, "POST", f"{base_url}/panel/api/clients/resetClientTraffic/{quote(str(email), safe='')}")
-                            if r2.status_code == 200 and r2.json().get("success"):
-                                successful += 1
-                            else:
-                                failed += 1
-                        except Exception:
-                            failed += 1
+                if res.status_code == 200:
+                    data = res.json()
+                    if isinstance(data, dict) and data.get("success") is True:
+                        successful += len(emails)
+                    else:
+                        failed += len(emails)
+                    continue
+
+                if res.status_code not in (404, 405):
+                    failed += len(emails)
+                    continue
+
+                # A missing batch route can be adapted only to the documented
+                # v3 email-addressed route.  No inbound ID is available for a
+                # safe v2 request, so an absent single route remains failed.
+                for email in emails:
+                    result = self._reset_client_traffic_v3(s, base_url, email)
+                    if result is True:
+                        successful += 1
+                    else:
+                        failed += 1
             except Exception as exc:
                 logger.debug("bulk_reset_traffic failed for %s: %s", node["name"], exc)
                 failed += len(emails)
