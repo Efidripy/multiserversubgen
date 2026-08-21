@@ -39,6 +39,25 @@ logger = logging.getLogger("sub_manager")
 VERIFY_TLS = os.getenv("VERIFY_TLS", "true").strip().lower() in ("1", "true", "yes", "on")
 CA_BUNDLE_PATH = os.getenv("CA_BUNDLE_PATH", "").strip()
 
+SERVER_HISTORY_METRICS = frozenset({
+    "cpu", "mem", "netUp", "netDown", "online", "load1", "load5", "load15",
+})
+SERVER_HISTORY_BUCKETS = frozenset({2, 30, 60, 180, 360, 720, 1440, 2880, 10080})
+
+
+def validate_server_history_request(metric: str, bucket: int | str) -> tuple[str, int]:
+    """Validate documented v3 history path parameters before a node request."""
+    normalized_metric = str(metric or "")
+    try:
+        normalized_bucket = int(bucket)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid history bucket") from exc
+    if normalized_metric not in SERVER_HISTORY_METRICS:
+        raise ValueError("invalid history metric")
+    if normalized_bucket not in SERVER_HISTORY_BUCKETS:
+        raise ValueError("invalid history bucket")
+    return normalized_metric, normalized_bucket
+
 
 def _requests_verify_value():
     if not VERIFY_TLS:
@@ -578,57 +597,13 @@ class ServerMonitor:
         return s, base_url
     
     def get_server_status(self, node: Dict) -> Dict:
-        """Получить статус системы сервера
-        
-        Args:
-            node: Конфигурация узла
-            
-        Returns:
-            Словарь со статусом системы (CPU, RAM, диск, uptime, core service)
+        """Compatibility facade for the current GET-only status adapter.
+
+        ``ThreeXUIMonitor`` is the canonical implementation.  Keeping this
+        public method as a delegation preserves callers of ``ServerMonitor``
+        without maintaining a stale POST-based status contract in parallel.
         """
-        s, base_url = self._get_session(node)
-        if not s:
-            return {
-                "node": node["name"],
-                "available": False,
-                "error": "Failed to connect"
-            }
-        
-        try:
-            # Primary API endpoint for node panel panel (panel/api path)
-            primary_url = join_panel_url(base_url, "/panel/api/server/status")
-            res = xui_request(s, "POST", primary_url)
-            
-            if res.status_code == 404:
-                # Fallback for older node panel versions
-                fallback_url = join_panel_url(base_url, "/server/status")
-                logger.debug(f"Primary endpoint 404, falling back to {fallback_url}")
-                res = xui_request(s, "POST", fallback_url)
-            
-            if res.status_code != 200:
-                logger.warning(
-                    f"Server status request to {node['name']} returned {res.status_code}; "
-                    f"url={res.url}; body={res.text[:200]!r}"
-                )
-            
-            if res.status_code == 200:
-                data = res.json()
-                
-                if data.get("success"):
-                    return _normalize_3xui_status(node, data.get("obj", {}))
-            
-            return {
-                "node": node["name"],
-                "available": False,
-                "error": f"API returned status {res.status_code}"
-            }
-        except Exception as exc:
-            logger.warning(f"Failed to get status from {node['name']}: {exc}")
-            return {
-                "node": node["name"],
-                "available": False,
-                "error": str(exc)
-            }
+        return ThreeXUIMonitor(self.decrypt).get_server_status(node)
     
     def get_all_servers_status(self, nodes: List[Dict]) -> List[Dict]:
         """Получить статус всех серверов
@@ -706,11 +681,15 @@ class ServerMonitor:
             return {"error": "Failed to connect"}
         
         try:
-            res = xui_request(s, "POST", f"{base_url}/xui/API/inbounds/get")
+            res = xui_request(s, "GET", f"{base_url}/panel/api/server/getConfigJson")
             
             if res.status_code == 200:
                 data = res.json()
-                return data
+                if isinstance(data, dict) and data.get("success"):
+                    return data
+                if isinstance(data, dict):
+                    return {"error": data.get("msg") or "API returned unsuccessful response"}
+                return {"error": "API returned malformed response"}
             
             return {"error": f"API returned status {res.status_code}"}
         except Exception as exc:
@@ -733,33 +712,26 @@ class ServerMonitor:
         if not s:
             return False
         
+        modern_endpoint = f"{base_url}/panel/api/server/restartXrayService"
+        legacy_endpoint = f"{base_url}/server/restartXrayService"
         try:
-            endpoints = [
-                f"{base_url}/panel/api/server/restartXrayService",
-                f"{base_url}/server/restartXrayService",
-            ]
-            for endpoint in endpoints:
-                try:
-                    res = xui_request(s, "POST", endpoint, timeout=15)
-                except Exception:
-                    continue
-                if res.status_code != 200:
-                    continue
-                try:
-                    data = res.json()
-                    # x-ui can return 200 with {"success": false}
-                    if isinstance(data, dict) and "success" in data:
-                        if bool(data.get("success")):
-                            return True
-                        continue
-                except Exception:
-                    # Older variants may return non-JSON on success.
-                    return True
-                return True
-            return False
+            modern_response = xui_request(s, "POST", modern_endpoint, timeout=15)
         except Exception as exc:
-            logger.warning(f"Failed to restart core service on {node['name']}: {exc}")
+            logger.warning("Restart Xray request failed for %s: %s", node["name"], exc)
             return False
+
+        if modern_response.status_code not in (404, 405):
+            # A reachable modern endpoint is terminal even when it reports an
+            # application failure. Retrying via legacy can perform a second
+            # restart after an ambiguous first write.
+            return self._xui_success(modern_response)
+
+        try:
+            legacy_response = xui_request(s, "POST", legacy_endpoint, timeout=15)
+        except Exception as exc:
+            logger.warning("Legacy restart Xray request failed for %s: %s", node["name"], exc)
+            return False
+        return self._xui_success(legacy_response)
     
     def get_server_logs(self, node: Dict, count: int = 100, level: str = "info") -> Dict:
         """Получить логи сервера
@@ -786,7 +758,7 @@ class ServerMonitor:
                 candidate = xui_request(s, "POST",
                                         f"{base_url}/panel/api/server/logs/{count}",
                                         json=body, timeout=15)
-                if candidate.status_code != 404:
+                if candidate.status_code not in (404, 405):
                     res = candidate
             except Exception:
                 pass
@@ -801,7 +773,7 @@ class ServerMonitor:
                             candidate = xui_request(s, "POST", ep, json=payload_v2)
                         except Exception:
                             continue
-                        if candidate.status_code != 404:
+                        if candidate.status_code not in (404, 405):
                             res = candidate
                             break
                 except Exception:
@@ -840,7 +812,7 @@ class ServerMonitor:
         try:
             # 3x-ui modern endpoint: /panel/api/server/getDb
             res = xui_request(s, "GET", f"{base_url}/panel/api/server/getDb", timeout=15)
-            if res.status_code == 404:
+            if res.status_code in (404, 405):
                 # fallback for old panels
                 res = xui_request(s, "GET", f"{base_url}/server/getDb", timeout=15)
             
@@ -911,7 +883,7 @@ class ServerMonitor:
                 files={"db": ("backup.db", raw_bytes, "application/octet-stream")},
                 timeout=30,
             )
-            if res.status_code == 404:
+            if res.status_code in (404, 405):
                 # fallback for older nodes
                 res = xui_request(
                     s,
@@ -930,15 +902,19 @@ class ServerMonitor:
             logger.warning(f"Failed to import database to {node['name']}: {exc}")
             return False
 
-    def get_server_history(self, node: Dict, metric: str, bucket: str = "5m") -> Dict:
+    def get_server_history(self, node: Dict, metric: str, bucket: int | str = 360) -> Dict:
         """Получить время-серию метрики сервера.
 
         Endpoint: GET /panel/api/server/history/{metric}/{bucket}
         Возвращает [{t: timestamp, v: value}, ...]
 
-        Примеры metric: cpu, mem, disk, netSent, netRecv, tcpCount
-        Примеры bucket: 1m, 5m, 15m, 1h, 6h, 24h
+        Допустимые metric: cpu, mem, netUp, netDown, online, load1, load5, load15.
+        Допустимые bucket (секунды): 2, 30, 60, 180, 360, 720, 1440, 2880, 10080.
         """
+        try:
+            metric, bucket = validate_server_history_request(metric, bucket)
+        except ValueError as exc:
+            return {"node": node["name"], "error": str(exc), "data": []}
         s, base_url, login_result = self._normalize_session_result(self._get_session(node))
         if not s:
             return {"node": node["name"], "error": login_result.get("error", "login failed"), "data": []}
@@ -999,13 +975,13 @@ class ServerMonitor:
     def get_api_tokens(self, node: Dict) -> Dict:
         """Получить список API токенов панели.
 
-        Endpoint: GET /panel/setting/apiTokens
+        Endpoint: GET /panel/api/setting/apiTokens
         """
         s, base_url, login_result = self._normalize_session_result(self._get_session(node))
         if not s:
             return {"node": node["name"], "error": login_result.get("error"), "tokens": []}
         try:
-            res = xui_request(s, "GET", f"{base_url}/panel/setting/apiTokens")
+            res = xui_request(s, "GET", f"{base_url}/panel/api/setting/apiTokens")
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
@@ -1018,15 +994,17 @@ class ServerMonitor:
     def create_api_token(self, node: Dict, name: str) -> Dict:
         """Создать новый API токен на панели.
 
-        Endpoint: POST /panel/setting/apiTokens/create
+        Endpoint: POST /panel/api/setting/apiTokens/create
         Возвращает {"token": "...", "id": N} при успехе.
         """
+        if self._is_read_only(node):
+            return {"error": "read-only"}
         s, base_url, login_result = self._normalize_session_result(self._get_session(node))
         if not s:
             return {"error": login_result.get("error")}
         try:
             res = xui_request(s, "POST",
-                              f"{base_url}/panel/setting/apiTokens/create",
+                              f"{base_url}/panel/api/setting/apiTokens/create",
                               json={"name": name})
             if res.status_code == 200:
                 data = res.json()
@@ -1157,7 +1135,7 @@ class ServerMonitor:
         if not s:
             return {"error": r.get("error"), "outbounds": []}
         try:
-            res = xui_request(s, "GET", f"{base_url}/panel/xray/getOutboundsTraffic")
+            res = xui_request(s, "GET", f"{base_url}/panel/api/xray/getOutboundsTraffic")
             if res.status_code == 200:
                 data = res.json()
                 if data.get("success"):
@@ -1223,6 +1201,8 @@ class ServerMonitor:
             return {"error": str(exc)}
 
     def backup_to_telegram(self, node):
+        if self._is_read_only(node):
+            return {"error": "read-only"}
         s, base_url, r = self._normalize_session_result(self._get_session(node))
         if not s:
             return {"error": r.get("error")}
@@ -1236,23 +1216,27 @@ class ServerMonitor:
             return {"error": str(exc)}
 
     def delete_api_token(self, node, token_id: int):
+        if self._is_read_only(node):
+            return False
         s, base_url, r = self._normalize_session_result(self._get_session(node))
         if not s:
             return False
         try:
-            res = xui_request(s, "POST", f"{base_url}/panel/setting/apiTokens/delete/{token_id}")
+            res = xui_request(s, "POST", f"{base_url}/panel/api/setting/apiTokens/delete/{token_id}")
             return self._xui_success(res)
         except Exception as exc:
             logger.warning("delete_api_token %s: %s", node["name"], exc)
             return False
 
     def set_api_token_enabled(self, node, token_id: int, enabled: bool):
+        if self._is_read_only(node):
+            return False
         s, base_url, r = self._normalize_session_result(self._get_session(node))
         if not s:
             return False
         try:
             res = xui_request(s, "POST",
-                              f"{base_url}/panel/setting/apiTokens/setEnabled/{token_id}",
+                              f"{base_url}/panel/api/setting/apiTokens/setEnabled/{token_id}",
                               json={"enabled": enabled})
             return self._xui_success(res)
         except Exception as exc:

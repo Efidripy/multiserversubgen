@@ -2,6 +2,8 @@
 from typing import Dict
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse
+from server_monitor import validate_server_history_request
 
 
 def build_server_ops_router(
@@ -21,11 +23,15 @@ def build_server_ops_router(
 
     @router.get("/api/v1/nodes/{node_id}/server-history/{metric}")
     async def get_server_history(
-        request: Request, node_id: int, metric: str, bucket: str = "5m"
+        request: Request, node_id: int, metric: str, bucket: int = 360
     ):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        try:
+            metric, bucket = validate_server_history_request(metric, bucket)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         node = await _node(node_id)
         return await _run(server_monitor.get_server_history, node, metric, bucket)
 
@@ -65,7 +71,9 @@ def build_server_ops_router(
         result = await _run(server_monitor.create_api_token, node, name)
         if "error" in result:
             raise HTTPException(status_code=500, detail=result["error"])
-        return result
+        # Token plaintext is returned by 3x-ui only once; intermediaries and
+        # browsers must not retain it after this response.
+        return JSONResponse(content=result, headers={"Cache-Control": "no-store"})
 
     @router.get("/api/v1/nodes/{node_id}/server-logs")
     async def get_server_logs(

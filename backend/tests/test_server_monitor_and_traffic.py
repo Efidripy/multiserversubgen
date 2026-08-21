@@ -31,7 +31,7 @@ def _make_response(status_code, body=None, url=None):
 # ---------------------------------------------------------------------------
 
 class TestServerMonitorEndpoint:
-    """Verify that get_server_status uses the correct node panel API endpoint."""
+    """The legacy facade must delegate to the canonical v3 GET adapter."""
 
     def _build_monitor(self):
         from server_monitor import ServerMonitor
@@ -42,89 +42,14 @@ class TestServerMonitorEndpoint:
         return {"name": "n1", "ip": "1.2.3.4", "port": 443,
                 "base_path": "", "user": "admin", "password": "pass"}
 
-    def test_primary_endpoint_called_first(self):
+    def test_status_facade_delegates_to_three_xui_monitor(self):
         monitor = self._build_monitor()
-        success_body = {
-            "success": True,
-            "obj": {
-                "cpu": 10,
-                "mem": {"current": 512, "total": 1024},
-                "disk": {"current": 5, "total": 100},
-                "swap": {"current": 0, "total": 0},
-                "uptime": 3600,
-                "loads": [0.1],
-                "xray": {"state": "running", "version": "1.8", "uptime": 100},
-                "netTraffic": {"sent": 1000, "recv": 2000},
-            }
-        }
-        mock_resp = _make_response(200, success_body)
-
-        with patch.object(monitor, '_get_session') as mock_gs:
-            sess = MagicMock()
-            mock_gs.return_value = (sess, "https://1.2.3.4:443")
-            with patch("server_monitor.xui_request", return_value=mock_resp) as mock_xui:
-                result = monitor.get_server_status(self._node())
-
-        # Primary endpoint must be used
-        mock_xui.assert_called_once_with(
-            sess, "POST", "https://1.2.3.4:443/panel/api/server/status"
-        )
-        assert result["available"] is True
-        assert result["xray"]["running"] is True
-
-    def test_fallback_to_old_endpoint_on_404(self):
-        monitor = self._build_monitor()
-        success_body = {
-            "success": True,
-            "obj": {
-                "cpu": 5,
-                "mem": {"current": 256, "total": 1024},
-                "disk": {"current": 10, "total": 200},
-                "swap": {"current": 0, "total": 0},
-                "uptime": 1800,
-                "loads": [],
-                "xray": {"state": "running", "version": "1.7", "uptime": 50},
-                "netTraffic": {"sent": 0, "recv": 0},
-            }
-        }
-        resp_404 = _make_response(404)
-        resp_200 = _make_response(200, success_body)
-
-        with patch.object(monitor, '_get_session') as mock_gs:
-            sess = MagicMock()
-            mock_gs.return_value = (sess, "https://1.2.3.4:443")
-            with patch("server_monitor.xui_request", side_effect=[resp_404, resp_200]) as mock_xui:
-                result = monitor.get_server_status(self._node())
-
-        calls = mock_xui.call_args_list
-        assert calls[0] == call(sess, "POST", "https://1.2.3.4:443/panel/api/server/status")
-        assert calls[1] == call(sess, "POST", "https://1.2.3.4:443/server/status")
-        assert result["available"] is True
-
-    def test_non_200_non_404_returns_unavailable_and_logs(self, caplog):
-        import logging
-        monitor = self._build_monitor()
-        resp_500 = _make_response(500)
-        resp_500.text = "Internal Server Error"
-
-        with patch.object(monitor, '_get_session') as mock_gs:
-            sess = MagicMock()
-            mock_gs.return_value = (sess, "https://1.2.3.4:443")
-            with patch("server_monitor.xui_request", return_value=resp_500):
-                with caplog.at_level(logging.WARNING, logger="sub_manager"):
-                    result = monitor.get_server_status(self._node())
-
-        assert result["available"] is False
-        assert "500" in result["error"]
-        # Warning log should mention status code
-        assert any("500" in r.message for r in caplog.records)
-
-    def test_login_failure_returns_unavailable(self):
-        monitor = self._build_monitor()
-        with patch.object(monitor, '_get_session') as mock_gs:
-            mock_gs.return_value = (None, None)
+        expected = {"node": "n1", "available": True, "source": "three-x-ui"}
+        with patch("server_monitor.ThreeXUIMonitor.get_server_status", return_value=expected) as delegated:
             result = monitor.get_server_status(self._node())
-        assert result["available"] is False
+
+        delegated.assert_called_once_with(self._node())
+        assert result is expected
 
 
 # ---------------------------------------------------------------------------

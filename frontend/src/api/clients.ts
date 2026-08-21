@@ -3,9 +3,17 @@ import { getAuth } from '../auth';
 
 export type ClientSourceFilter = 'all' | 'expired' | 'depleted';
 
+export interface ClientIpDetail {
+  ip: string;
+  time?: number | string;
+  node?: string;
+}
+
 export interface ClientIpHistoryEntry {
   node: string;
   ips: string[];
+  /** Present for current 3x-ui DTOs; `ips` remains the stable legacy shape. */
+  ip_details?: ClientIpDetail[];
 }
 
 export interface ClientIpHistoryResponse {
