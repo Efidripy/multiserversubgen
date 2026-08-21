@@ -181,6 +181,108 @@ def test_v3_reset_client_traffic_does_not_downgrade_on_reachable_route_failure()
     invalidate_node_api_version(base_url)
 
 
+def test_v3_bulk_reset_uses_documented_bulk_route_on_success():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    emails = ["first@example.test", "second@example.test"]
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", return_value=_response(200, {"success": True})
+    ) as request:
+        assert manager.bulk_reset_traffic([_node()], emails) == {
+            "successful": 2,
+            "failed": 0,
+            "total": 2,
+        }
+
+    assert request.call_count == 1
+    assert request.call_args.args[1:] == ("POST", f"{base_url}/panel/api/clients/bulkResetTraffic")
+    assert request.call_args.kwargs == {"json": {"emails": emails}}
+
+
+def test_v3_bulk_reset_does_not_retry_a_reachable_failure_through_another_route():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", return_value=_response(503)
+    ) as request:
+        assert manager.bulk_reset_traffic([_node()], ["first@example.test", "second@example.test"]) == {
+            "successful": 0,
+            "failed": 2,
+            "total": 2,
+        }
+
+    assert request.call_count == 1
+    assert request.call_args.args[1:] == ("POST", f"{base_url}/panel/api/clients/bulkResetTraffic")
+
+
+def test_v3_bulk_reset_rejects_a_non_success_payload_without_a_retry():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", return_value=_response(200, {"success": False})
+    ) as request:
+        assert manager.bulk_reset_traffic([_node()], ["first@example.test"]) == {
+            "successful": 0,
+            "failed": 1,
+            "total": 1,
+        }
+
+    assert request.call_count == 1
+    assert request.call_args.args[1:] == ("POST", f"{base_url}/panel/api/clients/bulkResetTraffic")
+
+
+def test_v3_bulk_reset_uses_single_v3_route_only_after_bulk_route_is_absent():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    emails = ["first+name@example.test", "second@example.test"]
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request",
+        side_effect=[_response(404), _response(200, {"success": True}), _response(200, {"success": True})],
+    ) as request:
+        assert manager.bulk_reset_traffic([_node()], emails) == {
+            "successful": 2,
+            "failed": 0,
+            "total": 2,
+        }
+
+    bulk_call, first_single_call, second_single_call = request.call_args_list
+    assert bulk_call.args[1:] == ("POST", f"{base_url}/panel/api/clients/bulkResetTraffic")
+    assert first_single_call.args[1:] == (
+        "POST", f"{base_url}/panel/api/clients/resetTraffic/first%2Bname%40example.test"
+    )
+    assert second_single_call.args[1:] == (
+        "POST", f"{base_url}/panel/api/clients/resetTraffic/second%40example.test"
+    )
+
+
+def test_v3_bulk_reset_never_guesses_a_legacy_inbound_request_when_single_route_is_absent():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", side_effect=[_response(405), _response(404)]
+    ) as request:
+        assert manager.bulk_reset_traffic([_node()], ["first@example.test"]) == {
+            "successful": 0,
+            "failed": 1,
+            "total": 1,
+        }
+
+    assert [call.args[2] for call in request.call_args_list] == [
+        f"{base_url}/panel/api/clients/bulkResetTraffic",
+        f"{base_url}/panel/api/clients/resetTraffic/first%40example.test",
+    ]
+
+
 def test_v3_delete_resolves_uuid_to_current_encoded_email_before_write():
     from client_manager import ClientManager
     from xui_session import invalidate_node_api_version, set_node_api_version
