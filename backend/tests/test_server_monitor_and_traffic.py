@@ -567,6 +567,34 @@ class TestThreeXUIMonitor:
             "/panel/api/inbounds/onlines",
         ]
 
+    def test_online_capability_cache_skips_repeat_probe_of_missing_modern_route(self):
+        from xui_session import invalidate_node_capabilities, make_node_key_for_node
+
+        node = self._node()
+        invalidate_node_capabilities(make_node_key_for_node(node))
+        modern_missing = _make_response(404, {"success": False})
+        legacy_available = _make_response(200, {"success": True, "obj": ["user@a.com"]})
+        ok = {"ok": True, "reason": "ok", "error": ""}
+        monitor = self._build_monitor()
+        with patch.object(
+            monitor,
+            "_request_with_reauth",
+            side_effect=[
+                (modern_missing, "https://1.2.3.4:443", ok),
+                (legacy_available, "https://1.2.3.4:443", ok),
+                (legacy_available, "https://1.2.3.4:443", ok),
+            ],
+        ) as request:
+            assert monitor.get_online_clients(node)["available"] is True
+            assert monitor.get_online_clients(node)["available"] is True
+
+        assert [call.args[2] for call in request.call_args_list] == [
+            "/panel/api/clients/onlines",
+            "/panel/api/inbounds/onlines",
+            "/panel/api/inbounds/onlines",
+        ]
+        invalidate_node_capabilities(make_node_key_for_node(node))
+
     def test_get_client_traffic_prefers_modern_clients_endpoint(self):
         monitor = self._build_monitor()
         body = {"success": True, "obj": {"up": 123, "down": 456, "enable": True, "expiryTime": 0}}

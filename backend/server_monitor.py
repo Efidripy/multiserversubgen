@@ -19,13 +19,17 @@ from xui_session import (
     XUI_FAST_TIMEOUT_SEC,
     bounded_xui_timeout,
     build_panel_base_url,
+    diagnose_xui_failure,
     extract_node_auth,
+    get_capability_route,
     get_authenticated_session,
+    invalidate_node_capabilities,
     invalidate_session_cache,
     is_auth_failure_response,
     join_panel_url,
     make_node_key_for_node,
     login_panel,
+    record_capability_route,
     xui_request,
 )
 from utils import parse_field_as_dict
@@ -147,6 +151,42 @@ class ThreeXUIMonitor:
         invalidate_session_cache(make_node_key_for_node(node))
 
     @staticmethod
+    def _diagnostic_payload(
+        *,
+        response: requests.Response | None = None,
+        error: Exception | None = None,
+        endpoint_probe: bool = False,
+    ) -> Dict[str, str]:
+        """Return a redacted operator-facing error contract."""
+        diagnostic = diagnose_xui_failure(
+            response=response, error=error, endpoint_probe=endpoint_probe
+        )
+        return {
+            "reason": diagnostic["code"],
+            "error": diagnostic["message"],
+            "diagnostic": diagnostic["code"],
+        }
+
+    @staticmethod
+    def _login_failure_payload(login_result: Dict[str, Any]) -> Dict[str, str]:
+        """Map known authentication outcomes to safe, actionable messages."""
+        code = str(login_result.get("reason") or "network_error")
+        messages = {
+            "auth_failed": "Panel rejected the configured authentication",
+            "two_factor_required": "Panel requires two-factor authentication",
+            "bearer_token_invalid": "Panel rejected the configured authentication",
+            "tls_error": "TLS certificate or handshake failed",
+            "timeout": "Node panel did not respond before the timeout",
+            "network_error": "Network request to node panel failed",
+        }
+        diagnostic = diagnose_xui_failure(error=Exception(login_result.get("error") or ""))
+        return {
+            "reason": code,
+            "error": messages.get(code, diagnostic["message"]),
+            "diagnostic": code,
+        }
+
+    @staticmethod
     def _normalize_inbound(inbound: Dict, node: Dict) -> Dict:
         normalized = dict(inbound)
         stream = parse_field_as_dict(
@@ -216,7 +256,15 @@ class ThreeXUIMonitor:
             "cached": bool(auth.get("cached")),
         }
 
-    def _request_with_reauth(self, node: Dict, method: str, path: str, **kwargs) -> tuple:
+    def _request_with_reauth(
+        self,
+        node: Dict,
+        method: str,
+        path: str,
+        *,
+        endpoint_probe: bool = False,
+        **kwargs,
+    ) -> tuple:
         s, base_url, login_result = self._normalize_session_result(self._get_session(node))
         if not s:
             return None, None, login_result
@@ -225,7 +273,9 @@ class ThreeXUIMonitor:
             res = xui_request(s, method, join_panel_url(base_url, path), **kwargs)
         except Exception as exc:
             return None, None, {"ok": False, "reason": "request_failed", "error": str(exc)}
-        if not is_auth_failure_response(res):
+        # A 404/405 while choosing a documented compatibility route is an
+        # endpoint capability result, not evidence that the session expired.
+        if not is_auth_failure_response(res, include_panel_api_404=not endpoint_probe):
             return res, base_url, {"ok": True, "reason": "ok", "error": ""}
 
         logger.info("ThreeXUIMonitor: session expired for %s, re-authenticating once", node.get("name"))
@@ -238,11 +288,18 @@ class ThreeXUIMonitor:
             res = xui_request(s, method, join_panel_url(base_url, path), **kwargs)
         except Exception as exc:
             return None, None, {"ok": False, "reason": "request_failed", "error": str(exc)}
-        if is_auth_failure_response(res):
+        if is_auth_failure_response(res, include_panel_api_404=not endpoint_probe):
             self._invalidate_cached_session(node)
         return res, base_url, {"ok": True, "reason": "ok", "error": ""}
 
-    def _request_first_supported(self, node: Dict, method: str, paths: tuple[str, ...], **kwargs) -> tuple:
+    def _request_first_supported(
+        self,
+        node: Dict,
+        method: str,
+        operation: str,
+        paths: tuple[str, ...],
+        **kwargs,
+    ) -> tuple:
         """Call the first API route supported by a node panel.
 
         3x-ui v3.6 documents clients/* routes while older panels keep several
@@ -250,13 +307,26 @@ class ThreeXUIMonitor:
         a 404/405 advances to the next documented compatibility path, whereas
         an authentication or application response keeps its original meaning.
         """
-        last_result = (None, None, {"ok": False, "reason": "route_not_found", "error": "No compatible API route"})
-        for path in paths:
-            result = self._request_with_reauth(node, method, path, **kwargs)
+        node_key = make_node_key_for_node(node)
+        cached_path = get_capability_route(node_key, operation, paths)
+        ordered_paths = ((cached_path,) if cached_path else ()) + tuple(path for path in paths if path != cached_path)
+        last_result = (None, None, {"ok": False, "reason": "endpoint_unsupported", "error": "No compatible API route"})
+        for path in ordered_paths:
+            result = self._request_with_reauth(
+                node, method, path, endpoint_probe=True, **kwargs
+            )
             response = result[0]
             last_result = result
-            if response is None or response.status_code not in (404, 405):
+            if response is None:
                 return result
+            if response.status_code in (404, 405):
+                # A cached route may disappear after a panel upgrade; retry the
+                # remaining modern/legacy contract in this same request.
+                invalidate_node_capabilities(node_key)
+                continue
+            if 200 <= response.status_code < 300:
+                record_capability_route(node_key, operation, path, response)
+            return result
         return last_result
 
     def get_server_status(self, node: Dict) -> Dict:
@@ -271,8 +341,7 @@ class ThreeXUIMonitor:
                 "node": node["name"],
                 "available": False,
                 "status": "offline",
-                "reason": login_result.get("reason", "connection_failed"),
-                "error": login_result.get("error") or "Failed to connect",
+                **self._login_failure_payload(login_result),
             }
         try:
             if res.status_code == 200:
@@ -286,8 +355,7 @@ class ThreeXUIMonitor:
                 "node": node["name"],
                 "available": False,
                 "status": "offline",
-                "reason": f"http_{res.status_code}",
-                "error": f"HTTP {res.status_code}",
+                **self._diagnostic_payload(response=res),
             }
         except Exception as exc:
             logger.warning(f"ThreeXUIMonitor: get_server_status error for {node['name']}: {exc}")
@@ -295,8 +363,7 @@ class ThreeXUIMonitor:
                 "node": node["name"],
                 "available": False,
                 "status": "offline",
-                "reason": "request_failed",
-                "error": str(exc),
+                **self._diagnostic_payload(error=exc),
             }
 
     def get_inbounds(self, node: Dict) -> Dict:
@@ -310,8 +377,7 @@ class ThreeXUIMonitor:
             return {
                 "node": node["name"],
                 "available": False,
-                "reason": login_result.get("reason", "connection_failed"),
-                "error": login_result.get("error") or "Failed to connect",
+                **self._login_failure_payload(login_result),
                 "inbounds": [],
             }
         try:
@@ -331,10 +397,16 @@ class ThreeXUIMonitor:
             logger.warning(
                 f"ThreeXUIMonitor: inbounds list for {node['name']} returned {res.status_code}"
             )
-            return {"node": node["name"], "available": False, "error": f"HTTP {res.status_code}", "inbounds": []}
+            return {
+                "node": node["name"], "available": False, "inbounds": [],
+                **self._diagnostic_payload(response=res),
+            }
         except Exception as exc:
             logger.warning(f"ThreeXUIMonitor: get_inbounds error for {node['name']}: {exc}")
-            return {"node": node["name"], "available": False, "error": str(exc), "inbounds": []}
+            return {
+                "node": node["name"], "available": False, "inbounds": [],
+                **self._diagnostic_payload(error=exc),
+            }
 
     def get_traffic(self, node: Dict) -> Dict:
         """Трафик по inbounds (up/down из /panel/api/inbounds/list)."""
@@ -363,6 +435,7 @@ class ThreeXUIMonitor:
         res, _base_url, login_result = self._request_first_supported(
             node,
             "POST",
+            "online_clients",
             (
                 "/panel/api/clients/onlines",
                 "/panel/api/inbounds/onlines",
@@ -372,8 +445,7 @@ class ThreeXUIMonitor:
             return {
                 "node": node["name"],
                 "available": False,
-                "reason": login_result.get("reason", "connection_failed"),
-                "error": login_result.get("error") or "Failed to connect",
+                **self._login_failure_payload(login_result),
                 "online_clients": [],
             }
         try:
@@ -388,10 +460,16 @@ class ThreeXUIMonitor:
             logger.warning(
                 f"ThreeXUIMonitor: online clients for {node['name']} returned {res.status_code}"
             )
-            return {"node": node["name"], "available": False, "error": f"HTTP {res.status_code}", "online_clients": []}
+            return {
+                "node": node["name"], "available": False, "online_clients": [],
+                **self._diagnostic_payload(response=res, endpoint_probe=res.status_code in (404, 405)),
+            }
         except Exception as exc:
             logger.warning(f"ThreeXUIMonitor: get_online_clients error for {node['name']}: {exc}")
-            return {"node": node["name"], "available": False, "error": str(exc), "online_clients": []}
+            return {
+                "node": node["name"], "available": False, "online_clients": [],
+                **self._diagnostic_payload(error=exc),
+            }
 
     def get_client_traffic(self, node: Dict, email: str) -> Dict:
         """Read client traffic via modern 3x-ui API with a legacy fallback."""
@@ -399,6 +477,7 @@ class ThreeXUIMonitor:
         res, _base_url, login_result = self._request_first_supported(
             node,
             "GET",
+            "client_traffic",
             (
                 f"/panel/api/clients/traffic/{safe_email}",
                 f"/panel/api/inbounds/getClientTraffics/{safe_email}",
@@ -408,8 +487,7 @@ class ThreeXUIMonitor:
             return {
                 "node": node["name"],
                 "available": False,
-                "reason": login_result.get("reason", "connection_failed"),
-                "error": login_result.get("error") or "Failed to connect",
+                **self._login_failure_payload(login_result),
             }
         try:
             if res.status_code == 200:
@@ -431,12 +509,18 @@ class ThreeXUIMonitor:
             logger.warning(
                 f"ThreeXUIMonitor: client traffic for {email}@{node['name']} returned {res.status_code}"
             )
-            return {"node": node["name"], "available": False, "error": f"HTTP {res.status_code}"}
+            return {
+                "node": node["name"], "available": False,
+                **self._diagnostic_payload(response=res, endpoint_probe=res.status_code in (404, 405)),
+            }
         except Exception as exc:
             logger.warning(
                 f"ThreeXUIMonitor: get_client_traffic error for {email}@{node['name']}: {exc}"
             )
-            return {"node": node["name"], "available": False, "error": str(exc)}
+            return {
+                "node": node["name"], "available": False,
+                **self._diagnostic_payload(error=exc),
+            }
 
 
 class ServerMonitor:

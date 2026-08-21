@@ -112,6 +112,13 @@ _AUTH_METHOD_CACHE_MAX = 512
 # v2: старые версии — клиенты вложены в inbound settings
 _NODE_API_VERSION: dict[str, str] = {}
 _NODE_API_VERSION_LOCK = Lock()
+# Runtime capability registry keyed by a non-secret node key.  Version numbers
+# are only hints in a heterogeneous fleet: route support is the authority.
+# Entries deliberately stay in memory so a node edit, credential rotation, or
+# process restart cannot leave durable stale feature flags in SQLite.
+_NODE_CAPABILITIES: dict[str, dict[str, Dict[str, Any]]] = {}
+_NODE_CAPABILITIES_LOCK = Lock()
+_NODE_CAPABILITIES_MAX = 1024
 _SESSION_CACHE_LOCK = Lock()
 _SESSION_LOGIN_LOCKS: dict[str, Lock] = {}
 _SESSION_CACHE: dict[str, Dict[str, Any]] = {}
@@ -286,6 +293,7 @@ XUI_HTTP_RETRY_STATUSES = {429, 500, 502, 503, 504}
 XUI_FAST_TIMEOUT_SEC = min(XUI_READ_TIMEOUT_SEC, max(1.0, _env_float("XUI_FAST_TIMEOUT_SEC", XUI_READ_TIMEOUT_SEC)))
 XUI_FAST_RETRIES = max(0, _env_int("XUI_FAST_RETRIES", 0))
 XUI_SESSION_TTL_SEC = max(60, _env_int("XUI_SESSION_TTL_SEC", 900))
+XUI_CAPABILITY_TTL_SEC = max(60, _env_int("XUI_CAPABILITY_TTL_SEC", 3600))
 
 
 def bounded_xui_timeout(timeout: float | tuple | list | None = None) -> tuple[float, float]:
@@ -324,6 +332,91 @@ def make_node_key(ip: str, port: int | str, base_path: str = "") -> str:
             port = parsed_port
     normalized_path = str(base_path or "").strip("/")
     return f"{ip}:{port}:{normalized_path}"
+
+
+def _response_shape(response: requests.Response) -> str:
+    """Return a small, non-sensitive response-shape marker for diagnostics."""
+    try:
+        payload = response.json()
+    except (TypeError, ValueError):
+        return "non_json"
+    if not isinstance(payload, dict):
+        return type(payload).__name__
+    obj = payload.get("obj")
+    return f"success={type(payload.get('success')).__name__};obj={type(obj).__name__}"
+
+
+def get_capability_route(node_key: str, operation: str, paths: tuple[str, ...]) -> str | None:
+    """Return a fresh supported path for an operation, if one was observed.
+
+    This prevents every polling interval from re-probing a modern endpoint
+    already known to be absent on one particular node.  The caller must still
+    retry the full compatibility pair when the cached route becomes unavailable.
+    """
+    now = time.time()
+    with _NODE_CAPABILITIES_LOCK:
+        entry = _NODE_CAPABILITIES.get(node_key, {}).get(operation)
+        if not entry or now - float(entry.get("ts", 0.0)) > XUI_CAPABILITY_TTL_SEC:
+            return None
+        path = str(entry.get("path") or "")
+        return path if path in paths else None
+
+
+def record_capability_route(
+    node_key: str,
+    operation: str,
+    path: str,
+    response: requests.Response,
+) -> None:
+    """Record a supported runtime route and its coarse response shape."""
+    with _NODE_CAPABILITIES_LOCK:
+        if node_key not in _NODE_CAPABILITIES and len(_NODE_CAPABILITIES) >= _NODE_CAPABILITIES_MAX:
+            try:
+                _NODE_CAPABILITIES.pop(next(iter(_NODE_CAPABILITIES)))
+            except StopIteration:
+                pass
+        _NODE_CAPABILITIES.setdefault(node_key, {})[operation] = {
+            "path": path,
+            "status": int(getattr(response, "status_code", 0) or 0),
+            "shape": _response_shape(response),
+            "ts": time.time(),
+        }
+
+
+def invalidate_node_capabilities(node_key: str | None = None) -> None:
+    """Invalidate ephemeral capability observations for one node or all nodes."""
+    with _NODE_CAPABILITIES_LOCK:
+        if node_key is None:
+            _NODE_CAPABILITIES.clear()
+        else:
+            _NODE_CAPABILITIES.pop(node_key, None)
+
+
+def diagnose_xui_failure(
+    *,
+    response: requests.Response | None = None,
+    error: Exception | None = None,
+    endpoint_probe: bool = False,
+) -> Dict[str, str]:
+    """Create a redacted actionable diagnostic without exposing panel data."""
+    if error is not None:
+        text = str(error).lower()
+        if "certificate" in text or "ssl" in text or "tls" in text:
+            return {"code": "tls_error", "message": "TLS certificate or handshake failed"}
+        if "timed out" in text or "timeout" in text:
+            return {"code": "timeout", "message": "Node panel did not respond before the timeout"}
+        return {"code": "network_error", "message": "Network request to node panel failed"}
+
+    status = int(getattr(response, "status_code", 0) or 0)
+    if status in (401, 403):
+        return {"code": "auth_failed", "message": "Panel rejected the configured authentication"}
+    if endpoint_probe and status in (404, 405):
+        return {"code": "endpoint_unsupported", "message": "Panel does not expose this API route"}
+    if status == 200 and _response_shape(response) == "non_json":
+        return {"code": "response_schema_changed", "message": "Panel response is not the expected JSON API format"}
+    if status:
+        return {"code": f"http_{status}", "message": f"Panel returned HTTP {status}"}
+    return {"code": "unknown", "message": "Node panel request failed"}
 
 
 def _node_lock(node_key: str) -> Lock:
@@ -477,7 +570,11 @@ def get_authenticated_session(
         }
 
 
-def is_auth_failure_response(response: requests.Response) -> bool:
+def is_auth_failure_response(
+    response: requests.Response,
+    *,
+    include_panel_api_404: bool = True,
+) -> bool:
     status_code = getattr(response, "status_code", None)
     final_url = str(getattr(response, "url", "") or "")
     if not final_url:
@@ -486,7 +583,7 @@ def is_auth_failure_response(response: requests.Response) -> bool:
 
     if status_code in (401, 403):
         return True
-    if status_code == 404 and final_url:
+    if include_panel_api_404 and status_code == 404 and final_url:
         # 3x-ui can mask expired/invalid panel sessions as 404 under /panel/api/*
         # instead of returning 401/403, so treat this as an auth-failure signal.
         path = urlparse(final_url).path.rstrip("/").lower()

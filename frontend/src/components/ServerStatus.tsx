@@ -65,6 +65,7 @@ type UiServer = {
   core: string;
   lastSeen: string;
   issue?: string;
+  xrayCompatibility?: { status: 'ok' | 'warning' | 'unknown'; warningCount: number; codes: string[] };
 };
 
 type ServerMetaItem = {
@@ -179,6 +180,29 @@ const toUiServer = (server: DashboardServerStatus): UiServer => {
     core: server.xray?.version || server.panel_version || '26.4.17',
     lastSeen: formatLastSeen(server.timestamp),
     issue: server.error || server.reason,
+    xrayCompatibility: server.xray_compatibility ? {
+      status: server.xray_compatibility.status,
+      warningCount: server.xray_compatibility.findings.reduce((sum, finding) => sum + finding.count, 0),
+      codes: server.xray_compatibility.findings.map((finding) => finding.code),
+    } : undefined,
+  };
+};
+
+const normalizeXrayCompatibility = (value: unknown): UiServer['xrayCompatibility'] => {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as { status?: unknown; findings?: unknown };
+  const findings = Array.isArray(raw.findings) ? raw.findings : [];
+  const codes = findings
+    .filter((finding): finding is { code: string; count?: unknown } => Boolean(finding) && typeof finding === 'object' && typeof (finding as { code?: unknown }).code === 'string')
+    .map((finding) => finding.code);
+  const warningCount = findings.reduce((sum, finding) => {
+    const count = Number((finding as { count?: unknown })?.count);
+    return sum + (Number.isFinite(count) ? count : 0);
+  }, 0);
+  return {
+    status: raw.status === 'warning' ? 'warning' : raw.status === 'unknown' ? 'unknown' : 'ok',
+    warningCount,
+    codes,
   };
 };
 
@@ -213,6 +237,9 @@ const mergeServerTelemetry = (server: UiServer, data: Record<string, any>): UiSe
     core: String(xray.version || data.panel_version || server.core),
     lastSeen: lastSeen === '-' ? server.lastSeen : lastSeen,
     issue: data.error || data.reason || (status === 'online' ? undefined : server.issue),
+    xrayCompatibility: data.xray_compatibility === undefined
+      ? server.xrayCompatibility
+      : normalizeXrayCompatibility(data.xray_compatibility),
   };
 };
 
@@ -719,6 +746,7 @@ function ServerCard({
   const geofilePending = isActionPending('geofile');
   const xrayLogsPending = isActionPending('xrayLogs');
   const serverLogsPending = isActionPending('serverLogs');
+  const compatibility = server.xrayCompatibility;
   const metaItems: ServerMetaItem[] = [
     { label: 'Net', value: server.network, icon: <Network className="w-3.5 h-3.5" /> },
     { label: 'Uptime', value: server.uptime, icon: <Timer className="w-3.5 h-3.5" /> },
@@ -750,6 +778,15 @@ function ServerCard({
         <MetricRow label="RAM Usage" value={server.ramPercent} valueText={`${server.ramPercent}%`} detail={server.ramDetail} color={server.ramPercent > 50 ? 'from-yellow-400 to-amber-400' : 'from-green-400 to-emerald-400'} />
         <MetricRow label="Disk Usage" value={server.diskPercent} valueText={`${server.diskPercent}%`} detail={server.diskDetail} color="from-green-400 to-emerald-400" />
       </div>
+
+      {compatibility?.status === 'warning' && (
+        <div
+          className="mb-2 rounded border border-amber-400/25 bg-amber-950/35 px-2 py-1 font-mono text-[10px] text-amber-200"
+          title={compatibility.codes.join(', ')}
+        >
+          Xray compatibility: {compatibility.warningCount} warning(s)
+        </div>
+      )}
 
       <div className="mb-2 grid grid-cols-2 gap-x-4 gap-y-0.5 font-mono text-[10px] font-light text-gray-500">
         {metaItems.map((item) => (
