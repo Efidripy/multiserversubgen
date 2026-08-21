@@ -89,6 +89,49 @@ def test_xui_login_requests_keep_base_url_prefix(monkeypatch):
     ]
 
 
+def test_xui_csrf_login_posts_json_credentials(monkeypatch):
+    """3x-ui v3.6+ accepts the CSRF login payload as application/json."""
+    import xui_session
+
+    requests_seen = []
+
+    def response(status_code, body=None):
+        payload = body or {}
+        return SimpleNamespace(
+            status_code=status_code,
+            text=json.dumps(payload),
+            headers={},
+            url="",
+            json=lambda: payload,
+        )
+
+    def fake_xui_request(_session, method, url, **kwargs):
+        requests_seen.append((method, url, kwargs))
+        if url.endswith("/csrf-token"):
+            return response(200, {"success": True, "obj": "csrf-token"})
+        if url.endswith("/login") and kwargs.get("json") == {"username": "admin", "password": "pass"}:
+            return response(200, {"success": True})
+        return response(404)
+
+    xui_session.invalidate_auth_method_cache()
+    monkeypatch.setattr(xui_session, "xui_request", fake_xui_request)
+
+    session = requests.Session()
+    result = xui_session.login_panel_detailed(
+        session,
+        "https://panel.example.test/secret-path",
+        "admin",
+        "pass",
+    )
+
+    assert result["ok"] is True
+    login_calls = [call for call in requests_seen if call[1].endswith("/login")]
+    assert len(login_calls) == 1
+    assert login_calls[0][2]["json"] == {"username": "admin", "password": "pass"}
+    assert "data" not in login_calls[0][2]
+    assert session.headers["X-CSRF-Token"] == "csrf-token"
+
+
 def test_xui_legacy_auth_cache_reprobes_csrf_after_panel_upgrade(monkeypatch):
     """A node upgrade must not leave a process pinned to removed legacy endpoints."""
     import xui_session
