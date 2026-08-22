@@ -11,6 +11,7 @@ def build_live_data_router(
     get_node_or_404: Callable[[int], Dict],
     get_cached_traffic_stats: Callable[[list, str], Dict],
     get_cached_traffic_stats_projection: Callable[[str], Dict] = None,
+    get_cached_traffic_stats_projection_by_period: Callable[[str, str], Dict] = None,
     get_cached_online_clients: Callable[[list], list],
     list_nodes: Callable[[], list],
     xui_monitor,
@@ -45,6 +46,28 @@ def build_live_data_router(
                 "total": total,
             })
         return sorted(clients, key=lambda client: (-client["total"], client["email"]))[:limit]
+
+    def _traffic_totals_from_projection(projection: Dict) -> Dict[str, int]:
+        stats = projection.get("stats") if isinstance(projection, dict) else None
+        if not isinstance(stats, dict):
+            return {"upload": 0, "download": 0, "total": 0}
+
+        upload = 0
+        download = 0
+        total = 0
+        for item in stats.values():
+            if not isinstance(item, dict):
+                continue
+            try:
+                item_upload = max(0, int(float(item.get("up", item.get("upload", 0)) or 0)))
+                item_download = max(0, int(float(item.get("down", item.get("download", 0)) or 0)))
+                item_total = max(0, int(float(item.get("total") or 0))) or item_upload + item_download
+            except (TypeError, ValueError, OverflowError):
+                continue
+            upload += item_upload
+            download += item_download
+            total += item_total
+        return {"upload": upload, "download": download, "total": total}
 
     def _apply_limit(payload: Dict, limit: int) -> Dict:
         if limit <= 0:
@@ -122,20 +145,24 @@ def build_live_data_router(
         return ORJSONResponse(content={"online_clients": online, "count": len(online)})
 
     @router.get("/api/v1/dashboard/summary")
-    async def get_dashboard_summary(request: Request):
+    async def get_dashboard_summary(request: Request, period: str = "all_time"):
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401)
+        if period not in ["day", "week", "month", "all_time"]:
+            raise HTTPException(status_code=400, detail="period must be day, week, month, or all_time")
         nodes = await run_in_threadpool(list_nodes)
         by_id, by_name, snapshot = _snapshot_by_node(nodes)
         traffic_projection = (
-            await run_in_threadpool(get_cached_traffic_stats_projection, "client")
+            await run_in_threadpool(get_cached_traffic_stats_projection_by_period, "client", period)
+            if get_cached_traffic_stats_projection_by_period
+            else await run_in_threadpool(get_cached_traffic_stats_projection, "client")
             if get_cached_traffic_stats_projection
             else {"stats": {}, "cache_source": "unavailable"}
         )
         top_clients = _top_clients_from_projection(traffic_projection)
+        traffic_totals = _traffic_totals_from_projection(traffic_projection)
         online_by_node: Dict[str, int] = {}
-        total_traffic = 0
         online_total = 0
         online_nodes = 0
         for node in nodes:
@@ -149,18 +176,17 @@ def build_live_data_router(
             online_total += online_count
             if cached.get("available"):
                 online_nodes += 1
-            total_traffic += int(cached.get("traffic_total") or 0)
         return ORJSONResponse(content={
             "nodes_total": len(nodes),
             "nodes_online": online_nodes,
-            "clients_total": len(traffic_projection.get("stats", {})) if isinstance(traffic_projection.get("stats"), dict) else 0,
+            "clients_total": int(traffic_projection.get("current_count") or len(traffic_projection.get("stats", {}))),
             "online_clients_total": online_total,
             "online_by_node": online_by_node,
             "traffic": {
-                "upload": 0,
-                "download": 0,
-                "total": total_traffic,
+                **traffic_totals,
             },
+            "traffic_period": period,
+            "traffic_note": traffic_projection.get("note"),
             "top_clients": top_clients,
             "cache": {
                 "source": "snapshot_collector",

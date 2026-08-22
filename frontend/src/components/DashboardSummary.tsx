@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Activity, CheckCircle, Download, RefreshCw, Server, Upload, Users } from 'lucide-react';
-import { getDashboardSummary, normalizeDashboardSummary, type DashboardSummaryData } from '../api/dashboard';
+import { ChoiceChips } from './ChoiceChips';
+import { getDashboardSummary, normalizeDashboardSummary, type DashboardSummaryData, type DashboardTrafficPeriod } from '../api/dashboard';
 import { listNodes, NODES_CHANGED_EVENT, type NodeRecord } from '../api/nodes';
 
 type StatTone = 'default' | 'accent' | 'success' | 'warning' | 'danger';
@@ -20,10 +21,13 @@ interface DashboardSummaryProps {
 
 const emptySummary = () => normalizeDashboardSummary({
   nodes_total: 0,
+  nodes_online: 0,
   clients_total: 0,
   online_clients_total: 0,
   online_by_node: {},
   traffic: { upload: 0, download: 0, total: 0 },
+  traffic_period: 'all_time',
+  traffic_note: null,
   top_clients: [],
 });
 
@@ -82,8 +86,6 @@ const getWidthClass = (percent: number) => {
   return trafficWidthClasses[0];
 };
 
-const isEnabledNode = (node: NodeRecord) => node.enabled === true || Number(node.enabled) === 1;
-
 const skeletonLine = (className: string) => (
   <span className={`block animate-pulse rounded bg-[#0f1420] ${className}`} />
 );
@@ -99,13 +101,14 @@ export function DashboardSummary({
   const [loading, setLoading] = useState(false);
   const [nodesError, setNodesError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [trafficPeriod, setTrafficPeriod] = useState<DashboardTrafficPeriod>('all_time');
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (period: DashboardTrafficPeriod) => {
     setLoading(true);
     setNodesError(null);
     try {
       const [summaryResult, nodesResult] = await Promise.allSettled([
-        getDashboardSummary(),
+        getDashboardSummary(period),
         listNodes(),
       ]);
 
@@ -132,46 +135,44 @@ export function DashboardSummary({
   }, []);
 
   useEffect(() => {
-    load();
-    const interval = window.setInterval(load, 60000);
+    void load(trafficPeriod);
+    const interval = window.setInterval(() => void load(trafficPeriod), 60000);
     return () => window.clearInterval(interval);
-  }, [load]);
+  }, [load, trafficPeriod]);
 
   useEffect(() => {
     const handleNodesChanged = () => {
-      void load();
+      void load(trafficPeriod);
     };
     window.addEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
     return () => window.removeEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
-  }, [load]);
+  }, [load, trafficPeriod]);
 
   const isInitialLoading = loading && lastUpdated === null;
-  const totalNodes = nodes.length;
-  const activeNodes = nodes.filter(isEnabledNode).length;
-  const disabledNodes = Math.max(totalNodes - activeNodes, 0);
-  const onlineNodes = fleetSummary && !fleetSummary.loading && fleetSummary.total === totalNodes
-    ? fleetSummary.online
-    : activeNodes;
+  const totalNodes = summary.nodes_total || nodes.length;
+  const onlineNodes = Math.min(Math.max(summary.nodes_online || 0, 0), totalNodes);
+  const offlineNodes = Math.max(totalNodes - onlineNodes, 0);
 
   const headerStats = useMemo(() => {
     void heroStats;
     return [
       { label: t('dashboardSummary.totalNodes', { defaultValue: 'Total Nodes' }), value: String(totalNodes) },
-      { label: 'Active', value: String(activeNodes), variant: activeNodes > 0 ? 'success' : 'warning' },
-      { label: 'Online', value: String(onlineNodes), variant: onlineNodes > 0 ? 'success' : 'warning' },
-      { label: 'Disabled', value: String(disabledNodes), variant: disabledNodes > 0 ? 'warning' : 'default' },
-      { label: 'Errors', value: String(fleetSummary?.checking ?? 0), variant: (fleetSummary?.checking ?? 0) > 0 ? 'warning' : 'default' },
-      { label: 'Clients', value: String(summary.clients_total) },
+      { label: t('dashboardSummary.onlineNodes', { defaultValue: 'Online Nodes' }), value: String(onlineNodes), variant: onlineNodes > 0 ? 'success' : 'warning' },
+      { label: t('dashboardSummary.offlineNodes', { defaultValue: 'Offline Nodes' }), value: String(offlineNodes), variant: offlineNodes > 0 ? 'warning' : 'default' },
+      { label: t('dashboardSummary.activeClients', { defaultValue: 'Active Clients' }), value: String(summary.online_clients_total), variant: summary.online_clients_total > 0 ? 'success' : 'default' },
+      { label: t('dashboardSummary.errors', { defaultValue: 'Errors' }), value: String(fleetSummary?.checking ?? 0), variant: (fleetSummary?.checking ?? 0) > 0 ? 'warning' : 'default' },
+      { label: t('clients.title'), value: String(summary.clients_total) },
     ];
-  }, [activeNodes, disabledNodes, fleetSummary?.checking, heroStats, onlineNodes, summary.clients_total, t, totalNodes]);
+  }, [fleetSummary?.checking, heroStats, offlineNodes, onlineNodes, summary.clients_total, summary.online_clients_total, t, totalNodes]);
 
+  const trafficPeriodLabel = t(`traffic.period${summary.traffic_period === 'all_time' ? 'AllTime' : summary.traffic_period[0].toUpperCase() + summary.traffic_period.slice(1)}`);
   const kpiCards = [
-    { label: t('nodes.title'), value: String(totalNodes), icon: Server, variant: 'accent', tab: 'monitoring' },
-    { label: t('clients.title'), value: String(summary.clients_total), icon: Users, variant: 'info', tab: 'clients' },
-    { label: 'Active Nodes', value: String(activeNodes), icon: CheckCircle, variant: 'success', tab: 'monitoring' },
-    { label: 'Upload', value: formatBytes(summary.traffic.upload), icon: Upload, variant: 'warning', tab: 'traffic' },
-    { label: 'Download', value: formatBytes(summary.traffic.download), icon: Download, variant: 'danger', tab: 'traffic' },
-    { label: t('traffic.totalTraffic'), value: formatBytes(summary.traffic.total), icon: Activity, variant: 'neutral', tab: 'traffic' },
+    { label: t('nodes.title'), value: `${totalNodes} / ${onlineNodes}`, detail: t('dashboardSummary.allNodesOnline'), icon: Server, variant: 'accent', tab: 'monitoring' },
+    { label: t('clients.title'), value: String(summary.clients_total), detail: undefined, icon: Users, variant: 'info', tab: 'clients' },
+    { label: t('dashboardSummary.activeClients'), value: String(summary.online_clients_total), detail: undefined, icon: CheckCircle, variant: 'success', tab: 'clients' },
+    { label: t('traffic.upload'), value: formatBytes(summary.traffic.upload), detail: trafficPeriodLabel, icon: Upload, variant: 'warning', tab: 'traffic' },
+    { label: t('traffic.download'), value: formatBytes(summary.traffic.download), detail: trafficPeriodLabel, icon: Download, variant: 'danger', tab: 'traffic' },
+    { label: t('traffic.totalTraffic'), value: formatBytes(summary.traffic.total), detail: trafficPeriodLabel, icon: Activity, variant: 'neutral', tab: 'traffic' },
   ] as const;
 
   const onlineByNode = Object.entries(summary.online_by_node);
@@ -224,7 +225,18 @@ export function DashboardSummary({
       <div className="mb-6">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="font-mono text-base font-medium uppercase tracking-[0.18em] text-cyan-300">{t('dashboardSummary.fleetOverview').toUpperCase()}</h2>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <ChoiceChips
+              options={[
+                { value: 'day', label: t('traffic.periodDay') },
+                { value: 'week', label: t('traffic.periodWeek') },
+                { value: 'month', label: t('traffic.periodMonth') },
+                { value: 'all_time', label: t('traffic.periodAllTime') },
+              ]}
+              value={trafficPeriod}
+              disabled={loading}
+              onChange={(value) => setTrafficPeriod(value as DashboardTrafficPeriod)}
+            />
             <span className="font-mono text-[10px] font-light tracking-wide text-gray-500">
               {lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '12:00 AM'}
             </span>
@@ -234,7 +246,7 @@ export function DashboardSummary({
               aria-label="Refresh"
               type="button"
               disabled={loading}
-              onClick={load}
+              onClick={() => void load(trafficPeriod)}
             >
               <RefreshCw className={`w-3.5 h-3.5 text-cyan-300 ${loading ? 'animate-spin' : ''}`} />
             </button>
@@ -262,9 +274,10 @@ export function DashboardSummary({
                 onClick={() => onNavigate?.(card.tab)}
               >
                 <div className="flex h-full items-center justify-between gap-4">
-                  <div>
-                    <div className="mb-2 font-mono text-xs font-light uppercase tracking-[0.12em] text-gray-400">{card.label}</div>
-                    <div className="font-mono text-3xl font-bold leading-none tabular-nums text-white">{card.value}</div>
+                    <div>
+                      <div className="mb-2 font-mono text-xs font-light uppercase tracking-[0.12em] text-gray-400">{card.label}</div>
+                      <div className="font-mono text-3xl font-bold leading-none tabular-nums text-white">{card.value}</div>
+                      {card.detail && <div className="mt-1 font-mono text-[10px] uppercase tracking-wide text-gray-500">{card.detail}</div>}
                   </div>
                   <div className={`flex h-14 w-14 items-center justify-center rounded-lg border border-white/10 bg-gradient-to-br ${iconTone[card.variant]}`}>
                     <CardIcon className="h-7 w-7 text-white" />
@@ -274,6 +287,12 @@ export function DashboardSummary({
             );
           })}
         </div>
+
+        {summary.traffic_note && (
+          <div className="mb-4 rounded-md border border-amber-400/20 bg-amber-950/20 px-3 py-2 font-mono text-[11px] font-light text-amber-100/80">
+            {t('dashboardSummary.collectingTrafficHistory')}
+          </div>
+        )}
 
         <div className="mb-4 grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 2xl:grid-cols-10">
           {isInitialLoading ? Array.from({ length: 10 }, (_, index) => (
@@ -297,7 +316,7 @@ export function DashboardSummary({
           <div className="scrollbar-none overflow-x-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)]">
             <div className="space-y-3 scrollbar-none">
               {isInitialLoading ? Array.from({ length: 5 }, (_, index) => (
-                <div key={index} className="grid h-5 w-full max-w-[360px] grid-cols-[18px_minmax(72px,86px)_minmax(90px,1fr)_minmax(5.5rem,5.5rem)] items-center gap-2 sm:grid-cols-[20px_minmax(82px,96px)_minmax(110px,1fr)_minmax(6rem,6rem)]">
+                <div key={index} className="grid h-5 w-full grid-cols-[18px_minmax(72px,86px)_minmax(90px,1fr)_minmax(5.5rem,5.5rem)] items-center gap-2 sm:grid-cols-[20px_minmax(82px,96px)_minmax(110px,1fr)_minmax(6rem,6rem)]">
                   {skeletonLine('h-3 w-4 bg-[#182133]')}
                   {skeletonLine('h-3 w-16 bg-[#182133]')}
                   {skeletonLine('h-1.5 w-full bg-[#182133]')}
@@ -321,7 +340,7 @@ export function DashboardSummary({
                       onNavigate?.('clients');
                     }}
                   >
-                    <span className="grid h-5 w-full max-w-[360px] grid-cols-[18px_minmax(72px,86px)_minmax(90px,1fr)_minmax(5.5rem,5.5rem)] sm:grid-cols-[20px_minmax(82px,96px)_minmax(110px,1fr)_minmax(6rem,6rem)] items-center gap-2">
+                    <span className="grid h-5 w-full grid-cols-[18px_minmax(72px,86px)_minmax(90px,1fr)_minmax(5.5rem,5.5rem)] sm:grid-cols-[20px_minmax(82px,96px)_minmax(110px,1fr)_minmax(6rem,6rem)] items-center gap-2">
                       <span className="text-right font-mono text-xs font-light text-gray-500">{index + 1}.</span>
                       <span className="truncate font-mono text-sm font-light text-cyan-300" title={client.email}>
                         {client.email}
