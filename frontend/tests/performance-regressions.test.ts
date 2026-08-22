@@ -41,9 +41,12 @@ describe('navigation performance regressions', () => {
 
   it('renders Dashboard server cards from the cached snapshot instead of probing every node', () => {
     const app = read('src/App.tsx');
+    const fleetPanel = read('src/components/RegisteredFleetPanel.tsx');
 
     expect(app).toContain('dashboardMode');
     expect(app).toContain('includeLiveStatus={false}');
+    expect(fleetPanel).toContain('getRegisteredFleetSnapshotOverview()');
+    expect(fleetPanel).toContain('load({ live: true })');
   });
 
   it('does not fetch complete node databases just to render Backup Manager', () => {
