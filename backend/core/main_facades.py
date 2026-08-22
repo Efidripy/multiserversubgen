@@ -97,6 +97,9 @@ def build_cache_facade(*, live_stats_runtime, clients_runtime, audit_runtime):
     def get_cached_traffic_stats_projection(group_by: str) -> Dict:
         return live_stats_runtime.get_cached_traffic_stats_projection(group_by)
 
+    def get_cached_traffic_stats_projection_by_period(group_by: str, period: str) -> Dict:
+        return live_stats_runtime.get_cached_traffic_stats_projection_by_period(group_by, period)
+
     def get_traffic_stats_by_period(nodes: List[Dict], group_by: str, period: str) -> Dict:
         return live_stats_runtime.get_traffic_stats_by_period(nodes, group_by, period)
 
@@ -116,6 +119,7 @@ def build_cache_facade(*, live_stats_runtime, clients_runtime, audit_runtime):
         invalidate_live_stats_cache,
         get_cached_traffic_stats,
         get_cached_traffic_stats_projection,
+        get_cached_traffic_stats_projection_by_period,
         get_traffic_stats_by_period,
         get_cached_online_clients,
         get_cached_clients,
