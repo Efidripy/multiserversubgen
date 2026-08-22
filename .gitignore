@@ -39,6 +39,7 @@ installer-sync-*.tgz
 xui-core-patch.tgz
 
 # Local one-off ops scripts (keep out of git)
+validate-mix-gate.ps1
 add-nginx-directives.sh
 fix-nginx-adguard.sh
 reset-adguard-pass.sh
