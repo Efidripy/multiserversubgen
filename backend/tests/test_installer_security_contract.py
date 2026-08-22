@@ -85,3 +85,16 @@ def test_privileged_binary_downloads_use_checked_in_digest_manifest():
     assert "artifact_verify_file XUI" in xui
     assert "artifact_verify_file SUB2SING" in xui
     assert "releases/latest" not in xui
+
+
+def test_xui_seed_matches_v3_hosts_contract():
+    manifest = _read("scripts/installer/lib/artifact_manifest.sh")
+    template = _read("scripts/installer/templates/xui-pro/base-inbounds.sql.tpl")
+
+    assert 'ARTIFACT_XUI_VERSION="v3.6.0"' in manifest
+    assert 'INSERT INTO hosts ("inbound_id","group_id"' in template
+    assert "__GROUP_REALITY__" in template
+    assert "__GROUP_WS__" in template
+    assert "__GROUP_XHTTP__" in template
+    assert "__GROUP_TROJAN__" in template
+    assert '"externalProxy"' not in template
