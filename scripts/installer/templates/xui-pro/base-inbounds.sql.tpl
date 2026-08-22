@@ -1,5 +1,6 @@
 DELETE FROM settings WHERE "key" IN (
-  'subPort','subPath','subURI','subJsonPath','subJsonURI','subEnable'
+  'subPort','subPath','subURI','subJsonPath','subJsonURI','subEnable',
+  'subClashEnable','subEnableRouting','subEncrypt','subShowInfo','subUpdates'
 );
 
 INSERT INTO settings ("key", "value") VALUES ('subPort', '__SUB_PORT__');
@@ -8,7 +9,20 @@ INSERT INTO settings ("key", "value") VALUES ('subURI', '__SUB_URI__');
 INSERT INTO settings ("key", "value") VALUES ('subJsonPath', '__JSON_PATH__');
 INSERT INTO settings ("key", "value") VALUES ('subJsonURI', '__JSON_URI__');
 INSERT INTO settings ("key", "value") VALUES ('subEnable', 'true');
+INSERT INTO settings ("key", "value") VALUES ('subClashEnable', 'false');
+INSERT INTO settings ("key", "value") VALUES ('subEnableRouting', 'false');
+INSERT INTO settings ("key", "value") VALUES ('subEncrypt', 'true');
+INSERT INTO settings ("key", "value") VALUES ('subShowInfo', 'true');
+INSERT INTO settings ("key", "value") VALUES ('subUpdates', '12');
 
+-- v3.5+ stores per-inbound share-link hosts in a dedicated table.  Remove
+-- only hosts belonging to the seed tags before replacing those inbounds.
+DELETE FROM hosts WHERE inbound_id IN (
+  SELECT id FROM inbounds WHERE tag IN (
+    'inbound-8443', 'inbound-__WS_PORT__',
+    'inbound-/dev/shm/uds2023.sock,0666:0|', 'inbound-__TROJAN_PORT__'
+  )
+);
 DELETE FROM client_traffics WHERE email IN ('first', 'first_1', 'firstX', 'firstT');
 DELETE FROM inbounds WHERE tag IN ('inbound-8443', 'inbound-__WS_PORT__', 'inbound-/dev/shm/uds2023.sock,0666:0|', 'inbound-__TROJAN_PORT__');
 
@@ -30,7 +44,6 @@ VALUES (
   '{
     "network":"tcp",
     "security":"reality",
-    "externalProxy":[{"forceTls":"same","dest":"__DOMAIN__","port":443,"remark":""}],
     "realitySettings":{
       "show":false,
       "xver":0,
@@ -60,7 +73,6 @@ VALUES (
   '{
     "network":"ws",
     "security":"none",
-    "externalProxy":[{"forceTls":"tls","dest":"__DOMAIN__","port":443,"remark":""}],
     "wsSettings":{"acceptProxyProtocol":false,"path":"/__WS_PORT__/__WS_PATH__","host":"__DOMAIN__","headers":{}}
   }',
   'inbound-__WS_PORT__',
@@ -78,7 +90,6 @@ VALUES (
   '{
     "network":"xhttp",
     "security":"none",
-    "externalProxy":[{"forceTls":"tls","dest":"__DOMAIN__","port":443,"remark":""}],
     "xhttpSettings":{"path":"/__XHTTP_PATH__","host":"","headers":{},"scMaxBufferedPosts":30,"scMaxEachPostBytes":"1000000","noSSEHeader":false,"xPaddingBytes":"100-1000","mode":"packet-up"},
     "sockopt":{"acceptProxyProtocol":false,"tcpFastOpen":true,"mark":0,"tproxy":"off","tcpMptcp":true,"tcpNoDelay":true,"domainStrategy":"UseIP","tcpMaxSeg":1440,"dialerProxy":"","tcpKeepAliveInterval":0,"tcpKeepAliveIdle":300,"tcpUserTimeout":10000,"tcpcongestion":"bbr","V6Only":false,"tcpWindowClamp":600,"interface":""}
   }',
@@ -96,9 +107,22 @@ VALUES (
   '{
     "network":"grpc",
     "security":"none",
-    "externalProxy":[{"forceTls":"tls","dest":"__DOMAIN__","port":443,"remark":""}],
     "grpcSettings":{"serviceName":"/__TROJAN_PORT__/__TROJAN_PATH__","authority":"__DOMAIN__","multiMode":false}
   }',
   'inbound-__TROJAN_PORT__',
   '{"enabled":false,"destOverride":["http","tls","quic","fakedns"],"metadataOnly":false,"routeOnly":false}'
 );
+
+-- Current 3x-ui uses hosts (and group_id) for share-link host editing.  Keep
+-- one explicit host per seeded inbound so the panel's host editor is populated
+-- instead of opening an empty add-host form.
+INSERT INTO hosts ("inbound_id","group_id","sort_order","remark","address","port","security","fingerprint","alpn")
+VALUES
+ ((SELECT id FROM inbounds WHERE tag='inbound-8443'),
+   '__GROUP_REALITY__', 0, 'reality', '__DOMAIN__', 443, 'same', '', '[]'),
+ ((SELECT id FROM inbounds WHERE tag='inbound-__WS_PORT__'),
+   '__GROUP_WS__', 0, 'ws', '__DOMAIN__', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
+ ((SELECT id FROM inbounds WHERE tag='inbound-/dev/shm/uds2023.sock,0666:0|'),
+   '__GROUP_XHTTP__', 0, 'xhttp', '__DOMAIN__', 443, 'tls', 'firefox', '["h2","http/1.1"]'),
+ ((SELECT id FROM inbounds WHERE tag='inbound-__TROJAN_PORT__'),
+   '__GROUP_TROJAN__', 0, 'trojan', '__DOMAIN__', 443, 'tls', 'firefox', '["h2","http/1.1"]');
