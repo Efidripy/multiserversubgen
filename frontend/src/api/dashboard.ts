@@ -14,12 +14,17 @@ export interface DashboardTopClient {
   total: number;
 }
 
+export type DashboardTrafficPeriod = 'day' | 'week' | 'month' | 'all_time';
+
 export interface DashboardSummaryData {
   nodes_total: number;
+  nodes_online: number;
   clients_total: number;
   online_clients_total: number;
   online_by_node: Record<string, number>;
   traffic: { upload: number; download: number; total: number };
+  traffic_period: DashboardTrafficPeriod;
+  traffic_note: string | null;
   top_clients: DashboardTopClient[];
 }
 
@@ -118,6 +123,7 @@ const normalizeTopClients = (value: unknown): DashboardTopClient[] => {
 
 export const normalizeDashboardSummary = (raw: any): DashboardSummaryData => ({
   nodes_total: toFiniteNumber(raw?.nodes_total),
+  nodes_online: toFiniteNumber(raw?.nodes_online),
   clients_total: toFiniteNumber(raw?.clients_total),
   online_clients_total: toFiniteNumber(raw?.online_clients_total),
   online_by_node: normalizeNumberRecord(raw?.online_by_node),
@@ -126,11 +132,15 @@ export const normalizeDashboardSummary = (raw: any): DashboardSummaryData => ({
     download: toFiniteNumber(raw?.traffic?.download),
     total: toFiniteNumber(raw?.traffic?.total),
   },
+  traffic_period: raw?.traffic_period === 'day' || raw?.traffic_period === 'week' || raw?.traffic_period === 'month'
+    ? raw.traffic_period
+    : 'all_time',
+  traffic_note: typeof raw?.traffic_note === 'string' && raw.traffic_note ? raw.traffic_note : null,
   top_clients: normalizeTopClients(raw?.top_clients),
 });
 
-export async function getDashboardSummary(): Promise<DashboardSummaryData> {
-  const res = await api.get('/v1/dashboard/summary', { auth: getAuth() });
+export async function getDashboardSummary(period: DashboardTrafficPeriod = 'all_time'): Promise<DashboardSummaryData> {
+  const res = await api.get('/v1/dashboard/summary', { auth: getAuth(), params: { period } });
   return normalizeDashboardSummary(res.data);
 }
 

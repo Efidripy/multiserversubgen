@@ -213,6 +213,104 @@ class LiveStatsRuntime:
 
         return {"stats": {}, "group_by": group_by, "cache_source": "empty"}
 
+    def get_cached_traffic_stats_projection_by_period(self, group_by: str, period: str = "all_time") -> Dict:
+        """Return a period projection without refreshing or cold-loading fleet data.
+
+        The Dashboard refreshes frequently, so its read model must use only the
+        last cached client projection and persisted baselines.  In particular,
+        this method must never call ``get_cached_traffic_stats`` because that
+        path may start a remote XUI fan-out when the cache is cold.
+        """
+        period_seconds = {
+            "day": 86400,
+            "week": 604800,
+            "month": 2592000,
+            "year": 31536000,
+            "all_time": 0,
+        }
+        if period not in period_seconds:
+            period = "all_time"
+
+        projection = self.get_cached_traffic_stats_projection(group_by)
+        current_stats = projection.get("stats") if isinstance(projection, dict) else {}
+        current_stats = current_stats if isinstance(current_stats, dict) else {}
+        payload = {
+            "stats": current_stats,
+            "group_by": group_by,
+            "period": period,
+            "current_count": len(current_stats),
+            "cache_source": projection.get("cache_source", "empty") if isinstance(projection, dict) else "empty",
+        }
+        if isinstance(projection, dict) and projection.get("cache_timestamp") is not None:
+            payload["cache_timestamp"] = projection["cache_timestamp"]
+
+        if period == "all_time":
+            return payload
+
+        seconds_back = period_seconds[period]
+        now = time.time()
+        period_start_time = now - seconds_back
+        snapshot, snapshot_stats, partial_window = self._load_period_snapshot(
+            group_by,
+            period,
+            seconds_back,
+            now,
+        )
+        if not isinstance(snapshot_stats, dict) or not snapshot_stats:
+            if group_by in {"client", "inbound"}:
+                note = (
+                    "No historical snapshot is available before the requested window yet. "
+                    "Older client/inbound history cannot be reconstructed from the current SQLite schema."
+                )
+            else:
+                note = "No historical snapshot is available before the requested window yet."
+            return {
+                **payload,
+                "stats": {},
+                "period_start": period_start_time,
+                "period_seconds": seconds_back,
+                "note": note,
+            }
+
+        def metric(value) -> int:
+            try:
+                return max(0, int(float(value or 0)))
+            except (TypeError, ValueError, OverflowError):
+                return 0
+
+        delta_stats: Dict[str, Dict[str, int]] = {}
+        for key, current_value in current_stats.items():
+            if not isinstance(current_value, dict):
+                continue
+            snapshot_value = snapshot_stats.get(key, {})
+            snapshot_value = snapshot_value if isinstance(snapshot_value, dict) else {}
+            current_up = metric(current_value.get("up", current_value.get("upload", 0)))
+            current_down = metric(current_value.get("down", current_value.get("download", 0)))
+            current_total = metric(current_value.get("total")) or current_up + current_down
+            snapshot_up = metric(snapshot_value.get("up", snapshot_value.get("upload", 0)))
+            snapshot_down = metric(snapshot_value.get("down", snapshot_value.get("download", 0)))
+            snapshot_total = metric(snapshot_value.get("total")) or snapshot_up + snapshot_down
+            delta_stats[str(key)] = {
+                "up": max(0, current_up - snapshot_up),
+                "down": max(0, current_down - snapshot_down),
+                "total": max(0, current_total - snapshot_total),
+                "count": metric(current_value.get("count", 1)) or 1,
+            }
+
+        result = {
+            **payload,
+            "stats": delta_stats,
+            "period_start": period_start_time,
+            "period_seconds": seconds_back,
+            "snapshot_ts": snapshot.get("ts") if isinstance(snapshot, dict) else None,
+        }
+        if partial_window:
+            result["note"] = (
+                "Historical data covers only part of the requested window. "
+                "Showing the earliest retained snapshot within that window."
+            )
+        return result
+
     def _snapshot_key(self, group_by: str, bucket_kind: str, bucket_id: int) -> str:
         return f"traffic_snapshot:{group_by}:{bucket_kind}:{bucket_id}"
 

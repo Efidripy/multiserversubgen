@@ -40,6 +40,7 @@ def _build_test_app(*, monitoring_enabled: bool) -> FastAPI:
         get_node_or_404=main.partial(main.get_node_or_404, main.node_service),
         get_cached_traffic_stats=main.get_cached_traffic_stats,
         get_cached_traffic_stats_projection=main.get_cached_traffic_stats_projection,
+        get_cached_traffic_stats_projection_by_period=main.get_cached_traffic_stats_projection_by_period,
         get_traffic_stats_by_period=main.get_traffic_stats_by_period,
         get_cached_online_clients=main.get_cached_online_clients,
         list_nodes=main.node_service.list_nodes,
@@ -267,6 +268,16 @@ def test_dashboard_summary_uses_snapshot_cache_without_xui_fetch(monkeypatch):
         "get_cached_traffic_stats_projection",
         lambda _group_by: {"stats": {}, "cache_source": "empty"},
     )
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats_projection_by_period",
+        lambda _group_by, period: {
+            "stats": {"alpha@example.test": {"up": 250, "down": 750, "total": 1000}},
+            "current_count": 1,
+            "period": period,
+            "cache_source": "memory",
+        },
+    )
     main.snapshot_collector._latest = {
         "timestamp": 1234567890.0,
         "nodes": {
@@ -301,7 +312,8 @@ def test_dashboard_summary_uses_snapshot_cache_without_xui_fetch(monkeypatch):
     assert payload["nodes_total"] == 2
     assert payload["nodes_online"] == 1
     assert payload["online_clients_total"] == 3
-    assert payload["traffic"]["total"] == 1000
+    assert payload["traffic"] == {"upload": 250, "download": 750, "total": 1000}
+    assert payload["traffic_period"] == "all_time"
     assert payload["cache"]["source"] == "snapshot_collector"
 
 
@@ -323,6 +335,22 @@ def test_dashboard_summary_returns_sorted_cached_top_clients_without_fleet_fetch
                 "middle@example.test": {"up": 30, "down": 70, "total": 100},
                 "bad@example.test": None,
             },
+            "cache_source": "memory",
+            "cache_timestamp": 1234567890.0,
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats_projection_by_period",
+        lambda _group_by, period: {
+            "stats": {
+                "least@example.test": {"up": 2, "down": 3},
+                "highest@example.test": {"up": 400, "down": 600, "total": 1000},
+                "middle@example.test": {"up": 30, "down": 70, "total": 100},
+                "bad@example.test": None,
+            },
+            "current_count": 4,
+            "period": period,
             "cache_source": "memory",
             "cache_timestamp": 1234567890.0,
         },
@@ -351,7 +379,22 @@ def test_dashboard_summary_returns_sorted_cached_top_clients_without_fleet_fetch
         "download": 600,
         "total": 1000,
     }
+    assert payload["traffic"] == {"upload": 432, "download": 673, "total": 1105}
     assert payload["cache"]["client_traffic_source"] == "memory"
+
+
+def test_dashboard_summary_rejects_unsupported_traffic_period(monkeypatch):
+    monkeypatch.setattr(main.node_service, "list_nodes", lambda: [])
+    app = _build_test_app(monitoring_enabled=False)
+
+    @app.middleware("http")
+    async def _inject_auth_user(request, call_next):
+        request.state.auth_user = "admin"
+        return await call_next(request)
+
+    response = TestClient(app).get("/api/v1/dashboard/summary?period=year")
+
+    assert response.status_code == 400
 
 
 def test_node_server_status_uses_snapshot_cache_without_xui_fetch(monkeypatch):

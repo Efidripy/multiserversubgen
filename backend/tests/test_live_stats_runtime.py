@@ -306,3 +306,48 @@ def test_cached_traffic_projection_never_starts_fleet_fetch(tmp_path):
     assert persisted["stats"]["persisted@example.com"]["total"] == 100
     assert persisted["cache_source"] == "sqlite_snapshot"
     assert restarted_manager.calls == 0
+
+
+def test_cached_traffic_projection_period_uses_baseline_without_fleet_fetch(monkeypatch, tmp_path):
+    now_ts = 900 * 3600
+    runtime = _build_runtime(
+        tmp_path,
+        {"alpha@example.com": {"up": 160, "down": 240, "total": 400, "count": 1}},
+    )
+    runtime.traffic_stats_cache["client"] = (
+        now_ts,
+        {"stats": {"alpha@example.com": {"up": 160, "down": 240, "total": 400, "count": 1}}},
+    )
+    runtime._save_period_snapshots(
+        "client",
+        {"alpha@example.com": {"up": 100, "down": 150, "total": 250, "count": 1}},
+        now_ts - (25 * 3600),
+    )
+    monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
+
+    payload = runtime.get_cached_traffic_stats_projection_by_period("client", "day")
+
+    assert payload["stats"] == {
+        "alpha@example.com": {"up": 60, "down": 90, "total": 150, "count": 1},
+    }
+    assert payload["current_count"] == 1
+    assert payload["cache_source"] == "memory"
+
+
+def test_cached_traffic_projection_period_reports_missing_history_without_fleet_fetch(monkeypatch, tmp_path):
+    now_ts = 1000 * 3600
+    runtime = _build_runtime(
+        tmp_path,
+        {"alpha@example.com": {"up": 160, "down": 240, "total": 400, "count": 1}},
+    )
+    runtime.traffic_stats_cache["client"] = (
+        now_ts,
+        {"stats": {"alpha@example.com": {"up": 160, "down": 240, "total": 400, "count": 1}}},
+    )
+    monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
+
+    payload = runtime.get_cached_traffic_stats_projection_by_period("client", "week")
+
+    assert payload["stats"] == {}
+    assert payload["current_count"] == 1
+    assert "No historical snapshot" in payload["note"]
