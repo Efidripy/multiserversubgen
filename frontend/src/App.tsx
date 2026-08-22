@@ -770,6 +770,7 @@ export const App: React.FC = () => {
                   includeCounts={false}
                   includeCollectorStatus={false}
                   includePanelUpdateChecks={false}
+                  includeLiveStatus={false}
                   fleetSummary={fleetSummary}
                   fleetCollapsed={registeredFleetCollapsed}
                   onToggleFleet={() => setRegisteredFleetCollapsed((value) => !value)}
