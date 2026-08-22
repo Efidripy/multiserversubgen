@@ -308,6 +308,39 @@ Authorization: Basic base64(username:password)
 
 ---
 
+## 🧭 Dashboard Summary
+
+### `GET /api/v1/dashboard/summary?period=all_time`
+
+Лёгкая сводка для Dashboard. Поддерживаемые значения `period`: `day`,
+`week`, `month`, `all_time`. Ответ строится из уже собранной локальной
+traffic projection и snapshots: этот endpoint не инициирует запросы к
+подключённым 3x-ui панелям при открытии Dashboard.
+
+Для `day`, `week` и `month` история может быть временно недоступна, пока не
+появится baseline snapshot. В этом случае `traffic` и `top_clients` пустые,
+а `traffic_note` объясняет состояние; all-time данные остаются доступны из
+последней projection.
+
+**Response:**
+```json
+{
+  "nodes_total": 5,
+  "nodes_online": 4,
+  "clients_total": 24,
+  "online_clients_total": 7,
+  "online_by_node": {"nl-1": 3, "fi-1": 4},
+  "traffic": {"upload": 1073741824, "download": 5368709120, "total": 6442450944},
+  "traffic_period": "week",
+  "traffic_note": null,
+  "top_clients": [
+    {"email": "user@example.com", "upload": 1048576, "download": 8388608, "total": 9437184}
+  ]
+}
+```
+
+---
+
 ## 🔧 Automation
 
 ### `POST /api/v1/automation/reset-all-traffic`
