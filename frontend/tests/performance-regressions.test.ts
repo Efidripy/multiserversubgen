@@ -39,6 +39,13 @@ describe('navigation performance regressions', () => {
     expect(clients).toContain('getInboundsHeaderSource({ signal: controller.signal })');
   });
 
+  it('renders Dashboard server cards from the cached snapshot instead of probing every node', () => {
+    const app = read('src/App.tsx');
+
+    expect(app).toContain('dashboardMode');
+    expect(app).toContain('includeLiveStatus={false}');
+  });
+
   it('does not fetch complete node databases just to render Backup Manager', () => {
     const backupManager = read('src/components/BackupManager.tsx');
 
