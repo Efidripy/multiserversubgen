@@ -98,20 +98,13 @@ flowchart LR
 
 ## Документация
 
-### Стартовая база
+Полный навигатор: [docs/README.md](./docs/README.md).
 
 - [Установка](./docs/INSTALL.md)
 - [Обновление](./docs/UPDATE.md)
 - [Эксплуатация (Ops)](./docs/OPS.md)
-- [API (входная точка)](./docs/API.md)
-
-### Глубже
-
-- [Полная API-документация](./docs/API_DOCUMENTATION.md)
-- [Гайд по компонентам](./docs/COMPONENTS_GUIDE.md)
-- [Гайд по подпискам](./docs/SUBSCRIPTION_GUIDE.md)
-- [Текущий remediation roadmap](./docs/REMEDIATION-ROADMAP-2026-08-10.md)
-- [Исторический снимок улучшений](./docs/IMPROVEMENTS.md)
+- [API](./docs/API.md)
+- [Подписки](./docs/SUBSCRIPTION_GUIDE.md)
 
 ## Практичные заметки для production
 

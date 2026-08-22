@@ -30,6 +30,15 @@ print(''.join(secrets.choice(alphabet) for _ in range(length)))
 PY
 }
 
+xui_random_group_id() {
+    python3 - <<'PY'
+import secrets
+import string
+
+print(''.join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(16)))
+PY
+}
+
 xui_pick_release_tag() {
     printf "%s" "$ARTIFACT_XUI_VERSION"
 }
@@ -156,6 +165,12 @@ xui_install_binary() {
     local workdir
     local archive
     local arch
+    local staged_dir
+    local rollback_root
+    local rollback_dir
+    local previous_cli=""
+    local previous_unit=""
+    local stamp
 
     arch="$(xui_arch)" || {
         echo "Unsupported CPU architecture for x-ui" >&2
@@ -167,24 +182,51 @@ xui_install_binary() {
 
     xui_ensure_system_prerequisites
 
-    xui_download_release "$archive" "$tag"
+    xui_download_release "$archive" "$tag" || { rm -rf "$workdir"; return 1; }
 
-    if [ -d /usr/local/x-ui ]; then
-        sudo systemctl stop x-ui >/dev/null 2>&1 || true
-        sudo rm -rf /usr/local/x-ui
+    staged_dir="${workdir}/x-ui"
+    if ! sudo tar -xzf "$archive" -C "$workdir"; then
+        echo "Failed to unpack verified 3x-ui archive." >&2
+        rm -rf "$workdir"
+        return 1
+    fi
+    [ -x "${staged_dir}/x-ui" ] || {
+        echo "Downloaded 3x-ui archive has no executable x-ui binary." >&2
+        rm -rf "$workdir"
+        return 1
+    }
+    [ -f "${staged_dir}/x-ui.service.debian" ] || {
+        echo "Downloaded 3x-ui archive has no Debian systemd unit." >&2
+        rm -rf "$workdir"
+        return 1
+    }
+    sudo chmod +x "${staged_dir}/x-ui" "${staged_dir}/x-ui.sh"
+
+    if [[ "$arch" == armv5 || "$arch" == armv6 || "$arch" == armv7 ]]; then
+        sudo mv "${staged_dir}/bin/xray-linux-${arch}" "${staged_dir}/bin/xray-linux-arm"
+        sudo chmod +x "${staged_dir}/bin/xray-linux-arm"
+    elif [ -f "${staged_dir}/bin/xray-linux-${arch}" ]; then
+        sudo chmod +x "${staged_dir}/bin/xray-linux-${arch}"
     fi
 
     sudo mkdir -p /usr/local
-    sudo tar -xzf "$archive" -C /usr/local
-    sudo chmod +x /usr/local/x-ui/x-ui /usr/local/x-ui/x-ui.sh
-
-    if [[ "$arch" == armv5 || "$arch" == armv6 || "$arch" == armv7 ]]; then
-        sudo mv "/usr/local/x-ui/bin/xray-linux-${arch}" /usr/local/x-ui/bin/xray-linux-arm
-        sudo chmod +x /usr/local/x-ui/bin/xray-linux-arm
-    elif [ -f "/usr/local/x-ui/bin/xray-linux-${arch}" ]; then
-        sudo chmod +x "/usr/local/x-ui/bin/xray-linux-${arch}"
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    rollback_root="/var/backups/multiserversubgen/x-ui"
+    rollback_dir="${rollback_root}/${stamp}"
+    sudo install -d -m 0700 "$rollback_dir"
+    if [ -d /usr/local/x-ui ]; then
+        sudo systemctl stop x-ui >/dev/null 2>&1 || true
+        sudo mv /usr/local/x-ui "${rollback_dir}/x-ui"
     fi
-
+    if [ -f /usr/bin/x-ui ]; then
+        previous_cli="${rollback_dir}/x-ui-cli"
+        sudo cp -p /usr/bin/x-ui "$previous_cli"
+    fi
+    if [ -f /etc/systemd/system/x-ui.service ]; then
+        previous_unit="${rollback_dir}/x-ui.service"
+        sudo cp -p /etc/systemd/system/x-ui.service "$previous_unit"
+    fi
+    sudo mv "$staged_dir" /usr/local/x-ui
     sudo install -m 0755 /usr/local/x-ui/x-ui.sh /usr/bin/x-ui
 
     if [ -f /usr/local/x-ui/x-ui.service.debian ]; then
@@ -193,7 +235,18 @@ xui_install_binary() {
 
     sudo systemctl daemon-reload
     sudo systemctl enable x-ui >/dev/null
-    sudo systemctl start x-ui
+    if ! sudo systemctl start x-ui; then
+        echo "3x-ui service failed after update; restoring rollback ${rollback_dir}." >&2
+        sudo systemctl stop x-ui >/dev/null 2>&1 || true
+        sudo rm -rf /usr/local/x-ui
+        if [ -d "${rollback_dir}/x-ui" ]; then sudo mv "${rollback_dir}/x-ui" /usr/local/x-ui; fi
+        if [ -n "$previous_cli" ] && [ -f "$previous_cli" ]; then sudo install -m 0755 "$previous_cli" /usr/bin/x-ui; fi
+        if [ -n "$previous_unit" ] && [ -f "$previous_unit" ]; then sudo install -m 0644 "$previous_unit" /etc/systemd/system/x-ui.service; fi
+        sudo systemctl daemon-reload
+        sudo systemctl start x-ui >/dev/null 2>&1 || true
+        rm -rf "$workdir"
+        return 1
+    fi
     sudo x-ui migrate >/dev/null 2>&1 || true
 
     rm -rf "$workdir"
@@ -254,6 +307,12 @@ xui_generate_seed_context() {
     PROFILE_XUI_UUID_REALITY="$("$xray_bin" uuid)"
     PROFILE_XUI_UUID_WS="$("$xray_bin" uuid)"
     PROFILE_XUI_UUID_XHTTP="$("$xray_bin" uuid)"
+    # 3x-ui v3.5+ requires a 16-character lowercase-alphanumeric group_id for
+    # editable host rows. Keep each seeded inbound in its own host group.
+    PROFILE_XUI_GROUP_REALITY="$(xui_random_group_id)"
+    PROFILE_XUI_GROUP_WS="$(xui_random_group_id)"
+    PROFILE_XUI_GROUP_XHTTP="$(xui_random_group_id)"
+    PROFILE_XUI_GROUP_TROJAN="$(xui_random_group_id)"
     PROFILE_XUI_TROJAN_PASS="$(xui_random_token 10)"
     local x25519_output
     x25519_output="$("$xray_bin" x25519)"
@@ -289,6 +348,14 @@ xui_seed_base_inbounds() {
     if [ -z "${PROFILE_XUI_DOMAIN:-}" ] || [ -z "${PROFILE_XUI_REALITY_DOMAIN:-}" ] || [ -z "${PROFILE_XUI_SUB_PATH:-}" ]; then
         xui_generate_seed_context "$domain" "$reality_domain"
     fi
+    if [ ! -f /etc/x-ui/x-ui.db ]; then
+        echo "3x-ui database was not created before seed configuration." >&2
+        return 1
+    fi
+    if ! sudo sqlite3 /etc/x-ui/x-ui.db "SELECT 1 FROM pragma_table_info('hosts') WHERE name='group_id' LIMIT 1;" | grep -qx '1'; then
+        echo "3x-ui v3.5+ hosts/group_id schema is missing after migration." >&2
+        return 1
+    fi
     sql_file="$(mktemp)"
 
     env \
@@ -306,6 +373,10 @@ xui_seed_base_inbounds() {
         PROFILE_XUI_UUID_REALITY="${PROFILE_XUI_UUID_REALITY}" \
         PROFILE_XUI_UUID_WS="${PROFILE_XUI_UUID_WS}" \
         PROFILE_XUI_UUID_XHTTP="${PROFILE_XUI_UUID_XHTTP}" \
+        PROFILE_XUI_GROUP_REALITY="${PROFILE_XUI_GROUP_REALITY}" \
+        PROFILE_XUI_GROUP_WS="${PROFILE_XUI_GROUP_WS}" \
+        PROFILE_XUI_GROUP_XHTTP="${PROFILE_XUI_GROUP_XHTTP}" \
+        PROFILE_XUI_GROUP_TROJAN="${PROFILE_XUI_GROUP_TROJAN}" \
         PROFILE_XUI_TROJAN_PASS="${PROFILE_XUI_TROJAN_PASS}" \
         PROFILE_XUI_PRIVATE_KEY="${PROFILE_XUI_PRIVATE_KEY}" \
         PROFILE_XUI_PUBLIC_KEY="${PROFILE_XUI_PUBLIC_KEY}" \
@@ -336,6 +407,10 @@ replacements = {
     "UUID_REALITY": os.environ["PROFILE_XUI_UUID_REALITY"],
     "UUID_WS": os.environ["PROFILE_XUI_UUID_WS"],
     "UUID_XHTTP": os.environ["PROFILE_XUI_UUID_XHTTP"],
+    "GROUP_REALITY": os.environ["PROFILE_XUI_GROUP_REALITY"],
+    "GROUP_WS": os.environ["PROFILE_XUI_GROUP_WS"],
+    "GROUP_XHTTP": os.environ["PROFILE_XUI_GROUP_XHTTP"],
+    "GROUP_TROJAN": os.environ["PROFILE_XUI_GROUP_TROJAN"],
     "TROJAN_PASS": os.environ["PROFILE_XUI_TROJAN_PASS"],
     "PRIVATE_KEY": os.environ["PROFILE_XUI_PRIVATE_KEY"],
     "PUBLIC_KEY": os.environ["PROFILE_XUI_PUBLIC_KEY"],
