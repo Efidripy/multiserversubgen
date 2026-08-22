@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, Edit3, Pause, Play, RefreshCw, Trash2 } from 'lucide-react';
-import { deleteNode, getRegisteredFleetOverview, NODES_CHANGED_EVENT, type FleetNode } from '../api/nodes';
+import {
+  deleteNode,
+  getRegisteredFleetOverview,
+  getRegisteredFleetSnapshotOverview,
+  NODES_CHANGED_EVENT,
+  type FleetNode,
+} from '../api/nodes';
 import { restartXray, stopXray } from '../api/serverOps';
 import { useToast } from './Toast';
 
@@ -93,11 +99,13 @@ export function RegisteredFleetPanel({
   const [deletingNodeId, setDeletingNodeId] = useState<number | null>(null);
   const [actionNodeKey, setActionNodeKey] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options: { live?: boolean } = {}) => {
     setLoading(true);
     setError(null);
     try {
-      const payload = await getRegisteredFleetOverview();
+      const payload = options.live
+        ? await getRegisteredFleetOverview()
+        : await getRegisteredFleetSnapshotOverview();
       setNodes(payload.map(toUiNode));
     } catch (err: any) {
       setError(err?.response?.data?.detail || err?.message || 'Unable to load registered servers');
@@ -141,7 +149,7 @@ export function RegisteredFleetPanel({
     try {
       await command(node.id);
       toast(t(successKey, { node: node.name }), 'success');
-      await load();
+      await load({ live: true });
     } catch (err: any) {
       const message = err?.response?.data?.detail || err?.response?.data?.error || err?.message || t(failureKey, { node: node.name });
       setError(message);
@@ -262,7 +270,7 @@ export function RegisteredFleetPanel({
                 </div>
                   <button
                     className="rounded-md border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 px-3 py-1.5 font-mono text-xs font-medium tracking-wide text-white disabled:opacity-50"
-                    onClick={load}
+                    onClick={() => void load({ live: true })}
                     disabled={loading}
                     type="button"
                   >
@@ -361,7 +369,7 @@ export function RegisteredFleetPanel({
                       >
                         {isStopping ? <RefreshCw className="w-3.5 h-3.5 animate-spin opacity-60" /> : <Pause className="w-3.5 h-3.5 opacity-60" />}
                       </button>
-                      <button className={fleetActionButtonClass} type="button" title="Refresh" onClick={load}>
+                      <button className={fleetActionButtonClass} type="button" title="Refresh" onClick={() => void load({ live: true })}>
                         <RefreshCw className="w-3.5 h-3.5 opacity-60" />
                       </button>
                       <button
