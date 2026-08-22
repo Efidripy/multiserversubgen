@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const node = {
   id: 42,
@@ -21,6 +21,7 @@ const node = {
 
 const mocks = vi.hoisted(() => ({
   getRegisteredFleetOverview: vi.fn(),
+  getRegisteredFleetSnapshotOverview: vi.fn(),
   deleteNode: vi.fn(),
   restartXray: vi.fn(),
   stopXray: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('react-i18next', () => ({
 
 vi.mock('../src/api/nodes', () => ({
   getRegisteredFleetOverview: mocks.getRegisteredFleetOverview,
+  getRegisteredFleetSnapshotOverview: mocks.getRegisteredFleetSnapshotOverview,
   deleteNode: mocks.deleteNode,
   NODES_CHANGED_EVENT: 'nodes-changed',
 }));
@@ -47,11 +49,13 @@ vi.mock('../src/components/Toast', () => ({
 
 import { RegisteredFleetPanel } from '../src/components/RegisteredFleetPanel';
 
+afterEach(cleanup);
+
 describe('RegisteredFleetPanel edit action', () => {
   it('passes the selected node to the edit flow instead of opening the add-node flow', async () => {
     const onEditNode = vi.fn();
     const onOpenNodes = vi.fn();
-    mocks.getRegisteredFleetOverview.mockResolvedValue([node]);
+    mocks.getRegisteredFleetSnapshotOverview.mockResolvedValue([node]);
 
     render(
       <RegisteredFleetPanel
@@ -63,9 +67,23 @@ describe('RegisteredFleetPanel edit action', () => {
     );
 
     await waitFor(() => expect(screen.getByText('edge-42')).toBeTruthy());
+    expect(mocks.getRegisteredFleetOverview).not.toHaveBeenCalled();
     fireEvent.click(screen.getByTitle('Edit'));
 
     expect(onEditNode).toHaveBeenCalledWith(node);
     expect(onOpenNodes).not.toHaveBeenCalled();
+  });
+
+  it('keeps remote node probes behind the explicit Test All control', async () => {
+    mocks.getRegisteredFleetSnapshotOverview.mockResolvedValue([node]);
+    mocks.getRegisteredFleetOverview.mockResolvedValue([node]);
+
+    render(<RegisteredFleetPanel collapsed={false} setCollapsed={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText('edge-42')).toBeTruthy());
+    expect(mocks.getRegisteredFleetOverview).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'nodes.testAll' }));
+    await waitFor(() => expect(mocks.getRegisteredFleetOverview).toHaveBeenCalledTimes(1));
   });
 });
