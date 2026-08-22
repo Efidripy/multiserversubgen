@@ -15,21 +15,16 @@ installer, updater, systemd unit and deployment helpers.
 - `scripts/deploy/` — server deployment helpers. They are local operator tools,
   not CI release authority.
 - `systemd/`, `nginx/`, `monitoring/` — host integration templates.
-- `docs/` — tracked operator and engineering documentation.
+- `docs/` — tracked user/operator documentation and the enforced composition-root ADR.
 
-## Canonical engineering records
+## Documentation boundary
 
-- Current remediation source of truth:
-  [`docs/REMEDIATION-ROADMAP-2026-08-10.md`](docs/REMEDIATION-ROADMAP-2026-08-10.md).
-- Navigation/cache performance record:
-  [`docs/PERF-01-NAVIGATION-CACHING-2026-08-17.md`](docs/PERF-01-NAVIGATION-CACHING-2026-08-17.md).
-- Production UI cold-path record:
-  [`docs/PERF-02-PRODUCTION-UI-COLD-PATH-2026-08-17.md`](docs/PERF-02-PRODUCTION-UI-COLD-PATH-2026-08-17.md).
-- Backup Manager metadata-first record:
-  [`docs/PERF-05-BACKUP-METADATA-FIRST-2026-08-21.md`](docs/PERF-05-BACKUP-METADATA-FIRST-2026-08-21.md).
-- Historical improvement snapshot:
-  [`docs/IMPROVEMENTS.md`](docs/IMPROVEMENTS.md). It is not the current
-  remediation authority.
+- Public user/operator documentation: [`docs/README.md`](docs/README.md).
+- Local working queue and completion log: ignored `.local_project_docs/TODO.md`
+  and `.local_project_docs/DONE.md` in the maintained workspace.
+- Historical audit, sprint, rollout, performance and design records: ignored
+  `.local_project_docs/archive/`. They are not expected in a clean Git clone
+  and must be revalidated before being reused as a source of truth.
 
 ## Validation baseline
 
