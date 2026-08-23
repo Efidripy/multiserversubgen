@@ -145,7 +145,14 @@ def build_live_data_router(
         return {
             "id": node.get("id"),
             "name": str(node.get("name") or node.get("id") or "unknown"),
-            "panel_url": _safe_panel_url(node.get("panel_url") or node.get("url")),
+            # `url` can be a UI-derived fallback based on the node name.  It
+            # is not an authoritative panel address (and names may contain
+            # emoji), so only forward an explicit saved panel URL here.
+            "panel_url": _safe_panel_url(node.get("panel_url")),
+            "ip": node.get("ip") or "",
+            "port": node.get("port") or "",
+            "scheme": node.get("scheme") or "https",
+            "base_path": node.get("base_path") or "",
             "source_type": node.get("source_type") or "xui",
             "read_only": bool(node.get("read_only")),
             "enabled": bool(node.get("enabled", True)),
