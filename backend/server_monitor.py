@@ -59,6 +59,37 @@ def validate_server_history_request(metric: str, bucket: int | str) -> tuple[str
     return normalized_metric, normalized_bucket
 
 
+def _normalize_log_lines(raw_logs: Any) -> List[str]:
+    """Normalize empty sentinels returned by different 3x-ui log backends."""
+    if raw_logs is None:
+        return []
+    values = raw_logs if isinstance(raw_logs, list) else str(raw_logs).splitlines()
+    lines = []
+    for value in values:
+        line = str(value or "").strip()
+        if line and line.lower() not in {"none", "null"}:
+            lines.append(line)
+    return lines
+
+
+def _format_xray_log_entry(entry: Any) -> str:
+    """Render the current 3x-ui structured access-log entry for the text UI."""
+    if not isinstance(entry, dict):
+        return str(entry or "").strip()
+
+    event_names = {0: "DIRECT", 1: "BLOCKED", 2: "PROXY"}
+    fields = (
+        ("time", entry.get("DateTime")),
+        ("from", entry.get("FromAddress")),
+        ("to", entry.get("ToAddress")),
+        ("inbound", entry.get("Inbound")),
+        ("outbound", entry.get("Outbound")),
+        ("email", entry.get("Email")),
+        ("event", event_names.get(entry.get("Event"), entry.get("Event"))),
+    )
+    return " | ".join(f"{label}={value}" for label, value in fields if value not in (None, ""))
+
+
 def _requests_verify_value():
     if not VERIFY_TLS:
         return False
@@ -750,31 +781,35 @@ class ServerMonitor:
             return {"error": "Failed to connect"}
         
         try:
-            body = {"level": level, "syslog": False}
+            # Current 3x-ui handlers read PostForm fields, not a JSON payload.
+            body = {"level": level, "syslog": "false"}
             res = None
+            logs_endpoint = ""
 
             # v3: count в URL path — POST /panel/api/server/logs/{count}
             try:
                 candidate = xui_request(s, "POST",
                                         f"{base_url}/panel/api/server/logs/{count}",
-                                        json=body, timeout=15)
+                                        data=body, timeout=15)
                 if candidate.status_code not in (404, 405):
                     res = candidate
+                    logs_endpoint = f"{base_url}/panel/api/server/logs/{count}"
             except Exception:
                 pass
 
             # v2 fallback: count в теле запроса
             if res is None:
                 try:
-                    payload_v2 = {"count": count, **body}
+                    payload_v2 = {"count": str(count), **body}
                     for ep in (f"{base_url}/panel/api/server/logs",
                                f"{base_url}/server/logs"):
                         try:
-                            candidate = xui_request(s, "POST", ep, json=payload_v2)
+                            candidate = xui_request(s, "POST", ep, data=payload_v2)
                         except Exception:
                             continue
                         if candidate.status_code not in (404, 405):
                             res = candidate
+                            logs_endpoint = ep
                             break
                 except Exception:
                     pass
@@ -784,11 +819,29 @@ class ServerMonitor:
 
             if res.status_code == 200:
                 data = res.json()
-                raw_logs = data.get("obj", "")
-                if isinstance(raw_logs, list):
-                    logs = [str(item) for item in raw_logs]
-                else:
-                    logs = str(raw_logs).split("\n") if data.get("success") else []
+                if not data.get("success"):
+                    return {"error": str(data.get("msg") or "Logs API returned an unsuccessful response")}
+                logs = _normalize_log_lines(data.get("obj"))
+
+                # logger.GetLogs can be empty on systemd installations even
+                # though journalctl still holds the panel service history.
+                if not logs:
+                    syslog_payload = {"level": level, "syslog": "true"}
+                    if logs_endpoint.endswith(f"/{count}"):
+                        request_data = syslog_payload
+                    else:
+                        request_data = {"count": str(count), **syslog_payload}
+                    syslog_response = xui_request(
+                        s,
+                        "POST",
+                        logs_endpoint,
+                        data=request_data,
+                        timeout=15,
+                    )
+                    if syslog_response.status_code == 200:
+                        syslog_data = syslog_response.json()
+                        if syslog_data.get("success"):
+                            logs = _normalize_log_lines(syslog_data.get("obj"))
                 return {"node": node["name"], "logs": logs, "count": count, "level": level}
 
             return {"error": f"API returned status {res.status_code}"}
@@ -1105,12 +1158,29 @@ class ServerMonitor:
             return {"error": r.get("error"), "logs": []}
         count = bounded_log_count(count)
         try:
-            res = xui_request(s, "POST", f"{base_url}/panel/api/server/xraylogs/{count}",
-                              json={"level": level, "syslog": False}, timeout=15)
+            # The modern handler consumes URL-encoded PostForm values. It
+            # returns structured LogEntry objects, unlike the legacy text API.
+            res = xui_request(
+                s,
+                "POST",
+                f"{base_url}/panel/api/server/xraylogs/{count}",
+                data={
+                    "filter": "",
+                    "showDirect": "true",
+                    "showBlocked": "true",
+                    "showProxy": "true",
+                },
+                timeout=15,
+            )
             if res.status_code == 200:
                 data = res.json()
-                raw = data.get("obj", "")
-                logs = raw.split("\n") if isinstance(raw, str) else (raw if isinstance(raw, list) else [])
+                if not data.get("success"):
+                    return {"error": str(data.get("msg") or "Xray logs API returned an unsuccessful response"), "logs": []}
+                raw = data.get("obj")
+                if isinstance(raw, list):
+                    logs = [line for line in (_format_xray_log_entry(item) for item in raw) if line]
+                else:
+                    logs = _normalize_log_lines(raw)
                 return {"node": node["name"], "logs": logs}
             return {"error": f"HTTP {res.status_code}", "logs": []}
         except Exception as exc:
