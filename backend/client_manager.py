@@ -18,7 +18,9 @@ from xui_session import (
     XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC,
     build_panel_base_url,
     extract_node_auth, get_authenticated_session, make_node_key_for_node, xui_request,
-    get_node_api_version, set_node_api_version,
+    # Imported for compatibility with older integrations/tests only. Version
+    # telemetry is deliberately not used as a routing authority below.
+    get_node_api_version, set_node_api_version,  # noqa: F401 - legacy telemetry import surface
 )
 from utils import parse_field_as_dict
 
@@ -74,7 +76,7 @@ class ClientManager:
         except Exception:
             return False
     
-    def _get_session(self, node: Dict) -> tuple:
+    def _get_session(self, node: Dict, *, force_reauth: bool = False) -> tuple:
         """Создать авторизованную сессию для узла
         
         Returns:
@@ -93,6 +95,7 @@ class ClientManager:
                 verify_value=_requests_verify_value(),
                 timeout=XUI_FAST_TIMEOUT_SEC,
                 retries=XUI_FAST_RETRIES,
+                force_reauth=force_reauth,
             )
             if not auth.get("ok"):
                 logger.warning(f"Failed to login to {node['name']}")
@@ -102,6 +105,24 @@ class ClientManager:
             return None, None
 
         return auth["session"], auth["base_url"]
+
+    def _retry_v3_after_reauth(self, node: Dict, operation):
+        """Repeat a v3 operation once with a fresh session after 404/405.
+
+        Some 3x-ui builds deliberately return a panel-API 404 for an expired
+        cookie.  A route is therefore legacy-only only when the same request
+        is still 404/405 after a forced login.  Callers must use this helper
+        only for the exact same v3 operation; it never invokes a v2 write.
+        """
+        fresh_session, fresh_base_url = self._get_session(node, force_reauth=True)
+        if not fresh_session:
+            return "reauth_failed", None, None, None
+        try:
+            result = operation(fresh_session, fresh_base_url)
+            return ("confirmed_absent" if result is None else "response"), result, fresh_session, fresh_base_url
+        except Exception as exc:
+            logger.warning("v3 retry after re-auth failed for %s: %s", node.get("name"), exc)
+            return "retry_failed", None, fresh_session, fresh_base_url
     
     def _fetch_inbounds_from_node(self, node: Dict) -> List[Dict]:
         """Получить инбаунды с узла"""
@@ -158,13 +179,18 @@ class ClientManager:
         traffic: Dict = c.get("traffic") or {}
         return {
             "id": c.get("uuid", ""),
+            "db_id": c.get("id"),
             "email": c.get("email", ""),
             "enable": c.get("enable", True),
             "expiryTime": c.get("expiryTime", 0),
             "totalGB": c.get("totalGB", 0),
+            "limitIp": c.get("limitIp"),
+            "security": c.get("security", ""),
+            "subId": c.get("subId", ""),
+            "reset": c.get("reset", 0),
+            "group": c.get("group", ""),
             "flow": c.get("flow", ""),
             "comment": c.get("comment", ""),
-            "encryption": c.get("encryption", ""),
             "node_id": node.get("id"),
             "node_name": node["name"],
             "node_ip": node.get("ip", ""),
@@ -175,6 +201,7 @@ class ClientManager:
             "password": "",
             "traffic_up": traffic.get("up", 0),
             "traffic_down": traffic.get("down", 0),
+            "traffic_total": traffic.get("total", (traffic.get("up", 0) or 0) + (traffic.get("down", 0) or 0)),
         }
 
     def _add_client_v3(self, s, base_url: str, email: str,
@@ -197,6 +224,12 @@ class ClientManager:
             "expiryTime": config.get("expiryTime", 0),
             "limitIp": config.get("limitIp", 0),
             "tgId": config.get("tgId", 0),
+            # Required by the v3 Client schema.  Explicit defaults prevent
+            # relying on undocumented panel defaults during a remote write.
+            "comment": config.get("comment", ""),
+            "security": config.get("security", ""),
+            "reset": config.get("reset", 0),
+            "subId": config.get("subId", email),
         })
         payload = {"client": client, "inboundIds": inbound_ids}
         try:
@@ -250,7 +283,7 @@ class ClientManager:
 
     def _update_client_v3(self, s, base_url: str, client_identifier: str,
                           inbound_id: int, updates: Dict) -> Optional[bool]:
-        """Read, merge and scoped-update a client through the v3 contract.
+        """Read and merge a client through the v3 full-replacement contract.
 
         The caller only carries a local client UUID for many v3 panels.  Match
         it against the authenticated list response to recover the *current*
@@ -295,9 +328,10 @@ class ClientManager:
             payload = self._v3_update_payload(existing, updates)
             if not payload.get("email"):
                 return False
+            # v3 updates propagate through every attached inbound.  The
+            # old scoped ``?inboundIds=`` query is undocumented and caused
+            # divergent behavior across current panels.
             url = f"{base_url}/panel/api/clients/update/{_path_segment(email)}"
-            if inbound_id:
-                url += f"?inboundIds={int(inbound_id)}"
             res = xui_request(s, "POST", url, json=payload)
             if res.status_code in (404, 405):
                 return None  # v2 fallback
@@ -341,9 +375,7 @@ class ClientManager:
             if not existing or not existing.get("email"):
                 return False
             email = str(existing["email"])
-            url = f"{base_url}/panel/api/clients/del/{_path_segment(email)}"
-            if keep_traffic:
-                url += "?keepTraffic=1"
+            url = f"{base_url}/panel/api/clients/del/{_path_segment(email)}?keepTraffic={1 if keep_traffic else 0}"
             res = xui_request(s, "POST", url)
             if res.status_code in (404, 405):
                 return None  # v2 fallback
@@ -485,24 +517,20 @@ class ClientManager:
                 return node_clients
 
             try:
-                # Определяем версию API (из кеша или проверяем)
-                api_version = get_node_api_version(base_url)
-                if api_version != "v2":
-                    # Пробуем v3
-                    v3_state, v3_obj = self._probe_v3(s, base_url)
-                    if v3_state == "supported":
-                        set_node_api_version(base_url, "v3")
-                        for c in v3_obj:
-                            email = c.get("email", "")
-                            if needle and needle not in email.lower():
-                                continue
-                            node_clients.append(self._map_v3_client(c, node))
-                        return node_clients
-                    if v3_state == "unsupported":
-                        set_node_api_version(base_url, "v2")
-                    else:
-                        logger.warning("v3 clients list failed for %s; legacy route was not assumed", node["name"])
-                        return node_clients
+                # API version is telemetry, not routing authority.  Probe the
+                # current v3 operation first for every node; only this route's
+                # confirmed absence permits its v2 legacy equivalent.
+                v3_state, v3_obj = self._probe_v3(s, base_url)
+                if v3_state == "supported":
+                    for c in v3_obj:
+                        email = c.get("email", "")
+                        if needle and needle not in email.lower():
+                            continue
+                        node_clients.append(self._map_v3_client(c, node))
+                    return node_clients
+                if v3_state != "unsupported":
+                    logger.warning("v3 clients list failed for %s; legacy route was not assumed", node["name"])
+                    return node_clients
 
                 # v2 fallback: извлекаем клиентов из инбаундов
                 try:
@@ -532,9 +560,13 @@ class ClientManager:
                                 "enable": client.get("enable", True),
                                 "expiryTime": client.get("expiryTime", 0),
                                 "totalGB": client.get("totalGB", 0),
+                                "limitIp": client.get("limitIp"),
+                                "security": client.get("security", client.get("encryption", "")),
+                                "subId": client.get("subId", ""),
+                                "reset": client.get("reset", 0),
+                                "group": client.get("group", ""),
                                 "flow": client.get("flow", ""),
                                 "comment": client.get("comment", ""),
-                                "encryption": client.get("encryption", ""),
                                 "node_id": node.get("id"),
                                 "node_name": node["name"],
                                 "node_ip": node["ip"],
@@ -576,21 +608,30 @@ class ClientManager:
             return False
 
         try:
-            api_version = get_node_api_version(base_url)
-            logger.debug("add_client: api_version=%r node=%r", api_version, node["name"])
-            if api_version != "v2":
-                result = self._add_client_v3(
-                    s, base_url,
-                    email=email,
-                    inbound_ids=[inbound_id],
-                    config=client_config,
-                )
-                if result is not None:
-                    set_node_api_version(base_url, "v3")
-                    logger.info("add_client v3 END node=%r email=%r result=%s", node["name"], email, result)
-                    return result
-                set_node_api_version(base_url, "v2")
-                logger.debug("add_client: v3 returned None, falling back to v2 for node=%r", node["name"])
+            result = self._add_client_v3(
+                s, base_url,
+                email=email,
+                inbound_ids=[inbound_id],
+                config=client_config,
+            )
+            if result is not None:
+                logger.info("add_client v3 END node=%r email=%r result=%s", node["name"], email, result)
+                return result
+            # 404/405 can be an expired session on current panels.  Re-auth
+            # and retry the *same v3 request* before deciding this operation
+            # is legacy-only.  No v2 request is sent after any other outcome.
+            retry_state, retry_result, retry_session, retry_base_url = self._retry_v3_after_reauth(
+                node,
+                lambda fresh, fresh_base: self._add_client_v3(
+                    fresh, fresh_base, email=email, inbound_ids=[inbound_id], config=client_config,
+                ),
+            )
+            if retry_state == "response":
+                return retry_result
+            if retry_state != "confirmed_absent":
+                return False
+            s, base_url = retry_session, retry_base_url
+            logger.debug("add_client: v3 route confirmed absent for node=%r; using v2 legacy", node["name"])
 
             # v2 fallback
             payload = {
@@ -604,10 +645,9 @@ class ClientManager:
             # response), because the legacy request may already have reached
             # the panel.
             if res.status_code in (404, 405):
-                logger.info("add_client: v2 /addClient %s, upgrading node=%r to v3", res.status_code, node["name"])
+                logger.info("add_client: v2 /addClient %s, retrying documented v3 route for node=%r", res.status_code, node["name"])
                 result = self._add_client_v3(s, base_url, email=email, inbound_ids=[inbound_id], config=client_config)
                 if result is not None:
-                    set_node_api_version(base_url, "v3")
                     logger.info("add_client v3 upgrade END node=%r email=%r result=%s", node["name"], email, result)
                     return result
 
@@ -719,14 +759,23 @@ class ClientManager:
             return False
 
         try:
-            # v3 replaces a full client record.  The helper uses the original
-            # UUID/email to read it first and scopes the write to this inbound.
-            if client_uuid and get_node_api_version(base_url) != "v2":
+            # v3 replaces a full client record. It remains primary even when
+            # telemetry from an optional feature once said "v2".
+            if client_uuid:
                 result = self._update_client_v3(s, base_url, str(client_uuid), inbound_id, updates)
                 if result is not None:
-                    set_node_api_version(base_url, "v3")
                     return result
-                set_node_api_version(base_url, "v2")
+                retry_state, retry_result, retry_session, retry_base_url = self._retry_v3_after_reauth(
+                    node,
+                    lambda fresh, fresh_base: self._update_client_v3(
+                        fresh, fresh_base, str(client_uuid), inbound_id, updates,
+                    ),
+                )
+                if retry_state == "response":
+                    return retry_result
+                if retry_state != "confirmed_absent":
+                    return False
+                s, base_url = retry_session, retry_base_url
 
             # v2 fallback
             payload = {
@@ -752,12 +801,19 @@ class ClientManager:
 
         try:
             # v3 deletes by email; local callers normally carry the UUID.
-            if client_uuid and get_node_api_version(base_url) != "v2":
+            if client_uuid:
                 result = self._delete_client_v3(s, base_url, str(client_uuid))
                 if result is not None:
-                    set_node_api_version(base_url, "v3")
                     return result
-                set_node_api_version(base_url, "v2")
+                retry_state, retry_result, retry_session, retry_base_url = self._retry_v3_after_reauth(
+                    node,
+                    lambda fresh, fresh_base: self._delete_client_v3(fresh, fresh_base, str(client_uuid)),
+                )
+                if retry_state == "response":
+                    return retry_result
+                if retry_state != "confirmed_absent":
+                    return False
+                s, base_url = retry_session, retry_base_url
 
             # v2 fallback: delete by UUID
             res = xui_request(s, "POST",
@@ -823,9 +879,11 @@ class ClientManager:
                     results.append({"node": node["name"], "deleted_count": 0, "errors": []})
                     continue
 
-                # v3: bulkDel — один запрос вместо N
+                # v3 is always the first capability.  A missing bulk route
+                # may degrade only to the documented v3 single-client route;
+                # an application/network error must never start legacy writes.
                 s, base_url = self._get_session(node)
-                if s and get_node_api_version(base_url) == "v3":
+                if s:
                     bulk_state, bulk_result = self._bulk_delete_v3(s, base_url, emails_to_delete)
                     if bulk_state == "supported":
                         deleted_count = bulk_result.get("deleted", len(emails_to_delete))
@@ -838,6 +896,42 @@ class ClientManager:
                             "node": node["name"],
                             "deleted_count": 0,
                             "errors": ["v3 bulkDel failed; legacy fallback skipped"],
+                        })
+                        continue
+                    # A panel can hide a live v3 route behind a stale/expired
+                    # session as 404.  Confirm the absence after a fresh login
+                    # before any individual legacy mutation is allowed.
+                    def retry_bulk_delete(fresh, fresh_base):
+                        retry_state, retry_obj = self._bulk_delete_v3(
+                            fresh, fresh_base, emails_to_delete
+                        )
+                        return None if retry_state == "unsupported" else (retry_state, retry_obj)
+
+                    retry_state, retry_result, _retry_session, _retry_base_url = self._retry_v3_after_reauth(
+                        node, retry_bulk_delete
+                    )
+                    if retry_state == "response":
+                        if (
+                            isinstance(retry_result, tuple)
+                            and retry_result[0] == "supported"
+                            and isinstance(retry_result[1], dict)
+                        ):
+                            retry_obj = retry_result[1]
+                            deleted_count = retry_obj.get("deleted", len(emails_to_delete))
+                            skipped = [sk.get("email", "") for sk in (retry_obj.get("skipped") or [])]
+                            results.append({"node": node["name"], "deleted_count": deleted_count, "errors": skipped})
+                            continue
+                        results.append({
+                            "node": node["name"],
+                            "deleted_count": 0,
+                            "errors": ["v3 bulkDel retry failed; legacy fallback skipped"],
+                        })
+                        continue
+                    if retry_state != "confirmed_absent":
+                        results.append({
+                            "node": node["name"],
+                            "deleted_count": 0,
+                            "errors": ["v3 bulkDel retry failed; legacy fallback skipped"],
                         })
                         continue
 
@@ -880,38 +974,25 @@ class ClientManager:
             return {}
 
         try:
-            # v3 traffic is email-addressed while control-plane callers often
-            # carry the UUID.  Resolve only in an already-confirmed v3 mode;
-            # an operational failure is terminal and cannot fall through to a
-            # second (legacy) read with a different identity.
-            api_version = get_node_api_version(base_url)
+            # v3 traffic is email-addressed.  Avoid an extra list request for
+            # the common email case; resolve a UUID only when an email is not
+            # already available.  An operational v3 failure is terminal and
+            # cannot fall through to a different legacy identity.
             identifier = str(client_uuid)
-            if api_version == "v3":
+            if "@" in identifier:
+                v3_state, result = self._get_traffic_v3(s, base_url, identifier)
+            else:
                 resolve_state, email = self._resolve_v3_client_email(s, base_url, identifier)
                 if resolve_state == "supported":
                     v3_state, result = self._get_traffic_v3(s, base_url, email)
                 elif resolve_state == "unsupported":
-                    set_node_api_version(base_url, "v2")
                     v3_state, result = "unsupported", {}
                 else:
                     return {}
-                if v3_state == "supported":
-                    set_node_api_version(base_url, "v3")
-                    return result if isinstance(result, dict) else {}
-                if v3_state == "unsupported":
-                    set_node_api_version(base_url, "v2")
-                else:
-                    return {}
-
-            elif "@" in identifier:
-                v3_state, result = self._get_traffic_v3(s, base_url, identifier)
-                if v3_state == "supported":
-                    set_node_api_version(base_url, "v3")
-                    return result if isinstance(result, dict) else {}
-                if v3_state == "unsupported":
-                    set_node_api_version(base_url, "v2")
-                else:
-                    return {}
+            if v3_state == "supported":
+                return result if isinstance(result, dict) else {}
+            if v3_state != "unsupported":
+                return {}
 
             # v2 fallback: endpoint depends on protocol
             if protocol in ("vless", "vmess"):
@@ -1044,12 +1125,18 @@ class ClientManager:
             return False
         
         try:
-            if get_node_api_version(base_url) != "v2":
-                result = self._reset_client_traffic_v3(s, base_url, client_email)
-                if result is not None:
-                    set_node_api_version(base_url, "v3")
-                    return result
-                set_node_api_version(base_url, "v2")
+            result = self._reset_client_traffic_v3(s, base_url, client_email)
+            if result is not None:
+                return result
+            retry_state, retry_result, retry_session, retry_base_url = self._retry_v3_after_reauth(
+                node,
+                lambda fresh, fresh_base: self._reset_client_traffic_v3(fresh, fresh_base, client_email),
+            )
+            if retry_state == "response":
+                return retry_result
+            if retry_state != "confirmed_absent":
+                return False
+            s, base_url = retry_session, retry_base_url
 
             payload = {
                 "id": inbound_id,
@@ -1201,15 +1288,11 @@ class ClientManager:
                 return []
             try:
                 # v3: POST /panel/api/clients/onlines
-                if get_node_api_version(base_url) != "v2":
-                    v3_state, emails = self._get_online_v3(s, base_url)
-                    if v3_state == "supported":
-                        set_node_api_version(base_url, "v3")
-                        return [{"email": e, "node": node["name"]} for e in emails]
-                    if v3_state == "unsupported":
-                        set_node_api_version(base_url, "v2")
-                    else:
-                        return []
+                v3_state, emails = self._get_online_v3(s, base_url)
+                if v3_state == "supported":
+                    return [{"email": e, "node": node["name"]} for e in emails]
+                if v3_state != "unsupported":
+                    return []
 
                 # v2 fallback: POST /panel/api/inbounds/onlines
                 res = xui_request(s, "POST", f"{base_url}/panel/api/inbounds/onlines")
@@ -1246,27 +1329,42 @@ class ClientManager:
                 results.append({"node": node["name"], "deleted": 0, "error": "login failed"})
                 continue
             try:
-                if get_node_api_version(base_url) != "v2":
-                    res = xui_request(s, "POST", f"{base_url}/panel/api/clients/delDepleted")
-                    if res.status_code in (404, 405):
-                        set_node_api_version(base_url, "v2")
-                    elif res.status_code == 200:
-                        data = res.json()
-                        if isinstance(data, dict) and data.get("success") is True:
-                            set_node_api_version(base_url, "v3")
-                            obj = data.get("obj")
-                            if obj is None:
-                                obj = {}
-                            if not isinstance(obj, dict):
-                                results.append({"node": node["name"], "deleted": 0, "error": "v3 delDepleted malformed response"})
-                                continue
-                            results.append({"node": node["name"], "deleted": obj.get("deleted", 0)})
+                res = xui_request(s, "POST", f"{base_url}/panel/api/clients/delDepleted")
+                if res.status_code == 200:
+                    data = res.json()
+                    if isinstance(data, dict) and data.get("success") is True:
+                        obj = data.get("obj")
+                        if obj is None:
+                            obj = {}
+                        if not isinstance(obj, dict):
+                            results.append({"node": node["name"], "deleted": 0, "error": "v3 delDepleted malformed response"})
                             continue
-                        results.append({"node": node["name"], "deleted": 0, "error": "v3 delDepleted failed"})
+                        results.append({"node": node["name"], "deleted": obj.get("deleted", 0)})
                         continue
-                    else:
-                        results.append({"node": node["name"], "deleted": 0, "error": f"v3 delDepleted failed ({res.status_code})"})
-                        continue
+                    results.append({"node": node["name"], "deleted": 0, "error": "v3 delDepleted failed"})
+                    continue
+                if res.status_code not in (404, 405):
+                    results.append({"node": node["name"], "deleted": 0, "error": f"v3 delDepleted failed ({res.status_code})"})
+                    continue
+                def retry_del_depleted(fresh, fresh_base):
+                    retry = xui_request(fresh, "POST", f"{fresh_base}/panel/api/clients/delDepleted")
+                    return None if retry.status_code in (404, 405) else retry
+
+                retry_state, retry_result, retry_session, retry_base_url = self._retry_v3_after_reauth(
+                    node, retry_del_depleted,
+                )
+                if retry_state == "response":
+                    if retry_result is not None and retry_result.status_code == 200:
+                        retry_data = retry_result.json()
+                        retry_obj = retry_data.get("obj") if isinstance(retry_data, dict) and retry_data.get("success") is True else None
+                        if isinstance(retry_obj, dict):
+                            results.append({"node": node["name"], "deleted": retry_obj.get("deleted", 0)})
+                            continue
+                    results.append({"node": node["name"], "deleted": 0, "error": "v3 delDepleted retry failed"})
+                    continue
+                if retry_state != "confirmed_absent":
+                    results.append({"node": node["name"], "deleted": 0, "error": "v3 delDepleted retry failed"})
+                    continue
                 # v2 fallback
                 fallback = self.batch_delete_clients([node], depleted_only=True)
                 deleted = sum(r.get("deleted_count", 0) for r in fallback.get("results", []))
@@ -1299,38 +1397,52 @@ class ClientManager:
                 results.append({"node": node["name"], "adjusted": 0, "error": "login failed"})
                 continue
             try:
-                if get_node_api_version(base_url) != "v2":
-                    payload: Dict = {"emails": emails}
-                    if add_days:
-                        payload["addDays"] = add_days
-                    if add_bytes:
-                        payload["addBytes"] = add_bytes
-                    res = xui_request(s, "POST",
-                                      f"{base_url}/panel/api/clients/bulkAdjust",
-                                      json=payload)
-                    if res.status_code in (404, 405):
-                        set_node_api_version(base_url, "v2")
-                    elif res.status_code == 200:
-                        data = res.json()
-                        if isinstance(data, dict) and data.get("success") is True:
-                            set_node_api_version(base_url, "v3")
-                            obj = data.get("obj")
-                            if obj is None:
-                                obj = {}
-                            if not isinstance(obj, dict):
-                                results.append({"node": node["name"], "adjusted": 0, "error": "v3 bulkAdjust malformed response"})
-                                continue
-                            results.append({
-                                "node": node["name"],
-                                "adjusted": obj.get("adjusted", 0),
-                                "skipped": obj.get("skipped", []),
-                            })
+                payload: Dict = {"emails": emails}
+                if add_days:
+                    payload["addDays"] = add_days
+                if add_bytes:
+                    payload["addBytes"] = add_bytes
+                res = xui_request(s, "POST", f"{base_url}/panel/api/clients/bulkAdjust", json=payload)
+                if res.status_code == 200:
+                    data = res.json()
+                    if isinstance(data, dict) and data.get("success") is True:
+                        obj = data.get("obj")
+                        if obj is None:
+                            obj = {}
+                        if not isinstance(obj, dict):
+                            results.append({"node": node["name"], "adjusted": 0, "error": "v3 bulkAdjust malformed response"})
                             continue
-                        results.append({"node": node["name"], "adjusted": 0, "error": "v3 bulkAdjust failed"})
+                        results.append({"node": node["name"], "adjusted": obj.get("adjusted", 0), "skipped": obj.get("skipped", [])})
                         continue
-                    else:
-                        results.append({"node": node["name"], "adjusted": 0, "error": f"v3 bulkAdjust failed ({res.status_code})"})
-                        continue
+                    results.append({"node": node["name"], "adjusted": 0, "error": "v3 bulkAdjust failed"})
+                    continue
+                if res.status_code not in (404, 405):
+                    results.append({"node": node["name"], "adjusted": 0, "error": f"v3 bulkAdjust failed ({res.status_code})"})
+                    continue
+                def retry_bulk_adjust(fresh, fresh_base):
+                    retry = xui_request(
+                        fresh,
+                        "POST",
+                        f"{fresh_base}/panel/api/clients/bulkAdjust",
+                        json=payload,
+                    )
+                    return None if retry.status_code in (404, 405) else retry
+
+                retry_state, retry_result, retry_session, retry_base_url = self._retry_v3_after_reauth(
+                    node, retry_bulk_adjust,
+                )
+                if retry_state == "response":
+                    if retry_result is not None and retry_result.status_code == 200:
+                        retry_data = retry_result.json()
+                        retry_obj = retry_data.get("obj") if isinstance(retry_data, dict) and retry_data.get("success") is True else None
+                        if isinstance(retry_obj, dict):
+                            results.append({"node": node["name"], "adjusted": retry_obj.get("adjusted", 0), "skipped": retry_obj.get("skipped", [])})
+                            continue
+                    results.append({"node": node["name"], "adjusted": 0, "error": "v3 bulkAdjust retry failed"})
+                    continue
+                if retry_state != "confirmed_absent":
+                    results.append({"node": node["name"], "adjusted": 0, "error": "v3 bulkAdjust retry failed"})
+                    continue
                 # v2 fallback: update each client individually
                 adjusted = 0
                 now_ms = int(__import__("time").time() * 1000)
@@ -1373,17 +1485,11 @@ class ClientManager:
         if not s:
             return []
         try:
-            if get_node_api_version(base_url) != "v2":
-                res = xui_request(s, "GET",
-                                  f"{base_url}/panel/api/clients/links/{_path_segment(email)}")
-                if res.status_code in (404, 405):
-                    set_node_api_version(base_url, "v2")
-                    return []
-                if res.status_code == 200:
-                    data = res.json()
-                    if isinstance(data, dict) and data.get("success") is True:
-                        set_node_api_version(base_url, "v3")
-                        return data.get("obj") or []
+            res = xui_request(s, "GET", f"{base_url}/panel/api/clients/links/{_path_segment(email)}")
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, dict) and data.get("success") is True:
+                    return data.get("obj") or []
         except Exception as exc:
             logger.debug("get_client_links failed for %s/%s: %s", node["name"], email, exc)
         return []

@@ -35,7 +35,7 @@ from shared.http_config import get_requests_verify_value
 import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from crypto import encrypt, decrypt
-from xui_session import login_panel, xui_request, seed_node_api_versions
+from xui_session import login_panel, xui_request
 from websocket_manager import manager as ws_manager, handle_websocket_message
 import services.subscription_links as subscription_links_service
 
@@ -275,7 +275,6 @@ HTTP_REQUEST_LATENCY = metrics.http_request_latency
 )
 
 bootstrap_db(DB_PATH)
-seed_node_api_versions(node_service.list_nodes())
 
 
 def _persist_node_version(snapshot: dict) -> None:

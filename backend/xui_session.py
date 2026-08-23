@@ -290,6 +290,11 @@ XUI_HTTP_TIMEOUT_SEC = XUI_READ_TIMEOUT_SEC
 XUI_HTTP_RETRIES = max(0, _env_int("XUI_HTTP_RETRIES", 0))
 XUI_HTTP_RETRY_BACKOFF_SEC = max(0.0, _env_float("XUI_HTTP_RETRY_BACKOFF_SEC", 0.35))
 XUI_HTTP_RETRY_STATUSES = {429, 500, 502, 503, 504}
+# Replaying a panel mutation after a timeout or a transient upstream error can
+# create/delete/update the same resource twice.  Keep transport retries to
+# methods whose semantics are safe to repeat; panel writes must reconcile
+# their outcome at the caller instead of being retried here.
+XUI_SAFE_RETRY_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 XUI_FAST_TIMEOUT_SEC = min(XUI_READ_TIMEOUT_SEC, max(1.0, _env_float("XUI_FAST_TIMEOUT_SEC", XUI_READ_TIMEOUT_SEC)))
 XUI_FAST_RETRIES = max(0, _env_int("XUI_FAST_RETRIES", 0))
 XUI_SESSION_TTL_SEC = max(60, _env_int("XUI_SESSION_TTL_SEC", 900))
@@ -667,9 +672,17 @@ def xui_request(
     retries: int | None = None,
     **kwargs,
 ) -> requests.Response:
-    """Выполнить HTTP-запрос к node panel c ретраями и backoff."""
+    """Выполнить HTTP-запрос к node panel с retry только для safe reads.
+
+    ``POST`` и другие небезопасные методы никогда не повторяются
+    автоматически — даже когда передан ``retries`` или задан
+    ``XUI_HTTP_RETRIES``. Их результат может быть неоднозначным после
+    разрыва соединения, поэтому вызывающий код обязан выполнить reconcile.
+    """
     actual_timeout = bounded_xui_timeout(timeout)
-    retry_budget = XUI_HTTP_RETRIES if retries is None else max(0, int(retries))
+    normalized_method = method.upper()
+    requested_retry_budget = XUI_HTTP_RETRIES if retries is None else max(0, int(retries))
+    retry_budget = requested_retry_budget if normalized_method in XUI_SAFE_RETRY_METHODS else 0
     attempts = retry_budget + 1
     last_exc: Exception | None = None
 
@@ -678,16 +691,16 @@ def xui_request(
             valid_url, url_error, pinned_address = validate_and_resolve_outbound_url(url)
             if not valid_url or not pinned_address:
                 raise requests.RequestException(f"Outbound URL rejected: {url_error or 'Destination address is unavailable'}")
-            logger.debug("XUI %s %s attempt=%d", method.upper(), redact_url(url), attempt)
+            logger.debug("XUI %s %s attempt=%d", normalized_method, redact_url(url), attempt)
             response = _pinned_session_request(
                 session,
-                method.upper(),
+                normalized_method,
                 url,
                 pinned_address=pinned_address,
                 timeout=actual_timeout,
                 **kwargs,
             )
-            logger.debug("XUI %s %s -> HTTP %d", method.upper(), redact_url(url), response.status_code)
+            logger.debug("XUI %s %s -> HTTP %d", normalized_method, redact_url(url), response.status_code)
             if (
                 response.status_code in XUI_HTTP_RETRY_STATUSES
                 and attempt < attempts - 1
@@ -695,7 +708,7 @@ def xui_request(
                 sleep_for = XUI_HTTP_RETRY_BACKOFF_SEC * (2 ** attempt)
                 logger.warning(
                     "XUI %s %s HTTP %d, retry in %.1fs (attempt %d/%d)",
-                    method.upper(), redact_url(url), response.status_code, sleep_for, attempt + 1, attempts,
+                    normalized_method, redact_url(url), response.status_code, sleep_for, attempt + 1, attempts,
                 )
                 if sleep_for > 0:
                     time.sleep(sleep_for)
@@ -703,7 +716,7 @@ def xui_request(
             return response
         except requests.RequestException as exc:
             last_exc = exc
-            logger.warning("XUI %s %s request error (attempt %d/%d): %s", method.upper(), redact_url(url), attempt + 1, attempts, type(exc).__name__)
+            logger.warning("XUI %s %s request error (attempt %d/%d): %s", normalized_method, redact_url(url), attempt + 1, attempts, type(exc).__name__)
             if attempt >= attempts - 1:
                 raise
             sleep_for = XUI_HTTP_RETRY_BACKOFF_SEC * (2 ** attempt)

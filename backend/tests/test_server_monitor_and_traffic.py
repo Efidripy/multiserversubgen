@@ -69,13 +69,13 @@ class TestGetClientTrafficHardening:
 
     def test_normal_dict_obj_returned(self):
         mgr = self._build_manager()
-        body = {"success": True, "obj": {"up": 100, "down": 200}}
-        resp = _make_response(200, body)
+        listed = _make_response(200, {"success": True, "obj": [{"uuid": "uuid1", "email": "user@example.test"}]})
+        traffic_response = _make_response(200, {"success": True, "obj": {"up": 100, "down": 200}})
 
         with patch.object(mgr, '_get_session') as mock_gs:
             sess = MagicMock()
             mock_gs.return_value = (sess, "https://1.2.3.4:443")
-            with patch("client_manager.xui_request", return_value=resp):
+            with patch("client_manager.xui_request", side_effect=[listed, traffic_response]):
                 traffic = mgr.get_client_traffic(self._node(), "uuid1", "vless")
 
         assert traffic == {"up": 100, "down": 200}
@@ -268,6 +268,15 @@ class TestThreeXUIMonitor:
         assert result["xray"]["running"] is True
         assert result["xray"]["uptime"] == 200.0
         assert result["panel_version"] == "2.6.0"
+
+    def test_get_server_status_normalizes_v3_net_io(self):
+        monitor = self._build_monitor()
+        body = {"success": True, "obj": {"netIO": {"up": 123, "down": 456}, "xray": {"state": "running"}}}
+        with patch.object(monitor, "_get_session", return_value=(MagicMock(), "https://1.2.3.4:443")), patch(
+            "server_monitor.xui_request", return_value=_make_response(200, body)
+        ):
+            result = monitor.get_server_status(self._node())
+        assert result["network"] == {"upload": 123.0, "download": 456.0}
 
     def test_get_session_preserves_panel_url_path_for_session_pool(self):
         monitor = self._build_monitor()

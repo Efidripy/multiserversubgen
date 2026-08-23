@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "contract": "3X-UI v2 legacy compatibility",
+  "policy": "v3 OpenAPI is the default. A legacy operation is callable only after the adapter has explicitly recorded LEGACY_SUPPORTED for this exact operation. A v3 write that may have reached the panel must fail closed and must not replay through v2.",
+  "operations": [
+    {
+      "method": "POST",
+      "path": "/panel/login",
+      "classification": "legacy_only",
+      "reason": "Старый login endpoint 3X-UI; современный default указан в v3 как POST /login."
+    },
+    {
+      "method": "GET",
+      "path": "/panel/api/inbounds/list",
+      "classification": "legacy_only",
+      "reason": "Тот же путь существует в v3, но legacy-adapter сохраняет отдельную нормализацию ответа старых панелей."
+    },
+    {
+      "method": "POST",
+      "path": "/panel/api/inbounds/addClient",
+      "classification": "legacy_only",
+      "reason": "V2 client-create API вместо v3 POST /panel/api/clients/add."
+    },
+    {
+      "method": "POST",
+      "path": "/panel/api/inbounds/updateClient/{uuid}",
+      "classification": "legacy_only",
+      "reason": "V2 client-update API вместо v3 POST /panel/api/clients/update/{email}."
+    },
+    {
+      "method": "POST",
+      "path": "/panel/api/inbounds/{inboundId}/delClient/{uuid}",
+      "classification": "legacy_only",
+      "reason": "V2 client-delete API вместо v3 POST /panel/api/clients/del/{email}."
+    },
+    {
+      "method": "GET",
+      "path": "/panel/api/inbounds/getClientTrafficsById/{uuid}",
+      "classification": "legacy_only",
+      "reason": "V2 client traffic by UUID; v3 uses GET /panel/api/clients/traffic/{email}."
+    },
+    {
+      "method": "GET",
+      "path": "/panel/api/inbounds/getClientTraffics/{id}",
+      "classification": "legacy_only",
+      "reason": "V2 client traffic fallback variant."
+    },
+    {
+      "method": "POST",
+      "path": "/panel/api/inbounds/resetClientTraffic/{email}",
+      "classification": "legacy_only",
+      "reason": "V2 traffic reset вместо v3 POST /panel/api/clients/resetTraffic/{email}."
+    },
+    {
+      "method": "POST",
+      "path": "/panel/api/inbounds/onlines",
+      "classification": "legacy_only",
+      "reason": "V2 online-client endpoint вместо v3 POST /panel/api/clients/onlines."
+    },
+    {
+      "method": "POST",
+      "path": "/server/restartXrayService",
+      "classification": "legacy_only",
+      "reason": "Старый restart endpoint вместо v3 POST /panel/api/server/restartXrayService."
+    },
+    {
+      "method": "POST",
+      "path": "/panel/api/server/logs",
+      "classification": "legacy_only",
+      "reason": "Legacy logs endpoint без count path parameter; v3 использует /panel/api/server/logs/{count}."
+    },
+    {
+      "method": "POST",
+      "path": "/server/logs",
+      "classification": "legacy_only",
+      "reason": "Старый syslog endpoint для v2 panel."
+    },
+    {
+      "method": "GET",
+      "path": "/server/getDb",
+      "classification": "legacy_only",
+      "reason": "Старый database-export endpoint вместо v3 GET /panel/api/server/getDb."
+    },
+    {
+      "method": "POST",
+      "path": "/server/importDb",
+      "classification": "legacy_only",
+      "reason": "Старый database-import endpoint вместо v3 POST /panel/api/server/importDB."
+    }
+  ]
+}

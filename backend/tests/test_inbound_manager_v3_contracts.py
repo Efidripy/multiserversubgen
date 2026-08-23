@@ -131,6 +131,99 @@ class TestInboundManagerV3Contracts:
 
         request.assert_not_called()
 
+    def test_list_projection_keeps_listen_and_sniffing_in_panel_shape(self):
+        manager = self._manager()
+        source_sniffing = '{"enabled":true,"destOverride":["http"],"futureSniffing":"keep"}'
+        source = {
+            "id": 41,
+            "protocol": "vless",
+            "port": 443,
+            "remark": "reality",
+            "enable": True,
+            "listen": "127.0.0.1",
+            "settings": {"clients": []},
+            "streamSettings": {"network": "tcp", "security": "reality"},
+            "sniffing": source_sniffing,
+        }
+
+        with patch.object(manager, "_fetch_inbounds_from_node", return_value=[source]):
+            rows = manager.get_all_inbounds([self._node()])
+
+        assert rows[0]["listen"] == "127.0.0.1"
+        # v3 panels may return JSON text here; preserve it for the UI rather
+        # than converting an edit into a lossy default object.
+        assert rows[0]["sniffing"] == source_sniffing
+
+    def test_clone_keeps_full_v3_config_without_server_owned_fields_or_shared_state(self):
+        manager = self._manager()
+        source = {
+            "id": 41,
+            "protocol": "vless",
+            "port": 443,
+            "remark": "source",
+            "enable": False,
+            "listen": "127.0.0.1",
+            "settings": json.dumps({"clients": [{"id": "client-1"}], "decryption": "none", "future": {"keep": True}}),
+            "streamSettings": {"network": "xhttp", "future": {"values": ["source"]}},
+            "sniffing": '{"enabled":true,"futureSniffing":"keep"}',
+            "allocate": {"strategy": "always"},
+            "subSortIndex": 7,
+            "trafficReset": "monthly",
+            "trafficResetDay": 3,
+            "total": 1234,
+            "expiryTime": 5678,
+            "shareAddrStrategy": "custom",
+            "tag": "in-443-xhttp",
+            "nodeId": 9,
+            "originNodeGuid": "node-guid",
+            "fallbackParent": {"masterId": 3},
+            "clientStats": [{"email": "client-1"}],
+            "up": 100,
+            "down": 200,
+            "lastTrafficResetTime": 300,
+        }
+        captured = []
+
+        def add_and_mutate_target_payload(node, payload):
+            captured.append(payload)
+            payload["streamSettings"]["future"]["values"].append(node["name"])
+            return True
+
+        targets = [
+            {**self._node(), "name": "target-a"},
+            {**self._node(), "name": "target-b"},
+        ]
+        with patch.object(manager, "_fetch_inbounds_from_node", return_value=[source]), patch.object(
+            manager, "add_inbound", side_effect=add_and_mutate_target_payload
+        ):
+            result = manager.clone_inbound(
+                self._node(),
+                41,
+                targets,
+                {"remark": "clone", "port": 8443},
+            )
+
+        assert [row["success"] for row in result["results"]] == [True, True]
+        assert source["streamSettings"]["future"]["values"] == ["source"]
+        assert captured[0]["streamSettings"]["future"]["values"] == ["source", "target-a"]
+        assert captured[1]["streamSettings"]["future"]["values"] == ["source", "target-b"]
+        for payload in captured:
+            assert payload["remark"] == "clone"
+            assert payload["port"] == 8443
+            assert payload["enable"] is False
+            assert payload["listen"] == "127.0.0.1"
+            assert payload["sniffing"] == source["sniffing"]
+            assert json.loads(payload["settings"]) == {
+                "clients": [],
+                "decryption": "none",
+                "future": {"keep": True},
+            }
+            for server_owned in (
+                "id", "tag", "nodeId", "originNodeGuid", "fallbackParent",
+                "clientStats", "up", "down", "lastTrafficResetTime",
+            ):
+                assert server_owned not in payload
+
     @pytest.mark.parametrize(
         "response",
         [
