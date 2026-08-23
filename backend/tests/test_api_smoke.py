@@ -459,6 +459,40 @@ def test_dashboard_overview_is_one_projection_and_never_serializes_node_secrets(
         assert forbidden not in serialized
 
 
+def test_dashboard_overview_does_not_treat_a_derived_node_url_as_panel_address(monkeypatch):
+    nodes = [{
+        "id": 1,
+        "name": "emoji node",
+        "url": "https://derived-from-node-name.invalid",
+        "ip": "panel.example.test",
+        "port": "5443",
+        "scheme": "https",
+        "base_path": "panel",
+    }]
+    monkeypatch.setattr(main.node_service, "list_nodes", lambda: nodes)
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats_projection_by_period",
+        lambda _group_by, period: {"stats": {}, "current_count": 0, "period": period, "cache_source": "memory"},
+    )
+    main.snapshot_collector._latest = {"timestamp": 1234567890.0, "nodes": {}}
+    app = _build_test_app(monitoring_enabled=False)
+
+    @app.middleware("http")
+    async def _inject_auth_user(request, call_next):
+        request.state.auth_user = "admin"
+        return await call_next(request)
+
+    response = TestClient(app).get("/api/v1/dashboard/overview")
+
+    assert response.status_code == 200
+    fleet_node = response.json()["fleet"][0]
+    assert fleet_node["panel_url"] == ""
+    assert fleet_node["ip"] == "panel.example.test"
+    assert fleet_node["port"] == "5443"
+    assert fleet_node["base_path"] == "panel"
+
+
 def test_node_server_status_uses_snapshot_cache_without_xui_fetch(monkeypatch):
     node = {"id": 1, "name": "alpha"}
     monkeypatch.setattr(main.node_service, "get_node", lambda node_id: node if node_id == 1 else None)

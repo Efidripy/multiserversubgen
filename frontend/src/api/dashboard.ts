@@ -33,6 +33,10 @@ export interface DashboardFleetNode {
   id: number;
   name: string;
   panel_url: string;
+  ip: string;
+  port: string;
+  scheme: string;
+  base_path: string;
   source_type: string;
   read_only: boolean;
   enabled: boolean;
@@ -180,6 +184,10 @@ const normalizeDashboardFleet = (raw: unknown): DashboardFleetNode[] => {
       id,
       name: typeof value.name === 'string' && value.name ? value.name : `node-${index + 1}`,
       panel_url: typeof value.panel_url === 'string' ? value.panel_url : '',
+      ip: typeof value.ip === 'string' ? value.ip : '',
+      port: typeof value.port === 'string' ? value.port : '',
+      scheme: typeof value.scheme === 'string' ? value.scheme : 'https',
+      base_path: typeof value.base_path === 'string' ? value.base_path : '',
       source_type: typeof value.source_type === 'string' ? value.source_type : 'xui',
       read_only: Boolean(value.read_only),
       enabled: value.enabled !== false,
