@@ -104,13 +104,17 @@ export async function generateNodeVlessEncryption(nodeId: number): Promise<Vless
 export async function getNodeLogs(
   nodeId: number,
   kind: NodeLogKind,
-  options: { count?: number; level?: string } = {},
+  options: { count?: number; level?: string; syslog?: boolean } = {},
 ): Promise<string[]> {
   const endpoint = kind === 'xray'
     ? `/v1/nodes/${nodeId}/xray-logs`
     : `/v1/nodes/${nodeId}/server-logs`;
   const res = await api.get(endpoint, {
-    params: { count: options.count ?? 200, level: options.level },
+    params: {
+      count: options.count ?? 200,
+      level: options.level,
+      ...(kind === 'panel' && options.syslog !== undefined ? { syslog: options.syslog } : {}),
+    },
     auth: getAuth(),
   });
   const payload = res.data || {};
