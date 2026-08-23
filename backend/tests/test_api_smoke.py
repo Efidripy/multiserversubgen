@@ -254,7 +254,9 @@ def test_client_presence_uses_collector_projection_without_fleet_scan(monkeypatc
             "projection": "client-presence-v1",
             "timestamp": 123.0,
             "online_emails": ["active@example.test"],
+            "online_by_node": {"12": ["active@example.test"]},
             "last_seen": {"active@example.test": 123.0},
+            "last_seen_by_node": {"12": {"active@example.test": 123.0}},
         },
     )
     monkeypatch.setattr(
@@ -280,7 +282,14 @@ def test_client_presence_uses_collector_projection_without_fleet_scan(monkeypatc
     response = TestClient(app).get("/api/v1/clients/presence")
 
     assert response.status_code == 200
-    assert response.json()["online_emails"] == ["active@example.test"]
+    assert response.json() == {
+        "projection": "client-presence-v1",
+        "timestamp": 123.0,
+        "online_emails": ["active@example.test"],
+        "online_by_node": {"12": ["active@example.test"]},
+        "last_seen": {"active@example.test": 123.0},
+        "last_seen_by_node": {"12": {"active@example.test": 123.0}},
+    }
     assert calls == ["presence"]
 
 

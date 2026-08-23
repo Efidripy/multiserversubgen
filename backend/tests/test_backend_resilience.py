@@ -380,8 +380,10 @@ def test_snapshot_collector_publishes_presence_without_exposing_it_to_dashboard(
                 "network": {},
             }
 
-        def get_online_clients(self, _node):
-            return {"online_clients": ["First@Example.test", " first@example.test ", "second@example.test", 7]}
+        def get_online_clients(self, node):
+            if node["id"] == 1:
+                return {"online_clients": ["First@Example.test", " first@example.test ", 7]}
+            return {"online_clients": ["second@example.test"]}
 
         def get_inbounds(self, _node):
             return {"available": True, "inbounds": []}
@@ -393,14 +395,21 @@ def test_snapshot_collector_publishes_presence_without_exposing_it_to_dashboard(
     )
 
     asyncio.run(collector._poll_node({"id": 1, "name": "alpha"}, "alpha"))
+    asyncio.run(collector._poll_node({"id": 2, "name": "beta"}, "beta"))
 
     presence = collector.latest_client_presence()
     dashboard = collector.latest_dashboard_snapshot()
 
     assert presence["projection"] == "client-presence-v1"
     assert presence["online_emails"] == ["first@example.test", "second@example.test"]
+    assert presence["online_by_node"] == {
+        "1": ["first@example.test"],
+        "2": ["second@example.test"],
+    }
     assert set(presence["last_seen"]) == {"first@example.test", "second@example.test"}
-    assert dashboard["nodes"][0]["online_clients"] == 2
+    assert set(presence["last_seen_by_node"]["1"]) == {"first@example.test"}
+    assert set(presence["last_seen_by_node"]["2"]) == {"second@example.test"}
+    assert dashboard["nodes"][0]["online_clients"] == 1
     assert "online_client_emails" not in dashboard["nodes"][0]
 
 
