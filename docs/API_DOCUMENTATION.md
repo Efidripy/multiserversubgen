@@ -266,7 +266,9 @@ Authorization: Basic base64(username:password)
 ```
 
 ### `GET /api/v1/clients/online`
-Получить список онлайн клиентов
+Совместимый плоский список записей online из последнего snapshot Collector.
+Не запускает новый опрос нод; один Email может иметь несколько записей только
+если он действительно наблюдался online на нескольких конкретных нодах.
 
 **Response:**
 ```json
@@ -274,7 +276,8 @@ Authorization: Basic base64(username:password)
   "online_clients": [
     {
       "email": "user@example.com",
-      "node": "Server-NL"
+      "node_id": "12",
+      "node_name": "Server-NL"
     }
   ],
   "count": 1
@@ -290,7 +293,9 @@ Authorization: Basic base64(username:password)
 `online_emails` и `last_seen` — агрегированные по Email данные для parent
 группы и общего счётчика. `online_by_node` и `last_seen_by_node` привязывают
 наблюдение к конкретной ноде: child record не отмечается online только потому,
-что такой же Email online на другой ноде. Timestamp — результат штатного
+что такой же Email online на другой ноде. `node_names` сопоставляет `node_id`
+из этой проекции с отображаемым именем без отдельного запроса списка нод.
+Timestamp — результат штатного
 наблюдения Collector, не отдельного запроса к панели. Записи `last_seen`
 удерживаются в памяти до 30 дней.
 
@@ -303,6 +308,9 @@ Authorization: Basic base64(username:password)
   "online_emails": ["user@example.com"],
   "online_by_node": {
     "12": ["user@example.com"]
+  },
+  "node_names": {
+    "12": "nl-1"
   },
   "last_seen": {
     "user@example.com": 1735689600.0

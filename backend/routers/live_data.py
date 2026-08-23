@@ -13,7 +13,6 @@ def build_live_data_router(
     get_cached_traffic_stats: Callable[[list, str], Dict],
     get_cached_traffic_stats_projection: Callable[[str], Dict] = None,
     get_cached_traffic_stats_projection_by_period: Callable[[str, str], Dict] = None,
-    get_cached_online_clients: Callable[[list], list],
     list_nodes: Callable[[], list],
     xui_monitor,
     get_latest_snapshot: Callable[[], Dict] = None,
@@ -231,14 +230,32 @@ def build_live_data_router(
 
     @router.get("/api/v1/clients/online")
     async def get_online_clients(request: Request, limit: int = 0):
+        """Compatibility list derived from the Collector snapshot; never polls nodes."""
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401)
-        nodes = await run_in_threadpool(list_nodes)
-        online = await run_in_threadpool(get_cached_online_clients, nodes)
+        presence = (
+            await run_in_threadpool(get_latest_client_presence)
+            if get_latest_client_presence
+            else {}
+        )
+        online_by_node = presence.get("online_by_node", {}) if isinstance(presence, dict) else {}
+        node_names = presence.get("node_names", {}) if isinstance(presence, dict) else {}
+        online = [
+            {
+                "email": email,
+                "node_id": node_id,
+                "node_name": str(node_names.get(node_id) or node_id),
+            }
+            for node_id, emails in online_by_node.items()
+            if isinstance(emails, list)
+            for email in emails
+            if isinstance(email, str) and email
+        ]
+        online.sort(key=lambda item: (item["email"], item["node_name"], item["node_id"]))
         if limit > 0:
             online = online[:limit]
-        return ORJSONResponse(content={"online_clients": online, "count": len(online)})
+        return ORJSONResponse(content={"online_clients": online, "count": len(online), "source": "snapshot_collector"})
 
     @router.get("/api/v1/clients/presence")
     async def get_client_presence(request: Request):

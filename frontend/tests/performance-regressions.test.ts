@@ -28,6 +28,7 @@ describe('navigation performance regressions', () => {
     expect(source).toContain('onlineClientKeys');
     expect(source).toContain('projection.online_by_node');
     expect(source).toContain('lastOnlineByNode');
+    expect(source).toContain("isClientOnline(client) && <span aria-hidden=\"true\" className=\"h-2 w-2 shrink-0 rounded-full bg-emerald-300\" />");
     expect(source).not.toContain("api.get('/v1/clients/online'");
     expect(api).toContain("api.get('/v1/clients/presence'");
     expect(api).toContain('online_by_node?: Record<string, string[]>');
@@ -46,6 +47,9 @@ describe('navigation performance regressions', () => {
     const inbounds = read('src/components/InboundManager.tsx');
     expect(traffic).toContain('Full online details remain opt-in.');
     expect(traffic).toContain('const loadOnlineDetails = () =>');
+    expect(traffic).toContain('getClientPresence(controller.signal)');
+    expect(traffic).not.toContain("api.get('/v1/clients/online'");
+    expect(traffic).toContain('groupOnlinePresence');
     expect(inbounds).toContain('inboundsAbortRef.current?.abort();');
     expect(inbounds).toContain('signal: controller.signal');
   });

@@ -145,6 +145,7 @@ class SnapshotCollector:
             "timestamp": None,
             "online_emails": (),
             "online_by_node": {},
+            "node_names": {},
             "last_seen": {},
             "last_seen_by_node": {},
         }
@@ -206,6 +207,7 @@ class SnapshotCollector:
                 node_id: list(emails)
                 for node_id, emails in presence["online_by_node"].items()
             },
+            "node_names": dict(presence["node_names"]),
             "last_seen": dict(presence["last_seen"]),
             "last_seen_by_node": {
                 node_id: dict(last_seen)
@@ -231,10 +233,16 @@ class SnapshotCollector:
             for snapshot in self._latest["nodes"].values()
             if isinstance(snapshot, dict) and snapshot.get("node_id") is not None
         }
+        node_names = {
+            str(snapshot["node_id"]): str(snapshot.get("name") or snapshot["node_id"])
+            for snapshot in self._latest["nodes"].values()
+            if isinstance(snapshot, dict) and snapshot.get("node_id") is not None
+        }
         self._client_presence = {
             "timestamp": self._latest["timestamp"],
             "online_emails": tuple(sorted(online_emails)),
             "online_by_node": online_by_node,
+            "node_names": node_names,
             "last_seen": dict(self._client_last_seen),
             "last_seen_by_node": {
                 node_id: dict(last_seen)
