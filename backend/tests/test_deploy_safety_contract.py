@@ -55,3 +55,14 @@ def test_linux_only_uvloop_extra_is_pinned_and_hashed_for_require_hashes_deploys
         lockfile = (REPO / relative_path).read_text(encoding="utf-8")
         assert expected in lockfile
         assert expected_hash in lockfile
+
+
+def test_ops_backup_check_uses_consistent_runtime_database_backup():
+    script = (REPO / "scripts/ops/backup-restore-check.sh").read_text(encoding="utf-8")
+
+    assert 'DB_FILE="${DB_FILE:-${PROJECT_DIR}/admin.db}"' in script
+    assert 'cp -a "$DB_FILE"' not in script
+    assert "PRAGMA wal_checkpoint(PASSIVE);" in script
+    assert '".backup \'$BACKUP_FILE\'"' in script
+    assert '".restore \'$BACKUP_FILE\'"' in script
+    assert "admin.db.bak" in script
