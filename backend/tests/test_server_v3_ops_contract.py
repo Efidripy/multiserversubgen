@@ -163,6 +163,28 @@ class TestServerMonitorV3OpsContracts:
             call(session, "POST", "https://panel.test/panel/api/server/logs", data={"count": "10", "level": "info", "syslog": "false"}),
         ]
 
+    def test_server_logs_preserve_explicit_syslog_selection(self):
+        monitor = self._monitor()
+        session = MagicMock()
+        with patch.object(monitor, "_get_session", return_value=(session, "https://panel.test")):
+            with patch("server_monitor.xui_request", return_value=_response(200, {"success": True, "obj": "journal line"})) as request:
+                assert monitor.get_server_logs(_node(), count=10, level="notice", syslog=True)["logs"] == ["journal line"]
+        request.assert_called_once_with(
+            session,
+            "POST",
+            "https://panel.test/panel/api/server/logs/10",
+            data={"level": "notice", "syslog": "true"},
+            timeout=15,
+        )
+
+    def test_server_logs_do_not_fallback_when_syslog_is_explicitly_disabled(self):
+        monitor = self._monitor()
+        session = MagicMock()
+        with patch.object(monitor, "_get_session", return_value=(session, "https://panel.test")):
+            with patch("server_monitor.xui_request", return_value=_response(200, {"success": True, "obj": ""})) as request:
+                assert monitor.get_server_logs(_node(), count=10, syslog=False)["logs"] == []
+        request.assert_called_once()
+
     def test_xray_logs_use_current_form_contract_and_format_structured_entries(self):
         monitor = self._monitor()
         session = MagicMock()
@@ -230,6 +252,21 @@ class TestServerOpsRouterContracts:
         response = self._client(monitor).get("/api/v1/nodes/1/server-history/disk?bucket=300")
         assert response.status_code == 400
         monitor.get_server_history.assert_not_called()
+
+    def test_invalid_server_log_level_is_rejected_before_node_lookup_or_monitor_call(self):
+        monitor = MagicMock()
+        response = self._client(monitor).get("/api/v1/nodes/1/server-logs?level=error")
+        assert response.status_code == 400
+        monitor.get_server_logs.assert_not_called()
+
+    def test_server_log_query_preserves_level_and_syslog(self):
+        monitor = MagicMock()
+        monitor.get_server_logs.return_value = {"node": "node-1", "logs": []}
+        response = self._client(monitor).get("/api/v1/nodes/1/server-logs?level=notice&syslog=true")
+        assert response.status_code == 200
+        monitor.get_server_logs.assert_called_once_with(
+            _node(), count=100, level="notice", syslog=True
+        )
 
     def test_token_create_response_is_not_cacheable(self):
         monitor = MagicMock()

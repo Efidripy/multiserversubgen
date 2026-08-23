@@ -23,9 +23,10 @@ import {
 } from 'lucide-react';
 import { dashboardFleetToServerDeck, getDashboardServerDeck, type DashboardServerStatus } from '../api/dashboard';
 import { refreshNodesNow } from '../api/nodes';
-import { getNodeLogs, restartXray, stopXray, updateGeofile, type NodeLogKind } from '../api/serverOps';
+import { restartXray, stopXray, updateGeofile, type NodeLogKind } from '../api/serverOps';
 import { useTrafficStatsSubscription, type TrafficUpdate } from '../services/useTrafficStatsSubscription';
 import { NodeOperationsModal, type NodeOpsTab } from './NodeOperationsModal';
+import { ServerLogsModal } from './ServerLogsModal';
 import { useToast } from './Toast';
 import { useDashboardData } from '../services/DashboardDataContext';
 
@@ -270,6 +271,7 @@ export function ServerStatus({
   const [cardSort, setCardSort] = useState<SortMode>('name');
   const [pendingActions, setPendingActions] = useState<Record<string, boolean>>({});
   const [nodeOpsModal, setNodeOpsModal] = useState<{ nodeId: number; nodeName: string; tab: NodeOpsTab } | null>(null);
+  const [logsModal, setLogsModal] = useState<{ nodeId: number; nodeName: string; kind: NodeLogKind } | null>(null);
   void includeCounts;
   void includeCollectorStatus;
 
@@ -365,24 +367,11 @@ export function ServerStatus({
     void runNodeCommand(server, 'geofile', updateGeofile, 'serverStatus.geofileUpdatedNode', 'serverStatus.geofileUpdateFailedNode');
   }, [runNodeCommand]);
 
-  const handleShowLogs = useCallback(async (server: UiServer, kind: NodeLogKind) => {
+  const handleShowLogs = useCallback((server: UiServer, kind: NodeLogKind) => {
     const nodeId = requireNodeId(server);
     if (nodeId === null) return;
-    const action: NodeAction = kind === 'xray' ? 'xrayLogs' : 'serverLogs';
-    const key = nodeActionKey(server, action);
-    setActionPending(key, true);
-    try {
-      const logs = await getNodeLogs(nodeId, kind, { count: 120 });
-      const title = t(kind === 'xray' ? 'serverStatus.xrayLogsTitle' : 'serverStatus.serverLogsTitle', { node: server.name });
-      const body = logs.length > 0 ? logs.slice(-120).join('\n') : t('serverStatus.logsEmptyNode', { node: server.name });
-      window.alert(`${title}\n\n${body}`);
-      toast(t('serverStatus.logsLoadedNode', { node: server.name }), 'success');
-    } catch (error: any) {
-      toast(`${t('serverStatus.failedToLoadLogs')}: ${getNodeActionError(error)}`, 'error');
-    } finally {
-      setActionPending(key, false);
-    }
-  }, [getNodeActionError, requireNodeId, setActionPending, t, toast]);
+    setLogsModal({ nodeId, nodeName: server.name, kind });
+  }, [requireNodeId]);
 
   const handleOpenNodeOps = useCallback((server: UiServer, tab: NodeOpsTab) => {
     const nodeId = requireNodeId(server);
@@ -727,6 +716,15 @@ export function ServerStatus({
         initialTab={nodeOpsModal.tab}
         onClose={() => setNodeOpsModal(null)}
         onNodeChanged={() => void loadServersStatus()}
+      />
+    )}
+    {logsModal && (
+      <ServerLogsModal
+        open
+        nodeId={logsModal.nodeId}
+        nodeName={logsModal.nodeName}
+        kind={logsModal.kind}
+        onClose={() => setLogsModal(null)}
       />
     )}
     </>
