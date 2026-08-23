@@ -137,13 +137,16 @@ class SnapshotCollector:
         # and never serializes client emails. Client Manager receives it through
         # a separate authenticated, snapshot-only projection.
         self._client_last_seen: Dict[str, float] = {}
+        self._client_last_seen_by_node: Dict[str, Dict[str, float]] = {}
         # This mapping is replaced atomically after a completed poll. The API
         # reads it from a worker thread, so it must not iterate mutable node
         # snapshots while the collector is updating them on its event loop.
         self._client_presence = {
             "timestamp": None,
             "online_emails": (),
+            "online_by_node": {},
             "last_seen": {},
+            "last_seen_by_node": {},
         }
         self._inflight_polls = 0
         self._last_cycle = {
@@ -199,7 +202,15 @@ class SnapshotCollector:
             "projection": "client-presence-v1",
             "timestamp": presence["timestamp"],
             "online_emails": list(presence["online_emails"]),
+            "online_by_node": {
+                node_id: list(emails)
+                for node_id, emails in presence["online_by_node"].items()
+            },
             "last_seen": dict(presence["last_seen"]),
+            "last_seen_by_node": {
+                node_id: dict(last_seen)
+                for node_id, last_seen in presence["last_seen_by_node"].items()
+            },
         }
 
     def _refresh_client_presence_projection(self) -> None:
@@ -211,10 +222,24 @@ class SnapshotCollector:
             for email in snapshot.get("online_client_emails") or []
             if isinstance(email, str) and email
         }
+        online_by_node = {
+            str(snapshot["node_id"]): tuple(sorted({
+                email
+                for email in snapshot.get("online_client_emails") or []
+                if isinstance(email, str) and email
+            }))
+            for snapshot in self._latest["nodes"].values()
+            if isinstance(snapshot, dict) and snapshot.get("node_id") is not None
+        }
         self._client_presence = {
             "timestamp": self._latest["timestamp"],
             "online_emails": tuple(sorted(online_emails)),
+            "online_by_node": online_by_node,
             "last_seen": dict(self._client_last_seen),
+            "last_seen_by_node": {
+                node_id: dict(last_seen)
+                for node_id, last_seen in self._client_last_seen_by_node.items()
+            },
         }
 
     def runtime_status(self) -> Dict:
@@ -609,12 +634,24 @@ class SnapshotCollector:
             self._latest["timestamp"] = time.time()
             self._latest["nodes"][key] = snapshot
             observed_at = float(snapshot.get("timestamp") or self._latest["timestamp"])
-            for email in snapshot.get("online_client_emails") or []:
+            online_client_emails = snapshot.get("online_client_emails") or []
+            for email in online_client_emails:
                 self._client_last_seen[email] = observed_at
+            node_id = snapshot.get("node_id")
+            if node_id is not None:
+                node_last_seen = self._client_last_seen_by_node.setdefault(str(node_id), {})
+                for email in online_client_emails:
+                    node_last_seen[email] = observed_at
             cutoff = observed_at - _CLIENT_PRESENCE_RETENTION_SEC
             stale_emails = [email for email, seen_at in self._client_last_seen.items() if seen_at < cutoff]
             for email in stale_emails:
                 del self._client_last_seen[email]
+            for node_id, node_last_seen in list(self._client_last_seen_by_node.items()):
+                stale_node_emails = [email for email, seen_at in node_last_seen.items() if seen_at < cutoff]
+                for email in stale_node_emails:
+                    del node_last_seen[email]
+                if not node_last_seen:
+                    del self._client_last_seen_by_node[node_id]
             self._refresh_client_presence_projection()
         if self.on_snapshot is not None:
             try:

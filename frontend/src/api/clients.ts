@@ -25,7 +25,9 @@ export interface ClientPresenceProjection {
   projection?: string;
   timestamp?: number | null;
   online_emails?: string[];
+  online_by_node?: Record<string, string[]>;
   last_seen?: Record<string, number | string>;
+  last_seen_by_node?: Record<string, Record<string, number | string>>;
 }
 
 const endpointBySource: Record<ClientSourceFilter, string> = {

@@ -87,6 +87,9 @@ const clientIdentifier = (client: Client): string | null =>
 const clientKey = (client: Client): string =>
   `${client.node_id ?? client.node_name}:${clientIdentifier(client) ?? "no-id"}:${client.email}`;
 
+const clientPresenceKey = (nodeId: number | null | undefined, email: string): string | null =>
+  nodeId == null ? null : `${nodeId}:${normalizeClientEmail(email)}`;
+
 const CLIENTS_PAGE_CACHE_KEY = 'sub_manager_clients_page_cache_v1';
 const CLIENTS_PAGE_CACHE_MAX_AGE_MS = 10 * 60 * 1000; // 10 minutes
 const CLIENTS_PAGE_REFRESH_MS = 5 * 60 * 1000; // background refresh interval
@@ -283,6 +286,7 @@ export const ClientManager: React.FC = () => {
   const [expiringSoonDays, setExpiringSoonDays] = useState<number>(_savedFilters.expiringSoonDays ?? 7);
   // Snapshot Collector projection; never populated by a page-triggered fleet scan.
   const [onlineEmails, setOnlineEmails] = useState<Set<string>>(() => new Set());
+  const [onlineClientKeys, setOnlineClientKeys] = useState<Set<string>>(() => new Set());
   const [sortField, setSortField] = useState<'email' | 'node' | 'download' | 'total' | 'expiry' | 'lastOnline' | 'usedPct' | 'health'>(_savedFilters.sortField ?? 'email');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(_savedFilters.sortDirection ?? 'asc');
   const [onlineFirst, setOnlineFirst] = useState<boolean>(false);
@@ -310,6 +314,7 @@ export const ClientManager: React.FC = () => {
 
   // Last collector observation by normalized email, rendered as “Last seen”.
   const [lastOnlineMap, setLastOnlineMap] = useState<Record<string, string>>(() => ({}));
+  const [lastOnlineByNode, setLastOnlineByNode] = useState<Record<string, Record<string, string>>>(() => ({}));
 
   // Bulk Adjust Modal
   const [showBulkAdjust, setShowBulkAdjust] = useState(false);
@@ -437,7 +442,7 @@ export const ClientManager: React.FC = () => {
     try {
       localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({ searchTerm, filterNode, filterStatus, filterProtocol, filterExpiringSoon, expiringSoonDays, sortField, sortDirection }));
     } catch {}
-  }, [clients, searchTerm, filterNode, filterStatus, filterProtocol, filterExpiringSoon, expiringSoonDays, filterInboundId, sortField, sortDirection, onlineFirst, onlineEmails, trafficCache]);
+  }, [clients, searchTerm, filterNode, filterStatus, filterProtocol, filterExpiringSoon, expiringSoonDays, filterInboundId, sortField, sortDirection, onlineFirst, onlineEmails, onlineClientKeys, trafficCache]);
 
   // Auto-refresh
   useEffect(() => {
@@ -570,6 +575,14 @@ export const ClientManager: React.FC = () => {
           .filter((email): email is string => typeof email === 'string')
           .map(normalizeClientEmail),
       );
+      const nextOnlineClientKeys = new Set<string>();
+      Object.entries(projection.online_by_node || {}).forEach(([nodeId, emails]) => {
+        if (!Array.isArray(emails)) return;
+        emails.forEach((email) => {
+          if (typeof email !== 'string') return;
+          nextOnlineClientKeys.add(`${nodeId}:${normalizeClientEmail(email)}`);
+        });
+      });
       const nextLastSeen: Record<string, string> = {};
       Object.entries(projection.last_seen || {}).forEach(([email, seenAt]) => {
         const numeric = typeof seenAt === 'number' ? seenAt : Number(seenAt);
@@ -577,8 +590,22 @@ export const ClientManager: React.FC = () => {
         if (!Number.isFinite(milliseconds)) return;
         nextLastSeen[normalizeClientEmail(email)] = new Date(milliseconds).toISOString();
       });
+      const nextLastSeenByNode: Record<string, Record<string, string>> = {};
+      Object.entries(projection.last_seen_by_node || {}).forEach(([nodeId, values]) => {
+        if (!values || typeof values !== 'object') return;
+        const nodeLastSeen: Record<string, string> = {};
+        Object.entries(values).forEach(([email, seenAt]) => {
+          const numeric = typeof seenAt === 'number' ? seenAt : Number(seenAt);
+          const milliseconds = Number.isFinite(numeric) ? (numeric < 1_000_000_000_000 ? numeric * 1000 : numeric) : Date.parse(String(seenAt));
+          if (!Number.isFinite(milliseconds)) return;
+          nodeLastSeen[normalizeClientEmail(email)] = new Date(milliseconds).toISOString();
+        });
+        if (Object.keys(nodeLastSeen).length > 0) nextLastSeenByNode[nodeId] = nodeLastSeen;
+      });
       setOnlineEmails(nextOnline);
+      setOnlineClientKeys(nextOnlineClientKeys);
       setLastOnlineMap(nextLastSeen);
+      setLastOnlineByNode(nextLastSeenByNode);
     } catch (error: any) {
       if (signal?.aborted || error?.code === 'ERR_CANCELED') return;
       // Snapshot may not be ready during startup; retain the last projection.
@@ -1145,8 +1172,10 @@ export const ClientManager: React.FC = () => {
 
   const applyFilters = () => {
     let filtered = clients;
-    const normalizedOnline = new Set(Array.from(onlineEmails, normalizeClientEmail));
-    const isOnline = (client: Client) => normalizedOnline.has(normalizeClientEmail(client.email));
+    const isOnline = (client: Client) => {
+      const key = clientPresenceKey(client.node_id, client.email);
+      return key !== null && onlineClientKeys.has(key);
+    };
     
     if (searchTerm) {
       const q = searchTerm.toLowerCase().trim();
@@ -1550,8 +1579,14 @@ export const ClientManager: React.FC = () => {
   
   const nodes = Array.from(new Set(clients.map(c => c.node_name)));
   const protocols = Array.from(new Set(clients.map(c => c.protocol)));
-  const normalizedOnlineEmails = new Set(Array.from(onlineEmails, normalizeClientEmail));
-  const isClientOnline = (client: Client) => normalizedOnlineEmails.has(normalizeClientEmail(client.email));
+  const isClientOnline = (client: Client) => {
+    const key = clientPresenceKey(client.node_id, client.email);
+    return key !== null && onlineClientKeys.has(key);
+  };
+  const getClientLastSeen = (client: Client): string | undefined =>
+    client.node_id != null
+      ? lastOnlineByNode[String(client.node_id)]?.[normalizeClientEmail(client.email)]
+      : lastOnlineMap[normalizeClientEmail(client.email)];
   const getGroupNearestExpiry = (group: ClientEmailGroup<Client>): number | null => {
     const expiryTimes = group.clients
       .map((client) => client.expiryTime)
@@ -1671,11 +1706,12 @@ export const ClientManager: React.FC = () => {
     const isDepleted = client.total > 0 && client.up + client.down >= client.total;
     const used = client.up + client.down;
     const pct = client.total > 0 ? Math.min(100, used / client.total * 100) : 0;
+    const lastSeen = getClientLastSeen(client);
     return <article key={clientKey(client)} className="ml-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/10 bg-[#0a0e1a] p-3">
       <div className="flex min-w-0 items-start justify-between gap-3"><label className="flex min-w-0 items-start gap-2"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /><span className="min-w-0"><span className={tableLongEmailClass} title={client.email}>{client.email}</span><span className={tableLongIdClass} title={client.id || client.password || ''}>{client.id || client.password || '-'}</span></span></label><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={() => toggleClientEnabled(client)}>{clientStatusLabel(client, isExpired, isDepleted)}</button></div>
       <div className="mt-3 grid min-w-0 grid-cols-2 gap-2"><button type="button" className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] text-slate-200')} onClick={() => setFilterNode((previous) => previous === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol((previous) => previous === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{formatBytes(downloadBytes)}</span></span><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : t('clients.unlimited')}</span></span></div>
       {client.total > 0 && <div className="mt-3"><div className="h-1 overflow-hidden rounded-full bg-[#0f1420]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></div>}
-      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-500"><div className="min-w-0"><span className="block uppercase tracking-wider">{t('clients.expiryTime')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-200 whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</span></div><div className="min-w-0 text-right"><span className="block uppercase tracking-wider">{t('clients.lastSeen')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-300 whitespace-nowrap">{lastOnlineMap[normalizeClientEmail(client.email)] ? new Date(lastOnlineMap[normalizeClientEmail(client.email)]).toLocaleString() : '-'}</span></div></div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-500"><div className="min-w-0"><span className="block uppercase tracking-wider">{t('clients.expiryTime')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-200 whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</span></div><div className="min-w-0 text-right"><span className="block uppercase tracking-wider">{t('clients.lastSeen')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-300 whitespace-nowrap">{lastSeen ? new Date(lastSeen).toLocaleString() : '-'}</span></div></div>
       <div className="mt-3 grid grid-cols-6 gap-2">{renderClientActions(client)}</div>
     </article>;
   };
@@ -1687,7 +1723,8 @@ export const ClientManager: React.FC = () => {
     const used = client.up + client.down;
     const pct = client.total > 0 ? Math.min(100, used / client.total * 100) : 0;
     const health = getHealthScore(client);
-    return <tr key={clientKey(client)} className={cn('bg-[#0f1420]/45 transition-colors hover:bg-cyan-400/5', isExpired && 'bg-amber-400/5', isDepleted && 'bg-rose-500/5', !client.enable && 'opacity-80')}><td className="px-3 py-3 text-center text-cyan-500/60">└</td><td className="min-w-0 px-3 py-3"><div className="flex min-w-0 items-start gap-2"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /><span className="min-w-0"><span className={tableLongEmailClass} title={client.email}>{client.email}</span><span className={tableLongIdClass} title={client.id || client.password || ''}>{client.id || client.password || '-'}</span></span></div></td><td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'max-w-full justify-start bg-[#0a0e1a] text-slate-200')} onClick={() => setFilterNode((previous) => previous === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button></td>{!denseView && <td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol((previous) => previous === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button></td>}<td className="px-3 py-3"><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={() => toggleClientEnabled(client)}>{clientStatusLabel(client, isExpired, isDepleted)}</button></td><td className="px-3 py-3"><div className="font-mono tabular-nums whitespace-nowrap">{formatBytes(downloadBytes)}</div>{client.total > 0 && <><div className="mt-1 h-1 min-w-[72px] overflow-hidden rounded-full bg-[#0a0e1a]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></>}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : t('clients.unlimited')}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</td>{!denseView && <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-slate-500">{lastOnlineMap[normalizeClientEmail(client.email)] ? new Date(lastOnlineMap[normalizeClientEmail(client.email)]).toLocaleString() : '-'}</td>}<td className={cn('px-3 py-3 font-mono tabular-nums font-medium whitespace-nowrap', health >= 70 ? 'text-emerald-300' : health >= 35 ? 'text-amber-300' : 'text-rose-300')}>{health}</td><td className="px-3 py-3">{renderClientActions(client)}</td></tr>;
+    const lastSeen = getClientLastSeen(client);
+    return <tr key={clientKey(client)} className={cn('bg-[#0f1420]/45 transition-colors hover:bg-cyan-400/5', isExpired && 'bg-amber-400/5', isDepleted && 'bg-rose-500/5', !client.enable && 'opacity-80')}><td className="px-3 py-3 text-center text-cyan-500/60">└</td><td className="min-w-0 px-3 py-3"><div className="flex min-w-0 items-start gap-2"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /><span className="min-w-0"><span className={tableLongEmailClass} title={client.email}>{client.email}</span><span className={tableLongIdClass} title={client.id || client.password || ''}>{client.id || client.password || '-'}</span></span></div></td><td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'max-w-full justify-start bg-[#0a0e1a] text-slate-200')} onClick={() => setFilterNode((previous) => previous === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button></td>{!denseView && <td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol((previous) => previous === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button></td>}<td className="px-3 py-3"><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={() => toggleClientEnabled(client)}>{clientStatusLabel(client, isExpired, isDepleted)}</button></td><td className="px-3 py-3"><div className="font-mono tabular-nums whitespace-nowrap">{formatBytes(downloadBytes)}</div>{client.total > 0 && <><div className="mt-1 h-1 min-w-[72px] overflow-hidden rounded-full bg-[#0a0e1a]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></>}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : t('clients.unlimited')}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</td>{!denseView && <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-slate-500">{lastSeen ? new Date(lastSeen).toLocaleString() : '-'}</td>}<td className={cn('px-3 py-3 font-mono tabular-nums font-medium whitespace-nowrap', health >= 70 ? 'text-emerald-300' : health >= 35 ? 'text-amber-300' : 'text-rose-300')}>{health}</td><td className="px-3 py-3">{renderClientActions(client)}</td></tr>;
   };
   
   return (
