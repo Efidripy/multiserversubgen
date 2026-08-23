@@ -49,6 +49,20 @@ describe('navigation performance regressions', () => {
     expect(fleetPanel).toContain('load({ live: true })');
   });
 
+  it('uses one persistent aggregate owner for the Dashboard instead of independent cold-path loops', () => {
+    const app = read('src/App.tsx');
+    const provider = read('src/services/DashboardDataContext.tsx');
+    const serverStatus = read('src/components/ServerStatus.tsx');
+    const fleetPanel = read('src/components/RegisteredFleetPanel.tsx');
+
+    expect(app).toContain('<DashboardDataProvider>');
+    expect(app).not.toContain('getDashboardHeaderMetrics');
+    expect(provider).toContain("getDashboardOverview(period)");
+    expect(provider).toContain('window.sessionStorage.setItem');
+    expect(serverStatus).toContain('enabled: !dashboardData');
+    expect(fleetPanel).toContain('if (dashboardData) return;');
+  });
+
   it('does not fetch complete node databases just to render Backup Manager', () => {
     const backupManager = read('src/components/BackupManager.tsx');
 

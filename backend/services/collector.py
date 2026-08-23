@@ -15,6 +15,35 @@ from services.xray_compatibility import summarize_node_inbounds
 logger = logging.getLogger("sub_manager")
 
 
+# Dashboard never needs full inbound inventories or raw panel responses.  They
+# remain in the collector's internal snapshot for explicit operations and
+# realtime table projections, but must not be serialized for every dashboard
+# page visit.
+_DASHBOARD_SNAPSHOT_FIELDS = (
+    "name",
+    "node_id",
+    "available",
+    "status",
+    "reason",
+    "error",
+    "system",
+    "xray",
+    "network",
+    "xray_running",
+    "cpu",
+    "online_clients",
+    "traffic_total",
+    "timestamp",
+    "panel_version",
+    "api_version",
+    "xray_compatibility",
+    "poll_ms",
+    "circuit_open_until",
+    "cached_from_db",
+    "snapshot_updated_at",
+)
+
+
 def _detect_api_version(panel_version: str) -> str:
     """Return 'v3' if panelVersion >= 3.x, else 'v2'.
     v2 panels don't return panelVersion at all, so absence means v2."""
@@ -68,8 +97,11 @@ class SnapshotCollector:
         self.max_interval_sec = max(self.base_interval_sec, max_interval_sec)
         self.min_interval_sec = max(1, min_interval_sec)
         self.configured_max_parallel_polls = max(1, max_parallel_polls)
-        self.max_parallel_polls = 5
-        self.semaphore = asyncio.Semaphore(5)
+        # This is deliberately a fleet-wide limiter.  Do not silently replace
+        # an operator's conservative production setting with a hard-coded
+        # value: at 100 nodes that makes capacity planning impossible.
+        self.max_parallel_polls = self.configured_max_parallel_polls
+        self.semaphore = asyncio.Semaphore(self.max_parallel_polls)
         self.warming_interval_1_sec = max(3, warming_interval_1_sec)
         self.warming_interval_2_sec = max(self.warming_interval_1_sec, warming_interval_2_sec)
         self.warming_interval_3_sec = max(self.warming_interval_2_sec, warming_interval_3_sec)
@@ -89,6 +121,14 @@ class SnapshotCollector:
         self._snapshot_write_lock = asyncio.Lock()
         self._node_state: Dict[str, Dict] = {}
         self._latest = {"timestamp": None, "nodes": {}}
+        self._inflight_polls = 0
+        self._last_cycle = {
+            "started_at": None,
+            "finished_at": None,
+            "duration_ms": 0.0,
+            "due_nodes": 0,
+            "queued_nodes": 0,
+        }
 
         # Adaptive mode state
         self._mode = CollectorMode.IDLE
@@ -104,6 +144,39 @@ class SnapshotCollector:
             "nodes": nodes,
             "count": len(nodes),
             "mode": self._mode.value,
+        }
+
+    def latest_dashboard_snapshot(self) -> Dict:
+        """Return the bounded, operator-safe projection used by Dashboard.
+
+        The collector internally retains full inbounds so explicit client and
+        inbound workflows can build their own projections.  Sending those
+        records with every Dashboard navigation turns an O(nodes) status view
+        into O(nodes * inbounds * clients) network and JSON work.
+        """
+        nodes = [
+            {field: snapshot[field] for field in _DASHBOARD_SNAPSHOT_FIELDS if field in snapshot}
+            for snapshot in self._latest["nodes"].values()
+            if isinstance(snapshot, dict)
+        ]
+        nodes.sort(key=lambda item: str(item.get("name") or "").casefold())
+        return {
+            "timestamp": self._latest["timestamp"],
+            "nodes": nodes,
+            "count": len(nodes),
+            "mode": self._mode.value,
+            "projection": "dashboard-v1",
+        }
+
+    def runtime_status(self) -> Dict:
+        """Small operational receipt for sizing a collector before fleet growth."""
+        return {
+            "mode": self._mode.value,
+            "configured_max_parallel_polls": self.configured_max_parallel_polls,
+            "max_parallel_polls": self.max_parallel_polls,
+            "inflight_polls": self._inflight_polls,
+            "last_cycle": dict(self._last_cycle),
+            "snapshot_nodes": len(self._latest["nodes"]),
         }
 
     async def load_persisted_snapshots(self) -> int:
@@ -355,6 +428,7 @@ class SnapshotCollector:
 
     async def _run(self):
         while self._running:
+            cycle_started = time.time()
             try:
                 self._update_mode_based_on_activity()
                 current_interval = self._get_current_interval()
@@ -393,6 +467,14 @@ class SnapshotCollector:
                 if tasks:
                     await asyncio.gather(*tasks, return_exceptions=True)
 
+                self._last_cycle = {
+                    "started_at": cycle_started,
+                    "finished_at": time.time(),
+                    "duration_ms": round((time.time() - cycle_started) * 1000, 2),
+                    "due_nodes": len(tasks),
+                    "queued_nodes": max(0, len(tasks) - self.max_parallel_polls),
+                }
+
                 if force_poll:
                     self._force_poll_event.clear()
                     logger.info(f"Force poll completed: {len(tasks)} nodes polled")
@@ -408,9 +490,13 @@ class SnapshotCollector:
                 pass
 
     async def _poll_node(self, node: Dict, key: str, sem: Optional[asyncio.Semaphore] = None):
-        async with self.semaphore:
-            started = time.time()
-            snapshot = await asyncio.to_thread(self._collect_node_snapshot, node)
+        self._inflight_polls += 1
+        try:
+            async with self.semaphore:
+                started = time.time()
+                snapshot = await asyncio.to_thread(self._collect_node_snapshot, node)
+        finally:
+            self._inflight_polls = max(0, self._inflight_polls - 1)
         elapsed = time.time() - started
         previous = self._latest["nodes"].get(key)
         should_broadcast = False

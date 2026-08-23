@@ -4,11 +4,13 @@ import { Activity, CheckCircle, Download, RefreshCw, Server, Upload, Users } fro
 import { ChoiceChips } from './ChoiceChips';
 import { getDashboardSummary, normalizeDashboardSummary, type DashboardSummaryData, type DashboardTrafficPeriod } from '../api/dashboard';
 import { listNodes, NODES_CHANGED_EVENT, type NodeRecord } from '../api/nodes';
+import { useDashboardData } from '../services/DashboardDataContext';
 
 type StatTone = 'default' | 'accent' | 'success' | 'warning' | 'danger';
 
 interface DashboardSummaryProps {
   onNavigate?: (tab: string) => void;
+  onOnlineClientsChange?: (onlineClients: number | null) => void;
   heroStats?: Array<{ label: string; value: string; tone?: StatTone }>;
   fleetSummary?: {
     total: number;
@@ -92,10 +94,12 @@ const skeletonLine = (className: string) => (
 
 export function DashboardSummary({
   onNavigate,
+  onOnlineClientsChange,
   heroStats = [],
   fleetSummary,
 }: DashboardSummaryProps) {
   const { t } = useTranslation();
+  const dashboardData = useDashboardData();
   const [summary, setSummary] = useState<DashboardSummaryData>(() => emptySummary());
   const [nodes, setNodes] = useState<NodeRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -106,6 +110,7 @@ export function DashboardSummary({
   const load = useCallback(async (period: DashboardTrafficPeriod) => {
     setLoading(true);
     setNodesError(null);
+    onOnlineClientsChange?.(null);
     try {
       const [summaryResult, nodesResult] = await Promise.allSettled([
         getDashboardSummary(period),
@@ -113,9 +118,12 @@ export function DashboardSummary({
       ]);
 
       if (summaryResult.status === 'fulfilled') {
-        setSummary(normalizeDashboardSummary(summaryResult.value));
+        const nextSummary = normalizeDashboardSummary(summaryResult.value);
+        setSummary(nextSummary);
+        onOnlineClientsChange?.(nextSummary.online_clients_total);
       } else {
         setSummary(emptySummary());
+        onOnlineClientsChange?.(0);
       }
 
       if (nodesResult.status === 'fulfilled') {
@@ -128,29 +136,41 @@ export function DashboardSummary({
       setSummary(emptySummary());
       setNodes([]);
       setNodesError('Unable to load registered servers');
+      onOnlineClientsChange?.(0);
     } finally {
       setLastUpdated(new Date());
       setLoading(false);
     }
-  }, []);
+  }, [onOnlineClientsChange]);
 
   useEffect(() => {
+    if (dashboardData) return;
     void load(trafficPeriod);
     const interval = window.setInterval(() => void load(trafficPeriod), 60000);
     return () => window.clearInterval(interval);
-  }, [load, trafficPeriod]);
+  }, [dashboardData, load, trafficPeriod]);
 
   useEffect(() => {
+    if (dashboardData) return;
     const handleNodesChanged = () => {
       void load(trafficPeriod);
     };
     window.addEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
     return () => window.removeEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
-  }, [load, trafficPeriod]);
+  }, [dashboardData, load, trafficPeriod]);
 
-  const isInitialLoading = loading && lastUpdated === null;
-  const totalNodes = summary.nodes_total || nodes.length;
-  const onlineNodes = Math.min(Math.max(summary.nodes_online || 0, 0), totalNodes);
+  useEffect(() => {
+    if (dashboardData?.summary) onOnlineClientsChange?.(dashboardData.summary.online_clients_total);
+  }, [dashboardData, onOnlineClientsChange]);
+
+  const activeSummary = dashboardData?.summary ?? summary;
+  const activeNodes = dashboardData?.fleet ?? nodes;
+  const activeLoading = dashboardData?.loading ?? loading;
+  const activeLastUpdated = dashboardData?.lastUpdated ?? lastUpdated;
+  const activeTrafficPeriod = dashboardData?.period ?? trafficPeriod;
+  const isInitialLoading = activeLoading && activeLastUpdated === null;
+  const totalNodes = activeSummary.nodes_total || activeNodes.length;
+  const onlineNodes = Math.min(Math.max(activeSummary.nodes_online || 0, 0), totalNodes);
   const offlineNodes = Math.max(totalNodes - onlineNodes, 0);
 
   const headerStats = useMemo(() => {
@@ -159,24 +179,24 @@ export function DashboardSummary({
       { label: t('dashboardSummary.totalNodes', { defaultValue: 'Total Nodes' }), value: String(totalNodes) },
       { label: t('dashboardSummary.onlineNodes', { defaultValue: 'Online Nodes' }), value: String(onlineNodes), variant: onlineNodes > 0 ? 'success' : 'warning' },
       { label: t('dashboardSummary.offlineNodes', { defaultValue: 'Offline Nodes' }), value: String(offlineNodes), variant: offlineNodes > 0 ? 'warning' : 'default' },
-      { label: t('dashboardSummary.activeClients', { defaultValue: 'Active Clients' }), value: String(summary.online_clients_total), variant: summary.online_clients_total > 0 ? 'success' : 'default' },
+      { label: t('dashboardSummary.activeClients', { defaultValue: 'Active Clients' }), value: String(activeSummary.online_clients_total), variant: activeSummary.online_clients_total > 0 ? 'success' : 'default' },
       { label: t('dashboardSummary.errors', { defaultValue: 'Errors' }), value: String(fleetSummary?.checking ?? 0), variant: (fleetSummary?.checking ?? 0) > 0 ? 'warning' : 'default' },
-      { label: t('clients.title'), value: String(summary.clients_total) },
+      { label: t('clients.title'), value: String(activeSummary.clients_total) },
     ];
-  }, [fleetSummary?.checking, heroStats, offlineNodes, onlineNodes, summary.clients_total, summary.online_clients_total, t, totalNodes]);
+  }, [activeSummary.clients_total, activeSummary.online_clients_total, fleetSummary?.checking, heroStats, offlineNodes, onlineNodes, t, totalNodes]);
 
-  const trafficPeriodLabel = t(`traffic.period${summary.traffic_period === 'all_time' ? 'AllTime' : summary.traffic_period[0].toUpperCase() + summary.traffic_period.slice(1)}`);
+  const trafficPeriodLabel = t(`traffic.period${activeSummary.traffic_period === 'all_time' ? 'AllTime' : activeSummary.traffic_period[0].toUpperCase() + activeSummary.traffic_period.slice(1)}`);
   const kpiCards = [
     { label: t('nodes.title'), value: `${totalNodes} / ${onlineNodes}`, detail: t('dashboardSummary.allNodesOnline'), icon: Server, variant: 'accent', tab: 'monitoring' },
-    { label: t('clients.title'), value: String(summary.clients_total), detail: undefined, icon: Users, variant: 'info', tab: 'clients' },
-    { label: t('dashboardSummary.activeClients'), value: String(summary.online_clients_total), detail: undefined, icon: CheckCircle, variant: 'success', tab: 'clients' },
-    { label: t('traffic.upload'), value: formatBytes(summary.traffic.upload), detail: trafficPeriodLabel, icon: Upload, variant: 'warning', tab: 'traffic' },
-    { label: t('traffic.download'), value: formatBytes(summary.traffic.download), detail: trafficPeriodLabel, icon: Download, variant: 'danger', tab: 'traffic' },
-    { label: t('traffic.totalTraffic'), value: formatBytes(summary.traffic.total), detail: trafficPeriodLabel, icon: Activity, variant: 'neutral', tab: 'traffic' },
+    { label: t('clients.title'), value: String(activeSummary.clients_total), detail: undefined, icon: Users, variant: 'info', tab: 'clients' },
+    { label: t('dashboardSummary.activeClients'), value: String(activeSummary.online_clients_total), detail: undefined, icon: CheckCircle, variant: 'success', tab: 'clients' },
+    { label: t('traffic.upload'), value: formatBytes(activeSummary.traffic.upload), detail: trafficPeriodLabel, icon: Upload, variant: 'warning', tab: 'traffic' },
+    { label: t('traffic.download'), value: formatBytes(activeSummary.traffic.download), detail: trafficPeriodLabel, icon: Download, variant: 'danger', tab: 'traffic' },
+    { label: t('traffic.totalTraffic'), value: formatBytes(activeSummary.traffic.total), detail: trafficPeriodLabel, icon: Activity, variant: 'neutral', tab: 'traffic' },
   ] as const;
 
-  const onlineByNode = Object.entries(summary.online_by_node);
-  const topClients = summary.top_clients.slice(0, 5);
+  const onlineByNode = Object.entries(activeSummary.online_by_node);
+  const topClients = activeSummary.top_clients.slice(0, 5);
   const maxTraffic = Math.max(...topClients.map((client) => client.total), 1);
 
   return (
@@ -233,22 +253,26 @@ export function DashboardSummary({
                 { value: 'month', label: t('traffic.periodMonth') },
                 { value: 'all_time', label: t('traffic.periodAllTime') },
               ]}
-              value={trafficPeriod}
-              disabled={loading}
-              onChange={(value) => setTrafficPeriod(value as DashboardTrafficPeriod)}
+              value={activeTrafficPeriod}
+              disabled={activeLoading}
+              onChange={(value) => {
+                const next = value as DashboardTrafficPeriod;
+                if (dashboardData) dashboardData.setPeriod(next);
+                else setTrafficPeriod(next);
+              }}
             />
             <span className="font-mono text-[10px] font-light tracking-wide text-gray-500">
-              {lastUpdated ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '12:00 AM'}
+              {activeLastUpdated ? activeLastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '12:00 AM'}
             </span>
             <button
               className="flex h-8 w-8 items-center justify-center rounded border border-cyan-500/20 bg-[#0a0e1a] transition-colors hover:border-cyan-400/30 disabled:opacity-50"
               title="Refresh"
               aria-label="Refresh"
               type="button"
-              disabled={loading}
-              onClick={() => void load(trafficPeriod)}
+              disabled={activeLoading}
+              onClick={() => void (dashboardData ? dashboardData.refresh() : load(trafficPeriod))}
             >
-              <RefreshCw className={`w-3.5 h-3.5 text-cyan-300 ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 text-cyan-300 ${activeLoading ? 'animate-spin' : ''}`} />
             </button>
           </div>
         </div>
@@ -288,7 +312,7 @@ export function DashboardSummary({
           })}
         </div>
 
-        {summary.traffic_note && (
+        {activeSummary.traffic_note && (
           <div className="mb-4 rounded-md border border-amber-400/20 bg-amber-950/20 px-3 py-2 font-mono text-[11px] font-light text-amber-100/80">
             {t('dashboardSummary.collectingTrafficHistory')}
           </div>

@@ -21,12 +21,13 @@ import {
   Square,
   Timer,
 } from 'lucide-react';
-import { getDashboardServerDeck, type DashboardServerStatus } from '../api/dashboard';
+import { dashboardFleetToServerDeck, getDashboardServerDeck, type DashboardServerStatus } from '../api/dashboard';
 import { refreshNodesNow } from '../api/nodes';
 import { getNodeLogs, restartXray, stopXray, updateGeofile, type NodeLogKind } from '../api/serverOps';
 import { useTrafficStatsSubscription, type TrafficUpdate } from '../services/useTrafficStatsSubscription';
 import { NodeOperationsModal, type NodeOpsTab } from './NodeOperationsModal';
 import { useToast } from './Toast';
+import { useDashboardData } from '../services/DashboardDataContext';
 
 interface ServerStatusProps {
   dashboardMode?: boolean;
@@ -40,10 +41,15 @@ interface ServerStatusProps {
     offline: number;
     checking: number;
     loading: boolean;
+    onlineClients?: number | null;
   };
   fleetCollapsed?: boolean;
   onToggleFleet?: () => void;
 }
+
+export const formatOnlineClients = (onlineClients: number | null | undefined): string => (
+  onlineClients == null ? '—' : String(onlineClients)
+);
 
 type SortMode = 'name' | 'cpu' | 'status' | 'clients';
 type NodeAction = 'restart' | 'stop' | 'geofile' | 'xrayLogs' | 'serverLogs';
@@ -255,6 +261,7 @@ export function ServerStatus({
 }: ServerStatusProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const dashboardData = useDashboardData();
   const [servers, setServers] = useState<UiServer[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -284,6 +291,12 @@ export function ServerStatus({
   }, [t]);
 
   const loadServersStatus = useCallback(async () => {
+    if (dashboardData) {
+      setServers(dashboardFleetToServerDeck(dashboardData.fleet).servers.map(toUiServer));
+      setLoadError(null);
+      setLoading(dashboardData.loading);
+      return;
+    }
     setLoading(true);
     setLoadError(null);
     try {
@@ -299,14 +312,15 @@ export function ServerStatus({
     } finally {
       setLoading(false);
     }
-  }, [dashboardMode, includeLiveStatus, includePanelUpdateChecks, t]);
+  }, [dashboardData, dashboardMode, includeLiveStatus, includePanelUpdateChecks, t]);
 
   const refreshDeck = useCallback(async () => {
     try {
       await refreshNodesNow();
     } catch {}
-    await loadServersStatus();
-  }, [loadServersStatus]);
+    if (dashboardData) await dashboardData.refresh();
+    else await loadServersStatus();
+  }, [dashboardData, loadServersStatus]);
 
   const requireNodeId = useCallback((server: UiServer): number | null => {
     if (server.nodeId !== undefined && Number.isFinite(server.nodeId)) {
@@ -530,6 +544,7 @@ export function ServerStatus({
   }, [autoRefresh, refreshInterval, loadServersStatus]);
 
   useTrafficStatsSubscription({
+    enabled: !dashboardData,
     channels: ['server_status'],
     onUpdate: handleRealtimeUpdate,
     onError: (err) => console.warn('[ServerStatus] realtime error:', err),
@@ -655,7 +670,7 @@ export function ServerStatus({
             <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-red-400">Offline: <strong className="ml-1 font-medium">{fleetSummary?.offline ?? offline}</strong></span>
             <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">{t('serverStatus.avgCpu')}: <strong className="ml-1 font-medium">{avgCpu.toFixed(1)}%</strong></span>
             <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">{t('serverStatus.fleetRam')}: <strong className="ml-1 font-medium">{'10.4/19.2 GB'}</strong></span>
-            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-gray-300">{t('serverStatus.onlineClients')}: <strong className="ml-1 font-medium">-</strong></span>
+            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-gray-300">{t('serverStatus.onlineClients')}: <strong className="ml-1 font-medium">{formatOnlineClients(fleetSummary?.onlineClients)}</strong></span>
           </div>
         </div>
 
