@@ -859,10 +859,10 @@ function ServerCard({
                 </button>
                 <button
                   className="h-6 rounded border border-cyan-500/20 bg-[#0f1420] px-2 font-mono text-[10px] font-light text-gray-400 transition-colors duration-200 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={t('serverStatus.xrayLogsTitle', { node: server.name })}
+                  title={t('serverStatus.serverLogsTitle', { node: server.name })}
                   type="button"
-                  onClick={() => onShowLogs(server, 'xray')}
-                  disabled={xrayLogsPending}
+                  onClick={() => onShowLogs(server, 'panel')}
+                  disabled={serverLogsPending}
                 >
                   {t('serverStatus.logs')}
                 </button>
@@ -881,10 +881,10 @@ function ServerCard({
                 disabled={geofilePending}
               />
               <IconAction
-                icon={serverLogsPending ? <RefreshCw className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
-                title={t('serverStatus.serverLogsTitle', { node: server.name })}
-                onClick={() => onShowLogs(server, 'panel')}
-                disabled={serverLogsPending}
+                icon={xrayLogsPending ? <RefreshCw className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
+                title={t('serverStatus.xrayLogsTitle', { node: server.name })}
+                onClick={() => onShowLogs(server, 'xray')}
+                disabled={xrayLogsPending}
               />
               <IconAction icon={<Settings className="w-3 h-3" />} title="Config" onClick={() => onOpenNodeOps(server, 'config')} />
             </div>
