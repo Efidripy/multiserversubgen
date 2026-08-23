@@ -154,6 +154,119 @@ class TestInboundManagerV3Contracts:
         # than converting an edit into a lossy default object.
         assert rows[0]["sniffing"] == source_sniffing
 
+    @pytest.mark.parametrize(
+        ("method_name", "expected_path"),
+        [
+            ("get_all_slim_inbounds", "/panel/api/inbounds/list/slim"),
+            ("get_all_inbound_options", "/panel/api/inbounds/options"),
+        ],
+    )
+    def test_v3_read_projections_use_documented_routes(self, method_name, expected_path):
+        manager = self._manager()
+        session = MagicMock()
+        response = _response(body={"success": True, "obj": []})
+        with patch.object(manager, "_get_read_session", return_value=(session, "https://panel.example.test")), patch(
+            "inbound_manager.xui_request", return_value=response
+        ) as request:
+            assert getattr(manager, method_name)([self._node()]) == []
+
+        request.assert_called_once()
+        assert request.call_args.args[1:] == ("GET", f"https://panel.example.test{expected_path}")
+
+    def test_v3_inbound_options_are_minimal_and_exclude_full_configuration(self):
+        manager = self._manager()
+        source = {
+            "id": 41,
+            "remark": "VLESS-443",
+            "tag": "in-443",
+            "protocol": "vless",
+            "port": 443,
+            "enable": True,
+            "tlsFlowCapable": True,
+            "ssMethod": "",
+            "settings": {"clients": [{"email": "must-not-leak"}]},
+            "streamSettings": {"security": "reality", "privateKey": "must-not-leak"},
+            "clientStats": [{"email": "must-not-leak"}],
+        }
+        with patch.object(manager, "_get_read_session", return_value=(MagicMock(), "https://panel.example.test")), patch(
+            "inbound_manager.xui_request", return_value=_response(body={"success": True, "obj": [source]})
+        ):
+            rows = manager.get_all_inbound_options([self._node()])
+
+        assert rows == [{
+            "detail_level": "option", "id": 41, "node_id": None, "node_name": "v3-node",
+            "remark": "VLESS-443", "tag": "in-443", "protocol": "vless", "port": 443,
+            "enable": True, "tlsFlowCapable": True, "ssMethod": "",
+        }]
+
+    def test_v3_slim_404_requires_reauth_before_cached_legacy_projection(self):
+        manager = self._manager()
+        node = self._node()
+        cached = {
+            str(node["name"]): [{
+                "id": 41, "remark": "legacy", "protocol": "vless", "port": 443,
+                "settings": {"clients": [{"email": "legacy@example.test", "enable": True}]},
+            }]
+        }
+        with patch.object(
+            manager, "_get_read_session", side_effect=[(MagicMock(), "https://panel.example.test"), (MagicMock(), "https://panel.example.test")]
+        ) as sessions, patch(
+            "inbound_manager.xui_request", side_effect=[_response(status_code=404), _response(status_code=405)]
+        ) as request, patch.object(manager, "_fetch_inbounds_from_node") as legacy_fetch:
+            rows = manager.get_all_slim_inbounds([node], cached_full=cached)
+
+        assert request.call_count == 2
+        assert all(call.args[2].endswith("/panel/api/inbounds/list/slim") for call in request.call_args_list)
+        assert sessions.call_args_list[1].kwargs == {"force_reauth": True}
+        legacy_fetch.assert_not_called()
+        assert rows[0]["settings"] == {"clients": [{"email": "legacy@example.test", "enable": True, "comment": ""}]}
+
+    def test_v3_options_5xx_is_terminal_and_never_reads_legacy(self):
+        manager = self._manager()
+        with patch.object(manager, "_get_read_session", return_value=(MagicMock(), "https://panel.example.test")), patch(
+            "inbound_manager.xui_request", return_value=_response(status_code=503)
+        ) as request, patch.object(manager, "_fetch_inbounds_from_node") as legacy_fetch:
+            assert manager.get_all_inbound_options([self._node()]) == []
+
+        request.assert_called_once()
+        legacy_fetch.assert_not_called()
+
+    def test_v3_slim_malformed_response_is_terminal_and_never_reads_legacy(self):
+        manager = self._manager()
+        malformed = _response(json_error=True)
+        with patch.object(manager, "_get_read_session", return_value=(MagicMock(), "https://panel.example.test")), patch(
+            "inbound_manager.xui_request", return_value=malformed
+        ) as request, patch.object(manager, "_fetch_inbounds_from_node") as legacy_fetch:
+            assert manager.get_all_slim_inbounds([self._node()]) == []
+
+        request.assert_called_once()
+        legacy_fetch.assert_not_called()
+
+    def test_v3_slim_rows_strip_full_client_and_stream_configuration(self):
+        manager = self._manager()
+        source = {
+            "id": 41,
+            "remark": "VLESS-443",
+            "protocol": "vless",
+            "port": 443,
+            "settings": {"clients": [{
+                "email": "alice@example.test", "enable": True, "comment": "paid",
+                "id": "uuid-must-not-leak", "password": "secret-must-not-leak",
+            }]},
+            "streamSettings": {"security": "reality", "privateKey": "secret-must-not-leak"},
+            "clientStats": [{"email": "alice@example.test"}],
+        }
+        with patch.object(manager, "_get_read_session", return_value=(MagicMock(), "https://panel.example.test")), patch(
+            "inbound_manager.xui_request", return_value=_response(body={"success": True, "obj": [source]})
+        ):
+            rows = manager.get_all_slim_inbounds([self._node()])
+
+        assert rows[0]["settings"] == {
+            "clients": [{"email": "alice@example.test", "enable": True, "comment": "paid"}]
+        }
+        assert "streamSettings" not in rows[0]
+        assert "clientStats" not in rows[0]
+
     def test_clone_keeps_full_v3_config_without_server_owned_fields_or_shared_state(self):
         manager = self._manager()
         source = {

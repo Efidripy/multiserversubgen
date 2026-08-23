@@ -62,7 +62,8 @@ describe('navigation performance regressions', () => {
     expect(app).not.toContain('getTrafficHeaderSource');
     expect(app).toContain("case 'inbounds':\n          case 'clients':\n          case 'traffic':");
     expect(clients).toContain('listNodes({ signal: controller.signal })');
-    expect(clients).toContain('getInboundsHeaderSource({ signal: controller.signal })');
+    expect(clients).toContain('getInboundOptions({ signal: controller.signal })');
+    expect(clients).not.toContain('getInboundsHeaderSource({ signal: controller.signal })');
   });
 
   it('renders Dashboard server cards from the cached snapshot instead of probing every node', () => {

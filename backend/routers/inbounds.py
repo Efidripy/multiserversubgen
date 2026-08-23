@@ -9,6 +9,8 @@ def build_inbounds_router(
     check_auth,
     inbound_mgr,
     get_cached_inbounds,
+    get_cached_slim_inbounds,
+    get_cached_inbound_options,
     node_service,
     get_node_or_404,
     invalidate_subscription_cache,
@@ -68,6 +70,32 @@ def build_inbounds_router(
             "by_protocol": by_protocol,
             "by_security": by_security,
         }
+
+    @router.get("/api/v1/inbounds/slim")
+    async def list_slim_inbounds(request: Request):
+        """List-only projection; never suitable as an inbound edit payload."""
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401)
+        nodes = await run_in_threadpool(node_service.list_nodes)
+        inbounds = await run_in_threadpool(get_cached_slim_inbounds, nodes)
+        return ORJSONResponse(
+            content={"detail_level": "slim", "inbounds": inbounds, "count": len(inbounds)},
+            headers={"Cache-Control": "private, max-age=30"},
+        )
+
+    @router.get("/api/v1/inbounds/options")
+    async def list_inbound_options(request: Request):
+        """Small picker projection, intentionally excluding settings/client stats."""
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401)
+        nodes = await run_in_threadpool(node_service.list_nodes)
+        options = await run_in_threadpool(get_cached_inbound_options, nodes)
+        return ORJSONResponse(
+            content={"detail_level": "option", "inbounds": options, "count": len(options)},
+            headers={"Cache-Control": "private, max-age=30"},
+        )
 
     @router.post("/api/v1/inbounds")
     async def add_inbound(request: Request, config: Dict):

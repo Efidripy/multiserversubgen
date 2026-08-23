@@ -62,6 +62,8 @@ def _build_test_app(*, monitoring_enabled: bool) -> FastAPI:
         client_mgr=main.client_mgr,
         get_cached_clients=main.get_cached_clients,
         get_cached_inbounds=main.inbounds_runtime.get_cached_inbounds,
+        get_cached_slim_inbounds=main.inbounds_runtime.get_cached_slim_inbounds,
+        get_cached_inbound_options=main.inbounds_runtime.get_cached_inbound_options,
         check_subscription_rate_limit=main._check_subscription_rate_limit,
         get_emails=main.get_emails,
         get_links_filtered=main.get_links_filtered,
@@ -149,6 +151,34 @@ def test_inbounds_endpoint_smoke(monkeypatch):
     payload = response.json()
     assert payload["count"] == 1
     assert payload["inbounds"][0]["node_name"] == "alpha"
+
+
+def test_inbound_read_projection_endpoints_are_separate_from_full_dtos(monkeypatch):
+    monkeypatch.setattr(main.p, "authenticate", lambda u, p: True)
+    monkeypatch.setattr(
+        main.node_service,
+        "list_nodes",
+        lambda: [{"id": 1, "name": "alpha", "ip": "1.1.1.1", "port": "443"}],
+    )
+    monkeypatch.setattr(
+        main.inbounds_runtime,
+        "get_cached_slim_inbounds",
+        lambda _nodes: [{"detail_level": "slim", "id": 11, "settings": {"clients": []}}],
+    )
+    monkeypatch.setattr(
+        main.inbounds_runtime,
+        "get_cached_inbound_options",
+        lambda _nodes: [{"detail_level": "option", "id": 11, "protocol": "vless"}],
+    )
+    client = TestClient(_build_test_app(monitoring_enabled=False))
+
+    slim = client.get("/api/v1/inbounds/slim", headers=_basic_auth())
+    options = client.get("/api/v1/inbounds/options", headers=_basic_auth())
+
+    assert slim.status_code == 200
+    assert slim.json() == {"detail_level": "slim", "inbounds": [{"detail_level": "slim", "id": 11, "settings": {"clients": []}}], "count": 1}
+    assert options.status_code == 200
+    assert options.json() == {"detail_level": "option", "inbounds": [{"detail_level": "option", "id": 11, "protocol": "vless"}], "count": 1}
 
 
 def test_clients_endpoint_smoke(monkeypatch):

@@ -417,6 +417,8 @@ register_app_routers(
     client_mgr=client_mgr,
     get_cached_clients=get_cached_clients,
     get_cached_inbounds=inbounds_runtime.get_cached_inbounds,
+    get_cached_slim_inbounds=inbounds_runtime.get_cached_slim_inbounds,
+    get_cached_inbound_options=inbounds_runtime.get_cached_inbound_options,
     check_subscription_rate_limit=_check_subscription_rate_limit,
     get_emails=get_emails,
     get_links_filtered=get_links_filtered,
