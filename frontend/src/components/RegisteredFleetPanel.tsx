@@ -5,11 +5,13 @@ import {
   deleteNode,
   getRegisteredFleetOverview,
   getRegisteredFleetSnapshotOverview,
+  listNodes,
   NODES_CHANGED_EVENT,
   type FleetNode,
 } from '../api/nodes';
 import { restartXray, stopXray } from '../api/serverOps';
 import { useToast } from './Toast';
+import { useDashboardData } from '../services/DashboardDataContext';
 
 interface FleetSummary {
   total: number;
@@ -92,6 +94,7 @@ export function RegisteredFleetPanel({
 }: RegisteredFleetPanelProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
+  const dashboardData = useDashboardData();
   const [nodes, setNodes] = useState<UiFleetNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
@@ -125,7 +128,8 @@ export function RegisteredFleetPanel({
     try {
       await deleteNode(node.id);
       setNodes((current) => current.filter((item) => item.id !== node.id));
-      await load();
+      if (dashboardData) await dashboardData.refresh();
+      else await load();
     } catch (err: any) {
       const message = err?.response?.data?.detail || err?.message || t('nodes.deleteFailed');
       setError(message);
@@ -149,7 +153,8 @@ export function RegisteredFleetPanel({
     try {
       await command(node.id);
       toast(t(successKey, { node: node.name }), 'success');
-      await load({ live: true });
+      if (dashboardData) await dashboardData.refresh();
+      else await load({ live: true });
     } catch (err: any) {
       const message = err?.response?.data?.detail || err?.response?.data?.error || err?.message || t(failureKey, { node: node.name });
       setError(message);
@@ -168,19 +173,48 @@ export function RegisteredFleetPanel({
     void runNodeAction(node, 'stop', stopXray, 'serverStatus.xrayStoppedNode', 'serverStatus.stopXrayFailedNode');
   };
 
+  const handleEditNode = useCallback(async (node: UiFleetNode) => {
+    if (!onEditNode) {
+      onOpenNodes?.();
+      return;
+    }
+    if (!dashboardData) {
+      onEditNode(node.record);
+      return;
+    }
+    try {
+      // Credentials are intentionally absent from the Dashboard aggregate.
+      // Fetch the edit record only after an explicit operator click.
+      const record = (await listNodes()).find((item) => item.id === node.id);
+      onEditNode(record ? { ...record, available: node.record.available } : node.record);
+    } catch {
+      onOpenNodes?.();
+    }
+  }, [dashboardData, onEditNode, onOpenNodes]);
+
   useEffect(() => {
+    if (!dashboardData) return;
+    setNodes(dashboardData.fleet.map((node, index) => toUiNode(node as FleetNode, index)));
+    setLoaded(true);
+    setLoading(dashboardData.loading);
+    setError(null);
+  }, [dashboardData]);
+
+  useEffect(() => {
+    if (dashboardData) return;
     load();
     const interval = window.setInterval(load, 30000);
     return () => window.clearInterval(interval);
-  }, [load]);
+  }, [dashboardData, load]);
 
   useEffect(() => {
+    if (dashboardData) return;
     const handleNodesChanged = () => {
       void load();
     };
     window.addEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
     return () => window.removeEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
-  }, [load]);
+  }, [dashboardData, load]);
 
   const counts = useMemo(() => {
     const online = nodes.filter((node) => node.status === 'online').length;
@@ -376,13 +410,7 @@ export function RegisteredFleetPanel({
                         className={fleetActionButtonClass}
                         type="button"
                         title="Edit"
-                        onClick={() => {
-                          if (onEditNode) {
-                            onEditNode(node.record);
-                            return;
-                          }
-                          onOpenNodes?.();
-                        }}
+                        onClick={() => void handleEditNode(node)}
                       >
                         <Edit3 className="w-3.5 h-3.5 opacity-60" />
                       </button>

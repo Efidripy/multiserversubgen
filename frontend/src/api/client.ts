@@ -52,6 +52,7 @@ export const API_BASE: string =
  * Used by the request interceptor to determine how long to cache each GET response.
  */
 export const CACHE_TTL = {
+  DASHBOARD: 30_000,
   NODES: 30_000,
   CLIENTS: 10_000,
   TRAFFIC: 8_000,
@@ -62,6 +63,7 @@ export const CACHE_TTL = {
 
 /** Map URL path fragments to their cache TTL. */
 const ROUTE_TTLS: Array<[string, number]> = [
+  ['/v1/dashboard', CACHE_TTL.DASHBOARD],
   ['/v1/nodes', CACHE_TTL.NODES],
   ['/v1/clients', CACHE_TTL.CLIENTS],
   ['/v1/traffic', CACHE_TTL.TRAFFIC],
@@ -106,6 +108,7 @@ function deriveCacheTags(url: string): string[] {
   tags.add(`resource:${resource}`);
 
   if (resource.startsWith('/v1/nodes')) tags.add('domain:nodes');
+  if (resource.startsWith('/v1/dashboard')) tags.add('domain:dashboard');
   if (resource.startsWith('/v1/clients')) tags.add('domain:clients');
   if (resource.startsWith('/v1/inbounds')) tags.add('domain:inbounds');
   if (resource.startsWith('/v1/traffic')) tags.add('domain:traffic');
@@ -127,11 +130,13 @@ function invalidateForMutation(url: string): void {
     cacheService.invalidateByTag('domain:inbounds');
     cacheService.invalidateByTag('domain:emails');
     cacheService.invalidateByTag('domain:traffic');
+    cacheService.invalidateByTag('domain:dashboard');
   }
 
   if (resource.startsWith('/v1/clients')) {
     cacheService.invalidateByTag('domain:clients');
     cacheService.invalidateByTag('domain:traffic');
+    cacheService.invalidateByTag('domain:dashboard');
     cacheService.invalidateByTag('domain:emails');
   }
 
@@ -139,6 +144,7 @@ function invalidateForMutation(url: string): void {
     cacheService.invalidateByTag('domain:inbounds');
     cacheService.invalidateByTag('domain:emails');
     cacheService.invalidateByTag('domain:traffic');
+    cacheService.invalidateByTag('domain:dashboard');
   }
 
   if (resource.startsWith('/v1/traffic')) {
@@ -282,5 +288,4 @@ api.interceptors.response.use((response) => {
 });
 
 export default api;
-
 

@@ -292,9 +292,15 @@ def test_snapshot_collector_opens_timeout_circuit():
         fetch_nodes=lambda: [],
         xui_monitor=TimeoutMonitor(),
         ws_manager=SimpleNamespace(active_connections=[]),
+        max_parallel_polls=2,
         degraded_backoff_sec=300,
     )
-    assert collector.semaphore._value == 5
+    assert collector.configured_max_parallel_polls == 2
+    assert collector.max_parallel_polls == 2
+    assert collector.semaphore._value == 2
+    runtime_status = collector.runtime_status()
+    assert runtime_status["configured_max_parallel_polls"] == 2
+    assert runtime_status["last_cycle"]["queued_nodes"] == 0
     collector._node_state["Server-6"] = {
         "next_poll": 0.0,
         "interval": 60.0,
@@ -320,6 +326,86 @@ def test_snapshot_collector_opens_timeout_circuit():
     assert snapshot["available"] is False
     assert snapshot["status"] == "offline"
     assert snapshot["reason"] == "timeout"
+
+
+def test_snapshot_collector_dashboard_projection_excludes_inventory_payload():
+    from services.collector import SnapshotCollector
+
+    collector = SnapshotCollector(
+        fetch_nodes=lambda: [],
+        xui_monitor=SimpleNamespace(),
+        ws_manager=SimpleNamespace(active_connections=[]),
+    )
+    collector._latest = {
+        "timestamp": 123.0,
+        "nodes": {
+            "alpha": {
+                "name": "alpha",
+                "node_id": 1,
+                "available": True,
+                "online_clients": 2,
+                "traffic_total": 42,
+                "system": {"cpu": 7},
+                "inbounds": [{"clientStats": [{"email": "private@example.test"}]}],
+                "inbounds_result": {"inbounds": [{"id": 1}]},
+                "server_status": {"session": "must-not-leak"},
+            }
+        },
+    }
+
+    payload = collector.latest_dashboard_snapshot()
+
+    assert payload["projection"] == "dashboard-v1"
+    assert payload["nodes"] == [{
+        "name": "alpha",
+        "node_id": 1,
+        "available": True,
+        "online_clients": 2,
+        "traffic_total": 42,
+        "system": {"cpu": 7},
+    }]
+
+
+def test_dashboard_projection_payload_is_bounded_for_a_100_node_fleet():
+    from services.collector import SnapshotCollector
+
+    inventory = [
+        {
+            "id": inbound_id,
+            "clientStats": [
+                {"email": f"client-{inbound_id}-{client_id}@example.test", "up": client_id, "down": client_id * 2}
+                for client_id in range(20)
+            ],
+        }
+        for inbound_id in range(12)
+    ]
+    collector = SnapshotCollector(
+        fetch_nodes=lambda: [],
+        xui_monitor=SimpleNamespace(),
+        ws_manager=SimpleNamespace(active_connections=[]),
+    )
+    collector._latest = {
+        "timestamp": 123.0,
+        "nodes": {
+            f"node-{index}": {
+                "name": f"node-{index}",
+                "node_id": index,
+                "available": True,
+                "online_clients": 20,
+                "traffic_total": 12345,
+                "system": {"cpu": 10},
+                "inbounds": inventory,
+                "inbounds_result": {"available": True, "inbounds": inventory},
+            }
+            for index in range(1, 101)
+        },
+    }
+
+    full_bytes = len(json.dumps(collector.latest_snapshot()).encode())
+    dashboard_bytes = len(json.dumps(collector.latest_dashboard_snapshot()).encode())
+
+    assert dashboard_bytes < 100_000
+    assert dashboard_bytes * 20 < full_bytes
 
 
 def test_snapshot_collector_promotes_server_telemetry_to_snapshot():

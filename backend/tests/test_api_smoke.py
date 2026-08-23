@@ -183,7 +183,12 @@ def test_snapshots_latest_smoke(monkeypatch):
     main.snapshot_collector._latest = {
         "timestamp": 1234567890,
         "nodes": {
-            "alpha": {"name": "alpha", "available": True},
+            "alpha": {
+                "name": "alpha",
+                "available": True,
+                "inbounds": [{"clientStats": [{"email": "private@example.test"}]}],
+                "server_status": {"token": "must-not-leak"},
+            },
             "beta": {"name": "beta", "available": False},
         },
     }
@@ -195,6 +200,8 @@ def test_snapshots_latest_smoke(monkeypatch):
     payload = response.json()
     assert payload["count"] == 2
     assert payload["nodes"][0]["name"] == "alpha"
+    assert "inbounds" not in payload["nodes"][0]
+    assert "server_status" not in payload["nodes"][0]
 
 
 def test_monitoring_stack_smoke(monkeypatch):
@@ -395,6 +402,61 @@ def test_dashboard_summary_rejects_unsupported_traffic_period(monkeypatch):
     response = TestClient(app).get("/api/v1/dashboard/summary?period=year")
 
     assert response.status_code == 400
+
+
+def test_dashboard_overview_is_one_projection_and_never_serializes_node_secrets(monkeypatch):
+    nodes = [{
+        "id": 1,
+        "name": "alpha",
+        "panel_url": "https://admin:panel-secret@alpha.example.test:5443/xui?ticket=private",
+        "user": "admin",
+        "password": "node-password",
+        "bearer_token": "node-token",
+        "enabled": True,
+    }]
+    monkeypatch.setattr(main.node_service, "list_nodes", lambda: nodes)
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("overview must not trigger a fleet fetch")),
+    )
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats_projection_by_period",
+        lambda _group_by, period: {"stats": {}, "current_count": 0, "period": period, "cache_source": "memory"},
+    )
+    main.snapshot_collector._latest = {
+        "timestamp": 1234567890.0,
+        "nodes": {
+            "alpha": {
+                "name": "alpha",
+                "node_id": 1,
+                "available": True,
+                "online_clients": 3,
+                "inbounds": [{"settings": {"clients": [{"email": "private@example.test"}]}}],
+                "inbounds_result": {"inbounds": [{"id": 1}]},
+                "server_status": {"session": "private"},
+            },
+        },
+    }
+    app = _build_test_app(monitoring_enabled=False)
+
+    @app.middleware("http")
+    async def _inject_auth_user(request, call_next):
+        request.state.auth_user = "admin"
+        return await call_next(request)
+
+    response = TestClient(app).get("/api/v1/dashboard/overview?period=week")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["projection"] == "dashboard-v1"
+    assert payload["summary"]["traffic_period"] == "week"
+    assert payload["fleet"][0]["name"] == "alpha"
+    assert payload["fleet"][0]["panel_url"] == "https://alpha.example.test:5443/xui"
+    serialized = response.text
+    for forbidden in ("panel-secret", "node-password", "node-token", "private@example.test", "inbounds_result"):
+        assert forbidden not in serialized
 
 
 def test_node_server_status_uses_snapshot_cache_without_xui_fetch(monkeypatch):

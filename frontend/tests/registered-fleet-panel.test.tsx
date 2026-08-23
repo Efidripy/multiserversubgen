@@ -22,6 +22,7 @@ const node = {
 const mocks = vi.hoisted(() => ({
   getRegisteredFleetOverview: vi.fn(),
   getRegisteredFleetSnapshotOverview: vi.fn(),
+  listNodes: vi.fn(),
   deleteNode: vi.fn(),
   restartXray: vi.fn(),
   stopXray: vi.fn(),
@@ -34,6 +35,7 @@ vi.mock('react-i18next', () => ({
 vi.mock('../src/api/nodes', () => ({
   getRegisteredFleetOverview: mocks.getRegisteredFleetOverview,
   getRegisteredFleetSnapshotOverview: mocks.getRegisteredFleetSnapshotOverview,
+  listNodes: mocks.listNodes,
   deleteNode: mocks.deleteNode,
   NODES_CHANGED_EVENT: 'nodes-changed',
 }));
@@ -45,6 +47,10 @@ vi.mock('../src/api/serverOps', () => ({
 
 vi.mock('../src/components/Toast', () => ({
   useToast: () => ({ toast: vi.fn() }),
+}));
+
+vi.mock('../src/services/DashboardDataContext', () => ({
+  useDashboardData: () => null,
 }));
 
 import { RegisteredFleetPanel } from '../src/components/RegisteredFleetPanel';

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import sqlite3
 import time
 from typing import Dict
 
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
+from services.db_bootstrap import connect
 
 
 class MetricsRuntime:
@@ -99,41 +100,37 @@ class MetricsRuntime:
         if not self.node_history_enabled:
             return
 
-        now_ts = time.time()
         with self.history_write_lock:
+            now_ts = time.time()
             node_last = self.history_write_state["last_by_node"].get(node_id, 0.0)
             if now_ts - node_last < max(1, self.node_history_min_interval_sec):
                 return
             self.history_write_state["last_by_node"][node_id] = now_ts
-
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                """
-                INSERT INTO node_history (
-                    ts, node_id, node_name, available, xray_running, cpu, online_clients, traffic_total, poll_ms
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    int(now_ts),
-                    int(snapshot.get("node_id") or 0),
-                    node_name,
-                    1 if snapshot.get("available") else 0,
-                    1 if snapshot.get("xray_running") else 0,
-                    float(snapshot.get("cpu", 0) or 0),
-                    int(snapshot.get("online_clients", 0) or 0),
-                    float(snapshot.get("traffic_total", 0) or 0),
-                    float(snapshot.get("poll_ms", 0) or 0),
-                ),
-            )
-
-            with self.history_write_lock:
+            with connect(self.db_path) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO node_history (
+                        ts, node_id, node_name, available, xray_running, cpu, online_clients, traffic_total, poll_ms
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(now_ts),
+                        int(snapshot.get("node_id") or 0),
+                        node_name,
+                        1 if snapshot.get("available") else 0,
+                        1 if snapshot.get("xray_running") else 0,
+                        float(snapshot.get("cpu", 0) or 0),
+                        int(snapshot.get("online_clients", 0) or 0),
+                        float(snapshot.get("traffic_total", 0) or 0),
+                        float(snapshot.get("poll_ms", 0) or 0),
+                    ),
+                )
                 do_cleanup = now_ts - self.history_write_state["last_cleanup_ts"] >= 3600
                 if do_cleanup:
                     self.history_write_state["last_cleanup_ts"] = now_ts
-            if do_cleanup:
-                cutoff = int(now_ts - max(1, self.node_history_retention_days) * 86400)
-                conn.execute("DELETE FROM node_history WHERE ts < ?", (cutoff,))
-            conn.commit()
+                    cutoff = int(now_ts - max(1, self.node_history_retention_days) * 86400)
+                    conn.execute("DELETE FROM node_history WHERE ts < ?", (cutoff,))
+                conn.commit()
 
     def render_metrics_response(self) -> Response:
         mode = self.snapshot_collector.get_mode()
@@ -170,5 +167,6 @@ class MetricsRuntime:
         return {
             "status": "ok" if self.snapshot_collector.is_running() else "degraded",
             "collector_running": self.snapshot_collector.is_running(),
+            "collector": self.snapshot_collector.runtime_status(),
             "redis": {"enabled": bool(self.redis_url), "ok": redis_ok, "error": redis_error},
         }
