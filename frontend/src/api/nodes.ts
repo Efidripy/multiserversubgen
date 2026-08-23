@@ -134,11 +134,6 @@ export async function getNodeServerStatus(nodeId: number): Promise<any> {
   return res.data || {};
 }
 
-export async function getServerLiveStatus(nodeId: number): Promise<any> {
-  const res = await api.get(`/v1/servers/${nodeId}/status`, { auth: getAuth() });
-  return res.data || {};
-}
-
 export async function getNodePanelUpdateInfo(nodeId: number): Promise<any> {
   const res = await api.get(`/v1/nodes/${nodeId}/panel-update-info`, { auth: getAuth() });
   return res.data || {};
@@ -154,11 +149,6 @@ export async function getNodeInbounds(nodeId: number): Promise<any[]> {
   const res = await api.get(`/v1/nodes/${nodeId}/inbounds`, { auth: getAuth() });
   const payload = res.data?.inbounds ?? res.data;
   return Array.isArray(payload) ? payload : [];
-}
-
-export async function getClientCountForNode(nodeId: number): Promise<number> {
-  const res = await api.get('/v1/clients/count', { auth: getAuth(), params: { node_id: nodeId } });
-  return Number(res.data?.count ?? 0);
 }
 
 export async function refreshNodesNow(): Promise<any> {
