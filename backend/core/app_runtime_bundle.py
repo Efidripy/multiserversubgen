@@ -207,6 +207,10 @@ def build_app_runtime_bundle(
         online_clients_cache_ttl=online_clients_cache_ttl,
         online_clients_stale_ttl=online_clients_stale_ttl,
         logger=logger,
+        get_latest_snapshot=snapshot_collector.latest_snapshot,
+        get_expected_snapshot_nodes=lambda: sum(
+            1 for node in node_service.list_nodes() if bool(node.get("enabled", True))
+        ),
     )
 
     clients_runtime = ClientsRuntime(
