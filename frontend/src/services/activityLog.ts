@@ -84,4 +84,3 @@ class ActivityLogStore {
 }
 
 export const activityLog = new ActivityLogStore();
-export const ACTIVITY_LOG_VERSION = '2.0';

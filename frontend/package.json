@@ -18,7 +18,6 @@
     "i18n:check": "node scripts/i18n-hardcoded-check.mjs"
   },
   "dependencies": {
-    "@tailwindcss/vite": "^4.3.3",
     "axios": "^1.18.1",
     "chart.js": "^4.5.1",
     "i18next": "^25.8.13",
@@ -28,12 +27,11 @@
     "react": "^18.3.1",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "^18.3.1",
-    "react-i18next": "^16.5.4",
-    "tailwindcss": "^4.3.3"
+    "react-i18next": "^16.5.4"
   },
   "devDependencies": {
-    "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^22.15.3",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.12",
@@ -45,6 +43,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "jsdom": "^25.0.1",
+    "tailwindcss": "^4.3.3",
     "typescript": "^5.6.3",
     "vite": "^6.4.2",
     "vitest": "^3.2.7"

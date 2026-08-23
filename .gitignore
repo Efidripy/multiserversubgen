@@ -1,5 +1,6 @@
 # Local project docs and agent control files (workspace-only)
 .local_project_docs/
+.backup/
 /AGENTS.md
 /PROJECT.md
 KNOWLEDGE_INDEX.md

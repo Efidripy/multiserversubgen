@@ -8,14 +8,6 @@ import { getAuth, setWsTicket } from '../auth';
 import { verifyCurrentAuth } from '../api/authService';
 import { devLog } from '../utils/devLogger';
 
-export interface DeltaUpdate<T> {
-  type: 'full' | 'partial' | 'delete';
-  entity: string; // 'client', 'node', 'traffic', etc.
-  id: string;
-  data?: Partial<T>;
-  timestamp: number;
-}
-
 export type WebSocketMessageHandler = (message: any) => void;
 
 class WebSocketManager {
@@ -273,34 +265,4 @@ export function useWebSocketMessages({ channels = [], enabled, onMessage }: WebS
       channels.forEach((channel) => wsManager.send({ type: 'unsubscribe', channel }));
     };
   }, [enabled, channelsKey]);
-}
-
-/**
- * Hook to use WebSocket subscriptions
- */
-export function useWebSocketSubscription<T>(event: string, onMessage: (data: T) => void) {
-  const [isConnected, setIsConnected] = React.useState(wsManager.isConnected());
-  const onMessageRef = React.useRef(onMessage);
-  onMessageRef.current = onMessage;
-
-  React.useEffect(() => {
-    wsManager.connect().catch(() => {
-      console.warn('[WebSocket] Failed to connect');
-    });
-
-    // Stable wrapper so effect only re-runs when `event` changes, not when the callback changes
-    const stableHandler = (data: T) => onMessageRef.current(data);
-    const unsubscribe = wsManager.subscribe(event, stableHandler);
-
-    const checkConnection = setInterval(() => {
-      setIsConnected(wsManager.isConnected());
-    }, 5000);
-
-    return () => {
-      unsubscribe();
-      clearInterval(checkConnection);
-    };
-  }, [event]); // stable: onMessage read via ref
-
-  return isConnected;
 }
