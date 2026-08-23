@@ -132,7 +132,7 @@ class TestServerMonitorV3OpsContracts:
         request.assert_called_once()
         assert request.call_args.args[:3] == (session, "POST", "https://panel.test/panel/api/server/importDB")
 
-    def test_server_logs_use_current_form_contract_and_fall_back_to_syslog(self):
+    def test_server_logs_use_pinned_v3_json_contract_and_fall_back_to_syslog(self):
         monitor = self._monitor()
         session = MagicMock()
         with patch.object(monitor, "_get_session", return_value=(session, "https://panel.test")):
@@ -145,8 +145,8 @@ class TestServerMonitorV3OpsContracts:
             ) as request:
                 assert monitor.get_server_logs(_node(), count=10)["logs"] == ["journal line"]
         assert request.call_args_list == [
-            call(session, "POST", "https://panel.test/panel/api/server/logs/10", data={"level": "info", "syslog": "false"}, timeout=15),
-            call(session, "POST", "https://panel.test/panel/api/server/logs/10", data={"level": "info", "syslog": "true"}, timeout=15),
+            call(session, "POST", "https://panel.test/panel/api/server/logs/10", json={"level": "info", "syslog": False}, timeout=15),
+            call(session, "POST", "https://panel.test/panel/api/server/logs/10", json={"level": "info", "syslog": True}, timeout=15),
         ]
 
     def test_server_logs_accepts_405_as_route_absence(self):
@@ -159,7 +159,7 @@ class TestServerMonitorV3OpsContracts:
             ) as request:
                 assert monitor.get_server_logs(_node(), count=10)["logs"] == ["line"]
         assert request.call_args_list == [
-            call(session, "POST", "https://panel.test/panel/api/server/logs/10", data={"level": "info", "syslog": "false"}, timeout=15),
+            call(session, "POST", "https://panel.test/panel/api/server/logs/10", json={"level": "info", "syslog": False}, timeout=15),
             call(session, "POST", "https://panel.test/panel/api/server/logs", data={"count": "10", "level": "info", "syslog": "false"}),
         ]
 
@@ -173,9 +173,22 @@ class TestServerMonitorV3OpsContracts:
             session,
             "POST",
             "https://panel.test/panel/api/server/logs/10",
-            data={"level": "notice", "syslog": "true"},
+            json={"level": "notice", "syslog": True},
             timeout=15,
         )
+
+    def test_server_logs_uses_form_only_after_explicit_media_type_rejection(self):
+        monitor = self._monitor()
+        session = MagicMock()
+        with patch.object(monitor, "_get_session", return_value=(session, "https://panel.test")), patch(
+            "server_monitor.xui_request",
+            side_effect=[_response(415), _response(200, {"success": True, "obj": "line"})],
+        ) as request:
+            assert monitor.get_server_logs(_node(), count=10)["logs"] == ["line"]
+        assert request.call_args_list == [
+            call(session, "POST", "https://panel.test/panel/api/server/logs/10", json={"level": "info", "syslog": False}, timeout=15),
+            call(session, "POST", "https://panel.test/panel/api/server/logs/10", data={"level": "info", "syslog": "false"}, timeout=15),
+        ]
 
     def test_server_logs_do_not_fallback_when_syslog_is_explicitly_disabled(self):
         monitor = self._monitor()
@@ -215,12 +228,19 @@ class TestServerMonitorV3OpsContracts:
             timeout=15,
         )
 
-    def test_invalid_history_parameters_do_not_open_a_node_session(self):
+    @patch("server_monitor.xui_request")
+    def test_invalid_history_parameters_do_not_open_a_node_session(self, request):
         monitor = self._monitor()
-        with patch.object(monitor, "_get_session") as session:
-            result = monitor.get_server_history(_node(), "disk", "5m")
-        assert result == {"node": "node-1", "error": "invalid history bucket", "data": []}
-        session.assert_not_called()
+        for metric, bucket, error in (
+            ("disk", 360, "invalid history metric"),
+            ("cpu", "5m", "invalid history bucket"),
+            ("cpu", 5, "invalid history bucket"),
+        ):
+            with patch.object(monitor, "_get_session") as session:
+                result = monitor.get_server_history(_node(), metric, bucket)
+            assert result == {"node": "node-1", "error": error, "data": []}
+            session.assert_not_called()
+        request.assert_not_called()
 
     def test_history_uses_documented_default_bucket(self):
         monitor = self._monitor()

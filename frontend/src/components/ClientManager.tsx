@@ -37,7 +37,6 @@ interface Client {
   protocol: string;
   totalGB?: number;
   flow?: string;
-  encryption?: string;
   remark?: string;
   limitIp?: number;
   security?: string;
@@ -140,13 +139,18 @@ const extractClientArray = (payload: unknown): unknown[] => {
   return [];
 };
 
-const normalizeClientRows = (
+export const normalizeClientRows = (
   payload: unknown,
   nodeNameToId: Record<string, number> = {},
 ): Client[] => extractClientArray(payload).map((c: any) => ({
   ...c,
   id: c.id != null ? String(c.id) : null,
-  total: Number(c.total ?? c.totalGB ?? 0) || 0,
+  // OpenAPI v3 keeps the configured quota (`totalGB`) separate from traffic
+  // telemetry (`traffic.total`, mapped by the backend as `traffic_total`).
+  // `total` drives usage/depleted UI and is always bytes; do not substitute a
+  // quota here when traffic data is missing.
+  total: Number(c.traffic_total ?? c.traffic?.total ?? c.total ?? 0) || 0,
+  totalGB: Number.isFinite(Number(c.totalGB)) ? Number(c.totalGB) : undefined,
   up: Number(c.up ?? c.traffic_up ?? 0) || 0,
   down: Number(c.down ?? c.traffic_down ?? 0) || 0,
   node_id: c.node_id ?? nodeNameToId[c.node_name] ?? null,
@@ -1021,7 +1025,12 @@ export const ClientManager: React.FC = () => {
             await api.put(`/v1/clients/${c.id}`, {
               node_id: c.node_id,
               inbound_id: c.inbound_id,
-              updates: { email: c.email, expiryTime: expiryMs, enable: c.enable, totalGB: c.totalGB ?? c.total },
+              updates: {
+                email: c.email,
+                expiryTime: expiryMs,
+                enable: c.enable,
+                ...(c.totalGB != null ? { totalGB: c.totalGB } : {}),
+              },
             }, { auth: { username: user, password } });
             done++;
           } catch { /* continue */ }
@@ -2078,13 +2087,14 @@ export const ClientManager: React.FC = () => {
                       const input = window.prompt(`Set traffic limit (GB) for ${selected.length} clients (0 = unlimited):`, '50');
                       const gb = parseFloat(input || '');
                       if (isNaN(gb) || gb < 0) return;
+                      const totalGBBytes = Math.round(gb * 1024 * 1024 * 1024);
                       const { user, password } = getAuth();
                       let done = 0;
                       for (const c of selected) {
                         try {
                           await api.put(`/v1/clients/${encodeURIComponent(c.id || '')}`, {
                             node_id: c.node_id, inbound_id: c.inbound_id,
-                            updates: { email: c.email, totalGB: gb, enable: c.enable },
+                            updates: { email: c.email, totalGB: totalGBBytes, enable: c.enable },
                           }, { auth: { username: user, password } });
                           done++;
                         } catch { /* continue */ }
@@ -2365,7 +2375,7 @@ export const ClientManager: React.FC = () => {
                   onClick={() => {
                     const data = filteredClients.map(c => ({
                       email: c.email, protocol: c.protocol, node: c.node_name,
-                      enable: c.enable, totalGB: c.total > 0 ? (c.total / 1024**3).toFixed(2) : null,
+                      enable: c.enable, totalGB: c.totalGB != null ? (c.totalGB / 1024**3).toFixed(2) : null,
                       expiryTime: c.expiryTime > 0 ? new Date(c.expiryTime).toISOString() : null,
                     }));
                     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
@@ -2386,7 +2396,7 @@ export const ClientManager: React.FC = () => {
                     const rows = filteredClients.map(c => {
                       const exp = c.expiryTime > 0 ? new Date(c.expiryTime).toISOString().slice(0,10) : '';
                       const usedGB = ((c.up + c.down) / (1024**3)).toFixed(2);
-                      const totalGB = c.total > 0 ? (c.total / (1024**3)).toFixed(2) : '';
+                      const totalGB = c.totalGB != null ? (c.totalGB / (1024**3)).toFixed(2) : '';
                       return [c.email, c.node_name, c.protocol, c.enable ? 'enabled' : 'disabled', usedGB, totalGB, exp]
                         .map(v => `"${String(v).replace(/"/g, '""')}"`).join(',');
                     });

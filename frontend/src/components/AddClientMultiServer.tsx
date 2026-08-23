@@ -90,7 +90,9 @@ export const AddClientMultiServer: React.FC = () => {
         email: email.trim(),
         flow,
         inbound_id: inboundIdNum,
-        totalGB: parseInt(totalGB, 10) || 0,
+        // The panel field is historically named totalGB but the v3 contract
+        // carries the quota as bytes.  Keep the operator-facing input in GB.
+        totalGB: Math.max(0, Math.round((parseFloat(totalGB) || 0) * 1024 ** 3)),
         expiryTime: expiryMs,
         enable,
       };

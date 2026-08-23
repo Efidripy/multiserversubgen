@@ -24,6 +24,10 @@ interface Inbound {
   client_count?: number;
   streamSettings?: Record<string, any>;
   settings?: Record<string, any>;
+  // 3x-ui returns this as either an object or a JSON string depending on
+  // panel version.  Keep that representation through to the edit modal.
+  sniffing?: Record<string, any> | string;
+  listen?: string;
 }
 
 interface NodeInfo {
@@ -198,6 +202,10 @@ const normalizeInboundRows = (
     client_count: Number.isFinite(Number(ib.client_count)) ? Number(ib.client_count) : undefined,
     settings: Object.keys(settings).length > 0 ? settings : undefined,
     streamSettings: Object.keys(streamSettings).length > 0 ? streamSettings : undefined,
+    sniffing: typeof ib.sniffing === 'string' || (ib.sniffing && typeof ib.sniffing === 'object' && !Array.isArray(ib.sniffing))
+      ? ib.sniffing
+      : undefined,
+    listen: typeof ib.listen === 'string' ? ib.listen : undefined,
   };
 });
 
