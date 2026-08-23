@@ -3,6 +3,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { getAuth } from '../auth';
+import { getClientPresence, type ClientPresenceProjection } from '../api/clients';
 import { ChoiceChips } from './ChoiceChips';
 import { mergeStaleCacheRecord, readStaleCache } from '../services/staleCache';
 import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
@@ -51,9 +52,9 @@ interface TrafficData {
   total: number;
 }
 
-interface OnlineClient {
+export interface OnlineClient {
   email: string;
-  node_name: string;
+  nodes: Array<{ node_id: string; node_name: string }>;
 }
 
 type TrafficStatsValue = {
@@ -72,7 +73,7 @@ type TrafficStatsValue = {
 };
 
 const normalizeEmailKey = (email: string): string => email.trim().toLowerCase();
-const TRAFFIC_STATS_CACHE_KEY = 'sub_manager_traffic_stats_cache_v2';
+const TRAFFIC_STATS_CACHE_KEY = 'sub_manager_traffic_stats_cache_v3';
 const TRAFFIC_STATS_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 const REALTIME_TRAFFIC_REFRESH_MIN_INTERVAL_MS = 60 * 1000;
 
@@ -111,6 +112,27 @@ const normalizeTrafficValue = (raw: TrafficStatsValue) => {
 };
 
 const trafficSelectionCacheKey = (groupBy: TrafficGroupBy, period: TrafficPeriod) => `${groupBy}:${period}`;
+
+export const groupOnlinePresence = (projection: ClientPresenceProjection): OnlineClient[] => {
+  const grouped = new Map<string, OnlineClient>();
+  const nodeNames = projection.node_names || {};
+  Object.entries(projection.online_by_node || {}).forEach(([nodeId, emails]) => {
+    if (!Array.isArray(emails)) return;
+    const nodeName = String(nodeNames[nodeId] || nodeId);
+    emails.forEach((email) => {
+      if (typeof email !== 'string' || !normalizeEmailKey(email)) return;
+      const normalizedEmail = normalizeEmailKey(email);
+      const current = grouped.get(normalizedEmail) || { email: normalizedEmail, nodes: [] };
+      if (!current.nodes.some((node) => node.node_id === nodeId)) {
+        current.nodes.push({ node_id: nodeId, node_name: nodeName });
+      }
+      grouped.set(normalizedEmail, current);
+    });
+  });
+  return Array.from(grouped.values())
+    .map((client) => ({ ...client, nodes: [...client.nodes].sort((a, b) => a.node_name.localeCompare(b.node_name, undefined, { sensitivity: 'base', numeric: true })) }))
+    .sort((a, b) => a.email.localeCompare(b.email, undefined, { sensitivity: 'base', numeric: true }));
+};
 
 export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => void }> = ({ onNavigateToClient }) => {
   const { t } = useTranslation();
@@ -284,24 +306,10 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     onlineAbortRef.current = controller;
     if (!silent) setOnlineLoading(true);
     try {
-      const onlineRes = await api.get('/v1/clients/online', {
-        auth: getAuth(),
-        params: { limit: 500 },
-        signal: controller.signal,
-      });
-      const items: Array<{ email: string; node?: string; node_name?: string; inbound_id?: number }> =
-        onlineRes.data?.online_clients || [];
-      setOnlineClients(
-        items.map((c) => ({
-          email: c.email,
-          node_name: c.node_name || c.node || 'unknown',
-        }))
-      );
+      const items = groupOnlinePresence(await getClientPresence(controller.signal));
+      setOnlineClients(items);
       mergeStaleCacheRecord<TrafficStatsCache>(TRAFFIC_STATS_CACHE_KEY, {
-        onlineClients: items.map((c) => ({
-          email: c.email,
-          node_name: c.node_name || c.node || 'unknown',
-        })),
+        onlineClients: items,
       });
     } catch (err: any) {
       if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return;
@@ -465,14 +473,16 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     .slice(0, topN);
 
   const filteredOnlineClients = trafficSearch.trim()
-    ? onlineClients.filter(c => c.email.toLowerCase().includes(trafficSearch.trim().toLowerCase()) || (c.node_name || '').toLowerCase().includes(trafficSearch.trim().toLowerCase()))
+    ? onlineClients.filter(c => c.email.toLowerCase().includes(trafficSearch.trim().toLowerCase()) || c.nodes.some((node) => node.node_name.toLowerCase().includes(trafficSearch.trim().toLowerCase())))
     : onlineClients;
+
+  const onlineNodeLabel = (client: OnlineClient) => client.nodes.map((node) => node.node_name).join(', ');
 
   const sortedOnlineClients = [...filteredOnlineClients].sort((a, b) => {
     const aTraffic = onlineTrafficTotals[normalizeEmailKey(a.email)] || 0;
     const bTraffic = onlineTrafficTotals[normalizeEmailKey(b.email)] || 0;
     const byEmail = compareText(a.email, b.email);
-    const byNode = compareText(a.node_name, b.node_name);
+    const byNode = compareText(onlineNodeLabel(a), onlineNodeLabel(b));
     const byTraffic = aTraffic - bTraffic;
 
     if (onlineSortField === 'email') {
@@ -756,8 +766,8 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
           <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><h6 className={titleClass}>{t('traffic.onlineClients')} ({onlineClients.length})</h6><div className="flex items-center gap-2"><div className="text-xs text-slate-500">{onlineLoading ? t('traffic.loadingOnline') : t('traffic.sortHint')}</div>{!onlineDetailsRequested && <button type="button" className={controlButtonClass} onClick={loadOnlineDetails}>{t('common.refresh')}</button>}</div></div>
           {onlineLoading && <div className="mb-4 h-1 overflow-hidden rounded-full bg-[#0a0e1a]"><div className="h-full w-1/2 animate-pulse rounded-full bg-cyan-300" /></div>}
           {onlineLoading && onlineClients.length === 0 ? <div className="grid gap-2 py-2">{Array.from({ length: 4 }).map((_, idx) => <div key={idx} className="h-12 animate-pulse rounded-lg border border-cyan-500/10 bg-[#0a0e1a]" style={{ animationDelay: `${idx * 90}ms` }} />)}</div> : onlineClients.length === 0 ? <div className="flex justify-center py-10 text-sm text-slate-500">{t('traffic.noClientsOnline')}</div> : <>
-            <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 lg:block"><table className="w-full table-fixed border-collapse text-sm"><thead><tr className="border-b border-cyan-500/20 bg-cyan-500/5"><th className="px-4 py-3 text-left"><button type="button" className={headerButtonClass} onClick={() => applyOnlineSortFromHeader('email')}>Email{onlineSortIndicator('email')}</button></th><th className="w-48 px-4 py-3 text-left"><button type="button" className={headerButtonClass} onClick={() => applyOnlineSortFromHeader('node')}>{t('traffic.node')}{onlineSortIndicator('node')}</button></th><th className="w-40 px-4 py-3 text-right"><button type="button" className={cn(headerButtonClass, 'justify-end')} onClick={() => applyOnlineSortFromHeader('traffic')}>{t('traffic.total')}{onlineSortIndicator('traffic')}</button></th></tr></thead><tbody>{sortedOnlineClients.map(client => <tr key={`${client.node_name}:${client.email}`} className="border-b border-cyan-500/10 hover:bg-cyan-400/5"><td className="min-w-0 px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="h-2 w-2 shrink-0 rounded-full bg-emerald-300" /><strong className="truncate text-slate-100" title={client.email}>{client.email}</strong></div></td><td className="px-4 py-3"><span className="inline-flex max-w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-2 py-1 text-xs font-medium text-slate-300"><span className="truncate">{client.node_name}</span></span></td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-slate-300')}>{formatBytes(onlineTrafficTotals[normalizeEmailKey(client.email)] || 0)}</span></td></tr>)}</tbody></table></div>
-            <div className="grid min-w-0 grid-cols-1 gap-2 lg:hidden">{sortedOnlineClients.map(client => <article key={`${client.node_name}:${client.email}`} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-3"><div className="flex min-w-0 items-start justify-between gap-3"><div className="min-w-0"><div className="flex min-w-0 items-center gap-2"><span className="h-2 w-2 shrink-0 rounded-full bg-emerald-300" /><strong className="truncate text-sm text-slate-100" title={client.email}>{client.email}</strong></div><div className="mt-2 inline-flex max-w-full rounded-md border border-cyan-500/20 px-2 py-1 text-xs text-slate-400"><span className="truncate">{client.node_name}</span></div></div><span className={cn(valueClass, 'text-right text-cyan-200')}>{formatBytes(onlineTrafficTotals[normalizeEmailKey(client.email)] || 0)}</span></div></article>)}</div>
+            <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 lg:block"><table className="w-full table-fixed border-collapse text-sm"><thead><tr className="border-b border-cyan-500/20 bg-cyan-500/5"><th className="px-4 py-3 text-left"><button type="button" className={headerButtonClass} onClick={() => applyOnlineSortFromHeader('email')}>Email{onlineSortIndicator('email')}</button></th><th className="w-48 px-4 py-3 text-left"><button type="button" className={headerButtonClass} onClick={() => applyOnlineSortFromHeader('node')}>{t('traffic.node')}{onlineSortIndicator('node')}</button></th><th className="w-40 px-4 py-3 text-right"><button type="button" className={cn(headerButtonClass, 'justify-end')} onClick={() => applyOnlineSortFromHeader('traffic')}>{t('traffic.total')}{onlineSortIndicator('traffic')}</button></th></tr></thead><tbody>{sortedOnlineClients.map(client => <tr key={client.email} className="border-b border-cyan-500/10 hover:bg-cyan-400/5"><td className="min-w-0 px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="h-2 w-2 shrink-0 rounded-full bg-emerald-300" /><strong className="truncate text-slate-100" title={client.email}>{client.email}</strong></div></td><td className="px-4 py-3"><span className="inline-flex max-w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-2 py-1 text-xs font-medium text-slate-300"><span className="truncate" title={onlineNodeLabel(client)}>{onlineNodeLabel(client)}</span></span></td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-slate-300')}>{formatBytes(onlineTrafficTotals[normalizeEmailKey(client.email)] || 0)}</span></td></tr>)}</tbody></table></div>
+            <div className="grid min-w-0 grid-cols-1 gap-2 lg:hidden">{sortedOnlineClients.map(client => <article key={client.email} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-3"><div className="flex min-w-0 items-start justify-between gap-3"><div className="min-w-0"><div className="flex min-w-0 items-center gap-2"><span className="h-2 w-2 shrink-0 rounded-full bg-emerald-300" /><strong className="truncate text-sm text-slate-100" title={client.email}>{client.email}</strong></div><div className="mt-2 inline-flex max-w-full rounded-md border border-cyan-500/20 px-2 py-1 text-xs text-slate-400"><span className="truncate" title={onlineNodeLabel(client)}>{onlineNodeLabel(client)}</span></div></div><span className={cn(valueClass, 'text-right text-cyan-200')}>{formatBytes(onlineTrafficTotals[normalizeEmailKey(client.email)] || 0)}</span></div></article>)}</div>
           </>}
         </section>
 

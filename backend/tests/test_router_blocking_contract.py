@@ -6,11 +6,17 @@ REPO = Path(__file__).resolve().parents[2]
 
 def test_clients_routes_offload_sync_panel_and_storage_calls():
     source = (REPO / "backend/routers/clients.py").read_text(encoding="utf-8")
+    live_data = (REPO / "backend/routers/live_data.py").read_text(encoding="utf-8")
 
     assert "from fastapi.concurrency import run_in_threadpool" in source
     assert "async def _run" in source
     assert "await _run(client_mgr.batch_add_clients" in source
-    assert "await _run(client_mgr.get_online_clients" in source
+    # The compatibility list is Collector-snapshot-only. Keeping a second
+    # endpoint here would shadow the route and resurrect a fleet fan-out.
+    assert "client_mgr.get_online_clients" not in source
+    assert '"/api/v1/clients/online"' in live_data
+    assert "get_latest_client_presence" in live_data
+    assert "await run_in_threadpool(get_latest_client_presence)" in live_data
     assert "await _run(enrich_clients_with_notes" in source
 
 
