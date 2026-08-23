@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import api from '../api';
 import {
   clearClientIpHistory,
+  getClientPresence,
   getClientIpHistory,
   listClientsBySource,
   type ClientIpHistoryEntry,
@@ -93,6 +94,7 @@ const ENABLE_LIVE_CLIENT_TRAFFIC = true;
 const TRAFFIC_FETCH_MAX_CLIENTS = 20;
 const TRAFFIC_FETCH_CONCURRENCY = 4;
 const TRAFFIC_FETCH_TIMEOUT_MS = 8000;
+const CLIENT_PRESENCE_REFRESH_MS = 30 * 1000;
 
 const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
 
@@ -279,8 +281,8 @@ export const ClientManager: React.FC = () => {
   const [filterInboundId, setFilterInboundId] = useState<number | null>(null);
   const [filterExpiringSoon, setFilterExpiringSoon] = useState<boolean>(_savedFilters.filterExpiringSoon ?? false);
   const [expiringSoonDays, setExpiringSoonDays] = useState<number>(_savedFilters.expiringSoonDays ?? 7);
-  // Online clients map: email -> true.
-  const [onlineEmails] = useState<Set<string>>(() => new Set());
+  // Snapshot Collector projection; never populated by a page-triggered fleet scan.
+  const [onlineEmails, setOnlineEmails] = useState<Set<string>>(() => new Set());
   const [sortField, setSortField] = useState<'email' | 'node' | 'download' | 'total' | 'expiry' | 'lastOnline' | 'usedPct' | 'health'>(_savedFilters.sortField ?? 'email');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>(_savedFilters.sortDirection ?? 'asc');
   const [onlineFirst, setOnlineFirst] = useState<boolean>(false);
@@ -306,8 +308,8 @@ export const ClientManager: React.FC = () => {
   // Del Depleted
   const [delDepletedLoading, setDelDepletedLoading] = useState(false);
 
-  // Last online map: email -> ISO string.
-  const [lastOnlineMap] = useState<Record<string, string>>(() => ({}));
+  // Last collector observation by normalized email, rendered as “Last seen”.
+  const [lastOnlineMap, setLastOnlineMap] = useState<Record<string, string>>(() => ({}));
 
   // Bulk Adjust Modal
   const [showBulkAdjust, setShowBulkAdjust] = useState(false);
@@ -321,6 +323,7 @@ export const ClientManager: React.FC = () => {
   const trafficRefreshTimerRef = useRef<number | null>(null);
   const clientsLoadAbortRef = useRef<AbortController | null>(null);
   const trafficFetchAbortRef = useRef<AbortController | null>(null);
+  const clientPresenceAbortRef = useRef<AbortController | null>(null);
   const realtimeRefreshRef = useRef(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -424,6 +427,7 @@ export const ClientManager: React.FC = () => {
     return () => {
       clientsLoadAbortRef.current?.abort();
       trafficFetchAbortRef.current?.abort();
+      clientPresenceAbortRef.current?.abort();
     };
   }, []);
   
@@ -555,6 +559,46 @@ export const ClientManager: React.FC = () => {
       refreshInFlightRef.current = false;
     }
   };
+
+  const loadClientPresence = async (signal?: AbortSignal) => {
+    try {
+      const projection = await getClientPresence(signal);
+      if (signal?.aborted) return;
+
+      const nextOnline = new Set(
+        (Array.isArray(projection.online_emails) ? projection.online_emails : [])
+          .filter((email): email is string => typeof email === 'string')
+          .map(normalizeClientEmail),
+      );
+      const nextLastSeen: Record<string, string> = {};
+      Object.entries(projection.last_seen || {}).forEach(([email, seenAt]) => {
+        const numeric = typeof seenAt === 'number' ? seenAt : Number(seenAt);
+        const milliseconds = Number.isFinite(numeric) ? (numeric < 1_000_000_000_000 ? numeric * 1000 : numeric) : Date.parse(String(seenAt));
+        if (!Number.isFinite(milliseconds)) return;
+        nextLastSeen[normalizeClientEmail(email)] = new Date(milliseconds).toISOString();
+      });
+      setOnlineEmails(nextOnline);
+      setLastOnlineMap(nextLastSeen);
+    } catch (error: any) {
+      if (signal?.aborted || error?.code === 'ERR_CANCELED') return;
+      // Snapshot may not be ready during startup; retain the last projection.
+    }
+  };
+
+  useEffect(() => {
+    const refresh = () => {
+      clientPresenceAbortRef.current?.abort();
+      const controller = new AbortController();
+      clientPresenceAbortRef.current = controller;
+      void loadClientPresence(controller.signal);
+    };
+    refresh();
+    const timer = window.setInterval(refresh, CLIENT_PRESENCE_REFRESH_MS);
+    return () => {
+      window.clearInterval(timer);
+      clientPresenceAbortRef.current?.abort();
+    };
+  }, []);
 
   const loadTraffic = async (clientList: Client[]) => {
     // Deduplicate by node_id + email
@@ -1200,8 +1244,8 @@ export const ClientManager: React.FC = () => {
       }
 
       if (sortField === 'lastOnline') {
-        const aLo = lastOnlineMap[a.email] ? new Date(lastOnlineMap[a.email]).getTime() : 0;
-        const bLo = lastOnlineMap[b.email] ? new Date(lastOnlineMap[b.email]).getTime() : 0;
+        const aLo = lastOnlineMap[normalizeClientEmail(a.email)] ? new Date(lastOnlineMap[normalizeClientEmail(a.email)]).getTime() : 0;
+        const bLo = lastOnlineMap[normalizeClientEmail(b.email)] ? new Date(lastOnlineMap[normalizeClientEmail(b.email)]).getTime() : 0;
         const byLo = aLo - bLo;
         if (byLo !== 0) return byLo * dir;
         if (byEmail !== 0) return byEmail;
@@ -1528,7 +1572,7 @@ export const ClientManager: React.FC = () => {
     const dir = sortDirection === 'asc' ? 1 : -1;
     const compareText = (left: string, right: string) => left.localeCompare(right, undefined, { sensitivity: 'base', numeric: true });
     const firstNode = (group: ClientEmailGroup<Client>) => [...group.clients].map((client) => client.node_name).sort()[0] || '';
-    const lastOnline = (group: ClientEmailGroup<Client>) => Math.max(0, ...group.clients.map((client) => lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).getTime() : 0));
+    const lastOnline = (group: ClientEmailGroup<Client>) => Math.max(0, ...group.clients.map((client) => lastOnlineMap[normalizeClientEmail(client.email)] ? new Date(lastOnlineMap[normalizeClientEmail(client.email)]).getTime() : 0));
     const health = (group: ClientEmailGroup<Client>) => Math.min(...group.clients.map(getHealthScore));
     const expiry = (group: ClientEmailGroup<Client>) => getGroupNearestExpiry(group) ?? Number.MAX_SAFE_INTEGER;
     let result = 0;
@@ -1631,7 +1675,7 @@ export const ClientManager: React.FC = () => {
       <div className="flex min-w-0 items-start justify-between gap-3"><label className="flex min-w-0 items-start gap-2"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /><span className="min-w-0"><span className={tableLongEmailClass} title={client.email}>{client.email}</span><span className={tableLongIdClass} title={client.id || client.password || ''}>{client.id || client.password || '-'}</span></span></label><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={() => toggleClientEnabled(client)}>{clientStatusLabel(client, isExpired, isDepleted)}</button></div>
       <div className="mt-3 grid min-w-0 grid-cols-2 gap-2"><button type="button" className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] text-slate-200')} onClick={() => setFilterNode((previous) => previous === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol((previous) => previous === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{formatBytes(downloadBytes)}</span></span><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : t('clients.unlimited')}</span></span></div>
       {client.total > 0 && <div className="mt-3"><div className="h-1 overflow-hidden rounded-full bg-[#0f1420]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></div>}
-      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-500"><div className="min-w-0"><span className="block uppercase tracking-wider">{t('clients.expiryTime')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-200 whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</span></div><div className="min-w-0 text-right"><span className="block uppercase tracking-wider">Last Online</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-300 whitespace-nowrap">{lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).toLocaleDateString() : '-'}</span></div></div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-500"><div className="min-w-0"><span className="block uppercase tracking-wider">{t('clients.expiryTime')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-200 whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</span></div><div className="min-w-0 text-right"><span className="block uppercase tracking-wider">{t('clients.lastSeen')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-300 whitespace-nowrap">{lastOnlineMap[normalizeClientEmail(client.email)] ? new Date(lastOnlineMap[normalizeClientEmail(client.email)]).toLocaleString() : '-'}</span></div></div>
       <div className="mt-3 grid grid-cols-6 gap-2">{renderClientActions(client)}</div>
     </article>;
   };
@@ -1643,7 +1687,7 @@ export const ClientManager: React.FC = () => {
     const used = client.up + client.down;
     const pct = client.total > 0 ? Math.min(100, used / client.total * 100) : 0;
     const health = getHealthScore(client);
-    return <tr key={clientKey(client)} className={cn('bg-[#0f1420]/45 transition-colors hover:bg-cyan-400/5', isExpired && 'bg-amber-400/5', isDepleted && 'bg-rose-500/5', !client.enable && 'opacity-80')}><td className="px-3 py-3 text-center text-cyan-500/60">└</td><td className="min-w-0 px-3 py-3"><div className="flex min-w-0 items-start gap-2"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /><span className="min-w-0"><span className={tableLongEmailClass} title={client.email}>{client.email}</span><span className={tableLongIdClass} title={client.id || client.password || ''}>{client.id || client.password || '-'}</span></span></div></td><td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'max-w-full justify-start bg-[#0a0e1a] text-slate-200')} onClick={() => setFilterNode((previous) => previous === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button></td>{!denseView && <td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol((previous) => previous === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button></td>}<td className="px-3 py-3"><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={() => toggleClientEnabled(client)}>{clientStatusLabel(client, isExpired, isDepleted)}</button></td><td className="px-3 py-3"><div className="font-mono tabular-nums whitespace-nowrap">{formatBytes(downloadBytes)}</div>{client.total > 0 && <><div className="mt-1 h-1 min-w-[72px] overflow-hidden rounded-full bg-[#0a0e1a]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></>}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : t('clients.unlimited')}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</td>{!denseView && <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-slate-500">{lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).toLocaleDateString() : '-'}</td>}<td className={cn('px-3 py-3 font-mono tabular-nums font-medium whitespace-nowrap', health >= 70 ? 'text-emerald-300' : health >= 35 ? 'text-amber-300' : 'text-rose-300')}>{health}</td><td className="px-3 py-3">{renderClientActions(client)}</td></tr>;
+    return <tr key={clientKey(client)} className={cn('bg-[#0f1420]/45 transition-colors hover:bg-cyan-400/5', isExpired && 'bg-amber-400/5', isDepleted && 'bg-rose-500/5', !client.enable && 'opacity-80')}><td className="px-3 py-3 text-center text-cyan-500/60">└</td><td className="min-w-0 px-3 py-3"><div className="flex min-w-0 items-start gap-2"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /><span className="min-w-0"><span className={tableLongEmailClass} title={client.email}>{client.email}</span><span className={tableLongIdClass} title={client.id || client.password || ''}>{client.id || client.password || '-'}</span></span></div></td><td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'max-w-full justify-start bg-[#0a0e1a] text-slate-200')} onClick={() => setFilterNode((previous) => previous === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button></td>{!denseView && <td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol((previous) => previous === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button></td>}<td className="px-3 py-3"><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={() => toggleClientEnabled(client)}>{clientStatusLabel(client, isExpired, isDepleted)}</button></td><td className="px-3 py-3"><div className="font-mono tabular-nums whitespace-nowrap">{formatBytes(downloadBytes)}</div>{client.total > 0 && <><div className="mt-1 h-1 min-w-[72px] overflow-hidden rounded-full bg-[#0a0e1a]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></>}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : t('clients.unlimited')}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</td>{!denseView && <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-slate-500">{lastOnlineMap[normalizeClientEmail(client.email)] ? new Date(lastOnlineMap[normalizeClientEmail(client.email)]).toLocaleString() : '-'}</td>}<td className={cn('px-3 py-3 font-mono tabular-nums font-medium whitespace-nowrap', health >= 70 ? 'text-emerald-300' : health >= 35 ? 'text-amber-300' : 'text-rose-300')}>{health}</td><td className="px-3 py-3">{renderClientActions(client)}</td></tr>;
   };
   
   return (
@@ -2399,7 +2443,7 @@ export const ClientManager: React.FC = () => {
               </article>;
             })}
           </div>
-          <div className="hidden w-full min-w-0 overflow-hidden bg-[#0a0e1a] lg:block"><div className="w-full min-w-0 overflow-x-auto"><table className="w-full table-fixed border-collapse text-left text-xs"><thead className="bg-[#0f1420] text-[10px] uppercase tracking-wider text-slate-500"><tr className="border-b border-cyan-500/20"><th className="w-10 px-3 py-3"><input className={checkboxClass} type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAll} /></th><th className="w-[17%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('email')}>{t('clients.email')}{sortIndicator('email')}</button></th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('node')}>{t('traffic.node')}{sortIndicator('node')}</button></th>{!denseView && <th className="w-[6%] px-3 py-3">{t('inbounds.protocol')}</th>}<th className="w-[8%] px-3 py-3">{t('common.status')}</th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('download')}>{t('traffic.download')}{sortIndicator('download')}</button></th><th className="w-[8%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('total')}>{t('clients.totalLimit')}{sortIndicator('total')}</button></th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('expiry')}>{t('clients.expiryTime')}{sortIndicator('expiry')}</button></th>{!denseView && <th className="w-[7%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('lastOnline')}>Last Online{sortIndicator('lastOnline')}</button></th>}<th className="w-[5%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('health')}>Health{sortIndicator('health')}</button></th><th className="w-[224px] px-3 py-3">{t('common.actions')}</th></tr></thead><tbody className="divide-y divide-slate-800/60 text-slate-200">
+          <div className="hidden w-full min-w-0 overflow-hidden bg-[#0a0e1a] lg:block"><div className="w-full min-w-0 overflow-x-auto"><table className="w-full table-fixed border-collapse text-left text-xs"><thead className="bg-[#0f1420] text-[10px] uppercase tracking-wider text-slate-500"><tr className="border-b border-cyan-500/20"><th className="w-10 px-3 py-3"><input className={checkboxClass} type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAll} /></th><th className="w-[17%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('email')}>{t('clients.email')}{sortIndicator('email')}</button></th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('node')}>{t('traffic.node')}{sortIndicator('node')}</button></th>{!denseView && <th className="w-[6%] px-3 py-3">{t('inbounds.protocol')}</th>}<th className="w-[8%] px-3 py-3">{t('common.status')}</th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('download')}>{t('traffic.download')}{sortIndicator('download')}</button></th><th className="w-[8%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('total')}>{t('clients.totalLimit')}{sortIndicator('total')}</button></th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('expiry')}>{t('clients.expiryTime')}{sortIndicator('expiry')}</button></th>{!denseView && <th className="w-[7%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('lastOnline')}>{t('clients.lastSeen')}{sortIndicator('lastOnline')}</button></th>}<th className="w-[5%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('health')}>Health{sortIndicator('health')}</button></th><th className="w-[224px] px-3 py-3">{t('common.actions')}</th></tr></thead><tbody className="divide-y divide-slate-800/60 text-slate-200">
             {visibleClientGroups.map((group) => {
               const selectionState = getGroupSelectionState(group);
               const expanded = expandedEmailKeys.has(group.key);

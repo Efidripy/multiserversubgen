@@ -17,6 +17,7 @@ def build_live_data_router(
     list_nodes: Callable[[], list],
     xui_monitor,
     get_latest_snapshot: Callable[[], Dict] = None,
+    get_latest_client_presence: Callable[[], Dict] = None,
     get_traffic_stats_by_period: Callable[[list, str, str], Dict] = None,
 ):
     router = APIRouter()
@@ -238,6 +239,15 @@ def build_live_data_router(
         if limit > 0:
             online = online[:limit]
         return ORJSONResponse(content={"online_clients": online, "count": len(online)})
+
+    @router.get("/api/v1/clients/presence")
+    async def get_client_presence(request: Request):
+        """Cached client presence only; never initiates a fleet scan."""
+        user = getattr(request.state, "auth_user", None)
+        if not user:
+            raise HTTPException(status_code=401)
+        payload = await run_in_threadpool(get_latest_client_presence) if get_latest_client_presence else {}
+        return ORJSONResponse(content=payload)
 
     @router.get("/api/v1/dashboard/summary")
     async def get_dashboard_summary(request: Request, period: str = "all_time"):
