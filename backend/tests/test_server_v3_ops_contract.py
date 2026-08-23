@@ -132,6 +132,23 @@ class TestServerMonitorV3OpsContracts:
         request.assert_called_once()
         assert request.call_args.args[:3] == (session, "POST", "https://panel.test/panel/api/server/importDB")
 
+    def test_server_logs_use_current_form_contract_and_fall_back_to_syslog(self):
+        monitor = self._monitor()
+        session = MagicMock()
+        with patch.object(monitor, "_get_session", return_value=(session, "https://panel.test")):
+            with patch(
+                "server_monitor.xui_request",
+                side_effect=[
+                    _response(200, {"success": True, "obj": "None"}),
+                    _response(200, {"success": True, "obj": "journal line"}),
+                ],
+            ) as request:
+                assert monitor.get_server_logs(_node(), count=10)["logs"] == ["journal line"]
+        assert request.call_args_list == [
+            call(session, "POST", "https://panel.test/panel/api/server/logs/10", data={"level": "info", "syslog": "false"}, timeout=15),
+            call(session, "POST", "https://panel.test/panel/api/server/logs/10", data={"level": "info", "syslog": "true"}, timeout=15),
+        ]
+
     def test_server_logs_accepts_405_as_route_absence(self):
         monitor = self._monitor()
         session = MagicMock()
@@ -142,9 +159,39 @@ class TestServerMonitorV3OpsContracts:
             ) as request:
                 assert monitor.get_server_logs(_node(), count=10)["logs"] == ["line"]
         assert request.call_args_list == [
-            call(session, "POST", "https://panel.test/panel/api/server/logs/10", json={"level": "info", "syslog": False}, timeout=15),
-            call(session, "POST", "https://panel.test/panel/api/server/logs", json={"count": 10, "level": "info", "syslog": False}),
+            call(session, "POST", "https://panel.test/panel/api/server/logs/10", data={"level": "info", "syslog": "false"}, timeout=15),
+            call(session, "POST", "https://panel.test/panel/api/server/logs", data={"count": "10", "level": "info", "syslog": "false"}),
         ]
+
+    def test_xray_logs_use_current_form_contract_and_format_structured_entries(self):
+        monitor = self._monitor()
+        session = MagicMock()
+        body = {
+            "success": True,
+            "obj": [{
+                "DateTime": "2026-08-23T13:00:00Z",
+                "FromAddress": "198.51.100.1",
+                "ToAddress": "example:443",
+                "Inbound": "vless-in",
+                "Outbound": "proxy",
+                "Email": "client@example.test",
+                "Event": 2,
+            }],
+        }
+        with patch.object(monitor, "_get_session", return_value=(session, "https://panel.test")):
+            with patch("server_monitor.xui_request", return_value=_response(200, body)) as request:
+                result = monitor.get_xray_logs(_node(), count=10)
+        assert result["logs"] == [
+            "time=2026-08-23T13:00:00Z | from=198.51.100.1 | to=example:443 | "
+            "inbound=vless-in | outbound=proxy | email=client@example.test | event=PROXY"
+        ]
+        request.assert_called_once_with(
+            session,
+            "POST",
+            "https://panel.test/panel/api/server/xraylogs/10",
+            data={"filter": "", "showDirect": "true", "showBlocked": "true", "showProxy": "true"},
+            timeout=15,
+        )
 
     def test_invalid_history_parameters_do_not_open_a_node_session(self):
         monitor = self._monitor()
