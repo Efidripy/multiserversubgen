@@ -287,10 +287,12 @@ Authorization: Basic base64(username:password)
 только последний штатный snapshot Collector и **не** запускает новый опрос
 подключённых 3x-ui панелей при открытии страницы.
 
-`online_emails` содержит нормализованные адреса клиентов, наблюдаемых online в
-последнем snapshot. `last_seen` — Unix timestamp последнего штатного
-наблюдения клиента online; это не результат отдельного запроса к панели.
-Записи `last_seen` удерживаются в памяти до 30 дней.
+`online_emails` и `last_seen` — агрегированные по Email данные для parent
+группы и общего счётчика. `online_by_node` и `last_seen_by_node` привязывают
+наблюдение к конкретной ноде: child record не отмечается online только потому,
+что такой же Email online на другой ноде. Timestamp — результат штатного
+наблюдения Collector, не отдельного запроса к панели. Записи `last_seen`
+удерживаются в памяти до 30 дней.
 
 **Response:**
 
@@ -299,8 +301,16 @@ Authorization: Basic base64(username:password)
   "projection": "client-presence-v1",
   "timestamp": 1735689600.0,
   "online_emails": ["user@example.com"],
+  "online_by_node": {
+    "12": ["user@example.com"]
+  },
   "last_seen": {
     "user@example.com": 1735689600.0
+  },
+  "last_seen_by_node": {
+    "12": {
+      "user@example.com": 1735689600.0
+    }
   }
 }
 ```

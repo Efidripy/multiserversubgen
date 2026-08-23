@@ -25,8 +25,12 @@ describe('navigation performance regressions', () => {
 
     expect(source).toContain('getClientPresence(signal)');
     expect(source).toContain('CLIENT_PRESENCE_REFRESH_MS = 30 * 1000');
+    expect(source).toContain('onlineClientKeys');
+    expect(source).toContain('projection.online_by_node');
+    expect(source).toContain('lastOnlineByNode');
     expect(source).not.toContain("api.get('/v1/clients/online'");
     expect(api).toContain("api.get('/v1/clients/presence'");
+    expect(api).toContain('online_by_node?: Record<string, string[]>');
   });
 
   it('derives logical client groups from already filtered records without adding a fleet request', () => {
