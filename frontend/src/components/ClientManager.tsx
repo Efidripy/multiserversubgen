@@ -18,6 +18,7 @@ import { UIIcon } from './UIIcon';
 import { readStaleCache, writeStaleCache } from '../services/staleCache';
 import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
 import { ClientEditModal } from './ClientEditModal';
+import { groupClientsByEmail, normalizeClientEmail, type ClientEmailGroup } from '../utils/clientGroups';
 
 interface Client {
   id?: string | null;
@@ -335,6 +336,8 @@ export const ClientManager: React.FC = () => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(100);
+  // Presentation state only. `expandedKey` remains the bounded live-traffic trigger.
+  const [expandedEmailKeys, setExpandedEmailKeys] = useState<Set<string>>(new Set());
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
 
   // IP Search modal
@@ -1098,6 +1101,8 @@ export const ClientManager: React.FC = () => {
 
   const applyFilters = () => {
     let filtered = clients;
+    const normalizedOnline = new Set(Array.from(onlineEmails, normalizeClientEmail));
+    const isOnline = (client: Client) => normalizedOnline.has(normalizeClientEmail(client.email));
     
     if (searchTerm) {
       const q = searchTerm.toLowerCase().trim();
@@ -1125,9 +1130,9 @@ export const ClientManager: React.FC = () => {
     } else if (filterStatus === 'depleted') {
       filtered = filtered.filter(c => c.total > 0 && (c.up + c.down) >= c.total);
     } else if (filterStatus === 'online') {
-      filtered = filtered.filter(c => onlineEmails.has(c.email));
+      filtered = filtered.filter(isOnline);
     } else if (filterStatus === 'offline') {
-      filtered = filtered.filter(c => !onlineEmails.has(c.email));
+      filtered = filtered.filter(c => !isOnline(c));
     }
     
     if (filterProtocol) {
@@ -1221,8 +1226,8 @@ export const ClientManager: React.FC = () => {
 
     if (onlineFirst) {
       sorted.sort((a, b) => {
-        const aOnline = onlineEmails.has(a.email) ? 1 : 0;
-        const bOnline = onlineEmails.has(b.email) ? 1 : 0;
+        const aOnline = isOnline(a) ? 1 : 0;
+        const bOnline = isOnline(b) ? 1 : 0;
         return bOnline - aOnline;
       });
     }
@@ -1420,6 +1425,34 @@ export const ClientManager: React.FC = () => {
     }
     setSelectedClientKeys(newSelection);
   };
+
+  const toggleGroupSelection = (group: ClientEmailGroup<Client>) => {
+    const keys = group.clients.map(clientKey);
+    setSelectedClientKeys((previous) => {
+      const next = new Set(previous);
+      const allSelected = keys.length > 0 && keys.every((key) => next.has(key));
+      keys.forEach((key) => {
+        if (allSelected) next.delete(key);
+        else next.add(key);
+      });
+      return next;
+    });
+  };
+
+  const toggleGroupExpanded = (group: ClientEmailGroup<Client>) => {
+    setExpandedEmailKeys((previous) => {
+      const next = new Set(previous);
+      if (next.has(group.key)) {
+        next.delete(group.key);
+        if (expandedKey === clientKey(group.clients[0])) setExpandedKey(null);
+      } else {
+        next.add(group.key);
+        // Preserve the existing bounded fetch guard and raw record source.
+        setExpandedKey(clientKey(group.clients[0]));
+      }
+      return next;
+    });
+  };
   
   const toggleSelectAll = () => {
     const visibleKeys = filteredClients.map((c) => clientKey(c));
@@ -1473,7 +1506,49 @@ export const ClientManager: React.FC = () => {
   
   const nodes = Array.from(new Set(clients.map(c => c.node_name)));
   const protocols = Array.from(new Set(clients.map(c => c.protocol)));
-  const visibleClients = filteredClients.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const normalizedOnlineEmails = new Set(Array.from(onlineEmails, normalizeClientEmail));
+  const isClientOnline = (client: Client) => normalizedOnlineEmails.has(normalizeClientEmail(client.email));
+  const getGroupNearestExpiry = (group: ClientEmailGroup<Client>): number | null => {
+    const expiryTimes = group.clients
+      .map((client) => client.expiryTime)
+      .filter((expiryTime) => expiryTime > 0);
+    return expiryTimes.length > 0 ? Math.min(...expiryTimes) : null;
+  };
+  const getGroupDownload = (group: ClientEmailGroup<Client>) => group.clients.reduce((sum, client) => {
+    const trafficKey = client.node_id != null ? `${client.node_id}:${client.email}` : null;
+    return sum + getTrafficBytes(trafficKey, 'download', client.down);
+  }, 0);
+  const getGroupTotal = (group: ClientEmailGroup<Client>) => group.clients.reduce((sum, client) => sum + client.total, 0);
+  const getGroupUsedPct = (group: ClientEmailGroup<Client>) => {
+    const total = getGroupTotal(group);
+    return total > 0 ? group.clients.reduce((sum, client) => sum + client.up + client.down, 0) / total : 0;
+  };
+  const clientGroups = groupClientsByEmail(filteredClients);
+  const sortedClientGroups = [...clientGroups].sort((a, b) => {
+    const dir = sortDirection === 'asc' ? 1 : -1;
+    const compareText = (left: string, right: string) => left.localeCompare(right, undefined, { sensitivity: 'base', numeric: true });
+    const firstNode = (group: ClientEmailGroup<Client>) => [...group.clients].map((client) => client.node_name).sort()[0] || '';
+    const lastOnline = (group: ClientEmailGroup<Client>) => Math.max(0, ...group.clients.map((client) => lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).getTime() : 0));
+    const health = (group: ClientEmailGroup<Client>) => Math.min(...group.clients.map(getHealthScore));
+    const expiry = (group: ClientEmailGroup<Client>) => getGroupNearestExpiry(group) ?? Number.MAX_SAFE_INTEGER;
+    let result = 0;
+
+    if (sortField === 'email') result = compareText(a.email, b.email);
+    else if (sortField === 'node') result = compareText(firstNode(a), firstNode(b));
+    else if (sortField === 'download') result = getGroupDownload(a) - getGroupDownload(b);
+    else if (sortField === 'total') result = getGroupTotal(a) - getGroupTotal(b);
+    else if (sortField === 'usedPct') result = getGroupUsedPct(a) - getGroupUsedPct(b);
+    else if (sortField === 'lastOnline') result = lastOnline(a) - lastOnline(b);
+    else if (sortField === 'health') result = health(a) - health(b);
+    else result = expiry(a) - expiry(b);
+
+    if (result !== 0) return result * dir;
+    return compareText(a.email, b.email);
+  });
+  if (onlineFirst) {
+    sortedClientGroups.sort((a, b) => Number(b.clients.some(isClientOnline)) - Number(a.clients.some(isClientOnline)));
+  }
+  const visibleClientGroups = sortedClientGroups.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const allFilteredSelected =
     filteredClients.length > 0 && filteredClients.every((c) => selectedClientKeys.has(clientKey(c)));
   const statusChipClass = (client: Client, isExpired: boolean, isDepleted: boolean) =>
@@ -1487,6 +1562,89 @@ export const ClientManager: React.FC = () => {
             ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-300'
             : 'border-cyan-500/20 bg-[#0f1420] text-slate-500'
     );
+
+  const clientStatusLabel = (client: Client, isExpired: boolean, isDepleted: boolean) =>
+    isExpired ? t('clients.expired') : isDepleted ? t('clients.depleted') : client.enable ? t('clients.active') : t('clients.disabled');
+  const getGroupSelectionState = (group: ClientEmailGroup<Client>) => {
+    const selectedCount = group.clients.filter((client) => selectedClientKeys.has(clientKey(client))).length;
+    return selectedCount === 0 ? 'none' : selectedCount === group.clients.length ? 'all' : 'partial';
+  };
+  const getGroupSummary = (group: ClientEmailGroup<Client>) => {
+    const onlineCount = group.clients.filter(isClientOnline).length;
+    const nearestExpiry = getGroupNearestExpiry(group);
+    return t('clients.groupSummary', {
+      nodes: group.clients.length,
+      online: onlineCount,
+      traffic: formatBytes(getGroupDownload(group)),
+      expiry: nearestExpiry ? new Date(nearestExpiry).toLocaleDateString() : t('clients.never'),
+    });
+  };
+  const toggleClientEnabled = async (client: Client) => {
+    const identifier = clientIdentifier(client);
+    if (!identifier) return;
+    try {
+      await api.put(`/v1/clients/${encodeURIComponent(identifier)}`, {
+        node_id: client.node_id,
+        inbound_id: client.inbound_id,
+        updates: { email: client.email, enable: !client.enable },
+      }, { auth: getAuth() });
+      setClients((previous) => previous.map((item) => clientKey(item) === clientKey(client) ? { ...item, enable: !item.enable } : item));
+    } catch (error: any) {
+      toast(error.response?.data?.detail || 'Failed', 'error');
+    }
+  };
+  const deleteClient = async (client: Client) => {
+    const identifier = clientIdentifier(client);
+    if (!identifier || !client.inbound_id) {
+      toast('Cannot identify client', 'warning');
+      return;
+    }
+    if (!window.confirm(`Delete client "${client.email}"?`)) return;
+    try {
+      await api.delete(`/v1/clients/${encodeURIComponent(identifier)}`, {
+        auth: getAuth(),
+        params: { node_id: client.node_id, inbound_id: client.inbound_id },
+      });
+      loadClients(true);
+    } catch (error: any) {
+      toast(error.response?.data?.detail || 'Delete failed', 'error');
+    }
+  };
+  const renderClientActions = (client: Client) => (
+    <div className="flex flex-wrap justify-end gap-1">
+      <button type="button" className={buttonIconClass} onClick={() => handleClientEditClick(client)} title={t('messages.editClient')}><UIIcon name="edit" size={14} /></button>
+      <button type="button" className={buttonIconClass} onClick={() => handleResetTraffic(client)} title={t('clients.resetTraffic')}><UIIcon name="refresh" size={14} /></button>
+      <button type="button" className={buttonIconClass} onClick={() => handleOpenAttach(client, 'attach')} title={t('clients.attachDetachInbounds')}><UIIcon name="attach" size={14} /></button>
+      <button type="button" className={buttonIconClass} onClick={() => handleOpenClientIpHistory(client)} title={t('clients.ipHistoryTitle')}><UIIcon name="ip" size={14} /></button>
+      <button type="button" className={cn(buttonIconClass, client.notes && 'text-cyan-300')} onClick={() => handleClientNoteClick(client)} title={t('clients.noteTitle')}><UIIcon name="note" size={14} /></button>
+      <button type="button" className={cn(buttonIconClass, 'bg-rose-500 text-white hover:bg-rose-400')} onClick={() => deleteClient(client)} title={t('clients.deleteClient')}><UIIcon name="trash" size={14} /></button>
+    </div>
+  );
+  const renderMobileChild = (client: Client) => {
+    const trafficKey = client.node_id != null ? `${client.node_id}:${client.email}` : null;
+    const downloadBytes = getTrafficBytes(trafficKey, 'download', client.down);
+    const isExpired = client.expiryTime > 0 && client.expiryTime < Date.now();
+    const isDepleted = client.total > 0 && client.up + client.down >= client.total;
+    const used = client.up + client.down;
+    const pct = client.total > 0 ? Math.min(100, used / client.total * 100) : 0;
+    return <article key={clientKey(client)} className="ml-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/10 bg-[#0a0e1a] p-3">
+      <div className="flex min-w-0 items-start justify-between gap-3"><label className="flex min-w-0 items-start gap-2"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /><span className="min-w-0"><span className={tableLongEmailClass} title={client.email}>{client.email}</span><span className={tableLongIdClass} title={client.id || client.password || ''}>{client.id || client.password || '-'}</span></span></label><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={() => toggleClientEnabled(client)}>{clientStatusLabel(client, isExpired, isDepleted)}</button></div>
+      <div className="mt-3 grid min-w-0 grid-cols-2 gap-2"><button type="button" className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] text-slate-200')} onClick={() => setFilterNode((previous) => previous === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol((previous) => previous === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{formatBytes(downloadBytes)}</span></span><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : t('clients.unlimited')}</span></span></div>
+      {client.total > 0 && <div className="mt-3"><div className="h-1 overflow-hidden rounded-full bg-[#0f1420]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></div>}
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-500"><div className="min-w-0"><span className="block uppercase tracking-wider">{t('clients.expiryTime')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-200 whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</span></div><div className="min-w-0 text-right"><span className="block uppercase tracking-wider">Last Online</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-300 whitespace-nowrap">{lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).toLocaleDateString() : '-'}</span></div></div>
+      <div className="mt-3 grid grid-cols-6 gap-2">{renderClientActions(client)}</div>
+    </article>;
+  };
+  const renderDesktopChild = (client: Client) => {
+    const trafficKey = client.node_id != null ? `${client.node_id}:${client.email}` : null;
+    const downloadBytes = getTrafficBytes(trafficKey, 'download', client.down);
+    const isExpired = client.expiryTime > 0 && client.expiryTime < Date.now();
+    const isDepleted = client.total > 0 && client.up + client.down >= client.total;
+    const used = client.up + client.down;
+    const pct = client.total > 0 ? Math.min(100, used / client.total * 100) : 0;
+    const health = getHealthScore(client);
+    return <tr key={clientKey(client)} className={cn('bg-[#0f1420]/45 transition-colors hover:bg-cyan-400/5', isExpired && 'bg-amber-400/5', isDepleted && 'bg-rose-500/5', !client.enable && 'opacity-80')}><td className="px-3 py-3 text-center text-cyan-500/60">└</td><td className="min-w-0 px-3 py-3"><div className="flex min-w-0 items-start gap-2"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /><span className="min-w-0"><span className={tableLongEmailClass} title={client.email}>{client.email}</span><span className={tableLongIdClass} title={client.id || client.password || ''}>{client.id || client.password || '-'}</span></span></div></td><td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'max-w-full justify-start bg-[#0a0e1a] text-slate-200')} onClick={() => setFilterNode((previous) => previous === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button></td>{!denseView && <td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol((previous) => previous === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button></td>}<td className="px-3 py-3"><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={() => toggleClientEnabled(client)}>{clientStatusLabel(client, isExpired, isDepleted)}</button></td><td className="px-3 py-3"><div className="font-mono tabular-nums whitespace-nowrap">{formatBytes(downloadBytes)}</div>{client.total > 0 && <><div className="mt-1 h-1 min-w-[72px] overflow-hidden rounded-full bg-[#0a0e1a]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></>}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : t('clients.unlimited')}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</td>{!denseView && <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-slate-500">{lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).toLocaleDateString() : '-'}</td>}<td className={cn('px-3 py-3 font-mono tabular-nums font-medium whitespace-nowrap', health >= 70 ? 'text-emerald-300' : health >= 35 ? 'text-amber-300' : 'text-rose-300')}>{health}</td><td className="px-3 py-3">{renderClientActions(client)}</td></tr>;
+  };
   
   return (
     <div data-client-manager-root className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6">
@@ -2178,22 +2336,22 @@ export const ClientManager: React.FC = () => {
       })()}
 
       {/* Pagination controls */}
-      {filteredClients.length > pageSize && (
+      {sortedClientGroups.length > pageSize && (
         <div className="pg-strip pg-strip--bar mb-2">
           <span className="pg-strip__info">
-            Page {currentPage} of {Math.ceil(filteredClients.length / pageSize)}
-            {' '}({(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, filteredClients.length)} of {filteredClients.length})
+            Page {currentPage} of {Math.ceil(sortedClientGroups.length / pageSize)}
+            {' '}({(currentPage - 1) * pageSize + 1}-{Math.min(currentPage * pageSize, sortedClientGroups.length)} of {sortedClientGroups.length})
           </span>
           <div className="flex gap-1">
             <button className={buttonNeutralClass} disabled={currentPage <= 1} onClick={() => setCurrentPage(1)}>{"<<"}</button>
             <button className={buttonNeutralClass} disabled={currentPage <= 1} onClick={() => setCurrentPage(p => p - 1)}>{"<"}</button>
-            <button className={buttonNeutralClass} disabled={currentPage >= Math.ceil(filteredClients.length / pageSize)} onClick={() => setCurrentPage(p => p + 1)}>{">"}</button>
-            <button className={buttonNeutralClass} disabled={currentPage >= Math.ceil(filteredClients.length / pageSize)} onClick={() => setCurrentPage(Math.ceil(filteredClients.length / pageSize))}>{">>"}</button>
+            <button className={buttonNeutralClass} disabled={currentPage >= Math.ceil(sortedClientGroups.length / pageSize)} onClick={() => setCurrentPage(p => p + 1)}>{">"}</button>
+            <button className={buttonNeutralClass} disabled={currentPage >= Math.ceil(sortedClientGroups.length / pageSize)} onClick={() => setCurrentPage(Math.ceil(sortedClientGroups.length / pageSize))}>{">>"}</button>
           </div>
           <button className={buttonNeutralClass} style={{ fontSize: '0.72rem' }}
             title={t('clients.selectPageTitle')}
             onClick={() => {
-              const pageClients = filteredClients.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+              const pageClients = visibleClientGroups.flatMap((group) => group.clients);
               setSelectedClientKeys(prev => {
                 const next = new Set(prev);
                 pageClients.forEach(c => next.add(clientKey(c)));
@@ -2204,7 +2362,7 @@ export const ClientManager: React.FC = () => {
           </button>
           <select className={selectClass}
             value={currentPage} onChange={e => setCurrentPage(Number(e.target.value))}>
-            {Array.from({ length: Math.ceil(filteredClients.length / pageSize) }, (_, i) => (
+            {Array.from({ length: Math.ceil(sortedClientGroups.length / pageSize) }, (_, i) => (
               <option key={i + 1} value={i + 1}>Page {i + 1}</option>
             ))}
           </select>
@@ -2229,27 +2387,30 @@ export const ClientManager: React.FC = () => {
         )}
         {filteredClients.length > 0 && <>
           <div className="grid min-w-0 grid-cols-1 gap-3 p-3 lg:hidden">
-            {visibleClients.map((client) => {
-              const trafficKey = client.node_id != null ? `${client.node_id}:${client.email}` : null;
-              const downloadBytes = getTrafficBytes(trafficKey, 'download', client.down);
-              const isExpired = client.expiryTime > 0 && client.expiryTime < Date.now();
-              const isDepleted = client.total > 0 && (client.up + client.down) >= client.total;
-              const used = client.up + client.down;
-              const pct = client.total > 0 ? Math.min(100, (used / client.total) * 100) : 0;
-              return <article key={clientKey(client)} className="min-w-0 overflow-hidden rounded-lg bg-[#0a0e1a] p-3 ring-1 ring-cyan-500/10">
-                <div className="flex min-w-0 items-start justify-between gap-3"><label className="flex min-w-0 items-start gap-2"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /><span className="min-w-0"><button type="button" className={tableLongEmailClass} title={client.email} onClick={() => setExpandedKey(prev => prev === clientKey(client) ? null : clientKey(client))}>{client.email}</button><span className={tableLongIdClass} title={client.id || client.password || ''}>{client.id || client.password || '-'}</span></span></label><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier) return; try { await api.put(`/v1/clients/${encodeURIComponent(identifier)}`, { node_id: client.node_id, inbound_id: client.inbound_id, updates: { email: client.email, enable: !client.enable } }, { auth: getAuth() }); setClients(prev => prev.map(c => clientKey(c) === clientKey(client) ? { ...c, enable: !c.enable } : c)); } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); } }}>{isExpired ? 'Expired' : isDepleted ? 'Depleted' : client.enable ? 'Active' : 'Disabled'}</button></div>
-                <div className="mt-3 grid min-w-0 grid-cols-2 gap-2"><button type="button" className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] text-slate-200')} onClick={() => setFilterNode(prev => prev === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol(prev => prev === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{formatBytes(downloadBytes)}</span></span><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : 'unlimited'}</span></span></div>
-                {client.total > 0 && <div className="mt-3"><div className="h-1 overflow-hidden rounded-full bg-[#0f1420]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></div>}
-                <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-500"><div className="min-w-0"><span className="block uppercase tracking-wider">{t('clients.expiryTime')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-200 whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</span></div><div className="min-w-0 text-right"><span className="block uppercase tracking-wider">Last Online</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-300 whitespace-nowrap">{lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).toLocaleDateString() : '-'}</span></div></div>
-                <div className="mt-3 grid grid-cols-6 gap-2"><button type="button" className={buttonIconClass} onClick={() => handleClientEditClick(client)} title={t('messages.editClient')}><UIIcon name="edit" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleResetTraffic(client)} title={t('clients.resetTraffic')}><UIIcon name="refresh" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleOpenAttach(client, 'attach')} title={t('clients.attachDetachInbounds')}><UIIcon name="attach" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleOpenClientIpHistory(client)} title={t('clients.ipHistoryTitle')}><UIIcon name="ip" size={14} /></button><button type="button" className={cn(buttonIconClass, client.notes && 'text-cyan-300')} onClick={() => handleClientNoteClick(client)} title={t('clients.noteTitle')}><UIIcon name="note" size={14} /></button><button type="button" className={cn(buttonIconClass, 'bg-rose-500 text-white hover:bg-rose-400')} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier || !client.inbound_id) { toast('Cannot identify client', 'warning'); return; } if (!window.confirm(`Delete client "${client.email}"?`)) return; try { await api.delete(`/v1/clients/${encodeURIComponent(identifier)}`, { auth: getAuth(), params: { node_id: client.node_id, inbound_id: client.inbound_id } }); loadClients(true); } catch (e: any) { toast(e.response?.data?.detail || 'Delete failed', 'error'); } }} title={t('clients.deleteClient') || 'Delete client'}><UIIcon name="trash" size={14} /></button></div>
+            {visibleClientGroups.map((group) => {
+              const selectionState = getGroupSelectionState(group);
+              const expanded = expandedEmailKeys.has(group.key);
+              return <article key={group.key} className="min-w-0 overflow-hidden rounded-lg bg-[#0a0e1a] p-3 ring-1 ring-cyan-500/10">
+                <div className="flex min-w-0 items-start gap-2">
+                  <input className={checkboxClass} type="checkbox" checked={selectionState === 'all'} aria-checked={selectionState === 'partial' ? 'mixed' : selectionState === 'all'} aria-label={t('clients.selectEmailGroup', { email: group.email })} ref={(input) => { if (input) input.indeterminate = selectionState === 'partial'; }} onChange={() => toggleGroupSelection(group)} />
+                  <button type="button" className="min-w-0 flex-1 text-left" aria-expanded={expanded} aria-label={expanded ? t('clients.collapseClientGroup', { email: group.email }) : t('clients.expandClientGroup', { email: group.email })} onClick={() => toggleGroupExpanded(group)}><span className={tableLongEmailClass} title={group.email}>{expanded ? '−' : '+'} {group.email}</span><span className="mt-1 block truncate text-xs text-slate-500">{getGroupSummary(group)}</span></button>
+                </div>
+                {expanded && <div className="mt-3 grid min-w-0 grid-cols-1 gap-2">{group.clients.map(renderMobileChild)}</div>}
               </article>;
             })}
           </div>
           <div className="hidden w-full min-w-0 overflow-hidden bg-[#0a0e1a] lg:block"><div className="w-full min-w-0 overflow-x-auto"><table className="w-full table-fixed border-collapse text-left text-xs"><thead className="bg-[#0f1420] text-[10px] uppercase tracking-wider text-slate-500"><tr className="border-b border-cyan-500/20"><th className="w-10 px-3 py-3"><input className={checkboxClass} type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAll} /></th><th className="w-[17%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('email')}>{t('clients.email')}{sortIndicator('email')}</button></th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('node')}>{t('traffic.node')}{sortIndicator('node')}</button></th>{!denseView && <th className="w-[6%] px-3 py-3">{t('inbounds.protocol')}</th>}<th className="w-[8%] px-3 py-3">{t('common.status')}</th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('download')}>{t('traffic.download')}{sortIndicator('download')}</button></th><th className="w-[8%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('total')}>{t('clients.totalLimit')}{sortIndicator('total')}</button></th><th className="w-[9%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('expiry')}>{t('clients.expiryTime')}{sortIndicator('expiry')}</button></th>{!denseView && <th className="w-[7%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('lastOnline')}>Last Online{sortIndicator('lastOnline')}</button></th>}<th className="w-[5%] px-3 py-3"><button type="button" className={sortButtonClass} onClick={() => applySortFromHeader('health')}>Health{sortIndicator('health')}</button></th><th className="w-[224px] px-3 py-3">{t('common.actions')}</th></tr></thead><tbody className="divide-y divide-slate-800/60 text-slate-200">
-            {visibleClients.map((client) => { const trafficKey = client.node_id != null ? `${client.node_id}:${client.email}` : null; const downloadBytes = getTrafficBytes(trafficKey, 'download', client.down); const isExpired = client.expiryTime > 0 && client.expiryTime < Date.now(); const isDepleted = client.total > 0 && (client.up + client.down) >= client.total; const used = client.up + client.down; const pct = client.total > 0 ? Math.min(100, (used / client.total) * 100) : 0; const hs = getHealthScore(client); return <tr key={clientKey(client)} className={cn('transition-colors hover:bg-cyan-400/5', isExpired && 'bg-amber-400/5', isDepleted && 'bg-rose-500/5', !client.enable && 'bg-[#0f1420]/60 opacity-80')}><td className="px-3 py-3"><input className={checkboxClass} type="checkbox" checked={selectedClientKeys.has(clientKey(client))} onChange={() => toggleSelection(client)} /></td><td className="min-w-0 px-3 py-3"><button type="button" className={tableLongEmailClass} title={client.email} onClick={() => setExpandedKey(prev => prev === clientKey(client) ? null : clientKey(client))}>{client.email}</button><div className={tableLongIdClass} title={client.id || client.password || ''}>{client.id || client.password || '-'}</div></td><td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'max-w-full justify-start bg-[#0f1420] text-slate-200')} onClick={() => setFilterNode(prev => prev === client.node_name ? '' : client.node_name)}><span className="truncate">{client.node_name}</span></button></td>{!denseView && <td className="px-3 py-3"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol(prev => prev === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button></td>}<td className="px-3 py-3"><button type="button" className={statusChipClass(client, isExpired, isDepleted)} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier) return; try { await api.put(`/v1/clients/${encodeURIComponent(identifier)}`, { node_id: client.node_id, inbound_id: client.inbound_id, updates: { email: client.email, enable: !client.enable } }, { auth: getAuth() }); setClients(prev => prev.map(c => clientKey(c) === clientKey(client) ? { ...c, enable: !c.enable } : c)); } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); } }}>{isExpired ? 'Expired' : isDepleted ? 'Depleted' : client.enable ? 'Active' : 'Disabled'}</button></td><td className="px-3 py-3"><div className="font-mono tabular-nums whitespace-nowrap">{formatBytes(downloadBytes)}</div>{client.total > 0 && <><div className="mt-1 h-1 min-w-[72px] overflow-hidden rounded-full bg-[#0f1420]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></>}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : 'unlimited'}</td><td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</td>{!denseView && <td className="px-3 py-3 font-mono tabular-nums whitespace-nowrap text-slate-500">{lastOnlineMap[client.email] ? new Date(lastOnlineMap[client.email]).toLocaleDateString() : '-'}</td>}<td className={cn('px-3 py-3 font-mono tabular-nums font-medium whitespace-nowrap', hs >= 70 ? 'text-emerald-300' : hs >= 35 ? 'text-amber-300' : 'text-rose-300')}>{hs}</td><td className="px-3 py-3"><div className="flex flex-wrap justify-end gap-1"><button type="button" className={buttonIconClass} onClick={() => handleClientEditClick(client)} title={t('messages.editClient')}><UIIcon name="edit" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleResetTraffic(client)} title={t('clients.resetTraffic')}><UIIcon name="refresh" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleOpenAttach(client, 'attach')} title={t('clients.attachDetachInbounds')}><UIIcon name="attach" size={14} /></button><button type="button" className={buttonIconClass} onClick={() => handleOpenClientIpHistory(client)} title={t('clients.ipHistoryTitle')}><UIIcon name="ip" size={14} /></button><button type="button" className={cn(buttonIconClass, client.notes && 'text-cyan-300')} onClick={() => handleClientNoteClick(client)} title={t('clients.noteTitle')}><UIIcon name="note" size={14} /></button><button type="button" className={cn(buttonIconClass, 'bg-rose-500 text-white hover:bg-rose-400')} onClick={async () => { const identifier = clientIdentifier(client); if (!identifier || !client.inbound_id) { toast('Cannot identify client', 'warning'); return; } if (!window.confirm(`Delete client "${client.email}"?`)) return; try { await api.delete(`/v1/clients/${encodeURIComponent(identifier)}`, { auth: getAuth(), params: { node_id: client.node_id, inbound_id: client.inbound_id } }); loadClients(true); } catch (e: any) { toast(e.response?.data?.detail || 'Delete failed', 'error'); } }} title={t('clients.deleteClient') || 'Delete client'}><UIIcon name="trash" size={14} /></button></div></td></tr>; })}
+            {visibleClientGroups.map((group) => {
+              const selectionState = getGroupSelectionState(group);
+              const expanded = expandedEmailKeys.has(group.key);
+              return <React.Fragment key={group.key}>
+                <tr className="bg-cyan-500/5 text-slate-100"><td className="px-3 py-3"><input className={checkboxClass} type="checkbox" checked={selectionState === 'all'} aria-checked={selectionState === 'partial' ? 'mixed' : selectionState === 'all'} aria-label={t('clients.selectEmailGroup', { email: group.email })} ref={(input) => { if (input) input.indeterminate = selectionState === 'partial'; }} onChange={() => toggleGroupSelection(group)} /></td><td colSpan={denseView ? 8 : 10} className="px-3 py-3"><button type="button" className="flex min-w-0 items-center gap-2 text-left" aria-expanded={expanded} aria-label={expanded ? t('clients.collapseClientGroup', { email: group.email }) : t('clients.expandClientGroup', { email: group.email })} onClick={() => toggleGroupExpanded(group)}><span className="font-mono text-cyan-300">{expanded ? '−' : '+'}</span><span className="min-w-0"><span className={tableLongEmailClass} title={group.email}>{group.email}</span><span className="mt-1 block truncate text-xs text-slate-500">{getGroupSummary(group)}</span></span></button></td></tr>
+                {expanded && group.clients.map(renderDesktopChild)}
+              </React.Fragment>;
+            })}
           </tbody></table></div></div>
         </>}
-        <div className="flex min-w-0 flex-wrap items-center gap-3 px-3 py-3 text-xs text-slate-500"><span className="whitespace-nowrap">{t('clients.showingCount', { filtered: filteredClients.length, total: clients.length })}</span>{selectedClientKeys.size > 0 && <span className="text-cyan-300 whitespace-nowrap">{t('clients.selectedCount', { count: selectedClientKeys.size })}</span>}</div>
+        <div className="flex min-w-0 flex-wrap items-center gap-3 px-3 py-3 text-xs text-slate-500"><span className="whitespace-nowrap">{t('clients.groupedShowingCount', { users: sortedClientGroups.length, records: filteredClients.length, total: clients.length })}</span>{selectedClientKeys.size > 0 && <span className="text-cyan-300 whitespace-nowrap">{t('clients.selectedCount', { count: selectedClientKeys.size })}</span>}</div>
       </section>
       {/* Batch Add Modal */}
       {showBatchModal && (

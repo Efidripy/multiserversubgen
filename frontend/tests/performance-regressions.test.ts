@@ -19,6 +19,14 @@ describe('navigation performance regressions', () => {
     expect(source).toContain('!expandedKey || filteredClients.length === 0');
   });
 
+  it('derives logical client groups from already filtered records without adding a fleet request', () => {
+    const source = read('src/components/ClientManager.tsx');
+
+    expect(source).toContain('groupClientsByEmail(filteredClients)');
+    expect(source).toContain('const visibleClientGroups = sortedClientGroups.slice');
+    expect(source).toContain('const visibleSlice = filteredClients.slice(0, TRAFFIC_FETCH_MAX_CLIENTS);');
+  });
+
   it('keeps online traffic details explicit and cancels stale inbound requests', () => {
     const traffic = read('src/components/TrafficStats.tsx');
     const inbounds = read('src/components/InboundManager.tsx');
