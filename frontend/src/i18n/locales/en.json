@@ -98,6 +98,7 @@
     "online": "Online",
     "expired": "Expired",
     "depleted": "Depleted",
+    "system": "SYSTEM",
     "resetTraffic": "Reset Traffic",
     "filterByEmail": "Filter by Email",
     "loadFailed": "Failed to load clients",

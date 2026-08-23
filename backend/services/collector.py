@@ -9,6 +9,7 @@ from enum import Enum
 
 from services.db_bootstrap import connect
 from services.snapshot_push import build_snapshot_push_payload
+from services.system_clients import normalize_email, system_client_emails_from_inbounds
 from services.xray_compatibility import summarize_node_inbounds
 
 
@@ -699,16 +700,20 @@ class SnapshotCollector:
                     "inbounds": [],
                     "timestamp": time.time(),
                 }
-            online = self.xui_monitor.get_online_clients(node)
             inbounds_result = self.xui_monitor.get_inbounds(node)
-            online_emails = _online_client_emails(online)
-
             available = bool(status.get("available"))
             inbounds = (
                 inbounds_result.get("inbounds", [])
                 if isinstance(inbounds_result, dict) and inbounds_result.get("available")
                 else []
             )
+            system_client_emails = system_client_emails_from_inbounds(inbounds)
+            online = self.xui_monitor.get_online_clients(node)
+            online_emails = [
+                email
+                for email in _online_client_emails(online)
+                if normalize_email(email) not in system_client_emails
+            ]
             total_traffic = sum(
                 (inbound.get("up", 0) or 0) + (inbound.get("down", 0) or 0)
                 for inbound in inbounds
@@ -733,6 +738,7 @@ class SnapshotCollector:
                 "cpu": (system_status.get("cpu", 0) if isinstance(status, dict) else 0),
                 "online_clients": len(online_emails),
                 "online_client_emails": online_emails,
+                "system_client_emails": sorted(system_client_emails),
                 "traffic_total": total_traffic,
                 "timestamp": time.time(),
                 "panel_version": panel_version,
