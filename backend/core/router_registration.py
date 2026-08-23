@@ -115,6 +115,7 @@ def register_app_routers(
             list_nodes=list_nodes,
             xui_monitor=xui_monitor,
             get_latest_snapshot=snapshot_collector.latest_snapshot,
+            get_latest_client_presence=snapshot_collector.latest_client_presence,
         )
     )
     app.include_router(

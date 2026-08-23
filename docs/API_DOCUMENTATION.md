@@ -281,6 +281,30 @@ Authorization: Basic base64(username:password)
 }
 ```
 
+### `GET /api/v1/clients/presence`
+
+Лёгкая authenticated-проекция присутствия для списка клиентов. Она читает
+только последний штатный snapshot Collector и **не** запускает новый опрос
+подключённых 3x-ui панелей при открытии страницы.
+
+`online_emails` содержит нормализованные адреса клиентов, наблюдаемых online в
+последнем snapshot. `last_seen` — Unix timestamp последнего штатного
+наблюдения клиента online; это не результат отдельного запроса к панели.
+Записи `last_seen` удерживаются в памяти до 30 дней.
+
+**Response:**
+
+```json
+{
+  "projection": "client-presence-v1",
+  "timestamp": 1735689600.0,
+  "online_emails": ["user@example.com"],
+  "last_seen": {
+    "user@example.com": 1735689600.0
+  }
+}
+```
+
 ---
 
 ## 📈 Traffic Statistics

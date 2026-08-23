@@ -143,6 +143,7 @@
     "expandClientGroup": "Раскрыть записи по узлам для {{email}}",
     "collapseClientGroup": "Свернуть записи по узлам для {{email}}",
     "unlimited": "Без лимита",
+    "lastSeen": "Последний раз замечен",
     "batchAddTitle": "Массовое добавление клиентов",
     "batchEmailsLabel": "Email-адреса (по одному в строке)",
     "inboundSelector": "Выбор inbound",
