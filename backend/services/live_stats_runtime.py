@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from threading import Lock, Thread
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from services.db_bootstrap import connect
 
@@ -38,6 +38,8 @@ class LiveStatsRuntime:
         online_clients_cache_ttl: int,
         online_clients_stale_ttl: int,
         logger,
+        get_latest_snapshot: Optional[Callable[[], Dict]] = None,
+        get_expected_snapshot_nodes: Optional[Callable[[], int]] = None,
     ) -> None:
         self.client_mgr = client_mgr
         self.db_path = db_path
@@ -53,6 +55,8 @@ class LiveStatsRuntime:
         self.online_clients_cache_ttl = online_clients_cache_ttl
         self.online_clients_stale_ttl = online_clients_stale_ttl
         self.logger = logger
+        self.get_latest_snapshot = get_latest_snapshot
+        self.get_expected_snapshot_nodes = get_expected_snapshot_nodes
         # In-memory snapshot fallback when Redis is unavailable.
         # Key: "traffic_snapshot:{group_by}:{bucket_kind}:{bucket_id}"
         # Value: {"ts": float, "stats": dict}
@@ -60,6 +64,154 @@ class LiveStatsRuntime:
         self._snapshot_cleanup_ts = 0.0
         self._snapshot_seed_check_ts = 0.0
         self._traffic_cold_load_locks: Dict[str, Lock] = {}
+        self._snapshot_projection_lock = Lock()
+        self._snapshot_projection_timestamp: Optional[float] = None
+        self._snapshot_projections: Dict[str, Dict[str, Dict[str, int]]] = {}
+
+    @staticmethod
+    def _metric(value) -> int:
+        try:
+            return max(0, int(float(value or 0)))
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
+    def _build_snapshot_traffic_projections(
+        self, snapshot: Optional[Dict] = None
+    ) -> tuple[Optional[float], Dict[str, Dict[str, Dict[str, int]]]]:
+        """Build all Statistics groupings from the collector's existing data.
+
+        The collector already obtains inbounds once per poll.  Re-reading it
+        here is strictly local work; this method must never call a panel or
+        ``ClientManager``.  Keeping all groupings in one projection prevents a
+        client -> inbound -> node switch from multiplying fleet work.
+        """
+        if snapshot is None:
+            if not self.get_latest_snapshot:
+                return None, {}
+            snapshot = self.get_latest_snapshot()
+        if not isinstance(snapshot, dict):
+            return None, {}
+        timestamp = snapshot.get("timestamp")
+        try:
+            timestamp = float(timestamp) if timestamp is not None else None
+        except (TypeError, ValueError):
+            timestamp = None
+        nodes = snapshot.get("nodes")
+        if timestamp is None or not isinstance(nodes, list):
+            return timestamp, {}
+
+        projections: Dict[str, Dict[str, Dict[str, int]]] = {
+            "client": {},
+            "inbound": {},
+            "node": {},
+        }
+
+        def add(group_by: str, key: str, up: int, down: int, count: int = 1) -> None:
+            if not key:
+                return
+            current = projections[group_by].setdefault(key, {"up": 0, "down": 0, "total": 0, "count": 0})
+            current["up"] += up
+            current["down"] += down
+            current["total"] += up + down
+            current["count"] += count
+
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            node_name = str(node.get("name") or node.get("node_id") or "")
+            inbounds = node.get("inbounds")
+            if not node_name or not isinstance(inbounds, list):
+                continue
+
+            for inbound in inbounds:
+                if not isinstance(inbound, dict):
+                    continue
+                inbound_up = self._metric(inbound.get("up"))
+                inbound_down = self._metric(inbound.get("down"))
+                inbound_key = f"{node_name}:{inbound.get('remark', inbound.get('id', 'unknown'))}"
+                # Node and inbound totals are available even when an older
+                # panel omits ``clientStats``.  Client-level rows stay absent
+                # instead of causing the old per-client remote fallback.
+                add("node", node_name, inbound_up, inbound_down)
+                add("inbound", inbound_key, inbound_up, inbound_down)
+
+                client_stats = inbound.get("clientStats")
+                if not isinstance(client_stats, list):
+                    continue
+                for client in client_stats:
+                    if not isinstance(client, dict):
+                        continue
+                    email = str(client.get("email") or "")
+                    add("client", email, self._metric(client.get("up")), self._metric(client.get("down")))
+
+        return timestamp, projections
+
+    def _snapshot_projection(self, group_by: str) -> Optional[Dict]:
+        """Return a memoized collector projection, or ``None`` while warming."""
+        if group_by not in {"client", "inbound", "node"} or not self.get_latest_snapshot:
+            return None
+        snapshot = self.get_latest_snapshot()
+        if not isinstance(snapshot, dict):
+            return None
+        try:
+            timestamp = float(snapshot.get("timestamp"))
+        except (TypeError, ValueError):
+            return None
+
+        with self._snapshot_projection_lock:
+            if timestamp == self._snapshot_projection_timestamp:
+                stats = self._snapshot_projections.get(group_by, {})
+                return {
+                    "stats": stats,
+                    "group_by": group_by,
+                    "cache_source": "snapshot_collector",
+                    "cache_timestamp": timestamp,
+                }
+
+        _timestamp, projections = self._build_snapshot_traffic_projections(snapshot)
+        with self._snapshot_projection_lock:
+            # A concurrently completed request may already have indexed the
+            # same collector revision; preserve that reusable projection.
+            if self._snapshot_projection_timestamp is None or timestamp > self._snapshot_projection_timestamp:
+                self._snapshot_projection_timestamp = timestamp
+                self._snapshot_projections = projections
+            stats = self._snapshot_projections.get(group_by, {})
+            return {
+                "stats": stats,
+                "group_by": group_by,
+                "cache_source": "snapshot_collector",
+                "cache_timestamp": timestamp,
+            }
+
+    def seed_period_snapshots_from_collector(self, now_ts: Optional[float] = None) -> Dict[str, bool]:
+        """Persist current period baselines from collector data, never a fleet read."""
+        now = float(now_ts or time.time())
+        if now - self._snapshot_seed_check_ts < 5.0:
+            return {}
+
+        if self.get_expected_snapshot_nodes and self.get_latest_snapshot:
+            snapshot = self.get_latest_snapshot()
+            nodes = snapshot.get("nodes") if isinstance(snapshot, dict) else []
+            try:
+                expected_nodes = max(0, int(self.get_expected_snapshot_nodes()))
+            except (TypeError, ValueError):
+                expected_nodes = 0
+            # Do not establish a day/week/month baseline from only the first
+            # few nodes during a cold collector start.  This is a local SQLite
+            # count check, never a panel request.
+            if expected_nodes and (not isinstance(nodes, list) or len(nodes) < expected_nodes):
+                return {"warming": False}
+
+        self._snapshot_seed_check_ts = now
+
+        seeded: Dict[str, bool] = {}
+        for group_by in ("client", "inbound", "node"):
+            projection = self._snapshot_projection(group_by)
+            if not projection:
+                continue
+            self._save_period_snapshots(group_by, projection.get("stats", {}), now)
+            seeded[group_by] = True
+        return seeded
 
     def _get_traffic_cold_load_lock(self, group_by: str) -> Lock:
         with self.state_lock:
@@ -167,6 +319,10 @@ class LiveStatsRuntime:
         read-model is for surfaces that may show the last known client traffic
         but must never make a remote XUI request just to render.
         """
+        snapshot_projection = self._snapshot_projection(group_by)
+        if snapshot_projection is not None:
+            return snapshot_projection
+
         redis_key = f"traffic_stats:{group_by}"
         redis_data = self.redis_get_json(redis_key)
         if isinstance(redis_data, dict):
@@ -321,12 +477,13 @@ class LiveStatsRuntime:
         memory_snapshot = self._memory_snapshots.get(key)
         return memory_snapshot if isinstance(memory_snapshot, dict) else None
 
-    def _write_snapshot(self, key: str, snapshot_value: dict, ttl_seconds: int) -> None:
+    def _write_snapshot(self, key: str, snapshot_value: dict, ttl_seconds: int) -> bool:
         existing = self._read_snapshot(key)
         if existing is not None:
-            return
+            return False
         self.redis_set_json(key, snapshot_value, ttl_seconds)
         self._memory_snapshots[key] = snapshot_value
+        return True
 
     def _persist_snapshot_to_db(
         self,
@@ -496,8 +653,9 @@ class LiveStatsRuntime:
             bucket_seconds = int(config["bucket_seconds"])
             bucket_id = int(now_ts / bucket_seconds)
             redis_key = self._snapshot_key(group_by, bucket_kind, bucket_id)
-            self._write_snapshot(redis_key, snapshot_value, int(config["ttl_seconds"]))
-            self._persist_snapshot_to_db(group_by, bucket_kind, bucket_id, snapshot_value)
+            created = self._write_snapshot(redis_key, snapshot_value, int(config["ttl_seconds"]))
+            if created:
+                self._persist_snapshot_to_db(group_by, bucket_kind, bucket_id, snapshot_value)
 
     def ensure_current_period_snapshots(
         self,

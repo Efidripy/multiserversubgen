@@ -169,7 +169,9 @@ def _on_snapshot(snapshot: dict) -> None:
     if live_stats_runtime is None:
         return
     try:
-        live_stats_runtime.ensure_current_period_snapshots(node_service.list_nodes())
+        # The collector already owns this data.  Never start a second fleet
+        # walk merely to seed Statistics period baselines.
+        live_stats_runtime.seed_period_snapshots_from_collector()
     except Exception as exc:
         logger.warning("Traffic snapshot auto-seed failed: %s", exc)
 
