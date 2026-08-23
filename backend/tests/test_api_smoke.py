@@ -245,6 +245,45 @@ def test_clients_last_online_smoke(monkeypatch):
     assert "data" in body
 
 
+def test_client_presence_uses_collector_projection_without_fleet_scan(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        main.snapshot_collector,
+        "latest_client_presence",
+        lambda: calls.append("presence") or {
+            "projection": "client-presence-v1",
+            "timestamp": 123.0,
+            "online_emails": ["active@example.test"],
+            "last_seen": {"active@example.test": 123.0},
+        },
+    )
+    monkeypatch.setattr(
+        main.node_service,
+        "list_nodes",
+        lambda: (_ for _ in ()).throw(AssertionError("presence must not enumerate nodes")),
+    )
+    monkeypatch.setattr(
+        main,
+        "get_cached_online_clients",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("presence must not start a fleet scan")),
+    )
+    unauthenticated_app = _build_test_app(monitoring_enabled=False)
+    assert TestClient(unauthenticated_app).get("/api/v1/clients/presence").status_code == 401
+
+    app = _build_test_app(monitoring_enabled=False)
+
+    @app.middleware("http")
+    async def _inject_auth_user(request, call_next):
+        request.state.auth_user = "admin"
+        return await call_next(request)
+
+    response = TestClient(app).get("/api/v1/clients/presence")
+
+    assert response.status_code == 200
+    assert response.json()["online_emails"] == ["active@example.test"]
+    assert calls == ["presence"]
+
+
 def test_dashboard_summary_auth_required():
     """dashboard/summary requires auth (no credentials → 401)."""
     # Note: this endpoint uses middleware-set auth_user, so a bare test client

@@ -366,6 +366,44 @@ def test_snapshot_collector_dashboard_projection_excludes_inventory_payload():
     }]
 
 
+def test_snapshot_collector_publishes_presence_without_exposing_it_to_dashboard():
+    from services.collector import SnapshotCollector
+
+    class PresenceMonitor:
+        def get_server_status(self, node):
+            return {
+                "node": node["name"],
+                "available": True,
+                "reason": "ok",
+                "system": {"cpu": 4},
+                "xray": {"running": True},
+                "network": {},
+            }
+
+        def get_online_clients(self, _node):
+            return {"online_clients": ["First@Example.test", " first@example.test ", "second@example.test", 7]}
+
+        def get_inbounds(self, _node):
+            return {"available": True, "inbounds": []}
+
+    collector = SnapshotCollector(
+        fetch_nodes=lambda: [],
+        xui_monitor=PresenceMonitor(),
+        ws_manager=SimpleNamespace(active_connections=[]),
+    )
+
+    asyncio.run(collector._poll_node({"id": 1, "name": "alpha"}, "alpha"))
+
+    presence = collector.latest_client_presence()
+    dashboard = collector.latest_dashboard_snapshot()
+
+    assert presence["projection"] == "client-presence-v1"
+    assert presence["online_emails"] == ["first@example.test", "second@example.test"]
+    assert set(presence["last_seen"]) == {"first@example.test", "second@example.test"}
+    assert dashboard["nodes"][0]["online_clients"] == 2
+    assert "online_client_emails" not in dashboard["nodes"][0]
+
+
 def test_dashboard_projection_payload_is_bounded_for_a_100_node_fleet():
     from services.collector import SnapshotCollector
 

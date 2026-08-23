@@ -19,6 +19,16 @@ describe('navigation performance regressions', () => {
     expect(source).toContain('!expandedKey || filteredClients.length === 0');
   });
 
+  it('reads client presence from the collector projection without a navigation-time fleet scan', () => {
+    const source = read('src/components/ClientManager.tsx');
+    const api = read('src/api/clients.ts');
+
+    expect(source).toContain('getClientPresence(signal)');
+    expect(source).toContain('CLIENT_PRESENCE_REFRESH_MS = 30 * 1000');
+    expect(source).not.toContain("api.get('/v1/clients/online'");
+    expect(api).toContain("api.get('/v1/clients/presence'");
+  });
+
   it('derives logical client groups from already filtered records without adding a fleet request', () => {
     const source = read('src/components/ClientManager.tsx');
 

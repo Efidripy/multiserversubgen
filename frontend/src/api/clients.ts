@@ -21,6 +21,13 @@ export interface ClientIpHistoryResponse {
   results: ClientIpHistoryEntry[];
 }
 
+export interface ClientPresenceProjection {
+  projection?: string;
+  timestamp?: number | null;
+  online_emails?: string[];
+  last_seen?: Record<string, number | string>;
+}
+
 const endpointBySource: Record<ClientSourceFilter, string> = {
   all: '/v1/clients',
   expired: '/v1/clients/expired',
@@ -30,6 +37,12 @@ const endpointBySource: Record<ClientSourceFilter, string> = {
 export async function listClientsBySource(source: ClientSourceFilter, signal?: AbortSignal): Promise<unknown> {
   const res = await api.get(endpointBySource[source], { auth: getAuth(), signal });
   return res.data;
+}
+
+/** Snapshot-only presence read. It never starts a per-node 3x-ui scan. */
+export async function getClientPresence(signal?: AbortSignal): Promise<ClientPresenceProjection> {
+  const res = await api.get('/v1/clients/presence', { auth: getAuth(), signal });
+  return res.data || {};
 }
 
 export async function getClientIpHistory(email: string, nodeId?: number | null): Promise<ClientIpHistoryResponse> {

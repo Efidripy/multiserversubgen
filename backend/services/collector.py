@@ -43,6 +43,18 @@ _DASHBOARD_SNAPSHOT_FIELDS = (
     "snapshot_updated_at",
 )
 
+_CLIENT_PRESENCE_RETENTION_SEC = 30 * 24 * 60 * 60
+
+
+def _online_client_emails(payload: Any) -> List[str]:
+    """Normalize the already-polled 3x-ui presence list for internal reuse."""
+    if not isinstance(payload, dict):
+        return []
+    values = payload.get("online_clients")
+    if not isinstance(values, list):
+        return []
+    return sorted({value.strip().casefold() for value in values if isinstance(value, str) and value.strip()})
+
 
 def _detect_api_version(panel_version: str) -> str:
     """Return 'v3' if panelVersion >= 3.x, else 'v2'.
@@ -121,6 +133,18 @@ class SnapshotCollector:
         self._snapshot_write_lock = asyncio.Lock()
         self._node_state: Dict[str, Dict] = {}
         self._latest = {"timestamp": None, "nodes": {}}
+        # Observed presence is deliberately internal: Dashboard remains bounded
+        # and never serializes client emails. Client Manager receives it through
+        # a separate authenticated, snapshot-only projection.
+        self._client_last_seen: Dict[str, float] = {}
+        # This mapping is replaced atomically after a completed poll. The API
+        # reads it from a worker thread, so it must not iterate mutable node
+        # snapshots while the collector is updating them on its event loop.
+        self._client_presence = {
+            "timestamp": None,
+            "online_emails": (),
+            "last_seen": {},
+        }
         self._inflight_polls = 0
         self._last_cycle = {
             "started_at": None,
@@ -166,6 +190,31 @@ class SnapshotCollector:
             "count": len(nodes),
             "mode": self._mode.value,
             "projection": "dashboard-v1",
+        }
+
+    def latest_client_presence(self) -> Dict:
+        """Return a no-RPC projection derived from already completed polls."""
+        presence = self._client_presence
+        return {
+            "projection": "client-presence-v1",
+            "timestamp": presence["timestamp"],
+            "online_emails": list(presence["online_emails"]),
+            "last_seen": dict(presence["last_seen"]),
+        }
+
+    def _refresh_client_presence_projection(self) -> None:
+        """Publish an immutable presence view after collector-owned mutations."""
+        online_emails = {
+            email
+            for snapshot in self._latest["nodes"].values()
+            if isinstance(snapshot, dict)
+            for email in snapshot.get("online_client_emails") or []
+            if isinstance(email, str) and email
+        }
+        self._client_presence = {
+            "timestamp": self._latest["timestamp"],
+            "online_emails": tuple(sorted(online_emails)),
+            "last_seen": dict(self._client_last_seen),
         }
 
     def runtime_status(self) -> Dict:
@@ -442,6 +491,7 @@ class SnapshotCollector:
                     if stale not in active_names:
                         self._node_state.pop(stale, None)
                         self._latest["nodes"].pop(stale, None)
+                        self._refresh_client_presence_projection()
 
                 tasks = []
                 force_poll = self._force_poll_event.is_set()
@@ -558,6 +608,14 @@ class SnapshotCollector:
         async with self._lock:
             self._latest["timestamp"] = time.time()
             self._latest["nodes"][key] = snapshot
+            observed_at = float(snapshot.get("timestamp") or self._latest["timestamp"])
+            for email in snapshot.get("online_client_emails") or []:
+                self._client_last_seen[email] = observed_at
+            cutoff = observed_at - _CLIENT_PRESENCE_RETENTION_SEC
+            stale_emails = [email for email, seen_at in self._client_last_seen.items() if seen_at < cutoff]
+            for email in stale_emails:
+                del self._client_last_seen[email]
+            self._refresh_client_presence_projection()
         if self.on_snapshot is not None:
             try:
                 # Callbacks may derive a fleet projection from latest_snapshot;
@@ -598,6 +656,7 @@ class SnapshotCollector:
                 }
             online = self.xui_monitor.get_online_clients(node)
             inbounds_result = self.xui_monitor.get_inbounds(node)
+            online_emails = _online_client_emails(online)
 
             available = bool(status.get("available"))
             inbounds = (
@@ -627,7 +686,8 @@ class SnapshotCollector:
                 "network": network_status,
                 "xray_running": (xray_status.get("running", False) if isinstance(status, dict) else False),
                 "cpu": (system_status.get("cpu", 0) if isinstance(status, dict) else 0),
-                "online_clients": len((online.get("online_clients") or []) if isinstance(online, dict) else []),
+                "online_clients": len(online_emails),
+                "online_client_emails": online_emails,
                 "traffic_total": total_traffic,
                 "timestamp": time.time(),
                 "panel_version": panel_version,

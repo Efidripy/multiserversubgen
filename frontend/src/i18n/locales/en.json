@@ -143,6 +143,7 @@
     "expandClientGroup": "Expand {{email}} node records",
     "collapseClientGroup": "Collapse {{email}} node records",
     "unlimited": "Unlimited",
+    "lastSeen": "Last seen",
     "batchAddTitle": "Batch Add Clients",
     "batchEmailsLabel": "Email addresses (one per line)",
     "inboundSelector": "Inbound selector",
