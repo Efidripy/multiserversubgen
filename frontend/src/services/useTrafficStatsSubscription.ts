@@ -16,6 +16,8 @@ export interface TrafficUpdate {
 }
 
 export interface TrafficStatsSubscriptionOptions {
+  /** Disable both WebSocket and fallback polling when a canonical data owner exists. */
+  enabled?: boolean;
   channels: string[]; // 'traffic', 'clients', 'server_status', 'inbounds'
   onUpdate: (update: TrafficUpdate) => void;
   onError?: (error: Error) => void;
@@ -51,6 +53,7 @@ export const filterRealtimeChannelsForRole = (channels: string[], role = getAuth
  * Хук для подписки на обновления трафика через WebSocket
  */
 export function useTrafficStatsSubscription({
+  enabled = true,
   channels,
   onUpdate,
   onError,
@@ -88,6 +91,7 @@ export function useTrafficStatsSubscription({
   );
 
   useEffect(() => {
+    if (!enabled) return undefined;
     let cancelled = false;
     const unsubscribers: Array<() => void> = [];
 
@@ -142,10 +146,17 @@ export function useTrafficStatsSubscription({
         wsManager.send({ type: 'unsubscribe', channel });
       });
     };
-  }, [normalizedChannels]); // stable: only re-runs when the channel list actually changes
+  }, [enabled, normalizedChannels]); // stable: only re-runs when the channel list actually changes
 
   // Fallback на polling если нет WebSocket
   useEffect(() => {
+    if (!enabled) {
+      if (fallbackIntervalRef.current !== null) {
+        window.clearInterval(fallbackIntervalRef.current);
+        fallbackIntervalRef.current = null;
+      }
+      return undefined;
+    }
     if (isConnected) {
       if (fallbackIntervalRef.current !== null) {
         window.clearInterval(fallbackIntervalRef.current);
@@ -183,7 +194,7 @@ export function useTrafficStatsSubscription({
         fallbackIntervalRef.current = null;
       }
     };
-  }, [isConnected, fallbackPollIntervalMs]); // callbacks read via refs — no loop risk
+  }, [enabled, isConnected, fallbackPollIntervalMs]); // callbacks read via refs — no loop risk
 
   // Вернуть функцию для явной отписки
   return useCallback(() => {

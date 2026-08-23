@@ -38,6 +38,10 @@ vi.mock('../src/api/nodes', () => ({
   NODES_CHANGED_EVENT: 'nodes-changed',
 }));
 
+vi.mock('../src/services/DashboardDataContext', () => ({
+  useDashboardData: () => null,
+}));
+
 import { DashboardSummary } from '../src/components/DashboardSummary';
 
 afterEach(cleanup);
@@ -45,9 +49,10 @@ afterEach(cleanup);
 describe('DashboardSummary traffic projection', () => {
   it('renders cached top traffic rows, correct online KPIs and opens the selected client', async () => {
     const onNavigate = vi.fn();
+    const onOnlineClientsChange = vi.fn();
     mocks.getDashboardSummary.mockResolvedValue(summary);
     mocks.listNodes.mockResolvedValue([{ id: 1, name: 'alpha', enabled: true }]);
-    render(<DashboardSummary onNavigate={onNavigate} />);
+    render(<DashboardSummary onNavigate={onNavigate} onOnlineClientsChange={onOnlineClientsChange} />);
 
     await waitFor(() => expect(screen.getByText('highest@example.test')).toBeTruthy());
 
@@ -56,6 +61,7 @@ describe('DashboardSummary traffic projection', () => {
     expect(screen.getByText('least@example.test')).toBeTruthy();
     expect(screen.getByText('1 / 1')).toBeTruthy();
     expect(screen.getByText('Active Clients')).toBeTruthy();
+    expect(onOnlineClientsChange).toHaveBeenLastCalledWith(1);
 
     const trafficRow = screen.getByText('highest@example.test').parentElement;
     expect(trafficRow?.className).toContain('w-full');

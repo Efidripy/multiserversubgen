@@ -1,5 +1,6 @@
 import time
 from typing import Callable, Dict
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -122,6 +123,93 @@ def build_live_data_router(
             return by_name[str(name)]
         return None
 
+    def _safe_panel_url(value) -> str:
+        raw = str(value or "").strip()
+        if not raw:
+            return ""
+        try:
+            parsed = urlsplit(raw)
+            host = parsed.hostname or parsed.netloc
+            try:
+                port = parsed.port
+            except ValueError:
+                port = None
+            netloc = f"{host}:{port}" if port is not None else host
+            return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+        except ValueError:
+            return raw.split("?", 1)[0].split("#", 1)[0]
+
+    def _dashboard_fleet_row(node: Dict, cached: Dict | None) -> Dict:
+        """Serialize only Dashboard fields; credentials never cross this route."""
+        cached = cached if isinstance(cached, dict) else {}
+        return {
+            "id": node.get("id"),
+            "name": str(node.get("name") or node.get("id") or "unknown"),
+            "panel_url": _safe_panel_url(node.get("panel_url") or node.get("url")),
+            "source_type": node.get("source_type") or "xui",
+            "read_only": bool(node.get("read_only")),
+            "enabled": bool(node.get("enabled", True)),
+            "available": bool(cached.get("available")) if cached else None,
+            "status": cached.get("status"),
+            "reason": cached.get("reason"),
+            "error": cached.get("error"),
+            "system": cached.get("system"),
+            "xray": cached.get("xray"),
+            "network": cached.get("network"),
+            "xray_running": cached.get("xray_running"),
+            "online_clients": cached.get("online_clients"),
+            "traffic_total": cached.get("traffic_total"),
+            "timestamp": cached.get("timestamp"),
+            "poll_ms": cached.get("poll_ms"),
+            "panel_version": cached.get("panel_version") or node.get("panel_version") or "",
+            "api_version": cached.get("api_version") or node.get("api_version") or "",
+            "xray_compatibility": cached.get("xray_compatibility"),
+        }
+
+    async def _dashboard_payload(period: str) -> tuple[Dict, list, Dict[str, Dict], Dict[str, Dict]]:
+        nodes = await run_in_threadpool(list_nodes)
+        by_id, by_name, snapshot = _snapshot_by_node(nodes)
+        traffic_projection = (
+            await run_in_threadpool(get_cached_traffic_stats_projection_by_period, "client", period)
+            if get_cached_traffic_stats_projection_by_period
+            else await run_in_threadpool(get_cached_traffic_stats_projection, "client")
+            if get_cached_traffic_stats_projection
+            else {"stats": {}, "cache_source": "unavailable"}
+        )
+        online_by_node: Dict[str, int] = {}
+        online_total = 0
+        online_nodes = 0
+        for node in nodes:
+            cached = _snapshot_for_node(node, by_id, by_name)
+            node_name = node.get("name") or str(node.get("id"))
+            if not isinstance(cached, dict):
+                online_by_node[node_name] = 0
+                continue
+            online_count = int(cached.get("online_clients") or 0)
+            online_by_node[node_name] = online_count
+            online_total += online_count
+            if cached.get("available"):
+                online_nodes += 1
+        return ({
+            "nodes_total": len(nodes),
+            "nodes_online": online_nodes,
+            "clients_total": int(traffic_projection.get("current_count") or len(traffic_projection.get("stats", {}))),
+            "online_clients_total": online_total,
+            "online_by_node": online_by_node,
+            "traffic": _traffic_totals_from_projection(traffic_projection),
+            "traffic_period": period,
+            "traffic_note": traffic_projection.get("note"),
+            "top_clients": _top_clients_from_projection(traffic_projection),
+            "cache": {
+                "source": "snapshot_collector",
+                "timestamp": snapshot.get("timestamp"),
+                "age_sec": round(time.time() - snapshot["timestamp"], 2) if snapshot.get("timestamp") else None,
+                "ready": bool(snapshot.get("nodes")),
+                "client_traffic_source": traffic_projection.get("cache_source"),
+                "client_traffic_timestamp": traffic_projection.get("cache_timestamp"),
+            },
+        }, nodes, by_id, by_name)
+
     @router.get("/api/v1/traffic/stats")
     async def get_traffic_stats(request: Request, group_by: str = "client", limit: int = 0):
         user = getattr(request.state, "auth_user", None)
@@ -151,52 +239,20 @@ def build_live_data_router(
             raise HTTPException(status_code=401)
         if period not in ["day", "week", "month", "all_time"]:
             raise HTTPException(status_code=400, detail="period must be day, week, month, or all_time")
-        nodes = await run_in_threadpool(list_nodes)
-        by_id, by_name, snapshot = _snapshot_by_node(nodes)
-        traffic_projection = (
-            await run_in_threadpool(get_cached_traffic_stats_projection_by_period, "client", period)
-            if get_cached_traffic_stats_projection_by_period
-            else await run_in_threadpool(get_cached_traffic_stats_projection, "client")
-            if get_cached_traffic_stats_projection
-            else {"stats": {}, "cache_source": "unavailable"}
-        )
-        top_clients = _top_clients_from_projection(traffic_projection)
-        traffic_totals = _traffic_totals_from_projection(traffic_projection)
-        online_by_node: Dict[str, int] = {}
-        online_total = 0
-        online_nodes = 0
-        for node in nodes:
-            cached = _snapshot_for_node(node, by_id, by_name)
-            node_name = node.get("name") or str(node.get("id"))
-            if not isinstance(cached, dict):
-                online_by_node[node_name] = 0
-                continue
-            online_count = int(cached.get("online_clients") or 0)
-            online_by_node[node_name] = online_count
-            online_total += online_count
-            if cached.get("available"):
-                online_nodes += 1
-        return ORJSONResponse(content={
-            "nodes_total": len(nodes),
-            "nodes_online": online_nodes,
-            "clients_total": int(traffic_projection.get("current_count") or len(traffic_projection.get("stats", {}))),
-            "online_clients_total": online_total,
-            "online_by_node": online_by_node,
-            "traffic": {
-                **traffic_totals,
-            },
-            "traffic_period": period,
-            "traffic_note": traffic_projection.get("note"),
-            "top_clients": top_clients,
-            "cache": {
-                "source": "snapshot_collector",
-                "timestamp": snapshot.get("timestamp"),
-                "age_sec": round(time.time() - snapshot["timestamp"], 2) if snapshot.get("timestamp") else None,
-                "ready": bool(snapshot.get("nodes")),
-                "client_traffic_source": traffic_projection.get("cache_source"),
-                "client_traffic_timestamp": traffic_projection.get("cache_timestamp"),
-            },
-        })
+        payload, _, _, _ = await _dashboard_payload(period)
+        return ORJSONResponse(content=payload)
+
+    @router.get("/api/v1/dashboard/overview")
+    async def get_dashboard_overview(request: Request, period: str = "all_time"):
+        """One bounded Dashboard read: summary plus sanitized fleet status."""
+        user = getattr(request.state, "auth_user", None)
+        if not user:
+            raise HTTPException(status_code=401)
+        if period not in ["day", "week", "month", "all_time"]:
+            raise HTTPException(status_code=400, detail="period must be day, week, month, or all_time")
+        summary, nodes, by_id, by_name = await _dashboard_payload(period)
+        fleet = [_dashboard_fleet_row(node, _snapshot_for_node(node, by_id, by_name)) for node in nodes]
+        return ORJSONResponse(content={"summary": summary, "fleet": fleet, "projection": "dashboard-v1"})
 
     @router.get("/api/v1/nodes/{node_id}/server-status")
     async def get_node_server_status(request: Request, node_id: int):

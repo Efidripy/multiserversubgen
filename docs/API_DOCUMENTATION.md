@@ -339,6 +339,39 @@ traffic projection и snapshots: этот endpoint не инициирует з�
 }
 ```
 
+### `GET /api/v1/dashboard/overview?period=all_time`
+
+Канонический ответ для начальной загрузки Dashboard: объединяет summary и
+лёгкий статус зарегистрированного fleet в одном запросе. Он читает только
+локальные collector snapshots и traffic projection; remote 3x-ui probes не
+запускаются. Поле `fleet` намеренно не содержит credentials, bearer tokens,
+полные inbound/client inventories или raw panel responses.
+
+```json
+{
+  "projection": "dashboard-v1",
+  "summary": {"nodes_total": 5, "nodes_online": 4, "online_clients_total": 7},
+  "fleet": [
+    {
+      "id": 1,
+      "name": "nl-1",
+      "panel_url": "https://nl-1.example.test/panel",
+      "available": true,
+      "online_clients": 3,
+      "poll_ms": 42.1,
+      "system": {"cpu": 12.5},
+      "xray": {"running": true}
+    }
+  ]
+}
+```
+
+### `GET /api/v1/snapshots/latest`
+
+Возвращает тот же bounded `dashboard-v1` node projection для совместимых
+экранов. Полный collector snapshot является внутренним runtime-артефактом;
+для детальных inbound/client операций используйте специализированные API.
+
 ---
 
 ## 🔧 Automation

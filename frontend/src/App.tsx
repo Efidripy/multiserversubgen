@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { activityLog } from './services/activityLog';
 import { ActivityLogPanel } from './components/ActivityLogPanel';
 import { useTranslation } from 'react-i18next';
@@ -15,13 +15,13 @@ import { clearAuthCredentials, loadRememberedUsername, rememberUsername, setAuth
 import { clearBrowserSession, createBrowserSession, getMfaStatus, verifyCurrentAuth } from './api/authService';
 import {
   getBackupHeaderSource,
-  getDashboardHeaderMetrics,
   getMonitoringHeaderSource,
   getSubscriptionsHeaderSource,
 } from './api/dashboard';
 import { IconName, UIIcon } from './components/UIIcon';
 import { requestActivityStore } from './services/requestActivity';
 import { readStaleCache, writeStaleCache } from './services/staleCache';
+import { DashboardDataProvider } from './services/DashboardDataContext';
 import { AUTH_REQUIRED_EVENT, resetAuthRequiredEventGuard } from './api/client';
 import type { NodeRecord } from './api/nodes';
 
@@ -175,7 +175,22 @@ export const App: React.FC = () => {
     offline: 0,
     checking: 0,
     loading: true,
+    onlineClients: null as number | null,
   });
+
+  const handleOnlineClientsChange = useCallback((onlineClients: number | null) => {
+    setFleetSummary((previous) => ({ ...previous, onlineClients }));
+  }, []);
+
+  const handleFleetSummaryChange = useCallback((summary: {
+    total: number;
+    online: number;
+    offline: number;
+    checking: number;
+    loading: boolean;
+  }) => {
+    setFleetSummary((previous) => ({ ...previous, ...summary }));
+  }, []);
 
   const lastNotifyRef = useRef<Record<string, number>>({});
 
@@ -321,28 +336,13 @@ export const App: React.FC = () => {
       try {
         switch (activeTab) {
           case 'dashboard': {
-            const metrics = await getDashboardHeaderMetrics();
+            // DashboardDataProvider owns the single aggregate read.  The
+            // header must not recreate /nodes + /snapshots/latest on every
+            // tab entry just to decorate values already rendered below.
             if (!cancelled) {
               updateHeaderSummary({
-                description: metrics.authIssues > 0
-                  ? t('header.dashboard.descAuthIssue', {
-                      online: metrics.reachableNow,
-                      total: metrics.registeredNodes,
-                      authBlocked: metrics.authIssues,
-                    })
-                  : t('header.dashboard.descHealthy', {
-                      online: metrics.reachableNow,
-                      total: metrics.registeredNodes,
-                      xray: metrics.xrayRunning,
-                    }),
-                stats: [
-                  { label: t('header.dashboard.registeredNodes'), value: String(metrics.registeredNodes) },
-                  { label: t('header.dashboard.reachableNow'), value: String(metrics.reachableNow), tone: metrics.reachableNow > 0 ? 'success' : 'warning' },
-                  { label: t('header.dashboard.authIssues'), value: String(metrics.authIssues), tone: metrics.authIssues > 0 ? 'danger' : 'default' },
-                  { label: t('header.dashboard.offlineNodes'), value: String(metrics.offlineNodes), tone: metrics.offlineNodes > 0 ? 'warning' : 'default' },
-                  { label: t('header.dashboard.xrayRunning'), value: String(metrics.xrayRunning), tone: metrics.xrayRunning > 0 ? 'accent' : 'warning' },
-                  { label: t('header.dashboard.onlineClients'), value: formatCompactNumber(metrics.onlineClients) },
-                ],
+                description: t(TAB_META.dashboard.descriptionKey),
+                stats: [],
               });
             }
             break;
@@ -730,6 +730,7 @@ export const App: React.FC = () => {
     switch (tab) {
       case 'dashboard':
         return (
+          <DashboardDataProvider>
           <div className="dashboard-command-grid min-w-0 overflow-hidden p-6 min-h-screen transition-all duration-300 ease-in-out xl:grid xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start xl:gap-6">
             <div className="dashboard-command-grid__main min-w-0 overflow-hidden">
               <DashboardSummary onNavigate={(tab) => {
@@ -738,6 +739,7 @@ export const App: React.FC = () => {
                   setActiveTab(t);
                 }
               }}
+              onOnlineClientsChange={handleOnlineClientsChange}
               heroStats={headerSummary.stats}
               fleetSummary={fleetSummary}
               />
@@ -780,7 +782,7 @@ export const App: React.FC = () => {
             <RegisteredFleetPanel
               collapsed={registeredFleetCollapsed}
               setCollapsed={setRegisteredFleetCollapsed}
-              onSummaryChange={setFleetSummary}
+              onSummaryChange={handleFleetSummaryChange}
               onOpenNodes={() => {
                 setNodeIntakeOpenSignal((value) => value + 1);
                 setRegisteredFleetCollapsed(true);
@@ -792,6 +794,7 @@ export const App: React.FC = () => {
               }}
             />
           </div>
+          </DashboardDataProvider>
         );
       case 'inbounds':
         return <LazyInboundManager
