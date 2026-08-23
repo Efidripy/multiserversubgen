@@ -37,6 +37,7 @@ export interface ClientForEdit {
   network?: string;              // 'tcp' | 'ws' | 'grpc' | 'xhttp' …
   flow?: string;
   encryption?: string;
+  comment?: string;
   remark?: string;
   limitIp?: number;
   totalGB?: number;
@@ -100,7 +101,9 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
   const [email, setEmail] = useState(client.email);
   const [uuid, setUuid] = useState(client.id || '');
   const [enable, setEnable] = useState(client.enable);
-  const [remark, setRemark] = useState(client.remark || '');
+  // 3x-ui stores the operator-visible annotation in `comment`.  `remark`
+  // remains a legacy fallback for older cached rows only.
+  const [comment, setComment] = useState(client.comment ?? client.remark ?? '');
   const [notes, setNotes] = useState(client.notes || '');
   const [flow, setFlow] = useState(client.flow || '');
   const [vlessEncryption, setVlessEncryption] = useState(client.encryption || 'none');
@@ -208,9 +211,11 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
         totalGB: totalGBNum,
         expiryTime: expiryMs,
         limitIp: limitIpNum,
+        // Always send `comment`, including an empty string, so an operator can
+        // intentionally clear it and the SYSTEM classifier remains stable.
+        comment,
         notes,
       };
-      if (remark) updates.remark = remark;
       if (flow !== undefined) updates.flow = flow;
       if (showVlessEncryption) updates.encryption = vlessEncryption.trim() || 'none';
       // Send UUID update if changed
@@ -329,8 +334,8 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
               <input
                 className="form-control form-control-sm"
                 style={inputStyle}
-                value={remark}
-                onChange={e => setRemark(e.target.value)}
+                value={comment}
+                onChange={e => setComment(e.target.value)}
                 placeholder=""
               />
             </Row>

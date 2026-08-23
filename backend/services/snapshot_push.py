@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from services.system_clients import is_system_client
 from utils import parse_field_as_dict
 
 
@@ -116,6 +117,8 @@ def flatten_snapshot_tables(snapshot: Dict[str, Any]) -> Dict[str, List[Dict[str
                     "up": up,
                     "down": down,
                     "flow": client.get("flow", ""),
+                    "comment": client.get("comment", ""),
+                    "is_system": is_system_client(client),
                     "node_id": node_id,
                     "node_name": node_name,
                     "node_ip": node_ip,
