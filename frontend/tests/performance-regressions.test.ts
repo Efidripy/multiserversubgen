@@ -83,4 +83,14 @@ describe('navigation performance regressions', () => {
     expect(traffic).toContain("reason: 'period'");
     expect(traffic).toContain('window.clearTimeout(realtimeTrafficRefreshTimerRef.current)');
   });
+
+  it('keeps a per-period stale projection visible while Statistics refreshes', () => {
+    const traffic = read('src/components/TrafficStats.tsx');
+
+    expect(traffic).toContain('trafficSelections?: Record<string');
+    expect(traffic).toContain('trafficSelectionCacheKey(nextGroupBy, nextPeriod)');
+    expect(traffic).toContain('const cachedSelection = readCachedTrafficSelection(nextGroupBy, nextPeriod)');
+    expect(traffic).toContain('{isColdLoading ? renderChartSkeleton()');
+    expect(traffic).toContain('sessionStorage.removeItem(TRAFFIC_STATS_CACHE_KEY)');
+  });
 });

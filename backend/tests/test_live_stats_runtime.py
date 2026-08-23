@@ -14,15 +14,17 @@ from services.live_stats_runtime import LiveStatsRuntime
 class DummyClientManager:
     def __init__(self, stats):
         self._stats = stats
+        self.traffic_calls = 0
 
     def get_traffic_stats(self, _nodes, group_by):
+        self.traffic_calls += 1
         return {"stats": deepcopy(self._stats), "group_by": group_by}
 
     def get_online_clients(self, _nodes):
         return []
 
 
-def _build_runtime(tmp_path, stats):
+def _build_runtime(tmp_path, stats, get_latest_snapshot=None):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     redis_store = {}
@@ -45,7 +47,54 @@ def _build_runtime(tmp_path, stats):
             warning=lambda *args, **kwargs: None,
             info=lambda *args, **kwargs: None,
         ),
+        get_latest_snapshot=get_latest_snapshot,
     )
+
+
+def test_collector_projection_serves_all_groupings_without_client_manager_fanout(monkeypatch, tmp_path):
+    now_ts = 500 * 3600
+    snapshot = {
+        "timestamp": now_ts,
+        "nodes": [
+            {
+                "name": "alpha",
+                "inbounds": [
+                    {
+                        "id": 7,
+                        "remark": "main",
+                        "up": 100,
+                        "down": 200,
+                        "clientStats": [
+                            {"email": "one@example.test", "up": 70, "down": 120},
+                            {"email": "two@example.test", "up": 30, "down": 80},
+                        ],
+                    }
+                ],
+            }
+        ],
+    }
+    runtime = _build_runtime(
+        tmp_path,
+        {"should-not": {"up": 1, "down": 1}},
+        get_latest_snapshot=lambda: snapshot,
+    )
+    runtime._save_period_snapshots(
+        "client",
+        {"one@example.test": {"up": 20, "down": 20, "total": 40, "count": 1}},
+        now_ts - 25 * 3600,
+    )
+    monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
+
+    client = runtime.get_cached_traffic_stats_projection_by_period("client", "day")
+    inbound = runtime.get_cached_traffic_stats_projection_by_period("inbound", "all_time")
+    node = runtime.get_cached_traffic_stats_projection_by_period("node", "all_time")
+
+    assert runtime.client_mgr.traffic_calls == 0
+    assert client["cache_source"] == "snapshot_collector"
+    assert client["stats"]["one@example.test"]["total"] == 150
+    assert client["stats"]["two@example.test"]["total"] == 110
+    assert inbound["stats"]["alpha:main"]["total"] == 300
+    assert node["stats"]["alpha"]["total"] == 300
 
 
 def test_day_period_uses_snapshot_before_requested_window(monkeypatch, tmp_path):
