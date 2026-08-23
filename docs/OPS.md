@@ -9,6 +9,16 @@ systemctl status sub-manager
 journalctl -u sub-manager -f
 ```
 
+### Browser-сессия и рестарты
+
+Подписанный browser cookie живёт до 8 часов и переживает reload только при
+стабильном signing key. Production systemd должен загружать
+`/etc/sub-manager/runtime-secrets.env` через `EnvironmentFile` и включать
+`REQUIRE_PERSISTENT_SECRETS=true`; файл должен иметь режим `0600` и содержать
+`WS_AUTH_SECRET` и `SUBSCRIPTION_SIGNING_SECRET`. `scripts/deploy/server-deploy.sh`
+проверяет этот контракт до staging/перезапуска. Если контракт нарушен, deploy
+останавливается без изменения рабочей директории и базы данных.
+
 ### Проверки
 
 ```bash
