@@ -58,15 +58,19 @@ def _online_client_emails(payload: Any) -> List[str]:
 
 
 def _detect_api_version(panel_version: str) -> str:
-    """Return 'v3' if panelVersion >= 3.x, else 'v2'.
-    v2 panels don't return panelVersion at all, so absence means v2."""
+    """Return telemetry only; endpoint capability remains the authority.
+
+    Absence of optional ``panelVersion`` is not proof of a v2 panel: current
+    3x-ui builds can omit it in a reduced status response.  Consumers must
+    probe the specific documented operation before using a legacy route.
+    """
     if not panel_version:
-        return "v2"
+        return "unknown"
     try:
         major = int(panel_version.split(".")[0])
         return "v3" if major >= 3 else "v2"
     except (ValueError, IndexError):
-        return "v2"
+        return "unknown"
 
 
 class CollectorMode(Enum):

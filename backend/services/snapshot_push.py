@@ -113,7 +113,11 @@ def flatten_snapshot_tables(snapshot: Dict[str, Any]) -> Dict[str, List[Dict[str
                     "enable": client.get("enable", True),
                     "expiryTime": _to_int(client.get("expiryTime", 0)),
                     "total": total,
-                    "totalGB": client.get("totalGB", total),
+                    # Inbound client config still names its quota ``total``.
+                    # Do not fall back to `clientStats.total`: that field is
+                    # consumption telemetry, while a missing config quota is
+                    # the explicit unlimited value (0).
+                    "totalGB": _to_int(client.get("totalGB", client.get("total", 0))),
                     "up": up,
                     "down": down,
                     "flow": client.get("flow", ""),

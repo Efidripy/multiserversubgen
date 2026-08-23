@@ -7,6 +7,8 @@ import sys
 import time
 from types import SimpleNamespace
 
+import pytest
+
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -18,6 +20,93 @@ def test_xui_timeout_is_hard_capped():
 
     assert connect_timeout <= 3.0
     assert read_timeout <= 4.0
+
+
+def test_xui_request_retries_safe_get_after_transient_status(monkeypatch):
+    """Configured transport retries remain available for safe reads."""
+    import xui_session
+
+    calls = []
+    responses = [SimpleNamespace(status_code=503), SimpleNamespace(status_code=200)]
+    monkeypatch.setattr(xui_session, "XUI_HTTP_RETRIES", 3)
+    monkeypatch.setattr(xui_session, "XUI_HTTP_RETRY_BACKOFF_SEC", 0)
+    monkeypatch.setattr(
+        xui_session,
+        "validate_and_resolve_outbound_url",
+        lambda _url: (True, "", "198.51.100.10"),
+    )
+
+    def fake_request(_session, method, url, **_kwargs):
+        calls.append((method, url))
+        return responses.pop(0)
+
+    monkeypatch.setattr(xui_session, "_pinned_session_request", fake_request)
+
+    response = xui_session.xui_request(
+        requests.Session(), "GET", "https://node.example.test/panel/api/server/status"
+    )
+
+    assert response.status_code == 200
+    assert calls == [
+        ("GET", "https://node.example.test/panel/api/server/status"),
+        ("GET", "https://node.example.test/panel/api/server/status"),
+    ]
+
+
+@pytest.mark.parametrize("method", ("POST", "PUT", "PATCH", "DELETE"))
+@pytest.mark.parametrize("retries", (None, 3))
+def test_xui_request_never_retries_unsafe_method_after_transient_status(monkeypatch, method, retries):
+    """A panel mutation is not replayed even when retry configuration is non-zero."""
+    import xui_session
+
+    calls = []
+    monkeypatch.setattr(xui_session, "XUI_HTTP_RETRIES", 3)
+    monkeypatch.setattr(xui_session, "XUI_HTTP_RETRY_BACKOFF_SEC", 0)
+    monkeypatch.setattr(
+        xui_session,
+        "validate_and_resolve_outbound_url",
+        lambda _url: (True, "", "198.51.100.10"),
+    )
+
+    def fake_request(_session, request_method, url, **_kwargs):
+        calls.append((request_method, url))
+        return SimpleNamespace(status_code=503)
+
+    monkeypatch.setattr(xui_session, "_pinned_session_request", fake_request)
+
+    response = xui_session.xui_request(
+        requests.Session(), method, "https://node.example.test/panel/api/clients/add", retries=retries
+    )
+
+    assert response.status_code == 503
+    assert calls == [(method, "https://node.example.test/panel/api/clients/add")]
+
+
+def test_xui_request_never_retries_unsafe_method_after_transport_error(monkeypatch):
+    """A disconnected POST stays ambiguous instead of being automatically replayed."""
+    import xui_session
+
+    calls = []
+    monkeypatch.setattr(xui_session, "XUI_HTTP_RETRIES", 3)
+    monkeypatch.setattr(xui_session, "XUI_HTTP_RETRY_BACKOFF_SEC", 0)
+    monkeypatch.setattr(
+        xui_session,
+        "validate_and_resolve_outbound_url",
+        lambda _url: (True, "", "198.51.100.10"),
+    )
+
+    def fake_request(*_args, **_kwargs):
+        calls.append("POST")
+        raise requests.ConnectionError("connection dropped after request send")
+
+    monkeypatch.setattr(xui_session, "_pinned_session_request", fake_request)
+
+    with pytest.raises(requests.ConnectionError, match="connection dropped"):
+        xui_session.xui_request(
+            requests.Session(), "POST", "https://node.example.test/panel/api/clients/add"
+        )
+
+    assert calls == ["POST"]
 
 
 def test_xui_panel_base_url_preserves_panel_url_path():

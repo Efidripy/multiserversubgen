@@ -36,7 +36,6 @@ export interface ClientForEdit {
   security?: string;             // 'none' | 'reality' | 'tls'
   network?: string;              // 'tcp' | 'ws' | 'grpc' | 'xhttp' …
   flow?: string;
-  encryption?: string;
   comment?: string;
   remark?: string;
   limitIp?: number;
@@ -67,6 +66,29 @@ const toDateInput = (ms: number): string => {
 
 const fromDateInput = (d: string): number =>
   d ? new Date(d + 'T00:00:00').getTime() : 0;
+
+const GIB_BYTES = 1024 ** 3;
+
+const quotaBytesToGbInput = (value: number | undefined): string => {
+  if (!Number.isFinite(value)) return '';
+  return String((value as number) / GIB_BYTES);
+};
+
+const quotaGbInputToBytes = (value: string): number | undefined => {
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  const gigabytes = Number(normalized);
+  if (!Number.isFinite(gigabytes) || gigabytes < 0) return undefined;
+  return Math.round(gigabytes * GIB_BYTES);
+};
+
+const ipLimitInputToValue = (value: string): number | undefined => {
+  const normalized = value.trim();
+  if (!normalized) return undefined;
+  const limit = Number(normalized);
+  if (!Number.isInteger(limit) || limit < 0) return undefined;
+  return limit;
+};
 
 // Flow is relevant only for VLESS with Reality or plain TCP
 const showFlowField = (protocol: string, security?: string, network?: string): boolean =>
@@ -106,12 +128,15 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
   const [comment, setComment] = useState(client.comment ?? client.remark ?? '');
   const [notes, setNotes] = useState(client.notes || '');
   const [flow, setFlow] = useState(client.flow || '');
-  const [vlessEncryption, setVlessEncryption] = useState(client.encryption || 'none');
-  const [totalGB, setTotalGB] = useState(() => {
-    const raw = client.totalGB ?? client.total ?? 0;
-    return raw >= 1e6 ? String(raw / (1024 ** 3)) : String(raw || 0);
-  });
-  const [limitIp, setLimitIp] = useState(String(client.limitIp || 0));
+  // `total` is the traffic response's byte counter/limit; `totalGB` is the
+  // separately configured quota.  Never derive one from the other.
+  const [security, setSecurity] = useState(client.security || 'none');
+  const [totalGB, setTotalGB] = useState(() => quotaBytesToGbInput(client.totalGB));
+  // An absent value means the cached row did not carry this field.  Keep it
+  // absent on save rather than unintentionally resetting the panel to zero.
+  const [limitIp, setLimitIp] = useState(() =>
+    client.limitIp == null ? '' : String(client.limitIp),
+  );
   const [expiryDate, setExpiryDate] = useState(toDateInput(client.expiryTime));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -167,7 +192,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
       if (!encryption) {
         throw new Error(t('clients.vlessEncryptionGenerationFailed'));
       }
-      setVlessEncryption(encryption);
+      setSecurity(encryption);
       toast(t('clients.vlessEncryptionGenerated'), 'success');
     } catch (e: any) {
       toast(e?.message || t('clients.vlessEncryptionGenerationFailed'), 'error');
@@ -202,22 +227,30 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
     setError('');
     try {
       const expiryMs = fromDateInput(expiryDate);
-      const totalGBNum = parseFloat(totalGB) || 0;
-      const limitIpNum = parseInt(limitIp) || 0;
+      const totalGBBytes = quotaGbInputToBytes(totalGB);
+      const limitIpValue = ipLimitInputToValue(limitIp);
+      if (totalGB.trim() && totalGBBytes === undefined) {
+        setError(t('clients.invalidTrafficLimit', { defaultValue: 'Enter a non-negative traffic limit.' }));
+        return;
+      }
+      if (limitIp.trim() && limitIpValue === undefined) {
+        setError(t('clients.invalidIpLimit', { defaultValue: 'Enter a non-negative whole IP limit.' }));
+        return;
+      }
 
       const updates: Record<string, any> = {
         email,
         enable,
-        totalGB: totalGBNum,
         expiryTime: expiryMs,
-        limitIp: limitIpNum,
         // Always send `comment`, including an empty string, so an operator can
         // intentionally clear it and the SYSTEM classifier remains stable.
         comment,
         notes,
       };
+      if (totalGBBytes !== undefined) updates.totalGB = totalGBBytes;
+      if (limitIpValue !== undefined) updates.limitIp = limitIpValue;
       if (flow !== undefined) updates.flow = flow;
-      if (showVlessEncryption) updates.encryption = vlessEncryption.trim() || 'none';
+      if (showVlessEncryption) updates.security = security.trim() || 'none';
       // Send UUID update if changed
       if (uuid && uuid !== client.id) updates.id = uuid;
 
@@ -373,8 +406,8 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
                   <input
                     className="form-control form-control-sm"
                     style={{ ...inputStyle, fontFamily: 'monospace', fontSize: '0.74rem' }}
-                    value={vlessEncryption}
-                    onChange={e => setVlessEncryption(e.target.value)}
+                    value={security}
+                    onChange={e => setSecurity(e.target.value)}
                     placeholder="none"
                   />
                   <button
