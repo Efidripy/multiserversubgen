@@ -75,6 +75,19 @@ class LiveStatsRuntime:
         except (TypeError, ValueError, OverflowError):
             return 0
 
+    @staticmethod
+    def _snapshot_system_client_emails(snapshot: Dict) -> list[str]:
+        nodes = snapshot.get("nodes") if isinstance(snapshot, dict) else None
+        if not isinstance(nodes, list):
+            return []
+        return sorted({
+            str(email).strip().casefold()
+            for node in nodes
+            if isinstance(node, dict)
+            for email in node.get("system_client_emails") or []
+            if isinstance(email, str) and email.strip()
+        })
+
     def _build_snapshot_traffic_projections(
         self, snapshot: Optional[Dict] = None
     ) -> tuple[Optional[float], Dict[str, Dict[str, Dict[str, int]]]]:
@@ -157,6 +170,7 @@ class LiveStatsRuntime:
             timestamp = float(snapshot.get("timestamp"))
         except (TypeError, ValueError):
             return None
+        system_client_emails = self._snapshot_system_client_emails(snapshot)
 
         with self._snapshot_projection_lock:
             if timestamp == self._snapshot_projection_timestamp:
@@ -166,6 +180,7 @@ class LiveStatsRuntime:
                     "group_by": group_by,
                     "cache_source": "snapshot_collector",
                     "cache_timestamp": timestamp,
+                    "system_client_emails": system_client_emails,
                 }
 
         _timestamp, projections = self._build_snapshot_traffic_projections(snapshot)
@@ -181,6 +196,7 @@ class LiveStatsRuntime:
                 "group_by": group_by,
                 "cache_source": "snapshot_collector",
                 "cache_timestamp": timestamp,
+                "system_client_emails": system_client_emails,
             }
 
     def seed_period_snapshots_from_collector(self, now_ts: Optional[float] = None) -> Dict[str, bool]:
@@ -397,6 +413,8 @@ class LiveStatsRuntime:
             "current_count": len(current_stats),
             "cache_source": projection.get("cache_source", "empty") if isinstance(projection, dict) else "empty",
         }
+        if isinstance(projection, dict) and isinstance(projection.get("system_client_emails"), list):
+            payload["system_client_emails"] = projection["system_client_emails"]
         if isinstance(projection, dict) and projection.get("cache_timestamp") is not None:
             payload["cache_timestamp"] = projection["cache_timestamp"]
 

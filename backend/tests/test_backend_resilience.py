@@ -382,10 +382,19 @@ def test_snapshot_collector_publishes_presence_without_exposing_it_to_dashboard(
 
         def get_online_clients(self, node):
             if node["id"] == 1:
-                return {"online_clients": ["First@Example.test", " first@example.test ", 7]}
+                return {"online_clients": ["First@Example.test", " first@example.test ", "system@example.test", 7]}
             return {"online_clients": ["second@example.test"]}
 
-        def get_inbounds(self, _node):
+        def get_inbounds(self, node):
+            if node["id"] == 1:
+                return {
+                    "available": True,
+                    "inbounds": [{
+                        "settings": {
+                            "clients": [{"email": "SYSTEM@example.test", "comment": "system"}]
+                        }
+                    }],
+                }
             return {"available": True, "inbounds": []}
 
     collector = SnapshotCollector(

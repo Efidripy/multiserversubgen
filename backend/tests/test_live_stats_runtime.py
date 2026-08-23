@@ -58,6 +58,7 @@ def test_collector_projection_serves_all_groupings_without_client_manager_fanout
         "nodes": [
             {
                 "name": "alpha",
+                "system_client_emails": ["two@example.test"],
                 "inbounds": [
                     {
                         "id": 7,
@@ -91,6 +92,7 @@ def test_collector_projection_serves_all_groupings_without_client_manager_fanout
 
     assert runtime.client_mgr.traffic_calls == 0
     assert client["cache_source"] == "snapshot_collector"
+    assert client["system_client_emails"] == ["two@example.test"]
     assert client["stats"]["one@example.test"]["total"] == 150
     assert client["stats"]["two@example.test"]["total"] == 110
     assert inbound["stats"]["alpha:main"]["total"] == 300

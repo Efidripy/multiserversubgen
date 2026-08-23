@@ -26,6 +26,11 @@ def build_live_data_router(
         stats = projection.get("stats") if isinstance(projection, dict) else None
         if not isinstance(stats, dict):
             return []
+        system_client_emails = {
+            email.strip().casefold()
+            for email in projection.get("system_client_emails", [])
+            if isinstance(email, str) and email.strip()
+        }
 
         def _metric(value) -> int:
             try:
@@ -36,6 +41,8 @@ def build_live_data_router(
         clients = []
         for email, item in stats.items():
             if not isinstance(item, dict):
+                continue
+            if str(email).strip().casefold() in system_client_emails:
                 continue
             upload = _metric(item.get("up", item.get("upload", 0)))
             download = _metric(item.get("down", item.get("download", 0)))
