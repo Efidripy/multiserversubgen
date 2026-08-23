@@ -431,15 +431,6 @@ def build_clients_router(
             await _run(invalidate_live_stats_cache)
         return {"results": results, "updated": ok_count}
 
-    @router.get("/api/v1/clients/online")
-    async def get_online_clients(request: Request):
-        user = check_auth(request)
-        if not user:
-            raise HTTPException(status_code=401)
-        nodes = await _run(node_service.list_nodes)
-        online = await _run(client_mgr.get_online_clients, nodes)
-        return ORJSONResponse(content={"online": online, "count": len(online)})
-
     # --- IP tracking ---
 
     @router.get("/api/v1/clients/{email}/ips")
