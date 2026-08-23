@@ -1,5 +1,5 @@
 from typing import Dict, Optional
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
 
@@ -123,6 +123,49 @@ def build_clients_router(
         total = len(clients)
         page_clients = clients[offset: offset + limit]
         return ORJSONResponse(content={"clients": page_clients, "total": total, "limit": limit, "offset": offset})
+
+    @router.get("/api/v1/clients/paged")
+    async def list_node_clients_paged(
+        request: Request,
+        node_id: int,
+        page: int = 1,
+        page_size: int = Query(25, alias="pageSize"),
+        search: str = "",
+        status_filter: str = Query("", alias="filter"),
+        protocol: str = "",
+        sort: str = "email",
+        order: str = "ascend",
+    ):
+        """Return one node's documented v3 slim page.
+
+        It is deliberately node-scoped: combining first pages from several
+        panels would omit clients and corrupt the UI's email grouping.  The
+        response is labelled ``detail_level=slim`` and must not be supplied to
+        update/edit endpoints that require a full client object.
+        """
+        user = check_auth(request)
+        if not user:
+            raise HTTPException(status_code=401)
+        if page < 1 or page_size < 1 or page_size > 200:
+            raise HTTPException(status_code=422, detail="page must be >= 1 and pageSize must be between 1 and 200")
+        node = await _run(get_node_or_404, node_id)
+        payload = await _run(
+            client_mgr.get_node_clients_paged,
+            node,
+            page=page,
+            page_size=page_size,
+            search=search,
+            status_filter=status_filter,
+            protocol=protocol,
+            sort=sort,
+            order=order,
+        )
+        if payload is None:
+            raise HTTPException(status_code=502, detail="Unable to read paged clients from node panel")
+        return ORJSONResponse(
+            content={"node_id": node.get("id"), "node_name": node.get("name", ""), **payload},
+            headers={"Cache-Control": "private, max-age=15"},
+        )
 
     @router.get("/api/v1/clients")
     async def list_clients(request: Request, email: Optional[str] = None):

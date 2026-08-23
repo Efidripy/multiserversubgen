@@ -204,6 +204,186 @@ class ClientManager:
             "traffic_total": traffic.get("total", (traffic.get("up", 0) or 0) + (traffic.get("down", 0) or 0)),
         }
 
+    @staticmethod
+    def _slim_client_row(row: Dict) -> Dict:
+        """Return the safe subset documented for ``clients/list/paged``.
+
+        The upstream paged endpoint intentionally omits fields required for a
+        full client replacement (UUID, credentials, flow and security).  Keep
+        that boundary explicit so a page row can never be confused with the
+        DTO used by ``update_client``.
+        """
+        traffic = row.get("traffic") if isinstance(row.get("traffic"), dict) else {}
+        inbound_ids = row.get("inboundIds") if isinstance(row.get("inboundIds"), list) else []
+        return {
+            "email": str(row.get("email") or ""),
+            "subId": str(row.get("subId") or ""),
+            "enable": bool(row.get("enable", True)),
+            "totalGB": row.get("totalGB", 0),
+            "expiryTime": row.get("expiryTime", 0),
+            "limitIp": row.get("limitIp", 0),
+            "reset": row.get("reset", 0),
+            "inboundIds": [item for item in inbound_ids if isinstance(item, int)],
+            "traffic": {
+                "up": traffic.get("up", 0),
+                "down": traffic.get("down", 0),
+                "total": traffic.get("total", (traffic.get("up", 0) or 0) + (traffic.get("down", 0) or 0)),
+                "enable": bool(traffic.get("enable", True)),
+            },
+            "createdAt": row.get("createdAt", 0),
+            "updatedAt": row.get("updatedAt", 0),
+        }
+
+    @staticmethod
+    def _safe_paged_summary(summary: object) -> Dict:
+        """Keep only the bounded, non-sensitive summary shape from the panel."""
+        if not isinstance(summary, dict):
+            return {}
+        result: Dict = {}
+        for key in ("total", "active", "onlineCount", "depletedCount", "expiringCount", "deactiveCount"):
+            value = summary.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                result[key] = value
+        for key in ("online", "depleted", "expiring", "deactive"):
+            value = summary.get(key)
+            if isinstance(value, list):
+                result[key] = [str(item) for item in value[:200] if isinstance(item, str)]
+        return result
+
+    def _request_paged_clients_v3(self, s, base_url: str, *, params: Dict) -> tuple[str, Optional[Dict]]:
+        """Fetch one documented slim client page without accepting full DTOs.
+
+        ``unsupported`` is reserved for an explicit route absence.  A response
+        that is reachable but malformed/unsuccessful stays terminal so it can
+        never silently become a legacy result.
+        """
+        try:
+            res = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/clients/list/paged",
+                params=params,
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
+            if res.status_code in (404, 405):
+                return "unsupported", None
+            if res.status_code != 200:
+                return "failed", None
+            data = res.json()
+            obj = data.get("obj") if isinstance(data, dict) and data.get("success") is True else None
+            if not isinstance(obj, dict) or not isinstance(obj.get("items"), list):
+                return "failed", None
+            return "supported", obj
+        except Exception as exc:
+            logger.debug("v3 clients paged read failed for %s: %s", base_url, exc)
+            return "failed", None
+
+    def _legacy_paged_clients(self, node: Dict, *, page: int, page_size: int, search: str) -> Dict:
+        """Build a bounded compatibility page only after modern absence is proven."""
+        rows: List[Dict] = []
+        needle = search.lower().strip()
+        for inbound in self._fetch_inbounds_from_node(node):
+            try:
+                settings = parse_field_as_dict(
+                    inbound.get("settings"), node_id=node["name"], field_name="settings"
+                )
+            except (TypeError, ValueError):
+                continue
+            for client in settings.get("clients", []):
+                if not isinstance(client, dict):
+                    continue
+                email = str(client.get("email") or "")
+                if needle and needle not in email.lower() and needle not in str(client.get("subId") or "").lower() and needle not in str(client.get("comment") or "").lower():
+                    continue
+                rows.append(self._slim_client_row({
+                    "email": email,
+                    "subId": client.get("subId", ""),
+                    "enable": client.get("enable", True),
+                    "totalGB": client.get("totalGB", 0),
+                    "expiryTime": client.get("expiryTime", 0),
+                    "limitIp": client.get("limitIp", 0),
+                    "reset": client.get("reset", 0),
+                    "inboundIds": [inbound.get("id")] if isinstance(inbound.get("id"), int) else [],
+                    "traffic": {},
+                }))
+        rows.sort(key=lambda item: item["email"].lower())
+        start = (page - 1) * page_size
+        return {
+            "items": rows[start:start + page_size],
+            "total": len(rows),
+            "filtered": len(rows),
+            "page": page,
+            "pageSize": page_size,
+            "summary": {},
+        }
+
+    def get_node_clients_paged(
+        self,
+        node: Dict,
+        *,
+        page: int = 1,
+        page_size: int = 25,
+        search: str = "",
+        status_filter: str = "",
+        protocol: str = "",
+        sort: str = "email",
+        order: str = "ascend",
+    ) -> Optional[Dict]:
+        """Return one node's read-only paged projection.
+
+        This is intentionally a node-scoped endpoint.  Combining the first
+        remote page from every node would drop email groups and create a false
+        global pagination contract.  The existing full fleet client cache
+        therefore remains responsible for the current global Client Manager.
+        """
+        page = max(1, int(page))
+        page_size = min(200, max(1, int(page_size)))
+        params = {
+            "page": page,
+            "pageSize": page_size,
+            "search": str(search or ""),
+            "filter": str(status_filter or ""),
+            "protocol": str(protocol or ""),
+            "sort": str(sort or "email"),
+            "order": str(order or "ascend"),
+        }
+        session, base_url = self._get_session(node)
+        if not session:
+            return None
+        state, obj = self._request_paged_clients_v3(session, base_url, params=params)
+        if state == "unsupported":
+            def _retry_paged(fresh_session, fresh_base_url):
+                retry_state, retry_obj = self._request_paged_clients_v3(
+                    fresh_session, fresh_base_url, params=params
+                )
+                return None if retry_state == "unsupported" else (retry_state, retry_obj)
+
+            retry_state, retry_result, _, _ = self._retry_v3_after_reauth(
+                node,
+                _retry_paged,
+            )
+            if retry_state == "confirmed_absent":
+                legacy = self._legacy_paged_clients(node, page=page, page_size=page_size, search=search)
+                return {"detail_level": "slim", "source": "legacy_projection", **legacy}
+            if retry_state != "response" or not isinstance(retry_result, tuple):
+                return None
+            state, obj = retry_result
+
+        if state != "supported" or not isinstance(obj, dict):
+            return None
+        items = [self._slim_client_row(row) for row in obj.get("items", []) if isinstance(row, dict)]
+        return {
+            "detail_level": "slim",
+            "source": "v3_paged",
+            "items": items,
+            "total": obj.get("total", len(items)),
+            "filtered": obj.get("filtered", len(items)),
+            "page": obj.get("page", page),
+            "pageSize": obj.get("pageSize", page_size),
+            "summary": self._safe_paged_summary(obj.get("summary")),
+        }
+
     def _add_client_v3(self, s, base_url: str, email: str,
                        inbound_ids: List[int], config: Dict) -> Optional[bool]:
         """POST /panel/api/clients/add — v3 single call."""

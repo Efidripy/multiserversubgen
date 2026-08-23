@@ -13,7 +13,16 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
-from xui_session import XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC, extract_node_auth, login_panel, xui_request
+from xui_session import (
+    XUI_FAST_RETRIES,
+    XUI_FAST_TIMEOUT_SEC,
+    build_panel_base_url,
+    extract_node_auth,
+    get_authenticated_session,
+    login_panel,
+    make_node_key_for_node,
+    xui_request,
+)
 from utils import parse_field_as_dict
 
 logger = logging.getLogger("sub_manager")
@@ -181,6 +190,7 @@ class InboundManager:
                     client_count = len(raw_settings.get("clients", []))
                     inbound = {
                         "id": ib.get("id"),
+                        "node_id": node.get("id"),
                         "node_name": node["name"],
                         "node_ip": node["ip"],
                         "protocol": ib.get("protocol"),
@@ -213,6 +223,195 @@ class InboundManager:
                 logger.warning(f"Failed to aggregate inbounds: {exc}")
 
         return inbounds
+
+    def _get_read_session(self, node: Dict, *, force_reauth: bool = False) -> tuple:
+        """Return an authenticated session for a modern read projection only."""
+        try:
+            base_url = build_panel_base_url(node)
+            username, password, bearer_token = extract_node_auth(node, self.decrypt)
+            auth = get_authenticated_session(
+                node_key=make_node_key_for_node(node),
+                base_url=base_url,
+                username=username,
+                password=password,
+                bearer_token=bearer_token,
+                verify_value=_requests_verify_value(),
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+                force_reauth=force_reauth,
+            )
+            if auth.get("ok"):
+                return auth["session"], auth["base_url"]
+        except Exception as exc:
+            logger.warning("Inbound read authentication failed for %s: %s", node.get("name"), exc)
+        return None, None
+
+    def _read_v3_projection(self, node: Dict, path: str) -> tuple[str, Optional[object]]:
+        """Fetch a modern read route, proving absence with a forced re-auth.
+
+        A reachable route with a 5xx response, invalid JSON, or a failed panel
+        envelope is terminal.  Only the same route returning 404/405 twice is
+        permitted to select the legacy projection below.
+        """
+        session, base_url = self._get_read_session(node)
+        if not session:
+            return "failed", None
+
+        for attempt in range(2):
+            try:
+                response = xui_request(
+                    session,
+                    "GET",
+                    f"{base_url}{path}",
+                    timeout=XUI_FAST_TIMEOUT_SEC,
+                    retries=XUI_FAST_RETRIES,
+                )
+            except Exception as exc:
+                logger.debug("v3 inbound read failed for %s%s: %s", base_url, path, exc)
+                return "failed", None
+
+            if response.status_code in (404, 405):
+                if attempt:
+                    return "unsupported", None
+                session, base_url = self._get_read_session(node, force_reauth=True)
+                if not session:
+                    return "failed", None
+                continue
+            if response.status_code != 200:
+                return "failed", None
+            try:
+                data = response.json()
+            except Exception:
+                return "failed", None
+            if not isinstance(data, dict) or data.get("success") is not True:
+                return "failed", None
+            return "supported", data.get("obj")
+        return "failed", None
+
+    @staticmethod
+    def _slim_inbound_projection(inbound: Dict, node: Dict) -> Dict:
+        """Make a list-only DTO which cannot be reused for full updates."""
+        try:
+            settings = parse_field_as_dict(
+                inbound.get("settings"), node_id=node.get("name", ""), field_name="settings"
+            )
+        except (TypeError, ValueError):
+            settings = {}
+        clients = settings.get("clients") if isinstance(settings.get("clients"), list) else []
+        slim_clients = [
+            {
+                "email": str(client.get("email") or ""),
+                "enable": bool(client.get("enable", True)),
+                "comment": str(client.get("comment") or ""),
+            }
+            for client in clients
+            if isinstance(client, dict)
+        ]
+        return {
+            "detail_level": "slim",
+            "id": inbound.get("id"),
+            "node_id": node.get("id"),
+            "node_name": node.get("name", ""),
+            "node_ip": node.get("ip", ""),
+            "remark": str(inbound.get("remark") or ""),
+            "tag": str(inbound.get("tag") or ""),
+            "protocol": str(inbound.get("protocol") or ""),
+            "port": inbound.get("port"),
+            "enable": bool(inbound.get("enable", True)),
+            "client_count": len(slim_clients),
+            "settings": {"clients": slim_clients},
+        }
+
+    @staticmethod
+    def _inbound_option_projection(inbound: Dict, node: Dict) -> Dict:
+        """Return only documented picker fields; no settings or client stats."""
+        try:
+            settings = parse_field_as_dict(
+                inbound.get("settings"), node_id=node.get("name", ""), field_name="settings"
+            )
+        except (TypeError, ValueError):
+            settings = {}
+        try:
+            stream = parse_field_as_dict(
+                inbound.get("streamSettings"), node_id=node.get("name", ""), field_name="streamSettings"
+            )
+        except (TypeError, ValueError):
+            stream = {}
+        security = str(stream.get("security") or "")
+        protocol = str(inbound.get("protocol") or "")
+        tls_flow_capable = bool(inbound.get("tlsFlowCapable"))
+        if "tlsFlowCapable" not in inbound:
+            tls_flow_capable = protocol == "vless" and security in {"tls", "reality"}
+        return {
+            "detail_level": "option",
+            "id": inbound.get("id"),
+            "node_id": node.get("id"),
+            "node_name": node.get("name", ""),
+            "remark": str(inbound.get("remark") or ""),
+            "tag": str(inbound.get("tag") or ""),
+            "protocol": protocol,
+            "port": inbound.get("port"),
+            "enable": bool(inbound.get("enable", True)),
+            "tlsFlowCapable": tls_flow_capable,
+            "ssMethod": str(inbound.get("ssMethod") or settings.get("method") or ""),
+        }
+
+    @staticmethod
+    def _legacy_rows_for_node(node: Dict, cached_full: Optional[Dict[str, List[Dict]]]) -> Optional[List[Dict]]:
+        if not cached_full:
+            return None
+        rows = cached_full.get(str(node.get("id")))
+        if rows is None:
+            rows = cached_full.get(str(node.get("name") or ""))
+        return rows if isinstance(rows, list) else None
+
+    def get_all_slim_inbounds(
+        self, nodes: List[Dict], *, cached_full: Optional[Dict[str, List[Dict]]] = None
+    ) -> List[Dict]:
+        """Get modern slim inbound rows; use full legacy rows only when proven absent."""
+        def _collect(node: Dict) -> List[Dict]:
+            state, obj = self._read_v3_projection(node, "/panel/api/inbounds/list/slim")
+            if state == "supported" and isinstance(obj, list):
+                return [self._slim_inbound_projection(item, node) for item in obj if isinstance(item, dict)]
+            if state != "unsupported":
+                return []
+            legacy = self._legacy_rows_for_node(node, cached_full)
+            if legacy is None:
+                legacy = self._fetch_inbounds_from_node(node)
+            return [self._slim_inbound_projection(item, node) for item in legacy if isinstance(item, dict)]
+
+        rows: List[Dict] = []
+        futures = [_shared_executor.submit(_collect, node) for node in nodes]
+        for future in as_completed(futures):
+            try:
+                rows.extend(future.result())
+            except Exception as exc:
+                logger.warning("Failed to aggregate slim inbounds: %s", exc)
+        return rows
+
+    def get_all_inbound_options(
+        self, nodes: List[Dict], *, cached_full: Optional[Dict[str, List[Dict]]] = None
+    ) -> List[Dict]:
+        """Get the v3 picker projection without exposing full inbound settings."""
+        def _collect(node: Dict) -> List[Dict]:
+            state, obj = self._read_v3_projection(node, "/panel/api/inbounds/options")
+            if state == "supported" and isinstance(obj, list):
+                return [self._inbound_option_projection(item, node) for item in obj if isinstance(item, dict)]
+            if state != "unsupported":
+                return []
+            legacy = self._legacy_rows_for_node(node, cached_full)
+            if legacy is None:
+                legacy = self._fetch_inbounds_from_node(node)
+            return [self._inbound_option_projection(item, node) for item in legacy if isinstance(item, dict)]
+
+        rows: List[Dict] = []
+        futures = [_shared_executor.submit(_collect, node) for node in nodes]
+        for future in as_completed(futures):
+            try:
+                rows.extend(future.result())
+            except Exception as exc:
+                logger.warning("Failed to aggregate inbound options: %s", exc)
+        return rows
     
     def _fetch_inbounds_from_node(self, node: Dict) -> List[Dict]:
         """Получить инбаунды с конкретного узла"""
