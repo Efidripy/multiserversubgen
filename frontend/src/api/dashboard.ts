@@ -63,15 +63,6 @@ export interface DashboardOverviewData {
   projection: 'dashboard-v1';
 }
 
-export interface DashboardHeaderMetrics {
-  registeredNodes: number;
-  reachableNow: number;
-  authIssues: number;
-  offlineNodes: number;
-  xrayRunning: number;
-  onlineClients: number;
-}
-
 export interface DashboardServerStatus {
   nodeId?: number;
   node: string;
@@ -254,46 +245,10 @@ export async function getLatestSnapshotNodes(): Promise<SnapshotNode[]> {
   return Array.isArray(res.data?.nodes) ? res.data.nodes : [];
 }
 
-export async function getDashboardHeaderMetrics(): Promise<DashboardHeaderMetrics> {
-  const [nodes, snapshotNodes] = await Promise.all([listNodes(), getLatestSnapshotNodes()]);
-  return {
-    registeredNodes: nodes.length || snapshotNodes.length || 0,
-    reachableNow: snapshotNodes.filter((node) => node.available).length,
-    authIssues: snapshotNodes.filter((node) => node.reason === 'auth_failed' || node.reason === 'two_factor_required').length,
-    offlineNodes: snapshotNodes.filter((node) => !node.available).length,
-    xrayRunning: snapshotNodes.filter((node) => node.xray_running).length,
-    onlineClients: snapshotNodes.reduce((sum, node) => sum + (node.online_clients || 0), 0),
-  };
-}
-
 export async function getInboundsHeaderSource(options: { signal?: AbortSignal } = {}): Promise<any[]> {
   const res = await api.get('/v1/inbounds', { auth: getAuth(), signal: options.signal });
   return Array.isArray(res.data?.inbounds) ? res.data.inbounds
     : Array.isArray(res.data) ? res.data : [];
-}
-
-export async function getClientsHeaderSource(): Promise<{ clients: any[]; nodes: NodeRecord[] }> {
-  const [clientsRes, nodes] = await Promise.all([
-    api.get('/v1/clients', { auth: getAuth() }),
-    listNodes(),
-  ]);
-  const data = clientsRes.data;
-  return {
-    clients: Array.isArray(data?.clients) ? data.clients
-      : Array.isArray(data) ? data : [],
-    nodes,
-  };
-}
-
-export async function getTrafficHeaderSource(): Promise<{ onlineClients: any[]; stats: Record<string, any> }> {
-  const [onlineRes, trafficRes] = await Promise.all([
-    api.get('/v1/clients/online', { auth: getAuth() }),
-    api.get('/v1/traffic/stats', { auth: getAuth(), params: { group_by: 'client' } }),
-  ]);
-  return {
-    onlineClients: Array.isArray(onlineRes.data?.online_clients) ? onlineRes.data.online_clients : [],
-    stats: trafficRes.data?.stats || {},
-  };
 }
 
 export async function getMonitoringHeaderSource(): Promise<{ deps: any; overview: any; stack: any }> {
