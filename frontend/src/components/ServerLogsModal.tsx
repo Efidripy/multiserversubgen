@@ -20,6 +20,7 @@ export function ServerLogsModal({ open, nodeId, nodeName, kind, onClose }: Serve
   const { t } = useTranslation();
   const failedText = t('common.failed');
   const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
   const requestRef = useRef(0);
   const inFlightRef = useRef(0);
   const [level, setLevel] = useState<ServerLogLevel>('info');
@@ -32,6 +33,8 @@ export function ServerLogsModal({ open, nodeId, nodeName, kind, onClose }: Serve
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
+
+  onCloseRef.current = onClose;
 
   const loadLogs = useCallback(async (silent = false) => {
     if (silent && inFlightRef.current > 0) return;
@@ -66,11 +69,11 @@ export function ServerLogsModal({ open, nodeId, nodeName, kind, onClose }: Serve
     closeRef.current?.focus();
     void loadLogs();
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
+      if (event.key === 'Escape') onCloseRef.current();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [loadLogs, onClose, open]);
+  }, [loadLogs, open]);
 
   useEffect(() => {
     if (!open || !autoUpdate) return undefined;
