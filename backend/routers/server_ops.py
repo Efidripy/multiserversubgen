@@ -3,7 +3,7 @@ from typing import Dict
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
-from server_monitor import validate_server_history_request
+from server_monitor import validate_server_history_request, validate_server_log_level
 
 
 def build_server_ops_router(
@@ -78,13 +78,23 @@ def build_server_ops_router(
     @router.get("/api/v1/nodes/{node_id}/server-logs")
     async def get_server_logs(
         request: Request, node_id: int,
-        count: int = 100, level: str = "info"
+        count: int = 100, level: str = "info", syslog: bool | None = None
     ):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        try:
+            level = validate_server_log_level(level)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         node = await _node(node_id)
-        return await _run(server_monitor.get_server_logs, node, count=min(max(count, 1), 500), level=level)
+        return await _run(
+            server_monitor.get_server_logs,
+            node,
+            count=min(max(count, 1), 500),
+            level=level,
+            syslog=syslog,
+        )
 
     @router.get("/api/v1/nodes/{node_id}/xray-logs")
     async def get_xray_logs(request: Request, node_id: int, count: int = 100, level: str = "info"):
