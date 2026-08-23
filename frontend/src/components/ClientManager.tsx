@@ -10,7 +10,7 @@ import {
   type ClientIpHistoryEntry,
   type ClientSourceFilter,
 } from '../api/clients';
-import { getInboundsHeaderSource } from '../api/dashboard';
+import { getInboundOptions, type InboundOption } from '../api/inbounds';
 import { listNodes } from '../api/nodes';
 import { AddClientMultiServer } from './AddClientMultiServer';
 import { getAuth } from '../auth';
@@ -64,13 +64,6 @@ interface BatchAddClient {
   expiryTime?: number;
   enable: boolean;
   flow?: string;
-}
-
-interface InboundOption {
-  id: number;
-  node_name: string;
-  protocol: string;
-  remark: string;
 }
 
 interface ClientsPageCache {
@@ -522,11 +515,11 @@ export const ClientManager: React.FC = () => {
     requestIdRef.current = requestId;
 
     try {
-      // Fire both requests in parallel; backend serves from cache (20s fresh / 180s stale).
-      const [nodeList, clientsPayload, rawInbounds] = await Promise.all([
+      // Fetch page projections in parallel; each route is independently cached.
+      const [nodeList, clientsPayload, inboundOptions] = await Promise.all([
         listNodes({ signal: controller.signal }),
         listClientsBySource(sourceFilter, controller.signal),
-        getInboundsHeaderSource({ signal: controller.signal }),
+        getInboundOptions({ signal: controller.signal }),
       ]);
 
       if (requestIdRef.current !== requestId) return;
@@ -549,13 +542,7 @@ export const ClientManager: React.FC = () => {
         sourceFilter,
       });
 
-      const inboundList: InboundOption[] = rawInbounds.map((ib: any) => ({
-        id: ib.id,
-        node_name: ib.node_name,
-        protocol: ib.protocol,
-        remark: ib.remark || '',
-      }));
-      setInboundOptions(inboundList);
+      setInboundOptions(inboundOptions);
 
       if (!silent && trafficEndpointModeRef.current === 'disabled') {
         trafficEndpointModeRef.current = 'unknown';

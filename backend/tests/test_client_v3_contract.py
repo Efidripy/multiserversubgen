@@ -57,6 +57,102 @@ def test_v3_list_404_selects_legacy_projection():
     # A v3 route absence is operation-specific; no node-wide v2 downgrade.
 
 
+def test_v3_paged_clients_uses_exact_query_and_strips_full_client_fields():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    paged = {
+        "success": True,
+        "obj": {
+            "items": [{
+                "uuid": "must-not-leak-into-slim-row",
+                "password": "must-not-leak",
+                "flow": "xtls-rprx-vision",
+                "email": "alice@example.test",
+                "subId": "sub-1",
+                "enable": True,
+                "totalGB": 100,
+                "inboundIds": [3],
+                "traffic": {"up": 4, "down": 5},
+            }],
+            "total": 1,
+            "filtered": 1,
+            "page": 2,
+            "pageSize": 10,
+            "summary": {"total": 1, "online": ["alice@example.test"]},
+        },
+    }
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", return_value=_response(200, paged)
+    ) as request:
+        result = manager.get_node_clients_paged(
+            _node(), page=2, page_size=10, search="alice", status_filter="active", protocol="vless"
+        )
+
+    assert request.call_args.args[1:] == ("GET", f"{base_url}/panel/api/clients/list/paged")
+    assert request.call_args.kwargs["params"] == {
+        "page": 2, "pageSize": 10, "search": "alice", "filter": "active",
+        "protocol": "vless", "sort": "email", "order": "ascend",
+    }
+    assert result["detail_level"] == "slim"
+    assert result["source"] == "v3_paged"
+    assert result["items"] == [{
+        "email": "alice@example.test", "subId": "sub-1", "enable": True,
+        "totalGB": 100, "expiryTime": 0, "limitIp": 0, "reset": 0,
+        "inboundIds": [3], "traffic": {"up": 4, "down": 5, "total": 9, "enable": True},
+        "createdAt": 0, "updatedAt": 0,
+    }]
+
+
+def test_v3_paged_clients_reauthenticates_before_legacy_projection():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    legacy = {"items": [], "total": 0, "filtered": 0, "page": 1, "pageSize": 25, "summary": {}}
+    with patch.object(
+        manager, "_get_session", side_effect=[(MagicMock(), base_url), (MagicMock(), base_url)]
+    ) as sessions, patch(
+        "client_manager.xui_request", side_effect=[_response(404), _response(405)]
+    ) as request, patch.object(manager, "_legacy_paged_clients", return_value=legacy) as fallback:
+        result = manager.get_node_clients_paged(_node())
+
+    assert request.call_count == 2
+    assert all(call.args[2].endswith("/panel/api/clients/list/paged") for call in request.call_args_list)
+    assert sessions.call_args_list[1].kwargs == {"force_reauth": True}
+    fallback.assert_called_once()
+    assert result["source"] == "legacy_projection"
+
+
+def test_v3_paged_clients_5xx_is_terminal_and_never_reads_legacy():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), "https://panel.example.test")), patch(
+        "client_manager.xui_request", return_value=_response(503)
+    ) as request, patch.object(manager, "_legacy_paged_clients") as fallback:
+        assert manager.get_node_clients_paged(_node()) is None
+
+    request.assert_called_once()
+    fallback.assert_not_called()
+
+
+def test_v3_paged_clients_malformed_response_is_terminal_and_never_reads_legacy():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    malformed = _response(200)
+    malformed.json.side_effect = ValueError("not json")
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), "https://panel.example.test")), patch(
+        "client_manager.xui_request", return_value=malformed
+    ) as request, patch.object(manager, "_legacy_paged_clients") as fallback:
+        assert manager.get_node_clients_paged(_node()) is None
+
+    request.assert_called_once()
+    fallback.assert_not_called()
+
+
 def test_v3_update_reads_full_record_without_undocumented_inbound_query():
     from client_manager import ClientManager
     from xui_session import invalidate_node_api_version, set_node_api_version

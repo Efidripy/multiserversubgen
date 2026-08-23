@@ -65,6 +65,8 @@ REGISTERED_V3_OPERATIONS = frozenset(
         route("POST", "/login"),
         # Inbounds
         route("GET", "/panel/api/inbounds/list"),
+        route("GET", "/panel/api/inbounds/list/slim"),
+        route("GET", "/panel/api/inbounds/options"),
         route("POST", "/panel/api/inbounds/add"),
         route("POST", "/panel/api/inbounds/del/{id}"),
         route("POST", "/panel/api/inbounds/update/{id}"),
@@ -74,6 +76,7 @@ REGISTERED_V3_OPERATIONS = frozenset(
         route("POST", "/panel/api/inbounds/resetAllTraffics"),
         # Clients
         route("GET", "/panel/api/clients/list"),
+        route("GET", "/panel/api/clients/list/paged"),
         route("POST", "/panel/api/clients/add"),
         route("POST", "/panel/api/clients/update/{email}"),
         route("POST", "/panel/api/clients/del/{email}"),
