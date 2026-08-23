@@ -56,6 +56,14 @@ class XUIClient:
         self._session: Optional[Any] = None  # requests.Session
 
     @property
+    def base_url(self) -> str:
+        """Return the panel URL including its configured reverse-proxy path."""
+        if not self.base_path:
+            return self.url
+        suffix = f"/{self.base_path}"
+        return self.url if self.url.endswith(suffix) else f"{self.url}{suffix}"
+
+    @property
     def _plain_password(self) -> str:
         if self._decrypt:
             try:
@@ -82,9 +90,9 @@ class XUIClient:
             raw = self._plain_password
             if raw.startswith("bearer:"):
                 bearer = raw[len("bearer:"):]
-                ok = login_panel(session, self.url, "", "", bearer_token=bearer)
+                ok = login_panel(session, self.base_url, "", "", bearer_token=bearer)
             else:
-                ok = login_panel(session, self.url, self.username, raw)
+                ok = login_panel(session, self.base_url, self.username, raw)
             if ok:
                 self._session = session
             return ok
@@ -121,15 +129,21 @@ class XUIClient:
         if not self._session:
             self.login()
 
-        url = f"{self.url}/{path.lstrip('/')}"
+        url = f"{self.base_url}/{path.lstrip('/')}"
         try:
             return xui_request(self._session, method, url, json=json, params=params)
         except Exception as exc:
-            # Session may have expired — try once more after re-login
-            logger.debug("XUIClient.request: retrying after session error: %s", exc)
+            # A transport exception after a non-idempotent request is
+            # ambiguous: the panel may already have applied it.  Only safe
+            # reads receive an automatic re-auth/retry.
+            if method.upper() not in {"GET", "HEAD", "OPTIONS"}:
+                raise RuntimeError(
+                    f"XUIClient: {method.upper()} outcome is ambiguous; refresh/reconcile before retrying"
+                ) from exc
+            logger.debug("XUIClient.request: retrying safe read after session error: %s", exc)
             self._session = None
             if not self.login():
-                raise RuntimeError(f"XUIClient: re-authentication failed for {self.url}") from exc
+                raise RuntimeError(f"XUIClient: re-authentication failed for {self.base_url}") from exc
             return xui_request(self._session, method, url, json=json, params=params)
 
     @classmethod

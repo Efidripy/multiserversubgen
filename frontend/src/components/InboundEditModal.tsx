@@ -50,6 +50,9 @@ const parseJ = (v: any): Record<string, any> => {
   return {};
 };
 
+const commaSeparated = (value: unknown): string => Array.isArray(value) ? value.join(',') : '';
+const csvValues = (value: string): string[] => value.split(',').map((item) => item.trim()).filter(Boolean);
+
 const NETWORKS = ['tcp', 'ws', 'grpc', 'xhttp', 'httpupgrade', 'quic'] as const;
 type Network = typeof NETWORKS[number];
 type Security = 'none' | 'tls' | 'reality';
@@ -220,8 +223,8 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
   const [sniffFAKEDNS, setSniffFAKEDNS] = useState<boolean>((sn0.destOverride || []).includes('fakedns'));
   const [sniffMetaOnly, setSniffMetaOnly] = useState<boolean>(Boolean(sn0.metadataOnly));
   const [sniffRouteOnly, setSniffRouteOnly] = useState<boolean>(Boolean(sn0.routeOnly));
-  const [sniffIPsExcl, setSniffIPsExcl] = useState((sn0.domainsExcluded || []).join(','));
-  const [sniffDomsExcl, setSniffDomsExcl] = useState((sn0.domainsExcluded || []).join(','));
+  const [sniffIPsExcl, setSniffIPsExcl] = useState(commaSeparated(sn0.excludeForInbound));
+  const [sniffDomsExcl, setSniffDomsExcl] = useState(commaSeparated(sn0.domainsExcluded));
 
   // UI state
   const [activeTab, setActiveTab] = useState<'form' | 'raw'>('form');
@@ -310,7 +313,30 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
     if (sniffTLS) destOverride.push('tls');
     if (sniffQUIC) destOverride.push('quic');
     if (sniffFAKEDNS) destOverride.push('fakedns');
-    return { enabled: sniffEnabled, destOverride, metadataOnly: sniffMetaOnly, routeOnly: sniffRouteOnly };
+    // Keep fields introduced by newer Xray/3x-ui versions when an operator
+    // changes one of the controls represented by this form.
+    return {
+      ...sn0,
+      enabled: sniffEnabled,
+      destOverride,
+      metadataOnly: sniffMetaOnly,
+      routeOnly: sniffRouteOnly,
+      excludeForInbound: csvValues(sniffIPsExcl),
+      domainsExcluded: csvValues(sniffDomsExcl),
+    };
+  };
+
+  const sniffingChanged = (): boolean => {
+    const initialDestOverride = Array.isArray(sn0.destOverride) ? sn0.destOverride : [];
+    const currentDestOverride = buildSniffing().destOverride as string[];
+    return (
+      sniffEnabled !== Boolean(sn0.enabled)
+      || sniffMetaOnly !== Boolean(sn0.metadataOnly)
+      || sniffRouteOnly !== Boolean(sn0.routeOnly)
+      || currentDestOverride.join('\u0000') !== initialDestOverride.join('\u0000')
+      || sniffIPsExcl !== commaSeparated(sn0.excludeForInbound)
+      || sniffDomsExcl !== commaSeparated(sn0.domainsExcluded)
+    );
   };
 
   const buildInboundSettings = (): Record<string, any> => {
@@ -364,10 +390,18 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
         remark,
         port: parseInt(port) || inbound.port,
         enable,
-        listen: listenIP,
         streamSettings: buildStreamSettings(),
-        sniffing: buildSniffing(),
       };
+      // Avoid touching values that this request did not edit.  This protects
+      // old cached/realtime rows that predate the v3 list DTO additions and
+      // makes a remark-only edit safe even if the panel has extra sniffing
+      // keys not represented by the form.
+      if (listenIP !== (typeof inbound.listen === 'string' ? inbound.listen : '')) {
+        updates.listen = listenIP;
+      }
+      if (sniffingChanged()) {
+        updates.sniffing = buildSniffing();
+      }
       if (inbound.protocol === 'vless' && String(settings0.decryption || 'none') !== String(vlessDecryption || 'none')) {
         updates.settings = buildInboundSettings();
       }

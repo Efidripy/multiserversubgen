@@ -158,7 +158,9 @@ def _normalize_loads(value: Any) -> List[float]:
 
 
 def _normalize_network(obj: Dict[str, Any]) -> Dict[str, float]:
-    net = obj.get("netTraffic") or obj.get("network") or obj.get("net") or {}
+    # 3x-ui v3 uses ``netIO: {up, down}``; retain the historical shapes only
+    # for older panels and cached snapshots.
+    net = obj.get("netIO") or obj.get("netTraffic") or obj.get("network") or obj.get("net") or {}
     return {
         "upload": _first_number(net, ("sent", "upload", "tx", "txBytes", "up"), 0.0),
         "download": _first_number(net, ("recv", "download", "rx", "rxBytes", "down"), 0.0),
@@ -333,9 +335,12 @@ class ThreeXUIMonitor:
             res = xui_request(s, method, join_panel_url(base_url, path), **kwargs)
         except Exception as exc:
             return None, None, {"ok": False, "reason": "request_failed", "error": str(exc)}
-        # A 404/405 while choosing a documented compatibility route is an
-        # endpoint capability result, not evidence that the session expired.
-        if not is_auth_failure_response(res, include_panel_api_404=not endpoint_probe):
+        # 3x-ui may mask an expired panel session as 404 on /panel/api/*.  For
+        # a compatibility probe, re-authenticate and repeat the *same* route
+        # once before classifying it as absent.  The caller may select legacy
+        # only after that second 404/405.
+        probe_ambiguous = endpoint_probe and res.status_code in (404, 405)
+        if not probe_ambiguous and not is_auth_failure_response(res, include_panel_api_404=True):
             return res, base_url, {"ok": True, "reason": "ok", "error": ""}
 
         logger.info("ThreeXUIMonitor: session expired for %s, re-authenticating once", node.get("name"))
@@ -797,16 +802,25 @@ class ServerMonitor:
             return {"error": "Failed to connect"}
         
         try:
-            # Current 3x-ui handlers read PostForm fields, not a JSON payload.
-            body = {"level": validate_server_log_level(level), "syslog": "true" if syslog else "false"}
+            # The pinned v3 OpenAPI declares JSON for the count-in-path
+            # endpoints.  Form data is a narrowly bounded compatibility path
+            # only when a concrete media-type rejection proves it is needed.
+            json_body = {"level": validate_server_log_level(level), "syslog": bool(syslog)}
+            form_body = {"level": json_body["level"], "syslog": "true" if syslog else "false"}
             res = None
             logs_endpoint = ""
+            v3_form_compat = False
 
             # v3: count в URL path — POST /panel/api/server/logs/{count}
             try:
                 candidate = xui_request(s, "POST",
                                         f"{base_url}/panel/api/server/logs/{count}",
-                                        data=body, timeout=15)
+                                        json=json_body, timeout=15)
+                if candidate.status_code in (415, 422):
+                    candidate = xui_request(s, "POST",
+                                            f"{base_url}/panel/api/server/logs/{count}",
+                                            data=form_body, timeout=15)
+                    v3_form_compat = True
                 if candidate.status_code not in (404, 405):
                     res = candidate
                     logs_endpoint = f"{base_url}/panel/api/server/logs/{count}"
@@ -816,7 +830,7 @@ class ServerMonitor:
             # v2 fallback: count в теле запроса
             if res is None:
                 try:
-                    payload_v2 = {"count": str(count), **body}
+                    payload_v2 = {"count": str(count), **form_body}
                     for ep in (f"{base_url}/panel/api/server/logs",
                                f"{base_url}/server/logs"):
                         try:
@@ -847,15 +861,17 @@ class ServerMonitor:
                 if not logs and syslog is None:
                     syslog_payload = {"level": level, "syslog": "true"}
                     if logs_endpoint.endswith(f"/{count}"):
-                        request_data = syslog_payload
+                        request_kwargs = {"data": syslog_payload} if v3_form_compat else {
+                            "json": {"level": level, "syslog": True}
+                        }
                     else:
-                        request_data = {"count": str(count), **syslog_payload}
+                        request_kwargs = {"data": {"count": str(count), **syslog_payload}}
                     syslog_response = xui_request(
                         s,
                         "POST",
                         logs_endpoint,
-                        data=request_data,
                         timeout=15,
+                        **request_kwargs,
                     )
                     if syslog_response.status_code == 200:
                         syslog_data = syslog_response.json()
@@ -1148,7 +1164,10 @@ class ServerMonitor:
             path = f"{base_url}/panel/api/server/updateGeofile"
             if file_name:
                 path = f"{path}/{file_name}"
-            res = xui_request(s, "POST", path, timeout=60)
+            # OpenAPI v3 requires a JSON body.  ``fileName`` is optional, so
+            # use an explicit empty object for the all-geofiles action.
+            body = {"fileName": file_name} if file_name else {}
+            res = xui_request(s, "POST", path, json=body, timeout=60)
             if res.status_code == 200:
                 data = res.json()
                 return {"success": data.get("success", False), "msg": data.get("msg", "")}
