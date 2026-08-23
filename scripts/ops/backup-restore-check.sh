@@ -9,7 +9,7 @@ fi
 
 PROJECT_NAME="${PROJECT_NAME:-sub-manager}"
 PROJECT_DIR="${PROJECT_DIR:-/opt/${PROJECT_NAME}}"
-DB_FILE="${DB_FILE:-${PROJECT_DIR}/nodes.db}"
+DB_FILE="${DB_FILE:-${PROJECT_DIR}/admin.db}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_DIR="${BACKUP_ROOT}/${PROJECT_NAME}_verify_${STAMP}"
@@ -20,15 +20,22 @@ if [[ ! -f "$DB_FILE" ]]; then
 fi
 
 mkdir -p "$OUT_DIR"
-cp -a "$DB_FILE" "$OUT_DIR/nodes.db.bak"
+BACKUP_FILE="$OUT_DIR/admin.db.bak"
+RESTORE_FILE="$OUT_DIR/admin.db.restore-test"
 
 if ! command -v sqlite3 >/dev/null 2>&1; then
   echo "sqlite3 is required"
   exit 1
 fi
 
+# Do not copy the main database while a running process may still have WAL
+# pages outside the main file. SQLite's online backup API gives us a
+# transactionally consistent snapshot without stopping the service.
+sqlite3 "$DB_FILE" 'PRAGMA wal_checkpoint(PASSIVE);' >/dev/null
+sqlite3 "$DB_FILE" ".backup '$BACKUP_FILE'"
+
 src_check="$(sqlite3 "$DB_FILE" 'PRAGMA integrity_check;' | tr -d '\r')"
-bak_check="$(sqlite3 "$OUT_DIR/nodes.db.bak" 'PRAGMA integrity_check;' | tr -d '\r')"
+bak_check="$(sqlite3 "$BACKUP_FILE" 'PRAGMA integrity_check;' | tr -d '\r')"
 
 if [[ "$src_check" != "ok" || "$bak_check" != "ok" ]]; then
   echo "Integrity check failed"
@@ -37,11 +44,9 @@ if [[ "$src_check" != "ok" || "$bak_check" != "ok" ]]; then
   exit 1
 fi
 
-sqlite3 "$OUT_DIR/nodes.db.restore-test" "ATTACH DATABASE '$OUT_DIR/nodes.db.bak' AS src; VACUUM INTO '$OUT_DIR/nodes.db.restored'; DETACH DATABASE src;" >/dev/null 2>&1 || true
-if [[ -f "$OUT_DIR/nodes.db.restored" ]]; then
-  restored_check="$(sqlite3 "$OUT_DIR/nodes.db.restored" 'PRAGMA integrity_check;' | tr -d '\r')"
-  [[ "$restored_check" == "ok" ]] || { echo "Restored DB integrity failed: $restored_check"; exit 1; }
-fi
+sqlite3 "$RESTORE_FILE" ".restore '$BACKUP_FILE'"
+restored_check="$(sqlite3 "$RESTORE_FILE" 'PRAGMA integrity_check;' | tr -d '\r')"
+[[ "$restored_check" == "ok" ]] || { echo "Restored DB integrity failed: $restored_check"; exit 1; }
 
 echo "Backup/restore verification passed."
 echo "Artifacts: $OUT_DIR"
