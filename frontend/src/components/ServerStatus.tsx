@@ -272,6 +272,7 @@ export function ServerStatus({
   const [pendingActions, setPendingActions] = useState<Record<string, boolean>>({});
   const [nodeOpsModal, setNodeOpsModal] = useState<{ nodeId: number; nodeName: string; tab: NodeOpsTab } | null>(null);
   const [logsModal, setLogsModal] = useState<{ nodeId: number; nodeName: string; kind: NodeLogKind } | null>(null);
+  const closeLogsModal = useCallback(() => setLogsModal(null), []);
   void includeCounts;
   void includeCollectorStatus;
 
@@ -724,7 +725,7 @@ export function ServerStatus({
         nodeId={logsModal.nodeId}
         nodeName={logsModal.nodeName}
         kind={logsModal.kind}
-        onClose={() => setLogsModal(null)}
+        onClose={closeLogsModal}
       />
     )}
     </>

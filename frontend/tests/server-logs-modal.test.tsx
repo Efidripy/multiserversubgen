@@ -43,4 +43,15 @@ describe('ServerLogsModal', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('does not refetch when the parent recreates the close callback', async () => {
+    getNodeLogs.mockResolvedValue(['stable']);
+    const { rerender } = render(<ServerLogsModal open nodeId={25} nodeName="5-EST" kind="panel" onClose={() => {}} />);
+    await screen.findByRole('log');
+    const callsAfterOpen = getNodeLogs.mock.calls.length;
+
+    rerender(<ServerLogsModal open nodeId={25} nodeName="5-EST" kind="panel" onClose={() => {}} />);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(getNodeLogs).toHaveBeenCalledTimes(callsAfterOpen);
+  });
 });
