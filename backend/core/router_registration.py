@@ -85,7 +85,7 @@ def register_app_routers(
 ):
     app.include_router(
         build_observability_router(
-            get_latest_snapshot=snapshot_collector.latest_snapshot,
+            get_latest_snapshot=snapshot_collector.latest_dashboard_snapshot,
             render_metrics=render_metrics_response,
             get_deps_health=deps_health_status,
         )

@@ -28,6 +28,37 @@ export interface DashboardSummaryData {
   top_clients: DashboardTopClient[];
 }
 
+/** Sanitized node telemetry returned by the single Dashboard aggregate route. */
+export interface DashboardFleetNode {
+  id: number;
+  name: string;
+  panel_url: string;
+  source_type: string;
+  read_only: boolean;
+  enabled: boolean;
+  available: boolean | null;
+  status?: string;
+  reason?: string;
+  error?: string;
+  system?: any;
+  xray?: any;
+  network?: any;
+  xray_running?: boolean;
+  online_clients?: number;
+  traffic_total?: number;
+  timestamp?: number;
+  poll_ms?: number;
+  panel_version?: string;
+  api_version?: string;
+  xray_compatibility?: XrayCompatibilitySummary;
+}
+
+export interface DashboardOverviewData {
+  summary: DashboardSummaryData;
+  fleet: DashboardFleetNode[];
+  projection: 'dashboard-v1';
+}
+
 export interface DashboardHeaderMetrics {
   registeredNodes: number;
   reachableNow: number;
@@ -139,9 +170,75 @@ export const normalizeDashboardSummary = (raw: any): DashboardSummaryData => ({
   top_clients: normalizeTopClients(raw?.top_clients),
 });
 
+const normalizeDashboardFleet = (raw: unknown): DashboardFleetNode[] => {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item, index) => {
+    const value = item && typeof item === 'object' ? item as Record<string, unknown> : null;
+    const id = toFiniteNumber(value?.id);
+    if (!value || id <= 0) return [];
+    return [{
+      id,
+      name: typeof value.name === 'string' && value.name ? value.name : `node-${index + 1}`,
+      panel_url: typeof value.panel_url === 'string' ? value.panel_url : '',
+      source_type: typeof value.source_type === 'string' ? value.source_type : 'xui',
+      read_only: Boolean(value.read_only),
+      enabled: value.enabled !== false,
+      available: typeof value.available === 'boolean' ? value.available : null,
+      status: typeof value.status === 'string' ? value.status : undefined,
+      reason: typeof value.reason === 'string' ? value.reason : undefined,
+      error: typeof value.error === 'string' ? value.error : undefined,
+      system: value.system,
+      xray: value.xray,
+      network: value.network,
+      xray_running: Boolean(value.xray_running),
+      online_clients: toFiniteNumber(value.online_clients),
+      traffic_total: toFiniteNumber(value.traffic_total),
+      timestamp: toFiniteNumber(value.timestamp),
+      poll_ms: toFiniteNumber(value.poll_ms),
+      panel_version: typeof value.panel_version === 'string' ? value.panel_version : '',
+      api_version: typeof value.api_version === 'string' ? value.api_version : '',
+      xray_compatibility: value.xray_compatibility as XrayCompatibilitySummary | undefined,
+    }];
+  });
+};
+
 export async function getDashboardSummary(period: DashboardTrafficPeriod = 'all_time'): Promise<DashboardSummaryData> {
   const res = await api.get('/v1/dashboard/summary', { auth: getAuth(), params: { period } });
   return normalizeDashboardSummary(res.data);
+}
+
+export async function getDashboardOverview(period: DashboardTrafficPeriod = 'all_time'): Promise<DashboardOverviewData> {
+  const res = await api.get('/v1/dashboard/overview', { auth: getAuth(), params: { period } });
+  return {
+    summary: normalizeDashboardSummary(res.data?.summary),
+    fleet: normalizeDashboardFleet(res.data?.fleet),
+    projection: 'dashboard-v1',
+  };
+}
+
+export function dashboardFleetToServerDeck(fleet: DashboardFleetNode[]): DashboardServerDeck {
+  const nodeIdsByName: Record<string, number> = {};
+  const latencyByNode: Record<number, number> = {};
+  const servers = fleet.map((node) => {
+    nodeIdsByName[node.name] = node.id;
+    if (node.poll_ms && node.poll_ms > 0) latencyByNode[node.id] = node.poll_ms;
+    return {
+      nodeId: node.id,
+      node: node.name,
+      available: node.available === true,
+      status: node.status,
+      reason: node.reason,
+      error: node.error,
+      timestamp: node.timestamp ? String(node.timestamp) : undefined,
+      system: node.system,
+      xray: node.xray,
+      network: node.network,
+      panel_version: node.panel_version,
+      api_version: node.api_version,
+      xray_compatibility: node.xray_compatibility,
+    };
+  });
+  return { servers, nodeIdsByName, latencyByNode, updateAvailableNodeIds: [] };
 }
 
 export async function getLatestSnapshotNodes(): Promise<SnapshotNode[]> {
