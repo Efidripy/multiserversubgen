@@ -59,6 +59,16 @@ def validate_server_history_request(metric: str, bucket: int | str) -> tuple[str
     return normalized_metric, normalized_bucket
 
 
+VALID_SERVER_LOG_LEVELS = frozenset({'debug', 'info', 'notice', 'warning', 'err'})
+
+
+def validate_server_log_level(level: str) -> str:
+    normalized = str(level or 'info').strip().lower()
+    if normalized not in VALID_SERVER_LOG_LEVELS:
+        raise ValueError(f'Unsupported server log level: {level}')
+    return normalized
+
+
 def _normalize_log_lines(raw_logs: Any) -> List[str]:
     """Normalize empty sentinels returned by different 3x-ui log backends."""
     if raw_logs is None:
@@ -764,7 +774,13 @@ class ServerMonitor:
             return False
         return self._xui_success(legacy_response)
     
-    def get_server_logs(self, node: Dict, count: int = 100, level: str = "info") -> Dict:
+    def get_server_logs(
+        self,
+        node: Dict,
+        count: int = 100,
+        level: str = "info",
+        syslog: bool | None = None,
+    ) -> Dict:
         """Получить логи сервера
         
         Args:
@@ -782,7 +798,7 @@ class ServerMonitor:
         
         try:
             # Current 3x-ui handlers read PostForm fields, not a JSON payload.
-            body = {"level": level, "syslog": "false"}
+            body = {"level": validate_server_log_level(level), "syslog": "true" if syslog else "false"}
             res = None
             logs_endpoint = ""
 
@@ -825,7 +841,10 @@ class ServerMonitor:
 
                 # logger.GetLogs can be empty on systemd installations even
                 # though journalctl still holds the panel service history.
-                if not logs:
+                # Keep the historical empty-app-log fallback only when the
+                # caller omitted syslog. An explicit checkbox choice must be
+                # respected and must not silently switch sources.
+                if not logs and syslog is None:
                     syslog_payload = {"level": level, "syslog": "true"}
                     if logs_endpoint.endswith(f"/{count}"):
                         request_data = syslog_payload
