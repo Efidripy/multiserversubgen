@@ -255,6 +255,7 @@ def test_client_presence_uses_collector_projection_without_fleet_scan(monkeypatc
             "timestamp": 123.0,
             "online_emails": ["active@example.test"],
             "online_by_node": {"12": ["active@example.test"]},
+            "node_names": {"12": "alpha"},
             "last_seen": {"active@example.test": 123.0},
             "last_seen_by_node": {"12": {"active@example.test": 123.0}},
         },
@@ -287,10 +288,18 @@ def test_client_presence_uses_collector_projection_without_fleet_scan(monkeypatc
         "timestamp": 123.0,
         "online_emails": ["active@example.test"],
         "online_by_node": {"12": ["active@example.test"]},
+        "node_names": {"12": "alpha"},
         "last_seen": {"active@example.test": 123.0},
         "last_seen_by_node": {"12": {"active@example.test": 123.0}},
     }
-    assert calls == ["presence"]
+    online_response = TestClient(app).get("/api/v1/clients/online")
+    assert online_response.status_code == 200
+    assert online_response.json() == {
+        "online_clients": [{"email": "active@example.test", "node_id": "12", "node_name": "alpha"}],
+        "count": 1,
+        "source": "snapshot_collector",
+    }
+    assert calls == ["presence", "presence"]
 
 
 def test_dashboard_summary_auth_required():

@@ -406,6 +406,7 @@ def test_snapshot_collector_publishes_presence_without_exposing_it_to_dashboard(
         "1": ["first@example.test"],
         "2": ["second@example.test"],
     }
+    assert presence["node_names"] == {"1": "alpha", "2": "beta"}
     assert set(presence["last_seen"]) == {"first@example.test", "second@example.test"}
     assert set(presence["last_seen_by_node"]["1"]) == {"first@example.test"}
     assert set(presence["last_seen_by_node"]["2"]) == {"second@example.test"}
