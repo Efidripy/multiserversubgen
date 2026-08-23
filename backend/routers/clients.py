@@ -4,6 +4,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
 
 from services.client_notes import enrich_clients_with_notes, upsert_client_note
+from services.system_clients import annotate_system_clients
 
 
 def build_clients_router(
@@ -41,7 +42,8 @@ def build_clients_router(
         return await _run(node_service.list_nodes)
 
     async def _with_notes(clients, nodes):
-        return await _run(enrich_clients_with_notes, db_path, clients, nodes=nodes)
+        enriched = await _run(enrich_clients_with_notes, db_path, clients, nodes=nodes)
+        return await _run(annotate_system_clients, enriched)
 
     @router.get("/api/v1/clients/count")
     async def count_clients(request: Request, node_id: Optional[int] = None):

@@ -20,6 +20,7 @@ import { readStaleCache, writeStaleCache } from '../services/staleCache';
 import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
 import { ClientEditModal } from './ClientEditModal';
 import { groupClientsByEmail, normalizeClientEmail, type ClientEmailGroup } from '../utils/clientGroups';
+import { isSystemClient } from '../utils/systemClients';
 
 interface Client {
   id?: string | null;
@@ -41,6 +42,8 @@ interface Client {
   limitIp?: number;
   security?: string;
   network?: string;
+  comment?: string;
+  is_system?: boolean;
   notes?: string;
 }
 
@@ -148,6 +151,8 @@ const normalizeClientRows = (
   down: Number(c.down ?? c.traffic_down ?? 0) || 0,
   node_id: c.node_id ?? nodeNameToId[c.node_name] ?? null,
   node_name: c.node_name || '',
+  comment: typeof c.comment === 'string' ? c.comment : '',
+  is_system: isSystemClient(c),
   notes: typeof c.notes === 'string' ? c.notes : '',
 }));
 
@@ -1177,6 +1182,12 @@ export const ClientManager: React.FC = () => {
       const key = clientPresenceKey(client.node_id, client.email);
       return key !== null && onlineClientKeys.has(key);
     };
+
+    // SYSTEM clients stay hidden for every ordinary status, including “All”.
+    // They can be inspected deliberately through the dedicated SYSTEM filter.
+    filtered = filtered.filter((client) =>
+      filterStatus === 'system' ? isSystemClient(client) : !isSystemClient(client)
+    );
     
     if (searchTerm) {
       const q = searchTerm.toLowerCase().trim();
@@ -1754,16 +1765,17 @@ export const ClientManager: React.FC = () => {
           </h2>
           {clients.length > 0 && (() => {
             const now = Date.now();
-            const active = clients.filter(c => c.enable && !(c.expiryTime > 0 && c.expiryTime < now) && !(c.total > 0 && c.up + c.down >= c.total)).length;
-            const expired = clients.filter(c => c.expiryTime > 0 && c.expiryTime < now).length;
-            const depleted = clients.filter(c => c.total > 0 && c.up + c.down >= c.total).length;
-            const disabled = clients.filter(c => !c.enable).length;
-            const online = onlineEmails.size;
+            const visibleClients = clients.filter(c => !isSystemClient(c));
+            const active = visibleClients.filter(c => c.enable && !(c.expiryTime > 0 && c.expiryTime < now) && !(c.total > 0 && c.up + c.down >= c.total)).length;
+            const expired = visibleClients.filter(c => c.expiryTime > 0 && c.expiryTime < now).length;
+            const depleted = visibleClients.filter(c => c.total > 0 && (c.up + c.down) >= c.total).length;
+            const disabled = visibleClients.filter(c => !c.enable).length;
+            const online = new Set(visibleClients.filter(isClientOnline).map(c => normalizeClientEmail(c.email))).size;
             return (
               <div className="grid grid-cols-3 gap-2 sm:grid-cols-6 lg:flex lg:flex-wrap">
                 {[
-                  { label: 'Total', value: clients.length, className: 'text-slate-100', status: '' },
-                  { label: 'Active', value: `${active} (${clients.length ? Math.round(active / clients.length * 100) : 0}%)`, className: 'text-emerald-300', status: 'active' },
+                  { label: 'Total', value: visibleClients.length, className: 'text-slate-100', status: '' },
+                  { label: 'Active', value: `${active} (${visibleClients.length ? Math.round(active / visibleClients.length * 100) : 0}%)`, className: 'text-emerald-300', status: 'active' },
                   { label: 'Online', value: `${online} (${active ? Math.round(online / active * 100) : 0}%)`, className: 'text-cyan-300', status: 'online' },
                   { label: 'Expired', value: expired, className: 'text-amber-300', status: 'expired' },
                   { label: 'Depleted', value: depleted, className: 'text-rose-300', status: 'depleted' },
@@ -1937,6 +1949,7 @@ export const ClientManager: React.FC = () => {
                   { value: 'disabled', label: t('clients.disabled') },
                   { value: 'expired', label: t('clients.expired') },
                   { value: 'depleted', label: t('clients.depleted') },
+                  { value: 'system', label: t('clients.system') },
                   { value: 'online', label: 'Online' },
                   { value: 'offline', label: 'Offline' },
                 ]}

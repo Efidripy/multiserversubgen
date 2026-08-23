@@ -439,8 +439,10 @@ def test_dashboard_summary_returns_sorted_cached_top_clients_without_fleet_fetch
                 "least@example.test": {"up": 2, "down": 3},
                 "highest@example.test": {"up": 400, "down": 600, "total": 1000},
                 "middle@example.test": {"up": 30, "down": 70, "total": 100},
+                "system@example.test": {"up": 500, "down": 1500, "total": 2000},
                 "bad@example.test": None,
             },
+            "system_client_emails": ["SYSTEM@example.test"],
             "cache_source": "memory",
             "cache_timestamp": 1234567890.0,
         },
@@ -453,9 +455,11 @@ def test_dashboard_summary_returns_sorted_cached_top_clients_without_fleet_fetch
                 "least@example.test": {"up": 2, "down": 3},
                 "highest@example.test": {"up": 400, "down": 600, "total": 1000},
                 "middle@example.test": {"up": 30, "down": 70, "total": 100},
+                "system@example.test": {"up": 500, "down": 1500, "total": 2000},
                 "bad@example.test": None,
             },
-            "current_count": 4,
+            "system_client_emails": ["SYSTEM@example.test"],
+            "current_count": 5,
             "period": period,
             "cache_source": "memory",
             "cache_timestamp": 1234567890.0,
@@ -473,7 +477,7 @@ def test_dashboard_summary_returns_sorted_cached_top_clients_without_fleet_fetch
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["clients_total"] == 4
+    assert payload["clients_total"] == 5
     assert [client["email"] for client in payload["top_clients"]] == [
         "highest@example.test",
         "middle@example.test",
@@ -485,7 +489,7 @@ def test_dashboard_summary_returns_sorted_cached_top_clients_without_fleet_fetch
         "download": 600,
         "total": 1000,
     }
-    assert payload["traffic"] == {"upload": 432, "download": 673, "total": 1105}
+    assert payload["traffic"] == {"upload": 932, "download": 2173, "total": 3105}
     assert payload["cache"]["client_traffic_source"] == "memory"
 
 
