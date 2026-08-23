@@ -1,10 +1,6 @@
 import api from './client';
 import { getAuth } from '../auth';
 
-export interface FeatureFlagsResponse {
-  monitoringEnabled?: boolean;
-}
-
 export interface MfaStatusResponse {
   enabled: boolean;
 }
@@ -13,11 +9,6 @@ export interface VerifyAuthResponse {
   user?: string;
   ws_ticket?: string;
   role?: 'viewer' | 'operator' | 'admin' | string;
-}
-
-export async function getFeatureFlags(): Promise<FeatureFlagsResponse> {
-  const res = await api.get('/v1/features', { auth: getAuth() });
-  return (res.data || {}) as FeatureFlagsResponse;
 }
 
 export async function getMfaStatus(): Promise<MfaStatusResponse> {

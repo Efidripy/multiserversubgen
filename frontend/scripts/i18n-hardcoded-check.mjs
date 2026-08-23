@@ -11,7 +11,6 @@ const IGNORE_FILES = new Set([
   path.normalize('src/i18n/config.ts'),
   path.normalize('src/i18n/locales/en.json'),
   path.normalize('src/i18n/locales/ru.json'),
-  path.normalize('src/components/msmAsciiVariants.ts'),
   path.normalize('src/components/UIIcon.tsx'),
   path.normalize('src/vite-env.d.ts'),
 ]);
