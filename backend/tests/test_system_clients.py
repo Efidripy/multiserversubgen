@@ -3,6 +3,7 @@ from services.system_clients import (
     has_system_comment,
     system_client_emails_from_inbounds,
 )
+from services.snapshot_push import flatten_snapshot_tables
 
 
 def test_system_marker_matches_a_standalone_comment_token_only():
@@ -41,3 +42,43 @@ def test_v3_client_mapping_preserves_comment_for_system_classification():
     )
 
     assert mapped["comment"] == "SYSTEM"
+
+
+def test_collector_snapshot_rows_preserve_comment_and_system_marker():
+    tables = flatten_snapshot_tables({
+        "name": "cholera",
+        "node_id": 5,
+        "inbounds": [{
+            "id": 12,
+            "protocol": "vless",
+            "settings": {
+                "clients": [{"id": "client-id", "email": "service@example.test", "comment": "SYSTEM"}]
+            },
+            "clientStats": [{"email": "service@example.test", "up": 10, "down": 20}],
+        }],
+    })
+
+    assert tables["clients"] == [
+        {
+            "id": "client-id",
+            "email": "service@example.test",
+            "enable": True,
+            "expiryTime": 0,
+            "total": 0,
+            "totalGB": 0,
+            "up": 10,
+            "down": 20,
+            "flow": "",
+            "comment": "SYSTEM",
+            "is_system": True,
+            "node_id": 5,
+            "node_name": "cholera",
+            "node_ip": "cholera",
+            "inbound_id": 12,
+            "inbound_remark": "",
+            "protocol": "vless",
+            "password": "",
+            "security": "",
+            "network": "",
+        }
+    ]
