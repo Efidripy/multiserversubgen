@@ -19,6 +19,12 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'mv -- "$STAGE_DIR" "$PROJECT_DIR"' in script
     assert 'mv -- "$QUARANTINE_DIR" "$PROJECT_DIR"' in script
     assert 'STATE_DB="${PROJECT_DIR}/admin.db"' in script
+    assert 'RUNTIME_SECRETS_FILE="/etc/${PROJECT_NAME}/runtime-secrets.env"' in script
+    assert 'validate_persistent_runtime_secrets()' in script
+    assert 'WS_AUTH_SECRET is missing from runtime secrets' in script
+    assert 'persistent runtime secrets must use mode 0600' in script
+    assert 'systemd unit does not load persistent runtime secrets' in script
+    assert 'Environment=REQUIRE_PERSISTENT_SECRETS=true' in script
     assert 'for pkg in config core modules integrations routers services shared; do' in script
     assert '".backup \'$STAGE_DIR/admin.db\'"' in script
     assert 'PRAGMA wal_checkpoint(TRUNCATE);' in script

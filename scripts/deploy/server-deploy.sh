@@ -11,6 +11,8 @@ APP_PORT="${APP_PORT:-666}"
 WEB_PATH="${WEB_PATH:-my-panel}"
 GRAFANA_WEB_PATH="${GRAFANA_WEB_PATH:-grafana}"
 DEPLOY_REF="${DEPLOY_REF:-HEAD}"
+RUNTIME_SECRETS_FILE="/etc/${PROJECT_NAME}/runtime-secrets.env"
+SERVICE_UNIT="/etc/systemd/system/${PROJECT_NAME}.service"
 
 fail() {
   printf 'Deploy refused: %s\n' "$*" >&2
@@ -29,6 +31,21 @@ require_safe_target() {
 }
 
 require_safe_target
+
+validate_persistent_runtime_secrets() {
+  [[ -f "$RUNTIME_SECRETS_FILE" ]] || fail "persistent runtime secrets are missing: $RUNTIME_SECRETS_FILE"
+  [[ -r "$RUNTIME_SECRETS_FILE" ]] || fail "persistent runtime secrets are unreadable: $RUNTIME_SECRETS_FILE"
+  [[ "$(stat -c '%a' "$RUNTIME_SECRETS_FILE")" == "600" ]] || fail "persistent runtime secrets must use mode 0600"
+  grep -q '^WS_AUTH_SECRET=' "$RUNTIME_SECRETS_FILE" || fail "WS_AUTH_SECRET is missing from runtime secrets"
+  grep -q '^SUBSCRIPTION_SIGNING_SECRET=' "$RUNTIME_SECRETS_FILE" || fail "SUBSCRIPTION_SIGNING_SECRET is missing from runtime secrets"
+  [[ -f "$SERVICE_UNIT" ]] || fail "systemd unit is missing: $SERVICE_UNIT"
+  systemctl cat "$PROJECT_NAME" 2>/dev/null | grep -Fq "EnvironmentFile=${RUNTIME_SECRETS_FILE}" \
+    || fail "systemd unit does not load persistent runtime secrets"
+  systemctl cat "$PROJECT_NAME" 2>/dev/null | grep -Fq 'Environment=REQUIRE_PERSISTENT_SECRETS=true' \
+    || fail "systemd unit does not enforce persistent runtime secrets"
+}
+
+validate_persistent_runtime_secrets
 REPO_DIR="$(realpath -e -- "$REPO_DIR")"
 git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null || fail "REPO_DIR is not a Git worktree"
 DEPLOY_COMMIT="$(git -C "$REPO_DIR" rev-parse --verify "${DEPLOY_REF}^{commit}")" || fail "DEPLOY_REF is not a commit"
