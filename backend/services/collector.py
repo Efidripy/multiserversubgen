@@ -555,15 +555,16 @@ class SnapshotCollector:
         state["next_poll"] = time.time() + state["interval"]
         snapshot["poll_ms"] = round(elapsed * 1000, 2)
 
-        if self.on_snapshot is not None:
-            try:
-                await asyncio.to_thread(self.on_snapshot, snapshot)
-            except Exception as exc:
-                logger.warning(f"Collector on_snapshot callback failed for {key}: {exc}")
-
         async with self._lock:
             self._latest["timestamp"] = time.time()
             self._latest["nodes"][key] = snapshot
+        if self.on_snapshot is not None:
+            try:
+                # Callbacks may derive a fleet projection from latest_snapshot;
+                # publish this node first so they never observe a stale fleet.
+                await asyncio.to_thread(self.on_snapshot, snapshot)
+            except Exception as exc:
+                logger.warning(f"Collector on_snapshot callback failed for {key}: {exc}")
         await self._persist_snapshot(snapshot)
         if should_broadcast:
             await self._broadcast_delta(key, snapshot, previous=previous)

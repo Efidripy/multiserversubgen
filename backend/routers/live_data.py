@@ -20,7 +20,7 @@ def build_live_data_router(
     get_traffic_stats_by_period: Callable[[list, str, str], Dict] = None,
 ):
     router = APIRouter()
-    period_stats_handler = get_traffic_stats_by_period
+    projection_period_handler = get_cached_traffic_stats_projection_by_period
 
     def _top_clients_from_projection(projection: Dict, limit: int = 5) -> list[Dict]:
         stats = projection.get("stats") if isinstance(projection, dict) else None
@@ -359,14 +359,13 @@ def build_live_data_router(
         if period not in ["day", "week", "month", "year", "all_time"]:
             raise HTTPException(status_code=400, detail="period must be day, week, month, year, or all_time")
         
-        if not period_stats_handler:
-            # Fallback to regular stats if handler not provided
-            nodes = await run_in_threadpool(list_nodes)
-            payload = await run_in_threadpool(get_cached_traffic_stats, nodes, group_by)
-            return ORJSONResponse(content=_apply_limit(payload, limit))
-        
-        nodes = await run_in_threadpool(list_nodes)
-        payload = await run_in_threadpool(period_stats_handler, nodes, group_by, period)
+        if not projection_period_handler:
+            raise HTTPException(status_code=503, detail="Traffic statistics projection is warming up")
+
+        # Statistics is a read-model: it must never enumerate nodes or invoke
+        # the legacy cache helper, because either can trigger a remote 3x-ui
+        # fan-out on each Day/Week/Month click.
+        payload = await run_in_threadpool(projection_period_handler, group_by, period)
         return ORJSONResponse(content=_apply_limit(payload, limit))
 
     return router

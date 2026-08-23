@@ -254,6 +254,48 @@ def test_dashboard_summary_auth_required():
     assert response.status_code == 401
 
 
+def test_traffic_period_route_uses_projection_without_nodes_or_legacy_traffic_fetch(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("legacy traffic fetch must not run")),
+    )
+    monkeypatch.setattr(
+        main.node_service,
+        "list_nodes",
+        lambda: (_ for _ in ()).throw(AssertionError("period read must not enumerate nodes")),
+    )
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats_projection_by_period",
+        lambda group_by, period: calls.append((group_by, period)) or {
+            "stats": {
+                "alpha": {"up": 1, "down": 9, "total": 10},
+                "beta": {"up": 1, "down": 4, "total": 5},
+            },
+            "group_by": group_by,
+            "period": period,
+            "cache_source": "snapshot_collector",
+            "cache_timestamp": 1234567890,
+        },
+    )
+    app = _build_test_app(monitoring_enabled=False)
+
+    @app.middleware("http")
+    async def _inject_auth_user(request, call_next):
+        request.state.auth_user = "admin"
+        return await call_next(request)
+
+    response = TestClient(app).get("/api/v1/traffic/stats-by-period?group_by=node&period=week&limit=1")
+
+    assert response.status_code == 200
+    assert calls == [("node", "week")]
+    payload = response.json()
+    assert payload["stats"] == {"alpha": {"up": 1, "down": 9, "total": 10}}
+    assert payload["cache_source"] == "snapshot_collector"
+
+
 def test_dashboard_summary_uses_snapshot_cache_without_xui_fetch(monkeypatch):
     nodes = [
         {"id": 1, "name": "alpha"},

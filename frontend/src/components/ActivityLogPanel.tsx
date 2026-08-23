@@ -40,7 +40,7 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
     .filter(e => !filter || `${e.section} ${e.message} ${JSON.stringify(e.context ?? '')}`.toLowerCase().includes(filter.toLowerCase()));
 
   useEffect(() => {
-    if (autoScroll && bottomRef.current) {
+    if (autoScroll && bottomRef.current?.scrollIntoView) {
       bottomRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [visible.length, autoScroll]);
@@ -63,16 +63,17 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
 
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="activity-log-title" style={{
-      position: 'fixed', bottom: 0, right: 0, width: 'min(520px, 100vw)', maxWidth: '100vw', height: 360,
-      background: '#0d1117', border: '1px solid #30363d', borderRadius: '10px 0 0 0',
-      boxShadow: '0 -4px 24px rgba(0,0,0,0.5)', zIndex: 9999,
+      position: 'fixed', bottom: 8, right: 8,
+      width: 'min(520px, calc(100vw - 16px))', maxWidth: 'calc(100vw - 16px)', minWidth: 'min(320px, calc(100vw - 16px))',
+      height: 360, minHeight: 180, maxHeight: 'calc(100dvh - 16px)', resize: 'both', overflow: 'hidden', boxSizing: 'border-box',
+      background: '#0d1117', border: '1px solid #30363d', borderRadius: 10,
+      boxShadow: '0 4px 24px rgba(0,0,0,0.5)', zIndex: 9999,
       display: 'flex', flexDirection: 'column', fontFamily: 'monospace', fontSize: '0.72rem',
     }}>
       {/* Header */}
       <div style={{
-        display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px',
-        borderBottom: '1px solid #30363d', background: '#161b22', borderRadius: '10px 0 0 0',
-        flexShrink: 0,
+        display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '6px 10px', width: '100%', boxSizing: 'border-box',
+        borderBottom: '1px solid #30363d', background: '#161b22', borderRadius: '10px 10px 0 0', flexShrink: 0,
       }}>
         <span id="activity-log-title" style={{ color: '#e6edf3', fontWeight: 700, fontSize: '0.75rem' }}>Activity Log v2</span>
         <div style={{ display: 'flex', gap: 3, marginLeft: 4 }}>
@@ -87,7 +88,7 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
         <input
           value={filter} onChange={e => setFilter(e.target.value)}
           placeholder="filter..." style={{
-            flex: 1, padding: '2px 7px', borderRadius: 4, border: '1px solid #30363d',
+            flex: '1 1 160px', minWidth: 0, padding: '2px 7px', borderRadius: 4, border: '1px solid #30363d',
             background: '#0d1117', color: '#e6edf3', fontSize: '0.68rem', outline: 'none',
           }}
         />
