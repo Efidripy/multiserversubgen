@@ -64,6 +64,8 @@ class LiveStatsRuntime:
         self._snapshot_cleanup_ts = 0.0
         self._snapshot_seed_check_ts = 0.0
         self._traffic_cold_load_locks: Dict[str, Lock] = {}
+        self._cache_state_lock = Lock()
+        self._cache_generation = 0
         self._snapshot_projection_lock = Lock()
         self._snapshot_projection_timestamp: Optional[float] = None
         self._snapshot_projections: Dict[str, Dict[str, Dict[str, int]]] = {}
@@ -238,10 +240,36 @@ class LiveStatsRuntime:
             return lock
 
     def invalidate(self) -> None:
-        self.traffic_stats_cache.clear()
-        self.online_clients_cache["ts"] = 0.0
-        self.online_clients_cache["data"] = []
+        with self._cache_state_lock:
+            self._cache_generation += 1
+            self.traffic_stats_cache.clear()
+            self.online_clients_cache["ts"] = 0.0
+            self.online_clients_cache["data"] = []
         self.redis_delete("traffic_stats:client", "traffic_stats:inbound", "traffic_stats:node", "online_clients")
+
+    def _cache_generation_snapshot(self) -> int:
+        with self._cache_state_lock:
+            return self._cache_generation
+
+    def _store_traffic_cache(self, group_by: str, data: Dict, generation: int) -> bool:
+        """Publish only data that was fetched after the last invalidation."""
+        with self._cache_state_lock:
+            if generation != self._cache_generation:
+                return False
+            self.traffic_stats_cache[group_by] = (time.time(), data)
+            self.redis_set_json(f"traffic_stats:{group_by}", data, self.traffic_stats_cache_ttl)
+            self._save_period_snapshots(group_by, data.get("stats", {}), time.time())
+            return True
+
+    def _store_online_clients(self, data: List[Dict], generation: int) -> bool:
+        """Publish only data that was fetched after the last invalidation."""
+        with self._cache_state_lock:
+            if generation != self._cache_generation:
+                return False
+            self.online_clients_cache["ts"] = time.time()
+            self.online_clients_cache["data"] = data
+            self.redis_set_json("online_clients", data, self.online_clients_cache_ttl)
+            return True
 
     def start_cache_refresh(self, flag_key: str, worker, worker_key: Optional[str] = None) -> None:
         with self.state_lock:
@@ -286,11 +314,10 @@ class LiveStatsRuntime:
             return cached[1]
 
         if cached and now - cached[0] < self.traffic_stats_stale_ttl:
+            generation = self._cache_generation_snapshot()
             def _refresh():
                 fresh = self.client_mgr.get_traffic_stats(nodes, group_by)
-                self.traffic_stats_cache[group_by] = (time.time(), fresh)
-                self.redis_set_json(redis_key, fresh, self.traffic_stats_cache_ttl)
-                self._save_period_snapshots(group_by, fresh.get("stats", {}), time.time())
+                self._store_traffic_cache(group_by, fresh, generation)
 
             self.start_cache_refresh("traffic", _refresh, worker_key=group_by)
             self._save_period_snapshots(group_by, cached[1].get("stats", {}), now)
@@ -311,20 +338,18 @@ class LiveStatsRuntime:
                 return cached[1]
 
             if cached and now - cached[0] < self.traffic_stats_stale_ttl:
+                generation = self._cache_generation_snapshot()
                 def _refresh():
                     fresh = self.client_mgr.get_traffic_stats(nodes, group_by)
-                    self.traffic_stats_cache[group_by] = (time.time(), fresh)
-                    self.redis_set_json(redis_key, fresh, self.traffic_stats_cache_ttl)
-                    self._save_period_snapshots(group_by, fresh.get("stats", {}), time.time())
+                    self._store_traffic_cache(group_by, fresh, generation)
 
                 self.start_cache_refresh("traffic", _refresh, worker_key=group_by)
                 self._save_period_snapshots(group_by, cached[1].get("stats", {}), now)
                 return cached[1]
 
+            generation = self._cache_generation_snapshot()
             data = self.client_mgr.get_traffic_stats(nodes, group_by)
-            self.traffic_stats_cache[group_by] = (time.time(), data)
-            self.redis_set_json(redis_key, data, self.traffic_stats_cache_ttl)
-            self._save_period_snapshots(group_by, data.get("stats", {}), time.time())
+            self._store_traffic_cache(group_by, data, generation)
             return data
 
     def get_cached_traffic_stats_projection(self, group_by: str) -> Dict:
@@ -857,17 +882,15 @@ class LiveStatsRuntime:
             return self.online_clients_cache["data"]
 
         if self.online_clients_cache["data"] and now - self.online_clients_cache["ts"] < self.online_clients_stale_ttl:
+            generation = self._cache_generation_snapshot()
             def _refresh():
                 fresh = self.client_mgr.get_online_clients(nodes)
-                self.online_clients_cache["ts"] = time.time()
-                self.online_clients_cache["data"] = fresh
-                self.redis_set_json("online_clients", fresh, self.online_clients_cache_ttl)
+                self._store_online_clients(fresh, generation)
 
             self.start_cache_refresh("online_clients", _refresh)
             return self.online_clients_cache["data"]
 
+        generation = self._cache_generation_snapshot()
         data = self.client_mgr.get_online_clients(nodes)
-        self.online_clients_cache["ts"] = now
-        self.online_clients_cache["data"] = data
-        self.redis_set_json("online_clients", data, self.online_clients_cache_ttl)
+        self._store_online_clients(data, generation)
         return data
