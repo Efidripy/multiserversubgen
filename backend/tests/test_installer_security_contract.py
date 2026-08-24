@@ -133,6 +133,23 @@ def test_installation_report_uses_dynamic_repository_root():
     assert '"${SCRIPT_DIR}/scripts/ops/hardening-profile.sh" audit' in ui
 
 
+def test_ops_scripts_validate_installer_log_before_sourcing():
+    helper = _read("scripts/ops/lib/install_log.sh")
+    for relative_path in (
+        "scripts/ops/backup-restore-check.sh",
+        "scripts/ops/smoke-test.sh",
+    ):
+        script = _read(relative_path)
+        assert '\n  source "$LOG_FILE"' not in script
+        assert "install_log_source \"$LOG_FILE\"" in script
+        assert "lib/install_log.sh" in script
+
+    assert "[[ ! -L \"$log_file\" ]]" in helper
+    assert "stat -c '%u'" in helper
+    assert "stat -c '%a'" in helper
+    assert '[[ "$owner" == "0" && "$mode" == "600" ]]' in helper
+
+
 def test_resource_guard_cleanup_is_project_scoped():
     guard = _read("scripts/installer/lib/resource_guard.sh")
 
