@@ -145,6 +145,18 @@ describe('navigation performance regressions', () => {
     expect(app).toContain('const verified = await verifyCurrentAuth();');
   });
 
+  it('keeps bulk client selection free of an unused clock read', () => {
+    const clients = read('src/components/ClientManager.tsx');
+    const selectAllBy = clients.slice(
+      clients.indexOf('const selectAllBy'),
+      clients.indexOf('const applySortFromHeader'),
+    );
+
+    expect(selectAllBy).toContain('const keys = clients.filter(predicate).map(clientKey);');
+    expect(selectAllBy).not.toContain('Date.now()');
+    expect(selectAllBy).not.toContain('void now');
+  });
+
   it('does not fetch complete node databases just to render Backup Manager', () => {
     const backupManager = read('src/components/BackupManager.tsx');
 
