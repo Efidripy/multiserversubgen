@@ -28,7 +28,7 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
   const [minLevel, setMinLevel] = useState<LogLevel>('info');
   const [autoScroll, setAutoScroll] = useState(true);
   const [filter, setFilter] = useState('');
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const closeRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -62,7 +62,7 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
   }, [open, onClose]);
 
   const copy = () => {
-    navigator.clipboard.writeText(activityLog.exportText(minLevel));
+    navigator.clipboard.writeText(activityLog.exportText(minLevel, i18n.language));
   };
 
   if (!open) return null;
@@ -125,7 +125,7 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
       {/* Entries */}
       <div ref={listRef} data-testid="activity-log-entries" style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
         {visible.map(e => {
-          const time = new Date(e.ts).toLocaleTimeString('ru', { hour12: false });
+          const time = new Date(e.ts).toLocaleTimeString(i18n.language, { hour12: false });
           return (
             <div key={e.id} style={{
               display: 'flex', gap: 6, alignItems: 'baseline',

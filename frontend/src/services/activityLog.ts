@@ -72,10 +72,10 @@ class ActivityLogStore {
     this.subscribers.forEach(fn => fn(snapshot));
   }
 
-  exportText(minLevel: LogLevel = 'debug'): string {
+  exportText(minLevel: LogLevel = 'debug', locale = 'ru'): string {
     return this.getEntries(minLevel)
       .map(e => {
-        const time = new Date(e.ts).toLocaleTimeString('ru', { hour12: false });
+        const time = new Date(e.ts).toLocaleTimeString(locale, { hour12: false });
         const ctx = e.context ? ' ' + JSON.stringify(e.context) : '';
         return `[${time}] ${e.level.toUpperCase().padEnd(7)} [${e.section}] ${e.message}${ctx}`;
       })
