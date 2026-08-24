@@ -138,31 +138,6 @@ class AuthService:
 
         return ok
 
-    # ------------------------------------------------------------------
-    # TOTP verification
-    # ------------------------------------------------------------------
-
-    def verify_totp(self, username: str, code: Optional[str]) -> bool:
-        """Verify a TOTP code for *username*.
-
-        Returns ``True`` if TOTP is not required for the user or if the
-        code is valid.
-        """
-        if not self.mfa_totp_enabled:
-            return True
-        secret = self.mfa_totp_users.get(username)
-        if not secret:
-            return False
-
-        if not code:
-            return False
-        try:
-            import pyotp  # type: ignore[import-untyped]
-            return pyotp.TOTP(secret).verify(code)
-        except Exception as exc:
-            logger.warning("AuthService.verify_totp error: %s", exc)
-            return False
-
     def issue_ws_ticket(self, username: str, ttl_sec: int = 60) -> str:
         expires = int(time.time()) + max(15, min(ttl_sec, 300))
         nonce = secrets.token_urlsafe(12)
