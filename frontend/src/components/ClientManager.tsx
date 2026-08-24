@@ -328,6 +328,7 @@ export const ClientManager: React.FC = () => {
   const [bulkAdjustLoading, setBulkAdjustLoading] = useState(false);
   const refreshInFlightRef = useRef(false);
   const requestIdRef = useRef(0);
+  const clientsLoadLoadingRequestIdRef = useRef<number | null>(null);
   const trafficRefreshTimerRef = useRef<number | null>(null);
   const clientsLoadAbortRef = useRef<AbortController | null>(null);
   const trafficFetchAbortRef = useRef<AbortController | null>(null);
@@ -498,6 +499,12 @@ export const ClientManager: React.FC = () => {
   }, [expandedKey, filteredClients, trafficCache]);
   
   const loadClients = async (silent = false, sourceFilter: ClientSourceFilter = clientSourceFilterRef.current) => {
+    const requestId = ++requestIdRef.current;
+
+    if (clientsLoadLoadingRequestIdRef.current !== null) {
+      clientsLoadLoadingRequestIdRef.current = null;
+      setLoading(false);
+    }
     if (refreshInFlightRef.current) {
       clientsLoadAbortRef.current?.abort();
     }
@@ -506,12 +513,12 @@ export const ClientManager: React.FC = () => {
     clientsLoadAbortRef.current = controller;
 
     refreshInFlightRef.current = true;
-    if (!silent) setLoading(true);
+    if (!silent) {
+      clientsLoadLoadingRequestIdRef.current = requestId;
+      setLoading(true);
+    }
     setError('');
     clientSourceFilterRef.current = sourceFilter;
-
-    const requestId = Date.now();
-    requestIdRef.current = requestId;
 
     try {
       // Fetch page projections in parallel; each route is independently cached.
@@ -546,18 +553,23 @@ export const ClientManager: React.FC = () => {
       if (!silent && trafficEndpointModeRef.current === 'disabled') {
         trafficEndpointModeRef.current = 'unknown';
       }
-      if (!silent) setLoading(false);
-      refreshInFlightRef.current = false;
-
     } catch (err: any) {
+      if (requestIdRef.current !== requestId) return;
       if (controller.signal.aborted || err?.code === 'ERR_CANCELED') {
-        if (!silent) setLoading(false);
-        refreshInFlightRef.current = false;
         return;
       }
       setError(err.response?.data?.detail || t('clients.loadFailed'));
-      if (!silent) setLoading(false);
-      refreshInFlightRef.current = false;
+    } finally {
+      if (requestIdRef.current === requestId) {
+        refreshInFlightRef.current = false;
+        if (clientsLoadAbortRef.current === controller) {
+          clientsLoadAbortRef.current = null;
+        }
+        if (clientsLoadLoadingRequestIdRef.current === requestId) {
+          clientsLoadLoadingRequestIdRef.current = null;
+          setLoading(false);
+        }
+      }
     }
   };
 
