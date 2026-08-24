@@ -9,6 +9,49 @@ export type StaleCacheReadResult<T> = {
   ts: number;
 };
 
+const SESSION_SNAPSHOT_CACHE_KEYS = [
+  'sub_manager_header_summary_cache_v1',
+  'sub_manager_clients_page_cache_v1',
+  'sub_manager_inbounds_page_cache_v1',
+  'sub_manager_traffic_stats_cache_v3',
+] as const;
+
+const LOCAL_SNAPSHOT_CACHE_KEYS = [
+  'sub_manager_node_list_cache_v1',
+  'sub_manager_node_status_cache_v1',
+] as const;
+
+const DASHBOARD_OVERVIEW_CACHE_PREFIX = 'sub-manager:dashboard-overview:v1:';
+
+/**
+ * Remove data snapshots that must never cross an authenticated session boundary.
+ * UI preferences intentionally remain untouched.
+ */
+export function clearManagerSnapshotCaches(): void {
+  try {
+    for (const key of SESSION_SNAPSHOT_CACHE_KEYS) {
+      sessionStorage.removeItem(key);
+    }
+
+    for (let index = sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = sessionStorage.key(index);
+      if (key?.startsWith(DASHBOARD_OVERVIEW_CACHE_PREFIX)) {
+        sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Storage availability is an enhancement; logout must always complete.
+  }
+
+  try {
+    for (const key of LOCAL_SNAPSHOT_CACHE_KEYS) {
+      localStorage.removeItem(key);
+    }
+  } catch {
+    // Storage availability is an enhancement; logout must always complete.
+  }
+}
+
 export function readStaleCache<T>(key: string, maxAgeMs: number): StaleCacheReadResult<T> {
   try {
     const raw = sessionStorage.getItem(key);
@@ -35,7 +78,7 @@ export function writeStaleCache<T>(key: string, data: T): void {
     const envelope: StaleCacheEnvelope<T> = { ts: Date.now(), data };
     sessionStorage.setItem(key, JSON.stringify(envelope));
   } catch {
-    // ignore localStorage write failures
+    // Ignore session storage write failures.
   }
 }
 
