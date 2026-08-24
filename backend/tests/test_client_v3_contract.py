@@ -616,6 +616,39 @@ class TestClientV3Contracts:
             f"{self.base_url}/panel/api/clients/traffic/name%2Btag%2Fone%3F%23%40example.test",
         )
 
+    def test_depleted_batch_uses_email_for_v3_then_uuid_for_v2_traffic_fallback(self):
+        manager = self.manager()
+        session = MagicMock()
+        client = {
+            "email": "alice@example.test",
+            "id": "uuid-123",
+            "inbound_id": 2,
+            "protocol": "vless",
+            "totalGB": 1,
+        }
+        with (
+            patch.object(manager, "get_all_clients", return_value=[client]),
+            patch.object(manager, "_get_session", return_value=(session, self.base_url)),
+            patch(
+                "client_manager.xui_request",
+                side_effect=[
+                    _response(404),
+                    _response(200, {"success": True, "obj": {"up": 2 * 1024 ** 3, "down": 0}}),
+                    _response(405),
+                    _response(405),
+                ],
+            ) as request,
+            patch.object(manager, "delete_client", return_value=True) as legacy_delete,
+        ):
+            result = manager.batch_delete_clients([self.node()], depleted_only=True)
+
+        assert request.call_args_list[:2] == [
+            call(session, "GET", f"{self.base_url}/panel/api/clients/traffic/alice%40example.test"),
+            call(session, "GET", f"{self.base_url}/panel/api/inbounds/getClientTrafficsById/uuid-123"),
+        ]
+        legacy_delete.assert_called_once_with(self.node(), 2, "uuid-123")
+        assert result["results"][0]["deleted_count"] == 1
+
     def test_ip_dto_keeps_legacy_strings_and_exposes_details(self):
         manager = self.manager()
         session = MagicMock()
