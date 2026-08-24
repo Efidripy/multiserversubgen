@@ -1,7 +1,7 @@
 import os
 import sys
 
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Request, Response
 from fastapi.testclient import TestClient
 
 
@@ -76,8 +76,14 @@ def test_successful_mutation_invalidates_read_projections_once():
     def rejected():
         return Response(status_code=400)
 
+    @app.post("/api/v1/read-projection")
+    def read_projection(request: Request):
+        request.state.skip_read_projection_invalidation = True
+        return {"success": True}
+
     client = TestClient(app)
     headers = {"Origin": "http://testserver"}
     assert client.post("/api/v1/mutate", headers=headers).status_code == 200
     assert client.post("/api/v1/rejected", headers=headers).status_code == 400
+    assert client.post("/api/v1/read-projection", headers=headers).status_code == 200
     assert invalidations == ["read-projections"]
