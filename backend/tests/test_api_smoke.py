@@ -399,6 +399,7 @@ def test_client_traffic_totals_reads_only_requested_projection_entries(monkeypat
         lambda group_by, period: calls.append((group_by, period)) or {
             "stats": {
                 "Active@Example.Test": {"up": 2, "down": 3},
+                "active@example.test": {"up": 30, "down": 40},
                 "other@example.test": {"up": 40, "down": 60},
             },
         },
@@ -419,7 +420,7 @@ def test_client_traffic_totals_reads_only_requested_projection_entries(monkeypat
     assert response.status_code == 200
     assert calls == [("client", "week")]
     assert response.json() == {
-        "totals": {"active@example.test": 5},
+        "totals": {"active@example.test": 75},
         "missing": ["missing@example.test"],
         "period": "week",
     }

@@ -442,7 +442,8 @@ def build_live_data_router(
                 key = str(email).strip().casefold()
                 if key not in wanted or not isinstance(value, dict):
                     continue
-                totals[key] = _traffic_totals_from_projection({"stats": {key: value}})["total"]
+                row_total = _traffic_totals_from_projection({"stats": {key: value}})["total"]
+                totals[key] = totals.get(key, 0) + row_total
         return ORJSONResponse(content={"totals": totals, "missing": sorted(wanted - set(totals)), "period": period})
 
     return router
