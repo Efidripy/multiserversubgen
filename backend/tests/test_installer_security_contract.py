@@ -116,6 +116,25 @@ def test_remove_script_defaults_to_conservative_scope():
     assert 'REMOVE_MODE="$mode" REMOVE_SCOPE=hard REMOVE_FORCE=true' in workflows
 
 
+def test_remove_requires_verified_install_state_before_any_mutation():
+    remove = _read("scripts/installer/remove.sh")
+
+    assert 'PROJECT_NAME="sub-manager"' not in remove
+    assert 'PROJECT_DIR="/opt/sub-manager"' not in remove
+    assert 'source "${SCRIPT_DIR}/lib/runtime_secrets.sh"' in remove
+    assert "require_verified_install_state()" in remove
+    assert 'if [ ! -f "$LOG_FILE" ]; then' in remove
+    assert 'if ! install_log_source "$LOG_FILE"; then' in remove
+    assert "if ! runtime_require_safe_project_name; then" in remove
+    assert 'if [ "${PROJECT_DIR:-}" != "/opt/$PROJECT_NAME" ]; then' in remove
+    assert remove.count("no removal performed.") == 4
+
+    state_gate = remove.index("\nrequire_verified_install_state\n")
+    assert state_gate < remove.index('timestamp="$(date')
+    assert state_gate < remove.index("confirm_or_die()")
+    assert state_gate < remove.index('rm -rf "$PROJECT_DIR"')
+
+
 def test_project_cleanup_preserves_evidence_and_supports_dry_run():
     script = _read("scripts/ops/project-cleanup.sh")
     safe_cleanup = script.split("cleanup_safe()", 1)[1].split("cleanup_deep()", 1)[0]

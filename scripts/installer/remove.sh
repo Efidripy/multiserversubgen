@@ -6,6 +6,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 source "${SCRIPT_DIR}/lib/locale.sh"
 # shellcheck source=../ops/lib/install_log.sh
 source "${REPO_ROOT}/scripts/ops/lib/install_log.sh"
+# shellcheck source=lib/runtime_secrets.sh
+source "${SCRIPT_DIR}/lib/runtime_secrets.sh"
 LOG_FILE="/opt/.sub_manager_install.log"
 
 REMOVE_MODE="${REMOVE_MODE:-keep-db}"
@@ -14,14 +16,34 @@ REMOVE_FORCE="${REMOVE_FORCE:-false}"
 # explicitly for the operator-selected full cleanup workflow.
 REMOVE_SCOPE="${REMOVE_SCOPE:-soft}"
 
-PROJECT_NAME="sub-manager"
-PROJECT_DIR="/opt/sub-manager"
+PROJECT_NAME=""
+PROJECT_DIR=""
 SELECTED_CFG=""
 
-if [ -f "$LOG_FILE" ]; then
+require_verified_install_state() {
+    if [ ! -f "$LOG_FILE" ]; then
+        echo "Installation state log is missing; no removal performed." >&2
+        exit 1
+    fi
+
     # shellcheck disable=SC1090
-    install_log_source "$LOG_FILE"
-fi
+    if ! install_log_source "$LOG_FILE"; then
+        echo "Installation state log failed validation; no removal performed." >&2
+        exit 1
+    fi
+
+    if ! runtime_require_safe_project_name; then
+        echo "Installation state log has an invalid project name; no removal performed." >&2
+        exit 1
+    fi
+
+    if [ "${PROJECT_DIR:-}" != "/opt/$PROJECT_NAME" ]; then
+        echo "Installation state log has an unexpected project directory; no removal performed." >&2
+        exit 1
+    fi
+}
+
+require_verified_install_state
 
 timestamp="$(date +%Y%m%d_%H%M%S)"
 backup_dir="/var/backups/${PROJECT_NAME}_remove_${timestamp}"
