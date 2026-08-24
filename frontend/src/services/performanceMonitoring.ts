@@ -1,6 +1,6 @@
 /**
  * Performance Monitoring & Analytics
- * Tracks Web Vitals, API latency, and sends metrics to Sentry
+ * Tracks Web Vitals and startup timing for local operator diagnostics.
  */
 import { devLog } from '../utils/devLogger';
 
@@ -10,15 +10,11 @@ export interface PerformanceMetrics {
   cls?: number; // Cumulative Layout Shift
   tti?: number; // Time to Interactive
   ttfb?: number; // Time to First Byte
-  apiLatency: Record<string, number[]>;
-  errorCount: number;
   timestamp: number;
 }
 
 class PerformanceMonitor {
   private metrics: PerformanceMetrics = {
-    apiLatency: {},
-    errorCount: 0,
     timestamp: Date.now(),
   };
 
@@ -73,21 +69,6 @@ class PerformanceMonitor {
     }
   }
 
-  recordApiLatency(endpoint: string, latencyMs: number) {
-    if (!this.metrics.apiLatency[endpoint]) {
-      this.metrics.apiLatency[endpoint] = [];
-    }
-    this.metrics.apiLatency[endpoint].push(latencyMs);
-    // Keep only last 100 samples per endpoint
-    if (this.metrics.apiLatency[endpoint].length > 100) {
-      this.metrics.apiLatency[endpoint].shift();
-    }
-  }
-
-  recordError() {
-    this.metrics.errorCount++;
-  }
-
   startMeasure(label: string) {
     if (typeof performance !== 'undefined' && performance.mark) {
       performance.mark(`${label}-start`);
@@ -117,25 +98,11 @@ class PerformanceMonitor {
     return { ...this.metrics };
   }
 
-  getAverageApiLatency(endpoint: string): number {
-    const samples = this.metrics.apiLatency[endpoint] || [];
-    if (samples.length === 0) return 0;
-    return samples.reduce((a, b) => a + b, 0) / samples.length;
-  }
-
   exportMetrics() {
     const exports = {
       fcp: this.metrics.fcp,
       lcp: this.metrics.lcp,
       cls: this.metrics.cls,
-      errorCount: this.metrics.errorCount,
-      apiEndpoints: Object.keys(this.metrics.apiLatency).map((endpoint) => ({
-        endpoint,
-        avgLatency: this.getAverageApiLatency(endpoint),
-        minLatency: Math.min(...(this.metrics.apiLatency[endpoint] || [])),
-        maxLatency: Math.max(...(this.metrics.apiLatency[endpoint] || [])),
-        sampleCount: this.metrics.apiLatency[endpoint]?.length || 0,
-      })),
     };
     devLog('[Metrics Export]', exports);
     // TODO: Send to Sentry/analytics here
