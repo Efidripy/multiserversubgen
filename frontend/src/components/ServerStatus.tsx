@@ -55,7 +55,12 @@ export const formatOnlineClients = (onlineClients: number | null | undefined): s
 type SortMode = 'name' | 'cpu' | 'status' | 'clients';
 type NodeAction = 'restart' | 'stop' | 'geofile' | 'xrayLogs' | 'serverLogs';
 
-type UiServer = {
+export type ServerMemoryMetric = {
+  ramCurrentBytes?: number;
+  ramTotalBytes?: number;
+};
+
+type UiServer = ServerMemoryMetric & {
   nodeId?: number;
   name: string;
   status: 'online' | 'offline';
@@ -130,6 +135,33 @@ const formatBytes = (bytes: number): string => {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
 };
 
+const telemetryBytes = (value: unknown): number | undefined => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+};
+
+export const formatFleetRam = (servers: ServerMemoryMetric[]): string => {
+  let current = 0;
+  let total = 0;
+  let measuredNodes = 0;
+
+  servers.forEach((server) => {
+    if (server.ramCurrentBytes === undefined || server.ramTotalBytes === undefined || server.ramTotalBytes <= 0) return;
+    current += server.ramCurrentBytes;
+    total += server.ramTotalBytes;
+    measuredNodes += 1;
+  });
+
+  return measuredNodes > 0 ? `${formatBytes(current)}/${formatBytes(total)}` : '—';
+};
+
+export const getReportedCoreVersion = (xrayVersion: unknown, panelVersion: unknown): string => {
+  const xray = typeof xrayVersion === 'string' ? xrayVersion.trim() : '';
+  if (xray) return xray;
+  const panel = typeof panelVersion === 'string' ? panelVersion.trim() : '';
+  return panel || '—';
+};
+
 const formatUptime = (seconds?: number) => {
   if (!seconds || seconds < 0) return '-';
   const d = Math.floor(seconds / 86400);
@@ -177,6 +209,8 @@ const toUiServer = (server: DashboardServerStatus): UiServer => {
     latency: isOnline ? 'online' : 'No connection',
     cpu,
     ramPercent,
+    ramCurrentBytes: telemetryBytes(server.system?.mem?.current),
+    ramTotalBytes: telemetryBytes(server.system?.mem?.total),
     ramDetail: server.system?.mem ? `${formatBytes(server.system.mem.current)}/${formatBytes(server.system.mem.total)}` : '-',
     diskPercent,
     diskDetail: server.system?.disk ? `${formatBytes(server.system.disk.current)}/${formatBytes(server.system.disk.total)}` : '-',
@@ -184,7 +218,7 @@ const toUiServer = (server: DashboardServerStatus): UiServer => {
     uptime: formatUptime(server.xray?.uptime || server.system?.uptime),
     load: (server.system?.loads || []).slice(0, 3).map((item: number) => item.toFixed(2)).join(' / ') || '-',
     swap: server.system?.swap ? `${formatBytes(server.system.swap.current)}/${formatBytes(server.system.swap.total)}` : '-',
-    core: server.xray?.version || server.panel_version || '26.4.17',
+    core: getReportedCoreVersion(server.xray?.version, server.panel_version),
     lastSeen: formatLastSeen(server.timestamp),
     issue: server.error || server.reason,
     xrayCompatibility: server.xray_compatibility ? {
@@ -221,6 +255,8 @@ const mergeServerTelemetry = (server: UiServer, data: Record<string, any>): UiSe
   const status = data.status === 'offline' ? 'offline' : data.status === 'online' ? 'online' : available ? 'online' : 'offline';
   const pollMs = Number(data.poll_ms);
   const lastSeen = formatLastSeen(data.timestamp);
+  const ramCurrentBytes = telemetryBytes(system.mem?.current);
+  const ramTotalBytes = telemetryBytes(system.mem?.total);
 
   return {
     ...server,
@@ -232,6 +268,8 @@ const mergeServerTelemetry = (server: UiServer, data: Record<string, any>): UiSe
       : 'No connection',
     cpu: toNumber(system.cpu ?? data.cpu, server.cpu),
     ramPercent: toNumber(system.mem?.percent, server.ramPercent),
+    ramCurrentBytes: ramCurrentBytes ?? server.ramCurrentBytes,
+    ramTotalBytes: ramTotalBytes ?? server.ramTotalBytes,
     ramDetail: metricDetail(system.mem, server.ramDetail),
     diskPercent: toNumber(system.disk?.percent, server.diskPercent),
     diskDetail: metricDetail(system.disk, server.diskDetail),
@@ -241,7 +279,7 @@ const mergeServerTelemetry = (server: UiServer, data: Record<string, any>): UiSe
     uptime: xray.uptime || system.uptime ? formatUptime(toNumber(xray.uptime || system.uptime)) : server.uptime,
     load: formatLoads(system.loads, server.load),
     swap: metricDetail(system.swap, server.swap),
-    core: String(xray.version || data.panel_version || server.core),
+    core: getReportedCoreVersion(xray.version, data.panel_version || server.core),
     lastSeen: lastSeen === '-' ? server.lastSeen : lastSeen,
     issue: data.error || data.reason || (status === 'online' ? undefined : server.issue),
     xrayCompatibility: data.xray_compatibility === undefined
@@ -554,6 +592,7 @@ export function ServerStatus({
   const online = servers.filter((server) => server.status === 'online').length;
   const offline = servers.filter((server) => server.status === 'offline').length;
   const avgCpu = online > 0 ? servers.reduce((sum, server) => sum + server.cpu, 0) / servers.length : 0;
+  const fleetRam = formatFleetRam(servers);
 
   return (
     <>
@@ -656,10 +695,10 @@ export function ServerStatus({
 
           <div className="server-status__stat-grid grid grid-cols-2 sm:grid-cols-3 xl:flex xl:flex-wrap gap-1.5">
             <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">Online: <strong className="ml-1 font-medium">{fleetSummary?.online ?? online}/{fleetSummary?.total ?? servers.length}</strong></span>
-            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-yellow-400">Errors: <strong className="ml-1 font-medium">{fleetSummary?.checking ?? 2}</strong></span>
+            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-yellow-400">{t('serverStatus.checking')}: <strong className="ml-1 font-medium">{fleetSummary?.checking ?? 0}</strong></span>
             <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-red-400">Offline: <strong className="ml-1 font-medium">{fleetSummary?.offline ?? offline}</strong></span>
             <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">{t('serverStatus.avgCpu')}: <strong className="ml-1 font-medium">{avgCpu.toFixed(1)}%</strong></span>
-            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">{t('serverStatus.fleetRam')}: <strong className="ml-1 font-medium">{'10.4/19.2 GB'}</strong></span>
+            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">{t('serverStatus.fleetRam')}: <strong className="ml-1 font-medium">{fleetRam}</strong></span>
             <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-gray-300">{t('serverStatus.onlineClients')}: <strong className="ml-1 font-medium">{formatOnlineClients(fleetSummary?.onlineClients)}</strong></span>
           </div>
         </div>
