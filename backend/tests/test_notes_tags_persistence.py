@@ -24,6 +24,15 @@ class _ClientManagerStub:
         raise AssertionError("notes-only persistence must not update x-ui clients")
 
 
+class _BulkClientManagerStub:
+    def __init__(self):
+        self.updates = []
+
+    def update_client(self, node, inbound_id, email, updates):
+        self.updates.append((node["name"], inbound_id, email, updates))
+        return True
+
+
 class _WsManagerStub:
     def __init__(self):
         self.client_updates = []
@@ -95,6 +104,39 @@ def test_client_notes_endpoint_persists_and_enriches_client_list(tmp_path):
             (1, 11, "client-1"),
         ).fetchone()
     assert row[0] == "server note"
+
+
+def test_bulk_enable_loads_nodes_before_iterating(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    nodes = [
+        {"id": 1, "name": "alpha", "ip": "1.1.1.1", "port": "443"},
+        {"id": 2, "name": "beta", "ip": "2.2.2.2", "port": "443"},
+    ]
+    manager = _BulkClientManagerStub()
+    app = FastAPI()
+    app.include_router(
+        build_clients_router(
+            check_auth=lambda request: "admin",
+            client_mgr=manager,
+            db_path=db_path,
+            get_cached_clients=lambda _nodes, email_filter=None: [],
+            node_service=_NodeServiceStub(nodes),
+            get_node_or_404=lambda node_id: next(node for node in nodes if node["id"] == node_id),
+            invalidate_live_stats_cache=lambda: None,
+            invalidate_subscription_cache=lambda: None,
+            ws_manager=_WsManagerStub(),
+        )
+    )
+
+    response = TestClient(app).post(
+        "/api/v1/clients/bulk-enable",
+        json={"emails": ["one@test.local"], "enable": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["updated"] == 2
+    assert [update[0] for update in manager.updates] == ["alpha", "beta"]
 
 
 def test_node_service_persists_tags_as_json(tmp_path):
