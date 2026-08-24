@@ -100,25 +100,6 @@ class AuthService:
         return ROLE_RANK.get(user_role, 0) >= ROLE_RANK.get(min_role, 0)
 
     # ------------------------------------------------------------------
-    # HTTP Basic Auth parsing
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def parse_basic_auth(auth_header: Optional[str]) -> Optional[Tuple[str, str]]:
-        """Parse an HTTP Basic Auth header and return ``(username, password)``.
-
-        Returns ``None`` if the header is absent or malformed.
-        """
-        if not auth_header or not auth_header.lower().startswith("basic "):
-            return None
-        try:
-            decoded = base64.b64decode(auth_header[6:]).decode("utf-8", errors="replace")
-            username, _, password = decoded.partition(":")
-            return username, password
-        except Exception:
-            return None
-
-    # ------------------------------------------------------------------
     # PAM authentication (delegates to system PAM)
     # ------------------------------------------------------------------
 
