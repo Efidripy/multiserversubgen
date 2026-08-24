@@ -354,6 +354,7 @@ def check_web_session(request: Request):
     get_emails,
     get_links,
     get_links_filtered,
+    register_subscription_response_cache_invalidator,
 ) = build_subscription_links_facade(subscription_links_service=subscription_links_service, db_path=DB_PATH)
 
 
@@ -422,6 +423,7 @@ register_app_routers(
     check_subscription_rate_limit=_check_subscription_rate_limit,
     get_emails=get_emails,
     get_links_filtered=get_links_filtered,
+    register_subscription_response_cache_invalidator=register_subscription_response_cache_invalidator,
     subscription_signing_secret=SUBSCRIPTION_SIGNING_SECRET,
     verify_tls_default=VERIFY_TLS,
     list_adguard_sources=adguard_runtime.list_sources,

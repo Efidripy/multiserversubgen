@@ -287,6 +287,7 @@ def build_inbounds_router(
             raise HTTPException(status_code=400, detail="No updates provided")
         success = await run_in_threadpool(inbound_mgr.update_inbound, node, inbound_id, updates)
         if success:
+            await run_in_threadpool(invalidate_subscription_cache)
             await run_in_threadpool(invalidate_live_stats_cache)
         return {"success": success}
 
