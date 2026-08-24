@@ -36,3 +36,4 @@ if ($KeyPath) { $invokeParams.KeyPath = $KeyPath }
 if ($HostKey) { $invokeParams.HostKey = $HostKey }
 
 & powershell -NoProfile -ExecutionPolicy Bypass -File $deployScript @invokeParams
+exit $LASTEXITCODE
