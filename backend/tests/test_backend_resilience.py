@@ -731,3 +731,85 @@ def test_snapshot_collector_persists_and_loads_sqlite_snapshots(tmp_path):
     assert latest["nodes"][0]["name"] == "alpha"
     assert latest["nodes"][0]["traffic_total"] == 1234
     assert latest["nodes"][0]["cached_from_db"] is True
+
+
+def test_snapshot_collector_keeps_duplicate_node_names_separate():
+    from services.collector import SnapshotCollector
+
+    class DuplicateNameMonitor:
+        def get_server_status(self, _node):
+            return {"available": True, "reason": "ok", "system": {}, "xray": {}, "network": {}}
+
+        def get_inbounds(self, _node):
+            return {"available": True, "inbounds": []}
+
+        def get_online_clients(self, _node):
+            return {"online_clients": []}
+
+    collector = SnapshotCollector(
+        fetch_nodes=lambda: [],
+        xui_monitor=DuplicateNameMonitor(),
+        ws_manager=SimpleNamespace(active_connections=[]),
+    )
+    first = {"id": 1, "name": "duplicate"}
+    second = {"id": 2, "name": "duplicate"}
+    broadcasts = []
+
+    async def capture_broadcast(key, snapshot, *, previous=None):
+        broadcasts.append((key, snapshot["node_id"], previous))
+
+    collector._broadcast_delta = capture_broadcast
+
+    asyncio.run(collector._poll_node(first, collector._node_key(first)))
+    asyncio.run(collector._poll_node(second, collector._node_key(second)))
+
+    latest = collector.latest_snapshot()
+    assert latest["count"] == 2
+    assert {snapshot["node_id"] for snapshot in latest["nodes"]} == {1, 2}
+    assert set(collector._node_state) == {"id:1", "id:2"}
+    assert [(key, node_id) for key, node_id, _previous in broadcasts] == [
+        ("duplicate", 1),
+        ("duplicate", 2),
+    ]
+
+
+def test_snapshot_collector_restores_duplicate_node_names_separately(tmp_path):
+    from services.collector import SnapshotCollector
+    from services.db_bootstrap import connect, init_db
+
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    snapshots = [
+        (1, "duplicate", 100),
+        (2, "duplicate", 200),
+    ]
+    with connect(db_path) as conn:
+        for node_id, name, traffic_total in snapshots:
+            conn.execute(
+                "INSERT INTO nodes (id, name, ip, port, user, password) VALUES (?, ?, ?, ?, ?, ?)",
+                (node_id, name, f"127.0.0.{node_id}", "443", "root", "encrypted"),
+            )
+            conn.execute(
+                "INSERT INTO node_snapshots (node_id, status_data, is_online) VALUES (?, ?, ?)",
+                (
+                    node_id,
+                    json.dumps({"node_id": node_id, "name": name, "available": True, "traffic_total": traffic_total}),
+                    1,
+                ),
+            )
+        conn.commit()
+
+    collector = SnapshotCollector(
+        fetch_nodes=lambda: [],
+        xui_monitor=SimpleNamespace(),
+        ws_manager=SimpleNamespace(active_connections=[]),
+        db_path=db_path,
+    )
+    loaded_count = asyncio.run(collector.load_persisted_snapshots())
+    latest = collector.latest_snapshot()
+
+    assert loaded_count == 2
+    assert latest["count"] == 2
+    assert {snapshot["node_id"] for snapshot in latest["nodes"]} == {1, 2}
+    assert {snapshot["traffic_total"] for snapshot in latest["nodes"]} == {100, 200}
+    assert set(collector._node_state) == {"id:1", "id:2"}
