@@ -51,11 +51,14 @@ def build_clients_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        # Keep the shared runtime cache fleet-wide. A scoped request must not
+        # replace its snapshot with clients from one node.
+        nodes = await _run(node_service.list_nodes)
         if node_id is not None:
-            nodes = [await _run(get_node_or_404, node_id)]
-        else:
-            nodes = await _run(node_service.list_nodes)
+            await _run(get_node_or_404, node_id)
         clients = await _run(get_cached_clients, nodes, email_filter=None)
+        if node_id is not None:
+            clients = [client for client in clients if client.get("node_id") == node_id]
         return {"count": len(clients), "node_id": node_id}
 
     @router.get("/api/v1/clients/expired")
@@ -102,10 +105,12 @@ def build_clients_router(
         if not user:
             raise HTTPException(status_code=401)
         import time
+        # This cache is a single fleet projection. Load and enrich the full
+        # fleet first, then scope the request result by stable node identity.
         nodes = await _run(node_service.list_nodes)
-        if node_id is not None:
-            nodes = [n for n in nodes if int(n.get("id", -1)) == node_id]
         clients = await _with_notes(await _run(get_cached_clients, nodes, email_filter=None), nodes)
+        if node_id is not None:
+            clients = [client for client in clients if client.get("node_id") == node_id]
         if q:
             q_lower = q.lower()
             clients = [c for c in clients if q_lower in c.get("email", "").lower()]
