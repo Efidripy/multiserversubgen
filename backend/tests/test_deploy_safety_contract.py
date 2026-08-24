@@ -67,3 +67,7 @@ def test_ops_backup_check_uses_consistent_runtime_database_backup():
     assert '".backup \'$BACKUP_FILE\'"' in script
     assert '".restore \'$BACKUP_FILE\'"' in script
     assert "admin.db.bak" in script
+    assert "umask 077" in script
+    assert 'mkdir -p -m 0700 "$OUT_DIR"' in script
+    assert 'chmod 0600 "$BACKUP_FILE"' in script
+    assert 'chmod 0600 "$RESTORE_FILE"' in script
