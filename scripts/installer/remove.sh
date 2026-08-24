@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 source "${SCRIPT_DIR}/lib/locale.sh"
+# shellcheck source=../ops/lib/install_log.sh
+source "${REPO_ROOT}/scripts/ops/lib/install_log.sh"
 LOG_FILE="/opt/.sub_manager_install.log"
 
 REMOVE_MODE="${REMOVE_MODE:-keep-db}"
@@ -18,7 +20,7 @@ SELECTED_CFG=""
 
 if [ -f "$LOG_FILE" ]; then
     # shellcheck disable=SC1090
-    source "$LOG_FILE"
+    install_log_source "$LOG_FILE"
 fi
 
 timestamp="$(date +%Y%m%d_%H%M%S)"
