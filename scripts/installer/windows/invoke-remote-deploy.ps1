@@ -58,27 +58,24 @@ function New-Archive {
         [string]$ArchivePath
     )
 
-    if (Test-Path $ArchivePath) {
-        Remove-Item -Force $ArchivePath
+    $commit = (& git -C $RepoRoot rev-parse --verify HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $commit) {
+        throw "Unable to resolve the immutable source commit."
+    }
+    $changes = @(& git -C $RepoRoot status --porcelain=v1 --untracked-files=all)
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to verify the source worktree state."
+    }
+    if ($changes.Count -gt 0) {
+        throw "Refusing to deploy a dirty source worktree; commit or remove local changes first."
     }
 
-    $parent = Split-Path $RepoRoot -Parent
     $leaf = Split-Path $RepoRoot -Leaf
-    Push-Location $parent
-    try {
-        & tar `
-            --exclude="$leaf/.git" `
-            --exclude="$leaf/.venv" `
-            --exclude="$leaf/.venv-wsl" `
-            --exclude="$leaf/frontend/node_modules" `
-            --exclude="$leaf/.tmp" `
-            --exclude="$leaf/.local_snapshots" `
-            --exclude="$leaf/.local_project_docs" `
-            -czf $ArchivePath $leaf
+    & git -C $RepoRoot archive --format=tar.gz "--prefix=$leaf/" "--output=$ArchivePath" $commit
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $ArchivePath)) {
+        throw "Unable to create the source archive from commit $commit."
     }
-    finally {
-        Pop-Location
-    }
+    return $commit
 }
 
 function Get-Transport {
@@ -211,14 +208,14 @@ $remoteWorkDir = "$RemoteDir-$runId"
 
 try {
     if (-not $SkipSync) {
-        Write-Host "Packing current source tree..."
-        New-Archive -RepoRoot $repoRoot -ArchivePath $archivePath
+        Write-Host "Packing committed source archive..."
+        $deployCommit = New-Archive -RepoRoot $repoRoot -ArchivePath $archivePath
 
         Write-Host "Copying source archive to $UserName@$HostName ..."
         Copy-ToRemote -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -LocalPath $archivePath -RemotePath $remoteArchive
 
         Write-Host "Extracting source tree on remote host..."
-        $extractCmd = "bash -lc 'rm -rf -- $remoteWorkDir && mkdir -p -- $remoteWorkDir && tar -xzf -- $remoteArchive -C $remoteWorkDir --strip-components=1 && rm -f -- $remoteArchive'"
+        $extractCmd = "bash -lc 'rm -rf -- $remoteWorkDir && mkdir -p -- $remoteWorkDir && tar -xzf -- $remoteArchive -C $remoteWorkDir --strip-components=1 && printf %s\\n $deployCommit > $remoteWorkDir/.deploy-source-commit && chmod 0600 $remoteWorkDir/.deploy-source-commit && rm -f -- $remoteArchive'"
         Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $extractCmd
     }
 
@@ -231,12 +228,12 @@ try {
             $remoteAnswers = "/tmp/sub-manager-install-answers-$timestamp.txt"
             Write-Host "Copying install answers file..."
             Copy-ToRemote -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -LocalPath $answersResolved -RemotePath $remoteAnswers
-            $remoteCmd = "bash -lc 'cd $remoteWorkDir && sudo bash -x ./install.sh < $remoteAnswers 2>&1 | tee $remoteLog; rc=`${PIPESTATUS[0]}; rm -f $remoteAnswers; exit `$rc'"
+            $remoteCmd = "bash -lc 'cd $remoteWorkDir && sudo bash ./install.sh < $remoteAnswers 2>&1 | tee $remoteLog; rc=`${PIPESTATUS[0]}; rm -f $remoteAnswers; exit `$rc'"
             Write-Host "Running remote install..."
             Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $remoteCmd
         }
         "update" {
-            $remoteCmd = "bash -lc 'cd $remoteWorkDir && sudo NONINTERACTIVE=true UPDATE_CHOICE=$UpdateChoice bash -x ./update.sh 2>&1 | tee $remoteLog; exit `${PIPESTATUS[0]}'"
+            $remoteCmd = "bash -lc 'cd $remoteWorkDir && sudo NONINTERACTIVE=true UPDATE_CHOICE=$UpdateChoice bash ./update.sh 2>&1 | tee $remoteLog; exit `${PIPESTATUS[0]}'"
             Write-Host "Running remote update..."
             Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $remoteCmd
         }
