@@ -9,7 +9,6 @@ import { ThemeProvider } from './contexts/ThemeContext';
 // Performance & Optimization Initialization
 import { performanceMonitor } from './services/performanceMonitoring';
 import { swManager } from './services/serviceWorkerManager';
-import { indexedDBManager } from './services/indexedDBManager';
 import { devLog } from './utils/devLogger';
 
 type ErrorBoundaryState = { hasError: boolean; message: string };
@@ -110,23 +109,6 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     await swManager.unregister().catch((err) => {
       devLog('[SW] Unregister skipped:', err);
     });
-  }
-
-  // IndexedDB initialization
-  devLog('[Init] Initializing IndexedDB...');
-  try {
-    await indexedDBManager.init();
-    devLog('[IndexedDB] Initialized successfully');
-  } catch (err) {
-    console.warn('[IndexedDB] Initialization failed (non-critical):', err);
-  }
-
-  // Optional: Prune old data from IndexedDB (90+ days old traffic history)
-  try {
-    const pruned = await indexedDBManager.pruneOlderThan('traffic_history', 90 * 24 * 60 * 60 * 1000);
-    devLog(`[IndexedDB] Pruned ${pruned} old records`);
-  } catch (err) {
-    console.warn('[IndexedDB] Prune failed:', err);
   }
 
   const loadTime = performanceMonitor.endMeasure('app-initial-load');
