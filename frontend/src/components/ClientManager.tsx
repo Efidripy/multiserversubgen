@@ -1545,14 +1545,12 @@ export const ClientManager: React.FC = () => {
   };
 
   const selectAllBy = (predicate: (c: Client) => boolean) => {
-    const now = Date.now();
     const keys = clients.filter(predicate).map(clientKey);
     setSelectedClientKeys(prev => {
       const next = new Set(prev);
       keys.forEach(k => next.add(k));
       return next;
     });
-    void now;
   };
 
   const applySortFromHeader = (field: 'email' | 'node' | 'download' | 'total' | 'expiry' | 'lastOnline' | 'usedPct' | 'health') => {
