@@ -76,7 +76,6 @@ cleanup_safe() {
 
 cleanup_deep() {
     cleanup_safe
-    remove_if_exists ".vscode"
 
     if [ "$PRUNE_MCP_CACHE" = "true" ]; then
         remove_if_exists "tools/mcp/node_modules"
@@ -90,6 +89,7 @@ log "preserved local-only paths:"
 log "  - .local_project_docs/"
 log "  - .local_snapshots/"
 log "  - .tmp/"
+log "  - .vscode/"
 log "  - scripts/installer/templates/.local-randomfakehtml/"
 log "  - scripts/installer/templates/.local-randomfakehtml-sample/"
 log "  - tools/mcp/ runtime (unless PRUNE_MCP_CACHE=true)"
