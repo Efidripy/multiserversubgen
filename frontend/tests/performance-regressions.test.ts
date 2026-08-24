@@ -108,10 +108,13 @@ describe('navigation performance regressions', () => {
     const serverStatus = read('src/components/ServerStatus.tsx');
     const fleetPanel = read('src/components/RegisteredFleetPanel.tsx');
     const nodesApi = read('src/api/nodes.ts');
+    const summary = read('src/components/DashboardSummary.tsx');
 
     expect(app).toContain('<DashboardDataProvider>');
     expect(app.indexOf('<DashboardDataProvider>')).toBeLessThan(app.indexOf('<ServerStatus'));
     expect(app.lastIndexOf('</DashboardDataProvider>')).toBeGreaterThan(app.indexOf('<ServerStatus'));
+    expect(app.indexOf('<DashboardDataProvider>')).toBeLessThan(app.indexOf('<DashboardSummary'));
+    expect(app.lastIndexOf('</DashboardDataProvider>')).toBeGreaterThan(app.indexOf('<DashboardSummary'));
     expect(app).not.toContain('includeLiveStatus={false}');
     expect(app).not.toContain('includePanelUpdateChecks={false}');
     expect(app).not.toContain('getDashboardHeaderMetrics');
@@ -125,6 +128,12 @@ describe('navigation performance regressions', () => {
     expect(nodesApi).not.toContain('getNodePanelUpdateInfo');
     expect(fleetPanel).toContain('if (dashboardData) return;');
     expect(fleetPanel).toContain('getRegisteredFleetOverview');
+    expect(summary).not.toContain('getDashboardSummary');
+    expect(summary).not.toContain('listNodes');
+    expect(summary).not.toContain('NODES_CHANGED_EVENT');
+    expect(summary).not.toContain('window.setInterval');
+    expect(summary).toContain('dashboardData?.setPeriod(next)');
+    expect(summary).toContain('dashboardData?.refresh()');
   });
 
   it('does not retain an ignored Dashboard hero-stats prop or memo dependency', () => {
