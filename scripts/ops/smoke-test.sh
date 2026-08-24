@@ -2,12 +2,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+OPS_DIR="${SCRIPT_DIR}/scripts/ops"
 
 LOG_FILE="${LOG_FILE:-/opt/.sub_manager_install.log}"
-if [[ -f "$LOG_FILE" ]]; then
-  # shellcheck disable=SC1090
-  source "$LOG_FILE"
-fi
+# shellcheck source=lib/install_log.sh
+source "${OPS_DIR}/lib/install_log.sh"
+install_log_source "$LOG_FILE"
 
 load_env_file() {
   local file="$1"
