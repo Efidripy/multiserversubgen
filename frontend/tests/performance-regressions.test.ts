@@ -114,6 +114,14 @@ describe('navigation performance regressions', () => {
     expect(fleetPanel).toContain('if (dashboardData) return;');
   });
 
+  it('does not retain an ignored Dashboard hero-stats prop or memo dependency', () => {
+    const app = read('src/App.tsx');
+    const summary = read('src/components/DashboardSummary.tsx');
+
+    expect(app).not.toContain('heroStats={headerSummary.stats}');
+    expect(summary).not.toContain('heroStats');
+  });
+
   it('does not fetch complete node databases just to render Backup Manager', () => {
     const backupManager = read('src/components/BackupManager.tsx');
 
