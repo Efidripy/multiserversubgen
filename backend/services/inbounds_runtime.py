@@ -35,6 +35,38 @@ class InboundsRuntime:
         self._options_cache: Dict = {"ts": 0.0, "data": []}
         self._slim_cold_load_lock = Lock()
         self._options_cold_load_lock = Lock()
+        self._cache_state_lock = Lock()
+        self._cache_generations = {"inbounds": 0, "inbounds_slim": 0, "inbounds_options": 0}
+
+    def _snapshot_cache(self, cache: Dict, cache_key: str) -> tuple[float, List[Dict], int]:
+        with self._cache_state_lock:
+            data = cache.get("data")
+            return (
+                float(cache.get("ts") or 0.0),
+                data if isinstance(data, list) else [],
+                self._cache_generations[cache_key],
+            )
+
+    def _store_cache(self, *, cache: Dict, cache_key: str, data: List[Dict], generation: int) -> bool:
+        """Publish a refresh only if no control-plane write superseded it."""
+        with self._cache_state_lock:
+            if generation != self._cache_generations[cache_key]:
+                return False
+            cache["ts"] = time.time()
+            cache["data"] = data
+            return True
+
+    def invalidate(self) -> None:
+        """Discard full, slim and picker projections after a successful write."""
+        with self._cache_state_lock:
+            for cache_key, cache in (
+                ("inbounds", self.inbounds_cache),
+                ("inbounds_slim", self._slim_cache),
+                ("inbounds_options", self._options_cache),
+            ):
+                self._cache_generations[cache_key] += 1
+                cache["ts"] = 0.0
+                cache["data"] = []
 
     def _cached_full_by_node(self) -> Dict[str, List[Dict]]:
         """Index already-held full cache rows for legacy projection fallback.
@@ -57,41 +89,43 @@ class InboundsRuntime:
 
     def _get_cached_projection(self, *, cache: Dict, lock: Lock, cache_key: str, nodes: List[Dict], loader) -> List[Dict]:
         now = time.time()
-        cached = cache.get("data") or []
-        if cached and now - cache["ts"] < self.fresh_ttl:
+        cached_at, cached, generation = self._snapshot_cache(cache, cache_key)
+        if cached and now - cached_at < self.fresh_ttl:
             return cached
 
-        if cached and now - cache["ts"] < self.stale_ttl:
+        if cached and now - cached_at < self.stale_ttl:
             def _refresh() -> None:
                 fresh = loader(nodes, cached_full=self._cached_full_by_node())
-                cache["ts"] = time.time()
-                cache["data"] = fresh
+                self._store_cache(cache=cache, cache_key=cache_key, data=fresh, generation=generation)
 
             self.start_cache_refresh(cache_key, _refresh)
             return cached
 
         with lock:
             now = time.time()
-            cached = cache.get("data") or []
-            if cached and now - cache["ts"] < self.fresh_ttl:
+            cached_at, cached, generation = self._snapshot_cache(cache, cache_key)
+            if cached and now - cached_at < self.fresh_ttl:
                 return cached
             fresh = loader(nodes, cached_full=self._cached_full_by_node())
-            cache["ts"] = time.time()
-            cache["data"] = fresh
+            self._store_cache(cache=cache, cache_key=cache_key, data=fresh, generation=generation)
             return fresh
 
     def get_cached_inbounds(self, nodes: List[Dict]) -> List[Dict]:
         now = time.time()
-        cached = self.inbounds_cache.get("data") or []
+        cached_at, cached, generation = self._snapshot_cache(self.inbounds_cache, "inbounds")
 
-        if cached and now - self.inbounds_cache["ts"] < self.fresh_ttl:
+        if cached and now - cached_at < self.fresh_ttl:
             return cached
 
-        if cached and now - self.inbounds_cache["ts"] < self.stale_ttl:
+        if cached and now - cached_at < self.stale_ttl:
             def _refresh() -> None:
                 fresh = self.inbound_mgr.get_all_inbounds(nodes)
-                self.inbounds_cache["ts"] = time.time()
-                self.inbounds_cache["data"] = fresh
+                self._store_cache(
+                    cache=self.inbounds_cache,
+                    cache_key="inbounds",
+                    data=fresh,
+                    generation=generation,
+                )
 
             self.start_cache_refresh("inbounds", _refresh)
             return cached
@@ -100,12 +134,16 @@ class InboundsRuntime:
         # while concurrent callers reuse the value populated by that loader.
         with self._cold_load_lock:
             now = time.time()
-            cached = self.inbounds_cache.get("data") or []
-            if cached and now - self.inbounds_cache["ts"] < self.fresh_ttl:
+            cached_at, cached, generation = self._snapshot_cache(self.inbounds_cache, "inbounds")
+            if cached and now - cached_at < self.fresh_ttl:
                 return cached
             fresh = self.inbound_mgr.get_all_inbounds(nodes)
-            self.inbounds_cache["ts"] = time.time()
-            self.inbounds_cache["data"] = fresh
+            self._store_cache(
+                cache=self.inbounds_cache,
+                cache_key="inbounds",
+                data=fresh,
+                generation=generation,
+            )
             return fresh
 
     def get_cached_slim_inbounds(self, nodes: List[Dict]) -> List[Dict]:

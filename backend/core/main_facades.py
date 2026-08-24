@@ -87,9 +87,15 @@ def build_auth_request_facade(
     )
 
 
-def build_cache_facade(*, live_stats_runtime, clients_runtime, audit_runtime):
+def build_cache_facade(*, live_stats_runtime, clients_runtime, inbounds_runtime, audit_runtime):
     def invalidate_live_stats_cache():
         return live_stats_runtime.invalidate()
+
+    def invalidate_read_projections():
+        """Invalidate every cache affected by a successful control-plane write."""
+        live_stats_runtime.invalidate()
+        clients_runtime.invalidate()
+        inbounds_runtime.invalidate()
 
     def get_cached_traffic_stats(nodes: List[Dict], group_by: str) -> Dict:
         return live_stats_runtime.get_cached_traffic_stats(nodes, group_by)
@@ -117,6 +123,7 @@ def build_cache_facade(*, live_stats_runtime, clients_runtime, audit_runtime):
 
     return (
         invalidate_live_stats_cache,
+        invalidate_read_projections,
         get_cached_traffic_stats,
         get_cached_traffic_stats_projection,
         get_cached_traffic_stats_projection_by_period,
