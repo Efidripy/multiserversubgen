@@ -84,7 +84,7 @@ function scanFile(filePath) {
     },
     {
       kind: 'attr-string',
-      regex: /\b(?:placeholder|title|aria-label)\s*=\s*(["'`])((?:\\.|(?!\1).){2,})\1/g,
+      regex: /\b(?:placeholder|title|aria-label|label)\s*=\s*(["'`])((?:\\.|(?!\1).){2,})\1/g,
       group: 2,
     },
     {

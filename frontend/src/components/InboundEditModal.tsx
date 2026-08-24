@@ -76,7 +76,7 @@ const Field: React.FC<{ label: string; children: React.ReactNode; colors: any; h
   <div className="row align-items-center mb-2">
     <div className="col-4 text-end">
       <span style={{ fontSize: '0.8rem', color: colors.text.secondary }}>{label}</span>
-      {hint && <span style={{ fontSize: '0.68rem', color: colors.text.tertiary, marginLeft: '3px' }}>ⓘ</span>}
+      {hint && <span title={hint} style={{ fontSize: '0.68rem', color: colors.text.tertiary, marginLeft: '3px' }}>ⓘ</span>}
     </div>
     <div className="col-8">{children}</div>
   </div>
@@ -442,8 +442,8 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
             <div className="drawer__subtitle">{inbound.protocol.toUpperCase()} · {inbound.node_name}</div>
           </div>
           <div className="d-flex align-items-center gap-2">
-            <button className={`${secTabCls(activeTab === 'form')} seg-tab--sm`} role="tab" aria-selected={activeTab === 'form'} onClick={() => setActiveTab('form')}>Form</button>
-            <button className={`${secTabCls(activeTab === 'raw')} seg-tab--sm`} role="tab" aria-selected={activeTab === 'raw'} onClick={() => setActiveTab('raw')}>Raw JSON</button>
+            <button className={`${secTabCls(activeTab === 'form')} seg-tab--sm`} role="tab" aria-selected={activeTab === 'form'} onClick={() => setActiveTab('form')}>{t('inbounds.form')}</button>
+            <button className={`${secTabCls(activeTab === 'raw')} seg-tab--sm`} role="tab" aria-selected={activeTab === 'raw'} onClick={() => setActiveTab('raw')}>{t('inbounds.rawJson')}</button>
             <button className="drawer__close" aria-label={t('common.close')} onClick={onClose}>✕</button>
           </div>
         </div>
@@ -465,24 +465,24 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
             ) : (
               <>
                 {/* ─── BASIC ──────────────────────────────────────────────── */}
-                <Toggle id="ib-enable" checked={enable} onChange={setEnable} label="Enabled" colors={colors} />
+                <Toggle id="ib-enable" checked={enable} onChange={setEnable} label={t('common.enabled')} colors={colors} />
                 <div style={{ height: '1px', background: colors.border, margin: '8px 0' }} />
 
-                <Field label="Remark" colors={colors}>
+                <Field label={t('inbounds.remark')} colors={colors}>
                   <TextInput value={remark} onChange={setRemark} placeholder={t('inbounds.inboundNamePlaceholder')} colors={colors} />
                 </Field>
-                <Field label="Protocol" colors={colors}>
+                <Field label={t('inbounds.protocol')} colors={colors}>
                   <input className="form-control form-control-sm" value={inbound.protocol} readOnly style={{ ...inputStyle, opacity: 0.6 }} />
                 </Field>
-                <Field label="Listen IP" colors={colors} hint="Leave empty to listen on all IPs">
+                <Field label={t('inbounds.listenIp')} colors={colors} hint={t('inbounds.listenAllIpHint')}>
                   <TextInput value={listenIP} onChange={setListenIP} placeholder={t('inbounds.listenPlaceholder')} colors={colors} />
                 </Field>
-                <Field label="Port" colors={colors}>
+                <Field label={t('inbounds.port')} colors={colors}>
                   <NumInput value={port} onChange={setPort} colors={colors} />
                 </Field>
 
                 {/* ─── TRANSMISSION ───────────────────────────────────────── */}
-                <SectionHeader title="Transmission" colors={colors} />
+                <SectionHeader title={t('inbounds.transmission')} colors={colors} />
 
                 <div className="d-flex flex-wrap gap-1 mb-3">
                   {NETWORKS.map(n => (
@@ -495,13 +495,13 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                 {/* WS */}
                 {network === 'ws' && (
                   <>
-                    <Field label="Host" colors={colors}>
+                    <Field label={t('inbounds.host')} colors={colors}>
                       <TextInput value={wsHost} onChange={setWsHost} placeholder={t('inbounds.exampleDomainPlaceholder')} colors={colors} />
                     </Field>
-                    <Field label="Path" colors={colors}>
+                    <Field label={t('inbounds.path')} colors={colors}>
                       <TextInput value={wsPath} onChange={setWsPath} placeholder="/path" colors={colors} />
                     </Field>
-                    <Field label="Heartbeat Period" colors={colors} hint="seconds, 0 = disabled">
+                    <Field label={t('inbounds.heartbeatPeriod')} colors={colors} hint={t('inbounds.heartbeatHint')}>
                       <NumInput value={wsHeartbeat} onChange={setWsHeartbeat} colors={colors} />
                     </Field>
                   </>
@@ -510,75 +510,75 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                 {/* gRPC */}
                 {network === 'grpc' && (
                   <>
-                    <Field label="Service Name" colors={colors}>
+                    <Field label={t('inbounds.serviceName')} colors={colors}>
                       <TextInput value={grpcService} onChange={setGrpcService} placeholder="serviceName" colors={colors} />
                     </Field>
-                    <Toggle id="grpc-multi" checked={grpcMultiMode} onChange={setGrpcMultiMode} label="Multi Mode" colors={colors} />
+                    <Toggle id="grpc-multi" checked={grpcMultiMode} onChange={setGrpcMultiMode} label={t('inbounds.multiMode')} colors={colors} />
                   </>
                 )}
 
                 {/* XHTTP */}
                 {network === 'xhttp' && (
                   <>
-                    <Field label="Host" colors={colors}>
+                    <Field label={t('inbounds.host')} colors={colors}>
                       <TextInput value={xhttpHost} onChange={setXhttpHost} placeholder="comma-separated" colors={colors} />
                     </Field>
-                    <Field label="Path" colors={colors}>
+                    <Field label={t('inbounds.path')} colors={colors}>
                       <TextInput value={xhttpPath} onChange={setXhttpPath} placeholder="/path" colors={colors} />
                     </Field>
-                    <Field label="Mode" colors={colors}>
+                    <Field label={t('inbounds.mode')} colors={colors}>
                       <Select value={xhttpMode} onChange={setXhttpMode} options={XHTTP_MODES} colors={colors} />
                     </Field>
-                    <Field label="Max Buffered Upload" colors={colors}>
+                    <Field label={t('inbounds.maxBufferedUpload')} colors={colors}>
                       <NumInput value={xhttpMaxBuf} onChange={setXhttpMaxBuf} colors={colors} />
                     </Field>
-                    <Field label="Max Upload Size (B)" colors={colors}>
+                    <Field label={t('inbounds.maxUploadSize')} colors={colors}>
                       <NumInput value={xhttpMaxUpload} onChange={setXhttpMaxUpload} colors={colors} />
                     </Field>
-                    <Field label="Padding Bytes" colors={colors} hint="min-max range">
+                    <Field label={t('inbounds.paddingBytes')} colors={colors} hint={t('inbounds.paddingRangeHint')}>
                       <div className="d-flex gap-1 align-items-center">
                         <NumInput value={xhttpPadMin} onChange={setXhttpPadMin} colors={colors} style={{ width: '80px' }} />
                         <span style={{ color: colors.text.tertiary }}>–</span>
                         <NumInput value={xhttpPadMax} onChange={setXhttpPadMax} colors={colors} style={{ width: '80px' }} />
                       </div>
                     </Field>
-                    <Toggle id="xhttp-nosse" checked={xhttpNoSSE} onChange={setXhttpNoSSE} label="No SSE Header" colors={colors} />
+                    <Toggle id="xhttp-nosse" checked={xhttpNoSSE} onChange={setXhttpNoSSE} label={t('inbounds.noSseHeader')} colors={colors} />
                   </>
                 )}
 
                 {/* HTTPUpgrade */}
                 {network === 'httpupgrade' && (
                   <>
-                    <Field label="Host" colors={colors}>
+                    <Field label={t('inbounds.host')} colors={colors}>
                       <TextInput value={huHost} onChange={setHuHost} placeholder={t('inbounds.exampleDomainPlaceholder')} colors={colors} />
                     </Field>
-                    <Field label="Path" colors={colors}>
+                    <Field label={t('inbounds.path')} colors={colors}>
                       <TextInput value={huPath} onChange={setHuPath} placeholder="/path" colors={colors} />
                     </Field>
                   </>
                 )}
 
                 {/* Sockopt */}
-                <SectionHeader title="Sockopt" colors={colors} collapsible open={sockOpen} onToggle={() => setSockOpen(p => !p)} />
+                <SectionHeader title={t('inbounds.sockopt')} colors={colors} collapsible open={sockOpen} onToggle={() => setSockOpen(p => !p)} />
                 {sockOpen && (
                   <>
-                    <Toggle id="tcp-fast-open" checked={tcpFastOpen} onChange={setTcpFastOpen} label="TCP Fast Open" colors={colors} />
-                    <Toggle id="multipath" checked={multiPath} onChange={setMultiPath} label="Multipath TCP" colors={colors} />
-                    <Toggle id="v6only" checked={v6Only} onChange={setV6Only} label="V6 Only" colors={colors} />
-                    <Field label="Domain Strategy" colors={colors}>
+                    <Toggle id="tcp-fast-open" checked={tcpFastOpen} onChange={setTcpFastOpen} label={t('inbounds.tcpFastOpen')} colors={colors} />
+                    <Toggle id="multipath" checked={multiPath} onChange={setMultiPath} label={t('inbounds.multipathTcp')} colors={colors} />
+                    <Toggle id="v6only" checked={v6Only} onChange={setV6Only} label={t('inbounds.v6Only')} colors={colors} />
+                    <Field label={t('inbounds.domainStrategy')} colors={colors}>
                       <Select value={domainStrategy} onChange={setDomainStrategy} options={DOMAIN_STRATEGIES} colors={colors} />
                     </Field>
-                    <Field label="TCP Congestion" colors={colors}>
+                    <Field label={t('inbounds.tcpCongestion')} colors={colors}>
                       <TextInput value={tcpCongestion} onChange={setTcpCongestion} placeholder={t('inbounds.tcpCongestionPlaceholder')} colors={colors} />
                     </Field>
-                    <Field label="TProxy" colors={colors}>
+                    <Field label={t('inbounds.tproxy')} colors={colors}>
                       <Select value={tproxy} onChange={setTproxy} options={['off', 'redirect', 'tproxy']} colors={colors} />
                     </Field>
                   </>
                 )}
 
                 {/* ─── SECURITY ───────────────────────────────────────────── */}
-                <SectionHeader title="Security" colors={colors} />
+                <SectionHeader title={t('inbounds.security')} colors={colors} />
 
                 <div className="d-flex gap-2 mb-3">
                   {(['none', 'reality', 'tls'] as Security[]).map(s => (
@@ -611,29 +611,29 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                 {/* Reality */}
                 {security === 'reality' && (
                   <>
-                    <Toggle id="real-show" checked={realShow} onChange={setRealShow} label="Show" colors={colors} />
-                    <Field label="Xver" colors={colors}>
+                    <Toggle id="real-show" checked={realShow} onChange={setRealShow} label={t('inbounds.show')} colors={colors} />
+                    <Field label={t('inbounds.xver')} colors={colors}>
                       <NumInput value={realXver} onChange={setRealXver} colors={colors} />
                     </Field>
                     <Field label="uTLS" colors={colors}>
                       <Select value={realUtls} onChange={(v) => { setRealUtls(v); setRealFingerprint(v); }} options={FINGERPRINTS.filter(f => f)} colors={colors} />
                     </Field>
-                    <Field label="Target" colors={colors} hint="dest for reality">
+                    <Field label={t('inbounds.target')} colors={colors} hint={t('inbounds.realityTargetHint')}>
                       <TextInput value={realDest} onChange={setRealDest} placeholder={t('inbounds.realityTargetPlaceholder')} colors={colors} />
                     </Field>
                     <Field label="SNI" colors={colors}>
                       <TextInput value={realServerNames} onChange={setRealServerNames} placeholder="comma-separated" colors={colors} />
                     </Field>
-                    <Field label="Short IDs" colors={colors} hint="comma-separated hex">
+                    <Field label={t('inbounds.shortIds')} colors={colors} hint={t('inbounds.commaSeparatedHexHint')}>
                       <TextInput value={realShortIds} onChange={setRealShortIds} placeholder={t('inbounds.shortIdsPlaceholder')} mono colors={colors} />
                     </Field>
                     <Field label="SpiderX" colors={colors}>
                       <TextInput value={realSpiderX} onChange={setRealSpiderX} placeholder="/" colors={colors} />
                     </Field>
-                    <Field label="Public Key" colors={colors}>
+                    <Field label={t('inbounds.publicKey')} colors={colors}>
                       <TextInput value={realPublicKey} onChange={setRealPublicKey} placeholder={t('inbounds.keyGenPlaceholder')} mono colors={colors} />
                     </Field>
-                    <Field label="Private Key" colors={colors}>
+                    <Field label={t('inbounds.privateKey')} colors={colors}>
                       <TextInput value={realPrivateKey} onChange={setRealPrivateKey} placeholder={t('inbounds.keyGenPlaceholder')} mono colors={colors} />
                     </Field>
                     <div className="d-flex gap-2 mt-1 mb-1">
@@ -654,18 +654,18 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                 {/* TLS */}
                 {security === 'tls' && (
                   <>
-                    <Field label="Server Name" colors={colors}>
+                    <Field label={t('inbounds.serverName')} colors={colors}>
                       <TextInput value={tlsServerName} onChange={setTlsServerName} placeholder={t('inbounds.exampleDomainPlaceholder')} colors={colors} />
                     </Field>
-                    <Toggle id="tls-insecure" checked={tlsAllowInsecure} onChange={setTlsAllowInsecure} label="Allow Insecure" colors={colors} />
+                    <Toggle id="tls-insecure" checked={tlsAllowInsecure} onChange={setTlsAllowInsecure} label={t('inbounds.allowInsecure')} colors={colors} />
                   </>
                 )}
 
                 {/* ─── SNIFFING ────────────────────────────────────────────── */}
-                <SectionHeader title="Sniffing" colors={colors} collapsible open={sniffOpen} onToggle={() => setSniffOpen(p => !p)} />
+                <SectionHeader title={t('inbounds.sniffing')} colors={colors} collapsible open={sniffOpen} onToggle={() => setSniffOpen(p => !p)} />
                 {sniffOpen && (
                   <>
-                    <Toggle id="sniff-en" checked={sniffEnabled} onChange={setSniffEnabled} label="Enabled" colors={colors} />
+                    <Toggle id="sniff-en" checked={sniffEnabled} onChange={setSniffEnabled} label={t('common.enabled')} colors={colors} />
                     {sniffEnabled && (
                       <>
                         <div className="d-flex flex-wrap gap-2 mt-2 mb-1">
@@ -681,12 +681,12 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
                             </label>
                           ))}
                         </div>
-                        <Toggle id="sniff-meta" checked={sniffMetaOnly} onChange={setSniffMetaOnly} label="Metadata Only" colors={colors} />
-                        <Toggle id="sniff-route" checked={sniffRouteOnly} onChange={setSniffRouteOnly} label="Route Only" colors={colors} />
-                        <Field label="IPs Excluded" colors={colors}>
+                        <Toggle id="sniff-meta" checked={sniffMetaOnly} onChange={setSniffMetaOnly} label={t('inbounds.metadataOnly')} colors={colors} />
+                        <Toggle id="sniff-route" checked={sniffRouteOnly} onChange={setSniffRouteOnly} label={t('inbounds.routeOnly')} colors={colors} />
+                        <Field label={t('inbounds.ipsExcluded')} colors={colors}>
                           <TextInput value={sniffIPsExcl} onChange={setSniffIPsExcl} placeholder={t('inbounds.ipRulesPlaceholder')} colors={colors} />
                         </Field>
-                        <Field label="Domains Excluded" colors={colors}>
+                        <Field label={t('inbounds.domainsExcluded')} colors={colors}>
                           <TextInput value={sniffDomsExcl} onChange={setSniffDomsExcl} placeholder={t('inbounds.domainRulesPlaceholder')} colors={colors} />
                         </Field>
                       </>
