@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 from copy import deepcopy
@@ -56,6 +57,20 @@ def _seed_traffic_projection(runtime, group_by, stats, timestamp=0.0):
         timestamp,
         {"stats": deepcopy(stats), "group_by": group_by},
     )
+
+
+def _node_identity_stats(*rows):
+    return {
+        f"node:{node_id}": {
+            "up": up,
+            "down": down,
+            "total": up + down,
+            "count": 1,
+            "_display_key": display_key,
+            "_legacy_key": legacy_key,
+        }
+        for node_id, display_key, legacy_key, up, down in rows
+    }
 
 
 def test_invalidation_rejects_in_flight_live_stats_cache_publish(tmp_path):
@@ -117,6 +132,117 @@ def test_collector_projection_serves_all_groupings_without_client_manager_fanout
     assert client["stats"]["two@example.test"]["total"] == 110
     assert inbound["stats"]["alpha:main"]["total"] == 300
     assert node["stats"]["alpha"]["total"] == 300
+
+
+def test_collector_traffic_projection_keeps_duplicate_node_names_separate(tmp_path):
+    snapshot = {
+        "timestamp": 123.0,
+        "nodes": [
+            {"node_id": 1, "name": "edge", "inbounds": [{"id": 7, "remark": "main", "up": 10, "down": 20}]},
+            {"node_id": 2, "name": "edge", "inbounds": [{"id": 7, "remark": "main", "up": 30, "down": 40}]},
+        ],
+    }
+    runtime = _build_runtime(tmp_path, {}, get_latest_snapshot=lambda: snapshot)
+
+    node = runtime.get_cached_traffic_stats_projection("node")
+    inbound = runtime.get_cached_traffic_stats_projection("inbound")
+
+    assert node["stats"] == {
+        "edge #1": {"up": 10, "down": 20, "total": 30, "count": 1},
+        "edge #2": {"up": 30, "down": 40, "total": 70, "count": 1},
+    }
+    assert node["identity_stats"]["node:1"]["total"] == 30
+    assert node["identity_stats"]["node:2"]["total"] == 70
+    assert inbound["stats"]["edge #1:main"]["total"] == 30
+    assert inbound["stats"]["edge #2:main"]["total"] == 70
+    assert inbound["identity_stats"]["node:1:inbound:7"]["total"] == 30
+    assert inbound["identity_stats"]["node:2:inbound:7"]["total"] == 70
+
+
+def test_node_period_uses_stable_identity_after_rename(monkeypatch, tmp_path):
+    now_ts = 500 * 3600
+    runtime = _build_runtime(tmp_path, {})
+    baseline = _node_identity_stats((1, "old-name", "old-name", 20, 100))
+    current = _node_identity_stats((1, "new-name", "new-name", 40, 280))
+    runtime._save_period_snapshots("node", {}, now_ts - 25 * 3600, baseline)
+    runtime.traffic_stats_cache["node"] = (
+        now_ts,
+        {"stats": {"new-name": {"up": 40, "down": 280, "total": 320, "count": 1}}, "identity_stats": current},
+    )
+    monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
+
+    payload = runtime.get_cached_traffic_stats_projection_by_period("node", "day")
+
+    assert payload["stats"] == {"new-name": {"up": 20, "down": 180, "total": 200, "count": 1}}
+
+
+def test_sqlite_identity_snapshot_rebuilds_readable_node_labels(tmp_path):
+    runtime = _build_runtime(tmp_path, {})
+    identity_stats = _node_identity_stats(
+        (1, "edge #1", "edge", 10, 20),
+        (2, "edge #2", "edge", 30, 40),
+    )
+    runtime._save_period_snapshots("node", {}, 500 * 3600, identity_stats)
+    restarted = _build_runtime(tmp_path, {})
+
+    payload = restarted.get_cached_traffic_stats_projection("node")
+
+    assert payload["cache_source"] == "sqlite_snapshot"
+    assert set(payload["stats"]) == {"edge #1", "edge #2"}
+    assert "node:1" not in payload["stats"]
+    assert set(payload["identity_stats"]) == {"node:1", "node:2"}
+
+
+def test_node_period_reads_legacy_name_snapshot_only_when_unambiguous(monkeypatch, tmp_path):
+    now_ts = 500 * 3600
+    runtime = _build_runtime(tmp_path, {})
+    runtime._save_period_snapshots(
+        "node",
+        {"alpha": {"up": 20, "down": 100, "total": 120, "count": 1}},
+        now_ts - 25 * 3600,
+    )
+    current = _node_identity_stats((1, "alpha", "alpha", 40, 280))
+    runtime.traffic_stats_cache["node"] = (
+        now_ts,
+        {"stats": {"alpha": {"up": 40, "down": 280, "total": 320, "count": 1}}, "identity_stats": current},
+    )
+    monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
+
+    payload = runtime.get_cached_traffic_stats_projection_by_period("node", "day")
+
+    assert payload["stats"]["alpha"]["total"] == 200
+    assert "missing_baseline_count" not in payload
+
+
+def test_node_period_omits_ambiguous_legacy_name_snapshot(monkeypatch, tmp_path):
+    now_ts = 500 * 3600
+    runtime = _build_runtime(tmp_path, {})
+    runtime._save_period_snapshots(
+        "node",
+        {"edge": {"up": 20, "down": 100, "total": 120, "count": 1}},
+        now_ts - 25 * 3600,
+    )
+    current = _node_identity_stats(
+        (1, "edge #1", "edge", 40, 280),
+        (2, "edge #2", "edge", 50, 350),
+    )
+    runtime.traffic_stats_cache["node"] = (
+        now_ts,
+        {
+            "stats": {
+                "edge #1": {"up": 40, "down": 280, "total": 320, "count": 1},
+                "edge #2": {"up": 50, "down": 350, "total": 400, "count": 1},
+            },
+            "identity_stats": current,
+        },
+    )
+    monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
+
+    payload = runtime.get_cached_traffic_stats_projection_by_period("node", "day")
+
+    assert payload["stats"] == {}
+    assert payload["missing_baseline_count"] == 2
+    assert "no unambiguous historical baseline" in payload["note"]
 
 
 def test_day_period_uses_snapshot_before_requested_window(monkeypatch, tmp_path):
@@ -242,6 +368,14 @@ def test_backfill_node_history_snapshots_restores_node_period_history(monkeypatc
 
     assert summary["hour"] >= 1
     assert summary["day"] >= 1
+    with connect(runtime.db_path) as conn:
+        row = conn.execute(
+            "SELECT stats_json FROM traffic_stats_snapshots WHERE group_by = 'node' AND bucket_kind = 'day' LIMIT 1"
+        ).fetchone()
+    persisted = json.loads(row[0])
+    assert set(persisted) == {"node:1", "node:2"}
+    assert persisted["node:1"]["_display_key"] == "alpha-node"
+    assert persisted["node:2"]["_display_key"] == "beta-node"
 
     monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
     _seed_traffic_projection(
@@ -252,6 +386,10 @@ def test_backfill_node_history_snapshots_restores_node_period_history(monkeypatc
             "beta-node": {"up": 0, "down": 480, "total": 480, "count": 1},
         },
         now_ts,
+    )
+    runtime.traffic_stats_cache["node"][1]["identity_stats"] = _node_identity_stats(
+        (1, "alpha-node", "alpha-node", 0, 320),
+        (2, "beta-node", "beta-node", 0, 480),
     )
     payload = runtime.get_cached_traffic_stats_projection_by_period("node", "day")
 
