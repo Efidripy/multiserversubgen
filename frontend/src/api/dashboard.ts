@@ -22,6 +22,7 @@ export interface DashboardSummaryData {
   clients_total: number;
   online_clients_total: number;
   online_by_node: Record<string, number>;
+  online_by_node_id: Record<string, number>;
   traffic: { upload: number; download: number; total: number };
   traffic_period: DashboardTrafficPeriod;
   traffic_note: string | null;
@@ -153,6 +154,7 @@ export const normalizeDashboardSummary = (raw: any): DashboardSummaryData => ({
   clients_total: toFiniteNumber(raw?.clients_total),
   online_clients_total: toFiniteNumber(raw?.online_clients_total),
   online_by_node: normalizeNumberRecord(raw?.online_by_node),
+  online_by_node_id: normalizeNumberRecord(raw?.online_by_node_id),
   traffic: {
     upload: toFiniteNumber(raw?.traffic?.upload),
     download: toFiniteNumber(raw?.traffic?.download),

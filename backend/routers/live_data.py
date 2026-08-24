@@ -190,16 +190,20 @@ def build_live_data_router(
             else {"stats": {}, "cache_source": "unavailable"}
         )
         online_by_node: Dict[str, int] = {}
+        online_by_node_id: Dict[str, int] = {}
         online_total = 0
         online_nodes = 0
         for node in nodes:
             cached = _snapshot_for_node(node, by_id, by_name)
             node_name = node.get("name") or str(node.get("id"))
+            node_id = str(node.get("id") or node_name)
             if not isinstance(cached, dict):
-                online_by_node[node_name] = 0
+                online_by_node_id[node_id] = 0
+                online_by_node.setdefault(node_name, 0)
                 continue
             online_count = int(cached.get("online_clients") or 0)
-            online_by_node[node_name] = online_count
+            online_by_node_id[node_id] = online_count
+            online_by_node[node_name] = online_by_node.get(node_name, 0) + online_count
             online_total += online_count
             if cached.get("available"):
                 online_nodes += 1
@@ -209,6 +213,7 @@ def build_live_data_router(
             "clients_total": int(traffic_projection.get("current_count") or len(traffic_projection.get("stats", {}))),
             "online_clients_total": online_total,
             "online_by_node": online_by_node,
+            "online_by_node_id": online_by_node_id,
             "traffic": _traffic_totals_from_projection(traffic_projection),
             "traffic_period": period,
             "traffic_note": traffic_projection.get("note"),

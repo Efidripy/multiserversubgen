@@ -447,6 +447,7 @@ def test_dashboard_summary_uses_snapshot_cache_without_xui_fetch(monkeypatch):
     assert payload["nodes_total"] == 2
     assert payload["nodes_online"] == 1
     assert payload["online_clients_total"] == 3
+    assert payload["online_by_node_id"] == {"1": 3, "2": 0}
     assert payload["traffic"] == {"upload": 250, "download": 750, "total": 1000}
     assert payload["traffic_period"] == "all_time"
     assert payload["cache"]["source"] == "snapshot_collector"

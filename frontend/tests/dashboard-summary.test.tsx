@@ -8,6 +8,7 @@ const { summary } = vi.hoisted(() => ({
     clients_total: 3,
     online_clients_total: 1,
     online_by_node: { alpha: 1 },
+    online_by_node_id: { '1': 1 },
     traffic: { upload: 400, download: 1600, total: 2000 },
     traffic_period: 'all_time',
     traffic_note: null,
