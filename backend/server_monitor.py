@@ -5,7 +5,6 @@
 import requests
 import logging
 import base64
-import time
 from urllib.parse import quote
 import sys
 import os
@@ -17,7 +16,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 from xui_session import (
     XUI_FAST_RETRIES,
     XUI_FAST_TIMEOUT_SEC,
-    bounded_xui_timeout,
     build_panel_base_url,
     diagnose_xui_failure,
     extract_node_auth,
@@ -650,68 +648,6 @@ class ServerMonitor:
         without maintaining a stale POST-based status contract in parallel.
         """
         return ThreeXUIMonitor(self.decrypt).get_server_status(node)
-    
-    def get_all_servers_status(self, nodes: List[Dict]) -> List[Dict]:
-        """Получить статус всех серверов
-        
-        Args:
-            nodes: Список узлов
-            
-        Returns:
-            Список со статусами всех серверов
-        """
-        statuses = []
-        
-        for node in nodes:
-            status = self.get_server_status(node)
-            statuses.append(status)
-        
-        return statuses
-    
-    def check_server_availability(self, node: Dict) -> Dict:
-        """Проверить доступность сервера (ping + latency)
-        
-        Args:
-            node: Конфигурация узла
-            
-        Returns:
-            Статус доступности и время отклика
-        """
-        start_time = time.time()
-        
-        try:
-            base_url = build_panel_base_url(node)
-            
-            # Простой запрос для проверки доступности
-            res = requests.get(
-                join_panel_url(base_url, "/"),
-                verify=_requests_verify_value(),
-                timeout=bounded_xui_timeout(),
-            )
-            
-            latency = (time.time() - start_time) * 1000  # в миллисекундах
-            
-            return {
-                "node": node["name"],
-                "available": True,
-                "latency_ms": round(latency, 2),
-                "status_code": res.status_code,
-                "timestamp": datetime.now().isoformat()
-            }
-        except requests.Timeout:
-            return {
-                "node": node["name"],
-                "available": False,
-                "error": "Timeout",
-                "timestamp": datetime.now().isoformat()
-            }
-        except Exception as exc:
-            return {
-                "node": node["name"],
-                "available": False,
-                "error": str(exc),
-                "timestamp": datetime.now().isoformat()
-            }
     
     def get_xray_config(self, node: Dict) -> Dict:
         """Получить полную конфигурацию core service с сервера
