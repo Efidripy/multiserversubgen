@@ -335,37 +335,18 @@ sanitize_nginx_sites_for_stream_443() {
         return 0
     fi
 
-    local removed_any="false"
     local cfg_entry
-    for cfg_entry in /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/default.conf /etc/nginx/sites-enabled/default.*; do
+    local conflicts=()
+    for cfg_entry in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
         [ -e "$cfg_entry" ] || continue
-        rm -f "$cfg_entry" 2>/dev/null || true
-        removed_any="true"
+        grep -qsE 'listen[[:space:]]+([^#;[:space:]]+:)?443([[:space:];]|$)' "$cfg_entry" && conflicts+=("$cfg_entry")
     done
 
-    local selected_base=""
-    if [ -n "${SELECTED_CFG:-}" ]; then
-        selected_base="$(basename "$SELECTED_CFG")"
-    fi
-
-    if [ -n "${PUBLIC_DOMAIN:-}" ]; then
-        local domain_variant
-        for domain_variant in "${PUBLIC_DOMAIN}" "${PUBLIC_DOMAIN}.conf"; do
-            [ -n "$domain_variant" ] || continue
-            [ "$domain_variant" = "$selected_base" ] && continue
-            if [ -e "/etc/nginx/sites-enabled/${domain_variant}" ]; then
-                rm -f "/etc/nginx/sites-enabled/${domain_variant}" 2>/dev/null || true
-                removed_any="true"
-            fi
-        done
-    fi
-
-    if [ "$removed_any" = "true" ]; then
-           echo "⚠️ Обнаружен stream listen 443: отключены конфликтующие nginx site entries (default/domain duplicates)."
-    fi
-
     shopt -u nullglob
-    return 0
+    if [ ${#conflicts[@]} -gt 0 ]; then
+        printf 'Refusing to remove unmanaged Nginx site listener(s) on port 443:\n%s\n' "$(printf '  %s\n' "${conflicts[@]}")" >&2
+        return 1
+    fi
 }
 
 selected_cfg_supports_stream_tls_mux() {
@@ -1760,7 +1741,7 @@ uninstall() {
     systemctl restart fail2ban
     if [ -f "${SELECTED_CFG}.bak" ]; then
         mv "${SELECTED_CFG}.bak" "$SELECTED_CFG"
-        sanitize_nginx_sites_for_stream_443
+        sanitize_nginx_sites_for_stream_443 || exit 1
         nginx -t && systemctl restart nginx
     fi
     rm -rf "$PROJECT_DIR" "$LOG_FILE"
@@ -1988,7 +1969,7 @@ update_project() {
     mkdir -p /etc/nginx/snippets
     generate_nginx_snippet "$SNIPPET_FILE"
     ensure_nginx_http_mime_types
-    sanitize_nginx_sites_for_stream_443
+    sanitize_nginx_sites_for_stream_443 || exit 1
     nginx -t && systemctl restart nginx
     
     echo -e "\n✅ ОБНОВЛЕНИЕ ЗАВЕРШЕНО!"
@@ -2417,7 +2398,7 @@ echo "✓ Include обработан в $SELECTED_CFG"
 
 ensure_nginx_http_mime_types
 
-sanitize_nginx_sites_for_stream_443
+sanitize_nginx_sites_for_stream_443 || exit 1
 nginx -t && systemctl restart nginx
 
 configure_fail2ban_security
