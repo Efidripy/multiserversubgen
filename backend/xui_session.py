@@ -107,11 +107,6 @@ _AUTH_METHOD_CACHE: dict[str, str] = {}
 _AUTH_METHOD_CACHE_LOCK = Lock()
 _AUTH_METHOD_CACHE_MAX = 512
 
-# Кеш версии API панели: base_url → "v3" | "v2"
-# v3: 3x-ui >= 3.x — поддерживает /panel/api/clients/* first-class API
-# v2: старые версии — клиенты вложены в inbound settings
-_NODE_API_VERSION: dict[str, str] = {}
-_NODE_API_VERSION_LOCK = Lock()
 # Runtime capability registry keyed by a non-secret node key.  Version numbers
 # are only hints in a heterogeneous fleet: route support is the authority.
 # Entries deliberately stay in memory so a node edit, credential rotation, or
@@ -201,55 +196,6 @@ def make_node_key_for_node(node: Dict[str, Any]) -> str:
     if port is None:
         port = 80 if parsed.scheme == "http" else 443
     return make_node_key(parsed.hostname or "", port, parsed.path.strip("/"))
-
-
-def get_node_api_version(base_url: str) -> str | None:
-    """Вернуть закешированную версию API ноды, или None если не определена."""
-    with _NODE_API_VERSION_LOCK:
-        return _NODE_API_VERSION.get(base_url)
-
-
-def set_node_api_version(base_url: str, version: str) -> None:
-    """Закешировать версию API ноды ('v3' или 'v2')."""
-    with _NODE_API_VERSION_LOCK:
-        if len(_NODE_API_VERSION) >= _AUTH_METHOD_CACHE_MAX:
-            try:
-                _NODE_API_VERSION.pop(next(iter(_NODE_API_VERSION)))
-            except StopIteration:
-                pass
-        _NODE_API_VERSION[base_url] = version
-
-
-def invalidate_node_api_version(base_url: str | None = None) -> None:
-    """Сбросить кеш версии API. base_url=None сбрасывает всё."""
-    with _NODE_API_VERSION_LOCK:
-        if base_url is None:
-            _NODE_API_VERSION.clear()
-        else:
-            _NODE_API_VERSION.pop(base_url, None)
-
-
-def seed_node_api_versions(nodes: list) -> None:
-    """Seed the in-memory API version cache from DB node records on startup.
-
-    Call this once after node_service is available so every operation knows
-    the correct API version immediately without probing.
-    """
-    seeded = 0
-    with _NODE_API_VERSION_LOCK:
-        for node in nodes:
-            api_version = (node.get("api_version") or "").strip()
-            if not api_version:
-                continue
-            try:
-                base_url = build_panel_base_url(node)
-            except ValueError:
-                continue
-            if base_url not in _NODE_API_VERSION:
-                _NODE_API_VERSION[base_url] = api_version
-                seeded += 1
-    if seeded:
-        logger.info("Seeded API version cache: %d nodes", seeded)
 
 
 def _env_int(name: str, default: int) -> int:
