@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 LOG_FILE="${LOG_FILE:-/opt/.sub_manager_install.log}"
 if [[ -f "$LOG_FILE" ]]; then
@@ -19,7 +20,7 @@ if [[ ! -f "$DB_FILE" ]]; then
   exit 1
 fi
 
-mkdir -p "$OUT_DIR"
+mkdir -p -m 0700 "$OUT_DIR"
 BACKUP_FILE="$OUT_DIR/admin.db.bak"
 RESTORE_FILE="$OUT_DIR/admin.db.restore-test"
 
@@ -33,6 +34,7 @@ fi
 # transactionally consistent snapshot without stopping or mutating the
 # service's live database state.
 sqlite3 "$DB_FILE" ".backup '$BACKUP_FILE'"
+chmod 0600 "$BACKUP_FILE"
 
 src_check="$(sqlite3 "$DB_FILE" 'PRAGMA integrity_check;' | tr -d '\r')"
 bak_check="$(sqlite3 "$BACKUP_FILE" 'PRAGMA integrity_check;' | tr -d '\r')"
@@ -45,6 +47,7 @@ if [[ "$src_check" != "ok" || "$bak_check" != "ok" ]]; then
 fi
 
 sqlite3 "$RESTORE_FILE" ".restore '$BACKUP_FILE'"
+chmod 0600 "$RESTORE_FILE"
 restored_check="$(sqlite3 "$RESTORE_FILE" 'PRAGMA integrity_check;' | tr -d '\r')"
 [[ "$restored_check" == "ok" ]] || { echo "Restored DB integrity failed: $restored_check"; exit 1; }
 
