@@ -12,9 +12,18 @@ export const resetAuthRequiredEventGuard = () => {
 };
 
 const inFlightGetRequests = new Map<string, Promise<AxiosResponse>>();
+let cacheGeneration = 0;
 
 export const resetInFlightGetRequests = () => {
   inFlightGetRequests.clear();
+};
+
+export const resetCacheGeneration = () => {
+  cacheGeneration = 0;
+};
+
+type CacheAwareRequestConfig = InternalAxiosRequestConfig & {
+  __cacheGeneration?: number;
 };
 
 const dispatchAuthRequired = (url: string, method: string) => {
@@ -194,6 +203,9 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
     const url = config.url ?? '';
     const ttl = getTTLForUrl(url);
     if (ttl > 0) {
+      const cacheConfig = config as CacheAwareRequestConfig;
+      const requestGeneration = cacheGeneration;
+      cacheConfig.__cacheGeneration = requestGeneration;
       const key = buildCacheKey(url, config.params, auth.username);
       const cached = cacheService.get(key);
       if (cached !== undefined) {
@@ -206,7 +218,8 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
         // duplicate full-fleet API fetch before that cache entry exists.
         const sourceAdapter = config.adapter;
         config.adapter = async (requestConfig) => {
-          const active = inFlightGetRequests.get(key);
+          const inFlightKey = `${requestGeneration}:${key}`;
+          const active = inFlightGetRequests.get(inFlightKey);
           if (active) {
             const response = await active;
             return { ...response, config: requestConfig };
@@ -214,12 +227,12 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 
           const adapter = axios.getAdapter(sourceAdapter ?? api.defaults.adapter);
           const request = Promise.resolve(adapter(requestConfig));
-          inFlightGetRequests.set(key, request);
+          inFlightGetRequests.set(inFlightKey, request);
           try {
             return await request;
           } finally {
-            if (inFlightGetRequests.get(key) === request) {
-              inFlightGetRequests.delete(key);
+            if (inFlightGetRequests.get(inFlightKey) === request) {
+              inFlightGetRequests.delete(inFlightKey);
             }
           }
         };
@@ -263,9 +276,14 @@ api.interceptors.response.use((response) => {
     const ttl = getTTLForUrl(url);
     if (ttl > 0) {
       const key = buildCacheKey(url, response.config.params, getAuth().username);
+      const requestGeneration = (response.config as CacheAwareRequestConfig).__cacheGeneration;
+      if (requestGeneration !== cacheGeneration) {
+        return response;
+      }
         cacheService.set(key, response, ttl, deriveCacheTags(url));
     }
   } else if (method === 'post' || method === 'put' || method === 'delete') {
+      cacheGeneration += 1;
       invalidateForMutation(url);
   }
 
@@ -288,4 +306,3 @@ api.interceptors.response.use((response) => {
 });
 
 export default api;
-
