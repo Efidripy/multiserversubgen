@@ -21,6 +21,47 @@ def build_live_data_router(
     router = APIRouter()
     projection_period_handler = get_cached_traffic_stats_projection_by_period
 
+    def _metric(value) -> int:
+        try:
+            return max(0, int(float(value or 0)))
+        except (TypeError, ValueError, OverflowError):
+            return 0
+
+    def _coalesce_client_stats(stats: Dict) -> Dict:
+        """Return a display projection with one case-insensitive key per email.
+
+        Collector snapshots deliberately retain their raw keys so period deltas
+        remain stable across an upgrade.  The public client read model already
+        uses case-insensitive email identity elsewhere, so normalize only this
+        response layer before calculating its summary or Top-N list.
+        """
+        if not isinstance(stats, dict):
+            return {}
+
+        coalesced: Dict[str, Dict] = {}
+        count_present: Dict[str, bool] = {}
+        for raw_email, item in stats.items():
+            if not isinstance(item, dict):
+                continue
+            email = str(raw_email).strip().casefold()
+            if not email:
+                continue
+            current = coalesced.setdefault(email, {"up": 0, "down": 0, "total": 0})
+            upload = _metric(item.get("up", item.get("upload", 0)))
+            download = _metric(item.get("down", item.get("download", 0)))
+            total = _metric(item.get("total")) or upload + download
+            current["up"] += upload
+            current["down"] += download
+            current["total"] += total
+            if "count" in item:
+                current["count"] = _metric(current.get("count")) + _metric(item.get("count"))
+                count_present[email] = True
+
+        return {
+            email: value if count_present.get(email) else {key: metric for key, metric in value.items() if key != "count"}
+            for email, value in coalesced.items()
+        }
+
     def _top_clients_from_projection(projection: Dict, limit: int = 5) -> list[Dict]:
         stats = projection.get("stats") if isinstance(projection, dict) else None
         if not isinstance(stats, dict):
@@ -31,16 +72,8 @@ def build_live_data_router(
             if isinstance(email, str) and email.strip()
         }
 
-        def _metric(value) -> int:
-            try:
-                return max(0, int(float(value or 0)))
-            except (TypeError, ValueError, OverflowError):
-                return 0
-
         clients = []
-        for email, item in stats.items():
-            if not isinstance(item, dict):
-                continue
+        for email, item in _coalesce_client_stats(stats).items():
             if str(email).strip().casefold() in system_client_emails:
                 continue
             upload = _metric(item.get("up", item.get("upload", 0)))
@@ -97,12 +130,15 @@ def build_live_data_router(
         trimmed["count"] = len(top_items)
         return trimmed
 
-    def _public_traffic_payload(payload: Dict, limit: int) -> Dict:
+    def _public_traffic_payload(payload: Dict, limit: int, *, group_by: str) -> Dict:
         """Hide runtime sidecars while preserving an aggregate before top-N trimming."""
-        summary = _traffic_totals_from_projection(payload)
-        stats = payload.get("stats") if isinstance(payload, dict) else None
+        public_payload = dict(payload) if isinstance(payload, dict) else {}
+        if group_by == "client":
+            public_payload["stats"] = _coalesce_client_stats(public_payload.get("stats"))
+        summary = _traffic_totals_from_projection(public_payload)
+        stats = public_payload.get("stats")
         summary["count"] = len(stats) if isinstance(stats, dict) else 0
-        limited = _apply_limit(payload, limit)
+        limited = _apply_limit(public_payload, limit)
         public = {key: value for key, value in limited.items() if key != "identity_stats"}
         public["summary"] = summary
         return public
@@ -247,7 +283,7 @@ def build_live_data_router(
             raise HTTPException(status_code=400, detail="group_by must be client, inbound, or node")
         nodes = await run_in_threadpool(list_nodes)
         payload = await run_in_threadpool(get_cached_traffic_stats, nodes, group_by)
-        return ORJSONResponse(content=_public_traffic_payload(payload, limit))
+        return ORJSONResponse(content=_public_traffic_payload(payload, limit, group_by=group_by))
 
     @router.get("/api/v1/clients/online")
     async def get_online_clients(request: Request, limit: int = 0):
@@ -416,7 +452,7 @@ def build_live_data_router(
         # the legacy cache helper, because either can trigger a remote 3x-ui
         # fan-out on each Day/Week/Month click.
         payload = await run_in_threadpool(projection_period_handler, group_by, period)
-        return ORJSONResponse(content=_public_traffic_payload(payload, limit))
+        return ORJSONResponse(content=_public_traffic_payload(payload, limit, group_by=group_by))
 
     @router.post("/api/v1/traffic/client-totals")
     async def get_client_traffic_totals(request: Request, data: Dict):
