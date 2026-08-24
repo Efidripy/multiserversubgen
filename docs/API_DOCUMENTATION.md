@@ -1,7 +1,7 @@
 # Multi-Server Manager API Documentation v3.2
 
 **Contract status:** production control-plane contract, verified against the
-current production composition root on 2026-08-21. The experimental
+current production composition root on 2026-08-24. The experimental
 `backend/modules/*` tree is not the production router authority.
 
 ## Аутентификация
@@ -158,6 +158,22 @@ Authorization: Basic base64(username:password)
 
 ### `DELETE /api/v1/inbounds/{inbound_id}?node_id=1`
 Удалить инбаунд с сервера
+
+---
+
+### `GET /api/v1/inbounds/slim`
+
+Аутентифицированная list-only проекция inbound для списков и мониторинга.
+Ответ помечен `detail_level=slim`; он не содержит полного settings/client
+payload и не должен передаваться в edit/update endpoint.
+
+### `GET /api/v1/inbounds/options`
+
+Минимальная проекция для picker-контролов. Возвращает только поля, нужные для
+выбора inbound, и также помечается `detail_level=option`.
+
+Обе проекции используют короткий `private, max-age=30` и не запускают лишние
+удалённые fan-out запросы при каждом рендере списка.
 
 ---
 
@@ -322,6 +338,17 @@ Timestamp — результат штатного
   }
 }
 ```
+
+---
+
+### `GET /api/v1/clients/paged?node_id=1&page=1&pageSize=25`
+
+Node-scoped страница клиентов на основе v3 `clients/list/paged`. Параметры
+`search`, `filter`, `protocol`, `sort` и `order` поддерживаются панелью 3x-ui.
+`pageSize` ограничен диапазоном 1–200. Ответ содержит `node_id`, `node_name`,
+`page`, `page_size`, `total` и массив `clients` с `detail_level=slim`.
+Slim DTO предназначен только для чтения и не заменяет полный client DTO в
+операциях редактирования.
 
 ---
 
