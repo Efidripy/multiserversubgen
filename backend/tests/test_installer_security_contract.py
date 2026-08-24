@@ -29,7 +29,8 @@ def test_installers_do_not_render_or_log_secret_values():
 
     for script in (install, update):
         assert "runtime_secrets_write" in script
-        assert 'sed "s|__PROJECT_NAME__|$PROJECT_NAME|g"' in script
+        assert 'source "${INSTALLER_DIR}/lib/config_activation.sh"' in script
+        assert "activate_manager_config()" in script
         assert "REDIS_URL=.*|REDIS_URL=$REDIS_URL" not in script
         assert "MFA_TOTP_USERS=.*|MFA_TOTP_USERS=$MFA_TOTP_USERS" not in script
         assert "chmod 0600 \"$LOG_FILE\"" in script
@@ -37,6 +38,30 @@ def test_installers_do_not_render_or_log_secret_values():
 
     assert 'echo "REDIS_URL: ${REDIS_URL:-<none>}"' not in update
     assert 'echo "REDIS_URL: <redacted>"' in update
+
+
+def test_manager_config_activation_is_staged_transactional_and_used_by_all_active_paths():
+    helper = _read("scripts/installer/lib/config_activation.sh")
+    install = _read("scripts/installer/install.sh")
+    update = _read("scripts/installer/update.sh")
+
+    assert "config_activation_snapshot \"unit\"" in helper
+    assert "config_activation_snapshot \"snippet\"" in helper
+    assert "config_activation_snapshot \"shield\"" in helper
+    assert "config_activation_snapshot \"site\"" in helper
+    assert "systemd-analyze verify \"$staged_unit\"" in helper
+    assert "mv -fT -- \"$temp_target\" \"$target\"" in helper
+    assert "config_activation_restore || true" in helper
+    assert "must not traverse or resolve through a symlink" in helper
+    assert "config_activation_render_service" in helper
+
+    for script in (install, update):
+        assert 'cat "$SCRIPT_DIR/systemd/sub-manager.service"' not in script
+        assert 'ensure_nginx_snippet_include_in_cfg "$SELECTED_CFG" >/dev/null || true' not in script
+        assert "config_activation_activate \"$stage_unit\"" in script
+
+    assert install.count("activate_manager_config ") >= 2
+    assert update.count("activate_manager_config ") >= 3
 
 
 def test_runtime_secret_writer_is_root_only_and_atomic():
