@@ -132,6 +132,19 @@ describe('navigation performance regressions', () => {
     expect(serverStatus).not.toContain('includeCollectorStatus');
   });
 
+  it('removes no-op username persistence without weakening memory-only auth cleanup', () => {
+    const app = read('src/App.tsx');
+    const auth = read('src/auth.ts');
+
+    expect(app).not.toContain('rememberUsername');
+    expect(app).not.toContain('loadRememberedUsername');
+    expect(auth).not.toContain('rememberUsername');
+    expect(auth).not.toContain('loadRememberedUsername');
+    expect(auth).toContain("window.sessionStorage.removeItem('sub_auth_runtime_v1')");
+    expect(auth).toContain('Credentials and short-lived WebSocket tickets stay memory-only.');
+    expect(app).toContain('const verified = await verifyCurrentAuth();');
+  });
+
   it('does not fetch complete node databases just to render Backup Manager', () => {
     const backupManager = read('src/components/BackupManager.tsx');
 

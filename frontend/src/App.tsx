@@ -11,7 +11,7 @@ import { ToastProvider } from './components/Toast';
 import { Sidebar, SidebarNavItem } from './components/Sidebar';
 import { useTheme } from './contexts/ThemeContext';
 import { useWebSocketMessages, wsManager } from './services/webSocketManager';
-import { clearAuthCredentials, loadRememberedUsername, rememberUsername, setAuthCredentials, setWsTicket } from './auth';
+import { clearAuthCredentials, setAuthCredentials, setWsTicket } from './auth';
 import { clearBrowserSession, createBrowserSession, getMfaStatus, verifyCurrentAuth } from './api/authService';
 import {
   getBackupHeaderSource,
@@ -258,9 +258,6 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     const bootstrap = async () => {
-      const remembered = loadRememberedUsername();
-      setUser(remembered);
-
       try {
         const mfaStatus = await getMfaStatus();
         setMfaEnabled(mfaStatus.enabled);
@@ -548,7 +545,6 @@ export const App: React.FC = () => {
         wsManager.resumeAfterAuth();
         resetAuthRequiredEventGuard();
         setIsAuthenticated(true);
-        rememberUsername(user);
         setPassword('');
         setTotpCode('');
       }
