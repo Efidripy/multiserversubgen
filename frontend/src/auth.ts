@@ -38,11 +38,3 @@ export function getAuth(): { username: string; password: string; user: string; t
     role: runtimeAuth.role,
   };
 }
-
-export function rememberUsername(username: string): void {
-  void username;
-}
-
-export function loadRememberedUsername(): string {
-  return '';
-}
