@@ -92,7 +92,7 @@ if (-not (Test-Path -LiteralPath $indexPath)) {
 }
 
 $indexHtml = Get-Content -LiteralPath $indexPath -Raw
-$expectedAssetPrefix = if ($basePath -eq "/") { "/assets/" } else { "$basePathassets/" }
+$expectedAssetPrefix = if ($basePath -eq "/") { "/assets/" } else { "${basePath}assets/" }
 if ($indexHtml -notmatch [regex]::Escape($expectedAssetPrefix)) {
     throw "Built index.html does not reference expected asset prefix: $expectedAssetPrefix"
 }
