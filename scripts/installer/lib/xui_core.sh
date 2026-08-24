@@ -90,7 +90,7 @@ xui_ensure_system_prerequisites() {
     sudo apt-get update -y >/dev/null
     xui_seed_nginx_bootstrap_files
     if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
-        -o Dpkg::Options::="--force-confnew" \
+        -o Dpkg::Options::="--force-confold" \
         wget \
         curl \
         tar \
@@ -102,10 +102,10 @@ xui_ensure_system_prerequisites() {
         fail2ban \
         certbot \
         python3-certbot-nginx >/dev/null; then
-        sudo DEBIAN_FRONTEND=noninteractive dpkg --force-confnew --configure -a >/dev/null 2>&1 || true
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y -o Dpkg::Options::="--force-confnew" >/dev/null 2>&1 || true
+        sudo DEBIAN_FRONTEND=noninteractive dpkg --force-confold --configure -a >/dev/null 2>&1 || true
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y -o Dpkg::Options::="--force-confold" >/dev/null 2>&1 || true
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
-            -o Dpkg::Options::="--force-confnew" \
+            -o Dpkg::Options::="--force-confold" \
             wget \
             curl \
             tar \
@@ -118,13 +118,13 @@ xui_ensure_system_prerequisites() {
             certbot \
             python3-certbot-nginx >/dev/null
     fi
-    sudo DEBIAN_FRONTEND=noninteractive dpkg --force-confnew --configure -a >/dev/null 2>&1 || true
-    sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y -o Dpkg::Options::="--force-confnew" >/dev/null 2>&1 || true
+    sudo DEBIAN_FRONTEND=noninteractive dpkg --force-confold --configure -a >/dev/null 2>&1 || true
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y -o Dpkg::Options::="--force-confold" >/dev/null 2>&1 || true
 
     if [ ! -f /etc/nginx/nginx.conf ]; then
         xui_seed_nginx_bootstrap_files
         sudo DEBIAN_FRONTEND=noninteractive apt-get install --reinstall -y -q \
-            -o Dpkg::Options::="--force-confnew" \
+            -o Dpkg::Options::="--force-confold" \
             nginx nginx-common libnginx-mod-stream >/dev/null
     fi
 
@@ -570,7 +570,8 @@ xui_install_root_landing_template() {
     local local_pool="${template_base}/.local-randomfakehtml"
     local sample_pool="${template_base}/.local-randomfakehtml-sample"
     local fallback_dir="${template_base}/xui-pro/fake-site"
-    local target_dir="/var/www/html"
+    local target_dir="/var/www/multiserversubgen-xui-root"
+    local ownership_marker="${target_dir}/.multiserversubgen-xui-root"
     local selected_zip=""
     local extract_dir=""
     local web_root=""
@@ -588,8 +589,6 @@ xui_install_root_landing_template() {
         while IFS= read -r f; do zip_candidates+=("$f"); done < <(find "$local_pool" -maxdepth 1 -type f -name '*.zip' | sort)
         [ "${#zip_candidates[@]}" -gt 0 ] && selected_pool="local"
     fi
-
-    sudo mkdir -p "$target_dir"
 
     if [ "${#zip_candidates[@]}" -gt 0 ]; then
         selected_zip="$(printf '%s\n' "${zip_candidates[@]}" | shuf -n 1)"
@@ -625,13 +624,7 @@ PY
         then
             web_root="$(cat "$extract_dir/.selected-web-root" 2>/dev/null || true)"
             if [ -n "$web_root" ] && [ -d "$web_root" ]; then
-                sudo find "$target_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
-                (
-                    cd "$web_root"
-                    tar -cf - .
-                ) | sudo tar -xf - -C "$target_dir"
-
-                if [ -f "$target_dir/index.html" ]; then
+                if xui_replace_owned_web_root "$target_dir" "$ownership_marker" "$web_root"; then
                     PROFILE_XUI_MAIN_TEMPLATE_SOURCE="zip"
                     PROFILE_XUI_MAIN_TEMPLATE_NAME="$(basename "$selected_zip")"
                     [ -n "$selected_pool" ] && PROFILE_XUI_MAIN_TEMPLATE_POOL="$selected_pool"
@@ -646,14 +639,99 @@ PY
 
     # fallback: bundled local placeholder page
     if [ -f "$fallback_dir/index.html" ]; then
-        sudo find "$target_dir" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
-        sudo install -m 0644 "$fallback_dir/index.html" "$target_dir/index.html"
-        PROFILE_XUI_MAIN_TEMPLATE_SOURCE="fallback"
-        PROFILE_XUI_MAIN_TEMPLATE_NAME="fake-site/index.html"
-        return 0
+        if xui_replace_owned_web_root "$target_dir" "$ownership_marker" "$fallback_dir"; then
+            PROFILE_XUI_MAIN_TEMPLATE_SOURCE="fallback"
+            PROFILE_XUI_MAIN_TEMPLATE_NAME="fake-site/index.html"
+            return 0
+        fi
     fi
 
     return 1
+}
+
+xui_require_owned_web_root() {
+    local target_dir="$1"
+    local ownership_marker="$2"
+
+    if sudo test -L "$target_dir" || sudo test -L "$ownership_marker"; then
+        echo "Refusing symlinked XUI web root or ownership marker: ${target_dir}" >&2
+        return 1
+    fi
+
+    sudo mkdir -p "$target_dir"
+    if sudo test -f "$ownership_marker"; then
+        return 0
+    fi
+
+    if sudo find "$target_dir" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+        echo "Refusing to replace unowned XUI web root: ${target_dir}" >&2
+        return 1
+    fi
+
+    printf '%s\n' 'managed-by: multiserversubgen-xui' | sudo tee "$ownership_marker" >/dev/null
+    sudo chmod 0644 "$ownership_marker"
+}
+
+xui_backup_owned_web_root() {
+    local target_dir="$1"
+    local backup_root="/var/backups/multiserversubgen/xui-web-root"
+    local stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    local backup_dir="${backup_root}/${stamp}"
+    local archive="${backup_dir}/web-root.tar.gz"
+    local parent_dir
+    local target_name
+
+    parent_dir="$(dirname "$target_dir")"
+    target_name="$(basename "$target_dir")"
+    sudo install -d -m 0700 "$backup_dir"
+    sudo tar -C "$parent_dir" -czf "$archive" -- "$target_name"
+    sudo sha256sum "$archive" | sudo tee "${archive}.sha256" >/dev/null
+    sudo sha256sum -c "${archive}.sha256" >/dev/null
+    sudo tar -tzf "$archive" >/dev/null
+    sudo chmod 0600 "$archive" "${archive}.sha256"
+    printf '%s\n' "$archive"
+}
+
+xui_replace_owned_web_root() {
+    local target_dir="$1"
+    local ownership_marker="$2"
+    local source_dir="$3"
+    local backup_archive
+
+    [ -f "$source_dir/index.html" ] || return 1
+    xui_require_owned_web_root "$target_dir" "$ownership_marker" || return 1
+    backup_archive="$(xui_backup_owned_web_root "$target_dir")" || return 1
+    XUI_WEB_ROOT_BACKUP_ARCHIVE="$backup_archive"
+
+    if ! (
+        cd "$source_dir"
+        tar -cf - .
+    ) | {
+        sudo find "$target_dir" -mindepth 1 -maxdepth 1 ! -name '.multiserversubgen-xui-root' -exec rm -rf -- {} +
+        sudo tar -xf - -C "$target_dir"
+    }; then
+        xui_restore_owned_web_root "$target_dir" || true
+        return 1
+    fi
+
+    if ! sudo test -f "$target_dir/index.html"; then
+        xui_restore_owned_web_root "$target_dir" || true
+        echo "XUI web root update failed; rollback archive: ${backup_archive}" >&2
+        return 1
+    fi
+}
+
+xui_restore_owned_web_root() {
+    local target_dir="$1"
+    local backup_archive="${XUI_WEB_ROOT_BACKUP_ARCHIVE:-}"
+    local parent_dir
+
+    [ -n "$backup_archive" ] && sudo test -f "$backup_archive" || return 1
+    sudo sha256sum -c "${backup_archive}.sha256" >/dev/null
+    sudo tar -tzf "$backup_archive" >/dev/null
+    parent_dir="$(dirname "$target_dir")"
+    sudo rm -rf -- "$target_dir"
+    sudo tar -C "$parent_dir" -xzf "$backup_archive"
 }
 
 xui_detect_public_ipv4() {
@@ -748,10 +826,115 @@ xui_ensure_domain_cert() {
     printf -v "$key_var" "%s" "$key_path"
 }
 
+xui_managed_nginx_paths() {
+    local domain="${1:-}"
+    local reality_domain="${2:-}"
+    cat <<'EOF'
+/etc/nginx/nginx.conf
+/etc/nginx/snippets/multiserversubgen-xui-includes.conf
+/etc/nginx/stream-enabled/multiserversubgen-xui-stream.conf
+/etc/nginx/sites-available/multiserversubgen-xui-redirect.conf
+/etc/nginx/sites-enabled/multiserversubgen-xui-redirect.conf
+/etc/nginx/sites-available/multiserversubgen-xui-main.conf
+/etc/nginx/sites-enabled/multiserversubgen-xui-main.conf
+/etc/nginx/sites-available/multiserversubgen-xui-reality.conf
+/etc/nginx/sites-enabled/multiserversubgen-xui-reality.conf
+EOF
+    [ -n "$domain" ] && printf '%s\n' "/etc/ssl/xui-core/${domain}" "/etc/letsencrypt/live/${domain}"
+    [ -n "$reality_domain" ] && printf '%s\n' "/etc/ssl/xui-core/${reality_domain}" "/etc/letsencrypt/live/${reality_domain}"
+}
+
+xui_backup_managed_nginx_files() {
+    local domain="${1:-}"
+    local reality_domain="${2:-}"
+    local backup_root="/var/backups/multiserversubgen/xui-nginx"
+    local backup_dir="${backup_root}/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    local stage_dir
+    local archive="${backup_dir}/nginx-managed-files.tar.gz"
+    local manifest="${backup_dir}/manifest.tsv"
+    local path
+
+    stage_dir="$(mktemp -d)"
+    trap 'rm -rf -- "$stage_dir"' RETURN
+    sudo install -d -m 0700 "$backup_dir"
+    while IFS= read -r path; do
+        if sudo test -e "$path" || sudo test -L "$path"; then
+            printf 'present\t%s\n' "$path" | sudo tee -a "$manifest" >/dev/null
+            sudo mkdir -p "${stage_dir}$(dirname "$path")"
+            sudo cp -a -- "$path" "${stage_dir}${path}"
+        else
+            printf 'absent\t%s\n' "$path" | sudo tee -a "$manifest" >/dev/null
+        fi
+    done < <(xui_managed_nginx_paths "$domain" "$reality_domain")
+    sudo tar -C "$stage_dir" -czf "$archive" .
+    sudo sha256sum "$archive" | sudo tee "${archive}.sha256" >/dev/null
+    sudo sha256sum -c "${archive}.sha256" >/dev/null
+    sudo tar -tzf "$archive" >/dev/null
+    sudo chmod 0600 "$archive" "$manifest" "${archive}.sha256"
+    rm -rf -- "$stage_dir"
+    trap - RETURN
+    XUI_NGINX_BACKUP_DIR="$backup_dir"
+}
+
+xui_restore_managed_nginx_files() {
+    local backup_dir="${XUI_NGINX_BACKUP_DIR:-}"
+    local archive="${backup_dir}/nginx-managed-files.tar.gz"
+    local manifest="${backup_dir}/manifest.tsv"
+    local state path
+
+    [ -n "$backup_dir" ] && sudo test -f "$archive" && sudo test -f "$manifest" || return 1
+    sudo sha256sum -c "${archive}.sha256" >/dev/null
+    sudo tar -tzf "$archive" >/dev/null
+    while IFS=$'\t' read -r state path; do
+        [ "$state" = "absent" ] && sudo rm -f -- "$path"
+    done < <(sudo cat "$manifest")
+    sudo tar -C / -xzf "$archive"
+}
+
+xui_assert_no_unmanaged_nginx_443_conflicts() {
+    local managed_stream="/etc/nginx/stream-enabled/multiserversubgen-xui-stream.conf"
+    local config_path
+    local conflicts=()
+
+    shopt -s nullglob
+    for config_path in /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf /etc/nginx/stream-enabled/*.conf; do
+        [ -f "$config_path" ] || [ -L "$config_path" ] || continue
+        [ "$(readlink -f "$config_path" 2>/dev/null || printf '%s' "$config_path")" = "$managed_stream" ] && continue
+        if grep -qsE 'listen[[:space:]]+([^#;[:space:]]+:)?443([[:space:];]|$)' "$config_path"; then
+            conflicts+=("$config_path")
+        fi
+    done
+    shopt -u nullglob
+
+    if [ "${#conflicts[@]}" -gt 0 ]; then
+        printf 'Refusing to replace unmanaged Nginx listener(s) on port 443:\n%s\n' "$(printf '  %s\n' "${conflicts[@]}")" >&2
+        return 1
+    fi
+}
+
+xui_ensure_stream_include() {
+    local nginx_conf="/etc/nginx/nginx.conf"
+
+    if sudo grep -q 'stream-enabled/\\*.conf' "$nginx_conf"; then
+        return 0
+    fi
+    if sudo grep -qE '^[[:space:]]*stream[[:space:]]*\{' "$nginx_conf"; then
+        echo "Refusing to modify an unmanaged Nginx stream block in ${nginx_conf}" >&2
+        return 1
+    fi
+
+    sudo tee -a "$nginx_conf" >/dev/null <<'EOF'
+# managed-by: multiserversubgen-xui
+stream {
+    include /etc/nginx/stream-enabled/*.conf;
+}
+EOF
+}
+
 xui_write_nginx_includes() {
     sudo mkdir -p /etc/nginx/snippets
-    sudo tee /etc/nginx/snippets/includes.conf >/dev/null <<EOF
-# Generated by internal x-ui core.
+    sudo tee /etc/nginx/snippets/multiserversubgen-xui-includes.conf >/dev/null <<EOF
+# managed-by: multiserversubgen-xui
 location /${PROFILE_XUI_SUB2SING_PATH}/ {
     proxy_redirect off;
     proxy_set_header Host \$host;
@@ -855,8 +1038,8 @@ xui_write_stream_mux() {
     local domain="$1"
     local reality_domain="$2"
     sudo mkdir -p /etc/nginx/stream-enabled
-    sudo rm -f /etc/nginx/stream-enabled/xui-stream.conf
-    sudo tee /etc/nginx/stream-enabled/stream.conf >/dev/null <<EOF
+    sudo tee /etc/nginx/stream-enabled/multiserversubgen-xui-stream.conf >/dev/null <<EOF
+# managed-by: multiserversubgen-xui
 map \$ssl_preread_server_name \$sni_name {
     hostnames;
     ${reality_domain} xray;
@@ -881,9 +1064,7 @@ server {
 }
 EOF
 
-    sudo grep -q "stream-enabled/\\*.conf" /etc/nginx/nginx.conf || sudo tee -a /etc/nginx/nginx.conf >/dev/null <<'EOF'
-stream { include /etc/nginx/stream-enabled/*.conf; }
-EOF
+    xui_ensure_stream_include
 
     if [ -f /etc/nginx/modules-enabled/50-mod-stream.conf ]; then
         sudo python3 - <<'PY'
@@ -910,13 +1091,8 @@ xui_write_site_configs() {
 
     sudo mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
 
-    # Stream mux owns 443. Keep default vhost disabled to avoid bind() conflicts and
-    # remove stale *.conf variants for the same domains that can cause duplicate server_name.
-    sudo rm -f /etc/nginx/sites-enabled/default /etc/nginx/sites-enabled/default.conf /etc/nginx/sites-enabled/default.* 2>/dev/null || true
-    sudo rm -f "/etc/nginx/sites-available/${domain}.conf" "/etc/nginx/sites-enabled/${domain}.conf" 2>/dev/null || true
-    sudo rm -f "/etc/nginx/sites-available/${reality_domain}.conf" "/etc/nginx/sites-enabled/${reality_domain}.conf" 2>/dev/null || true
-
-    sudo tee /etc/nginx/sites-available/80.conf >/dev/null <<EOF
+    sudo tee /etc/nginx/sites-available/multiserversubgen-xui-redirect.conf >/dev/null <<EOF
+# managed-by: multiserversubgen-xui
 server {
     listen 80;
     server_name ${domain} ${reality_domain};
@@ -924,13 +1100,14 @@ server {
 }
 EOF
 
-    sudo tee "/etc/nginx/sites-available/${domain}" >/dev/null <<EOF
+    sudo tee /etc/nginx/sites-available/multiserversubgen-xui-main.conf >/dev/null <<EOF
+# managed-by: multiserversubgen-xui
 server {
     server_tokens off;
     server_name ${domain};
     listen 7443 ssl http2 proxy_protocol;
     listen [::]:7443 ssl http2 proxy_protocol;
-    root /var/www/html/;
+    root /var/www/multiserversubgen-xui-root/;
     ssl_certificate ${domain_cert};
     ssl_certificate_key ${domain_key};
 
@@ -958,17 +1135,18 @@ server {
         proxy_send_timeout 3600s;
         proxy_pass https://127.0.0.1:${PROFILE_XUI_PANEL_PORT};
     }
-    include /etc/nginx/snippets/includes.conf;
+    include /etc/nginx/snippets/multiserversubgen-xui-includes.conf;
 }
 EOF
 
-    sudo tee "/etc/nginx/sites-available/${reality_domain}" >/dev/null <<EOF
+    sudo tee /etc/nginx/sites-available/multiserversubgen-xui-reality.conf >/dev/null <<EOF
+# managed-by: multiserversubgen-xui
 server {
     server_tokens off;
     server_name ${reality_domain};
     listen 9443 ssl http2;
     listen [::]:9443 ssl http2;
-    root /var/www/html/;
+    root /var/www/multiserversubgen-xui-root/;
     ssl_certificate ${reality_cert};
     ssl_certificate_key ${reality_key};
 
@@ -986,13 +1164,13 @@ server {
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
         proxy_pass http://127.0.0.1:${PROFILE_XUI_PANEL_PORT};
     }
-    include /etc/nginx/snippets/includes.conf;
+    include /etc/nginx/snippets/multiserversubgen-xui-includes.conf;
 }
 EOF
 
-    sudo ln -sf /etc/nginx/sites-available/80.conf /etc/nginx/sites-enabled/80.conf
-    sudo ln -sf "/etc/nginx/sites-available/${domain}" "/etc/nginx/sites-enabled/${domain}"
-    sudo ln -sf "/etc/nginx/sites-available/${reality_domain}" "/etc/nginx/sites-enabled/${reality_domain}"
+    sudo ln -sf /etc/nginx/sites-available/multiserversubgen-xui-redirect.conf /etc/nginx/sites-enabled/multiserversubgen-xui-redirect.conf
+    sudo ln -sf /etc/nginx/sites-available/multiserversubgen-xui-main.conf /etc/nginx/sites-enabled/multiserversubgen-xui-main.conf
+    sudo ln -sf /etc/nginx/sites-available/multiserversubgen-xui-reality.conf /etc/nginx/sites-enabled/multiserversubgen-xui-reality.conf
 }
 
 xui_configure_nginx_and_tls() {
@@ -1000,16 +1178,24 @@ xui_configure_nginx_and_tls() {
     local reality_domain="$2"
     local domain_cert domain_key reality_cert reality_key
 
-    xui_ensure_system_prerequisites
-    xui_generate_panel_settings
-    xui_ensure_domain_cert "$domain" domain_cert domain_key
-    xui_ensure_domain_cert "$reality_domain" reality_cert reality_key
-    xui_write_nginx_includes
-    xui_write_stream_mux "$domain" "$reality_domain"
-    xui_write_site_configs "$domain" "$reality_domain" "$domain_cert" "$domain_key" "$reality_cert" "$reality_key"
-    xui_install_root_landing_template || true
-    sudo nginx -t
-    sudo systemctl reload nginx
+    xui_backup_managed_nginx_files "$domain" "$reality_domain"
+
+    if ! xui_ensure_system_prerequisites \
+        || ! xui_generate_panel_settings \
+        || ! xui_assert_no_unmanaged_nginx_443_conflicts \
+        || ! xui_install_root_landing_template \
+        || ! xui_ensure_domain_cert "$domain" domain_cert domain_key \
+        || ! xui_ensure_domain_cert "$reality_domain" reality_cert reality_key \
+        || ! xui_write_nginx_includes \
+        || ! xui_write_stream_mux "$domain" "$reality_domain" \
+        || ! xui_write_site_configs "$domain" "$reality_domain" "$domain_cert" "$domain_key" "$reality_cert" "$reality_key" \
+        || ! sudo nginx -t \
+        || ! sudo systemctl reload nginx; then
+        xui_restore_managed_nginx_files || true
+        xui_restore_owned_web_root "/var/www/multiserversubgen-xui-root" || true
+        sudo nginx -t && sudo systemctl reload nginx || true
+        return 1
+    fi
     xui_configure_fail2ban_security
 
     PROFILE_XUI_CERT_PATH="$domain_cert"

@@ -204,3 +204,52 @@ def test_resource_guard_cleanup_is_project_scoped():
     assert '"${PWD}/frontend"' not in guard
     assert "journalctl --vacuum-size" not in guard
     assert '"$project_root/frontend/node_modules"' in guard
+
+
+def test_xui_installer_owns_only_its_dedicated_web_root_and_nginx_files():
+    xui = _read("scripts/installer/lib/xui_core.sh")
+
+    assert 'local target_dir="/var/www/multiserversubgen-xui-root"' in xui
+    assert ".multiserversubgen-xui-root" in xui
+    assert "Refusing to replace unowned XUI web root" in xui
+    assert "Refusing symlinked XUI web root or ownership marker" in xui
+    assert "xui_backup_owned_web_root" in xui
+    assert "sha256sum -c" in xui
+    assert "tar -tzf" in xui
+    assert "xui_restore_owned_web_root" in xui
+    assert "/var/www/html" not in xui
+    assert "xui_install_root_landing_template || true" not in xui
+
+    for path in (
+        "multiserversubgen-xui-includes.conf",
+        "multiserversubgen-xui-stream.conf",
+        "multiserversubgen-xui-redirect.conf",
+        "multiserversubgen-xui-main.conf",
+        "multiserversubgen-xui-reality.conf",
+    ):
+        assert path in xui
+    assert "# managed-by: multiserversubgen-xui" in xui
+    assert "/etc/nginx/sites-enabled/default.*" not in xui
+    assert 'Dpkg::Options::="--force-confnew"' not in xui
+    assert 'Dpkg::Options::="--force-confold"' in xui
+    configure = xui.split("xui_configure_nginx_and_tls()", 1)[1]
+    assert configure.index('xui_backup_managed_nginx_files "$domain" "$reality_domain"') < configure.index(
+        "xui_ensure_system_prerequisites"
+    )
+
+
+def test_stream_mux_conflicts_fail_closed_without_deleting_unmanaged_sites():
+    xui = _read("scripts/installer/lib/xui_core.sh")
+
+    assert "xui_assert_no_unmanaged_nginx_443_conflicts" in xui
+    assert "Refusing to replace unmanaged Nginx listener(s) on port 443" in xui
+    assert "Refusing to modify an unmanaged Nginx stream block" in xui
+
+    for relative_path in (
+        "scripts/installer/install.sh",
+        "scripts/installer/update.sh",
+    ):
+        script = _read(relative_path)
+        assert "/etc/nginx/sites-enabled/default.*" not in script
+        assert "Refusing to remove unmanaged Nginx site listener(s) on port 443" in script
+        assert script.count("sanitize_nginx_sites_for_stream_443 || exit 1") == 3
