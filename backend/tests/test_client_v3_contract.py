@@ -23,11 +23,9 @@ def _response(status_code, payload=None):
 
 def test_v3_list_timeout_or_http_failure_does_not_downgrade_node_to_v2():
     from client_manager import ClientManager
-    from xui_session import get_node_api_version, invalidate_node_api_version
 
     manager = ClientManager(decrypt_func=lambda value: value)
     base_url = "https://198.51.100.8:443"
-    invalidate_node_api_version(base_url)
     with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
         "client_manager.xui_request", return_value=_response(503)
     ) as request:
@@ -35,7 +33,6 @@ def test_v3_list_timeout_or_http_failure_does_not_downgrade_node_to_v2():
 
     assert request.call_count == 1
     assert request.call_args.args[2].endswith("/panel/api/clients/list")
-    assert get_node_api_version(base_url) is None
 
 
 def test_v3_list_404_selects_legacy_projection():
@@ -155,11 +152,9 @@ def test_v3_paged_clients_malformed_response_is_terminal_and_never_reads_legacy(
 
 def test_v3_update_reads_full_record_without_undocumented_inbound_query():
     from client_manager import ClientManager
-    from xui_session import invalidate_node_api_version, set_node_api_version
 
     manager = ClientManager(decrypt_func=lambda value: value)
     base_url = "https://198.51.100.8:443"
-    set_node_api_version(base_url, "v3")
     existing = {
         "uuid": "client-uuid",
         "email": "old@example.test",
@@ -196,16 +191,11 @@ def test_v3_update_reads_full_record_without_undocumented_inbound_query():
     assert payload["expiryTime"] == 123456789
     assert payload["reverse"] == {"enabled": True}
     assert payload["allowedIPs"] == ["10.0.0.2/32"]
-    invalidate_node_api_version(base_url)
-
-
 def test_v3_update_does_not_write_when_the_read_contract_fails():
     from client_manager import ClientManager
-    from xui_session import invalidate_node_api_version, set_node_api_version
 
     manager = ClientManager(decrypt_func=lambda value: value)
     base_url = "https://198.51.100.8:443"
-    set_node_api_version(base_url, "v3")
     with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
         "client_manager.xui_request", return_value=_response(503)
     ) as request:
@@ -215,16 +205,13 @@ def test_v3_update_does_not_write_when_the_read_contract_fails():
 
     assert request.call_count == 1
     assert request.call_args.args[1:] == ("GET", f"{base_url}/panel/api/clients/list")
-    invalidate_node_api_version(base_url)
 
 
 def test_v3_reset_client_traffic_uses_documented_encoded_email_route():
     from client_manager import ClientManager
-    from xui_session import invalidate_node_api_version, set_node_api_version
 
     manager = ClientManager(decrypt_func=lambda value: value)
     base_url = "https://198.51.100.8:443"
-    set_node_api_version(base_url, "v3")
     with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
         "client_manager.xui_request", return_value=_response(200, {"success": True})
     ) as request:
@@ -234,16 +221,13 @@ def test_v3_reset_client_traffic_uses_documented_encoded_email_route():
         "POST", f"{base_url}/panel/api/clients/resetTraffic/first%2Bname%40example.test"
     )
     assert request.call_args.kwargs == {}
-    invalidate_node_api_version(base_url)
 
 
 def test_v3_reset_client_traffic_uses_v2_only_when_modern_route_is_absent():
     from client_manager import ClientManager
-    from xui_session import set_node_api_version
 
     manager = ClientManager(decrypt_func=lambda value: value)
     base_url = "https://198.51.100.8:443"
-    set_node_api_version(base_url, "v3")
     with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
         "client_manager.xui_request", side_effect=[_response(404), _response(404), _response(200, {"success": True})]
     ) as request:
@@ -258,11 +242,9 @@ def test_v3_reset_client_traffic_uses_v2_only_when_modern_route_is_absent():
 
 def test_v3_reset_client_traffic_does_not_downgrade_on_reachable_route_failure():
     from client_manager import ClientManager
-    from xui_session import get_node_api_version, invalidate_node_api_version, set_node_api_version
 
     manager = ClientManager(decrypt_func=lambda value: value)
     base_url = "https://198.51.100.8:443"
-    set_node_api_version(base_url, "v3")
     with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
         "client_manager.xui_request", return_value=_response(503)
     ) as request:
@@ -272,8 +254,6 @@ def test_v3_reset_client_traffic_does_not_downgrade_on_reachable_route_failure()
     assert request.call_args.args[1:] == (
         "POST", f"{base_url}/panel/api/clients/resetTraffic/user%40example.test"
     )
-    assert get_node_api_version(base_url) == "v3"
-    invalidate_node_api_version(base_url)
 
 
 def test_v3_bulk_reset_uses_documented_bulk_route_on_success():
@@ -380,11 +360,9 @@ def test_v3_bulk_reset_never_guesses_a_legacy_inbound_request_when_single_route_
 
 def test_v3_delete_resolves_uuid_to_current_encoded_email_before_write():
     from client_manager import ClientManager
-    from xui_session import invalidate_node_api_version, set_node_api_version
 
     manager = ClientManager(decrypt_func=lambda value: value)
     base_url = "https://198.51.100.8:443"
-    set_node_api_version(base_url, "v3")
     listed = _response(200, {"success": True, "obj": [{"uuid": "client-uuid", "email": "old+name@example.test"}]})
     deleted = _response(200, {"success": True})
     with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
@@ -395,16 +373,13 @@ def test_v3_delete_resolves_uuid_to_current_encoded_email_before_write():
     list_call, delete_call = request.call_args_list
     assert list_call.args[1:] == ("GET", f"{base_url}/panel/api/clients/list")
     assert delete_call.args[1:] == ("POST", f"{base_url}/panel/api/clients/del/old%2Bname%40example.test?keepTraffic=0")
-    invalidate_node_api_version(base_url)
 
 
 def test_v3_delete_does_not_write_when_uuid_resolution_fails():
     from client_manager import ClientManager
-    from xui_session import invalidate_node_api_version, set_node_api_version
 
     manager = ClientManager(decrypt_func=lambda value: value)
     base_url = "https://198.51.100.8:443"
-    set_node_api_version(base_url, "v3")
     with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
         "client_manager.xui_request", return_value=_response(503)
     ) as request:
@@ -412,7 +387,6 @@ def test_v3_delete_does_not_write_when_uuid_resolution_fails():
 
     assert request.call_count == 1
     assert request.call_args.args[1:] == ("GET", f"{base_url}/panel/api/clients/list")
-    invalidate_node_api_version(base_url)
 
 
 def test_v3_write_404_requires_reauth_before_one_legacy_write():
@@ -485,7 +459,7 @@ class TestClientV3Contracts:
         from client_manager import ClientManager
         return ClientManager(decrypt_func=lambda value: value)
 
-    def test_add_uses_v3_even_when_legacy_telemetry_is_present(self):
+    def test_add_uses_v3_first(self):
         manager = self.manager()
         session = MagicMock()
         config = {"email": "alice@example.test", "enable": True}
@@ -495,7 +469,7 @@ class TestClientV3Contracts:
         ):
             assert manager.add_client(self.node(), 7, config) is True
 
-        # Version telemetry no longer routes writes; v3 is tried first.
+        # v3 is always tried before a compatibility fallback.
         modern_add.assert_called_once_with(session, self.base_url, email="alice@example.test", inbound_ids=[7], config=config)
 
     def test_client_links_treats_405_as_route_absence_without_json_parse(self):
@@ -503,7 +477,6 @@ class TestClientV3Contracts:
         session = MagicMock()
         with (
             patch.object(manager, "_get_session", return_value=(session, self.base_url)),
-            patch("client_manager.get_node_api_version", return_value="v3"),
             patch("client_manager.xui_request", return_value=_response(405)) as request,
         ):
             assert manager.get_client_links(self.node(), "name/tag?#") == []
@@ -520,7 +493,6 @@ class TestClientV3Contracts:
         with (
             patch.object(manager, "get_all_clients", return_value=[{"email": "alice"}]),
             patch.object(manager, "_get_session", return_value=(session, self.base_url)),
-            patch("client_manager.get_node_api_version", return_value="v3"),
             patch("client_manager.xui_request", return_value=_response(503)) as request,
             patch.object(manager, "delete_client") as legacy_delete,
         ):
@@ -543,7 +515,6 @@ class TestClientV3Contracts:
                 "_get_session",
                 side_effect=[(session, self.base_url), (fresh_session, self.base_url)],
             ),
-            patch("client_manager.get_node_api_version", return_value="v3"),
             patch("client_manager.xui_request", side_effect=[_response(405), _response(405)]) as request,
             patch.object(manager, "delete_client", return_value=True) as legacy_delete,
         ):
@@ -580,7 +551,6 @@ class TestClientV3Contracts:
         manager = self.manager()
         with (
             patch.object(manager, "_get_session", return_value=(MagicMock(), self.base_url)),
-            patch("client_manager.get_node_api_version", return_value="v3"),
             patch("client_manager.xui_request", return_value=_response(200, {"success": False})),
             patch.object(manager, "batch_delete_clients") as legacy_delete,
         ):
@@ -594,7 +564,6 @@ class TestClientV3Contracts:
         manager = self.manager()
         with (
             patch.object(manager, "_get_session", return_value=(MagicMock(), self.base_url)),
-            patch("client_manager.get_node_api_version", return_value="v3"),
             patch("client_manager.xui_request", return_value=_response(200, {"success": True, "obj": []})),
             patch.object(manager, "get_all_clients") as legacy_clients,
         ):
@@ -611,8 +580,6 @@ class TestClientV3Contracts:
         traffic = _response(200, {"success": True, "obj": {"up": 1, "down": 2}})
         with (
             patch.object(manager, "_get_session", return_value=(session, self.base_url)),
-            patch("client_manager.get_node_api_version", return_value="v3"),
-            patch("client_manager.set_node_api_version"),
             patch("client_manager.xui_request", side_effect=[listed, traffic]) as request,
         ):
             result = manager.get_client_traffic(self.node(), "uuid-1", "vless")
@@ -626,7 +593,6 @@ class TestClientV3Contracts:
         manager = self.manager()
         with (
             patch.object(manager, "_get_session", return_value=(MagicMock(), self.base_url)),
-            patch("client_manager.get_node_api_version", return_value="v3"),
             patch("client_manager.xui_request", return_value=_response(503)) as request,
         ):
             assert manager.get_client_traffic(self.node(), "uuid-1", "vless") == {}
