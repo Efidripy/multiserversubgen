@@ -150,6 +150,22 @@ def test_ops_scripts_validate_installer_log_before_sourcing():
     assert '[[ "$owner" == "0" && "$mode" == "600" ]]' in helper
 
 
+def test_installer_scripts_validate_log_before_sourcing():
+    helper = _read("scripts/ops/lib/install_log.sh")
+    for relative_path in (
+        "scripts/installer/install.sh",
+        "scripts/installer/update.sh",
+        "scripts/installer/remove.sh",
+    ):
+        script = _read(relative_path)
+        assert '\n    source "$LOG_FILE"' not in script
+        assert '\nsource "$LOG_FILE"' not in script
+        assert "install_log_source \"$LOG_FILE\"" in script
+        assert "scripts/ops/lib/install_log.sh" in script
+
+    assert "source \"$log_file\"" in helper
+
+
 def test_resource_guard_cleanup_is_project_scoped():
     guard = _read("scripts/installer/lib/resource_guard.sh")
 

@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "${INSTALLER_DIR}/../.." && pwd)"
 source "${INSTALLER_DIR}/lib/locale.sh"
 source "${INSTALLER_DIR}/lib/resource_guard.sh"
 source "${INSTALLER_DIR}/lib/runtime_secrets.sh"
+# shellcheck source=../ops/lib/install_log.sh
+source "${SCRIPT_DIR}/scripts/ops/lib/install_log.sh"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
 apt_update() {
@@ -953,7 +955,7 @@ if [ ! -f "$LOG_FILE" ]; then
     exit 1
 fi
 
-source "$LOG_FILE"
+install_log_source "$LOG_FILE"
 runtime_secrets_load
 if [ "${REDIS_URL:-}" = "<redacted>" ] || [ "${MFA_TOTP_USERS:-}" = "<redacted>" ]; then
     echo "❌ Runtime secrets are missing. Re-enter Redis/TOTP settings before updating."
