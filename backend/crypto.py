@@ -67,18 +67,6 @@ def decrypt_password(encrypted_password: str, fernet: Fernet) -> str:
         ) from exc
 
 
-def is_encrypted(value: str) -> bool:
-    """Проверить, является ли значение Fernet-зашифрованным токеном."""
-    if not value:
-        return False
-    try:
-        raw = base64.urlsafe_b64decode(value.encode())
-        # Fernet-токены начинаются с версии 0x80
-        return len(raw) > 0 and raw[0] == 0x80
-    except Exception:
-        return False
-
-
 # Глобальный экземпляр Fernet (инициализируется при импорте)
 _fernet: Optional[Fernet] = None
 
