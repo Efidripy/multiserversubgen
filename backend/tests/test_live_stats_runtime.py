@@ -86,6 +86,27 @@ def test_invalidation_rejects_in_flight_live_stats_cache_publish(tmp_path):
     assert runtime.online_clients_cache == {"ts": 0.0, "data": []}
 
 
+def test_memory_snapshot_fallback_expires_and_remains_bounded(monkeypatch, tmp_path):
+    runtime = _build_runtime(tmp_path, {})
+    runtime._memory_snapshot_max_entries = 2
+    runtime.redis_get_json = lambda _key: None
+    monotonic_now = [100.0]
+    monkeypatch.setattr("services.live_stats_runtime.time.monotonic", lambda: monotonic_now[0])
+
+    assert runtime._write_snapshot("one", {"ts": 1, "stats": {"one": {}}}, 5) is True
+    assert runtime._read_snapshot("one") == {"ts": 1, "stats": {"one": {}}}
+
+    monotonic_now[0] = 106.0
+    assert runtime._read_snapshot("one") is None
+    assert "one" not in runtime._memory_snapshots
+
+    for key in ("two", "three", "four"):
+        assert runtime._write_snapshot(key, {"ts": 1, "stats": {key: {}}}, 60) is True
+        monotonic_now[0] += 1
+
+    assert set(runtime._memory_snapshots) == {"three", "four"}
+
+
 def test_collector_projection_serves_all_groupings_without_client_manager_fanout(monkeypatch, tmp_path):
     now_ts = 500 * 3600
     snapshot = {
