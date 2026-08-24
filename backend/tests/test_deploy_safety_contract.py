@@ -58,6 +58,15 @@ def test_linux_only_uvloop_extra_is_pinned_and_hashed_for_require_hashes_deploys
         assert expected_hash in lockfile
 
 
+def test_unused_six_is_not_a_direct_or_locked_backend_dependency():
+    direct_requirements = (REPO / "backend/requirements.in").read_text(encoding="utf-8")
+    assert "six\n" not in direct_requirements
+
+    for relative_path in ("backend/requirements.txt", "backend/requirements-dev.txt"):
+        lockfile = (REPO / relative_path).read_text(encoding="utf-8")
+        assert "\nsix==" not in lockfile
+
+
 def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_trace():
     script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
 
