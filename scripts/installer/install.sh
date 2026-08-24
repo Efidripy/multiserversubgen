@@ -7,6 +7,8 @@ SCRIPT_DIR="$(cd "${INSTALLER_DIR}/../.." && pwd)"
 source "${INSTALLER_DIR}/lib/locale.sh"
 source "${INSTALLER_DIR}/lib/ui.sh"
 source "${INSTALLER_DIR}/lib/resource_guard.sh"
+# shellcheck source=../ops/lib/install_log.sh
+source "${SCRIPT_DIR}/scripts/ops/lib/install_log.sh"
 source "${INSTALLER_DIR}/lib/runtime_secrets.sh"
 source "${INSTALLER_DIR}/lib/artifact_manifest.sh"
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
@@ -1743,7 +1745,7 @@ configure_ufw_firewall() {
 uninstall() {
     echo -e "\n--- Удаление и откат настроек ---"
     if [ ! -f "$LOG_FILE" ]; then echo "Лог не найден."; return 1; fi
-    source "$LOG_FILE"
+    install_log_source "$LOG_FILE"
     systemctl stop "$PROJECT_NAME" 2>/dev/null
     systemctl disable "$PROJECT_NAME" 2>/dev/null
     rm -f "/etc/systemd/system/$PROJECT_NAME.service"
@@ -1777,7 +1779,7 @@ uninstall_nuke() {
 
     if [ -f "$LOG_FILE" ]; then
         # shellcheck disable=SC1090
-        source "$LOG_FILE"
+        install_log_source "$LOG_FILE"
         project_name="${PROJECT_NAME:-$project_name}"
         project_dir="${PROJECT_DIR:-$project_dir}"
         selected_cfg="${SELECTED_CFG:-$selected_cfg}"
@@ -1864,7 +1866,7 @@ uninstall_nuke() {
 update_project() {
     echo -e "\n--- Обновление проекта ---"
     if [ ! -f "$LOG_FILE" ]; then echo "Установка не найдена. Запустите установку сначала."; exit 1; fi
-    source "$LOG_FILE"
+    install_log_source "$LOG_FILE"
     ALLOW_ORIGINS=${ALLOW_ORIGINS:-"http://localhost:5173,http://127.0.0.1:5173"}
     VERIFY_TLS=${VERIFY_TLS:-"true"}
     CA_BUNDLE_PATH=${CA_BUNDLE_PATH:-""}
@@ -2029,17 +2031,17 @@ clear_stale_install_markers
 if [ -f "$LOG_FILE" ] && has_real_existing_install; then
     case "${INSTALLER_EXISTING_ACTION:-}" in
         reinstall)
-            source "$LOG_FILE"
+            install_log_source "$LOG_FILE"
             uninstall
             unset SELECTED_CFG
             exec bash "$0" "$@"
             ;;
         update)
-            source "$LOG_FILE"
+            install_log_source "$LOG_FILE"
             update_project
             ;;
         remove)
-            source "$LOG_FILE"
+            install_log_source "$LOG_FILE"
             uninstall_nuke
             exit 0
             ;;
@@ -2048,7 +2050,7 @@ if [ -f "$LOG_FILE" ] && has_real_existing_install; then
             ;;
     esac
     [ -n "${INSTALLER_AUTOMATION_STEPS:-}" ] && exit 0
-    source "$LOG_FILE"
+    install_log_source "$LOG_FILE"
     clear
     echo -e "${C_YELLOW}======================================================${C_RESET}"
     echo -e "${C_WHITE}    ОБНАРУЖЕНА УСТАНОВКА: ${PROJECT_NAME}${C_RESET}"
