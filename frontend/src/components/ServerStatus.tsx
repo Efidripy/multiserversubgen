@@ -65,10 +65,10 @@ type UiServer = ServerMemoryMetric & {
   name: string;
   status: 'online' | 'offline';
   latency: string;
-  cpu: number;
-  ramPercent: number;
+  cpu?: number;
+  ramPercent?: number;
   ramDetail: string;
-  diskPercent: number;
+  diskPercent?: number;
   diskDetail: string;
   network: string;
   uptime: string;
@@ -140,6 +140,29 @@ const telemetryBytes = (value: unknown): number | undefined => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
 };
 
+const telemetryMetric = (value: unknown): number | undefined => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+};
+
+export const formatTelemetryPercent = (value: number | undefined): string => (
+  value === undefined ? '—' : `${value}%`
+);
+
+const formatTelemetryBytes = (value: unknown): string => {
+  const bytes = telemetryBytes(value);
+  return bytes === undefined ? '—' : formatBytes(bytes);
+};
+
+export const formatTelemetryNetwork = (network: unknown): string => {
+  if (!network || typeof network !== 'object') return '—';
+  const value = network as { upload?: unknown; download?: unknown };
+  const upload = telemetryBytes(value.upload);
+  const download = telemetryBytes(value.download);
+  if (upload === undefined && download === undefined) return '—';
+  return `${formatTelemetryBytes(value.upload)} / ${formatTelemetryBytes(value.download)}`;
+};
+
 export const formatFleetRam = (servers: ServerMemoryMetric[]): string => {
   let current = 0;
   let total = 0;
@@ -160,6 +183,12 @@ export const getReportedCoreVersion = (xrayVersion: unknown, panelVersion: unkno
   if (xray) return xray;
   const panel = typeof panelVersion === 'string' ? panelVersion.trim() : '';
   return panel || '—';
+};
+
+export const calculateAverageCpu = (servers: Array<Pick<UiServer, 'status' | 'cpu'>>): number | undefined => {
+  const reported = servers.filter((server) => server.status === 'online' && server.cpu !== undefined);
+  if (reported.length === 0) return undefined;
+  return reported.reduce((sum, server) => sum + (server.cpu ?? 0), 0) / reported.length;
 };
 
 const formatUptime = (seconds?: number) => {
@@ -189,7 +218,9 @@ const formatLastSeen = (value?: string | number | null) => {
 
 const metricDetail = (metric: any, fallback: string) => {
   if (!metric || typeof metric !== 'object') return fallback;
-  return `${formatBytes(toNumber(metric.current))}/${formatBytes(toNumber(metric.total))}`;
+  const current = telemetryBytes(metric.current);
+  const total = telemetryBytes(metric.total);
+  return current === undefined || total === undefined ? fallback : `${formatBytes(current)}/${formatBytes(total)}`;
 };
 
 const formatLoads = (loads: unknown, fallback: string) => {
@@ -197,11 +228,11 @@ const formatLoads = (loads: unknown, fallback: string) => {
   return loads.slice(0, 3).map((item) => toNumber(item).toFixed(2)).join(' / ');
 };
 
-const toUiServer = (server: DashboardServerStatus): UiServer => {
+export const toUiServer = (server: DashboardServerStatus): UiServer => {
   const isOnline = Boolean(server.available);
-  const cpu = Number(server.system?.cpu ?? 0);
-  const ramPercent = Number(server.system?.mem?.percent ?? 0);
-  const diskPercent = Number(server.system?.disk?.percent ?? 0);
+  const cpu = telemetryMetric(server.system?.cpu);
+  const ramPercent = telemetryMetric(server.system?.mem?.percent);
+  const diskPercent = telemetryMetric(server.system?.disk?.percent);
   return {
     nodeId: server.nodeId,
     name: server.node,
@@ -211,10 +242,10 @@ const toUiServer = (server: DashboardServerStatus): UiServer => {
     ramPercent,
     ramCurrentBytes: telemetryBytes(server.system?.mem?.current),
     ramTotalBytes: telemetryBytes(server.system?.mem?.total),
-    ramDetail: server.system?.mem ? `${formatBytes(server.system.mem.current)}/${formatBytes(server.system.mem.total)}` : '-',
+    ramDetail: metricDetail(server.system?.mem, '-'),
     diskPercent,
-    diskDetail: server.system?.disk ? `${formatBytes(server.system.disk.current)}/${formatBytes(server.system.disk.total)}` : '-',
-    network: `${formatBytes(server.network?.upload ?? 0)} / ${formatBytes(server.network?.download ?? 0)}`,
+    diskDetail: metricDetail(server.system?.disk, '-'),
+    network: formatTelemetryNetwork(server.network),
     uptime: formatUptime(server.xray?.uptime || server.system?.uptime),
     load: (server.system?.loads || []).slice(0, 3).map((item: number) => item.toFixed(2)).join(' / ') || '-',
     swap: server.system?.swap ? `${formatBytes(server.system.swap.current)}/${formatBytes(server.system.swap.total)}` : '-',
@@ -266,15 +297,15 @@ const mergeServerTelemetry = (server: UiServer, data: Record<string, any>): UiSe
     latency: status === 'online'
       ? Number.isFinite(pollMs) && pollMs > 0 ? `${Math.round(pollMs)}ms` : server.latency === 'No connection' ? 'online' : server.latency
       : 'No connection',
-    cpu: toNumber(system.cpu ?? data.cpu, server.cpu),
-    ramPercent: toNumber(system.mem?.percent, server.ramPercent),
+    cpu: telemetryMetric(system.cpu ?? data.cpu) ?? server.cpu,
+    ramPercent: telemetryMetric(system.mem?.percent) ?? server.ramPercent,
     ramCurrentBytes: ramCurrentBytes ?? server.ramCurrentBytes,
     ramTotalBytes: ramTotalBytes ?? server.ramTotalBytes,
     ramDetail: metricDetail(system.mem, server.ramDetail),
-    diskPercent: toNumber(system.disk?.percent, server.diskPercent),
+    diskPercent: telemetryMetric(system.disk?.percent) ?? server.diskPercent,
     diskDetail: metricDetail(system.disk, server.diskDetail),
     network: Object.keys(network).length > 0
-      ? `${formatBytes(toNumber(network.upload))} / ${formatBytes(toNumber(network.download))}`
+      ? formatTelemetryNetwork(network)
       : server.network,
     uptime: xray.uptime || system.uptime ? formatUptime(toNumber(xray.uptime || system.uptime)) : server.uptime,
     load: formatLoads(system.loads, server.load),
@@ -434,9 +465,9 @@ export function ServerStatus({
   const handleCopyNodeSummary = useCallback(async (server: UiServer) => {
     const summary = [
       `${server.name}: ${server.status}`,
-      `CPU ${server.cpu}%`,
-      `RAM ${server.ramPercent}% (${server.ramDetail})`,
-      `Disk ${server.diskPercent}% (${server.diskDetail})`,
+      `CPU ${formatTelemetryPercent(server.cpu)}`,
+      `RAM ${formatTelemetryPercent(server.ramPercent)} (${server.ramDetail})`,
+      `Disk ${formatTelemetryPercent(server.diskPercent)} (${server.diskDetail})`,
       `Network ${server.network}`,
       `Core ${server.core}`,
       `Seen ${server.lastSeen}`,
@@ -451,7 +482,7 @@ export function ServerStatus({
 
   const copyFleetSummary = useCallback(async () => {
     const summary = servers.map((server) => (
-      `${server.name}: ${server.status}; CPU ${server.cpu}%; RAM ${server.ramPercent}%; Disk ${server.diskPercent}%; Core ${server.core}; Seen ${server.lastSeen}`
+      `${server.name}: ${server.status}; CPU ${formatTelemetryPercent(server.cpu)}; RAM ${formatTelemetryPercent(server.ramPercent)}; Disk ${formatTelemetryPercent(server.diskPercent)}; Core ${server.core}; Seen ${server.lastSeen}`
     )).join('\n');
     try {
       await navigator.clipboard.writeText(summary);
@@ -583,15 +614,15 @@ export function ServerStatus({
   const sortedServers = useMemo(() => {
     return [...servers].sort((a, b) => {
       if (cardSort === 'name') return a.name.localeCompare(b.name);
-      if (cardSort === 'cpu') return b.cpu - a.cpu;
+      if (cardSort === 'cpu') return (b.cpu ?? -1) - (a.cpu ?? -1);
       if (cardSort === 'status') return Number(b.status === 'online') - Number(a.status === 'online');
-      return b.ramPercent - a.ramPercent;
+      return (b.ramPercent ?? -1) - (a.ramPercent ?? -1);
     });
   }, [cardSort, servers]);
 
   const online = servers.filter((server) => server.status === 'online').length;
   const offline = servers.filter((server) => server.status === 'offline').length;
-  const avgCpu = online > 0 ? servers.reduce((sum, server) => sum + server.cpu, 0) / servers.length : 0;
+  const avgCpu = calculateAverageCpu(servers);
   const fleetRam = formatFleetRam(servers);
 
   return (
@@ -697,7 +728,7 @@ export function ServerStatus({
             <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">Online: <strong className="ml-1 font-medium">{fleetSummary?.online ?? online}/{fleetSummary?.total ?? servers.length}</strong></span>
             <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-yellow-400">{t('serverStatus.checking')}: <strong className="ml-1 font-medium">{fleetSummary?.checking ?? 0}</strong></span>
             <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-red-400">Offline: <strong className="ml-1 font-medium">{fleetSummary?.offline ?? offline}</strong></span>
-            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">{t('serverStatus.avgCpu')}: <strong className="ml-1 font-medium">{avgCpu.toFixed(1)}%</strong></span>
+            <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">{t('serverStatus.avgCpu')}: <strong className="ml-1 font-medium">{avgCpu === undefined ? '—' : `${avgCpu.toFixed(1)}%`}</strong></span>
             <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-green-400">{t('serverStatus.fleetRam')}: <strong className="ml-1 font-medium">{fleetRam}</strong></span>
             <span className="flex h-6 items-center justify-center whitespace-nowrap rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-gray-300">{t('serverStatus.onlineClients')}: <strong className="ml-1 font-medium">{formatOnlineClients(fleetSummary?.onlineClients)}</strong></span>
           </div>
@@ -827,9 +858,9 @@ function ServerCard({
       </div>
 
       <div className="space-y-2 mb-2">
-        <MetricRow label={t('serverStatus.cpu')} value={server.cpu} valueText={`${server.cpu}%`} color={server.cpu > 50 ? 'from-yellow-400 to-amber-400' : 'from-green-400 to-emerald-400'} />
-        <MetricRow label={t('serverStatus.ram')} value={server.ramPercent} valueText={`${server.ramPercent}%`} detail={server.ramDetail} color={server.ramPercent > 50 ? 'from-yellow-400 to-amber-400' : 'from-green-400 to-emerald-400'} />
-        <MetricRow label={t('serverStatus.disk')} value={server.diskPercent} valueText={`${server.diskPercent}%`} detail={server.diskDetail} color="from-green-400 to-emerald-400" />
+        <MetricRow label={t('serverStatus.cpu')} value={server.cpu} valueText={formatTelemetryPercent(server.cpu)} color={server.cpu !== undefined && server.cpu > 50 ? 'from-yellow-400 to-amber-400' : 'from-green-400 to-emerald-400'} />
+        <MetricRow label={t('serverStatus.ram')} value={server.ramPercent} valueText={formatTelemetryPercent(server.ramPercent)} detail={server.ramDetail} color={server.ramPercent !== undefined && server.ramPercent > 50 ? 'from-yellow-400 to-amber-400' : 'from-green-400 to-emerald-400'} />
+        <MetricRow label={t('serverStatus.disk')} value={server.diskPercent} valueText={formatTelemetryPercent(server.diskPercent)} detail={server.diskDetail} color="from-green-400 to-emerald-400" />
       </div>
 
       {compatibility?.status === 'warning' && (
@@ -941,7 +972,7 @@ function MetricRow({
   color,
 }: {
   label: string;
-  value: number;
+  value?: number;
   valueText: string;
   detail?: string;
   color: string;
@@ -955,9 +986,11 @@ function MetricRow({
           {detail && <span className="ml-1.5 text-[10px] font-light text-gray-500">{detail}</span>}
         </span>
       </div>
-      <div className="w-full h-[3px] bg-[#1b2638] rounded-full overflow-hidden">
-        <div className={`h-full rounded-full bg-gradient-to-r ${color} ${getWidthClass(value)}`} />
-      </div>
+      {value !== undefined && (
+        <div className="w-full h-[3px] bg-[#1b2638] rounded-full overflow-hidden">
+          <div className={`h-full rounded-full bg-gradient-to-r ${color} ${getWidthClass(value)}`} />
+        </div>
+      )}
     </div>
   );
 }
