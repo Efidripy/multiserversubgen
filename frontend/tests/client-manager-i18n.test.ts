@@ -25,4 +25,11 @@ describe('Client Manager localization', () => {
     expect(en.clients.confirmResetTrafficSelected).toBe('Reset traffic for {{count}} selected clients?');
     expect(en.clients.resetTrafficSelectedResult).toBe('Traffic reset for selected clients: {{count}}');
   });
+
+  it('uses the shared localized fallback for every Client Manager operation error', () => {
+    expect(clientManagerSource).not.toContain("|| 'Failed'");
+    expect((clientManagerSource.match(/t\('common\.failed'\)/g) || []).length).toBeGreaterThanOrEqual(14);
+    expect(ru.common.failed).toBe('Ошибка');
+    expect(en.common.failed).toBe('Failed');
+  });
 });
