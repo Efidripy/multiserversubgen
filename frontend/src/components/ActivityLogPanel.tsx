@@ -29,21 +29,27 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
   const [autoScroll, setAutoScroll] = useState(true);
   const [filter, setFilter] = useState('');
   const { t } = useTranslation();
-  const bottomRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => activityLog.subscribe(setEntries), []);
+  useEffect(() => {
+    if (!open) return undefined;
+    return activityLog.subscribe(setEntries);
+  }, [open]);
 
   const visible = entries
     .filter(e => LEVEL_RANK[e.level] >= LEVEL_RANK[minLevel])
     .filter(e => !filter || `${e.section} ${e.message} ${JSON.stringify(e.context ?? '')}`.toLowerCase().includes(filter.toLowerCase()));
 
   useEffect(() => {
-    if (autoScroll && bottomRef.current?.scrollIntoView) {
-      bottomRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [visible.length, autoScroll]);
+    if (!open || !autoScroll) return undefined;
+
+    const frame = requestAnimationFrame(() => {
+      const list = listRef.current;
+      if (list) list.scrollTop = list.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, visible.length, autoScroll]);
 
   useEffect(() => {
     if (!open) return;
@@ -117,7 +123,7 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
       </div>
 
       {/* Entries */}
-      <div ref={listRef} style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
+      <div ref={listRef} data-testid="activity-log-entries" style={{ flex: 1, overflowY: 'auto', padding: '4px 0' }}>
         {visible.map(e => {
           const time = new Date(e.ts).toLocaleTimeString('ru', { hour12: false });
           return (
@@ -145,7 +151,6 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
         {visible.length === 0 && (
           <div style={{ padding: '16px', color: '#6c757d', textAlign: 'center' }}>No entries</div>
         )}
-        <div ref={bottomRef} />
       </div>
     </div>
   );
