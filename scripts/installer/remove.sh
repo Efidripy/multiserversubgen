@@ -11,10 +11,8 @@ source "${SCRIPT_DIR}/lib/runtime_secrets.sh"
 LOG_FILE="/opt/.sub_manager_install.log"
 
 REMOVE_MODE="${REMOVE_MODE:-keep-db}"
-REMOVE_FORCE="${REMOVE_FORCE:-false}"
-# Direct invocation is conservative. The installer launcher passes `hard`
-# explicitly for the operator-selected full cleanup workflow.
 REMOVE_SCOPE="${REMOVE_SCOPE:-soft}"
+HOST_WIDE_ACK_PHRASE="ERASE_HOST_WIDE_STACK"
 
 PROJECT_NAME=""
 PROJECT_DIR=""
@@ -49,12 +47,31 @@ timestamp="$(date +%Y%m%d_%H%M%S)"
 backup_dir="/var/backups/${PROJECT_NAME}_remove_${timestamp}"
 
 confirm_or_die() {
-    if [ "$REMOVE_FORCE" = "true" ]; then
-        return 0
-    fi
     local answer=""
     read -r -p "Confirm removal of ${PROJECT_NAME} (${REMOVE_MODE})? (yes/no): " answer
     [ "$answer" = "yes" ] || exit 1
+}
+
+require_supported_scope() {
+    case "$REMOVE_SCOPE" in
+        soft|hard) ;;
+        *)
+            echo "Unsupported removal scope; no removal performed." >&2
+            exit 1
+            ;;
+    esac
+}
+
+require_host_wide_acknowledgement() {
+    [ "$REMOVE_SCOPE" = "hard" ] || return 0
+
+    local acknowledgement=""
+    echo "WARNING: hard cleanup removes host-wide services, packages, and paths."
+    read -r -p "Type ${HOST_WIDE_ACK_PHRASE} to continue: " acknowledgement
+    if [ "$acknowledgement" != "$HOST_WIDE_ACK_PHRASE" ]; then
+        echo "Host-wide acknowledgement did not match; no removal performed." >&2
+        exit 1
+    fi
 }
 
 ensure_root() {
@@ -188,6 +205,8 @@ hard_cleanup_stack() {
 
 main() {
     ensure_root
+    require_supported_scope
+    require_host_wide_acknowledgement
     confirm_or_die
 
     systemctl stop "$PROJECT_NAME" >/dev/null 2>&1 || true

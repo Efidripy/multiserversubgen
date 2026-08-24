@@ -58,6 +58,20 @@ def test_linux_only_uvloop_extra_is_pinned_and_hashed_for_require_hashes_deploys
         assert expected_hash in lockfile
 
 
+def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_trace():
+    script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
+
+    assert 'git -C $RepoRoot rev-parse --verify HEAD' in script
+    assert 'git -C $RepoRoot status --porcelain=v1 --untracked-files=all' in script
+    assert 'Refusing to deploy a dirty source worktree' in script
+    assert 'git -C $RepoRoot archive --format=tar.gz' in script
+    assert '.deploy-source-commit' in script
+    assert r'printf %s\\n $deployCommit' in script
+    assert 'bash -x' not in script
+    assert 'sudo bash ./install.sh' in script
+    assert 'sudo NONINTERACTIVE=true UPDATE_CHOICE=$UpdateChoice bash ./update.sh' in script
+
+
 def test_ops_backup_check_uses_consistent_runtime_database_backup():
     script = (REPO / "scripts/ops/backup-restore-check.sh").read_text(encoding="utf-8")
 

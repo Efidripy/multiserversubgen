@@ -113,10 +113,31 @@ def test_xui_seed_matches_v3_hosts_contract():
 def test_remove_script_defaults_to_conservative_scope():
     remove = _read("scripts/installer/remove.sh")
     workflows = _read("scripts/installer/lib/workflows.sh")
+    launcher = _read("scripts/installer/launcher.sh")
 
     assert 'REMOVE_SCOPE="${REMOVE_SCOPE:-soft}"' in remove
     assert 'REMOVE_SCOPE="${REMOVE_SCOPE:-hard}"' not in remove
-    assert 'REMOVE_MODE="$mode" REMOVE_SCOPE=hard REMOVE_FORCE=true' in workflows
+    assert "REMOVE_FORCE" not in remove
+    assert 'REMOVE_MODE="$mode" REMOVE_SCOPE=soft bash "${INSTALLER_DIR}/remove.sh"' in workflows
+    assert "REMOVE_SCOPE=hard" not in workflows
+    assert "Full Cleanup" not in launcher
+    assert "Remove Application + Keep Database" in launcher
+
+
+def test_host_wide_cleanup_requires_an_exact_typed_acknowledgement():
+    remove = _read("scripts/installer/remove.sh")
+    workflows = _read("scripts/installer/lib/workflows.sh")
+
+    assert 'HOST_WIDE_ACK_PHRASE="ERASE_HOST_WIDE_STACK"' in remove
+    assert "require_supported_scope()" in remove
+    assert "soft|hard) ;;" in remove
+    assert "require_host_wide_acknowledgement()" in remove
+    assert 'read -r -p "Type ${HOST_WIDE_ACK_PHRASE} to continue: " acknowledgement' in remove
+    assert '[ "$acknowledgement" != "$HOST_WIDE_ACK_PHRASE" ]' in remove
+    assert "Host-wide acknowledgement did not match; no removal performed." in remove
+    main = remove.split("main() {", 1)[1]
+    assert main.index("require_host_wide_acknowledgement") < main.index("confirm_or_die")
+    assert "REMOVE_SCOPE=hard" not in workflows
 
 
 def test_remove_requires_verified_install_state_before_any_mutation():
@@ -130,7 +151,8 @@ def test_remove_requires_verified_install_state_before_any_mutation():
     assert 'if ! install_log_source "$LOG_FILE"; then' in remove
     assert "if ! runtime_require_safe_project_name; then" in remove
     assert 'if [ "${PROJECT_DIR:-}" != "/opt/$PROJECT_NAME" ]; then' in remove
-    assert remove.count("no removal performed.") == 4
+    state_guard = remove.split("require_verified_install_state() {", 1)[1].split("\n}\n\nrequire_verified_install_state", 1)[0]
+    assert state_guard.count("no removal performed.") == 4
 
     state_gate = remove.index("\nrequire_verified_install_state\n")
     assert state_gate < remove.index('timestamp="$(date')
