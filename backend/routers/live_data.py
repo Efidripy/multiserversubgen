@@ -17,7 +17,6 @@ def build_live_data_router(
     xui_monitor,
     get_latest_snapshot: Callable[[], Dict] = None,
     get_latest_client_presence: Callable[[], Dict] = None,
-    get_traffic_stats_by_period: Callable[[list, str, str], Dict] = None,
 ):
     router = APIRouter()
     projection_period_handler = get_cached_traffic_stats_projection_by_period

@@ -41,7 +41,6 @@ def _build_test_app(*, monitoring_enabled: bool) -> FastAPI:
         get_cached_traffic_stats=main.get_cached_traffic_stats,
         get_cached_traffic_stats_projection=main.get_cached_traffic_stats_projection,
         get_cached_traffic_stats_projection_by_period=main.get_cached_traffic_stats_projection_by_period,
-        get_traffic_stats_by_period=main.get_traffic_stats_by_period,
         get_cached_online_clients=main.get_cached_online_clients,
         list_nodes=main.node_service.list_nodes,
         xui_monitor=main.xui_monitor,
