@@ -58,6 +58,19 @@ def _seed_traffic_projection(runtime, group_by, stats, timestamp=0.0):
     )
 
 
+def test_invalidation_rejects_in_flight_live_stats_cache_publish(tmp_path):
+    runtime = _build_runtime(tmp_path, {"before@example.test": {"up": 1, "down": 2}})
+    generation = runtime._cache_generation_snapshot()
+
+    runtime.invalidate()
+
+    traffic = {"stats": {"before@example.test": {"up": 1, "down": 2}}, "group_by": "client"}
+    assert runtime._store_traffic_cache("client", traffic, generation) is False
+    assert runtime._store_online_clients([{"email": "before@example.test"}], generation) is False
+    assert runtime.traffic_stats_cache == {}
+    assert runtime.online_clients_cache == {"ts": 0.0, "data": []}
+
+
 def test_collector_projection_serves_all_groupings_without_client_manager_fanout(monkeypatch, tmp_path):
     now_ts = 500 * 3600
     snapshot = {
