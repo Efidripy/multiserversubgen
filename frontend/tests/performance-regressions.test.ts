@@ -122,6 +122,16 @@ describe('navigation performance regressions', () => {
     expect(summary).not.toContain('heroStats');
   });
 
+  it('does not retain retired ServerStatus props that were permanently ignored', () => {
+    const app = read('src/App.tsx');
+    const serverStatus = read('src/components/ServerStatus.tsx');
+
+    expect(app).not.toContain('includeCounts');
+    expect(app).not.toContain('includeCollectorStatus');
+    expect(serverStatus).not.toContain('includeCounts');
+    expect(serverStatus).not.toContain('includeCollectorStatus');
+  });
+
   it('does not fetch complete node databases just to render Backup Manager', () => {
     const backupManager = read('src/components/BackupManager.tsx');
 

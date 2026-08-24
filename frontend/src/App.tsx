@@ -768,8 +768,6 @@ export const App: React.FC = () => {
               <section className="dashboard-server-deck min-w-0">
                 <ServerStatus
                   dashboardMode
-                  includeCounts={false}
-                  includeCollectorStatus={false}
                   includePanelUpdateChecks={false}
                   includeLiveStatus={false}
                   fleetSummary={fleetSummary}
