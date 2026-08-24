@@ -118,12 +118,6 @@ class AuthService:
         except Exception:
             return None
 
-    @staticmethod
-    def extract_username(auth_header: Optional[str]) -> Optional[str]:
-        """Return just the username from a Basic Auth header."""
-        pair = AuthService.parse_basic_auth(auth_header)
-        return pair[0] if pair else None
-
     # ------------------------------------------------------------------
     # PAM authentication (delegates to system PAM)
     # ------------------------------------------------------------------
