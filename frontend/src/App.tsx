@@ -741,7 +741,6 @@ export const App: React.FC = () => {
                 }
               }}
               onOnlineClientsChange={handleOnlineClientsChange}
-              heroStats={headerSummary.stats}
               fleetSummary={fleetSummary}
               />
               <section className="mb-6 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04)]">
