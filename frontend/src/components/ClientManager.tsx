@@ -2091,13 +2091,13 @@ export const ClientManager: React.FC = () => {
                   <button className={buttonAccentClass}
                     onClick={async () => {
                       const emails = filteredClients.filter(c => selectedClientKeys.has(clientKey(c))).map(c => c.email);
-                      if (!window.confirm(`Reset traffic for ${emails.length} clients?`)) return;
+                      if (!window.confirm(t('clients.confirmResetTrafficSelected', { count: emails.length }))) return;
                       const { user, password } = getAuth();
                       try {
                         const res = await api.post('/v1/clients/bulk-reset-traffic', { emails }, { auth: { username: user, password } });
-                        toast(`Traffic reset: ${res.data?.successful ?? emails.length} clients`, 'success');
+                        toast(t('clients.resetTrafficSelectedResult', { count: res.data?.successful ?? emails.length }), 'success');
                         loadClients(true);
-                      } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+                      } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                     }}>
                     {t('clients.resetTraffic')}
                   </button>

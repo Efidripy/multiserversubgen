@@ -15,4 +15,14 @@ describe('Client Manager localization', () => {
     expect(ru.clients.health).toBe('Состояние');
     expect(en.clients.health).toBe('Health');
   });
+
+  it('localizes the selected-client traffic reset confirmation and result', () => {
+    expect(clientManagerSource).toContain("t('clients.confirmResetTrafficSelected', { count: emails.length })");
+    expect(clientManagerSource).toContain("t('clients.resetTrafficSelectedResult', { count: res.data?.successful ?? emails.length })");
+    expect(clientManagerSource).toContain("t('common.failed')");
+    expect(ru.clients.confirmResetTrafficSelected).toBe('Сбросить трафик у выбранных клиентов: {{count}}?');
+    expect(ru.clients.resetTrafficSelectedResult).toBe('Сброшен трафик у выбранных клиентов: {{count}}');
+    expect(en.clients.confirmResetTrafficSelected).toBe('Reset traffic for {{count}} selected clients?');
+    expect(en.clients.resetTrafficSelectedResult).toBe('Traffic reset for selected clients: {{count}}');
+  });
 });
