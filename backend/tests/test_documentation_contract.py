@@ -26,3 +26,6 @@ def test_subscription_guide_matches_stable_token_contract() -> None:
     assert "Старые ссылки с raw email/identifier и ранее выданные HMAC-ссылки поддерживаются" in guide
     assert "Authorization: Bearer $ADMIN_API_TOKEN" not in guide
     assert "Старые ссылки с raw email/identifier больше не совместимы" not in guide
+    assert "100% обратная совместимость с v3.0" not in guide
+    assert "Старые ссылки работают без изменений" not in guide
+    assert "Новым клиентам выдаются только новые token URL" in guide
