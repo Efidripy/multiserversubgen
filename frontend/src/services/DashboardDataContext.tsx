@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   getDashboardOverview,
   type DashboardFleetNode,
@@ -60,29 +60,51 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(!stored);
   const [stale, setStale] = useState(Boolean(stored));
   const [lastUpdated, setLastUpdated] = useState<Date | null>(stored ? new Date(stored.savedAt) : null);
+  const refreshGenerationRef = useRef(0);
+  const refreshControllerRef = useRef<AbortController | null>(null);
+
+  const invalidateActiveRefresh = useCallback(() => {
+    refreshGenerationRef.current += 1;
+    refreshControllerRef.current?.abort();
+    refreshControllerRef.current = null;
+  }, []);
 
   const refresh = useCallback(async () => {
+    const generation = refreshGenerationRef.current + 1;
+    refreshGenerationRef.current = generation;
+    refreshControllerRef.current?.abort();
+    const controller = new AbortController();
+    refreshControllerRef.current = controller;
     setLoading(true);
     try {
-      const next = await getDashboardOverview(period);
+      const next = await getDashboardOverview(period, { signal: controller.signal });
+      if (controller.signal.aborted || generation !== refreshGenerationRef.current) return;
       const savedAt = Date.now();
       setOverview(next);
       setLastUpdated(new Date(savedAt));
       setStale(false);
       saveStored({ savedAt, period, overview: next });
     } catch {
+      if (controller.signal.aborted || generation !== refreshGenerationRef.current) return;
       // Keep an already rendered snapshot visible when a background refresh
       // fails; the next interval or explicit refresh can recover it.
       setStale(true);
     } finally {
-      setLoading(false);
+      if (generation === refreshGenerationRef.current) {
+        setLoading(false);
+        if (refreshControllerRef.current === controller) {
+          refreshControllerRef.current = null;
+        }
+      }
     }
   }, [period]);
 
   const selectPeriod = useCallback((nextPeriod: DashboardTrafficPeriod) => {
+    if (nextPeriod === period) return;
+    invalidateActiveRefresh();
     setStale(true);
     setPeriod(nextPeriod);
-  }, []);
+  }, [invalidateActiveRefresh, period]);
 
   useEffect(() => {
     void refresh();
@@ -95,6 +117,8 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
     window.addEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
     return () => window.removeEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
   }, [refresh]);
+
+  useEffect(() => () => invalidateActiveRefresh(), [invalidateActiveRefresh]);
 
   const value = useMemo<DashboardData>(() => {
     return {
