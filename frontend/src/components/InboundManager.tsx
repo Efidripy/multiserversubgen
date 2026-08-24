@@ -532,14 +532,12 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   ]);
 
   const loadInbounds = async (silent = false) => {
+    const requestId = ++requestIdRef.current;
     inboundsAbortRef.current?.abort();
     const controller = new AbortController();
     inboundsAbortRef.current = controller;
     if (!silent) setPageLoading(true);
     setError('');
-
-    const requestId = Date.now();
-    requestIdRef.current = requestId;
 
     try {
       // Single parallel fetch â€” backend returns from cache (30s fresh / 300s stale).
@@ -569,12 +567,18 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       const normalized = normalizeInboundRows(rawInbounds, nameMap);
 
       setInbounds(normalized);
-      if (!silent) setPageLoading(false);
 
     } catch (err: any) {
+      if (requestIdRef.current !== requestId) return;
       if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return;
       setError(err.response?.data?.detail || t('messages.operationFailed'));
-      if (!silent) setPageLoading(false);
+    } finally {
+      if (requestIdRef.current === requestId) {
+        if (inboundsAbortRef.current === controller) {
+          inboundsAbortRef.current = null;
+        }
+        setPageLoading(false);
+      }
     }
   };
 
