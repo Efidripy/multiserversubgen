@@ -788,9 +788,9 @@ function ServerCard({
       </div>
 
       <div className="space-y-2 mb-2">
-        <MetricRow label="CPU Usage" value={server.cpu} valueText={`${server.cpu}%`} color={server.cpu > 50 ? 'from-yellow-400 to-amber-400' : 'from-green-400 to-emerald-400'} />
-        <MetricRow label="RAM Usage" value={server.ramPercent} valueText={`${server.ramPercent}%`} detail={server.ramDetail} color={server.ramPercent > 50 ? 'from-yellow-400 to-amber-400' : 'from-green-400 to-emerald-400'} />
-        <MetricRow label="Disk Usage" value={server.diskPercent} valueText={`${server.diskPercent}%`} detail={server.diskDetail} color="from-green-400 to-emerald-400" />
+        <MetricRow label={t('serverStatus.cpu')} value={server.cpu} valueText={`${server.cpu}%`} color={server.cpu > 50 ? 'from-yellow-400 to-amber-400' : 'from-green-400 to-emerald-400'} />
+        <MetricRow label={t('serverStatus.ram')} value={server.ramPercent} valueText={`${server.ramPercent}%`} detail={server.ramDetail} color={server.ramPercent > 50 ? 'from-yellow-400 to-amber-400' : 'from-green-400 to-emerald-400'} />
+        <MetricRow label={t('serverStatus.disk')} value={server.diskPercent} valueText={`${server.diskPercent}%`} detail={server.diskDetail} color="from-green-400 to-emerald-400" />
       </div>
 
       {compatibility?.status === 'warning' && (
