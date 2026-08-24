@@ -1191,6 +1191,28 @@ class ClientManager:
         """Построить статистику для одного узла."""
         node_stats: Dict[str, Dict[str, int]] = {}
         inbounds = self._fetch_inbounds_from_node(node)
+        node_name = str(node.get("name") or node.get("id") or "")
+        node_label = str(node.get("_traffic_display_name") or node_name)
+        node_id = str(node.get("id") or node.get("node_id") or "").strip()
+
+        def group_keys(inbound: Dict) -> tuple[str, str, str]:
+            inbound_name = str(inbound.get("remark", inbound.get("id", "unknown")))
+            if group_by == "inbound":
+                identity = f"node:{node_id}:inbound:{inbound.get('id')}" if node_id and inbound.get("id") is not None else ""
+                return f"{node_label}:{inbound_name}", f"{node_name}:{inbound_name}", identity
+            return node_label, node_name, f"node:{node_id}" if node_id else ""
+
+        def add(key: str, up: int, down: int, *, legacy_key: str = "", identity: str = "") -> None:
+            if key not in node_stats:
+                node_stats[key] = {"up": 0, "down": 0, "total": 0, "count": 0}
+            node_stats[key]["up"] += up
+            node_stats[key]["down"] += down
+            node_stats[key]["total"] += up + down
+            node_stats[key]["count"] += 1
+            if legacy_key:
+                node_stats[key]["_legacy_key"] = legacy_key
+            if identity:
+                node_stats[key]["_identity"] = identity
 
         for inbound in inbounds:
             try:
@@ -1205,17 +1227,11 @@ class ClientManager:
 
                         if group_by == "client":
                             key = client_email
-                        elif group_by == "inbound":
-                            key = f"{node['name']}:{inbound.get('remark', inbound.get('id'))}"
-                        else:  # node
-                            key = node["name"]
+                            legacy_key = identity = ""
+                        else:  # node/inbound
+                            key, legacy_key, identity = group_keys(inbound)
 
-                        if key not in node_stats:
-                            node_stats[key] = {"up": 0, "down": 0, "total": 0, "count": 0}
-                        node_stats[key]["up"] += up
-                        node_stats[key]["down"] += down
-                        node_stats[key]["total"] += up + down
-                        node_stats[key]["count"] += 1
+                        add(key, up, down, legacy_key=legacy_key, identity=identity)
                     continue
 
                 # Compatibility fallback for older/non-standard panels.
@@ -1234,17 +1250,11 @@ class ClientManager:
 
                     if group_by == "client":
                         key = client_email
-                    elif group_by == "inbound":
-                        key = f"{node['name']}:{inbound.get('remark', inbound.get('id'))}"
-                    else:  # node
-                        key = node["name"]
+                        legacy_key = identity = ""
+                    else:  # node/inbound
+                        key, legacy_key, identity = group_keys(inbound)
 
-                    if key not in node_stats:
-                        node_stats[key] = {"up": 0, "down": 0, "total": 0, "count": 0}
-                    node_stats[key]["up"] += up
-                    node_stats[key]["down"] += down
-                    node_stats[key]["total"] += up + down
-                    node_stats[key]["count"] += 1
+                    add(key, up, down, legacy_key=legacy_key, identity=identity)
             except Exception as exc:
                 logger.warning(f"Error processing inbound stats in {node['name']}: {exc}")
 
@@ -1261,12 +1271,27 @@ class ClientManager:
             Агрегированная статистика
         """
         stats: Dict[str, Dict[str, int]] = {}
+        identity_stats: Dict[str, Dict[str, int]] = {}
         if not nodes:
             return {"stats": stats, "group_by": group_by}
 
-        workers = min(len(nodes), TRAFFIC_MAX_WORKERS)
+        node_name_counts: Dict[str, int] = {}
+        for node in nodes:
+            node_name = str(node.get("name") or node.get("id") or "")
+            if node_name:
+                node_name_counts[node_name] = node_name_counts.get(node_name, 0) + 1
+
+        labeled_nodes = []
+        for node in nodes:
+            node_name = str(node.get("name") or node.get("id") or "")
+            node_id = str(node.get("id") or node.get("node_id") or "").strip()
+            labeled = dict(node)
+            labeled["_traffic_display_name"] = node_name if node_name_counts.get(node_name, 0) == 1 else f"{node_name} #{node_id or 'unknown'}"
+            labeled_nodes.append(labeled)
+
+        workers = min(len(labeled_nodes), TRAFFIC_MAX_WORKERS)
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = {executor.submit(self._build_stats_for_node, node, group_by): node for node in nodes}
+            futures = {executor.submit(self._build_stats_for_node, node, group_by): node for node in labeled_nodes}
             for future in as_completed(futures):
                 node = futures[future]
                 try:
@@ -1278,10 +1303,30 @@ class ClientManager:
                         stats[key]["down"] += item.get("down", 0)
                         stats[key]["total"] += item.get("total", 0)
                         stats[key]["count"] += item.get("count", 0)
+                        identity = item.get("_identity")
+                        if isinstance(identity, str) and identity:
+                            identity_item = identity_stats.setdefault(
+                                identity,
+                                {
+                                    "up": 0,
+                                    "down": 0,
+                                    "total": 0,
+                                    "count": 0,
+                                    "_display_key": key,
+                                    "_legacy_key": item.get("_legacy_key") or key,
+                                },
+                            )
+                            identity_item["up"] += item.get("up", 0)
+                            identity_item["down"] += item.get("down", 0)
+                            identity_item["total"] += item.get("total", 0)
+                            identity_item["count"] += item.get("count", 0)
                 except Exception as exc:
                     logger.warning(f"Failed to get stats from {node.get('name', 'unknown')}: {exc}")
 
-        return {"stats": stats, "group_by": group_by}
+        payload = {"stats": stats, "group_by": group_by}
+        if group_by in {"node", "inbound"} and identity_stats:
+            payload["identity_stats"] = identity_stats
+        return payload
     
     def reset_client_traffic(self, node: Dict, inbound_id: int, client_email: str) -> bool:
         if self._is_read_only(node):
