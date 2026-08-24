@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   createApiToken,
@@ -125,6 +125,7 @@ export function NodeOperationsModal({
   const [saving, setSaving] = useState(false);
   const [keyLoading, setKeyLoading] = useState<KeyKind | null>(null);
   const [generatedKey, setGeneratedKey] = useState<{ label: string; value: unknown } | null>(null);
+  const tabRequestIdRef = useRef(0);
 
   const activeData = dataByTab[activeTab];
   const activeTabMeta = useMemo(() => tabs.find((tab) => tab.id === activeTab), [activeTab]);
@@ -143,45 +144,53 @@ export function NodeOperationsModal({
 
   const loadTab = useCallback(async (tab: NodeOpsTab) => {
     if (tab === 'keys' || tab === 'panel') return;
+    const requestId = ++tabRequestIdRef.current;
+    const isCurrentRequest = () => requestId === tabRequestIdRef.current;
     setLoadingTab(tab);
     setError('');
     try {
       if (tab === 'traffic') {
         const payload = await getNodeTraffic(nodeId);
-        setDataByTab((current) => ({ ...current, traffic: payload }));
+        if (isCurrentRequest()) setDataByTab((current) => ({ ...current, traffic: payload }));
       } else if (tab === 'online') {
         const payload = await getNodeOnlineClients(nodeId);
-        setDataByTab((current) => ({ ...current, online: payload }));
+        if (isCurrentRequest()) setDataByTab((current) => ({ ...current, online: payload }));
       } else if (tab === 'metrics') {
         const payload = await getXrayMetrics(nodeId);
-        setDataByTab((current) => ({ ...current, metrics: payload }));
+        if (isCurrentRequest()) setDataByTab((current) => ({ ...current, metrics: payload }));
       } else if (tab === 'outbounds') {
         const payload = await getOutboundsTraffic(nodeId);
-        setDataByTab((current) => ({ ...current, outbounds: payload }));
+        if (isCurrentRequest()) setDataByTab((current) => ({ ...current, outbounds: payload }));
       } else if (tab === 'observatory') {
         const payload = await getXrayObservatory(nodeId);
-        setDataByTab((current) => ({ ...current, observatory: payload }));
+        if (isCurrentRequest()) setDataByTab((current) => ({ ...current, observatory: payload }));
       } else if (tab === 'config') {
         const payload = await getXrayConfig(nodeId);
-        setDataByTab((current) => ({ ...current, config: payload }));
+        if (isCurrentRequest()) setDataByTab((current) => ({ ...current, config: payload }));
       } else if (tab === 'versions') {
         const payload = await getXrayVersions(nodeId);
-        setVersions(payload);
-        setSelectedVersion((current) => current || payload[0] || '');
+        if (isCurrentRequest()) {
+          setVersions(payload);
+          setSelectedVersion((current) => current || payload[0] || '');
+        }
       } else if (tab === 'tokens') {
         const payload = await getApiTokens(nodeId);
-        setTokens(payload as ApiTokenItem[]);
+        if (isCurrentRequest()) setTokens(payload as ApiTokenItem[]);
       }
     } catch (err: any) {
-      setError(getErrorMessage(err, t('common.failed')));
+      if (isCurrentRequest()) setError(getErrorMessage(err, t('common.failed')));
     } finally {
-      setLoadingTab(null);
+      if (isCurrentRequest()) setLoadingTab(null);
     }
   }, [nodeId, t]);
 
   useEffect(() => {
     void loadTab(activeTab);
   }, [activeTab, loadTab]);
+
+  useEffect(() => () => {
+    tabRequestIdRef.current += 1;
+  }, []);
 
   const handleInstallXray = async () => {
     if (!selectedVersion) return;
