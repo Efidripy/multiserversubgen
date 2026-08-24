@@ -4,6 +4,13 @@ import { cacheService } from '../services/cacheService';
 import { getAuth } from '../auth';
 import { requestActivityStore } from '../services/requestActivity';
 
+declare module 'axios' {
+  interface AxiosRequestConfig<D = any> {
+    /** Explicit opt-out for a POST that is a read projection, not a mutation. */
+    skipCacheInvalidation?: boolean;
+  }
+}
+
 export const AUTH_REQUIRED_EVENT = 'sub-manager:auth-required';
 let authRequiredEventSent = false;
 
@@ -258,7 +265,8 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
  * Response interceptor:
  *  • GET  success — store the response in the cache with the appropriate TTL.
  *  • POST / PUT / DELETE success — invalidate cached entries for the same resource
- *    so stale data is never served after a mutation.
+ *    so stale data is never served after a mutation, unless a typed read-only
+ *    POST opts out explicitly.
  */
 api.interceptors.response.use((response) => {
   requestActivityStore.decrement();
@@ -282,7 +290,7 @@ api.interceptors.response.use((response) => {
       }
         cacheService.set(key, response, ttl, deriveCacheTags(url));
     }
-  } else if (method === 'post' || method === 'put' || method === 'delete') {
+  } else if ((method === 'post' || method === 'put' || method === 'delete') && !response.config.skipCacheInvalidation) {
       cacheGeneration += 1;
       invalidateForMutation(url);
   }
