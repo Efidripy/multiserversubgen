@@ -85,4 +85,64 @@ describe('API cold-request coalescing', () => {
     await expect(api.get('/v1/clients')).resolves.toMatchObject({ data: { version: 'after' } });
     expect(getCalls).toBe(2);
   });
+
+  it('keeps cached traffic projections after the designated read-only totals POST', async () => {
+    let trafficGetCalls = 0;
+    api.defaults.adapter = async (config: any) => {
+      if (config.method === 'get') {
+        trafficGetCalls += 1;
+        return {
+          data: { stats: { 'operator@example.test': { total: 42 } } },
+          status: 200,
+          statusText: 'OK',
+          headers: {},
+          config,
+        };
+      }
+      return {
+        data: { totals: { 'operator@example.test': 42 } },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+    };
+
+    await api.get('/v1/traffic/stats-by-period', { params: { group_by: 'client', period: 'day' } });
+    await api.post('/v1/traffic/client-totals', { emails: ['operator@example.test'], period: 'day' }, {
+      skipCacheInvalidation: true,
+    });
+    await api.get('/v1/traffic/stats-by-period', { params: { group_by: 'client', period: 'day' } });
+
+    expect(trafficGetCalls).toBe(1);
+  });
+
+  it('continues to invalidate traffic cache after an ordinary POST mutation', async () => {
+    let trafficGetCalls = 0;
+    api.defaults.adapter = async (config: any) => {
+      if (config.method === 'get') {
+        trafficGetCalls += 1;
+        return {
+          data: { stats: {} },
+          status: 200,
+          statusText: 'OK',
+          headers: {},
+          config,
+        };
+      }
+      return {
+        data: { success: true },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+    };
+
+    await api.get('/v1/traffic/stats-by-period', { params: { group_by: 'client', period: 'day' } });
+    await api.post('/v1/traffic/reset', { email: 'operator@example.test' });
+    await api.get('/v1/traffic/stats-by-period', { params: { group_by: 'client', period: 'day' } });
+
+    expect(trafficGetCalls).toBe(2);
+  });
 });

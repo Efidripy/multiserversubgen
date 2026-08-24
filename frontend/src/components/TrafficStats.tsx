@@ -369,6 +369,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
       }, {
         auth: getAuth(),
         signal: controller.signal,
+        skipCacheInvalidation: true,
       });
       const totals: Record<string, number> = Object.fromEntries(
         Object.entries(res.data?.totals || {}).map(([email, total]) => [normalizeEmailKey(email), toFiniteNumber(total)]),
