@@ -68,7 +68,7 @@ class LiveStatsRuntime:
         self._cache_generation = 0
         self._snapshot_projection_lock = Lock()
         self._snapshot_projection_timestamp: Optional[float] = None
-        self._snapshot_projections: Dict[str, Dict[str, Dict[str, int]]] = {}
+        self._snapshot_projections: Dict[str, Dict] = {}
 
     @staticmethod
     def _metric(value) -> int:
@@ -90,9 +90,38 @@ class LiveStatsRuntime:
             if isinstance(email, str) and email.strip()
         })
 
+    @staticmethod
+    def _stable_node_key(node_id, fallback_key: str) -> str:
+        """Return a rename-safe identity for node period snapshots."""
+        node_id = str(node_id).strip() if node_id is not None else ""
+        return f"node:{node_id}" if node_id else fallback_key
+
+    @classmethod
+    def _stable_inbound_key(cls, node_id, inbound_id, fallback_key: str) -> str:
+        """Return a node-scoped identity for inbound period snapshots."""
+        node_key = cls._stable_node_key(node_id, "")
+        inbound_id = str(inbound_id).strip() if inbound_id is not None else ""
+        return f"{node_key}:inbound:{inbound_id}" if node_key and inbound_id else fallback_key
+
+    @staticmethod
+    def _public_stats_from_identity(identity_stats: Dict) -> Dict:
+        """Rebuild readable keys when the only warm source is an ID snapshot."""
+        public_stats: Dict[str, Dict] = {}
+        for identity, value in identity_stats.items():
+            if not isinstance(value, dict):
+                continue
+            display_key = str(value.get("_display_key") or identity)
+            public_stats[display_key] = {
+                "up": value.get("up", 0),
+                "down": value.get("down", 0),
+                "total": value.get("total", 0),
+                "count": value.get("count", 1),
+            }
+        return public_stats
+
     def _build_snapshot_traffic_projections(
         self, snapshot: Optional[Dict] = None
-    ) -> tuple[Optional[float], Dict[str, Dict[str, Dict[str, int]]]]:
+    ) -> tuple[Optional[float], Dict[str, Dict]]:
         """Build all Statistics groupings from the collector's existing data.
 
         The collector already obtains inbounds once per poll.  Re-reading it
@@ -115,40 +144,87 @@ class LiveStatsRuntime:
         if timestamp is None or not isinstance(nodes, list):
             return timestamp, {}
 
-        projections: Dict[str, Dict[str, Dict[str, int]]] = {
-            "client": {},
-            "inbound": {},
-            "node": {},
+        projections: Dict[str, Dict] = {
+            "client": {"stats": {}},
+            "inbound": {"stats": {}, "identity_stats": {}},
+            "node": {"stats": {}, "identity_stats": {}},
         }
 
-        def add(group_by: str, key: str, up: int, down: int, count: int = 1) -> None:
+        def add(
+            group_by: str,
+            key: str,
+            up: int,
+            down: int,
+            count: int = 1,
+            *,
+            identity: Optional[str] = None,
+            legacy_key: Optional[str] = None,
+        ) -> None:
             if not key:
                 return
-            current = projections[group_by].setdefault(key, {"up": 0, "down": 0, "total": 0, "count": 0})
+            current = projections[group_by]["stats"].setdefault(
+                key, {"up": 0, "down": 0, "total": 0, "count": 0}
+            )
             current["up"] += up
             current["down"] += down
             current["total"] += up + down
             current["count"] += count
 
+            if identity:
+                identity_current = projections[group_by]["identity_stats"].setdefault(
+                    identity,
+                    {
+                        "up": 0,
+                        "down": 0,
+                        "total": 0,
+                        "count": 0,
+                        "_display_key": key,
+                        "_legacy_key": legacy_key or key,
+                    },
+                )
+                identity_current["up"] += up
+                identity_current["down"] += down
+                identity_current["total"] += up + down
+                identity_current["count"] += count
+
+        node_name_counts: Dict[str, int] = {}
+        for node in nodes:
+            if isinstance(node, dict):
+                node_name = str(node.get("name") or node.get("node_id") or "")
+                if node_name:
+                    node_name_counts[node_name] = node_name_counts.get(node_name, 0) + 1
+
         for node in nodes:
             if not isinstance(node, dict):
                 continue
             node_name = str(node.get("name") or node.get("node_id") or "")
+            node_id = str(node.get("node_id") or node.get("id") or "").strip()
             inbounds = node.get("inbounds")
             if not node_name or not isinstance(inbounds, list):
                 continue
+            node_key = node_name if node_name_counts.get(node_name, 0) == 1 else f"{node_name} #{node_id or 'unknown'}"
+            node_identity = self._stable_node_key(node_id, node_key)
 
             for inbound in inbounds:
                 if not isinstance(inbound, dict):
                     continue
                 inbound_up = self._metric(inbound.get("up"))
                 inbound_down = self._metric(inbound.get("down"))
-                inbound_key = f"{node_name}:{inbound.get('remark', inbound.get('id', 'unknown'))}"
+                inbound_name = str(inbound.get("remark", inbound.get("id", "unknown")))
+                inbound_key = f"{node_key}:{inbound_name}"
+                inbound_identity = self._stable_inbound_key(node_id, inbound.get("id"), inbound_key)
                 # Node and inbound totals are available even when an older
                 # panel omits ``clientStats``.  Client-level rows stay absent
                 # instead of causing the old per-client remote fallback.
-                add("node", node_name, inbound_up, inbound_down)
-                add("inbound", inbound_key, inbound_up, inbound_down)
+                add("node", node_key, inbound_up, inbound_down, identity=node_identity, legacy_key=node_name)
+                add(
+                    "inbound",
+                    inbound_key,
+                    inbound_up,
+                    inbound_down,
+                    identity=inbound_identity,
+                    legacy_key=f"{node_name}:{inbound_name}",
+                )
 
                 client_stats = inbound.get("clientStats")
                 if not isinstance(client_stats, list):
@@ -176,13 +252,14 @@ class LiveStatsRuntime:
 
         with self._snapshot_projection_lock:
             if timestamp == self._snapshot_projection_timestamp:
-                stats = self._snapshot_projections.get(group_by, {})
+                projection = self._snapshot_projections.get(group_by, {})
                 return {
-                    "stats": stats,
+                    "stats": projection.get("stats", {}),
                     "group_by": group_by,
                     "cache_source": "snapshot_collector",
                     "cache_timestamp": timestamp,
                     "system_client_emails": system_client_emails,
+                    **({"identity_stats": projection["identity_stats"]} if isinstance(projection.get("identity_stats"), dict) else {}),
                 }
 
         _timestamp, projections = self._build_snapshot_traffic_projections(snapshot)
@@ -192,13 +269,14 @@ class LiveStatsRuntime:
             if self._snapshot_projection_timestamp is None or timestamp > self._snapshot_projection_timestamp:
                 self._snapshot_projection_timestamp = timestamp
                 self._snapshot_projections = projections
-            stats = self._snapshot_projections.get(group_by, {})
+            projection = self._snapshot_projections.get(group_by, {})
             return {
-                "stats": stats,
+                "stats": projection.get("stats", {}),
                 "group_by": group_by,
                 "cache_source": "snapshot_collector",
                 "cache_timestamp": timestamp,
                 "system_client_emails": system_client_emails,
+                **({"identity_stats": projection["identity_stats"]} if isinstance(projection.get("identity_stats"), dict) else {}),
             }
 
     def seed_period_snapshots_from_collector(self, now_ts: Optional[float] = None) -> Dict[str, bool]:
@@ -227,7 +305,12 @@ class LiveStatsRuntime:
             projection = self._snapshot_projection(group_by)
             if not projection:
                 continue
-            self._save_period_snapshots(group_by, projection.get("stats", {}), now)
+            self._save_period_snapshots(
+                group_by,
+                projection.get("stats", {}),
+                now,
+                projection.get("identity_stats"),
+            )
             seeded[group_by] = True
         return seeded
 
@@ -258,7 +341,7 @@ class LiveStatsRuntime:
                 return False
             self.traffic_stats_cache[group_by] = (time.time(), data)
             self.redis_set_json(f"traffic_stats:{group_by}", data, self.traffic_stats_cache_ttl)
-            self._save_period_snapshots(group_by, data.get("stats", {}), time.time())
+            self._save_period_snapshots(group_by, data.get("stats", {}), time.time(), data.get("identity_stats"))
             return True
 
     def _store_online_clients(self, data: List[Dict], generation: int) -> bool:
@@ -304,13 +387,13 @@ class LiveStatsRuntime:
         redis_data = self.redis_get_json(redis_key)
         if redis_data is not None:
             if isinstance(redis_data, dict):
-                self._save_period_snapshots(group_by, redis_data.get("stats", {}), time.time())
+                self._save_period_snapshots(group_by, redis_data.get("stats", {}), time.time(), redis_data.get("identity_stats"))
             return redis_data
 
         now = time.time()
         cached = self.traffic_stats_cache.get(group_by)
         if cached and now - cached[0] < self.traffic_stats_cache_ttl:
-            self._save_period_snapshots(group_by, cached[1].get("stats", {}), now)
+            self._save_period_snapshots(group_by, cached[1].get("stats", {}), now, cached[1].get("identity_stats"))
             return cached[1]
 
         if cached and now - cached[0] < self.traffic_stats_stale_ttl:
@@ -320,7 +403,7 @@ class LiveStatsRuntime:
                 self._store_traffic_cache(group_by, fresh, generation)
 
             self.start_cache_refresh("traffic", _refresh, worker_key=group_by)
-            self._save_period_snapshots(group_by, cached[1].get("stats", {}), now)
+            self._save_period_snapshots(group_by, cached[1].get("stats", {}), now, cached[1].get("identity_stats"))
             return cached[1]
 
         # A cold navigation, header summary, or realtime retry can reach this
@@ -328,13 +411,13 @@ class LiveStatsRuntime:
         with self._get_traffic_cold_load_lock(group_by):
             redis_data = self.redis_get_json(redis_key)
             if isinstance(redis_data, dict):
-                self._save_period_snapshots(group_by, redis_data.get("stats", {}), time.time())
+                self._save_period_snapshots(group_by, redis_data.get("stats", {}), time.time(), redis_data.get("identity_stats"))
                 return redis_data
 
             now = time.time()
             cached = self.traffic_stats_cache.get(group_by)
             if cached and now - cached[0] < self.traffic_stats_cache_ttl:
-                self._save_period_snapshots(group_by, cached[1].get("stats", {}), now)
+                self._save_period_snapshots(group_by, cached[1].get("stats", {}), now, cached[1].get("identity_stats"))
                 return cached[1]
 
             if cached and now - cached[0] < self.traffic_stats_stale_ttl:
@@ -344,7 +427,7 @@ class LiveStatsRuntime:
                     self._store_traffic_cache(group_by, fresh, generation)
 
                 self.start_cache_refresh("traffic", _refresh, worker_key=group_by)
-                self._save_period_snapshots(group_by, cached[1].get("stats", {}), now)
+                self._save_period_snapshots(group_by, cached[1].get("stats", {}), now, cached[1].get("identity_stats"))
                 return cached[1]
 
             generation = self._cache_generation_snapshot()
@@ -371,6 +454,7 @@ class LiveStatsRuntime:
                 "stats": redis_data.get("stats", {}),
                 "group_by": group_by,
                 "cache_source": "redis",
+                **({"identity_stats": redis_data["identity_stats"]} if isinstance(redis_data.get("identity_stats"), dict) else {}),
             }
 
         cached = self.traffic_stats_cache.get(group_by)
@@ -380,6 +464,7 @@ class LiveStatsRuntime:
                 "group_by": group_by,
                 "cache_source": "memory",
                 "cache_timestamp": cached[0],
+                **({"identity_stats": cached[1]["identity_stats"]} if isinstance(cached[1].get("identity_stats"), dict) else {}),
             }
 
         if not self.db_path:
@@ -399,11 +484,18 @@ class LiveStatsRuntime:
                 ).fetchone()
             stats = json.loads(row[1]) if row and row[1] else {}
             if isinstance(stats, dict) and stats:
+                identity_stats = (
+                    stats
+                    if group_by in {"node", "inbound"}
+                    and any(isinstance(value, dict) and value.get("_display_key") for value in stats.values())
+                    else None
+                )
                 return {
-                    "stats": stats,
+                    "stats": self._public_stats_from_identity(identity_stats) if identity_stats else stats,
                     "group_by": group_by,
                     "cache_source": "sqlite_snapshot",
                     "cache_timestamp": row[0] if row else None,
+                    **({"identity_stats": identity_stats} if identity_stats else {}),
                 }
         except Exception as exc:
             self.logger.warning("Failed to load cached traffic projection (%s): %s", group_by, exc)
@@ -477,19 +569,36 @@ class LiveStatsRuntime:
             except (TypeError, ValueError, OverflowError):
                 return 0
 
+        identity_stats = projection.get("identity_stats") if isinstance(projection, dict) else None
+        use_identity_stats = group_by in {"node", "inbound"} and isinstance(identity_stats, dict)
+        comparison_stats = identity_stats if use_identity_stats else current_stats
         delta_stats: Dict[str, Dict[str, int]] = {}
-        for key, current_value in current_stats.items():
+        missing_baseline_count = 0
+        for key, current_value in comparison_stats.items():
             if not isinstance(current_value, dict):
                 continue
-            snapshot_value = snapshot_stats.get(key, {})
-            snapshot_value = snapshot_value if isinstance(snapshot_value, dict) else {}
+            snapshot_value = snapshot_stats.get(key)
+            if not isinstance(snapshot_value, dict) and use_identity_stats:
+                legacy_key = str(current_value.get("_legacy_key") or "")
+                matches = [
+                    item for item in comparison_stats.values()
+                    if isinstance(item, dict) and item.get("_legacy_key") == legacy_key
+                ]
+                candidate = snapshot_stats.get(legacy_key) if len(matches) == 1 and legacy_key else None
+                snapshot_value = candidate if isinstance(candidate, dict) else None
+            if snapshot_value is None:
+                if use_identity_stats and str(key).startswith("node:"):
+                    missing_baseline_count += 1
+                    continue
+                snapshot_value = {}
             current_up = metric(current_value.get("up", current_value.get("upload", 0)))
             current_down = metric(current_value.get("down", current_value.get("download", 0)))
             current_total = metric(current_value.get("total")) or current_up + current_down
             snapshot_up = metric(snapshot_value.get("up", snapshot_value.get("upload", 0)))
             snapshot_down = metric(snapshot_value.get("down", snapshot_value.get("download", 0)))
             snapshot_total = metric(snapshot_value.get("total")) or snapshot_up + snapshot_down
-            delta_stats[str(key)] = {
+            display_key = str(current_value.get("_display_key") or key) if use_identity_stats else str(key)
+            delta_stats[display_key] = {
                 "up": max(0, current_up - snapshot_up),
                 "down": max(0, current_down - snapshot_down),
                 "total": max(0, current_total - snapshot_total),
@@ -508,6 +617,10 @@ class LiveStatsRuntime:
                 "Historical data covers only part of the requested window. "
                 "Showing the earliest retained snapshot within that window."
             )
+        if missing_baseline_count:
+            note = "Some node rows have no unambiguous historical baseline yet and are omitted."
+            result["note"] = f"{result.get('note')} {note}".strip()
+            result["missing_baseline_count"] = missing_baseline_count
         return result
 
     def _snapshot_key(self, group_by: str, bucket_kind: str, bucket_id: int) -> str:
@@ -653,12 +766,19 @@ class LiveStatsRuntime:
             )
             return None
 
-    def _save_period_snapshots(self, group_by: str, stats_data: Dict, now_ts: float) -> None:
+    def _save_period_snapshots(
+        self,
+        group_by: str,
+        stats_data: Dict,
+        now_ts: float,
+        identity_stats: Optional[Dict] = None,
+    ) -> None:
         """Persist rolling snapshots used for period deltas."""
         if not isinstance(stats_data, dict):
             return
 
-        snapshot_value = {"ts": now_ts, "stats": stats_data}
+        snapshot_stats = identity_stats if group_by in {"node", "inbound"} and isinstance(identity_stats, dict) else stats_data
+        snapshot_value = {"ts": now_ts, "stats": snapshot_stats}
         for bucket_kind, config in self._ROLLING_SNAPSHOT_CONFIG.items():
             bucket_seconds = int(config["bucket_seconds"])
             bucket_id = int(now_ts / bucket_seconds)
@@ -721,19 +841,35 @@ class LiveStatsRuntime:
                         )
                         payload["snapshot_ts"] = max(int(payload["snapshot_ts"]), int(ts))
 
-                        node_key = str(node_name or f"node-{node_id}")
+                        node_key = self._stable_node_key(node_id, str(node_name or f"node-{node_id}"))
                         total = int(float(traffic_total or 0))
                         payload["stats"][node_key] = {
                             "up": 0,
                             "down": total,
                             "total": total,
                             "count": 1,
+                            "_display_key": str(node_name or f"node-{node_id}"),
+                            "_legacy_key": str(node_name or f"node-{node_id}"),
                         }
 
                     inserted = 0
                     for bucket_id, payload in sorted(bucket_payloads.items()):
                         if not payload["stats"]:
                             continue
+                        name_counts: Dict[str, int] = {}
+                        for value in payload["stats"].values():
+                            if isinstance(value, dict):
+                                name = str(value.get("_legacy_key") or "")
+                                if name:
+                                    name_counts[name] = name_counts.get(name, 0) + 1
+                        for node_key, value in payload["stats"].items():
+                            if not isinstance(value, dict):
+                                continue
+                            legacy_key = str(value.get("_legacy_key") or node_key)
+                            node_id = str(node_key).removeprefix("node:")
+                            value["_display_key"] = (
+                                legacy_key if name_counts.get(legacy_key, 0) == 1 else f"{legacy_key} #{node_id or 'unknown'}"
+                            )
                         result = conn.execute(
                             """
                             INSERT OR IGNORE INTO traffic_stats_snapshots (

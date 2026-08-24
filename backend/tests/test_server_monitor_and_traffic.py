@@ -192,6 +192,29 @@ class TestTrafficStatsFastPath:
         assert result["stats"]["a@test.com"]["total"] == 300
         assert result["stats"]["b@test.com"]["total"] == 75
 
+    def test_duplicate_node_names_keep_cold_traffic_stats_separate(self):
+        mgr = self._build_manager()
+        inbounds = [{
+            "id": 7,
+            "remark": "main",
+            "protocol": "vless",
+            "clientStats": [{"email": "user@test.com", "up": 10, "down": 20}],
+        }]
+        nodes = [
+            {**self._node(), "id": 1, "name": "edge"},
+            {**self._node(), "id": 2, "name": "edge"},
+        ]
+
+        with patch.object(mgr, "_fetch_inbounds_from_node", return_value=inbounds):
+            result = mgr.get_traffic_stats(nodes, group_by="node")
+
+        assert result["stats"] == {
+            "edge #1": {"up": 10, "down": 20, "total": 30, "count": 1},
+            "edge #2": {"up": 10, "down": 20, "total": 30, "count": 1},
+        }
+        assert result["identity_stats"]["node:1"]["_display_key"] == "edge #1"
+        assert result["identity_stats"]["node:2"]["_display_key"] == "edge #2"
+
 
 # ---------------------------------------------------------------------------
 # ThreeXUIMonitor – new class with GET-based server status
