@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import api from '../src/api';
 import { ClientEditModal } from '../src/components/ClientEditModal';
@@ -13,6 +13,7 @@ const GIB = 1024 ** 3;
 describe('3x-ui v3 client DTO', () => {
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
     api.defaults.adapter = axios.defaults.adapter;
   });
 
@@ -124,5 +125,53 @@ describe('3x-ui v3 client DTO', () => {
 
     await waitFor(() => expect(requestBody).toBeDefined());
     expect((requestBody as any).updates.limitIp).toBe(0);
+  });
+
+  it('sends reset-traffic identity in the JSON body from the edit modal', async () => {
+    let requestUrl = '';
+    let requestBody: Record<string, unknown> | undefined;
+    api.defaults.adapter = async (config: any) => {
+      requestUrl = config.url || '';
+      requestBody = typeof config.data === 'string' ? JSON.parse(config.data) : config.data;
+      return {
+        data: { success: true },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+    };
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <ThemeProvider>
+        <ClientEditModal
+          client={{
+            id: 'client-id',
+            email: 'alice@example.test',
+            enable: true,
+            up: 0,
+            down: 0,
+            total: 3 * GIB,
+            totalGB: 50 * GIB,
+            expiryTime: 0,
+            node_id: 11,
+            inbound_id: 17,
+            protocol: 'vless',
+          }}
+          onClose={() => undefined}
+          onSaved={() => undefined}
+        />
+      </ThemeProvider>,
+    );
+
+    fireEvent.click(screen.getByTitle('Reset Traffic'));
+
+    await waitFor(() => expect(requestBody).toEqual({
+      node_id: 11,
+      inbound_id: 17,
+      email: 'alice@example.test',
+    }));
+    expect(requestUrl).toBe('/v1/clients/client-id/reset-traffic');
   });
 });
