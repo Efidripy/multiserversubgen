@@ -1274,11 +1274,11 @@ run_update_mode() {
 run_remove_mode() {
     local mode="$1"
     if [ "${INSTALLER_DRY_RUN:-false}" = "true" ]; then
-        installer_message "Dry Run" "Would run remove.sh with REMOVE_MODE=${mode}, REMOVE_SCOPE=hard."
+        installer_message "Dry Run" "Would run remove.sh with REMOVE_MODE=${mode}, REMOVE_SCOPE=soft and an interactive confirmation."
         installer_pause
         return 0
     fi
-    REMOVE_MODE="$mode" REMOVE_SCOPE=hard REMOVE_FORCE=true bash "${INSTALLER_DIR}/remove.sh"
+    REMOVE_MODE="$mode" REMOVE_SCOPE=soft bash "${INSTALLER_DIR}/remove.sh"
 }
 
 run_simple_install_over_existing() {
