@@ -287,7 +287,7 @@ export function NodeOperationsModal({
         label = 'X25519';
         value = await generateNodeX25519(nodeId);
       } else if (kind === 'vless') {
-        label = 'VLESS Enc';
+        label = t('inbounds.vlessDecryption');
         value = await generateNodeVlessEncryption(nodeId);
       } else {
         label = 'ML-DSA-65';
