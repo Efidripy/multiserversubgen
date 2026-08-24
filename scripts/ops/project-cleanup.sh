@@ -1,12 +1,27 @@
 #!/bin/bash
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd -P)" || {
+    printf '%s\n' "cleanup refused: cannot resolve repository root" >&2
+    exit 1
+}
 CLEANUP_MODE="${CLEANUP_MODE:-safe}"
 PRUNE_MCP_CACHE="${PRUNE_MCP_CACHE:-false}"
 CLEANUP_DRY_RUN="${CLEANUP_DRY_RUN:-false}"
 
 cd "$REPO_ROOT"
+
+if ! command -v git >/dev/null 2>&1; then
+    printf '%s\n' "cleanup refused: git is required to verify repository root" >&2
+    exit 1
+fi
+
+GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$GIT_ROOT" ] || [ "$GIT_ROOT" != "$REPO_ROOT" ]; then
+    printf '%s\n' "cleanup refused: resolved path is not the project Git root" >&2
+    exit 1
+fi
 
 log() {
     printf '%s\n' "$*"
