@@ -97,6 +97,23 @@ def test_legacy_windows_wrappers_propagate_canonical_script_exit_codes():
         assert script.index(invocation) < script.index("exit $LASTEXITCODE")
 
 
+def test_canonical_windows_entrypoints_propagate_remote_deploy_exit_codes():
+    entrypoints = (
+        "scripts/installer/windows/windows-install.ps1",
+        "scripts/installer/windows/windows-update.ps1",
+        "scripts/installer/windows/windows-smoke.ps1",
+    )
+    invocation = "& powershell -NoProfile -ExecutionPolicy Bypass -File $deployScript @invokeParams"
+
+    for relative_path in entrypoints:
+        script = (REPO / relative_path).read_text(encoding="utf-8")
+
+        assert '"invoke-remote-deploy.ps1"' in script
+        assert invocation in script
+        assert "exit $LASTEXITCODE" in script
+        assert script.index(invocation) < script.index("exit $LASTEXITCODE")
+
+
 def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_trace():
     script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
 
