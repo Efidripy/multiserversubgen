@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-i18next', () => ({
@@ -6,8 +6,13 @@ vi.mock('react-i18next', () => ({
 }));
 
 import { ActivityLogPanel } from '../src/components/ActivityLogPanel';
+import { activityLog } from '../src/services/activityLog';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  activityLog.clear();
+  vi.restoreAllMocks();
+});
 
 describe('ActivityLogPanel viewport and resize contract', () => {
   it('keeps a bounded, resizable dialog and a shrinkable filter control', () => {
@@ -34,5 +39,40 @@ describe('ActivityLogPanel viewport and resize contract', () => {
 
     rerender(<ActivityLogPanel open={false} onClose={onClose} />);
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('subscribes only while open and snapshots entries when it opens', () => {
+    const subscribe = vi.spyOn(activityLog, 'subscribe');
+    const { rerender } = render(<ActivityLogPanel open={false} onClose={vi.fn()} />);
+    expect(subscribe).not.toHaveBeenCalled();
+
+    activityLog.info('Hidden', 'kept in ring buffer');
+    rerender(<ActivityLogPanel open onClose={vi.fn()} />);
+
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('kept in ring buffer')).toBeTruthy();
+
+    rerender(<ActivityLogPanel open={false} onClose={vi.fn()} />);
+    activityLog.info('Hidden', 'must not trigger a hidden render');
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('keeps automatic scrolling inside the log list', async () => {
+    const requestAnimationFrame = vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callback(1);
+      return 1;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => undefined);
+
+    render(<ActivityLogPanel open onClose={vi.fn()} />);
+    const list = screen.getByTestId('activity-log-entries');
+    Object.defineProperty(list, 'scrollHeight', { configurable: true, value: 420 });
+
+    activityLog.info('Panel', 'scroll locally');
+
+    await waitFor(() => {
+      expect(requestAnimationFrame).toHaveBeenCalled();
+      expect(list.scrollTop).toBe(420);
+    });
   });
 });
