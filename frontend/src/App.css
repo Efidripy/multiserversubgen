@@ -1529,57 +1529,6 @@
     transition: width 180ms ease-in-out;
   }
 
-  .empty-state {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    padding: 32px 18px;
-    border: 1px solid rgba(34, 211, 238, 0.20);
-    border-radius: 8px;
-    background: #0a0e1a;
-    color: #cbd5e1;
-    text-align: center;
-  }
-
-  .empty-state__title {
-    color: #e2e8f0;
-    font-size: 13px;
-    font-weight: 500;
-    letter-spacing: 0.10em;
-    text-transform: uppercase;
-  }
-
-  .empty-state__hint {
-    max-width: 28rem;
-    color: #64748b;
-    font-size: 12px;
-    line-height: 1.45;
-  }
-
-  .icon-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid rgba(34, 211, 238, 0.20);
-    background: rgba(34, 211, 238, 0.08);
-    color: #67e8f9;
-    font-family: var(--font-mono);
-    line-height: 1;
-  }
-
-  .icon-badge--rounded {
-    border-radius: 8px;
-  }
-
-  .icon-badge--lg {
-    width: 42px;
-    height: 42px;
-    font-size: 18px;
-  }
-
   @media (max-width: 640px) {
     .drawer__panel {
       width: calc(100% - 16px);
