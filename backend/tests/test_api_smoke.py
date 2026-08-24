@@ -380,6 +380,7 @@ def test_traffic_period_route_uses_projection_without_nodes_or_legacy_traffic_fe
     assert calls == [("node", "week")]
     payload = response.json()
     assert payload["stats"] == {"alpha": {"up": 1, "down": 9, "total": 10}}
+    assert payload["summary"] == {"upload": 2, "download": 13, "total": 15, "count": 2}
     assert payload["cache_source"] == "snapshot_collector"
     assert "identity_stats" not in payload
 
