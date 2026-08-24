@@ -129,3 +129,16 @@ def test_installation_report_uses_dynamic_repository_root():
     assert '"${SCRIPT_DIR}/scripts/ops/smoke-test.sh"' in ui
     assert '"${SCRIPT_DIR}/scripts/ops/backup-restore-check.sh"' in ui
     assert '"${SCRIPT_DIR}/scripts/ops/hardening-profile.sh" audit' in ui
+
+
+def test_resource_guard_cleanup_is_project_scoped():
+    guard = _read("scripts/installer/lib/resource_guard.sh")
+
+    assert "resource_guard_project_root()" in guard
+    assert 'project_root="$(resource_guard_project_root 2>/dev/null || true)"' in guard
+    assert "/var/tmp/*" not in guard
+    assert "/tmp/npm-*" not in guard
+    assert "/tmp/vite-*" not in guard
+    assert '"${PWD}/frontend"' not in guard
+    assert "journalctl --vacuum-size" not in guard
+    assert '"$project_root/frontend/node_modules"' in guard
