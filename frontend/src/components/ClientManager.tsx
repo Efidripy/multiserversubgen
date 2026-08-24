@@ -985,7 +985,7 @@ export const ClientManager: React.FC = () => {
       toast(t('messages.delDepletedDone', { count: res.data?.total_deleted ?? 0 }), 'success');
       loadClients(true);
     } catch (e: any) {
-      toast(e.response?.data?.detail || 'Failed', 'error');
+      toast(e.response?.data?.detail || t('common.failed'), 'error');
     } finally {
       setDelDepletedLoading(false);
     }
@@ -1037,7 +1037,7 @@ export const ClientManager: React.FC = () => {
       setShowBulkAdjust(false);
       loadClients(true);
     } catch (e: any) {
-      toast(e.response?.data?.detail || 'Failed', 'error');
+      toast(e.response?.data?.detail || t('common.failed'), 'error');
     } finally {
       setBulkAdjustLoading(false);
     }
@@ -1094,7 +1094,7 @@ export const ClientManager: React.FC = () => {
       await api.post(`/v1/nodes/${groupsNodeId}/client-groups`, { name: groupNewName.trim() }, { auth: getAuth() });
       setGroupNewName('');
       await handleOpenGroups(groupsNodeId, groupsNodeName);
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const handleDeleteGroup = async (name: string) => {
@@ -1103,7 +1103,7 @@ export const ClientManager: React.FC = () => {
       await api.delete(`/v1/nodes/${groupsNodeId}/client-groups/${encodeURIComponent(name)}`, { auth: getAuth() });
       setGroupsList(prev => prev.filter(g => g !== name));
       if (showGroupMembers === name) { setShowGroupMembers(''); setGroupMemberEmails([]); }
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const handleRenameGroup = async () => {
@@ -1113,7 +1113,7 @@ export const ClientManager: React.FC = () => {
       setGroupsList(prev => prev.map(g => g === groupRenameFrom ? groupRenameTo.trim() : g));
       setGroupRenameFrom('');
       setGroupRenameTo('');
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const handleViewGroupMembers = async (name: string) => {
@@ -1136,7 +1136,7 @@ export const ClientManager: React.FC = () => {
       await api.post(`/v1/nodes/${groupsNodeId}/client-groups/${encodeURIComponent(groupName)}/add`, { emails }, { auth: getAuth() });
       setGroupAddEmails('');
       await handleViewGroupMembers(groupName);
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const handleRemoveFromGroup = async (groupName: string, email: string) => {
@@ -1144,7 +1144,7 @@ export const ClientManager: React.FC = () => {
     try {
       await api.post(`/v1/nodes/${groupsNodeId}/client-groups/${encodeURIComponent(groupName)}/remove`, { emails: [email] }, { auth: getAuth() });
       setGroupMemberEmails(prev => prev.filter(e => e !== email));
-    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
   };
 
   const getHealthScore = (client: Client): number => {
@@ -1674,7 +1674,7 @@ export const ClientManager: React.FC = () => {
       }, { auth: getAuth() });
       setClients((previous) => previous.map((item) => clientKey(item) === clientKey(client) ? { ...item, enable: !item.enable } : item));
     } catch (error: any) {
-      toast(error.response?.data?.detail || 'Failed', 'error');
+      toast(error.response?.data?.detail || t('common.failed'), 'error');
     }
   };
   const deleteClient = async (client: Client) => {
@@ -2044,7 +2044,7 @@ export const ClientManager: React.FC = () => {
                         await api.post('/v1/clients/bulk-enable', { emails, enable: true }, { auth: { username: user, password } });
                         toast(`Enabled ${emails.length} clients`, 'success');
                         loadClients(true);
-                      } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+                      } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                     }}>
                     {t('common.enable')}
                   </button>
@@ -2056,7 +2056,7 @@ export const ClientManager: React.FC = () => {
                         await api.post('/v1/clients/bulk-enable', { emails, enable: false }, { auth: { username: user, password } });
                         toast(`Disabled ${emails.length} clients`, 'success');
                         loadClients(true);
-                      } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+                      } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                     }}>
                     {t('common.disable')}
                   </button>
@@ -2190,7 +2190,7 @@ export const ClientManager: React.FC = () => {
                         const groupName = groups[parseInt(choice) - 1] || choice;
                         await api.post(`/v1/nodes/${nodeId}/client-groups/${encodeURIComponent(groupName)}/add`, { emails: selectedEmails }, { auth: getAuth() });
                         toast(`Added ${selectedEmails.length} clients to "${groupName}"`, 'success');
-                      } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+                      } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                     }}>
                     <UIIcon name="group" size={13} /> {t('clients.addToGroup')}
                   </button>
@@ -2255,7 +2255,7 @@ export const ClientManager: React.FC = () => {
                       }, { auth: { username: user, password } });
                       toast(t('clients.resetDepletedResult', { count: res.data?.successful ?? depleted.length }), 'success');
                       loadClients(true);
-                    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+                    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                   }}
                 >
                   <span className="inline-flex items-center gap-1"><UIIcon name="refresh" size={14} /> {t('clients.resetDepleted')}</span>
@@ -2278,7 +2278,7 @@ export const ClientManager: React.FC = () => {
                       }, { auth: { username: user, password } });
                       toast(`Renewed ${res.data?.total_adjusted ?? expired.length} clients (+${days} days)`, 'success');
                       loadClients(true);
-                    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+                    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                   }}
                 >
                   <span className="inline-flex items-center gap-1">{t('clients.renewExpired')}</span>
@@ -2300,7 +2300,7 @@ export const ClientManager: React.FC = () => {
                       }, { auth: { username: user, password } });
                       toast(`Extended ${res.data?.successful ?? expiring.length} clients by ${days}d`, 'success');
                       loadClients(true);
-                    } catch (e: any) { toast(e.response?.data?.detail || 'Failed', 'error'); }
+                    } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                   }}
                 >
                   {t('clients.extendExpiring')}
