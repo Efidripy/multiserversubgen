@@ -6,7 +6,6 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from modules.nodes.service import NodesService
 from routers.clients import build_clients_router
 from services.db_bootstrap import connect, init_db
 from services.node_service import NodeService
@@ -98,7 +97,7 @@ def test_client_notes_endpoint_persists_and_enriches_client_list(tmp_path):
     assert row[0] == "server note"
 
 
-def test_node_services_persist_tags_as_json(tmp_path):
+def test_node_service_persists_tags_as_json(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     with connect(db_path) as conn:
@@ -108,7 +107,7 @@ def test_node_services_persist_tags_as_json(tmp_path):
         )
 
     runtime_updated = NodeService(db_path).update_node(1, {"tags": ["edge", " beta ", ""]})
-    module_updated = NodesService(db_path).update_node(1, {"tags": "core, vpn"})
+    comma_updated = NodeService(db_path).update_node(1, {"tags": "core, vpn"})
 
     assert runtime_updated["tags"] == '["edge", "beta"]'
-    assert module_updated["tags"] == '["core", "vpn"]'
+    assert comma_updated["tags"] == '["core", "vpn"]'

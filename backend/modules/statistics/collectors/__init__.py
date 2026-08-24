@@ -1,1 +1,0 @@
-"""Statistics collectors package."""
