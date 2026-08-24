@@ -19,7 +19,7 @@ def build_request_controls_and_audit_middleware(
     required_role_for_request,
     has_min_role,
     read_only_mode: bool,
-    invalidate_live_stats_cache,
+    invalidate_read_projections,
     http_request_count,
     http_request_latency,
     get_client_ip,
@@ -97,7 +97,7 @@ def build_request_controls_and_audit_middleware(
             and request.method in {"POST", "PUT", "DELETE", "PATCH"}
             and path.startswith("/api/v1/")
         ):
-            invalidate_live_stats_cache()
+            invalidate_read_projections()
 
         response.headers["X-Request-ID"] = request_id
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
