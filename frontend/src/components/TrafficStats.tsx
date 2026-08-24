@@ -72,6 +72,13 @@ type TrafficStatsValue = {
   traffic_total_bytes?: number;
 };
 
+type TrafficSummary = {
+  upload: number;
+  download: number;
+  total: number;
+  count: number;
+};
+
 const normalizeEmailKey = (email: string): string => email.trim().toLowerCase();
 const TRAFFIC_STATS_CACHE_KEY = 'sub_manager_traffic_stats_cache_v3';
 const TRAFFIC_STATS_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
@@ -88,6 +95,7 @@ type TrafficStatsCache = {
   trafficSelections?: Record<string, {
     trafficData: TrafficData[];
     periodNote?: string;
+    trafficSummary?: TrafficSummary;
   }>;
   groupBy?: TrafficGroupBy;
   period?: TrafficPeriod;
@@ -108,6 +116,17 @@ const normalizeTrafficValue = (raw: TrafficStatsValue) => {
     upload,
     download,
     total: total > 0 ? total : upload + download,
+  };
+};
+
+const normalizeTrafficSummary = (raw: unknown): TrafficSummary | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const value = raw as Record<string, unknown>;
+  return {
+    upload: toFiniteNumber(value.upload),
+    download: toFiniteNumber(value.download),
+    total: toFiniteNumber(value.total),
+    count: toFiniteNumber(value.count),
   };
 };
 
@@ -140,6 +159,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   const [trafficData, setTrafficData] = useState<TrafficData[]>([]);
   const [onlineClients, setOnlineClients] = useState<OnlineClient[]>([]);
   const [onlineTrafficTotals, setOnlineTrafficTotals] = useState<Record<string, number>>({});
+  const [trafficSummary, setTrafficSummary] = useState<TrafficSummary | undefined>();
   const [periodNote, setPeriodNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadReason, setLoadReason] = useState<TrafficLoadReason | null>(null);
@@ -180,6 +200,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     nextPeriod: TrafficPeriod,
     nextTrafficData: TrafficData[],
     nextPeriodNote: string,
+    nextTrafficSummary?: TrafficSummary,
   ) => {
     const cached = readStaleCache<TrafficStatsCache>(TRAFFIC_STATS_CACHE_KEY, Number.MAX_SAFE_INTEGER).data;
     mergeStaleCacheRecord<TrafficStatsCache>(TRAFFIC_STATS_CACHE_KEY, {
@@ -192,6 +213,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
         [trafficSelectionCacheKey(nextGroupBy, nextPeriod)]: {
           trafficData: nextTrafficData,
           periodNote: nextPeriodNote,
+          trafficSummary: nextTrafficSummary,
         },
       },
     });
@@ -208,6 +230,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
       if (selection) {
         setTrafficData(selection.trafficData);
         setPeriodNote(selection.periodNote || '');
+        setTrafficSummary(selection.trafficSummary);
       }
       if (cached.data.onlineTrafficTotals) setOnlineTrafficTotals(cached.data.onlineTrafficTotals);
     }
@@ -285,9 +308,11 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
       });
 
       if (requestId !== trafficRequestRef.current) return;
+      const summary = normalizeTrafficSummary(res.data?.summary);
       setTrafficData(parsed);
       setPeriodNote(res.data?.note || '');
-      persistTrafficSelection(nextGroupBy, nextPeriod, parsed, res.data?.note || '');
+      setTrafficSummary(summary);
+      persistTrafficSelection(nextGroupBy, nextPeriod, parsed, res.data?.note || '', summary);
     } catch (err: any) {
       if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return;
       if (requestId !== trafficRequestRef.current) return;
@@ -624,6 +649,10 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   const totalUpload = trafficData.reduce((sum, d) => sum + d.upload, 0);
   const totalDownload = trafficData.reduce((sum, d) => sum + d.download, 0);
   const totalTraffic = trafficData.reduce((sum, d) => sum + d.total, 0);
+  const summaryUpload = trafficSummary?.upload ?? totalUpload;
+  const summaryDownload = trafficSummary?.download ?? totalDownload;
+  const summaryTraffic = trafficSummary?.total ?? totalTraffic;
+  const isTrafficTruncated = (trafficSummary?.count ?? trafficData.length) > trafficData.length;
   const filteredTotalUpload = filteredTrafficData.reduce((sum, d) => sum + d.upload, 0);
   const filteredTotalDownload = filteredTrafficData.reduce((sum, d) => sum + d.download, 0);
   const filteredTotalTraffic = filteredTrafficData.reduce((sum, d) => sum + d.total, 0);
@@ -639,9 +668,9 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   const headerButtonClass = 'inline-flex whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500 hover:text-cyan-300';
 
   const summaryMetrics = [
-    { label: t('traffic.upload'), value: formatBytes(totalUpload), color: 'text-cyan-300', bar: 'from-cyan-400 to-sky-400' },
-    { label: t('traffic.download'), value: formatBytes(totalDownload), color: 'text-emerald-300', bar: 'from-emerald-400 to-teal-300' },
-    { label: t('traffic.total'), value: formatBytes(totalTraffic), color: 'text-indigo-200', bar: 'from-indigo-400 to-cyan-300' },
+    { label: t('traffic.upload'), value: formatBytes(summaryUpload), color: 'text-cyan-300', bar: 'from-cyan-400 to-sky-400' },
+    { label: t('traffic.download'), value: formatBytes(summaryDownload), color: 'text-emerald-300', bar: 'from-emerald-400 to-teal-300' },
+    { label: t('traffic.total'), value: formatBytes(summaryTraffic), color: 'text-indigo-200', bar: 'from-indigo-400 to-cyan-300' },
   ];
 
   const isColdLoading = loading && trafficData.length === 0;
@@ -716,7 +745,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
                 <span className="whitespace-nowrap">{loading ? t('messages.loadingData') : t('common.refresh')}</span>
               </button>
               <button type="button" className={controlButtonClass} title={t('traffic.clearCacheTitle')} onClick={() => { try { sessionStorage.removeItem(TRAFFIC_STATS_CACHE_KEY); } catch {} setTrafficData([]); setOnlineTrafficTotals({}); loadTrafficStats(groupBy, period, { reason: 'manual' }); if (onlineDetailsRequested) loadOnlineDetails(); }}><UIIcon name="clear" size={14} /><span className="whitespace-nowrap">{t('traffic.clearCache')}</span></button>
-              <button type="button" className={controlButtonClass} title={t('traffic.exportCsvTitle')} disabled={trafficData.length === 0} onClick={() => { const rows = trafficData.map(d => [d.email || d.node_name || '', d.node_name || '', d.protocol || '', (d.upload / 1073741824).toFixed(3), (d.download / 1073741824).toFixed(3), (d.total / 1073741824).toFixed(3)].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')); const csv = ['name,node,protocol,upload_gb,download_gb,total_gb', ...rows].join('\n'); const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `traffic_${groupBy}_${period}_${new Date().toISOString().slice(0,10)}.csv`; a.click(); URL.revokeObjectURL(url); }}><UIIcon name="download" size={14} /><span className="whitespace-nowrap">{t('traffic.csv')}</span></button>
+              <button type="button" className={controlButtonClass} title={isTrafficTruncated ? t('traffic.exportCsvTopNTitle', { shown: trafficData.length, total: trafficSummary?.count ?? trafficData.length }) : t('traffic.exportCsvTitle')} disabled={trafficData.length === 0} onClick={() => { const rows = trafficData.map(d => [d.email || d.node_name || '', d.node_name || '', d.protocol || '', (d.upload / 1073741824).toFixed(3), (d.download / 1073741824).toFixed(3), (d.total / 1073741824).toFixed(3)].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')); const csv = ['name,node,protocol,upload_gb,download_gb,total_gb', ...rows].join('\n'); const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${isTrafficTruncated ? `traffic_top_${trafficData.length}_of_${trafficSummary?.count}_` : 'traffic_'}${groupBy}_${period}_${new Date().toISOString().slice(0,10)}.csv`; a.click(); URL.revokeObjectURL(url); }}><UIIcon name="download" size={14} /><span className="whitespace-nowrap">{t('traffic.csv')}</span></button>
               <div className="flex h-9 min-w-0 items-center rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-3 text-xs text-slate-500"><span className="mr-2 h-2 w-2 rounded-full bg-emerald-300" /><span className="truncate">{t('traffic.onlineClients')}</span><span className="ml-2 min-w-[2.5rem] whitespace-nowrap text-right font-mono text-slate-200">{onlineClients.length}</span></div>
             </div>
             <div className="mt-3 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
@@ -774,7 +803,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
         {groupBy === 'client' && trafficNodeNames.length > 1 && <section className={panelClass}><h6 className={titleClass}>{t('traffic.trafficByNode')}</h6><div className="mt-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">{trafficNodeNames.map(nodeName => { const nodeTotal = trafficData.filter(d => d.node_name === nodeName).reduce((s, d) => s + d.total, 0); const pct = totalTraffic > 0 ? (nodeTotal / totalTraffic * 100).toFixed(0) : '0'; return <button key={nodeName} type="button" className={cn('min-w-0 rounded-lg border px-3 py-3 text-left transition', filterNodeName === nodeName ? 'border-amber-300/50 bg-amber-300/10 text-amber-200' : 'border-cyan-500/20 bg-[#0a0e1a] text-slate-300 hover:border-cyan-300/40')} onClick={() => setFilterNodeName(prev => prev === nodeName ? '' : (nodeName ?? ''))}><div className="truncate text-xs font-medium uppercase tracking-[0.14em]">{nodeName}</div><div className="mt-2 flex min-w-0 items-center justify-between gap-3"><span className={cn(valueClass, 'text-slate-100')}>{formatBytes(nodeTotal)}</span><span className="whitespace-nowrap font-mono text-xs text-slate-500">{pct}%</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#0a0e1a]"><div className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-300" style={{ width: `${pct}%` }} /></div></button>; })}</div></section>}
 
         <section className={panelClass}>
-          <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><h6 className={titleClass}>{t('traffic.topUsage', { count: topN })}</h6><span className="whitespace-nowrap font-mono text-xs text-slate-500">{filteredTrafficData.length} rows</span></div>
+          <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><h6 className={titleClass}>{t('traffic.topUsage', { count: topN })}</h6><span className="whitespace-nowrap font-mono text-xs text-slate-500">{isTrafficTruncated ? t('traffic.rowsShown', { shown: filteredTrafficData.length, total: trafficSummary?.count ?? trafficData.length }) : t('traffic.rows', { count: filteredTrafficData.length })}</span></div>
           {isColdLoading ? <div className="grid gap-2 py-2">{Array.from({ length: 5 }).map((_, idx) => <div key={idx} className="h-14 animate-pulse rounded-lg border border-cyan-500/10 bg-[#0a0e1a]" style={{ animationDelay: `${idx * 80}ms` }} />)}</div> : sortedTraffic.length === 0 ? <p className="flex justify-center py-10 text-sm text-slate-500">{t('messages.noDataAvailable')}</p> : <>
             <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 lg:block"><table className="w-full table-fixed border-collapse text-sm"><thead><tr className="border-b border-cyan-500/20 bg-cyan-500/5"><th className="w-14 px-4 py-3 text-left text-[11px] font-medium uppercase tracking-wider text-slate-500">#</th><th className="px-4 py-3 text-left"><button type="button" className={headerButtonClass} onClick={() => applyTrafficSortFromHeader('name')}>{groupBy === 'client' ? t('clients.email') : groupBy === 'inbound' ? t('nav.inbounds') : t('traffic.node')}{trafficSortIndicator('name')}</button></th><th className="w-36 px-4 py-3 text-right"><button type="button" className={cn(headerButtonClass, 'justify-end')} onClick={() => applyTrafficSortFromHeader('upload')}>Up{trafficSortIndicator('upload')}</button></th><th className="w-36 px-4 py-3 text-right"><button type="button" className={cn(headerButtonClass, 'justify-end')} onClick={() => applyTrafficSortFromHeader('download')}>Down{trafficSortIndicator('download')}</button></th><th className="w-44 px-4 py-3 text-right"><button type="button" className={cn(headerButtonClass, 'justify-end')} onClick={() => applyTrafficSortFromHeader('total')}>{t('traffic.total')}{trafficSortIndicator('total')}</button></th></tr></thead><tbody>{sortedTraffic.map((item, idx) => { const pct = filteredTotalTraffic > 0 ? (item.total / filteredTotalTraffic * 100).toFixed(1) : '0'; return <tr key={idx} className="border-b border-cyan-500/10 hover:bg-cyan-400/5"><td className="px-4 py-3 font-mono text-xs text-slate-500">{idx + 1}</td><td className="min-w-0 px-4 py-3"><button type="button" className={cn('block max-w-full truncate text-left font-medium', item.email && onNavigateToClient ? 'text-cyan-300 hover:text-cyan-200' : 'cursor-default text-slate-100')} title={item.email && onNavigateToClient ? `Filter clients by: ${item.email}` : undefined} onClick={() => item.email && onNavigateToClient && onNavigateToClient(item.email)}>{item.email || item.node_name || t('traffic.unknown')}</button>{renderNodeChips(item)}</td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-cyan-300')}>{formatBytes(item.upload)}</span></td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-emerald-300')}>{formatBytes(item.download)}</span></td><td className="px-4 py-3 text-right"><strong className={cn(valueClass, 'ml-auto text-indigo-200')}>{formatBytes(item.total)}</strong><div className="mt-2 flex items-center justify-end gap-2"><div className="h-1.5 w-20 overflow-hidden rounded-full bg-[#0a0e1a]"><div className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-cyan-300" style={{ width: `${pct}%` }} /></div><span className="whitespace-nowrap font-mono text-[11px] text-slate-500">{pct}%</span></div></td></tr>; })}</tbody><tfoot><tr className="border-t border-cyan-500/20 bg-cyan-500/5"><td colSpan={2} className="px-4 py-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-500">Total {filteredTrafficData.length} {(filterNodeName || trafficSearch) ? '(filtered)' : ''}</td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-cyan-300')}>{formatBytes(filteredTotalUpload)}</span></td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-emerald-300')}>{formatBytes(filteredTotalDownload)}</span></td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-indigo-200')}>{formatBytes(filteredTotalTraffic)}</span></td></tr></tfoot></table></div>
             <div className="grid min-w-0 grid-cols-1 gap-2 lg:hidden">{sortedTraffic.map((item, idx) => { const pct = filteredTotalTraffic > 0 ? (item.total / filteredTotalTraffic * 100).toFixed(1) : '0'; return <article key={idx} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-3"><div className="flex min-w-0 items-start justify-between gap-3"><div className="min-w-0"><div className="mb-2 font-mono text-xs text-slate-500">#{idx + 1}</div><button type="button" className={cn('block max-w-full truncate text-left text-sm font-medium', item.email && onNavigateToClient ? 'text-cyan-300' : 'cursor-default text-slate-100')} title={item.email && onNavigateToClient ? `Filter clients by: ${item.email}` : undefined} onClick={() => item.email && onNavigateToClient && onNavigateToClient(item.email)}>{item.email || item.node_name || t('traffic.unknown')}</button>{renderNodeChips(item)}</div><span className={cn(valueClass, 'text-right text-indigo-200')}>{formatBytes(item.total)}</span></div><div className="mt-4 grid grid-cols-2 gap-2"><div className="min-w-0 rounded-md bg-[#0f1420] px-3 py-2"><div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">Up</div><span className={cn(valueClass, 'mt-1 text-cyan-300')}>{formatBytes(item.upload)}</span></div><div className="min-w-0 rounded-md bg-[#0f1420] px-3 py-2"><div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">Down</div><span className={cn(valueClass, 'mt-1 text-emerald-300')}>{formatBytes(item.download)}</span></div></div><div className="mt-3 flex items-center gap-2"><div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[#0a0e1a]"><div className="h-full rounded-full bg-gradient-to-r from-indigo-400 to-cyan-300" style={{ width: `${pct}%` }} /></div><span className="min-w-[3rem] whitespace-nowrap text-right font-mono text-xs text-slate-500">{pct}%</span></div></article>; })}</div>
