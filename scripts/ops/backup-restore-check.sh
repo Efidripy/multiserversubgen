@@ -30,8 +30,8 @@ fi
 
 # Do not copy the main database while a running process may still have WAL
 # pages outside the main file. SQLite's online backup API gives us a
-# transactionally consistent snapshot without stopping the service.
-sqlite3 "$DB_FILE" 'PRAGMA wal_checkpoint(PASSIVE);' >/dev/null
+# transactionally consistent snapshot without stopping or mutating the
+# service's live database state.
 sqlite3 "$DB_FILE" ".backup '$BACKUP_FILE'"
 
 src_check="$(sqlite3 "$DB_FILE" 'PRAGMA integrity_check;' | tr -d '\r')"
