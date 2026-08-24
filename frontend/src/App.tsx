@@ -763,9 +763,6 @@ export const App: React.FC = () => {
               />
               <section className="dashboard-server-deck min-w-0">
                 <ServerStatus
-                  dashboardMode
-                  includePanelUpdateChecks={false}
-                  includeLiveStatus={false}
                   fleetSummary={fleetSummary}
                   fleetCollapsed={registeredFleetCollapsed}
                   onToggleFleet={() => setRegisteredFleetCollapsed((value) => !value)}

@@ -81,8 +81,10 @@ describe('navigation performance regressions', () => {
     const app = read('src/App.tsx');
     const fleetPanel = read('src/components/RegisteredFleetPanel.tsx');
 
-    expect(app).toContain('dashboardMode');
-    expect(app).toContain('includeLiveStatus={false}');
+    expect(app).toContain('<DashboardDataProvider>');
+    expect(app).toContain('<ServerStatus');
+    expect(app).not.toContain('includeLiveStatus={false}');
+    expect(app).not.toContain('includePanelUpdateChecks={false}');
     expect(fleetPanel).toContain('getRegisteredFleetSnapshotOverview()');
     expect(fleetPanel).toContain('load({ live: true })');
   });
@@ -105,13 +107,23 @@ describe('navigation performance regressions', () => {
     const provider = read('src/services/DashboardDataContext.tsx');
     const serverStatus = read('src/components/ServerStatus.tsx');
     const fleetPanel = read('src/components/RegisteredFleetPanel.tsx');
+    const nodesApi = read('src/api/nodes.ts');
 
     expect(app).toContain('<DashboardDataProvider>');
+    expect(app.indexOf('<DashboardDataProvider>')).toBeLessThan(app.indexOf('<ServerStatus'));
+    expect(app.lastIndexOf('</DashboardDataProvider>')).toBeGreaterThan(app.indexOf('<ServerStatus'));
+    expect(app).not.toContain('includeLiveStatus={false}');
+    expect(app).not.toContain('includePanelUpdateChecks={false}');
     expect(app).not.toContain('getDashboardHeaderMetrics');
     expect(provider).toContain("getDashboardOverview(period)");
     expect(provider).toContain('window.sessionStorage.setItem');
-    expect(serverStatus).toContain('enabled: !dashboardData');
+    expect(serverStatus).toContain('dashboardFleetToServerDeck(dashboardData.fleet)');
+    expect(serverStatus).not.toContain('getDashboardServerDeck');
+    expect(serverStatus).not.toContain('useTrafficStatsSubscription');
+    expect(serverStatus).not.toContain('autoRefresh');
+    expect(nodesApi).not.toContain('getNodePanelUpdateInfo');
     expect(fleetPanel).toContain('if (dashboardData) return;');
+    expect(fleetPanel).toContain('getRegisteredFleetOverview');
   });
 
   it('does not retain an ignored Dashboard hero-stats prop or memo dependency', () => {

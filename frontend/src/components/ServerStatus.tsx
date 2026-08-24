@@ -21,19 +21,15 @@ import {
   Square,
   Timer,
 } from 'lucide-react';
-import { dashboardFleetToServerDeck, getDashboardServerDeck, type DashboardServerStatus } from '../api/dashboard';
+import { dashboardFleetToServerDeck, type DashboardServerStatus } from '../api/dashboard';
 import { refreshNodesNow } from '../api/nodes';
 import { restartXray, stopXray, updateGeofile, type NodeLogKind } from '../api/serverOps';
-import { useTrafficStatsSubscription, type TrafficUpdate } from '../services/useTrafficStatsSubscription';
 import { NodeOperationsModal, type NodeOpsTab } from './NodeOperationsModal';
 import { ServerLogsModal } from './ServerLogsModal';
 import { useToast } from './Toast';
 import { useDashboardData } from '../services/DashboardDataContext';
 
 interface ServerStatusProps {
-  dashboardMode?: boolean;
-  includePanelUpdateChecks?: boolean;
-  includeLiveStatus?: boolean;
   fleetSummary?: {
     total: number;
     online: number;
@@ -199,11 +195,6 @@ const formatUptime = (seconds?: number) => {
   return `${m}m`;
 };
 
-const toNumber = (value: unknown, fallback = 0): number => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
-
 const formatLastSeen = (value?: string | number | null) => {
   if (value === undefined || value === null || value === '') return '-';
   const numeric = Number(value);
@@ -219,11 +210,6 @@ const metricDetail = (metric: any, fallback: string) => {
   const current = telemetryBytes(metric.current);
   const total = telemetryBytes(metric.total);
   return current === undefined || total === undefined ? fallback : `${formatBytes(current)}/${formatBytes(total)}`;
-};
-
-const formatLoads = (loads: unknown, fallback: string) => {
-  if (!Array.isArray(loads) || loads.length === 0) return fallback;
-  return loads.slice(0, 3).map((item) => toNumber(item).toFixed(2)).join(' / ');
 };
 
 export const toUiServer = (server: DashboardServerStatus): UiServer => {
@@ -258,69 +244,7 @@ export const toUiServer = (server: DashboardServerStatus): UiServer => {
   };
 };
 
-const normalizeXrayCompatibility = (value: unknown): UiServer['xrayCompatibility'] => {
-  if (!value || typeof value !== 'object') return undefined;
-  const raw = value as { status?: unknown; findings?: unknown };
-  const findings = Array.isArray(raw.findings) ? raw.findings : [];
-  const codes = findings
-    .filter((finding): finding is { code: string; count?: unknown } => Boolean(finding) && typeof finding === 'object' && typeof (finding as { code?: unknown }).code === 'string')
-    .map((finding) => finding.code);
-  const warningCount = findings.reduce((sum, finding) => {
-    const count = Number((finding as { count?: unknown })?.count);
-    return sum + (Number.isFinite(count) ? count : 0);
-  }, 0);
-  return {
-    status: raw.status === 'warning' ? 'warning' : raw.status === 'unknown' ? 'unknown' : 'ok',
-    warningCount,
-    codes,
-  };
-};
-
-const mergeServerTelemetry = (server: UiServer, data: Record<string, any>): UiServer => {
-  const system = data.system && typeof data.system === 'object' ? data.system : {};
-  const xray = data.xray && typeof data.xray === 'object' ? data.xray : {};
-  const network = data.network && typeof data.network === 'object' ? data.network : {};
-  const available = data.available === undefined ? server.status === 'online' : Boolean(data.available);
-  const status = data.status === 'offline' ? 'offline' : data.status === 'online' ? 'online' : available ? 'online' : 'offline';
-  const pollMs = Number(data.poll_ms);
-  const lastSeen = formatLastSeen(data.timestamp);
-  const ramCurrentBytes = telemetryBytes(system.mem?.current);
-  const ramTotalBytes = telemetryBytes(system.mem?.total);
-
-  return {
-    ...server,
-    nodeId: data.node_id !== undefined && data.node_id !== null ? Number(data.node_id) : server.nodeId,
-    name: String(data.node || data.name || server.name),
-    status,
-    latency: status === 'online'
-      ? Number.isFinite(pollMs) && pollMs > 0 ? `${Math.round(pollMs)}ms` : server.latency === 'No connection' ? 'online' : server.latency
-      : 'No connection',
-    cpu: telemetryMetric(system.cpu ?? data.cpu) ?? server.cpu,
-    ramPercent: telemetryMetric(system.mem?.percent) ?? server.ramPercent,
-    ramCurrentBytes: ramCurrentBytes ?? server.ramCurrentBytes,
-    ramTotalBytes: ramTotalBytes ?? server.ramTotalBytes,
-    ramDetail: metricDetail(system.mem, server.ramDetail),
-    diskPercent: telemetryMetric(system.disk?.percent) ?? server.diskPercent,
-    diskDetail: metricDetail(system.disk, server.diskDetail),
-    network: Object.keys(network).length > 0
-      ? formatTelemetryNetwork(network)
-      : server.network,
-    uptime: xray.uptime || system.uptime ? formatUptime(toNumber(xray.uptime || system.uptime)) : server.uptime,
-    load: formatLoads(system.loads, server.load),
-    swap: metricDetail(system.swap, server.swap),
-    core: getReportedCoreVersion(xray.version, data.panel_version || server.core),
-    lastSeen: lastSeen === '-' ? server.lastSeen : lastSeen,
-    issue: data.error || data.reason || (status === 'online' ? undefined : server.issue),
-    xrayCompatibility: data.xray_compatibility === undefined
-      ? server.xrayCompatibility
-      : normalizeXrayCompatibility(data.xray_compatibility),
-  };
-};
-
 export function ServerStatus({
-  dashboardMode = false,
-  includePanelUpdateChecks,
-  includeLiveStatus = true,
   fleetSummary,
   fleetCollapsed = true,
   onToggleFleet,
@@ -331,8 +255,6 @@ export function ServerStatus({
   const [servers, setServers] = useState<UiServer[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const [refreshInterval, setRefreshInterval] = useState(30);
   const [cardSort, setCardSort] = useState<SortMode>('name');
   const [pendingActions, setPendingActions] = useState<Record<string, boolean>>({});
   const [nodeOpsModal, setNodeOpsModal] = useState<{ nodeId: number; nodeName: string; tab: NodeOpsTab } | null>(null);
@@ -356,37 +278,19 @@ export function ServerStatus({
     return detail ? String(detail) : t('common.failed');
   }, [t]);
 
-  const loadServersStatus = useCallback(async () => {
-    if (dashboardData) {
-      setServers(dashboardFleetToServerDeck(dashboardData.fleet).servers.map(toUiServer));
-      setLoadError(null);
-      setLoading(dashboardData.loading);
-      return;
-    }
-    setLoading(true);
+  const loadServersStatus = useCallback(() => {
+    if (!dashboardData) return;
+    setServers(dashboardFleetToServerDeck(dashboardData.fleet).servers.map(toUiServer));
     setLoadError(null);
-    try {
-      const deck = await getDashboardServerDeck({
-        includeLiveStatus,
-        includePanelUpdateChecks: includePanelUpdateChecks ?? !dashboardMode,
-      });
-      const mapped = deck.servers.map(toUiServer);
-      setServers(mapped);
-    } catch {
-      setServers([]);
-      setLoadError(t('serverStatus.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [dashboardData, dashboardMode, includeLiveStatus, includePanelUpdateChecks, t]);
+    setLoading(dashboardData.loading);
+  }, [dashboardData]);
 
   const refreshDeck = useCallback(async () => {
     try {
       await refreshNodesNow();
     } catch {}
-    if (dashboardData) await dashboardData.refresh();
-    else await loadServersStatus();
-  }, [dashboardData, loadServersStatus]);
+    await dashboardData?.refresh();
+  }, [dashboardData]);
 
   const requireNodeId = useCallback((server: UiServer): number | null => {
     if (server.nodeId !== undefined && Number.isFinite(server.nodeId)) {
@@ -537,73 +441,9 @@ export function ServerStatus({
     await loadServersStatus();
   }, [loadServersStatus, servers, setActionPending, t, toast]);
 
-  const applyServerTelemetry = useCallback((rawData: Record<string, any>) => {
-    const data = rawData.snapshot && typeof rawData.snapshot === 'object'
-      ? { ...rawData.snapshot, ...rawData }
-      : rawData;
-    const nodeName = String(data.node || data.name || '');
-    const nodeId = data.node_id !== undefined && data.node_id !== null ? Number(data.node_id) : null;
-
-    setServers((current) => {
-      let matched = false;
-      const next = current.map((server) => {
-        const byId = nodeId !== null && server.nodeId !== undefined && Number(server.nodeId) === nodeId;
-        const byName = Boolean(nodeName) && server.name === nodeName;
-        if (!byId && !byName) return server;
-        matched = true;
-        return mergeServerTelemetry(server, data);
-      });
-
-      if (matched || !nodeName) {
-        return next;
-      }
-
-      return [
-        ...next,
-        toUiServer({
-          nodeId: nodeId ?? undefined,
-          node: nodeName,
-          available: Boolean(data.available),
-          status: data.status,
-          reason: data.reason,
-          error: data.error,
-          timestamp: data.timestamp,
-          system: data.system,
-          xray: data.xray,
-          network: data.network,
-          panel_version: data.panel_version,
-          api_version: data.api_version,
-        }),
-      ];
-    });
-    setLoadError(null);
-    setLoading(false);
-  }, []);
-
-  const handleRealtimeUpdate = useCallback((update: TrafficUpdate) => {
-    if (update.type !== 'server_status') return;
-    if (!update.data || typeof update.data !== 'object') return;
-    applyServerTelemetry(update.data);
-  }, [applyServerTelemetry]);
-
   useEffect(() => {
     loadServersStatus();
   }, [loadServersStatus]);
-
-  useEffect(() => {
-    if (!autoRefresh) return;
-    const timer = window.setInterval(loadServersStatus, refreshInterval * 1000);
-    return () => window.clearInterval(timer);
-  }, [autoRefresh, refreshInterval, loadServersStatus]);
-
-  useTrafficStatsSubscription({
-    enabled: !dashboardData,
-    channels: ['server_status'],
-    onUpdate: handleRealtimeUpdate,
-    onError: (err) => console.warn('[ServerStatus] realtime error:', err),
-    fallbackPollIntervalMs: 60_000,
-    fallbackRun: loadServersStatus,
-  });
 
   const sortedServers = useMemo(() => {
     return [...servers].sort((a, b) => {
@@ -621,7 +461,7 @@ export function ServerStatus({
 
   return (
     <>
-    <section className={dashboardMode ? 'pb-6' : 'px-6 pb-6'}>
+    <section className="pb-6">
       <div className="overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] shadow-[inset_0_1px_0_rgba(103,232,249,0.05)] backdrop-blur-sm">
         <div className="border-b border-cyan-500/20 bg-cyan-500/5 p-3">
           <div className="flex items-center justify-between gap-2 mb-2">
@@ -650,21 +490,7 @@ export function ServerStatus({
                 </button>
               ))}
             </div>
-            <div className="grid w-full grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-2 min-h-7 xl:flex xl:justify-end">
-              <label className="flex min-w-0 items-center gap-1.5 font-mono text-[10px] font-light text-gray-400">
-                <input type="checkbox" className="w-3 h-3 flex-shrink-0" checked={autoRefresh} onChange={(event) => setAutoRefresh(event.target.checked)} />
-                <span className="truncate">{t('serverStatus.autoRefresh')}</span>
-              </label>
-              <select
-                className="h-7 flex-shrink-0 rounded border border-cyan-500/20 bg-[#0a0e1a] px-2 font-mono text-[10px] font-light text-gray-400"
-                value={refreshInterval}
-                onChange={(event) => setRefreshInterval(Number(event.target.value))}
-                aria-label={t('serverStatus.autoRefresh')}
-              >
-                {[10, 15, 30, 60, 120, 300].map((seconds) => (
-                  <option key={seconds} value={seconds}>{seconds}s</option>
-                ))}
-              </select>
+            <div className="grid w-full grid-cols-[auto_auto] items-center justify-end gap-2 min-h-7 xl:flex">
               <button
                 className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white disabled:opacity-50"
                 onClick={refreshDeck}
