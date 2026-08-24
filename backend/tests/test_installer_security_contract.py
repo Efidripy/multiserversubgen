@@ -206,6 +206,23 @@ def test_update_aborts_when_runtime_secrets_fail_security_validation():
     assert "exit 1" in update
 
 
+def test_update_aborts_when_installer_log_fails_security_validation():
+    update = _read("scripts/installer/update.sh")
+
+    guard = 'if ! install_log_source "$LOG_FILE"; then'
+    assert guard in update
+    assert "Installation state log failed security validation. Update aborted." in update
+
+    guard_start = update.index(guard)
+    guard_end = update.index("fi", guard_start)
+    assert "exit 1" in update[guard_start:guard_end]
+    assert update.index("runtime_require_safe_project_name") > guard_end
+    assert update.index("runtime_require_expected_project_dir") > guard_end
+    assert update.index("runtime_secrets_load") > guard_end
+    assert update.index("runtime_secrets_write") > guard_end
+    assert update.index("systemctl stop") > guard_end
+
+
 def test_state_driven_installer_paths_require_exact_project_identity():
     install = _read("scripts/installer/install.sh")
     update = _read("scripts/installer/update.sh")
