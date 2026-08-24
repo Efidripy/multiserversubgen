@@ -167,13 +167,13 @@ handle_remove_menu() {
     local choice
     choice="$(installer_select_menu \
         "Remove Installation" \
-        "Choose whether the database should be preserved." \
-        "● 5.1 Full Cleanup + Keep Database (recommended)" \
-        "5.2 Full Cleanup + Remove Database" \
+        "Remove only this installation; choose whether the database should be preserved." \
+        "● 5.1 Remove Application + Keep Database (recommended)" \
+        "5.2 Remove Application + Remove Database" \
         "5.3 Back")"
     case "$choice" in
-        0) run_with_result "5.1 Full Cleanup + Keep Database" run_remove_mode "keep-db" ;;
-        1) run_with_result "5.2 Full Cleanup + Remove Database" run_remove_mode "drop-db" ;;
+        0) run_with_result "5.1 Remove Application + Keep Database" run_remove_mode "keep-db" ;;
+        1) run_with_result "5.2 Remove Application + Remove Database" run_remove_mode "drop-db" ;;
         __QUIT__) exit 0 ;;
     esac
 }
