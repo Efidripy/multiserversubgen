@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Activity, CheckCircle, Download, RefreshCw, Server, Upload, Users } from 'lucide-react';
 import { ChoiceChips } from './ChoiceChips';
-import { getDashboardSummary, normalizeDashboardSummary, type DashboardSummaryData, type DashboardTrafficPeriod } from '../api/dashboard';
-import { listNodes, NODES_CHANGED_EVENT, type NodeRecord } from '../api/nodes';
+import type { DashboardSummaryData, DashboardTrafficPeriod } from '../api/dashboard';
 import { useDashboardData } from '../services/DashboardDataContext';
 
 interface DashboardSummaryProps {
@@ -18,12 +17,13 @@ interface DashboardSummaryProps {
   };
 }
 
-const emptySummary = () => normalizeDashboardSummary({
+const emptySummary = (): DashboardSummaryData => ({
   nodes_total: 0,
   nodes_online: 0,
   clients_total: 0,
   online_clients_total: 0,
   online_by_node: {},
+  online_by_node_id: {},
   traffic: { upload: 0, download: 0, total: 0 },
   traffic_period: 'all_time',
   traffic_note: null,
@@ -96,74 +96,15 @@ export function DashboardSummary({
 }: DashboardSummaryProps) {
   const { t } = useTranslation();
   const dashboardData = useDashboardData();
-  const [summary, setSummary] = useState<DashboardSummaryData>(() => emptySummary());
-  const [nodes, setNodes] = useState<NodeRecord[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [nodesError, setNodesError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
-  const [trafficPeriod, setTrafficPeriod] = useState<DashboardTrafficPeriod>('all_time');
-
-  const load = useCallback(async (period: DashboardTrafficPeriod) => {
-    setLoading(true);
-    setNodesError(null);
-    onOnlineClientsChange?.(null);
-    try {
-      const [summaryResult, nodesResult] = await Promise.allSettled([
-        getDashboardSummary(period),
-        listNodes(),
-      ]);
-
-      if (summaryResult.status === 'fulfilled') {
-        const nextSummary = normalizeDashboardSummary(summaryResult.value);
-        setSummary(nextSummary);
-        onOnlineClientsChange?.(nextSummary.online_clients_total);
-      } else {
-        setSummary(emptySummary());
-        onOnlineClientsChange?.(0);
-      }
-
-      if (nodesResult.status === 'fulfilled') {
-        setNodes(nodesResult.value);
-      } else {
-        setNodes([]);
-        setNodesError('Unable to load registered servers');
-      }
-    } catch {
-      setSummary(emptySummary());
-      setNodes([]);
-      setNodesError('Unable to load registered servers');
-      onOnlineClientsChange?.(0);
-    } finally {
-      setLastUpdated(new Date());
-      setLoading(false);
-    }
-  }, [onOnlineClientsChange]);
-
-  useEffect(() => {
-    if (dashboardData) return;
-    void load(trafficPeriod);
-    const interval = window.setInterval(() => void load(trafficPeriod), 60000);
-    return () => window.clearInterval(interval);
-  }, [dashboardData, load, trafficPeriod]);
-
-  useEffect(() => {
-    if (dashboardData) return;
-    const handleNodesChanged = () => {
-      void load(trafficPeriod);
-    };
-    window.addEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
-    return () => window.removeEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
-  }, [dashboardData, load, trafficPeriod]);
-
   useEffect(() => {
     if (dashboardData?.summary) onOnlineClientsChange?.(dashboardData.summary.online_clients_total);
   }, [dashboardData, onOnlineClientsChange]);
 
-  const activeSummary = dashboardData?.summary ?? summary;
-  const activeNodes = dashboardData?.fleet ?? nodes;
-  const activeLoading = dashboardData?.loading ?? loading;
-  const activeLastUpdated = dashboardData?.lastUpdated ?? lastUpdated;
-  const activeTrafficPeriod = dashboardData?.period ?? trafficPeriod;
+  const activeSummary = dashboardData?.summary ?? emptySummary();
+  const activeNodes = dashboardData?.fleet ?? [];
+  const activeLoading = dashboardData?.loading ?? true;
+  const activeLastUpdated = dashboardData?.lastUpdated ?? null;
+  const activeTrafficPeriod = dashboardData?.period ?? 'all_time';
   const isInitialLoading = activeLoading && activeLastUpdated === null;
   const totalNodes = activeSummary.nodes_total || activeNodes.length;
   const onlineNodes = Math.min(Math.max(activeSummary.nodes_online || 0, 0), totalNodes);
@@ -234,12 +175,7 @@ export function DashboardSummary({
             </div>
           ))}
         </div>
-        {nodesError && (
-          <div className="mt-4 rounded-md border border-red-400/20 bg-red-950/20 px-3 py-2 font-mono text-[11px] font-light text-red-200/80">
-            {nodesError}
-          </div>
-        )}
-        {!isInitialLoading && !nodesError && totalNodes === 0 && (
+        {!isInitialLoading && totalNodes === 0 && (
           <div className="mt-4 rounded-md border border-cyan-500/15 bg-[#0a0e1a] px-3 py-2 font-mono text-[11px] font-light text-gray-400">
             {t('nodes.noRegisteredServersFound', { defaultValue: 'No registered servers found' })}
           </div>
@@ -261,8 +197,7 @@ export function DashboardSummary({
               disabled={activeLoading}
               onChange={(value) => {
                 const next = value as DashboardTrafficPeriod;
-                if (dashboardData) dashboardData.setPeriod(next);
-                else setTrafficPeriod(next);
+                dashboardData?.setPeriod(next);
               }}
             />
             <span className="font-mono text-[10px] font-light tracking-wide text-gray-500">
@@ -274,7 +209,7 @@ export function DashboardSummary({
               aria-label="Refresh"
               type="button"
               disabled={activeLoading}
-              onClick={() => void (dashboardData ? dashboardData.refresh() : load(trafficPeriod))}
+              onClick={() => void dashboardData?.refresh()}
             >
               <RefreshCw className={`w-3.5 h-3.5 text-cyan-300 ${activeLoading ? 'animate-spin' : ''}`} />
             </button>

@@ -21,26 +21,24 @@ const { summary } = vi.hoisted(() => ({
 }));
 
 const mocks = vi.hoisted(() => ({
-  getDashboardSummary: vi.fn(),
-  listNodes: vi.fn(),
+  dashboardData: {
+    summary,
+    fleet: [{ id: 1, name: 'alpha', enabled: true }],
+    period: 'all_time' as const,
+    loading: false,
+    stale: false,
+    lastUpdated: new Date('2026-08-25T12:00:00Z'),
+    setPeriod: vi.fn(),
+    refresh: vi.fn(),
+  },
 }));
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string, options?: { defaultValue?: string }) => options?.defaultValue ?? key }),
 }));
 
-vi.mock('../src/api/dashboard', () => ({
-  getDashboardSummary: mocks.getDashboardSummary,
-  normalizeDashboardSummary: (value: unknown) => value,
-}));
-
-vi.mock('../src/api/nodes', () => ({
-  listNodes: mocks.listNodes,
-  NODES_CHANGED_EVENT: 'nodes-changed',
-}));
-
 vi.mock('../src/services/DashboardDataContext', () => ({
-  useDashboardData: () => null,
+  useDashboardData: () => mocks.dashboardData,
 }));
 
 import { DashboardSummary } from '../src/components/DashboardSummary';
@@ -48,11 +46,9 @@ import { DashboardSummary } from '../src/components/DashboardSummary';
 afterEach(cleanup);
 
 describe('DashboardSummary traffic projection', () => {
-  it('renders cached top traffic rows, correct online KPIs and opens the selected client', async () => {
+  it('renders aggregate top traffic rows, correct online KPIs and opens the selected client', async () => {
     const onNavigate = vi.fn();
     const onOnlineClientsChange = vi.fn();
-    mocks.getDashboardSummary.mockResolvedValue(summary);
-    mocks.listNodes.mockResolvedValue([{ id: 1, name: 'alpha', enabled: true }]);
     render(<DashboardSummary onNavigate={onNavigate} onOnlineClientsChange={onOnlineClientsChange} />);
 
     await waitFor(() => expect(screen.getByText('highest@example.test')).toBeTruthy());
@@ -73,14 +69,13 @@ describe('DashboardSummary traffic projection', () => {
     expect(onNavigate).toHaveBeenCalledWith('clients');
   });
 
-  it('loads all traffic KPIs for the selected period in one summary request', async () => {
-    mocks.getDashboardSummary.mockResolvedValue(summary);
-    mocks.listNodes.mockResolvedValue([{ id: 1, name: 'alpha', enabled: true }]);
+  it('delegates period changes and refresh to the shared Dashboard provider', async () => {
     render(<DashboardSummary />);
 
-    await waitFor(() => expect(mocks.getDashboardSummary).toHaveBeenCalledWith('all_time'));
     fireEvent.click(screen.getByRole('button', { name: 'traffic.periodWeek' }));
+    expect(mocks.dashboardData.setPeriod).toHaveBeenCalledWith('week');
 
-    await waitFor(() => expect(mocks.getDashboardSummary).toHaveBeenLastCalledWith('week'));
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(mocks.dashboardData.refresh).toHaveBeenCalledOnce());
   });
 });
