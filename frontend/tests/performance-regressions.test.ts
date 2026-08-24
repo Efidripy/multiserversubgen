@@ -115,7 +115,8 @@ describe('navigation performance regressions', () => {
     expect(app).not.toContain('includeLiveStatus={false}');
     expect(app).not.toContain('includePanelUpdateChecks={false}');
     expect(app).not.toContain('getDashboardHeaderMetrics');
-    expect(provider).toContain("getDashboardOverview(period)");
+    expect(provider).toContain('getDashboardOverview(period, { signal: controller.signal })');
+    expect(provider).toContain('refreshGenerationRef');
     expect(provider).toContain('window.sessionStorage.setItem');
     expect(serverStatus).toContain('dashboardFleetToServerDeck(dashboardData.fleet)');
     expect(serverStatus).not.toContain('getDashboardServerDeck');
