@@ -6,12 +6,9 @@ import { getDashboardSummary, normalizeDashboardSummary, type DashboardSummaryDa
 import { listNodes, NODES_CHANGED_EVENT, type NodeRecord } from '../api/nodes';
 import { useDashboardData } from '../services/DashboardDataContext';
 
-type StatTone = 'default' | 'accent' | 'success' | 'warning' | 'danger';
-
 interface DashboardSummaryProps {
   onNavigate?: (tab: string) => void;
   onOnlineClientsChange?: (onlineClients: number | null) => void;
-  heroStats?: Array<{ label: string; value: string; tone?: StatTone }>;
   fleetSummary?: {
     total: number;
     online: number;
@@ -95,7 +92,6 @@ const skeletonLine = (className: string) => (
 export function DashboardSummary({
   onNavigate,
   onOnlineClientsChange,
-  heroStats = [],
   fleetSummary,
 }: DashboardSummaryProps) {
   const { t } = useTranslation();
@@ -174,7 +170,6 @@ export function DashboardSummary({
   const offlineNodes = Math.max(totalNodes - onlineNodes, 0);
 
   const headerStats = useMemo(() => {
-    void heroStats;
     return [
       { label: t('dashboardSummary.totalNodes', { defaultValue: 'Total Nodes' }), value: String(totalNodes) },
       { label: t('dashboardSummary.onlineNodes', { defaultValue: 'Online Nodes' }), value: String(onlineNodes), variant: onlineNodes > 0 ? 'success' : 'warning' },
@@ -183,7 +178,7 @@ export function DashboardSummary({
       { label: t('dashboardSummary.errors', { defaultValue: 'Errors' }), value: String(fleetSummary?.checking ?? 0), variant: (fleetSummary?.checking ?? 0) > 0 ? 'warning' : 'default' },
       { label: t('clients.title'), value: String(activeSummary.clients_total) },
     ];
-  }, [activeSummary.clients_total, activeSummary.online_clients_total, fleetSummary?.checking, heroStats, offlineNodes, onlineNodes, t, totalNodes]);
+  }, [activeSummary.clients_total, activeSummary.online_clients_total, fleetSummary?.checking, offlineNodes, onlineNodes, t, totalNodes]);
 
   const trafficPeriodLabel = t(`traffic.period${activeSummary.traffic_period === 'all_time' ? 'AllTime' : activeSummary.traffic_period[0].toUpperCase() + activeSummary.traffic_period.slice(1)}`);
   const kpiCards = [
