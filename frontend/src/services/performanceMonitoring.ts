@@ -94,10 +94,6 @@ class PerformanceMonitor {
     return duration;
   }
 
-  getMetrics(): PerformanceMetrics {
-    return { ...this.metrics };
-  }
-
   exportMetrics() {
     const exports = {
       fcp: this.metrics.fcp,
