@@ -422,6 +422,9 @@ def build_live_data_router(
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401)
+        # This is a read projection expressed as POST to carry a bounded email
+        # list. It must not make the next Dashboard/Clients read cold.
+        request.state.skip_read_projection_invalidation = True
         if not projection_period_handler:
             raise HTTPException(status_code=503, detail="Traffic statistics projection is warming up")
         period = data.get("period", "all_time")

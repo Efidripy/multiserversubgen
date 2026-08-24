@@ -96,6 +96,7 @@ def build_request_controls_and_audit_middleware(
             response.status_code < 400
             and request.method in {"POST", "PUT", "DELETE", "PATCH"}
             and path.startswith("/api/v1/")
+            and not getattr(request.state, "skip_read_projection_invalidation", False)
         ):
             invalidate_read_projections()
 
