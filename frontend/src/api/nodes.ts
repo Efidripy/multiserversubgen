@@ -123,11 +123,6 @@ export async function getNodeServerStatus(nodeId: number): Promise<any> {
   return res.data || {};
 }
 
-export async function getNodePanelUpdateInfo(nodeId: number): Promise<any> {
-  const res = await api.get(`/v1/nodes/${nodeId}/panel-update-info`, { auth: getAuth() });
-  return res.data || {};
-}
-
 export async function refreshNodesNow(): Promise<any> {
   const res = await api.post('/v1/nodes/refresh-now', {}, { auth: getAuth() });
   return res.data;
