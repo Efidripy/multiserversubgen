@@ -68,6 +68,7 @@ class LiveStatsRuntime:
         self._memory_snapshot_max_entries = self._MEMORY_SNAPSHOT_MAX_ENTRIES
         self._snapshot_cleanup_ts = 0.0
         self._snapshot_seed_check_ts = 0.0
+        self._snapshot_seed_lock = Lock()
         self._traffic_cold_load_locks: Dict[str, Lock] = {}
         self._cache_state_lock = Lock()
         self._cache_generation = 0
@@ -286,38 +287,46 @@ class LiveStatsRuntime:
 
     def seed_period_snapshots_from_collector(self, now_ts: Optional[float] = None) -> Dict[str, bool]:
         """Persist current period baselines from collector data, never a fleet read."""
-        now = float(now_ts or time.time())
-        if now - self._snapshot_seed_check_ts < 5.0:
+        # Every completed node poll invokes this method.  Without a
+        # single-flight guard, several callbacks can cross the timestamp check
+        # together and each rebuild all fleet projections plus SQLite snapshots.
+        if not self._snapshot_seed_lock.acquire(blocking=False):
             return {}
+        try:
+            now = float(now_ts or time.time())
+            if now - self._snapshot_seed_check_ts < 5.0:
+                return {}
 
-        if self.get_expected_snapshot_nodes and self.get_latest_snapshot:
-            snapshot = self.get_latest_snapshot()
-            nodes = snapshot.get("nodes") if isinstance(snapshot, dict) else []
-            try:
-                expected_nodes = max(0, int(self.get_expected_snapshot_nodes()))
-            except (TypeError, ValueError):
-                expected_nodes = 0
-            # Do not establish a day/week/month baseline from only the first
-            # few nodes during a cold collector start.  This is a local SQLite
-            # count check, never a panel request.
-            if expected_nodes and (not isinstance(nodes, list) or len(nodes) < expected_nodes):
-                return {"warming": False}
+            if self.get_expected_snapshot_nodes and self.get_latest_snapshot:
+                snapshot = self.get_latest_snapshot()
+                nodes = snapshot.get("nodes") if isinstance(snapshot, dict) else []
+                try:
+                    expected_nodes = max(0, int(self.get_expected_snapshot_nodes()))
+                except (TypeError, ValueError):
+                    expected_nodes = 0
+                # Do not establish a day/week/month baseline from only the first
+                # few nodes during a cold collector start.  This is a local SQLite
+                # count check, never a panel request.
+                if expected_nodes and (not isinstance(nodes, list) or len(nodes) < expected_nodes):
+                    return {"warming": False}
 
-        self._snapshot_seed_check_ts = now
+            self._snapshot_seed_check_ts = now
 
-        seeded: Dict[str, bool] = {}
-        for group_by in ("client", "inbound", "node"):
-            projection = self._snapshot_projection(group_by)
-            if not projection:
-                continue
-            self._save_period_snapshots(
-                group_by,
-                projection.get("stats", {}),
-                now,
-                projection.get("identity_stats"),
-            )
-            seeded[group_by] = True
-        return seeded
+            seeded: Dict[str, bool] = {}
+            for group_by in ("client", "inbound", "node"):
+                projection = self._snapshot_projection(group_by)
+                if not projection:
+                    continue
+                self._save_period_snapshots(
+                    group_by,
+                    projection.get("stats", {}),
+                    now,
+                    projection.get("identity_stats"),
+                )
+                seeded[group_by] = True
+            return seeded
+        finally:
+            self._snapshot_seed_lock.release()
 
     def _get_traffic_cold_load_lock(self, group_by: str) -> Lock:
         with self.state_lock:

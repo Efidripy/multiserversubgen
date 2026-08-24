@@ -3,7 +3,7 @@ import os
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from threading import Event
+from threading import Event, Lock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -17,6 +17,7 @@ from services.db_bootstrap import connect, init_db
 from services.runtime_support import AuditQueueRuntime, RedisJsonCache
 from services.clients_runtime import ClientsRuntime
 from services.inbounds_runtime import InboundsRuntime
+from services.live_stats_runtime import LiveStatsRuntime
 
 
 def test_audit_enqueue_is_memory_only_and_bounded(monkeypatch, tmp_path):
@@ -136,6 +137,50 @@ def test_clients_and_inbounds_cold_cache_misses_are_single_flight():
         results = list(executor.map(lambda _: inbounds_runtime.get_cached_inbounds([]), range(2)))
     assert results == [[{"id": 1}], [{"id": 1}]]
     assert inbound_manager.calls == 1
+
+
+def test_period_snapshot_seed_is_single_flight_across_collector_callbacks():
+    started = Event()
+    release = Event()
+    projection_calls = []
+    saved_groups = []
+
+    runtime = LiveStatsRuntime(
+        client_mgr=object(),
+        db_path=None,
+        traffic_stats_cache={},
+        online_clients_cache={"ts": 0.0, "data": []},
+        cache_refresh_state={"traffic": set(), "online_clients": False},
+        state_lock=Lock(),
+        redis_get_json=lambda _key: None,
+        redis_set_json=lambda *_args: None,
+        redis_delete=lambda *_keys: None,
+        traffic_stats_cache_ttl=30,
+        traffic_stats_stale_ttl=60,
+        online_clients_cache_ttl=30,
+        online_clients_stale_ttl=60,
+        logger=logging.getLogger("test.snapshot_seed"),
+    )
+
+    def projection(group_by):
+        projection_calls.append(group_by)
+        started.set()
+        release.wait(timeout=2)
+        return {"stats": {group_by: {"total": 1}}}
+
+    runtime._snapshot_projection = projection
+    runtime._save_period_snapshots = lambda group_by, *_args: saved_groups.append(group_by)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(runtime.seed_period_snapshots_from_collector, 100.0)
+        assert started.wait(timeout=1)
+        second = executor.submit(runtime.seed_period_snapshots_from_collector, 100.0)
+        assert second.result(timeout=1) == {}
+        release.set()
+        assert first.result(timeout=2) == {"client": True, "inbound": True, "node": True}
+
+    assert projection_calls == ["client", "inbound", "node"]
+    assert saved_groups == ["client", "inbound", "node"]
 
 
 def test_read_projections_refetch_immediately_after_invalidation():
