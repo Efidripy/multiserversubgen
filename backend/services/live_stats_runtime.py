@@ -9,6 +9,9 @@ from services.db_bootstrap import connect
 
 
 class LiveStatsRuntime:
+    # Redis and SQLite keep the long period history. The process-local fallback
+    # must remain a small hot set instead of retaining every full fleet snapshot.
+    _MEMORY_SNAPSHOT_MAX_ENTRIES = 96
     _ROLLING_SNAPSHOT_CONFIG = {
         "hour": {"bucket_seconds": 3600, "ttl_seconds": 3 * 86400, "max_search_buckets": 48},
         "day": {"bucket_seconds": 86400, "ttl_seconds": 400 * 86400, "max_search_buckets": 400},
@@ -59,8 +62,10 @@ class LiveStatsRuntime:
         self.get_expected_snapshot_nodes = get_expected_snapshot_nodes
         # In-memory snapshot fallback when Redis is unavailable.
         # Key: "traffic_snapshot:{group_by}:{bucket_kind}:{bucket_id}"
-        # Value: {"ts": float, "stats": dict}
-        self._memory_snapshots: Dict[str, dict] = {}
+        # Value: (monotonic expiry timestamp, {"ts": float, "stats": dict})
+        self._memory_snapshots: Dict[str, tuple[float, dict]] = {}
+        self._memory_snapshots_lock = Lock()
+        self._memory_snapshot_max_entries = self._MEMORY_SNAPSHOT_MAX_ENTRIES
         self._snapshot_cleanup_ts = 0.0
         self._snapshot_seed_check_ts = 0.0
         self._traffic_cold_load_locks: Dict[str, Lock] = {}
@@ -626,19 +631,48 @@ class LiveStatsRuntime:
     def _snapshot_key(self, group_by: str, bucket_kind: str, bucket_id: int) -> str:
         return f"traffic_snapshot:{group_by}:{bucket_kind}:{bucket_id}"
 
+    def _prune_memory_snapshots_locked(self, now: float) -> None:
+        expired_keys = [
+            key for key, (expires_at, _snapshot) in self._memory_snapshots.items()
+            if expires_at <= now
+        ]
+        for key in expired_keys:
+            self._memory_snapshots.pop(key, None)
+
+        overflow = len(self._memory_snapshots) - self._memory_snapshot_max_entries
+        if overflow <= 0:
+            return
+        oldest_keys = sorted(
+            self._memory_snapshots,
+            key=lambda key: self._memory_snapshots[key][0],
+        )[:overflow]
+        for key in oldest_keys:
+            self._memory_snapshots.pop(key, None)
+
     def _read_snapshot(self, key: str) -> Optional[dict]:
         snapshot = self.redis_get_json(key)
         if isinstance(snapshot, dict):
             return snapshot
-        memory_snapshot = self._memory_snapshots.get(key)
-        return memory_snapshot if isinstance(memory_snapshot, dict) else None
+        now = time.monotonic()
+        with self._memory_snapshots_lock:
+            memory_entry = self._memory_snapshots.get(key)
+            if not memory_entry:
+                return None
+            expires_at, memory_snapshot = memory_entry
+            if expires_at <= now:
+                self._memory_snapshots.pop(key, None)
+                return None
+            return memory_snapshot if isinstance(memory_snapshot, dict) else None
 
     def _write_snapshot(self, key: str, snapshot_value: dict, ttl_seconds: int) -> bool:
         existing = self._read_snapshot(key)
         if existing is not None:
             return False
         self.redis_set_json(key, snapshot_value, ttl_seconds)
-        self._memory_snapshots[key] = snapshot_value
+        with self._memory_snapshots_lock:
+            now = time.monotonic()
+            self._memory_snapshots[key] = (now + max(1, ttl_seconds), snapshot_value)
+            self._prune_memory_snapshots_locked(now)
         return True
 
     def _persist_snapshot_to_db(
