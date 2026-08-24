@@ -52,6 +52,19 @@ function Assert-SafeRemotePath {
     }
 }
 
+function Invoke-NativeChecked {
+    param(
+        [Parameter(Mandatory = $true)][string]$Action,
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter()][string[]]$ArgumentList = @()
+    )
+
+    & $FilePath @ArgumentList
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Action failed with exit code $LASTEXITCODE."
+    }
+}
+
 function New-Archive {
     param(
         [string]$RepoRoot,
@@ -136,7 +149,7 @@ function Invoke-RemoteCommand {
         if ($Transport.PasswordFile) { $args += @("-pwfile", $Transport.PasswordFile) }
         $args += "$UserName@$HostName"
         $args += $Command
-        & $Transport.Plink @args
+        Invoke-NativeChecked -Action "PuTTY remote command" -FilePath $Transport.Plink -ArgumentList $args
         return
     }
 
@@ -147,7 +160,7 @@ function Invoke-RemoteCommand {
     if ($Transport.KeyPath) { $args += @("-i", $Transport.KeyPath) }
     $args += "$UserName@$HostName"
     $args += $Command
-    & $Transport.Ssh @args
+    Invoke-NativeChecked -Action "OpenSSH remote command" -FilePath $Transport.Ssh -ArgumentList $args
 }
 
 function Copy-ToRemote {
@@ -168,7 +181,7 @@ function Copy-ToRemote {
         if ($Transport.PasswordFile) { $args += @("-pwfile", $Transport.PasswordFile) }
         $args += $LocalPath
         $args += "${UserName}@${HostName}:$RemotePath"
-        & $Transport.Pscp @args
+        Invoke-NativeChecked -Action "PuTTY remote copy" -FilePath $Transport.Pscp -ArgumentList $args
         return
     }
 
@@ -178,7 +191,7 @@ function Copy-ToRemote {
     if ($Transport.KeyPath) { $args += @("-i", $Transport.KeyPath) }
     $args += $LocalPath
     $args += "${UserName}@${HostName}:$RemotePath"
-    & $Transport.Scp @args
+    Invoke-NativeChecked -Action "OpenSSH remote copy" -FilePath $Transport.Scp -ArgumentList $args
 }
 
 $repoRoot = Get-RepoRoot
