@@ -49,6 +49,8 @@ def test_runtime_secret_writer_is_root_only_and_atomic():
     assert "runtime_ensure_service_user" in helper
     assert "useradd --system" in helper
     assert "chown -R -- \"$service_user:$service_user\" \"$service_dir\"" in helper
+    assert 'source "$secret_file"' not in helper
+    assert 'secure_source_file "$secret_file" "runtime secrets"' in helper
 
 
 def test_privileged_runtime_install_uses_only_hashed_production_lock():
@@ -144,7 +146,7 @@ def test_ops_scripts_validate_installer_log_before_sourcing():
         assert "install_log_source \"$LOG_FILE\"" in script
         assert "lib/install_log.sh" in script
 
-    assert "[[ ! -L \"$log_file\" ]]" in helper
+    assert "[[ ! -L \"$source_file\" ]]" in helper
     assert "stat -c '%u'" in helper
     assert "stat -c '%a'" in helper
     assert '[[ "$owner" == "0" && "$mode" == "600" ]]' in helper
@@ -163,7 +165,8 @@ def test_installer_scripts_validate_log_before_sourcing():
         assert "install_log_source \"$LOG_FILE\"" in script
         assert "scripts/ops/lib/install_log.sh" in script
 
-    assert "source \"$log_file\"" in helper
+    assert 'source "$source_file"' in helper
+    assert 'secure_source_file()' in helper
 
 
 def test_resource_guard_cleanup_is_project_scoped():
