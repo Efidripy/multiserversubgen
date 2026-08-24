@@ -169,6 +169,19 @@ class SnapshotCollector:
         self._mode_started_at = time.time()
         self._force_poll_event = asyncio.Event()
 
+    @staticmethod
+    def _node_key(node: Dict) -> str:
+        """Return the internal collector key without relying on display names.
+
+        Node names are operator-facing labels and may legitimately be duplicated
+        or renamed. Poll state and snapshots must instead remain bound to the
+        database identity so one node cannot replace another in memory.
+        """
+        node_id = node.get("id")
+        if node_id is not None and str(node_id).strip():
+            return f"id:{node_id}"
+        return f"name:{str(node.get('name') or '').strip()}"
+
     def latest_snapshot(self) -> Dict:
         nodes = list(self._latest["nodes"].values())
         nodes.sort(key=lambda x: x.get("name", ""))
@@ -345,7 +358,7 @@ class SnapshotCollector:
             snapshot["snapshot_updated_at"] = row["updated_at"]
             ts = self._coerce_snapshot_timestamp(snapshot.get("timestamp"), row["updated_at"])
             snapshot["timestamp"] = ts
-            loaded.append((str(node_name), snapshot, ts))
+            loaded.append((self._node_key({"id": node_id, "name": node_name}), snapshot, ts))
         return loaded
 
     async def _persist_snapshot(self, snapshot: Dict) -> None:
@@ -522,11 +535,11 @@ class SnapshotCollector:
 
                 nodes = await asyncio.to_thread(self.fetch_nodes)
                 now = time.time()
-                active_names = {str(n.get("name", n.get("id", ""))) for n in nodes}
+                active_node_keys = {self._node_key(node) for node in nodes}
 
                 # Cleanup state for removed nodes.
                 for stale in list(self._node_state.keys()):
-                    if stale not in active_names:
+                    if stale not in active_node_keys:
                         self._node_state.pop(stale, None)
                         self._latest["nodes"].pop(stale, None)
                         self._refresh_client_presence_projection()
@@ -535,7 +548,7 @@ class SnapshotCollector:
                 force_poll = self._force_poll_event.is_set()
 
                 for node in nodes:
-                    key = str(node.get("name", node.get("id", "")))
+                    key = self._node_key(node)
                     state = self._node_state.setdefault(
                         key,
                         {
@@ -675,7 +688,9 @@ class SnapshotCollector:
                 logger.warning(f"Collector on_snapshot callback failed for {key}: {exc}")
         await self._persist_snapshot(snapshot)
         if should_broadcast:
-            await self._broadcast_delta(key, snapshot, previous=previous)
+            # WebSocket consumers display the operator-facing name; the
+            # database ID below remains the unambiguous machine identity.
+            await self._broadcast_delta(str(snapshot.get("name") or key), snapshot, previous=previous)
 
     def _collect_node_snapshot(self, node: Dict) -> Dict:
         name = node.get("name", "unknown")
