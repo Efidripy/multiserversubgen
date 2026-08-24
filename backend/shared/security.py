@@ -60,12 +60,6 @@ def _resolve_host_addresses(host: str, *, allow_private: bool) -> tuple[tuple[st
     return tuple(addresses), ""
 
 
-def _validate_resolved_host(host: str, *, allow_private: bool) -> tuple[bool, str]:
-    """Resolve a hostname and reject unsafe addresses before a request is made."""
-    addresses, error = _resolve_host_addresses(host, allow_private=allow_private)
-    return bool(addresses), error
-
-
 def validate_outbound_url(
     value: str,
     *,
