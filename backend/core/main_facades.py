@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from threading import Lock
+from typing import Callable, Dict, List, Optional, Tuple
 
 from fastapi import Request
 
@@ -133,9 +134,19 @@ def build_cache_facade(*, live_stats_runtime, clients_runtime, inbounds_runtime,
 
 def build_subscription_links_facade(*, subscription_links_service, db_path: str):
     subscription_links_service.configure_snapshot_db(db_path)
+    response_cache_invalidators: List[Callable[[], None]] = []
+    response_cache_invalidators_lock = Lock()
+
+    def register_subscription_response_cache_invalidator(invalidator: Callable[[], None]) -> None:
+        with response_cache_invalidators_lock:
+            response_cache_invalidators.append(invalidator)
 
     def invalidate_subscription_cache():
-        return subscription_links_service.invalidate_subscription_cache()
+        subscription_links_service.invalidate_subscription_cache()
+        with response_cache_invalidators_lock:
+            invalidators = tuple(response_cache_invalidators)
+        for invalidator in invalidators:
+            invalidator()
 
     def fetch_inbounds(node: Dict) -> List[Dict]:
         return subscription_links_service.fetch_inbounds(node)
@@ -155,4 +166,5 @@ def build_subscription_links_facade(*, subscription_links_service, db_path: str)
         get_emails,
         get_links,
         get_links_filtered,
+        register_subscription_response_cache_invalidator,
     )
