@@ -762,7 +762,6 @@ export const App: React.FC = () => {
               <NodeManager
                 onReload={() => setKey((prev) => prev + 1)}
                 showIntake={false}
-                showFleet={false}
                 openIntakeSignal={nodeIntakeOpenSignal}
                 editNode={nodeEditTarget}
                 openEditSignal={nodeEditOpenSignal}

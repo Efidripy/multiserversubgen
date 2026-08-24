@@ -10,17 +10,6 @@ export interface FleetNode extends NodeRecord {
   error?: string;
 }
 
-export interface NodeDashboardOverview {
-  nodes: NodeRecord[];
-  statuses: Record<number, boolean | null>;
-  clientCounts: Record<number, number>;
-  inboundCounts: Record<number, number>;
-}
-
-export interface NodeDashboardOverviewOptions {
-  includeCounts?: boolean;
-}
-
 export type NodesChangedAction = 'create' | 'update' | 'delete';
 
 export interface NodesChangedDetail {
@@ -139,18 +128,6 @@ export async function getNodePanelUpdateInfo(nodeId: number): Promise<any> {
   return res.data || {};
 }
 
-export async function getClientsForNode(nodeId: number): Promise<any[]> {
-  const res = await api.get('/v1/clients', { auth: getAuth(), params: { node_id: nodeId } });
-  const payload = res.data?.clients ?? res.data;
-  return Array.isArray(payload) ? payload : [];
-}
-
-export async function getNodeInbounds(nodeId: number): Promise<any[]> {
-  const res = await api.get(`/v1/nodes/${nodeId}/inbounds`, { auth: getAuth() });
-  const payload = res.data?.inbounds ?? res.data;
-  return Array.isArray(payload) ? payload : [];
-}
-
 export async function refreshNodesNow(): Promise<any> {
   const res = await api.post('/v1/nodes/refresh-now', {}, { auth: getAuth() });
   return res.data;
@@ -229,47 +206,6 @@ export async function getRegisteredFleetSnapshotOverview(): Promise<FleetNode[]>
       error: snapshot?.error || (available === false ? snapshot?.reason : undefined),
     };
   });
-}
-
-export async function getNodeDashboardOverview(
-  options: NodeDashboardOverviewOptions = {},
-): Promise<NodeDashboardOverview> {
-  const { includeCounts = true } = options;
-  const nodes = await listNodes();
-  const statuses: Record<number, boolean | null> = {};
-
-  await Promise.all(
-    nodes.map(async (node) => {
-      try {
-        const status = await getNodeServerStatus(node.id);
-        statuses[node.id] = Boolean(status?.available);
-      } catch {
-        statuses[node.id] = false;
-      }
-    }),
-  );
-
-  const clientCounts: Record<number, number> = {};
-  const inboundCounts: Record<number, number> = {};
-
-  if (includeCounts) {
-    await Promise.all(
-      nodes.map(async (node) => {
-        try {
-          const [clients, inbounds] = await Promise.all([
-            getClientsForNode(node.id),
-            getNodeInbounds(node.id),
-          ]);
-          if (clients.length > 0) clientCounts[node.id] = clients.length;
-          if (inbounds.length > 0) inboundCounts[node.id] = inbounds.length;
-        } catch {
-          // Counts are enrichment only.
-        }
-      }),
-    );
-  }
-
-  return { nodes, statuses, clientCounts, inboundCounts };
 }
 
 export async function createNode(payload: unknown, options: NodeMutationOptions = {}): Promise<any> {
