@@ -51,6 +51,13 @@ def _build_runtime(tmp_path, stats, get_latest_snapshot=None):
     )
 
 
+def _seed_traffic_projection(runtime, group_by, stats, timestamp=0.0):
+    runtime.traffic_stats_cache[group_by] = (
+        timestamp,
+        {"stats": deepcopy(stats), "group_by": group_by},
+    )
+
+
 def test_collector_projection_serves_all_groupings_without_client_manager_fanout(monkeypatch, tmp_path):
     now_ts = 500 * 3600
     snapshot = {
@@ -119,10 +126,16 @@ def test_day_period_uses_snapshot_before_requested_window(monkeypatch, tmp_path)
         {"alpha@example.com": {"up": 144, "down": 36, "total": 180, "count": 1}},
         recent_snapshot_ts,
     )
+    _seed_traffic_projection(
+        runtime,
+        "client",
+        {"alpha@example.com": {"up": 160, "down": 40, "total": 200, "count": 1}},
+        now_ts,
+    )
 
     monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
 
-    payload = runtime.get_traffic_stats_by_period([{"id": 1, "name": "alpha"}], "client", "day")
+    payload = runtime.get_cached_traffic_stats_projection_by_period("client", "day")
 
     assert payload["stats"]["alpha@example.com"]["total"] == 100
     assert int(payload["snapshot_ts"]) == old_snapshot_ts
@@ -134,10 +147,15 @@ def test_period_stats_do_not_fallback_to_all_time_without_history(monkeypatch, t
         tmp_path,
         {"alpha@example.com": {"up": 320, "down": 80, "total": 400, "count": 1}},
     )
+    _seed_traffic_projection(
+        runtime,
+        "client",
+        {"alpha@example.com": {"up": 320, "down": 80, "total": 400, "count": 1}},
+    )
 
     monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
 
-    payload = runtime.get_traffic_stats_by_period([{"id": 1, "name": "alpha"}], "client", "day")
+    payload = runtime.get_cached_traffic_stats_projection_by_period("client", "day")
 
     assert payload["stats"] == {}
     assert "No historical snapshot" in payload["note"]
@@ -161,9 +179,15 @@ def test_db_snapshot_survives_runtime_restart(monkeypatch, tmp_path):
         tmp_path,
         {"alpha@example.com": {"up": 240, "down": 60, "total": 300, "count": 1}},
     )
+    _seed_traffic_projection(
+        restarted_runtime,
+        "client",
+        {"alpha@example.com": {"up": 240, "down": 60, "total": 300, "count": 1}},
+        now_ts,
+    )
     monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
 
-    payload = restarted_runtime.get_traffic_stats_by_period([{"id": 1, "name": "alpha"}], "client", "day")
+    payload = restarted_runtime.get_cached_traffic_stats_projection_by_period("client", "day")
 
     assert payload["stats"]["alpha@example.com"]["total"] == 200
     assert int(payload["snapshot_ts"]) == old_snapshot_ts
@@ -207,11 +231,16 @@ def test_backfill_node_history_snapshots_restores_node_period_history(monkeypatc
     assert summary["day"] >= 1
 
     monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
-    payload = runtime.get_traffic_stats_by_period(
-        [{"id": 1, "name": "alpha-node"}, {"id": 2, "name": "beta-node"}],
+    _seed_traffic_projection(
+        runtime,
         "node",
-        "day",
+        {
+            "alpha-node": {"up": 0, "down": 320, "total": 320, "count": 1},
+            "beta-node": {"up": 0, "down": 480, "total": 480, "count": 1},
+        },
+        now_ts,
     )
+    payload = runtime.get_cached_traffic_stats_projection_by_period("node", "day")
 
     assert payload["stats"]["alpha-node"]["total"] == 200
     assert payload["stats"]["beta-node"]["total"] == 180
@@ -233,46 +262,19 @@ def test_year_period_uses_earliest_available_snapshot_when_window_is_partial(mon
         {"alpha-node": {"up": 0, "down": 120, "total": 120, "count": 1}},
         snapshot_ts,
     )
+    _seed_traffic_projection(
+        runtime,
+        "node",
+        {"alpha-node": {"up": 0, "down": 320, "total": 320, "count": 1}},
+        now_ts,
+    )
 
     monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
-    payload = runtime.get_traffic_stats_by_period(
-        [{"id": 1, "name": "alpha-node"}],
-        "node",
-        "year",
-    )
+    payload = runtime.get_cached_traffic_stats_projection_by_period("node", "year")
 
     assert payload["stats"]["alpha-node"]["total"] == 200
     assert int(payload["snapshot_ts"]) == int(snapshot_ts)
     assert "part of the requested window" in payload["note"]
-
-
-def test_ensure_current_period_snapshots_seeds_buckets_without_ui_request(monkeypatch, tmp_path):
-    now_ts = 700 * 3600
-    runtime = _build_runtime(
-        tmp_path,
-        {"alpha@example.com": {"up": 10, "down": 20, "total": 30, "count": 1}},
-    )
-    monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
-
-    seeded = runtime.ensure_current_period_snapshots([{"id": 1, "name": "alpha"}], ["client"], now_ts=now_ts)
-
-    assert seeded == {"client": True}
-
-    with connect(runtime.db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT bucket_kind, bucket_start
-            FROM traffic_stats_snapshots
-            WHERE group_by = 'client'
-            ORDER BY bucket_kind ASC
-            """
-        ).fetchall()
-
-    assert ("day", int(now_ts / 86400)) in rows
-    assert ("hour", int(now_ts / 3600)) in rows
-
-    seeded_again = runtime.ensure_current_period_snapshots([{"id": 1, "name": "alpha"}], ["client"], now_ts=now_ts + 6)
-    assert seeded_again == {}
 
 
 def test_concurrent_cold_traffic_requests_share_one_fleet_fetch(tmp_path):

@@ -628,39 +628,6 @@ class LiveStatsRuntime:
             )
             return None
 
-    def _bucket_exists_in_db(self, group_by: str, bucket_kind: str, bucket_id: int) -> bool:
-        if not self.db_path:
-            return False
-
-        try:
-            with connect(self.db_path) as conn:
-                row = conn.execute(
-                    """
-                    SELECT 1
-                    FROM traffic_stats_snapshots
-                    WHERE group_by = ?
-                      AND bucket_kind = ?
-                      AND bucket_start = ?
-                    LIMIT 1
-                    """,
-                    (group_by, bucket_kind, int(bucket_id)),
-                ).fetchone()
-            return row is not None
-        except Exception as exc:
-            self.logger.warning(
-                "Failed to check traffic snapshot bucket existence (%s/%s/%s): %s",
-                group_by,
-                bucket_kind,
-                bucket_id,
-                exc,
-            )
-            return False
-
-    def _has_bucket_snapshot(self, group_by: str, bucket_kind: str, bucket_id: int) -> bool:
-        if isinstance(self._read_snapshot(self._snapshot_key(group_by, bucket_kind, bucket_id)), dict):
-            return True
-        return self._bucket_exists_in_db(group_by, bucket_kind, bucket_id)
-
     def _save_period_snapshots(self, group_by: str, stats_data: Dict, now_ts: float) -> None:
         """Persist rolling snapshots used for period deltas."""
         if not isinstance(stats_data, dict):
@@ -674,35 +641,6 @@ class LiveStatsRuntime:
             created = self._write_snapshot(redis_key, snapshot_value, int(config["ttl_seconds"]))
             if created:
                 self._persist_snapshot_to_db(group_by, bucket_kind, bucket_id, snapshot_value)
-
-    def ensure_current_period_snapshots(
-        self,
-        nodes: List[Dict],
-        group_bys: Optional[List[str]] = None,
-        now_ts: Optional[float] = None,
-    ) -> Dict[str, bool]:
-        """Ensure current hour/day buckets are seeded even when Traffic Stats UI is unopened."""
-        now = float(now_ts or time.time())
-        if now - self._snapshot_seed_check_ts < 5.0:
-            return {}
-        self._snapshot_seed_check_ts = now
-
-        targets = group_bys or ["client", "inbound", "node"]
-        seeded: Dict[str, bool] = {}
-        for group_by in targets:
-            missing_bucket = False
-            for bucket_kind, config in self._ROLLING_SNAPSHOT_CONFIG.items():
-                bucket_id = int(now / int(config["bucket_seconds"]))
-                if not self._has_bucket_snapshot(group_by, bucket_kind, bucket_id):
-                    missing_bucket = True
-                    break
-            if not missing_bucket:
-                continue
-
-            self.get_cached_traffic_stats(nodes, group_by)
-            seeded[group_by] = True
-
-        return seeded
 
     def backfill_node_history_snapshots(self, now_ts: Optional[float] = None) -> Dict[str, int]:
         """Backfill node-group period snapshots from persisted node_history rows."""
@@ -933,101 +871,3 @@ class LiveStatsRuntime:
         self.online_clients_cache["data"] = data
         self.redis_set_json("online_clients", data, self.online_clients_cache_ttl)
         return data
-
-    def get_traffic_stats_by_period(
-        self, nodes: List[Dict], group_by: str, period: str = "all_time"
-    ) -> Dict:
-        """
-        Get traffic stats for a specific period by comparing snapshots.
-        
-        Args:
-            nodes: List of nodes
-            group_by: Grouping ('client', 'inbound', 'node')
-            period: 'day', 'week', 'month', 'year', or 'all_time'
-        
-        Returns:
-            Traffic statistics for the specified period
-        """
-        # Period to seconds mapping
-        period_seconds = {
-            "day": 86400,        # 24 hours
-            "week": 604800,      # 7 days
-            "month": 2592000,    # 30 days
-            "year": 31536000,    # 365 days
-            "all_time": 0,       # Special: return current total
-        }
-        
-        if period not in period_seconds:
-            period = "all_time"
-        
-        # Get current stats
-        current_stats = self.get_cached_traffic_stats(nodes, group_by)
-        current_data = current_stats.get("stats", {})
-        
-        if period == "all_time":
-            # Return current totals as all-time
-            return current_stats
-        
-        seconds_back = period_seconds[period]
-        now = time.time()
-        period_start_time = now - seconds_back
-        snapshot, snapshot_stats, partial_window = self._load_period_snapshot(group_by, period, seconds_back, now)
-        
-        if not snapshot_stats or not isinstance(snapshot_stats, dict):
-            if group_by in {"client", "inbound"}:
-                note = (
-                    "No historical snapshot is available before the requested window yet. "
-                    "Older client/inbound history cannot be reconstructed from the current SQLite schema."
-                )
-            else:
-                note = "No historical snapshot is available before the requested window yet."
-            return {
-                "stats": {},
-                "group_by": group_by,
-                "period": period,
-                "period_start": period_start_time,
-                "note": note,
-            }
-
-        # Calculate delta between current and period snapshot
-        delta_stats: Dict[str, Dict[str, int]] = {}
-        for key, current_val in current_data.items():
-            snapshot_val = snapshot_stats.get(key, {"up": 0, "down": 0, "total": 0})
-            delta_stats[key] = {
-                "up": max(0, current_val.get("up", 0) - snapshot_val.get("up", 0)),
-                "down": max(0, current_val.get("down", 0) - snapshot_val.get("down", 0)),
-                "total": max(0, current_val.get("total", 0) - snapshot_val.get("total", 0)),
-                "count": current_val.get("count", 1)
-            }
-        
-        return {
-            "stats": delta_stats,
-            "group_by": group_by,
-            "period": period,
-            "period_start": period_start_time,
-            "period_seconds": seconds_back,
-            "snapshot_ts": snapshot.get("ts") if isinstance(snapshot, dict) else None,
-            **(
-                {
-                    "note": (
-                        "Historical data covers only part of the requested window. "
-                        "Showing the earliest retained snapshot within that window."
-                    )
-                }
-                if partial_window
-                else {}
-            ),
-        }
-
-    def save_traffic_snapshot(self, nodes: List[Dict], group_by: str) -> None:
-        """
-        Save current traffic stats as a snapshot for period-based calculations.
-        Called periodically (e.g., hourly) to enable period tracking.
-        
-        Args:
-            nodes: List of nodes
-            group_by: Grouping ('client', 'inbound', 'node')
-        """
-        current_stats = self.get_cached_traffic_stats(nodes, group_by)
-        current_data = current_stats.get("stats", {})
-        self._save_period_snapshots(group_by, current_data, time.time())
