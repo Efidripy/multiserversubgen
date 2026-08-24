@@ -375,6 +375,38 @@ Slim DTO предназначен только для чтения и не за�
 }
 ```
 
+### `GET /api/v1/traffic/stats-by-period?group_by=client&period=all_time&limit=0`
+
+Read-projection для экрана статистики. Поддерживаемые `group_by`: `client`,
+`inbound`, `node`; значения `period`: `day`, `week`, `month`, `year`,
+`all_time`. Необязательный `limit` оставляет только самые крупные записи по
+`total`.
+
+Endpoint читает только уже собранную Collector traffic projection и сохранённые
+Redis/SQLite baseline snapshots. Он не перечисляет ноды и не отправляет
+запросы к 3x-ui панелям: переключение периода в UI не запускает fleet fan-out.
+Для периодов с ещё не накопленной историей возвращается пустой `stats` и
+поясняющее поле `note`; это не означает нулевой all-time traffic.
+
+**Response:**
+```json
+{
+  "stats": {
+    "user@example.com": {
+      "up": 1073741824,
+      "down": 5368709120,
+      "total": 6442450944,
+      "count": 3
+    }
+  },
+  "group_by": "client",
+  "period": "week",
+  "period_seconds": 604800,
+  "snapshot_ts": 1770000000.0,
+  "cache_source": "snapshot_collector"
+}
+```
+
 ---
 
 ## 🧭 Dashboard Summary
