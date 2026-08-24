@@ -339,10 +339,12 @@ def build_live_data_router(
                 "reason": cached.get("reason") or ("ok" if cached.get("available") else "unknown"),
                 "error": cached.get("error", ""),
                 "xray": {"running": bool(cached.get("xray_running"))},
-                "system": {"cpu": cached.get("cpu", 0)},
-                "network": {"upload": 0, "download": cached.get("traffic_total", 0)},
                 "panel_version": cached.get("panel_version", ""),
             }
+            if isinstance(cached.get("system"), dict):
+                payload["system"] = cached["system"]
+            if isinstance(cached.get("network"), dict):
+                payload["network"] = cached["network"]
         payload.setdefault("node_id", cached.get("node_id") or node_id)
         payload["cached"] = True
         payload["snapshot_timestamp"] = cached.get("timestamp")
