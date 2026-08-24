@@ -1,18 +1,6 @@
-"""Core infrastructure for the modular multiserversubgen backend."""
+"""Production backend composition helpers.
 
-from .base_module import BaseModule, HealthStatus
-from .event_bus import EventBus
-from .container import Container
-from .module_registry import ModuleRegistry
-from .job_queue import JobQueue
-from .feature_flags import FeatureFlags
-
-__all__ = [
-    "BaseModule",
-    "HealthStatus",
-    "EventBus",
-    "Container",
-    "ModuleRegistry",
-    "JobQueue",
-    "FeatureFlags",
-]
+Modules are imported explicitly by the application composition root.  Keeping
+this package initializer side-effect free prevents dormant framework modules
+from being loaded whenever a live ``core.*`` module is imported.
+"""
