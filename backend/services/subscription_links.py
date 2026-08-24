@@ -186,10 +186,6 @@ def get_emails(nodes: List[Dict]) -> List[str]:
     return emails_list
 
 
-def get_links(nodes: List[Dict], email: str) -> List[str]:
-    return get_links_filtered(nodes, email)
-
-
 def _first_server_name(stream_settings: Dict) -> str:
     reality = stream_settings.get("realitySettings", {}) or {}
     reality_names = reality.get("serverNames") or []

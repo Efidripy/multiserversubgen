@@ -154,9 +154,6 @@ def build_subscription_links_facade(*, subscription_links_service, db_path: str)
     def get_emails(nodes: List[Dict]) -> List[str]:
         return subscription_links_service.get_emails(nodes)
 
-    def get_links(nodes: List[Dict], email: str) -> List[str]:
-        return subscription_links_service.get_links(nodes, email)
-
     def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[str] = None) -> List[str]:
         return subscription_links_service.get_links_filtered(nodes, email, protocol_filter)
 
@@ -164,7 +161,6 @@ def build_subscription_links_facade(*, subscription_links_service, db_path: str)
         invalidate_subscription_cache,
         fetch_inbounds,
         get_emails,
-        get_links,
         get_links_filtered,
         register_subscription_response_cache_invalidator,
     )
