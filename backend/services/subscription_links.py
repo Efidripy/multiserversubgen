@@ -199,6 +199,18 @@ def _fingerprint_from_stream_settings(stream_settings: Dict) -> str:
     return "chrome"
 
 
+def _subscription_port(inbound: Dict) -> str:
+    """Return the public listener port from an inbound, with a legacy fallback."""
+    raw_port = inbound.get("port")
+    if isinstance(raw_port, bool):
+        return "443"
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError):
+        return "443"
+    return str(port) if 1 <= port <= 65535 else "443"
+
+
 def get_links_filtered(
     nodes: List[Dict],
     email: str,
@@ -241,6 +253,7 @@ def get_links_filtered(
             sni = _first_server_name(stream_settings)
             fingerprint = _fingerprint_from_stream_settings(stream_settings)
             network = stream_settings.get("network", "tcp")
+            subscription_port = _subscription_port(inbound)
 
             for client in settings.get("clients", []):
                 if client.get("email") != email:
@@ -251,13 +264,13 @@ def get_links_filtered(
                     flow_param = f"&flow={flow}" if flow else ""
                     if security == "reality":
                         links.append(
-                            f"vless://{client['id']}@{node['ip']}:443?encryption=none&security=reality"
+                            f"vless://{client['id']}@{node['ip']}:{subscription_port}?encryption=none&security=reality"
                             f"&sni={sni}&fp={fingerprint}&pbk={public_key}&sid={short_id}"
                             f"{flow_param}&type={network}#{node['name']}"
                         )
                     else:
                         links.append(
-                            f"vless://{client['id']}@{node['ip']}:443?encryption=none&security=tls"
+                            f"vless://{client['id']}@{node['ip']}:{subscription_port}?encryption=none&security=tls"
                             f"&sni={sni}&fp={fingerprint}{flow_param}&type={network}#{node['name']}"
                         )
                     continue
@@ -267,7 +280,7 @@ def get_links_filtered(
                         "v": "2",
                         "ps": f"{client['email']} ({node['name']})",
                         "add": node["ip"],
-                        "port": "443",
+                        "port": subscription_port,
                         "id": client.get("id", ""),
                         "aid": "0",
                         "net": network,
@@ -293,13 +306,13 @@ def get_links_filtered(
                     password = client.get("password", "")
                     if security == "reality":
                         links.append(
-                            f"trojan://{password}@{node['ip']}:443?security=reality"
+                            f"trojan://{password}@{node['ip']}:{subscription_port}?security=reality"
                             f"&sni={sni}&fp={fingerprint}&pbk={public_key}&sid={short_id}"
                             f"&type={network}#{node['name']}"
                         )
                     else:
                         links.append(
-                            f"trojan://{password}@{node['ip']}:443?security=tls"
+                            f"trojan://{password}@{node['ip']}:{subscription_port}?security=tls"
                             f"&sni={sni}&type={network}#{node['name']}"
                         )
 
