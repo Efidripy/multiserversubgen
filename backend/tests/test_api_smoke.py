@@ -66,6 +66,7 @@ def _build_test_app(*, monitoring_enabled: bool) -> FastAPI:
         check_subscription_rate_limit=main._check_subscription_rate_limit,
         get_emails=main.get_emails,
         get_links_filtered=main.get_links_filtered,
+        register_subscription_response_cache_invalidator=main.register_subscription_response_cache_invalidator,
         subscription_signing_secret=main.SUBSCRIPTION_SIGNING_SECRET,
         verify_tls_default=main.VERIFY_TLS,
         list_adguard_sources=main.adguard_runtime.list_sources,
@@ -988,6 +989,117 @@ def test_sub_grouped_cache_key_includes_filters(tmp_path):
     assert trojan.headers["x-subscription-cache"] == "miss"
     assert base64.b64decode(vless.text).decode() == "vless://alpha@example.com@node1"
     assert base64.b64decode(trojan.text).decode() == "trojan://alpha@example.com@node1"
+
+
+def test_sub_grouped_cache_is_cleared_by_shared_subscription_invalidation(tmp_path):
+    from core.main_facades import build_subscription_links_facade
+    from routers.subscriptions import build_subscriptions_router
+    from services.db_bootstrap import init_db
+    from services.subscription_tokens import ensure_tokens
+
+    class SubscriptionLinksServiceStub:
+        def __init__(self):
+            self.invalidations = 0
+
+        def configure_snapshot_db(self, _db_path):
+            pass
+
+        def invalidate_subscription_cache(self):
+            self.invalidations += 1
+
+        def fetch_inbounds(self, _node):
+            return []
+
+        def get_emails(self, _nodes):
+            return []
+
+        def get_links(self, _nodes, _email):
+            return []
+
+        def get_links_filtered(self, _nodes, _email, _protocol=None):
+            return []
+
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO subscription_groups (name, identifier, email_patterns, node_filters) VALUES (?, ?, ?, ?)",
+            ("Alpha", "alpha", json.dumps(["alpha@example.com"]), json.dumps([])),
+        )
+        conn.commit()
+
+    service = SubscriptionLinksServiceStub()
+    (
+        invalidate_subscription_cache,
+        _,
+        _,
+        _,
+        _,
+        register_response_cache_invalidator,
+    ) = build_subscription_links_facade(subscription_links_service=service, db_path=db_path)
+    link_value = {"value": "vless://before"}
+    app = FastAPI()
+    app.include_router(
+        build_subscriptions_router(
+            check_auth=lambda _request: "admin",
+            db_path=db_path,
+            node_service=type("NodeServiceStub", (), {"list_nodes": lambda self: [{"name": "node1"}]})(),
+            check_subscription_rate_limit=lambda _request, _key: (True, 0),
+            get_emails=lambda _nodes: ["alpha@example.com"],
+            get_links_filtered=lambda _nodes, _email, _protocol: [link_value["value"]],
+            subscription_signing_secret="test-subscription-secret",
+            invalidate_subscription_cache=invalidate_subscription_cache,
+            register_subscription_response_cache_invalidator=register_response_cache_invalidator,
+            logger=main.logger,
+        )
+    )
+    token = ensure_tokens(db_path, "group", ["alpha"])["alpha"]
+    client = TestClient(app)
+
+    first = client.get(f"/api/v1/sub-grouped/{token}")
+    second = client.get(f"/api/v1/sub-grouped/{token}")
+    assert first.headers["x-subscription-cache"] == "miss"
+    assert second.headers["x-subscription-cache"] == "hit"
+    assert base64.b64decode(second.text).decode() == "vless://before"
+
+    link_value["value"] = "vless://after"
+    invalidate_subscription_cache()
+    refreshed = client.get(f"/api/v1/sub-grouped/{token}")
+
+    assert service.invalidations == 1
+    assert refreshed.headers["x-subscription-cache"] == "miss"
+    assert base64.b64decode(refreshed.text).decode() == "vless://after"
+
+
+def test_inbound_update_invalidates_subscription_cache():
+    from routers.inbounds import build_inbounds_router
+
+    class InboundManagerStub:
+        def update_inbound(self, _node, _inbound_id, _updates):
+            return True
+
+    invalidations = {"subscription": 0, "live_stats": 0}
+    app = FastAPI()
+    app.include_router(
+        build_inbounds_router(
+            check_auth=lambda _request: "admin",
+            inbound_mgr=InboundManagerStub(),
+            get_cached_inbounds=lambda _nodes: [],
+            get_cached_slim_inbounds=lambda _nodes: [],
+            get_cached_inbound_options=lambda _nodes: [],
+            node_service=type("NodeServiceStub", (), {"list_nodes": lambda self: [{"id": 1, "name": "node1"}]})(),
+            get_node_or_404=lambda _node_id: {"id": 1, "name": "node1"},
+            invalidate_subscription_cache=lambda: invalidations.__setitem__("subscription", invalidations["subscription"] + 1),
+            invalidate_live_stats_cache=lambda: invalidations.__setitem__("live_stats", invalidations["live_stats"] + 1),
+            ws_manager=object(),
+        )
+    )
+
+    response = TestClient(app).put("/api/v1/inbounds/1/42", json={"port": 8443})
+
+    assert response.status_code == 200
+    assert response.json() == {"success": True}
+    assert invalidations == {"subscription": 1, "live_stats": 1}
 
 
 def test_inbound_set_enable_auth_required():

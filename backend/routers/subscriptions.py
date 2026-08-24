@@ -33,6 +33,7 @@ def build_subscriptions_router(
     subscription_signing_secret,
     invalidate_subscription_cache,
     logger,
+    register_subscription_response_cache_invalidator=None,
 ):
     router = APIRouter()
     subscription_response_cache: Dict[str, tuple[float, str]] = {}
@@ -84,6 +85,9 @@ def build_subscriptions_router(
     def _clear_subscription_response_cache() -> None:
         with subscription_response_cache_lock:
             subscription_response_cache.clear()
+
+    if register_subscription_response_cache_invalidator is not None:
+        register_subscription_response_cache_invalidator(_clear_subscription_response_cache)
 
     def _verify_subscription_token(token: str, expected_kind: str) -> Optional[str]:
         decoded = _decode_subscription_payload(token, expected_kind)
@@ -380,7 +384,6 @@ def build_subscriptions_router(
         if not token:
             raise HTTPException(status_code=404, detail="Subscription not found")
         invalidate_subscription_cache()
-        _clear_subscription_response_cache()
         return {"kind": kind, "identifier": identifier, "subscription_token": token}
 
     @router.post("/api/v1/subscription-groups")
@@ -413,7 +416,6 @@ def build_subscriptions_router(
                 )
                 conn.commit()
             invalidate_subscription_cache()
-            _clear_subscription_response_cache()
             return {"status": "success", "identifier": identifier}
         except Exception as exc:
             logger.error(f"Error creating subscription group: {exc}")
@@ -461,7 +463,6 @@ def build_subscriptions_router(
                 )
                 conn.commit()
             invalidate_subscription_cache()
-            _clear_subscription_response_cache()
             return {"status": "success"}
         except Exception as exc:
             logger.error(f"Error updating subscription group: {exc}")
@@ -478,7 +479,6 @@ def build_subscriptions_router(
                 conn.execute("DELETE FROM subscription_groups WHERE id = ?", (group_id,))
                 conn.commit()
             invalidate_subscription_cache()
-            _clear_subscription_response_cache()
             return {"status": "success"}
         except Exception as exc:
             logger.error(f"Error deleting subscription group: {exc}")
