@@ -936,7 +936,10 @@ if [ ! -f "$LOG_FILE" ]; then
     exit 1
 fi
 
-install_log_source "$LOG_FILE"
+if ! install_log_source "$LOG_FILE"; then
+    echo "❌ Installation state log failed security validation. Update aborted."
+    exit 1
+fi
 if ! runtime_require_safe_project_name; then
     echo "❌ Некорректное имя проекта/сервиса в install log. Обновление прервано."
     exit 1
