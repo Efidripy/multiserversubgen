@@ -6,9 +6,9 @@ INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT_DIR="$(cd "${INSTALLER_DIR}/../.." && pwd)"
 source "${INSTALLER_DIR}/lib/locale.sh"
 source "${INSTALLER_DIR}/lib/resource_guard.sh"
-source "${INSTALLER_DIR}/lib/runtime_secrets.sh"
 # shellcheck source=../ops/lib/install_log.sh
 source "${SCRIPT_DIR}/scripts/ops/lib/install_log.sh"
+source "${INSTALLER_DIR}/lib/runtime_secrets.sh"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
 apt_update() {
