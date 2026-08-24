@@ -177,6 +177,31 @@ def test_scoped_client_routes_preserve_the_shared_fleet_cache(tmp_path):
     assert warm_scopes == [(1, 2), (1, 2), (1, 2)]
 
 
+def test_node_client_route_uses_node_id_when_names_are_duplicated(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    nodes = [
+        {"id": 1, "name": "edge", "ip": "1.1.1.1", "port": "443"},
+        {"id": 2, "name": "edge", "ip": "2.2.2.2", "port": "443"},
+    ]
+    cached_clients = [
+        {"id": "edge-one", "email": "one@test.local", "node_id": 1, "inbound_id": 11, "node_name": "edge"},
+        {"id": "edge-two", "email": "two@test.local", "node_id": 2, "inbound_id": 22, "node_name": "edge"},
+    ]
+    client = _build_clients_router_test_client(
+        db_path=db_path,
+        nodes=nodes,
+        cached_clients=cached_clients,
+        cache_scopes=[],
+    )
+
+    response = client.get("/api/v1/nodes/1/clients")
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+    assert [item["email"] for item in response.json()["clients"]] == ["one@test.local"]
+
+
 def test_bulk_enable_loads_nodes_before_iterating(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)

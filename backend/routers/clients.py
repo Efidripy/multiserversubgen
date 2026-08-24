@@ -192,12 +192,11 @@ def build_clients_router(
             raise HTTPException(status_code=401)
 
         node = await _run(get_node_or_404, node_id)
-        node_name = node.get("name", "")
         # Use the shared cache (20s fresh / 180s stale) instead of a live panel call.
         # Fetch all nodes so the cache covers the full fleet and filter to this node.
         all_nodes = await _run(node_service.list_nodes)
         all_clients = await _with_notes(await _run(get_cached_clients, all_nodes, email_filter=email), all_nodes)
-        clients = [c for c in all_clients if c.get("node_name") == node_name]
+        clients = [c for c in all_clients if c.get("node_id") == node.get("id")]
         return ORJSONResponse(
             content={"clients": clients, "count": len(clients)},
             headers={"Cache-Control": "private, max-age=20"},
