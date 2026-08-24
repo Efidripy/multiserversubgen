@@ -891,7 +891,7 @@ export const App: React.FC = () => {
             <button
               className={`app-topbar__command-btn inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-medium tracking-wide${logPanelOpen ? ' is-active' : ''}`}
               onClick={() => setLogPanelOpen(v => !v)}
-              title="Activity Log"
+              title={t('common.activityLogTitle')}
             >
               LOG
             </button>
