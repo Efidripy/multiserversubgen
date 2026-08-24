@@ -385,6 +385,46 @@ def test_traffic_period_route_uses_projection_without_nodes_or_legacy_traffic_fe
     assert "identity_stats" not in payload
 
 
+def test_client_traffic_totals_reads_only_requested_projection_entries(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("legacy traffic fetch must not run")),
+    )
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats_projection_by_period",
+        lambda group_by, period: calls.append((group_by, period)) or {
+            "stats": {
+                "Active@Example.Test": {"up": 2, "down": 3},
+                "other@example.test": {"up": 40, "down": 60},
+            },
+        },
+    )
+    app = _build_test_app(monitoring_enabled=False)
+
+    @app.middleware("http")
+    async def _inject_auth_user(request, call_next):
+        request.state.auth_user = "admin"
+        return await call_next(request)
+
+    client = TestClient(app)
+    response = client.post("/api/v1/traffic/client-totals", json={
+        "emails": [" active@example.test ", "missing@example.test"],
+        "period": "week",
+    })
+
+    assert response.status_code == 200
+    assert calls == [("client", "week")]
+    assert response.json() == {
+        "totals": {"active@example.test": 5},
+        "missing": ["missing@example.test"],
+        "period": "week",
+    }
+    assert client.post("/api/v1/traffic/client-totals", json={"emails": "not-a-list"}).status_code == 422
+
+
 def test_dashboard_summary_uses_snapshot_cache_without_xui_fetch(monkeypatch):
     nodes = [
         {"id": 1, "name": "alpha"},
