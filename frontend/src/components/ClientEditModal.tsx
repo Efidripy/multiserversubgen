@@ -274,10 +274,11 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
     if (!window.confirm(t('clients.confirmResetTrafficForEmail', { email }))) return;
     setResetTrafficLoading(true);
     try {
-      await api.post(`/v1/clients/${encodeURIComponent(client.id || email)}/reset-traffic`, {}, {
-        auth: getAuth(),
-        params: { node_id: client.node_id, inbound_id: client.inbound_id },
-      });
+      await api.post(`/v1/clients/${encodeURIComponent(client.id || email)}/reset-traffic`, {
+        node_id: client.node_id,
+        inbound_id: client.inbound_id,
+        email,
+      }, { auth: getAuth() });
       toast(t('clients.trafficResetForEmail', { email }), 'success');
       onSaved();
     } catch (e: any) {
