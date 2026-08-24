@@ -352,7 +352,6 @@ def check_web_session(request: Request):
     invalidate_subscription_cache,
     fetch_inbounds,
     get_emails,
-    get_links,
     get_links_filtered,
     register_subscription_response_cache_invalidator,
 ) = build_subscription_links_facade(subscription_links_service=subscription_links_service, db_path=DB_PATH)
