@@ -39,7 +39,9 @@ describe('navigation performance regressions', () => {
 
     expect(source).toContain('groupClientsByEmail(filteredClients)');
     expect(source).toContain('const visibleClientGroups = sortedClientGroups.slice');
-    expect(source).toContain('const visibleSlice = filteredClients.slice(0, TRAFFIC_FETCH_MAX_CLIENTS);');
+    expect(source).toContain('const expandedGroup = groupClientsByEmail(filteredClients).find((group) => group.key === expandedKey);');
+    expect(source).toContain('const missing = (expandedGroup?.clients || []).filter((client) => {');
+    expect(source).not.toContain('const visibleSlice = filteredClients.slice(0, TRAFFIC_FETCH_MAX_CLIENTS);');
   });
 
   it('keeps online traffic details explicit and cancels stale inbound requests', () => {
