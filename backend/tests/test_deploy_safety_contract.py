@@ -72,6 +72,13 @@ def test_python_pam_runtime_compatibility_keeps_six_pinned():
         assert expected_hash in lockfile
 
 
+def test_windows_smoke_requires_exact_subpath_asset_prefix():
+    script = (REPO / "scripts/windows/validate-project-smoke.ps1").read_text(encoding="utf-8")
+
+    assert '"${basePath}assets/"' in script
+    assert '"$basePathassets/"' not in script
+
+
 def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_trace():
     script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
 
