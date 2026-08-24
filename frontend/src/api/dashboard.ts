@@ -1,11 +1,6 @@
 import api from './client';
 import { getAuth } from '../auth';
-import {
-  getNodePanelUpdateInfo,
-  getNodeServerStatus,
-  listNodes,
-  type NodeRecord,
-} from './nodes';
+import { listNodes, type NodeRecord } from './nodes';
 
 export interface DashboardTopClient {
   email: string;
@@ -87,37 +82,11 @@ export interface XrayCompatibilitySummary {
   findings: Array<{ code: string; severity: 'warning' | 'error' | 'critical'; count: number }>;
 }
 
-interface SnapshotNode {
-  node_id?: number;
-  name: string;
-  available: boolean;
-  status?: string;
-  reason?: string;
-  error?: string;
-  xray_running?: boolean;
-  timestamp?: number;
-  online_clients?: number;
-  traffic_total?: number;
-  poll_ms?: number;
-  cpu?: number;
-  system?: any;
-  xray?: any;
-  network?: any;
-  panel_version?: string;
-  api_version?: string;
-  xray_compatibility?: XrayCompatibilitySummary;
-}
-
 export interface DashboardServerDeck {
   servers: DashboardServerStatus[];
   nodeIdsByName: Record<string, number>;
   latencyByNode: Record<number, number>;
   updateAvailableNodeIds: number[];
-}
-
-export interface DashboardServerDeckOptions {
-  includeLiveStatus?: boolean;
-  includePanelUpdateChecks?: boolean;
 }
 
 const toFiniteNumber = (value: unknown): number => {
@@ -242,11 +211,6 @@ export function dashboardFleetToServerDeck(fleet: DashboardFleetNode[]): Dashboa
   return { servers, nodeIdsByName, latencyByNode, updateAvailableNodeIds: [] };
 }
 
-export async function getLatestSnapshotNodes(): Promise<SnapshotNode[]> {
-  const res = await api.get('/v1/snapshots/latest', { auth: getAuth() });
-  return Array.isArray(res.data?.nodes) ? res.data.nodes : [];
-}
-
 export async function getInboundsHeaderSource(options: { signal?: AbortSignal } = {}): Promise<any[]> {
   const res = await api.get('/v1/inbounds', { auth: getAuth(), signal: options.signal });
   return Array.isArray(res.data?.inbounds) ? res.data.inbounds
@@ -280,110 +244,4 @@ export async function getSubscriptionsHeaderSource(): Promise<{ emails: string[]
     stats: emailsRes.data?.stats || {},
     nodes,
   };
-}
-
-function buildBaseStatuses(nodes: NodeRecord[], snapshotNodes: SnapshotNode[]): DashboardServerStatus[] {
-  const snapshotByNodeId = new Map<number, SnapshotNode>();
-  const snapshotByName = new Map<string, SnapshotNode>();
-  snapshotNodes.forEach((snapshot) => {
-    if (typeof snapshot.node_id === 'number') snapshotByNodeId.set(snapshot.node_id, snapshot);
-    snapshotByName.set(snapshot.name, snapshot);
-  });
-
-  return nodes.map((node) => {
-    const snapshot = snapshotByNodeId.get(node.id) || snapshotByName.get(node.name);
-    return {
-      nodeId: node.id,
-      node: node.name,
-      available: Boolean(snapshot?.available),
-      loadingDetails: Boolean(snapshot?.available),
-      status: snapshot?.status || (snapshot?.available ? 'online' : 'offline'),
-      reason: snapshot?.reason || (snapshot?.available ? 'ok' : 'unknown'),
-      error: snapshot?.error || '',
-      timestamp: snapshot?.timestamp ? new Date(snapshot.timestamp * 1000).toISOString() : undefined,
-      system: snapshot?.system,
-      xray: snapshot ? {
-        ...(snapshot.xray || {}),
-        state: snapshot.xray?.state || (snapshot.xray_running ? 'running' : 'stopped'),
-        running: snapshot.xray?.running ?? Boolean(snapshot.xray_running),
-      } : undefined,
-      network: snapshot?.network,
-      panel_version: snapshot?.panel_version,
-      api_version: snapshot?.api_version,
-      xray_compatibility: snapshot?.xray_compatibility,
-    };
-  });
-}
-
-export async function getDashboardServerDeck(
-  options: DashboardServerDeckOptions = {},
-): Promise<DashboardServerDeck> {
-  const { includeLiveStatus = true, includePanelUpdateChecks = false } = options;
-  const [nodes, snapshotNodes] = await Promise.all([listNodes(), getLatestSnapshotNodes()]);
-  const nodeIdsByName: Record<string, number> = {};
-  nodes.forEach((node) => { nodeIdsByName[node.name] = node.id; });
-
-  const baseStatuses = buildBaseStatuses(nodes, snapshotNodes);
-  const latencyByNode: Record<number, number> = {};
-  const updateAvailableNodeIds: number[] = [];
-
-  let servers = baseStatuses;
-  if (includeLiveStatus) {
-    const liveResults = await Promise.all(
-      nodes.map(async (node) => {
-        const base = baseStatuses.find((server) => server.nodeId === node.id);
-        if (!base?.available) return null;
-        const started = Date.now();
-        try {
-          const live = await getNodeServerStatus(node.id);
-          latencyByNode[node.id] = Date.now() - started;
-          return {
-            nodeId: node.id,
-            live: live as DashboardServerStatus,
-          };
-        } catch {
-          return {
-            nodeId: node.id,
-            live: null,
-          };
-        }
-      }),
-    );
-    const liveByNodeId = new Map(liveResults.filter(Boolean).map((item) => [item!.nodeId, item!.live]));
-    servers = baseStatuses.map((server) => {
-      if (!server.nodeId) return server;
-      const live = liveByNodeId.get(server.nodeId);
-      if (!live) return { ...server, loadingDetails: false };
-      return {
-        ...server,
-        ...live,
-        nodeId: server.nodeId,
-        node: live.node || server.node,
-        available: true,
-        loadingDetails: false,
-        status: server.status,
-        reason: server.reason,
-        error: server.error,
-      };
-    });
-  }
-
-  if (includePanelUpdateChecks) {
-    await Promise.all(
-      nodes.map(async (node) => {
-        const base = baseStatuses.find((server) => server.nodeId === node.id);
-        if (!base?.available) return;
-        try {
-          const updateInfo = await getNodePanelUpdateInfo(node.id);
-          if (updateInfo?.isUpdatable ?? updateInfo?.has_update ?? false) {
-            updateAvailableNodeIds.push(node.id);
-          }
-        } catch {
-          // Panel update badges are enrichment only.
-        }
-      }),
-    );
-  }
-
-  return { servers, nodeIdsByName, latencyByNode, updateAvailableNodeIds };
 }
