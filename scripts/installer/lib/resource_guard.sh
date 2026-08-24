@@ -40,22 +40,36 @@ resource_guard_print_summary() {
     echo "Resource profile (${scope}): cpu=${RESOURCE_CPU_COUNT} mem_mb=${RESOURCE_MEM_MB} free_root_mb=${RESOURCE_ROOT_FREE_MB} low_resource=${RESOURCE_LOW_RESOURCE_MODE} very_low_resource=${RESOURCE_VERY_LOW_RESOURCE_MODE}"
 }
 
+resource_guard_project_root() {
+    local source_path="${BASH_SOURCE[0]}"
+    local source_dir="${source_path%/*}"
+    local project_root
+
+    if [ "$source_dir" = "$source_path" ]; then
+        source_dir="."
+    fi
+    project_root="$(cd "$source_dir/../../.." 2>/dev/null && pwd -P)" || return 1
+
+    if [ ! -d "$project_root/backend" ] || [ ! -d "$project_root/frontend" ]; then
+        return 1
+    fi
+    printf '%s\n' "$project_root"
+}
+
 resource_guard_try_safe_cleanup() {
     local path="${1:-/}"
     local before_free after_free
+    local project_root
 
     resource_guard_detect_profile
     before_free="$(resource_guard_free_mb "$path")"
     echo "Low-resource host: trying safe disk cleanup on ${path} before aborting."
 
     apt-get clean >/dev/null 2>&1 || true
-    rm -rf /root/.npm /root/.npm-cache /root/.cache/pip /var/tmp/* /tmp/npm-* /tmp/vite-* 2>/dev/null || true
-    if [ -d "${PWD}/frontend" ]; then
-        rm -rf "${PWD}/frontend/node_modules" "${PWD}/frontend/.vite" "${PWD}/frontend/dist" 2>/dev/null || true
-    fi
-
-    if command -v journalctl >/dev/null 2>&1; then
-        journalctl --vacuum-size=50M >/dev/null 2>&1 || true
+    rm -rf -- /root/.npm /root/.npm-cache /root/.cache/pip 2>/dev/null || true
+    project_root="$(resource_guard_project_root 2>/dev/null || true)"
+    if [ -n "$project_root" ]; then
+        rm -rf -- "$project_root/frontend/node_modules" "$project_root/frontend/.vite" "$project_root/frontend/dist" 2>/dev/null || true
     fi
 
     after_free="$(resource_guard_free_mb "$path")"
