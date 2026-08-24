@@ -85,8 +85,10 @@ describe('navigation performance regressions', () => {
     expect(app).toContain('<ServerStatus');
     expect(app).not.toContain('includeLiveStatus={false}');
     expect(app).not.toContain('includePanelUpdateChecks={false}');
-    expect(fleetPanel).toContain('getRegisteredFleetSnapshotOverview()');
-    expect(fleetPanel).toContain('load({ live: true })');
+    expect(fleetPanel).not.toContain('getRegisteredFleetSnapshotOverview');
+    expect(fleetPanel).not.toContain('NODES_CHANGED_EVENT');
+    expect(fleetPanel).not.toContain('window.setInterval');
+    expect(fleetPanel).toContain('refreshFleetLive()');
   });
 
   it('keeps the node intake/editor isolated from the retired per-node fleet fan-out', () => {
@@ -115,6 +117,8 @@ describe('navigation performance regressions', () => {
     expect(app.lastIndexOf('</DashboardDataProvider>')).toBeGreaterThan(app.indexOf('<ServerStatus'));
     expect(app.indexOf('<DashboardDataProvider>')).toBeLessThan(app.indexOf('<DashboardSummary'));
     expect(app.lastIndexOf('</DashboardDataProvider>')).toBeGreaterThan(app.indexOf('<DashboardSummary'));
+    expect(app.indexOf('<DashboardDataProvider>')).toBeLessThan(app.indexOf('<RegisteredFleetPanel'));
+    expect(app.lastIndexOf('</DashboardDataProvider>')).toBeGreaterThan(app.indexOf('<RegisteredFleetPanel'));
     expect(app).not.toContain('includeLiveStatus={false}');
     expect(app).not.toContain('includePanelUpdateChecks={false}');
     expect(app).not.toContain('getDashboardHeaderMetrics');
@@ -126,7 +130,8 @@ describe('navigation performance regressions', () => {
     expect(serverStatus).not.toContain('useTrafficStatsSubscription');
     expect(serverStatus).not.toContain('autoRefresh');
     expect(nodesApi).not.toContain('getNodePanelUpdateInfo');
-    expect(fleetPanel).toContain('if (dashboardData) return;');
+    expect(fleetPanel).not.toContain('getRegisteredFleetSnapshotOverview');
+    expect(fleetPanel).not.toContain('window.setInterval');
     expect(fleetPanel).toContain('getRegisteredFleetOverview');
     expect(summary).not.toContain('getDashboardSummary');
     expect(summary).not.toContain('listNodes');
