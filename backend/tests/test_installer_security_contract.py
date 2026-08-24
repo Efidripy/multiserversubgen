@@ -42,6 +42,9 @@ def test_installers_do_not_render_or_log_secret_values():
 def test_runtime_secret_writer_is_root_only_and_atomic():
     helper = _read("scripts/installer/lib/runtime_secrets.sh")
 
+    assert "runtime_require_safe_project_name()" in helper
+    assert '[[ ! "$project_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]' in helper
+    assert 'runtime_require_safe_project_name || return 1' in helper
     assert "install -d -m 0700" in helper
     assert "mktemp" in helper
     assert "chmod 0600 \"$temp_file\"" in helper
@@ -174,9 +177,20 @@ def test_installer_scripts_validate_log_before_sourcing():
 def test_update_aborts_when_runtime_secrets_fail_security_validation():
     update = _read("scripts/installer/update.sh")
 
+    assert "if ! runtime_require_safe_project_name; then" in update
+    assert update.index("runtime_require_safe_project_name") < update.index("runtime_secrets_load")
     assert "if ! runtime_secrets_load; then" in update
     assert "Runtime secrets file failed security validation. Update aborted." in update
     assert "exit 1" in update
+
+
+def test_installer_validates_project_name_before_path_construction():
+    install = _read("scripts/installer/install.sh")
+
+    assert "if ! runtime_require_safe_project_name; then" in install
+    validation = install.index("if ! runtime_require_safe_project_name; then", install.index('read -p "Имя проекта/сервиса'))
+    assert validation < install.index('PROJECT_DIR="/opt/$PROJECT_NAME"')
+    assert "runtime_require_safe_project_name || exit 1" in install
 
 
 def test_resource_guard_cleanup_is_project_scoped():
