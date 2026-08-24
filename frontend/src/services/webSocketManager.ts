@@ -10,7 +10,7 @@ import { devLog } from '../utils/devLogger';
 
 export type WebSocketMessageHandler = (message: any) => void;
 
-class WebSocketManager {
+export class WebSocketManager {
   private ws: WebSocket | null = null;
   private url: string;
   private reconnectDelay = 1000;
@@ -21,7 +21,9 @@ class WebSocketManager {
   private policyRefreshAttempted = false;
   private terminalPolicyFailure = false;
   private ticketRefreshPromise: Promise<boolean> | null = null;
+  private connectPromise: Promise<void> | null = null;
   private handlers: Map<string, Set<WebSocketMessageHandler>> = new Map();
+  private channelRefs: Map<string, number> = new Map();
   private messageQueue: any[] = [];
 
   constructor(wsUrl?: string) {
@@ -33,27 +35,36 @@ class WebSocketManager {
   }
 
   connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.closedByOwner = false;
-      if (this.terminalPolicyFailure) {
-        reject(new Error('WebSocket reconnect is paused after an authentication/policy failure.'));
-        return;
-      }
-      if (this.reconnectTimer !== null) {
-        window.clearTimeout(this.reconnectTimer);
-        this.reconnectTimer = null;
-      }
-      if (this.isConnecting || (this.ws && this.ws.readyState === WebSocket.OPEN)) {
+    this.closedByOwner = false;
+    if (this.terminalPolicyFailure) {
+      return Promise.reject(new Error('WebSocket reconnect is paused after an authentication/policy failure.'));
+    }
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) return Promise.resolve();
+    if (this.connectPromise) return this.connectPromise;
+
+    this.connectPromise = new Promise((resolve, reject) => {
+      let settled = false;
+      const resolveOnce = () => {
+        if (settled) return;
+        settled = true;
         resolve();
-        return;
-      }
+      };
+      const rejectOnce = (reason: unknown) => {
+        if (settled) return;
+        settled = true;
+        reject(reason);
+      };
 
       this.isConnecting = true;
       try {
         const auth = getAuth();
         if (!auth.wsTicket) {
           this.isConnecting = false;
-          reject(new Error('WebSocket ticket is missing; waiting for authenticated session.'));
+          rejectOnce(new Error('WebSocket ticket is missing; waiting for authenticated session.'));
           return;
         }
 
@@ -62,7 +73,7 @@ class WebSocketManager {
         const allowInsecureWs = import.meta.env.VITE_ALLOW_INSECURE_WS === 'true';
         if (!isSecurePage && !isLocalDevelopment && !allowInsecureWs) {
           this.isConnecting = false;
-          reject(new Error('Refusing insecure WebSocket outside local development. Configure HTTPS/WSS.'));
+          rejectOnce(new Error('Refusing insecure WebSocket outside local development. Configure HTTPS/WSS.'));
           return;
         }
 
@@ -74,13 +85,15 @@ class WebSocketManager {
           this.reconnectDelay = 1000;
           this.policyRefreshAttempted = false;
 
+          this.resubscribeActiveChannels();
+
           // Flush queued messages
           while (this.messageQueue.length > 0) {
             const msg = this.messageQueue.shift();
             this.send(msg);
           }
 
-          resolve();
+          resolveOnce();
         };
 
         this.ws.onmessage = (event) => {
@@ -97,13 +110,14 @@ class WebSocketManager {
           // include a safe diagnostic and logging each one caused console spam.
           devLog('[WebSocket] transport error', error);
           this.isConnecting = false;
-          reject(error);
+          rejectOnce(error);
         };
 
         this.ws.onclose = (event) => {
           devLog('[WebSocket] Disconnected');
           this.isConnecting = false;
           this.ws = null;
+          rejectOnce(new Error(`WebSocket closed before opening (code ${event.code}).`));
           if (this.closedByOwner) {
             return;
           }
@@ -120,9 +134,15 @@ class WebSocketManager {
         };
       } catch (err) {
         this.isConnecting = false;
-        reject(err);
+        rejectOnce(err);
       }
     });
+    const pendingConnect = this.connectPromise;
+    pendingConnect.then(
+      () => { if (this.connectPromise === pendingConnect) this.connectPromise = null; },
+      () => { if (this.connectPromise === pendingConnect) this.connectPromise = null; },
+    );
+    return this.connectPromise;
   }
 
   private async refreshTicketAndReconnect(): Promise<void> {
@@ -174,6 +194,37 @@ class WebSocketManager {
     } catch (err) {
       console.error('[WebSocket] Send error:', err);
     }
+  }
+
+  subscribeChannel(channel: string): () => void {
+    const normalized = channel.trim();
+    if (!normalized) return () => undefined;
+
+    const previous = this.channelRefs.get(normalized) || 0;
+    this.channelRefs.set(normalized, previous + 1);
+    if (previous === 0) {
+      if (this.isConnected()) {
+        this.send({ type: 'subscribe', channel: normalized });
+      } else if (!this.isConnecting) {
+        this.connect().catch(() => undefined);
+      }
+    }
+
+    return () => {
+      const current = this.channelRefs.get(normalized) || 0;
+      if (current <= 1) {
+        this.channelRefs.delete(normalized);
+        if (this.isConnected()) this.send({ type: 'unsubscribe', channel: normalized });
+        return;
+      }
+      this.channelRefs.set(normalized, current - 1);
+    };
+  }
+
+  private resubscribeActiveChannels() {
+    this.channelRefs.forEach((count, channel) => {
+      if (count > 0) this.send({ type: 'subscribe', channel });
+    });
   }
 
   subscribe(event: string, handler: WebSocketMessageHandler) {
@@ -229,6 +280,8 @@ class WebSocketManager {
       this.reconnectTimer = null;
     }
     this.messageQueue = [];
+    this.channelRefs.clear();
+    this.connectPromise = null;
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -254,15 +307,15 @@ export function useWebSocketMessages({ channels = [], enabled, onMessage }: WebS
     let cancelled = false;
     const handler = (message: any) => onMessageRef.current(message);
     const unsubscribe = wsManager.subscribe('*', handler);
+    const releaseChannels = channels.map((channel) => wsManager.subscribeChannel(channel));
     wsManager.connect().then(() => {
       if (cancelled) return;
-      channels.forEach((channel) => wsManager.send({ type: 'subscribe', channel }));
     }).catch(() => undefined);
 
     return () => {
       cancelled = true;
       unsubscribe();
-      channels.forEach((channel) => wsManager.send({ type: 'unsubscribe', channel }));
+      releaseChannels.forEach((release) => release());
     };
   }, [enabled, channelsKey]);
 }
