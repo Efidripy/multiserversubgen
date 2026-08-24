@@ -333,6 +333,7 @@ def check_web_session(request: Request):
 
 (
     invalidate_live_stats_cache,
+    invalidate_read_projections,
     get_cached_traffic_stats,
     get_cached_traffic_stats_projection,
     get_cached_traffic_stats_projection_by_period,
@@ -344,6 +345,7 @@ def check_web_session(request: Request):
 ) = build_cache_facade(
     live_stats_runtime=live_stats_runtime,
     clients_runtime=clients_runtime,
+    inbounds_runtime=inbounds_runtime,
     audit_runtime=audit_runtime,
 )
 
@@ -366,7 +368,7 @@ app.middleware("http")(
         required_role_for_request=_required_role_for_request,
         has_min_role=has_min_role,
         read_only_mode=READ_ONLY_MODE,
-        invalidate_live_stats_cache=invalidate_live_stats_cache,
+        invalidate_read_projections=invalidate_read_projections,
         http_request_count=HTTP_REQUEST_COUNT,
         http_request_latency=HTTP_REQUEST_LATENCY,
         get_client_ip=_get_client_ip,

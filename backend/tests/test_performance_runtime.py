@@ -138,6 +138,102 @@ def test_clients_and_inbounds_cold_cache_misses_are_single_flight():
     assert inbound_manager.calls == 1
 
 
+def test_read_projections_refetch_immediately_after_invalidation():
+    class ClientManager:
+        calls = 0
+
+        def get_all_clients(self, _nodes, email_filter=None):
+            self.calls += 1
+            return [{"email": "fresh@example.test"}]
+
+    clients_runtime = ClientsRuntime(
+        client_mgr=ClientManager(),
+        clients_cache={"ts": time.time(), "data": [{"email": "stale@example.test"}]},
+        clients_cache_ttl=60,
+        clients_cache_stale_ttl=300,
+        start_cache_refresh=lambda *_args, **_kwargs: None,
+    )
+    assert clients_runtime.get_cached_clients([]) == [{"email": "stale@example.test"}]
+    clients_runtime.invalidate()
+    assert clients_runtime.get_cached_clients([]) == [{"email": "fresh@example.test"}]
+    assert clients_runtime.client_mgr.calls == 1
+
+    class InboundManager:
+        full_calls = 0
+        slim_calls = 0
+        options_calls = 0
+
+        def get_all_inbounds(self, _nodes):
+            self.full_calls += 1
+            return [{"id": "fresh-full"}]
+
+        def get_all_slim_inbounds(self, _nodes, *, cached_full):
+            self.slim_calls += 1
+            return [{"id": "fresh-slim"}]
+
+        def get_all_inbound_options(self, _nodes, *, cached_full):
+            self.options_calls += 1
+            return [{"id": "fresh-options"}]
+
+    inbound_manager = InboundManager()
+    inbounds_runtime = InboundsRuntime(
+        inbound_mgr=inbound_manager,
+        inbounds_cache={"ts": time.time(), "data": [{"id": "stale-full"}]},
+        start_cache_refresh=lambda *_args, **_kwargs: None,
+    )
+    inbounds_runtime._slim_cache = {"ts": time.time(), "data": [{"id": "stale-slim"}]}
+    inbounds_runtime._options_cache = {"ts": time.time(), "data": [{"id": "stale-options"}]}
+
+    assert inbounds_runtime.get_cached_inbounds([]) == [{"id": "stale-full"}]
+    assert inbounds_runtime.get_cached_slim_inbounds([]) == [{"id": "stale-slim"}]
+    assert inbounds_runtime.get_cached_inbound_options([]) == [{"id": "stale-options"}]
+
+    inbounds_runtime.invalidate()
+
+    assert inbounds_runtime.get_cached_inbounds([]) == [{"id": "fresh-full"}]
+    assert inbounds_runtime.get_cached_slim_inbounds([]) == [{"id": "fresh-slim"}]
+    assert inbounds_runtime.get_cached_inbound_options([]) == [{"id": "fresh-options"}]
+    assert (inbound_manager.full_calls, inbound_manager.slim_calls, inbound_manager.options_calls) == (1, 1, 1)
+
+
+def test_invalidation_rejects_an_in_flight_pre_mutation_refresh():
+    class ClientManager:
+        def get_all_clients(self, _nodes, email_filter=None):
+            return [{"email": "before-mutation@example.test"}]
+
+    clients_runtime = ClientsRuntime(
+        client_mgr=ClientManager(),
+        clients_cache={"ts": 0.0, "data": []},
+        clients_cache_ttl=60,
+        clients_cache_stale_ttl=300,
+        start_cache_refresh=lambda *_args, **_kwargs: None,
+    )
+    _cached_at, _cached, generation = clients_runtime._snapshot_cache()
+    clients_runtime.invalidate()
+
+    assert clients_runtime._store_cache([{"email": "before-mutation@example.test"}], generation) is False
+    assert clients_runtime.clients_cache == {"ts": 0.0, "data": []}
+
+    class InboundManager:
+        pass
+
+    inbounds_runtime = InboundsRuntime(
+        inbound_mgr=InboundManager(),
+        inbounds_cache={"ts": 0.0, "data": []},
+        start_cache_refresh=lambda *_args, **_kwargs: None,
+    )
+    _cached_at, _cached, generation = inbounds_runtime._snapshot_cache(inbounds_runtime._options_cache, "inbounds_options")
+    inbounds_runtime.invalidate()
+
+    assert inbounds_runtime._store_cache(
+        cache=inbounds_runtime._options_cache,
+        cache_key="inbounds_options",
+        data=[{"id": "before-mutation"}],
+        generation=generation,
+    ) is False
+    assert inbounds_runtime._options_cache == {"ts": 0.0, "data": []}
+
+
 def test_client_notes_query_only_matches_requested_identities(monkeypatch, tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
