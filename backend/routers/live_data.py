@@ -98,9 +98,14 @@ def build_live_data_router(
         return trimmed
 
     def _public_traffic_payload(payload: Dict, limit: int) -> Dict:
-        """Hide runtime-only stable identity sidecars from the public API."""
+        """Hide runtime sidecars while preserving an aggregate before top-N trimming."""
+        summary = _traffic_totals_from_projection(payload)
+        stats = payload.get("stats") if isinstance(payload, dict) else None
+        summary["count"] = len(stats) if isinstance(stats, dict) else 0
         limited = _apply_limit(payload, limit)
-        return {key: value for key, value in limited.items() if key != "identity_stats"}
+        public = {key: value for key, value in limited.items() if key != "identity_stats"}
+        public["summary"] = summary
+        return public
 
     def _latest_snapshot_payload() -> Dict:
         if not get_latest_snapshot:
