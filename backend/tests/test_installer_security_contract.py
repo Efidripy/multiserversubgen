@@ -119,6 +119,8 @@ def test_project_cleanup_preserves_evidence_and_supports_dry_run():
     assert '".tmp"' not in safe_cleanup
     assert 'log "would remove: $path"' in script
     assert '  - .tmp/' in script
+    assert '  - .vscode/' in script
+    assert 'remove_if_exists ".vscode"' not in script
     assert "cleanup_python_caches" in script
 
 
