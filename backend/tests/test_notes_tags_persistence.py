@@ -41,6 +41,37 @@ class _WsManagerStub:
         self.client_updates.append(payload)
 
 
+def _build_clients_router_test_client(*, db_path, nodes, cached_clients, cache_scopes):
+    """Build a router whose cache emulates one shared fleet snapshot."""
+    cached_snapshot = None
+
+    def get_cached_clients(requested_nodes, email_filter=None):
+        nonlocal cached_snapshot
+        node_ids = tuple(sorted(node["id"] for node in requested_nodes))
+        cache_scopes.append(node_ids)
+        if cached_snapshot is None:
+            cached_snapshot = [
+                client for client in cached_clients if client["node_id"] in set(node_ids)
+            ]
+        return list(cached_snapshot)
+
+    app = FastAPI()
+    app.include_router(
+        build_clients_router(
+            check_auth=lambda request: "admin",
+            client_mgr=_ClientManagerStub(),
+            db_path=db_path,
+            get_cached_clients=get_cached_clients,
+            node_service=_NodeServiceStub(nodes),
+            get_node_or_404=lambda node_id: next(node for node in nodes if node["id"] == node_id),
+            invalidate_live_stats_cache=lambda: None,
+            invalidate_subscription_cache=lambda: None,
+            ws_manager=_WsManagerStub(),
+        )
+    )
+    return TestClient(app)
+
+
 def test_bootstrap_adds_notes_and_tags_schema_idempotently(tmp_path):
     db_path = str(tmp_path / "admin.db")
 
@@ -104,6 +135,46 @@ def test_client_notes_endpoint_persists_and_enriches_client_list(tmp_path):
             (1, 11, "client-1"),
         ).fetchone()
     assert row[0] == "server note"
+
+
+def test_scoped_client_routes_preserve_the_shared_fleet_cache(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    nodes = [
+        {"id": 1, "name": "alpha", "ip": "1.1.1.1", "port": "443"},
+        {"id": 2, "name": "beta", "ip": "2.2.2.2", "port": "443"},
+    ]
+    cached_clients = [
+        {"id": "alpha-client", "email": "alpha@test.local", "node_id": 1, "inbound_id": 11, "node_name": "alpha"},
+        {"id": "beta-client", "email": "beta@test.local", "node_id": 2, "inbound_id": 22, "node_name": "beta"},
+    ]
+
+    # A cold scoped count must not fill the shared cache with one node only.
+    cold_scopes = []
+    cold_client = _build_clients_router_test_client(
+        db_path=db_path,
+        nodes=nodes,
+        cached_clients=cached_clients,
+        cache_scopes=cold_scopes,
+    )
+    assert cold_client.get("/api/v1/clients/count?node_id=1").json() == {"count": 1, "node_id": 1}
+    assert cold_client.get("/api/v1/clients").json()["count"] == 2
+    assert cold_scopes == [(1, 2), (1, 2)]
+
+    # A warm fleet snapshot must still be filtered for every scoped endpoint.
+    warm_scopes = []
+    warm_client = _build_clients_router_test_client(
+        db_path=db_path,
+        nodes=nodes,
+        cached_clients=cached_clients,
+        cache_scopes=warm_scopes,
+    )
+    assert warm_client.get("/api/v1/clients").json()["count"] == 2
+    assert warm_client.get("/api/v1/clients/count?node_id=2").json() == {"count": 1, "node_id": 2}
+    searched = warm_client.get("/api/v1/clients/search?node_id=1").json()
+    assert searched["total"] == 1
+    assert [client["email"] for client in searched["clients"]] == ["alpha@test.local"]
+    assert warm_scopes == [(1, 2), (1, 2), (1, 2)]
 
 
 def test_bulk_enable_loads_nodes_before_iterating(tmp_path):
