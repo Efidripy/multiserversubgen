@@ -72,6 +72,19 @@ def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_
     assert 'sudo NONINTERACTIVE=true UPDATE_CHOICE=$UpdateChoice bash ./update.sh' in script
 
 
+def test_windows_remote_deploy_fails_closed_on_native_transport_errors():
+    script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
+
+    assert "function Invoke-NativeChecked" in script
+    assert "& $FilePath @ArgumentList" in script
+    assert "if ($LASTEXITCODE -ne 0)" in script
+    assert 'throw "$Action failed with exit code $LASTEXITCODE."' in script
+    assert 'Invoke-NativeChecked -Action "PuTTY remote command" -FilePath $Transport.Plink -ArgumentList $args' in script
+    assert 'Invoke-NativeChecked -Action "OpenSSH remote command" -FilePath $Transport.Ssh -ArgumentList $args' in script
+    assert 'Invoke-NativeChecked -Action "PuTTY remote copy" -FilePath $Transport.Pscp -ArgumentList $args' in script
+    assert 'Invoke-NativeChecked -Action "OpenSSH remote copy" -FilePath $Transport.Scp -ArgumentList $args' in script
+
+
 def test_ops_backup_check_uses_consistent_runtime_database_backup():
     script = (REPO / "scripts/ops/backup-restore-check.sh").read_text(encoding="utf-8")
 
