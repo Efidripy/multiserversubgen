@@ -44,13 +44,14 @@
 
 Старые URL с raw email/group identifier, а также ранее выданные HMAC URL, временно получают `302` redirect на текущую постоянную ссылку, если соответствующая подписка ещё существует. Новым клиентам выдаются только новые token URL.
 
-Администратор получает подписанные токены через authenticated API:
+Администратор получает токены через защищённый management API. Для control-plane
+используется Basic Auth (в браузере после bootstrap — восьмичасовая session cookie):
 
 ```bash
 # Ответ содержит subscription_tokens для email и subscription_token для групп.
-curl -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+curl -u "$ADMIN_USER:$ADMIN_PASSWORD" \
   https://your-domain/api/v1/emails
-curl -H "Authorization: Bearer $ADMIN_API_TOKEN" \
+curl -u "$ADMIN_USER:$ADMIN_PASSWORD" \
   https://your-domain/api/v1/subscription-groups
 ```
 
@@ -233,10 +234,12 @@ Protocol Filter: vmess
 
 ### Кэширование
 
-Система использует кэш для оптимизации:
-- TTL: 60 секунд
-- Кэш ключ: `email_protocol_nodes`
-- Автоматическая инвалидация при изменении узлов
+Система использует несколько кэшей, поэтому одного общего TTL нет:
+- link projection cache: `CACHE_TTL`, по умолчанию 30 секунд;
+- grouped subscription response cache: 300 секунд (в памяти процесса);
+- кэш автоматически инвалидируется после изменений узлов, inbound или клиентов;
+- публичные subscription-ответы помечаются `no-store`, чтобы клиент не держал
+  устаревшую ссылку локально.
 
 ### Группировка (алгоритм)
 
@@ -359,15 +362,20 @@ Content: "Not found" или "No matching clients found"
 
 ### Защита от брутфорса
 
-Используется встроенный fail2ban:
-- Лимит: 10 запросов/минуту на IP
-- Блокировка: 1 час после превышения
+Встроенный limiter приложения ограничивает каждый ключ `IP + subscription token`
+(или `IP + group token`). Значения по умолчанию: 30 запросов за 60 секунд;
+их можно изменить через `SUB_RATE_LIMIT_COUNT` и
+`SUB_RATE_LIMIT_WINDOW_SEC`. Дополнительные fail2ban/UFW-правила устанавливаются
+installer-профилем отдельно и не заменяют этот limiter.
 
 ---
 
 ## 📈 Миграция с v3.0
 
-Старые ссылки с raw email/identifier больше не совместимы: это намеренное security-изменение.
+Старые ссылки с raw email/identifier и ранее выданные HMAC-ссылки поддерживаются
+в режиме миграции: при существующей подписке сервер отвечает `302` на текущую
+постоянную opaque-ссылку. Новым клиентам выдаются только token URL. Если
+подписка удалена или токен не удаётся сопоставить, сервер возвращает `404`.
 
 ```bash
 # Получите новые значения через authenticated API.
@@ -379,7 +387,9 @@ Content: "Not found" или "No matching clients found"
 /api/v1/sub-grouped/<signed-group-token>
 ```
 
-Старые raw-ссылки должны быть заменены на токены из `/api/v1/emails` и `/api/v1/subscription-groups`.
+Новые ссылки можно получить из `/api/v1/emails` и
+`/api/v1/subscription-groups`; ручная ротация выполняется через
+`POST /api/v1/subscription-tokens/{kind}/{identifier}/regenerate`.
 
 ---
 
@@ -416,7 +426,8 @@ curl -u admin:pass https://your-domain/api/v1/emails
 
 **Решение:**
 1. Обновить страницу (F5)
-2. Или подождать 60 секунд (TTL кэша)
+2. Или подождать до 30 секунд для link projection cache (либо до 300 секунд
+   для уже сформированного grouped response)
 
 ---
 
