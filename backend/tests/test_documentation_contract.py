@@ -11,10 +11,12 @@ def test_api_reference_lists_live_read_projections() -> None:
         "GET /api/v1/clients/paged",
         "GET /api/v1/inbounds/slim",
         "GET /api/v1/inbounds/options",
+        "GET /api/v1/traffic/stats-by-period",
     ):
         assert route in docs
 
     assert "production control-plane contract" in docs
+    assert "переключение периода в UI не запускает fleet fan-out" in docs
 
 
 def test_subscription_guide_matches_stable_token_contract() -> None:
