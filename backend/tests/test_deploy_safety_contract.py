@@ -62,7 +62,7 @@ def test_ops_backup_check_uses_consistent_runtime_database_backup():
 
     assert 'DB_FILE="${DB_FILE:-${PROJECT_DIR}/admin.db}"' in script
     assert 'cp -a "$DB_FILE"' not in script
-    assert "PRAGMA wal_checkpoint(PASSIVE);" in script
+    assert "PRAGMA wal_checkpoint(PASSIVE);" not in script
     assert '".backup \'$BACKUP_FILE\'"' in script
     assert '".restore \'$BACKUP_FILE\'"' in script
     assert "admin.db.bak" in script
