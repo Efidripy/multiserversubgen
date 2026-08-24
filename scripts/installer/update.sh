@@ -956,6 +956,10 @@ if [ ! -f "$LOG_FILE" ]; then
 fi
 
 install_log_source "$LOG_FILE"
+if ! runtime_require_safe_project_name; then
+    echo "❌ Некорректное имя проекта/сервиса в install log. Обновление прервано."
+    exit 1
+fi
 if ! runtime_secrets_load; then
     echo "❌ Runtime secrets file failed security validation. Update aborted."
     exit 1

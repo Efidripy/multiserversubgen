@@ -1746,6 +1746,7 @@ uninstall() {
     echo -e "\n--- Удаление и откат настроек ---"
     if [ ! -f "$LOG_FILE" ]; then echo "Лог не найден."; return 1; fi
     install_log_source "$LOG_FILE"
+    runtime_require_safe_project_name || return 1
     systemctl stop "$PROJECT_NAME" 2>/dev/null
     systemctl disable "$PROJECT_NAME" 2>/dev/null
     rm -f "/etc/systemd/system/$PROJECT_NAME.service"
@@ -1780,6 +1781,7 @@ uninstall_nuke() {
     if [ -f "$LOG_FILE" ]; then
         # shellcheck disable=SC1090
         install_log_source "$LOG_FILE"
+        runtime_require_safe_project_name || return 1
         project_name="${PROJECT_NAME:-$project_name}"
         project_dir="${PROJECT_DIR:-$project_dir}"
         selected_cfg="${SELECTED_CFG:-$selected_cfg}"
@@ -2032,16 +2034,19 @@ if [ -f "$LOG_FILE" ] && has_real_existing_install; then
     case "${INSTALLER_EXISTING_ACTION:-}" in
         reinstall)
             install_log_source "$LOG_FILE"
+            runtime_require_safe_project_name || exit 1
             uninstall
             unset SELECTED_CFG
             exec bash "$0" "$@"
             ;;
         update)
             install_log_source "$LOG_FILE"
+            runtime_require_safe_project_name || exit 1
             update_project
             ;;
         remove)
             install_log_source "$LOG_FILE"
+            runtime_require_safe_project_name || exit 1
             uninstall_nuke
             exit 0
             ;;
@@ -2051,6 +2056,7 @@ if [ -f "$LOG_FILE" ] && has_real_existing_install; then
     esac
     [ -n "${INSTALLER_AUTOMATION_STEPS:-}" ] && exit 0
     install_log_source "$LOG_FILE"
+    runtime_require_safe_project_name || exit 1
     clear
     echo -e "${C_YELLOW}======================================================${C_RESET}"
     echo -e "${C_WHITE}    ОБНАРУЖЕНА УСТАНОВКА: ${PROJECT_NAME}${C_RESET}"
@@ -2082,6 +2088,10 @@ echo -e "${C_YELLOW}======================================================${C_RE
 
 read -p "Имя проекта/сервиса (sub-manager): " PROJECT_NAME
 PROJECT_NAME=${PROJECT_NAME:-sub-manager}
+if ! runtime_require_safe_project_name; then
+    echo "❌ Некорректное имя проекта/сервиса. Разрешены буквы, цифры, _, . и -; первый символ должен быть буквенно-цифровым."
+    exit 1
+fi
 read -p "Локальный порт Python (666): " APP_PORT
 APP_PORT=${APP_PORT:-666}
 read -p "SSH порт для fail2ban/UFW (22): " SSH_PORT

@@ -3,8 +3,17 @@
 # Runtime secrets are intentionally kept outside the install-state log and the
 # world-readable systemd unit. The caller must set PROJECT_NAME first.
 
+runtime_require_safe_project_name() {
+    local project_name="${PROJECT_NAME:-}"
+    if [[ ! "$project_name" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]]; then
+        printf 'invalid PROJECT_NAME: %s\n' "$project_name" >&2
+        return 1
+    fi
+}
+
 runtime_secrets_file() {
-    printf '/etc/%s/runtime-secrets.env\n' "${PROJECT_NAME:?PROJECT_NAME is required}"
+    runtime_require_safe_project_name || return 1
+    printf '/etc/%s/runtime-secrets.env\n' "$PROJECT_NAME"
 }
 
 runtime_secret_generate() {
@@ -17,7 +26,7 @@ runtime_secret_generate() {
 
 runtime_secrets_load() {
     local secret_file
-    secret_file="$(runtime_secrets_file)"
+    secret_file="$(runtime_secrets_file)" || return 1
     if [ -f "$secret_file" ]; then
         # This root-owned 0600 file uses shell-escaped values written below.
         secure_source_file "$secret_file" "runtime secrets"
@@ -26,7 +35,7 @@ runtime_secrets_load() {
 
 runtime_secrets_write() {
     local secret_file temp_file
-    secret_file="$(runtime_secrets_file)"
+    secret_file="$(runtime_secrets_file)" || return 1
     if [ -L "$secret_file" ]; then
         printf 'refusing to overwrite symlinked runtime secrets: %s\n' "$secret_file" >&2
         return 1
@@ -48,7 +57,8 @@ runtime_secrets_write() {
 }
 
 runtime_ensure_service_user() {
-    local service_user="${PROJECT_NAME:?PROJECT_NAME is required}"
+    runtime_require_safe_project_name || return 1
+    local service_user="$PROJECT_NAME"
     local service_dir="${PROJECT_DIR:?PROJECT_DIR is required}"
 
     if ! getent group "$service_user" >/dev/null 2>&1; then
