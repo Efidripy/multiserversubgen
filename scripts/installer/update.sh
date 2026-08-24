@@ -941,6 +941,10 @@ if ! runtime_require_safe_project_name; then
     echo "❌ Некорректное имя проекта/сервиса в install log. Обновление прервано."
     exit 1
 fi
+if ! runtime_require_expected_project_dir; then
+    echo "❌ Некорректный каталог проекта в install log. Обновление прервано."
+    exit 1
+fi
 if ! runtime_secrets_load; then
     echo "❌ Runtime secrets file failed security validation. Update aborted."
     exit 1

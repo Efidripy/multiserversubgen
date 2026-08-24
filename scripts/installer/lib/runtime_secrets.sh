@@ -11,6 +11,16 @@ runtime_require_safe_project_name() {
     fi
 }
 
+runtime_require_expected_project_dir() {
+    runtime_require_safe_project_name || return 1
+
+    local expected_project_dir="/opt/$PROJECT_NAME"
+    if [ "${PROJECT_DIR:-}" != "$expected_project_dir" ]; then
+        printf 'invalid PROJECT_DIR for %s: %s\n' "$PROJECT_NAME" "${PROJECT_DIR:-<empty>}" >&2
+        return 1
+    fi
+}
+
 runtime_secrets_file() {
     runtime_require_safe_project_name || return 1
     printf '/etc/%s/runtime-secrets.env\n' "$PROJECT_NAME"
