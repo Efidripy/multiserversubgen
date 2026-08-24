@@ -364,6 +364,7 @@ def test_traffic_period_route_uses_projection_without_nodes_or_legacy_traffic_fe
             "period": period,
             "cache_source": "snapshot_collector",
             "cache_timestamp": 1234567890,
+            "identity_stats": {"node:1": {"_display_key": "alpha", "total": 10}},
         },
     )
     app = _build_test_app(monitoring_enabled=False)
@@ -380,6 +381,7 @@ def test_traffic_period_route_uses_projection_without_nodes_or_legacy_traffic_fe
     payload = response.json()
     assert payload["stats"] == {"alpha": {"up": 1, "down": 9, "total": 10}}
     assert payload["cache_source"] == "snapshot_collector"
+    assert "identity_stats" not in payload
 
 
 def test_dashboard_summary_uses_snapshot_cache_without_xui_fetch(monkeypatch):

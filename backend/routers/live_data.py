@@ -97,6 +97,11 @@ def build_live_data_router(
         trimmed["count"] = len(top_items)
         return trimmed
 
+    def _public_traffic_payload(payload: Dict, limit: int) -> Dict:
+        """Hide runtime-only stable identity sidecars from the public API."""
+        limited = _apply_limit(payload, limit)
+        return {key: value for key, value in limited.items() if key != "identity_stats"}
+
     def _latest_snapshot_payload() -> Dict:
         if not get_latest_snapshot:
             return {"timestamp": None, "nodes": [], "count": 0}
@@ -237,7 +242,7 @@ def build_live_data_router(
             raise HTTPException(status_code=400, detail="group_by must be client, inbound, or node")
         nodes = await run_in_threadpool(list_nodes)
         payload = await run_in_threadpool(get_cached_traffic_stats, nodes, group_by)
-        return ORJSONResponse(content=_apply_limit(payload, limit))
+        return ORJSONResponse(content=_public_traffic_payload(payload, limit))
 
     @router.get("/api/v1/clients/online")
     async def get_online_clients(request: Request, limit: int = 0):
@@ -404,6 +409,6 @@ def build_live_data_router(
         # the legacy cache helper, because either can trigger a remote 3x-ui
         # fan-out on each Day/Week/Month click.
         payload = await run_in_threadpool(projection_period_handler, group_by, period)
-        return ORJSONResponse(content=_apply_limit(payload, limit))
+        return ORJSONResponse(content=_public_traffic_payload(payload, limit))
 
     return router
