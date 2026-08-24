@@ -20,7 +20,7 @@ import {
 } from './api/dashboard';
 import { IconName, UIIcon } from './components/UIIcon';
 import { requestActivityStore } from './services/requestActivity';
-import { readStaleCache, writeStaleCache } from './services/staleCache';
+import { clearManagerSnapshotCaches, readStaleCache, writeStaleCache } from './services/staleCache';
 import { DashboardDataProvider } from './services/DashboardDataContext';
 import { AUTH_REQUIRED_EVENT, resetAuthRequiredEventGuard } from './api/client';
 import type { NodeRecord } from './api/nodes';
@@ -294,6 +294,7 @@ export const App: React.FC = () => {
 
   const endSession = () => {
     wsManager.close();
+    clearManagerSnapshotCaches();
     clearAuthCredentials();
     window.dispatchEvent(new Event('sub-manager:cache-clear'));
     setUser('');
