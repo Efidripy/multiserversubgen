@@ -107,3 +107,14 @@ def test_remove_script_defaults_to_conservative_scope():
     assert 'REMOVE_SCOPE="${REMOVE_SCOPE:-soft}"' in remove
     assert 'REMOVE_SCOPE="${REMOVE_SCOPE:-hard}"' not in remove
     assert 'REMOVE_MODE="$mode" REMOVE_SCOPE=hard REMOVE_FORCE=true' in workflows
+
+
+def test_project_cleanup_preserves_evidence_and_supports_dry_run():
+    script = _read("scripts/ops/project-cleanup.sh")
+    safe_cleanup = script.split("cleanup_safe()", 1)[1].split("cleanup_deep()", 1)[0]
+
+    assert 'CLEANUP_DRY_RUN="${CLEANUP_DRY_RUN:-false}"' in script
+    assert '".tmp"' not in safe_cleanup
+    assert 'log "would remove: $path"' in script
+    assert '  - .tmp/' in script
+    assert "cleanup_python_caches" in script
