@@ -20,8 +20,7 @@ runtime_secrets_load() {
     secret_file="$(runtime_secrets_file)"
     if [ -f "$secret_file" ]; then
         # This root-owned 0600 file uses shell-escaped values written below.
-        # shellcheck disable=SC1090
-        source "$secret_file"
+        secure_source_file "$secret_file" "runtime secrets"
     fi
 }
 
