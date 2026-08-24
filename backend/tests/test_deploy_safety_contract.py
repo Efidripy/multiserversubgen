@@ -79,6 +79,24 @@ def test_windows_smoke_requires_exact_subpath_asset_prefix():
     assert '"$basePathassets/"' not in script
 
 
+def test_legacy_windows_wrappers_propagate_canonical_script_exit_codes():
+    expected_targets = {
+        "scripts/windows/invoke-remote-deploy.ps1": "invoke-remote-deploy.ps1",
+        "scripts/windows/windows-install.ps1": "windows-install.ps1",
+        "scripts/windows/windows-update.ps1": "windows-update.ps1",
+        "scripts/windows/windows-smoke.ps1": "windows-smoke.ps1",
+    }
+
+    for relative_path, target_name in expected_targets.items():
+        script = (REPO / relative_path).read_text(encoding="utf-8")
+        invocation = "& powershell -NoProfile -ExecutionPolicy Bypass -File $target @RemainingArgs"
+
+        assert f'"{target_name}"' in script
+        assert invocation in script
+        assert "exit $LASTEXITCODE" in script
+        assert script.index(invocation) < script.index("exit $LASTEXITCODE")
+
+
 def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_trace():
     script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
 
