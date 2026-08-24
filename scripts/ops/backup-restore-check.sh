@@ -3,10 +3,10 @@ set -euo pipefail
 umask 077
 
 LOG_FILE="${LOG_FILE:-/opt/.sub_manager_install.log}"
-if [[ -f "$LOG_FILE" ]]; then
-  # shellcheck disable=SC1090
-  source "$LOG_FILE"
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/install_log.sh
+source "${SCRIPT_DIR}/lib/install_log.sh"
+install_log_source "$LOG_FILE"
 
 PROJECT_NAME="${PROJECT_NAME:-sub-manager}"
 PROJECT_DIR="${PROJECT_DIR:-/opt/${PROJECT_NAME}}"
