@@ -472,8 +472,8 @@ export const ClientManager: React.FC = () => {
   useEffect(() => {
     if (!ENABLE_LIVE_CLIENT_TRAFFIC || !expandedKey || filteredClients.length === 0) return;
 
-    const visibleSlice = filteredClients.slice(0, TRAFFIC_FETCH_MAX_CLIENTS);
-    const missing = visibleSlice.filter((client) => {
+    const expandedGroup = groupClientsByEmail(filteredClients).find((group) => group.key === expandedKey);
+    const missing = (expandedGroup?.clients || []).filter((client) => {
       if (client.node_id == null) return false;
       const key = `${client.node_id}:${client.email}`;
       return !(key in trafficCache);
@@ -1523,11 +1523,10 @@ export const ClientManager: React.FC = () => {
       const next = new Set(previous);
       if (next.has(group.key)) {
         next.delete(group.key);
-        if (expandedKey === clientKey(group.clients[0])) setExpandedKey(null);
+        if (expandedKey === group.key) setExpandedKey(null);
       } else {
         next.add(group.key);
-        // Preserve the existing bounded fetch guard and raw record source.
-        setExpandedKey(clientKey(group.clients[0]));
+        setExpandedKey(group.key);
       }
       return next;
     });
