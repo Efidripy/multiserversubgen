@@ -98,3 +98,12 @@ def test_ops_backup_check_uses_consistent_runtime_database_backup():
     assert 'mkdir -p -m 0700 "$OUT_DIR"' in script
     assert 'chmod 0600 "$BACKUP_FILE"' in script
     assert 'chmod 0600 "$RESTORE_FILE"' in script
+    assert 'prune-verify-artifacts --older-than <days> [--apply]' in script
+    assert 'VERIFY_ARTIFACT_GLOB="${PROJECT_NAME}_verify_' in script
+    assert 'find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name "$VERIFY_ARTIFACT_GLOB"' in script
+    assert 'rm -rf --one-file-system -- "$artifact"' in script
+    assert '[[ "$APPLY_PRUNE" != "true" ]]' in script
+
+    update = (REPO / "scripts/installer/update.sh").read_text(encoding="utf-8")
+    assert 'backup-restore-check.sh list' in update
+    assert 'prune-verify-artifacts --older-than 30' in update
