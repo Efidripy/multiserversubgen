@@ -94,6 +94,7 @@ export function useTrafficStatsSubscription({
     if (!enabled) return undefined;
     let cancelled = false;
     const unsubscribers: Array<() => void> = [];
+    const releaseChannels: Array<() => void> = [];
 
     const handleEvent = (eventType: TrafficUpdate['type']) => (message: unknown) => {
       const now = Date.now();
@@ -114,19 +115,18 @@ export function useTrafficStatsSubscription({
     };
 
     const connectAndSubscribe = async () => {
+      normalizedChannels.forEach((channel) => {
+        const eventType = CHANNEL_TO_EVENT[channel];
+        if (!eventType) return;
+        const unsubscribe = wsManager.subscribe(eventType, handleEvent(eventType));
+        unsubscribers.push(unsubscribe);
+        releaseChannels.push(wsManager.subscribeChannel(channel));
+      });
       try {
         await wsManager.connect();
         if (cancelled) return;
 
         setIsConnected(wsManager.isConnected());
-
-        normalizedChannels.forEach((channel) => {
-          const eventType = CHANNEL_TO_EVENT[channel];
-          if (!eventType) return;
-          const unsubscribe = wsManager.subscribe(eventType, handleEvent(eventType));
-          unsubscribers.push(unsubscribe);
-          wsManager.send({ type: 'subscribe', channel });
-        });
       } catch (err) {
         onErrorRef.current?.(err instanceof Error ? err : new Error(String(err)));
       }
@@ -142,9 +142,7 @@ export function useTrafficStatsSubscription({
       cancelled = true;
       window.clearInterval(checkConnection);
       unsubscribers.forEach((unsub) => unsub());
-      normalizedChannels.forEach((channel) => {
-        wsManager.send({ type: 'unsubscribe', channel });
-      });
+      releaseChannels.forEach((release) => release());
     };
   }, [enabled, normalizedChannels]); // stable: only re-runs when the channel list actually changes
 
