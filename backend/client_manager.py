@@ -1038,8 +1038,9 @@ class ClientManager:
                     if depleted_only:
                         traffic = self.get_client_traffic(
                             node,
-                            client_email if "@" in client_email else (client.get("id") or ""),
+                            str(client.get("id") or ""),
                             client.get("protocol", ""),
+                            v3_email=client_email if "@" in client_email else None,
                         )
                         total_limit = client.get("totalGB", 0)
                         if total_limit > 0:
@@ -1135,13 +1136,21 @@ class ClientManager:
         
         return {"results": results}
     
-    def get_client_traffic(self, node: Dict, client_uuid: str, protocol: str) -> Dict:
+    def get_client_traffic(
+        self,
+        node: Dict,
+        client_uuid: str,
+        protocol: str,
+        *,
+        v3_email: Optional[str] = None,
+    ) -> Dict:
         """Получить статистику трафика клиента
         
         Args:
             node: Конфигурация узла
             client_uuid: UUID клиента
             protocol: Протокол (vless, vmess, trojan и т.д.)
+            v3_email: Известный email для v3 read, без подмены UUID в v2 fallback
             
         Returns:
             Словарь с данными трафика (up, down, total)
@@ -1155,7 +1164,7 @@ class ClientManager:
             # the common email case; resolve a UUID only when an email is not
             # already available.  An operational v3 failure is terminal and
             # cannot fall through to a different legacy identity.
-            identifier = str(client_uuid)
+            identifier = str(v3_email or client_uuid)
             if "@" in identifier:
                 v3_state, result = self._get_traffic_v3(s, base_url, identifier)
             else:
