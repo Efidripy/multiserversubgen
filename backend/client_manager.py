@@ -18,9 +18,6 @@ from xui_session import (
     XUI_FAST_RETRIES, XUI_FAST_TIMEOUT_SEC,
     build_panel_base_url,
     extract_node_auth, get_authenticated_session, make_node_key_for_node, xui_request,
-    # Imported for compatibility with older integrations/tests only. Version
-    # telemetry is deliberately not used as a routing authority below.
-    get_node_api_version, set_node_api_version,  # noqa: F401 - legacy telemetry import surface
 )
 from utils import parse_field_as_dict
 
