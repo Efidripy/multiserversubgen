@@ -427,6 +427,44 @@ def test_client_traffic_totals_reads_only_requested_projection_entries(monkeypat
     assert client.post("/api/v1/traffic/client-totals", json={"emails": "not-a-list"}).status_code == 422
 
 
+def test_client_traffic_stats_by_period_coalesces_case_variants_before_limit(monkeypatch):
+    calls = []
+
+    def projection(group_by, period):
+        calls.append((group_by, period))
+        if group_by == "client":
+            return {
+                "stats": {
+                    "Active@Example.Test": {"up": 2, "down": 3, "total": 5, "count": 1},
+                    "active@example.test": {"up": 30, "down": 40, "total": 70, "count": 1},
+                    "other@example.test": {"up": 20, "down": 40, "total": 60, "count": 1},
+                },
+            }
+        return {"stats": {"alpha": {"up": 1, "down": 9, "total": 10}}}
+
+    monkeypatch.setattr(main, "get_cached_traffic_stats_projection_by_period", projection)
+    app = _build_test_app(monitoring_enabled=False)
+
+    @app.middleware("http")
+    async def _inject_auth_user(request, call_next):
+        request.state.auth_user = "admin"
+        return await call_next(request)
+
+    client = TestClient(app)
+    response = client.get("/api/v1/traffic/stats-by-period?group_by=client&period=week&limit=1")
+
+    assert response.status_code == 200
+    assert calls == [("client", "week")]
+    assert response.json()["stats"] == {
+        "active@example.test": {"up": 32, "down": 43, "total": 75, "count": 2},
+    }
+    assert response.json()["summary"] == {"upload": 52, "download": 83, "total": 135, "count": 2}
+
+    node_response = client.get("/api/v1/traffic/stats-by-period?group_by=node&period=week")
+    assert node_response.status_code == 200
+    assert node_response.json()["stats"] == {"alpha": {"up": 1, "down": 9, "total": 10}}
+
+
 def test_dashboard_summary_uses_snapshot_cache_without_xui_fetch(monkeypatch):
     nodes = [
         {"id": 1, "name": "alpha"},
@@ -566,6 +604,53 @@ def test_dashboard_summary_returns_sorted_cached_top_clients_without_fleet_fetch
     }
     assert payload["traffic"] == {"upload": 932, "download": 2173, "total": 3105}
     assert payload["cache"]["client_traffic_source"] == "memory"
+
+
+def test_dashboard_summary_coalesces_case_variants_before_top_clients(monkeypatch):
+    monkeypatch.setattr(main.node_service, "list_nodes", lambda: [])
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("dashboard must not trigger a fleet fetch")),
+    )
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats_projection",
+        lambda _group_by: {
+            "stats": {
+                "Active@Example.Test": {"up": 2, "down": 3, "total": 5},
+                "active@example.test": {"up": 30, "down": 40, "total": 70},
+                "other@example.test": {"up": 20, "down": 40, "total": 60},
+            },
+            "cache_source": "memory",
+        },
+    )
+    monkeypatch.setattr(
+        main,
+        "get_cached_traffic_stats_projection_by_period",
+        lambda _group_by, period: {
+            "stats": {
+                "Active@Example.Test": {"up": 2, "down": 3, "total": 5},
+                "active@example.test": {"up": 30, "down": 40, "total": 70},
+                "other@example.test": {"up": 20, "down": 40, "total": 60},
+            },
+            "period": period,
+        },
+    )
+    main.snapshot_collector._latest = {"timestamp": 1234567890.0, "nodes": {}}
+    app = _build_test_app(monitoring_enabled=False)
+
+    @app.middleware("http")
+    async def _inject_auth_user(request, call_next):
+        request.state.auth_user = "admin"
+        return await call_next(request)
+
+    payload = TestClient(app).get("/api/v1/dashboard/summary").json()
+
+    assert payload["top_clients"] == [
+        {"email": "active@example.test", "upload": 32, "download": 43, "total": 75},
+        {"email": "other@example.test", "upload": 20, "download": 40, "total": 60},
+    ]
 
 
 def test_dashboard_summary_rejects_unsupported_traffic_period(monkeypatch):
