@@ -45,7 +45,9 @@ def test_runtime_secret_writer_is_root_only_and_atomic():
     assert "install -d -m 0700" in helper
     assert "mktemp" in helper
     assert "chmod 0600 \"$temp_file\"" in helper
-    assert "install -m 0600 \"$temp_file\" \"$secret_file\"" in helper
+    assert 'if [ -L "$secret_file" ]; then' in helper
+    assert 'refusing to overwrite symlinked runtime secrets' in helper
+    assert 'mv -fT -- "$temp_file" "$secret_file"' in helper
     assert "runtime_ensure_service_user" in helper
     assert "useradd --system" in helper
     assert "chown -R -- \"$service_user:$service_user\" \"$service_dir\"" in helper

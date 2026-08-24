@@ -27,6 +27,10 @@ runtime_secrets_load() {
 runtime_secrets_write() {
     local secret_file temp_file
     secret_file="$(runtime_secrets_file)"
+    if [ -L "$secret_file" ]; then
+        printf 'refusing to overwrite symlinked runtime secrets: %s\n' "$secret_file" >&2
+        return 1
+    fi
     install -d -m 0700 "$(dirname "$secret_file")"
     temp_file="$(mktemp "${secret_file}.tmp.XXXXXX")"
     chmod 0600 "$temp_file"
@@ -40,8 +44,7 @@ runtime_secrets_write() {
         printf 'WS_AUTH_SECRET=%q\n' "$WS_AUTH_SECRET"
         printf 'SUBSCRIPTION_SIGNING_SECRET=%q\n' "$SUBSCRIPTION_SIGNING_SECRET"
     } > "$temp_file"
-    install -m 0600 "$temp_file" "$secret_file"
-    rm -f "$temp_file"
+    mv -fT -- "$temp_file" "$secret_file"
 }
 
 runtime_ensure_service_user() {
