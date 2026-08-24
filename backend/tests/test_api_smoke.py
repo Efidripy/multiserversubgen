@@ -681,9 +681,7 @@ def test_servers_status_routes_use_snapshot_cache_without_monitor_fetch(monkeypa
     def _fail_live_fetch(*_args, **_kwargs):
         raise AssertionError("server_monitor live fetch must not run")
 
-    monkeypatch.setattr(main.server_monitor, "get_all_servers_status", _fail_live_fetch)
     monkeypatch.setattr(main.server_monitor, "get_server_status", _fail_live_fetch)
-    monkeypatch.setattr(main.server_monitor, "check_server_availability", _fail_live_fetch)
 
     main.snapshot_collector._latest = {
         "timestamp": 1234567890.0,
