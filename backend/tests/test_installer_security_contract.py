@@ -113,6 +113,8 @@ def test_project_cleanup_preserves_evidence_and_supports_dry_run():
     script = _read("scripts/ops/project-cleanup.sh")
     safe_cleanup = script.split("cleanup_safe()", 1)[1].split("cleanup_deep()", 1)[0]
 
+    assert 'GIT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"' in script
+    assert 'cleanup refused: resolved path is not the project Git root' in script
     assert 'CLEANUP_DRY_RUN="${CLEANUP_DRY_RUN:-false}"' in script
     assert '".tmp"' not in safe_cleanup
     assert 'log "would remove: $path"' in script
