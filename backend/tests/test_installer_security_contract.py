@@ -98,3 +98,12 @@ def test_xui_seed_matches_v3_hosts_contract():
     assert "__GROUP_XHTTP__" in template
     assert "__GROUP_TROJAN__" in template
     assert '"externalProxy"' not in template
+
+
+def test_remove_script_defaults_to_conservative_scope():
+    remove = _read("scripts/installer/remove.sh")
+    workflows = _read("scripts/installer/lib/workflows.sh")
+
+    assert 'REMOVE_SCOPE="${REMOVE_SCOPE:-soft}"' in remove
+    assert 'REMOVE_SCOPE="${REMOVE_SCOPE:-hard}"' not in remove
+    assert 'REMOVE_MODE="$mode" REMOVE_SCOPE=hard REMOVE_FORCE=true' in workflows
