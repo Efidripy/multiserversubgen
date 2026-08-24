@@ -58,6 +58,20 @@ def test_linux_only_uvloop_extra_is_pinned_and_hashed_for_require_hashes_deploys
         assert expected_hash in lockfile
 
 
+def test_python_pam_runtime_compatibility_keeps_six_pinned():
+    direct_requirements = (REPO / "backend/requirements.in").read_text(encoding="utf-8")
+    assert "python-pam\n" in direct_requirements
+    assert "six\n" in direct_requirements
+
+    expected = "six==1.17.0"
+    expected_hash = "--hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+
+    for relative_path in ("backend/requirements.txt", "backend/requirements-dev.txt"):
+        lockfile = (REPO / relative_path).read_text(encoding="utf-8")
+        assert expected in lockfile
+        assert expected_hash in lockfile
+
+
 def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_trace():
     script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
 
