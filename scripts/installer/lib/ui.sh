@@ -486,13 +486,13 @@ EOF
 ${UI_YELLOW}┌─ ПОЛЕЗНЫЕ КОМАНДЫ ───────────────────────────────────┐${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}  Проверка здоровья сервиса:
-${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash /root/multiserversubgen-live/scripts/ops/smoke-test.sh${UI_RESET}
+${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash "${SCRIPT_DIR}/scripts/ops/smoke-test.sh"${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}  Резервная копия & восстановление:
-${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash /root/multiserversubgen-live/scripts/ops/backup-restore-check.sh${UI_RESET}
+${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash "${SCRIPT_DIR}/scripts/ops/backup-restore-check.sh"${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}  Проверка безопасности:
-${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash /root/multiserversubgen-live/scripts/ops/hardening-profile.sh audit${UI_RESET}
+${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash "${SCRIPT_DIR}/scripts/ops/hardening-profile.sh" audit${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}
 ${UI_YELLOW}└───────────────────────────────────────────────────────┘${UI_RESET}
 

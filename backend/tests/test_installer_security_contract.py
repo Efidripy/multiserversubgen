@@ -120,3 +120,12 @@ def test_project_cleanup_preserves_evidence_and_supports_dry_run():
     assert 'log "would remove: $path"' in script
     assert '  - .tmp/' in script
     assert "cleanup_python_caches" in script
+
+
+def test_installation_report_uses_dynamic_repository_root():
+    ui = _read("scripts/installer/lib/ui.sh")
+
+    assert "/root/multiserversubgen-live/scripts/ops/" not in ui
+    assert '"${SCRIPT_DIR}/scripts/ops/smoke-test.sh"' in ui
+    assert '"${SCRIPT_DIR}/scripts/ops/backup-restore-check.sh"' in ui
+    assert '"${SCRIPT_DIR}/scripts/ops/hardening-profile.sh" audit' in ui
