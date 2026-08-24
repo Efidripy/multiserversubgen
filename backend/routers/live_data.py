@@ -416,4 +416,30 @@ def build_live_data_router(
         payload = await run_in_threadpool(projection_period_handler, group_by, period)
         return ORJSONResponse(content=_public_traffic_payload(payload, limit))
 
+    @router.post("/api/v1/traffic/client-totals")
+    async def get_client_traffic_totals(request: Request, data: Dict):
+        """Return totals for requested emails from the existing period projection only."""
+        user = getattr(request.state, "auth_user", None)
+        if not user:
+            raise HTTPException(status_code=401)
+        if not projection_period_handler:
+            raise HTTPException(status_code=503, detail="Traffic statistics projection is warming up")
+        period = data.get("period", "all_time")
+        if period not in ["day", "week", "month", "year", "all_time"]:
+            raise HTTPException(status_code=400, detail="period must be day, week, month, year, or all_time")
+        emails = data.get("emails")
+        if not isinstance(emails, list) or len(emails) > 5000:
+            raise HTTPException(status_code=422, detail="emails must be a list with at most 5000 entries")
+        wanted = {str(email).strip().casefold() for email in emails if isinstance(email, str) and str(email).strip()}
+        payload = await run_in_threadpool(projection_period_handler, "client", period)
+        stats = payload.get("stats") if isinstance(payload, dict) else {}
+        totals = {}
+        if isinstance(stats, dict):
+            for email, value in stats.items():
+                key = str(email).strip().casefold()
+                if key not in wanted or not isinstance(value, dict):
+                    continue
+                totals[key] = _traffic_totals_from_projection({"stats": {key: value}})["total"]
+        return ORJSONResponse(content={"totals": totals, "missing": sorted(wanted - set(totals)), "period": period})
+
     return router
