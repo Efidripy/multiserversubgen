@@ -164,45 +164,6 @@ export async function getRegisteredFleetOverview(): Promise<FleetNode[]> {
   });
 }
 
-type SnapshotFleetNode = {
-  node_id?: number;
-  name?: string;
-  available?: boolean;
-  reason?: string;
-  error?: string;
-};
-
-/**
- * Returns the last collector snapshot for the Dashboard side panel.
- * It deliberately avoids per-node panel probes; operators can request those
- * probes through the explicit "Test All" or node refresh controls.
- */
-export async function getRegisteredFleetSnapshotOverview(): Promise<FleetNode[]> {
-  const [nodes, snapshotResponse] = await Promise.all([
-    listNodes(),
-    api.get('/v1/snapshots/latest', { auth: getAuth() }),
-  ]);
-  const snapshotNodes: SnapshotFleetNode[] = Array.isArray(snapshotResponse.data?.nodes)
-    ? snapshotResponse.data.nodes
-    : [];
-  const snapshotsById = new Map<number, SnapshotFleetNode>();
-  const snapshotsByName = new Map<string, SnapshotFleetNode>();
-  snapshotNodes.forEach((snapshot) => {
-    if (typeof snapshot.node_id === 'number') snapshotsById.set(snapshot.node_id, snapshot);
-    if (snapshot.name) snapshotsByName.set(snapshot.name, snapshot);
-  });
-
-  return nodes.map((node) => {
-    const snapshot = snapshotsById.get(node.id) || snapshotsByName.get(node.name);
-    const available = typeof snapshot?.available === 'boolean' ? snapshot.available : null;
-    return {
-      ...node,
-      available,
-      error: snapshot?.error || (available === false ? snapshot?.reason : undefined),
-    };
-  });
-}
-
 export async function createNode(payload: unknown, options: NodeMutationOptions = {}): Promise<any> {
   const res = await api.post('/v1/nodes', payload, { auth: getAuth() });
   if (options.emitChange !== false) {

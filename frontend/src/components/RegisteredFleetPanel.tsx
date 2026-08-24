@@ -1,14 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, Edit3, Pause, Play, RefreshCw, Trash2 } from 'lucide-react';
-import {
-  deleteNode,
-  getRegisteredFleetOverview,
-  getRegisteredFleetSnapshotOverview,
-  listNodes,
-  NODES_CHANGED_EVENT,
-  type FleetNode,
-} from '../api/nodes';
+import { deleteNode, getRegisteredFleetOverview, listNodes, type FleetNode } from '../api/nodes';
 import { restartXray, stopXray } from '../api/serverOps';
 import { useToast } from './Toast';
 import { useDashboardData } from '../services/DashboardDataContext';
@@ -102,13 +95,11 @@ export function RegisteredFleetPanel({
   const [deletingNodeId, setDeletingNodeId] = useState<number | null>(null);
   const [actionNodeKey, setActionNodeKey] = useState<string | null>(null);
 
-  const load = useCallback(async (options: { live?: boolean } = {}) => {
+  const refreshFleetLive = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const payload = options.live
-        ? await getRegisteredFleetOverview()
-        : await getRegisteredFleetSnapshotOverview();
+      const payload = await getRegisteredFleetOverview();
       setNodes(payload.map(toUiNode));
     } catch (err: any) {
       setError(err?.response?.data?.detail || err?.message || 'Unable to load registered servers');
@@ -128,8 +119,7 @@ export function RegisteredFleetPanel({
     try {
       await deleteNode(node.id);
       setNodes((current) => current.filter((item) => item.id !== node.id));
-      if (dashboardData) await dashboardData.refresh();
-      else await load();
+      await dashboardData?.refresh();
     } catch (err: any) {
       const message = err?.response?.data?.detail || err?.message || t('nodes.deleteFailed');
       setError(message);
@@ -153,8 +143,7 @@ export function RegisteredFleetPanel({
     try {
       await command(node.id);
       toast(t(successKey, { node: node.name }), 'success');
-      if (dashboardData) await dashboardData.refresh();
-      else await load({ live: true });
+      await dashboardData?.refresh();
     } catch (err: any) {
       const message = err?.response?.data?.detail || err?.response?.data?.error || err?.message || t(failureKey, { node: node.name });
       setError(message);
@@ -178,10 +167,6 @@ export function RegisteredFleetPanel({
       onOpenNodes?.();
       return;
     }
-    if (!dashboardData) {
-      onEditNode(node.record);
-      return;
-    }
     try {
       // Credentials are intentionally absent from the Dashboard aggregate.
       // Fetch the edit record only after an explicit operator click.
@@ -190,7 +175,7 @@ export function RegisteredFleetPanel({
     } catch {
       onOpenNodes?.();
     }
-  }, [dashboardData, onEditNode, onOpenNodes]);
+  }, [onEditNode, onOpenNodes]);
 
   useEffect(() => {
     if (!dashboardData) return;
@@ -199,22 +184,6 @@ export function RegisteredFleetPanel({
     setLoading(dashboardData.loading);
     setError(null);
   }, [dashboardData]);
-
-  useEffect(() => {
-    if (dashboardData) return;
-    load();
-    const interval = window.setInterval(load, 30000);
-    return () => window.clearInterval(interval);
-  }, [dashboardData, load]);
-
-  useEffect(() => {
-    if (dashboardData) return;
-    const handleNodesChanged = () => {
-      void load();
-    };
-    window.addEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
-    return () => window.removeEventListener(NODES_CHANGED_EVENT, handleNodesChanged);
-  }, [dashboardData, load]);
 
   const counts = useMemo(() => {
     const online = nodes.filter((node) => node.status === 'online').length;
@@ -304,7 +273,7 @@ export function RegisteredFleetPanel({
                 </div>
                   <button
                     className="rounded-md border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 px-3 py-1.5 font-mono text-xs font-medium tracking-wide text-white disabled:opacity-50"
-                    onClick={() => void load({ live: true })}
+                    onClick={() => void refreshFleetLive()}
                     disabled={loading}
                     type="button"
                   >
@@ -403,7 +372,7 @@ export function RegisteredFleetPanel({
                       >
                         {isStopping ? <RefreshCw className="w-3.5 h-3.5 animate-spin opacity-60" /> : <Pause className="w-3.5 h-3.5 opacity-60" />}
                       </button>
-                      <button className={fleetActionButtonClass} type="button" title="Refresh" onClick={() => void load({ live: true })}>
+                      <button className={fleetActionButtonClass} type="button" title="Refresh" onClick={() => void refreshFleetLive()}>
                         <RefreshCw className="w-3.5 h-3.5 opacity-60" />
                       </button>
                       <button
