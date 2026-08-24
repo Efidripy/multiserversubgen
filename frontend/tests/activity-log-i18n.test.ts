@@ -18,4 +18,15 @@ describe('Activity Log localization', () => {
     expect(ru.common.activityLogEmpty).toBe('Нет записей');
     expect(en.common.activityLogPanelTitle).toBe('Activity Log v{{version}}');
   });
+
+  it('uses the active i18n language for rendered and exported timestamps', () => {
+    const panel = readSource('src/components/ActivityLogPanel.tsx');
+    const store = readSource('src/services/activityLog.ts');
+
+    expect(panel).toContain("useTranslation();");
+    expect(panel).toContain("toLocaleTimeString(i18n.language, { hour12: false })");
+    expect(panel).toContain("activityLog.exportText(minLevel, i18n.language)");
+    expect(store).toContain("exportText(minLevel: LogLevel = 'debug', locale = 'ru')");
+    expect(store).toContain("toLocaleTimeString(locale, { hour12: false })");
+  });
 });
