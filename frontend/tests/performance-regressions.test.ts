@@ -45,9 +45,16 @@ describe('navigation performance regressions', () => {
   it('keeps online traffic details explicit and cancels stale inbound requests', () => {
     const traffic = read('src/components/TrafficStats.tsx');
     const inbounds = read('src/components/InboundManager.tsx');
+    const onlineTotals = traffic.slice(
+      traffic.indexOf('const loadOnlineTrafficTotals'),
+      traffic.indexOf('const scheduleRealtimeTrafficRefresh'),
+    );
     expect(traffic).toContain('Full online details remain opt-in.');
-    expect(traffic).toContain('const loadOnlineDetails = () =>');
+    expect(traffic).toContain('const loadOnlineDetails = async () =>');
     expect(traffic).toContain('getClientPresence(controller.signal)');
+    expect(onlineTotals).toContain("api.post('/v1/traffic/client-totals'");
+    expect(traffic).toContain('await loadOnlineTrafficTotals(period, clients);');
+    expect(onlineTotals).not.toContain("api.get('/v1/traffic/stats-by-period'");
     expect(traffic).not.toContain("api.get('/v1/clients/online'");
     expect(traffic).toContain('groupOnlinePresence');
     expect(inbounds).toContain('inboundsAbortRef.current?.abort();');
