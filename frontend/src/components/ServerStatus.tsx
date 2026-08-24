@@ -32,8 +32,6 @@ import { useDashboardData } from '../services/DashboardDataContext';
 
 interface ServerStatusProps {
   dashboardMode?: boolean;
-  includeCounts?: boolean;
-  includeCollectorStatus?: boolean;
   includePanelUpdateChecks?: boolean;
   includeLiveStatus?: boolean;
   fleetSummary?: {
@@ -321,8 +319,6 @@ const mergeServerTelemetry = (server: UiServer, data: Record<string, any>): UiSe
 
 export function ServerStatus({
   dashboardMode = false,
-  includeCounts,
-  includeCollectorStatus,
   includePanelUpdateChecks,
   includeLiveStatus = true,
   fleetSummary,
@@ -342,8 +338,6 @@ export function ServerStatus({
   const [nodeOpsModal, setNodeOpsModal] = useState<{ nodeId: number; nodeName: string; tab: NodeOpsTab } | null>(null);
   const [logsModal, setLogsModal] = useState<{ nodeId: number; nodeName: string; kind: NodeLogKind } | null>(null);
   const closeLogsModal = useCallback(() => setLogsModal(null), []);
-  void includeCounts;
-  void includeCollectorStatus;
 
   const setActionPending = useCallback((key: string, pending: boolean) => {
     setPendingActions((current) => {
