@@ -195,7 +195,16 @@ export function DashboardSummary({
     { label: t('traffic.totalTraffic'), value: formatBytes(activeSummary.traffic.total), detail: trafficPeriodLabel, icon: Activity, variant: 'neutral', tab: 'traffic' },
   ] as const;
 
-  const onlineByNode = Object.entries(activeSummary.online_by_node);
+  const nodeNameCounts = activeNodes.reduce<Record<string, number>>((counts, node) => {
+    counts[node.name] = (counts[node.name] || 0) + 1;
+    return counts;
+  }, {});
+  const onlineCountsById = activeSummary.online_by_node_id || activeSummary.online_by_node;
+  const onlineByNode = Object.entries(onlineCountsById).map(([nodeId, count]) => {
+    const node = activeNodes.find((item) => String(item.id) === nodeId);
+    const name = node?.name || nodeId;
+    return [node && nodeNameCounts[name] > 1 ? `${name} #${nodeId}` : name, count] as const;
+  });
   const topClients = activeSummary.top_clients.slice(0, 5);
   const maxTraffic = Math.max(...topClients.map((client) => client.total), 1);
 
