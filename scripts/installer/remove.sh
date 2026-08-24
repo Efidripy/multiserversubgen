@@ -8,7 +8,9 @@ LOG_FILE="/opt/.sub_manager_install.log"
 
 REMOVE_MODE="${REMOVE_MODE:-keep-db}"
 REMOVE_FORCE="${REMOVE_FORCE:-false}"
-REMOVE_SCOPE="${REMOVE_SCOPE:-hard}"
+# Direct invocation is conservative. The installer launcher passes `hard`
+# explicitly for the operator-selected full cleanup workflow.
+REMOVE_SCOPE="${REMOVE_SCOPE:-soft}"
 
 PROJECT_NAME="sub-manager"
 PROJECT_DIR="/opt/sub-manager"
