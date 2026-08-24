@@ -64,6 +64,8 @@ describe('navigation performance regressions', () => {
     expect(clients).toContain('listNodes({ signal: controller.signal })');
     expect(clients).toContain('getInboundOptions({ signal: controller.signal })');
     expect(clients).not.toContain('getInboundsHeaderSource({ signal: controller.signal })');
+    expect(clients).toContain('const nodeOptions = inboundOptions.filter(option => option.node_id === client.node_id)');
+    expect(clients).not.toContain("api.get('/v1/inbounds', { auth: getAuth() })");
   });
 
   it('renders Dashboard server cards from the cached snapshot instead of probing every node', () => {

@@ -340,7 +340,6 @@ export const ClientManager: React.FC = () => {
   const [attachClient, setAttachClient] = useState<Client | null>(null);
   const [attachInbounds, setAttachInbounds] = useState<Array<{id: number; remark: string; protocol: string}>>([]);
   const [attachSelected, setAttachSelected] = useState<Set<number>>(new Set());
-  const [attachLoading, setAttachLoading] = useState(false);
   const [attachMode, setAttachMode] = useState<'attach' | 'detach'>('attach');
 
   const [denseView, setDenseView] = useState(false);
@@ -1044,19 +1043,18 @@ export const ClientManager: React.FC = () => {
     }
   };
 
-  const handleOpenAttach = async (client: Client, mode: 'attach' | 'detach') => {
+  const handleOpenAttach = (client: Client, mode: 'attach' | 'detach') => {
     if (!client.node_id) { toast('Client has no node_id', 'warning'); return; }
     setAttachClient(client);
     setAttachMode(mode);
     setAttachSelected(new Set());
     setShowAttachModal(true);
-    setAttachLoading(true);
-    try {
-      const res = await api.get('/v1/inbounds', { auth: getAuth() });
-      const all: Array<{id: number; node_id: number; protocol: string; remark: string}> = res.data?.inbounds || res.data || [];
-      setAttachInbounds(all.filter(ib => ib.node_id === client.node_id).map(ib => ({ id: ib.id, remark: ib.remark, protocol: ib.protocol })));
-    } catch { setAttachInbounds([]); }
-    finally { setAttachLoading(false); }
+    const nodeOptions = inboundOptions.filter(option => option.node_id === client.node_id);
+    setAttachInbounds(nodeOptions.map(option => ({
+      id: option.id,
+      remark: option.remark,
+      protocol: option.protocol,
+    })));
   };
 
   const handleAttachSubmit = async () => {
@@ -2781,8 +2779,7 @@ export const ClientManager: React.FC = () => {
                 <p className="mb-2 text-xs text-slate-500">
                   Select inbounds to {attachMode} this client {attachMode === 'attach' ? 'to' : 'from'}:
                 </p>
-                {attachLoading && <div className="py-2 text-center"><div className="h-4 w-4 animate-spin rounded-full border-2 border-cyan-500/20 border-t-cyan-300" /></div>}
-                {!attachLoading && attachInbounds.length === 0 && <p className="text-sm text-slate-500">{t('clients.noInboundsForNode')}</p>}
+                {attachInbounds.length === 0 && <p className="text-sm text-slate-500">{t('clients.noInboundsForNode')}</p>}
                 <div className="mb-3 flex flex-col gap-1">
                   {attachInbounds.map(ib => (
                     <label key={ib.id} className="flex cursor-pointer items-center gap-2 rounded-md bg-[#0a0e1a] p-2">
