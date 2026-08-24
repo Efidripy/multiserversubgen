@@ -715,6 +715,37 @@ def test_node_server_status_uses_snapshot_cache_without_xui_fetch(monkeypatch):
     assert payload["system"]["cpu"] == 11
 
 
+def test_node_server_status_does_not_invent_telemetry_from_incomplete_snapshot(monkeypatch):
+    node = {"id": 1, "name": "alpha"}
+    monkeypatch.setattr(main.node_service, "get_node", lambda node_id: node if node_id == 1 else None)
+    main.snapshot_collector._latest = {
+        "timestamp": 1234567890.0,
+        "nodes": {
+            "alpha": {
+                "name": "alpha",
+                "node_id": 1,
+                "available": True,
+                "cpu": 7,
+                "traffic_total": 987654,
+            },
+        },
+    }
+    app = _build_test_app(monitoring_enabled=False)
+
+    @app.middleware("http")
+    async def _inject_auth_user(request, call_next):
+        request.state.auth_user = "admin"
+        return await call_next(request)
+
+    response = TestClient(app).get("/api/v1/nodes/1/server-status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert "system" not in payload
+    assert "network" not in payload
+
+
 def test_servers_status_routes_use_snapshot_cache_without_monitor_fetch(monkeypatch):
     nodes = [
         {"id": 1, "name": "alpha"},
