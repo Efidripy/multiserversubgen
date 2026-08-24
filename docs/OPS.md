@@ -102,7 +102,7 @@ curl -fsSL -o /dev/null -w '%{http_code}\n' https://<your-domain>/<web-path>/ass
 ## Полезные скрипты
 
 - `scripts/ops/smoke-test.sh`
-- `scripts/ops/backup-restore-check.sh`
+- `scripts/ops/backup-restore-check.sh` — проверяет online SQLite backup/restore. Его verification-артефакты (`/var/backups/<project>_verify_<timestamp>/`) сохраняются по умолчанию. Проверить их объём: `sudo bash scripts/ops/backup-restore-check.sh list`. Для безопасного preview cleanup: `sudo bash scripts/ops/backup-restore-check.sh prune-verify-artifacts --older-than 30`; фактическое удаление требует отдельного `--apply`. Команда намеренно не выбирает обычные `<project>_backup_*` или deploy backups.
 - `scripts/ops/hardening-profile.sh`
 - `scripts/deploy/server-deploy.sh`
 
