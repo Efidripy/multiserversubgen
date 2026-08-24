@@ -462,7 +462,7 @@ def build_clients_router(
         node_ids = data.get("node_ids")
         if not emails:
             raise HTTPException(status_code=400, detail="emails required")
-        nodes = _load_nodes(node_ids=node_ids)
+        nodes = await _load_nodes(node_ids=node_ids)
         results = []
         for node in nodes:
             for email in emails:
