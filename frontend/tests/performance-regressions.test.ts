@@ -87,6 +87,19 @@ describe('navigation performance regressions', () => {
     expect(fleetPanel).toContain('load({ live: true })');
   });
 
+  it('keeps the node intake/editor isolated from the retired per-node fleet fan-out', () => {
+    const app = read('src/App.tsx');
+    const manager = read('src/components/NodeManager.tsx');
+    const nodesApi = read('src/api/nodes.ts');
+
+    expect(app).toContain('<NodeManager');
+    expect(manager).not.toContain('showFleet');
+    expect(manager).not.toContain('getNodeDashboardOverview');
+    expect(nodesApi).not.toContain('getNodeDashboardOverview');
+    expect(nodesApi).not.toContain('getClientsForNode');
+    expect(nodesApi).not.toContain('getNodeInbounds');
+  });
+
   it('uses one persistent aggregate owner for the Dashboard instead of independent cold-path loops', () => {
     const app = read('src/App.tsx');
     const provider = read('src/services/DashboardDataContext.tsx');
