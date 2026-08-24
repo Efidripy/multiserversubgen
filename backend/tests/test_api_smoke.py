@@ -1130,9 +1130,6 @@ def test_sub_grouped_cache_is_cleared_by_shared_subscription_invalidation(tmp_pa
         def get_emails(self, _nodes):
             return []
 
-        def get_links(self, _nodes, _email):
-            return []
-
         def get_links_filtered(self, _nodes, _email, _protocol=None):
             return []
 
@@ -1148,7 +1145,6 @@ def test_sub_grouped_cache_is_cleared_by_shared_subscription_invalidation(tmp_pa
     service = SubscriptionLinksServiceStub()
     (
         invalidate_subscription_cache,
-        _,
         _,
         _,
         _,
