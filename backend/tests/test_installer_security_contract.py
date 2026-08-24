@@ -169,6 +169,14 @@ def test_installer_scripts_validate_log_before_sourcing():
     assert 'secure_source_file()' in helper
 
 
+def test_update_aborts_when_runtime_secrets_fail_security_validation():
+    update = _read("scripts/installer/update.sh")
+
+    assert "if ! runtime_secrets_load; then" in update
+    assert "Runtime secrets file failed security validation. Update aborted." in update
+    assert "exit 1" in update
+
+
 def test_resource_guard_cleanup_is_project_scoped():
     guard = _read("scripts/installer/lib/resource_guard.sh")
 

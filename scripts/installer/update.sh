@@ -956,7 +956,10 @@ if [ ! -f "$LOG_FILE" ]; then
 fi
 
 install_log_source "$LOG_FILE"
-runtime_secrets_load
+if ! runtime_secrets_load; then
+    echo "❌ Runtime secrets file failed security validation. Update aborted."
+    exit 1
+fi
 if [ "${REDIS_URL:-}" = "<redacted>" ] || [ "${MFA_TOTP_USERS:-}" = "<redacted>" ]; then
     echo "❌ Runtime secrets are missing. Re-enter Redis/TOTP settings before updating."
     exit 1
