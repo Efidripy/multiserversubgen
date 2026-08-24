@@ -81,7 +81,7 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
         display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '6px 10px', width: '100%', boxSizing: 'border-box',
         borderBottom: '1px solid #30363d', background: '#161b22', borderRadius: '10px 10px 0 0', flexShrink: 0,
       }}>
-        <span id="activity-log-title" style={{ color: '#e6edf3', fontWeight: 700, fontSize: '0.75rem' }}>Activity Log v2</span>
+        <span id="activity-log-title" style={{ color: '#e6edf3', fontWeight: 700, fontSize: '0.75rem' }}>{t('common.activityLogPanelTitle', { version: 2 })}</span>
         <div style={{ display: 'flex', gap: 3, marginLeft: 4 }}>
           {LEVELS.map(l => (
             <button key={l} onClick={() => setMinLevel(l)} style={{
@@ -149,7 +149,7 @@ export const ActivityLogPanel: React.FC<Props> = ({ open, onClose }) => {
           );
         })}
         {visible.length === 0 && (
-          <div style={{ padding: '16px', color: '#6c757d', textAlign: 'center' }}>No entries</div>
+          <div style={{ padding: '16px', color: '#6c757d', textAlign: 'center' }}>{t('common.activityLogEmpty')}</div>
         )}
       </div>
     </div>
