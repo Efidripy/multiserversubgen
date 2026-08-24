@@ -21,7 +21,8 @@ journalctl -u sub-manager -f
 
 ### Безопасное удаление установки
 
-`scripts/installer/remove.sh` выполняет удаление только при наличии
+`scripts/installer/remove.sh`, legacy-ветки удаления в `install.sh` и
+`update.sh` выполняют destructive/update-операции только при наличии
 `/opt/.sub_manager_install.log`: это должен быть обычный (не symlink) файл
 `root:root` с режимом `0600`. Скрипт получает из него имя и каталог проекта и
 проверяет, что каталог строго равен `/opt/<PROJECT_NAME>`. Если state-log
