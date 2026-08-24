@@ -1,4 +1,5 @@
-"""Tests for VLESS flow parameter in subscription link generation."""
+"""Tests for subscription link generation details."""
+import base64
 import json
 import sys
 import os
@@ -13,8 +14,8 @@ import main
 from services import subscription_links as subscription_links_service
 
 
-def _make_inbound(security, flow=""):
-    """Build a minimal inbound dict for a VLESS client with given security and flow."""
+def _make_inbound(security, flow="", protocol="vless", port=None):
+    """Build a minimal subscription inbound with configurable protocol and listener port."""
     stream_settings = {
         "security": security,
         "network": "tcp",
@@ -26,20 +27,21 @@ def _make_inbound(security, flow=""):
         },
         "tlsSettings": {"serverNames": ["example.com"]},
     }
-    settings = {
-        "clients": [
-            {
-                "id": "client-uuid",
-                "email": "user@example.com",
-                "flow": flow,
-            }
-        ]
+    client = {
+        "id": "client-uuid",
+        "email": "user@example.com",
+        "flow": flow,
     }
-    return {
-        "protocol": "vless",
+    if protocol == "trojan":
+        client["password"] = "trojan-password"
+    inbound = {
+        "protocol": protocol,
         "streamSettings": json.dumps(stream_settings),
-        "settings": json.dumps(settings),
+        "settings": json.dumps({"clients": [client]}),
     }
+    if port is not None:
+        inbound["port"] = port
+    return inbound
 
 
 def _nodes():
@@ -151,6 +153,46 @@ class TestVlessFlowParameter:
 
         assert len(links) == 1
         assert f"&fp={fingerprint}&" in links[0]
+
+
+@pytest.mark.parametrize("security", ["reality", "tls"])
+def test_vless_subscription_uses_inbound_listener_port(security):
+    subscription_links_service.links_cache.clear()
+    inbound = _make_inbound(security, port=8443)
+    with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
+        links = main.get_links_filtered(_nodes(), "user@example.com")
+
+    assert links[0].startswith("vless://client-uuid@1.2.3.4:8443")
+
+
+def test_vmess_subscription_uses_inbound_listener_port():
+    subscription_links_service.links_cache.clear()
+    inbound = _make_inbound("reality", protocol="vmess", port="8443")
+    with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
+        links = main.get_links_filtered(_nodes(), "user@example.com")
+
+    payload = base64.b64decode(links[0].removeprefix("vmess://")).decode()
+    assert json.loads(payload)["port"] == "8443"
+
+
+@pytest.mark.parametrize("security", ["reality", "tls"])
+def test_trojan_subscription_uses_inbound_listener_port(security):
+    subscription_links_service.links_cache.clear()
+    inbound = _make_inbound(security, protocol="trojan", port=8443)
+    with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
+        links = main.get_links_filtered(_nodes(), "user@example.com")
+
+    assert links[0].startswith("trojan://trojan-password@1.2.3.4:8443")
+
+
+@pytest.mark.parametrize("port", [None, 0, 65536, "not-a-port", True])
+def test_subscription_uses_legacy_443_fallback_for_missing_or_invalid_inbound_port(port):
+    subscription_links_service.links_cache.clear()
+    inbound = _make_inbound("reality", port=port)
+    with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
+        links = main.get_links_filtered(_nodes(), "user@example.com")
+
+    assert links[0].startswith("vless://client-uuid@1.2.3.4:443")
 
 
 def test_links_are_generated_from_persisted_node_snapshot(tmp_path):
