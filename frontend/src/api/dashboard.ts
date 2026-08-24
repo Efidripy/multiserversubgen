@@ -177,8 +177,11 @@ export async function getDashboardSummary(period: DashboardTrafficPeriod = 'all_
   return normalizeDashboardSummary(res.data);
 }
 
-export async function getDashboardOverview(period: DashboardTrafficPeriod = 'all_time'): Promise<DashboardOverviewData> {
-  const res = await api.get('/v1/dashboard/overview', { auth: getAuth(), params: { period } });
+export async function getDashboardOverview(
+  period: DashboardTrafficPeriod = 'all_time',
+  options: { signal?: AbortSignal } = {},
+): Promise<DashboardOverviewData> {
+  const res = await api.get('/v1/dashboard/overview', { auth: getAuth(), params: { period }, signal: options.signal });
   return {
     summary: normalizeDashboardSummary(res.data?.summary),
     fleet: normalizeDashboardFleet(res.data?.fleet),
