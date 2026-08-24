@@ -7,7 +7,6 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from core.app_settings import load_app_settings
-from core.config import Settings
 
 
 def _parse_mfa_users(_: str) -> dict[str, str]:
@@ -21,8 +20,6 @@ def test_runtime_requires_provisioned_secrets_when_hardened(monkeypatch):
 
     with pytest.raises(RuntimeError, match="WS_AUTH_SECRET"):
         load_app_settings(parse_mfa_users=_parse_mfa_users)
-    with pytest.raises(RuntimeError, match="WS_AUTH_SECRET"):
-        Settings()
 
 
 def test_runtime_uses_provisioned_secrets_stably(monkeypatch):
@@ -39,7 +36,6 @@ def test_runtime_uses_provisioned_secrets_stably(monkeypatch):
         == second.subscription_signing_secret
         == "subscription-secret-for-test"
     )
-    assert Settings().ws_auth_secret == "ws-secret-for-test"
 
 
 def test_development_keeps_explicit_ephemeral_fallback(monkeypatch):

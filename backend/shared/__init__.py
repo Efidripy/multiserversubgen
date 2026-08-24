@@ -1,27 +1,5 @@
-"""Shared utilities for the modular backend."""
+"""Shared production utilities.
 
-from .exceptions import (
-    AppError,
-    AuthenticationError,
-    AuthorizationError,
-    NotFoundError,
-    ValidationError,
-    RateLimitError,
-    ServiceUnavailableError,
-)
-from .logging import get_logger
-from .metrics import Counter, Gauge, Histogram
-
-__all__ = [
-    "AppError",
-    "AuthenticationError",
-    "AuthorizationError",
-    "NotFoundError",
-    "ValidationError",
-    "RateLimitError",
-    "ServiceUnavailableError",
-    "get_logger",
-    "Counter",
-    "Gauge",
-    "Histogram",
-]
+Callers import the required submodule directly.  This initializer intentionally
+has no imports so a live utility does not load retired framework helpers.
+"""
