@@ -13,6 +13,7 @@ from utils import parse_field_as_dict
 logger = logging.getLogger("sub_manager")
 
 CACHE_TTL = int(os.getenv("CACHE_TTL", "30"))
+LINKS_CACHE_MAX_ENTRIES = int(os.getenv("SUBSCRIPTION_LINKS_CACHE_MAX_ENTRIES", "2048"))
 
 _SNAPSHOT_DB_PATH: Optional[str] = None
 _cache_lock = Lock()
@@ -34,6 +35,23 @@ def invalidate_subscription_cache() -> None:
         emails_cache["items"] = {}
         links_cache.clear()
         _inbounds_cache.clear()
+
+
+def _prune_links_cache(now: float) -> None:
+    expired_keys = [
+        key for key, (created_at, _) in links_cache.items()
+        if now - created_at >= CACHE_TTL
+    ]
+    for key in expired_keys:
+        links_cache.pop(key, None)
+
+    overflow = len(links_cache) - LINKS_CACHE_MAX_ENTRIES + 1
+    if overflow <= 0:
+        return
+
+    oldest_keys = sorted(links_cache, key=lambda key: links_cache[key][0])[:overflow]
+    for key in oldest_keys:
+        links_cache.pop(key, None)
 
 
 def _node_cache_key(node: Dict) -> str:
@@ -317,5 +335,6 @@ def get_links_filtered(
                         )
 
     with _cache_lock:
+        _prune_links_cache(now_link)
         links_cache[cache_key] = (now_link, links)
     return links
