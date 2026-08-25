@@ -188,6 +188,9 @@ export async function deleteNode(nodeId: number): Promise<any> {
 }
 
 export async function checkNodeConnection(payload: unknown): Promise<any> {
-  const res = await api.post('/v1/nodes/check-connection', payload, { auth: getAuth() });
+  const res = await api.post('/v1/nodes/check-connection', payload, {
+    auth: getAuth(),
+    skipCacheInvalidation: true,
+  });
   return res.data;
 }
