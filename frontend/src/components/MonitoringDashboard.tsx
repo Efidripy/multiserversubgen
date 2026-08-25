@@ -500,6 +500,12 @@ export const MonitoringDashboard: React.FC = () => {
   const latestSnapshotAbortRef = useRef<AbortController | null>(null);
   const serverStatusRequestIdRef = useRef(0);
   const serverStatusAbortRef = useRef<AbortController | null>(null);
+  const collectorStatusRequestIdRef = useRef(0);
+  const collectorStatusAbortRef = useRef<AbortController | null>(null);
+  const depsHealthRequestIdRef = useRef(0);
+  const depsHealthAbortRef = useRef<AbortController | null>(null);
+  const stackStatusRequestIdRef = useRef(0);
+  const stackStatusAbortRef = useRef<AbortController | null>(null);
   const adguardHistoryRequestIdRef = useRef(0);
   const adguardHistoryAbortRef = useRef<AbortController | null>(null);
   const [editingAdguardSourceId, setEditingAdguardSourceId] = useState<number | null>(null);
@@ -636,11 +642,21 @@ export const MonitoringDashboard: React.FC = () => {
     Object.values(stats || {}).reduce((sum, item) => sum + Number(item?.total || 0), 0);
 
   const loadDepsHealth = async () => {
+    const requestId = ++depsHealthRequestIdRef.current;
+    depsHealthAbortRef.current?.abort();
+    const controller = new AbortController();
+    depsHealthAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/health/deps', { auth: getAuth() });
+      const res = await api.get('/v1/health/deps', { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== depsHealthRequestIdRef.current) return;
       setDepsHealth(res.data as DepsHealth);
     } catch {
+      if (controller.signal.aborted || requestId !== depsHealthRequestIdRef.current) return;
       setDepsHealth(null);
+    } finally {
+      if (depsHealthAbortRef.current === controller) {
+        depsHealthAbortRef.current = null;
+      }
     }
   };
 
@@ -688,11 +704,21 @@ export const MonitoringDashboard: React.FC = () => {
   };
 
   const loadStackStatus = async () => {
+    const requestId = ++stackStatusRequestIdRef.current;
+    stackStatusAbortRef.current?.abort();
+    const controller = new AbortController();
+    stackStatusAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/monitoring/stack', { auth: getAuth() });
+      const res = await api.get('/v1/monitoring/stack', { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== stackStatusRequestIdRef.current) return;
       setStackStatus(res.data as StackStatusResponse);
     } catch {
+      if (controller.signal.aborted || requestId !== stackStatusRequestIdRef.current) return;
       setStackStatus(null);
+    } finally {
+      if (stackStatusAbortRef.current === controller) {
+        stackStatusAbortRef.current = null;
+      }
     }
   };
 
@@ -727,11 +753,21 @@ export const MonitoringDashboard: React.FC = () => {
   };
 
   const loadCollectorStatus = async () => {
+    const requestId = ++collectorStatusRequestIdRef.current;
+    collectorStatusAbortRef.current?.abort();
+    const controller = new AbortController();
+    collectorStatusAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/collector/status', { auth: getAuth() });
+      const res = await api.get('/v1/collector/status', { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== collectorStatusRequestIdRef.current) return;
       setCollectorStatus(res.data as CollectorStatus);
     } catch {
+      if (controller.signal.aborted || requestId !== collectorStatusRequestIdRef.current) return;
       setCollectorStatus(null);
+    } finally {
+      if (collectorStatusAbortRef.current === controller) {
+        collectorStatusAbortRef.current = null;
+      }
     }
   };
 
@@ -930,6 +966,15 @@ export const MonitoringDashboard: React.FC = () => {
     serverStatusRequestIdRef.current += 1;
     serverStatusAbortRef.current?.abort();
     serverStatusAbortRef.current = null;
+    collectorStatusRequestIdRef.current += 1;
+    collectorStatusAbortRef.current?.abort();
+    collectorStatusAbortRef.current = null;
+    depsHealthRequestIdRef.current += 1;
+    depsHealthAbortRef.current?.abort();
+    depsHealthAbortRef.current = null;
+    stackStatusRequestIdRef.current += 1;
+    stackStatusAbortRef.current?.abort();
+    stackStatusAbortRef.current = null;
   }, []);
 
   const handleRealtimeUpdate = useCallback(
