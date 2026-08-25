@@ -496,6 +496,7 @@ export const App: React.FC = () => {
         const action = msg.data?.action || 'update';
         const successful = msg.data?.result?.successful ?? 0;
         const total = msg.data?.result?.total ?? 0;
+        if (successful === 0 && total === 0) return;
 
         let actionLabel = t('push.inboundUpdated');
         if (action === 'batch_enable') actionLabel = t('push.inboundBatchEnable');
