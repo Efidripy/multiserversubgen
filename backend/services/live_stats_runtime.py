@@ -568,6 +568,13 @@ class LiveStatsRuntime:
         identity_stats = projection.get("identity_stats") if isinstance(projection, dict) else None
         use_identity_stats = group_by in {"node", "inbound"} and isinstance(identity_stats, dict)
         comparison_stats = identity_stats if use_identity_stats else current_stats
+        legacy_key_counts: Dict[str, int] = {}
+        if use_identity_stats:
+            for identity_value in comparison_stats.values():
+                if isinstance(identity_value, dict):
+                    legacy_key = str(identity_value.get("_legacy_key") or "")
+                    if legacy_key:
+                        legacy_key_counts[legacy_key] = legacy_key_counts.get(legacy_key, 0) + 1
         delta_stats: Dict[str, Dict[str, int]] = {}
         missing_baseline_count = 0
         for key, current_value in comparison_stats.items():
@@ -576,11 +583,7 @@ class LiveStatsRuntime:
             snapshot_value = snapshot_stats.get(key)
             if not isinstance(snapshot_value, dict) and use_identity_stats:
                 legacy_key = str(current_value.get("_legacy_key") or "")
-                matches = [
-                    item for item in comparison_stats.values()
-                    if isinstance(item, dict) and item.get("_legacy_key") == legacy_key
-                ]
-                candidate = snapshot_stats.get(legacy_key) if len(matches) == 1 and legacy_key else None
+                candidate = snapshot_stats.get(legacy_key) if legacy_key_counts.get(legacy_key) == 1 else None
                 snapshot_value = candidate if isinstance(candidate, dict) else None
             if snapshot_value is None:
                 if use_identity_stats and str(key).startswith("node:"):
