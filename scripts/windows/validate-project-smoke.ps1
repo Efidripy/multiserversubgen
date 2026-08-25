@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$RepoRoot = ""
+    [string]$RepoRoot = "",
+    [switch]$CheckRemote
 )
 
 $ErrorActionPreference = "Stop"
@@ -97,7 +98,11 @@ if ($indexHtml -notmatch [regex]::Escape($expectedAssetPrefix)) {
     throw "Built index.html does not reference expected asset prefix: $expectedAssetPrefix"
 }
 
-if (-not [string]::IsNullOrWhiteSpace($env:PLAYWRIGHT_BASE_URL)) {
+if ($CheckRemote) {
+    if ([string]::IsNullOrWhiteSpace($env:PLAYWRIGHT_BASE_URL)) {
+        throw "-CheckRemote requires PLAYWRIGHT_BASE_URL to be configured"
+    }
+
     $target = $env:PLAYWRIGHT_BASE_URL.TrimEnd("/") + "/"
     Write-Host "Project smoke: checking configured panel URL"
     $httpCode = & curl.exe -k -L --max-time 10 -o NUL -s -w "%{http_code}" $target
