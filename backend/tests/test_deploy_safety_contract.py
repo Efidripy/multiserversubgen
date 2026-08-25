@@ -179,6 +179,21 @@ def test_windows_remote_deploy_cleans_password_file_after_setup_failure():
     assert "Remove-Item -LiteralPath $passwordFile -Force -ErrorAction SilentlyContinue" in script[cleanup:]
 
 
+def test_windows_remote_deploy_cleans_local_archive_after_sync_or_failure():
+    script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
+
+    archive_init = script.index('$archivePath = Join-Path')
+    archive_use = script.index('New-Archive -RepoRoot $repoRoot -ArchivePath $archivePath')
+    cleanup = script.index("finally {", archive_init)
+    archive_cleanup = script.index(
+        'Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue',
+        cleanup,
+    )
+
+    assert archive_init < archive_use < cleanup < archive_cleanup
+    assert 'if ($archivePath -and (Test-Path -LiteralPath $archivePath))' in script[cleanup:]
+
+
 def test_ops_backup_check_uses_consistent_runtime_database_backup():
     script = (REPO / "scripts/ops/backup-restore-check.sh").read_text(encoding="utf-8")
 
