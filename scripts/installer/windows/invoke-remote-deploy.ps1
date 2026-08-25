@@ -217,7 +217,7 @@ $runId = [guid]::NewGuid().ToString("N")
 $archivePath = Join-Path ([IO.Path]::GetTempPath()) "multiserversubgen-remote-$timestamp-$runId.tar.gz"
 $remoteArchive = "/tmp/multiserversubgen-remote-$timestamp-$runId.tar.gz"
 $remoteLog = "/tmp/sub-manager-$Mode-$timestamp.log"
-$remoteWorkDir = "$RemoteDir-$runId"
+$remoteWorkDir = if ($SkipSync) { $RemoteDir } else { "$RemoteDir-$runId" }
 
 try {
     if (-not $SkipSync) {
