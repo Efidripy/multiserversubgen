@@ -156,37 +156,37 @@ class TestVlessFlowParameter:
 
 
 @pytest.mark.parametrize("security", ["reality", "tls"])
-def test_vless_subscription_uses_inbound_listener_port(security):
+def test_vless_subscription_uses_public_https_port(security):
     subscription_links_service.links_cache.clear()
     inbound = _make_inbound(security, port=8443)
     with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
         links = main.get_links_filtered(_nodes(), "user@example.com")
 
-    assert links[0].startswith("vless://client-uuid@1.2.3.4:8443")
+    assert links[0].startswith("vless://client-uuid@1.2.3.4:443")
 
 
-def test_vmess_subscription_uses_inbound_listener_port():
+def test_vmess_subscription_uses_public_https_port():
     subscription_links_service.links_cache.clear()
     inbound = _make_inbound("reality", protocol="vmess", port="8443")
     with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
         links = main.get_links_filtered(_nodes(), "user@example.com")
 
     payload = base64.b64decode(links[0].removeprefix("vmess://")).decode()
-    assert json.loads(payload)["port"] == "8443"
+    assert json.loads(payload)["port"] == "443"
 
 
 @pytest.mark.parametrize("security", ["reality", "tls"])
-def test_trojan_subscription_uses_inbound_listener_port(security):
+def test_trojan_subscription_uses_public_https_port(security):
     subscription_links_service.links_cache.clear()
     inbound = _make_inbound(security, protocol="trojan", port=8443)
     with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
         links = main.get_links_filtered(_nodes(), "user@example.com")
 
-    assert links[0].startswith("trojan://trojan-password@1.2.3.4:8443")
+    assert links[0].startswith("trojan://trojan-password@1.2.3.4:443")
 
 
 @pytest.mark.parametrize("port", [None, 0, 65536, "not-a-port", True])
-def test_subscription_uses_legacy_443_fallback_for_missing_or_invalid_inbound_port(port):
+def test_subscription_uses_public_https_port_for_missing_or_invalid_inbound_port(port):
     subscription_links_service.links_cache.clear()
     inbound = _make_inbound("reality", port=port)
     with patch("services.subscription_links.fetch_inbounds", return_value=[inbound]):
