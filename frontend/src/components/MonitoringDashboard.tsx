@@ -496,6 +496,8 @@ export const MonitoringDashboard: React.FC = () => {
   const realtimeRefreshRef = useRef(0);
   const historyLoadIdRef = useRef(0);
   const historyAbortRef = useRef<AbortController | null>(null);
+  const latestSnapshotRequestIdRef = useRef(0);
+  const latestSnapshotAbortRef = useRef<AbortController | null>(null);
   const adguardHistoryRequestIdRef = useRef(0);
   const adguardHistoryAbortRef = useRef<AbortController | null>(null);
   const [editingAdguardSourceId, setEditingAdguardSourceId] = useState<number | null>(null);
@@ -594,15 +596,26 @@ export const MonitoringDashboard: React.FC = () => {
     }
   };
 
-  const loadLatestSnapshot = async (): Promise<SnapshotNode[]> => {
+  const loadLatestSnapshot = async (): Promise<SnapshotNode[] | null> => {
+    const requestId = ++latestSnapshotRequestIdRef.current;
+    latestSnapshotAbortRef.current?.abort();
+    const controller = new AbortController();
+    latestSnapshotAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/snapshots/latest', { auth: getAuth() });
+      const res = await api.get('/v1/snapshots/latest', { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== latestSnapshotRequestIdRef.current) return null;
       const parsed = (res.data?.nodes || []) as SnapshotNode[];
       setLatestSnapshotNodes(parsed);
       return parsed;
-    } catch {
+    } catch (err: any) {
+      if (controller.signal.aborted || requestId !== latestSnapshotRequestIdRef.current
+        || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.message === 'canceled') return null;
       setLatestSnapshotNodes([]);
-      return [];
+      return null;
+    } finally {
+      if (latestSnapshotAbortRef.current === controller) {
+        latestSnapshotAbortRef.current = null;
+      }
     }
   };
 
@@ -834,7 +847,7 @@ export const MonitoringDashboard: React.FC = () => {
     const tick = async () => {
       try {
         const snapshot = await loadLatestSnapshot();
-        if (cancelled) return;
+        if (cancelled || !snapshot) return;
 
         const nodeTotals: Record<string, number> = {};
         for (const node of snapshot) {
@@ -897,6 +910,9 @@ export const MonitoringDashboard: React.FC = () => {
     historyLoadIdRef.current += 1;
     historyAbortRef.current?.abort();
     historyAbortRef.current = null;
+    latestSnapshotRequestIdRef.current += 1;
+    latestSnapshotAbortRef.current?.abort();
+    latestSnapshotAbortRef.current = null;
   }, []);
 
   const handleRealtimeUpdate = useCallback(
