@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import api, { resetCacheGeneration, resetInFlightGetRequests } from '../src/api/client';
+import { checkNodeConnection } from '../src/api/nodes';
 import { cacheService } from '../src/services/cacheService';
 
 describe('API cold-request coalescing', () => {
@@ -112,6 +113,37 @@ describe('API cold-request coalescing', () => {
     await api.post('/v1/traffic/client-totals', { emails: ['operator@example.test'], period: 'day' }, {
       skipCacheInvalidation: true,
     });
+    await api.get('/v1/traffic/stats-by-period', { params: { group_by: 'client', period: 'day' } });
+
+    expect(trafficGetCalls).toBe(1);
+  });
+
+  it('keeps cached read projections after a node connection probe', async () => {
+    let trafficGetCalls = 0;
+    api.defaults.adapter = async (config: any) => {
+      if (config.method === 'get') {
+        trafficGetCalls += 1;
+        return {
+          data: { stats: { 'operator@example.test': { total: 42 } } },
+          status: 200,
+          statusText: 'OK',
+          headers: {},
+          config,
+        };
+      }
+      expect(config.url).toBe('/v1/nodes/check-connection');
+      expect(config.skipCacheInvalidation).toBe(true);
+      return {
+        data: { success: true },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+    };
+
+    await api.get('/v1/traffic/stats-by-period', { params: { group_by: 'client', period: 'day' } });
+    await checkNodeConnection({ url: 'https://node.example.test' });
     await api.get('/v1/traffic/stats-by-period', { params: { group_by: 'client', period: 'day' } });
 
     expect(trafficGetCalls).toBe(1);
