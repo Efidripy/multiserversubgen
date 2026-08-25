@@ -356,6 +356,8 @@ export const ClientManager: React.FC = () => {
   const [ipSearchValue, setIpSearchValue] = useState('');
   const [ipSearchResults, setIpSearchResults] = useState<Array<{email: string; node: string; ips: string[]}>>([]);
   const [ipSearchLoading, setIpSearchLoading] = useState(false);
+  const ipSearchRequestIdRef = useRef(0);
+  const ipSearchAbortRef = useRef<AbortController | null>(null);
 
   // Per-client IP history modal
   const [ipHistoryClient, setIpHistoryClient] = useState<Client | null>(null);
@@ -436,6 +438,8 @@ export const ClientManager: React.FC = () => {
       clientsLoadAbortRef.current?.abort();
       trafficFetchAbortRef.current?.abort();
       clientPresenceAbortRef.current?.abort();
+      ipSearchRequestIdRef.current += 1;
+      ipSearchAbortRef.current?.abort();
     };
   }, []);
   
@@ -1485,6 +1489,45 @@ export const ClientManager: React.FC = () => {
     }
   };
   
+  const cancelIpSearch = () => {
+    ipSearchRequestIdRef.current += 1;
+    ipSearchAbortRef.current?.abort();
+    ipSearchAbortRef.current = null;
+    setIpSearchLoading(false);
+  };
+
+  const runIpSearch = async () => {
+    const targetIp = ipSearchValue.trim();
+    if (!targetIp) return;
+
+    const requestId = ++ipSearchRequestIdRef.current;
+    ipSearchAbortRef.current?.abort();
+    const controller = new AbortController();
+    ipSearchAbortRef.current = controller;
+    setIpSearchLoading(true);
+    setIpSearchResults([]);
+    try {
+      const res = await api.get('/v1/clients/find-by-ip', {
+        params: { ip: targetIp },
+        auth: getAuth(),
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted || requestId !== ipSearchRequestIdRef.current) return;
+      setIpSearchResults(res.data?.matches || []);
+    } catch (err: any) {
+      if (controller.signal.aborted || requestId !== ipSearchRequestIdRef.current
+        || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.message === 'canceled') return;
+      toast(err.response?.data?.detail || 'Search failed', 'error');
+    } finally {
+      if (requestId === ipSearchRequestIdRef.current) {
+        setIpSearchLoading(false);
+      }
+      if (ipSearchAbortRef.current === controller) {
+        ipSearchAbortRef.current = null;
+      }
+    }
+  };
+
   const exportToCSV = () => {
     const headers = ['Email', 'Node', 'Protocol', 'Status', 'Download (GB)', 'Total (GB)', 'Expiry Date'];
     const rows = filteredClients.map(c => [
@@ -3000,12 +3043,12 @@ export const ClientManager: React.FC = () => {
 
       {/* IP Search Modal */}
       {showIpSearch && (
-        <div className={modalBackdropClass} onClick={e => { if (e.target === e.currentTarget) setShowIpSearch(false); }}>
+        <div className={modalBackdropClass} onClick={e => { if (e.target === e.currentTarget) { cancelIpSearch(); setShowIpSearch(false); } }}>
           <div className="my-8 w-full max-w-3xl">
             <div className={modalPanelClass}>
               <div className={modalHeaderClass}>
                 <h6 className={modalTitleClass}>{t('clients.findByIpModalTitle')}</h6>
-                <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setShowIpSearch(false)}>
+                <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => { cancelIpSearch(); setShowIpSearch(false); }}>
                   X
                 </button>
               </div>
@@ -3021,28 +3064,14 @@ export const ClientManager: React.FC = () => {
                     onChange={e => setIpSearchValue(e.target.value)}
                     onKeyDown={async e => {
                       if (e.key !== 'Enter' || !ipSearchValue.trim()) return;
-                      setIpSearchLoading(true);
-                      setIpSearchResults([]);
-                      try {
-                        const res = await api.get('/v1/clients/find-by-ip', { params: { ip: ipSearchValue.trim() }, auth: getAuth() });
-                        setIpSearchResults(res.data?.matches || []);
-                      } catch (err: any) { toast(err.response?.data?.detail || 'Search failed', 'error'); }
-                      finally { setIpSearchLoading(false); }
+                      await runIpSearch();
                     }}
     
                   />
                   <button
                     className={buttonAccentClass}
                     disabled={!ipSearchValue.trim() || ipSearchLoading}
-                    onClick={async () => {
-                      setIpSearchLoading(true);
-                      setIpSearchResults([]);
-                      try {
-                        const res = await api.get('/v1/clients/find-by-ip', { params: { ip: ipSearchValue.trim() }, auth: getAuth() });
-                        setIpSearchResults(res.data?.matches || []);
-                      } catch (err: any) { toast(err.response?.data?.detail || 'Search failed', 'error'); }
-                      finally { setIpSearchLoading(false); }
-                    }}
+                    onClick={() => { void runIpSearch(); }}
                   >
                     {ipSearchLoading ? '...' : 'Search'}
                   </button>
