@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
 import { getAuth } from '../auth';
@@ -41,18 +41,31 @@ export const AddClientMultiServer: React.FC = () => {
   const [error, setError] = useState('');
   const [result, setResult] = useState<AddResult | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
+  const nodesRequestIdRef = useRef(0);
+  const nodesAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    loadNodes();
+    void loadNodes();
+    return () => {
+      nodesAbortRef.current?.abort();
+      nodesAbortRef.current = null;
+    };
   }, []);
 
   const loadNodes = async () => {
+    nodesAbortRef.current?.abort();
+    const controller = new AbortController();
+    nodesAbortRef.current = controller;
+    const requestId = ++nodesRequestIdRef.current;
     try {
-      const res = await api.get('/v1/nodes/list', { auth: getAuth() });
+      const res = await api.get('/v1/nodes/list', { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== nodesRequestIdRef.current) return;
       const nodeList: NodeOption[] = res.data || [];
       setNodes(nodeList);
       setSelectedNodeIds(new Set(nodeList.map((node) => node.id)));
-    } catch {
+    } catch (err: any) {
+      if (controller.signal.aborted || requestId !== nodesRequestIdRef.current
+        || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.message === 'canceled') return;
       setError(t('clients.addMulti.loadNodesFailed'));
     }
   };
