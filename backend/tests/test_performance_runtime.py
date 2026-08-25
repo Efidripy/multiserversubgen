@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import time
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, Lock
 
@@ -352,5 +353,62 @@ def test_fleet_history_is_one_bounded_route(tmp_path):
     assert response.status_code == 200
     payload = response.json()
     assert payload["count"] == 200
+    assert payload["effective_limit_per_node"] == 100
+    assert payload["point_budget"] == 24_000
+    assert payload["active_node_count"] == 2
     assert {point["node_id"] for point in payload["points"]} == {1, 2}
     assert {point["ts"] for point in payload["points"]} == set(range(now - 100, now))
+
+
+def test_fleet_history_fairly_bounds_large_response_to_point_budget(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    now = int(time.time())
+    node_count = 100
+    points_per_node = 300
+    with connect(db_path) as conn:
+        conn.executemany(
+            """
+            INSERT INTO node_history (ts, node_id, node_name, available, xray_running, cpu, online_clients, traffic_total, poll_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (now - offset, node_id, f"node-{node_id}", 1, 1, 10, 1, 1000 + offset, 5)
+                for node_id in range(1, node_count + 1)
+                for offset in range(1, points_per_node + 1)
+            ],
+        )
+
+    class NodeService:
+        def list_nodes(self):
+            return []
+
+    class SnapshotCollector:
+        def latest_snapshot(self):
+            return {}
+
+    app = FastAPI()
+    app.include_router(
+        build_operations_router(
+            check_auth=lambda _request: "admin",
+            db_path=db_path,
+            node_service=NodeService(),
+            client_mgr=object(),
+            server_monitor=object(),
+            get_node_or_404=lambda _node_id: {},
+            snapshot_collector=SnapshotCollector(),
+        )
+    )
+    response = TestClient(app).get("/api/v1/history/nodes?since_sec=999999&limit_per_node=300")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["active_node_count"] == node_count
+    assert payload["point_budget"] == 24_000
+    assert payload["effective_limit_per_node"] == 240
+    assert payload["count"] == 24_000
+    assert {point["node_id"] for point in payload["points"]} == set(range(1, node_count + 1))
+    assert Counter(point["node_id"] for point in payload["points"]) == {node_id: 240 for node_id in range(1, node_count + 1)}
+    assert [(point["ts"], point["node_id"]) for point in payload["points"]] == sorted(
+        (point["ts"], point["node_id"]) for point in payload["points"]
+    )

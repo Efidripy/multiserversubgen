@@ -60,7 +60,7 @@ describe('reload generation guards', () => {
     expect(source).toContain('latestSnapshotAbortRef.current?.abort();');
     expect(source).toContain("signal: controller.signal");
     expect(source).toContain('if (controller.signal.aborted || requestId !== latestSnapshotRequestIdRef.current) return null;');
-    expect(source).toContain('if (cancelled || !snapshot) return;');
+    expect(source).toContain('if (cancelled || controller.signal.aborted || !snapshot) return;');
     expect(source).toContain('latestSnapshotRequestIdRef.current += 1;');
   });
 
@@ -75,6 +75,17 @@ describe('reload generation guards', () => {
     expect(source).toContain('if (controller.signal.aborted || requestId !== nodesRequestIdRef.current) return;');
     expect(source).toContain('nodesRequestIdRef.current += 1;');
     expect(source).toContain('if (nodesAbortRef.current === controller) {');
+  });
+
+  it('cancels stale live traffic aggregation reads on a sampling restart', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain('const liveTrafficAbortRef = useRef<AbortController | null>(null);');
+    expect(source).toContain('liveTrafficAbortRef.current?.abort();');
+    expect(source).toContain("loadTrafficStats('client', 1500, controller.signal)");
+    expect(source).toContain("loadTrafficStats('inbound', 1500, controller.signal)");
+    expect(source).toContain('if (cancelled || controller.signal.aborted) return;');
+    expect(source).toContain('if (liveTrafficAbortRef.current === controller) {');
   });
 
   it('cancels overlapping MonitoringDashboard server-status reads', () => {
@@ -143,6 +154,13 @@ describe('reload generation guards', () => {
     expect(source).toContain('setAdguardMutationLoading(true);');
     expect(source).toContain('setAdguardMutationLoading(false);');
     expect(source).toContain('disabled={adguardMutationLoading}');
+  });
+
+  it('uses the collection refresh as the sole post-save AdGuard source reload', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain('resetAdguardForm();\n      await collectAdguardNow();');
+    expect(source).not.toContain('await Promise.all([loadAdguardSources(), collectAdguardNow()]);');
   });
 
   it('guards TrafficStats online details and cache writes by request generation', () => {
