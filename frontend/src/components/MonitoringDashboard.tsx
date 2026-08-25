@@ -486,7 +486,7 @@ export const MonitoringDashboard: React.FC = () => {
   const [stackStatus, setStackStatus] = useState<StackStatusResponse | null>(null);
   const [serverStatuses, setServerStatuses] = useState<ServerResourceStatus[]>([]);
   const [collectorStatus, setCollectorStatus] = useState<CollectorStatus | null>(null);
-  const [adguardLoading, setAdguardLoading] = useState(false);
+  const [adguardMutationLoading, setAdguardMutationLoading] = useState(false);
   const [adguardError, setAdguardError] = useState('');
   const [resourceLoading, setResourceLoading] = useState(false);
   const [resourceError, setResourceError] = useState('');
@@ -506,6 +506,10 @@ export const MonitoringDashboard: React.FC = () => {
   const depsHealthAbortRef = useRef<AbortController | null>(null);
   const stackStatusRequestIdRef = useRef(0);
   const stackStatusAbortRef = useRef<AbortController | null>(null);
+  const adguardSourcesRequestIdRef = useRef(0);
+  const adguardSourcesAbortRef = useRef<AbortController | null>(null);
+  const adguardOverviewRequestIdRef = useRef(0);
+  const adguardOverviewAbortRef = useRef<AbortController | null>(null);
   const adguardHistoryRequestIdRef = useRef(0);
   const adguardHistoryAbortRef = useRef<AbortController | null>(null);
   const [editingAdguardSourceId, setEditingAdguardSourceId] = useState<number | null>(null);
@@ -661,21 +665,44 @@ export const MonitoringDashboard: React.FC = () => {
   };
 
   const loadAdguardSources = async () => {
-    const res = await api.get('/v1/adguard/sources', { auth: getAuth() });
-    setAdguardSources((res.data || []) as AdGuardSource[]);
+    const requestId = ++adguardSourcesRequestIdRef.current;
+    adguardSourcesAbortRef.current?.abort();
+    const controller = new AbortController();
+    adguardSourcesAbortRef.current = controller;
+    try {
+      const res = await api.get('/v1/adguard/sources', { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== adguardSourcesRequestIdRef.current) return;
+      setAdguardSources((res.data || []) as AdGuardSource[]);
+    } catch (err: any) {
+      if (controller.signal.aborted || requestId !== adguardSourcesRequestIdRef.current
+        || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.message === 'canceled') return;
+      throw err;
+    } finally {
+      if (adguardSourcesAbortRef.current === controller) {
+        adguardSourcesAbortRef.current = null;
+      }
+    }
   };
 
   const loadAdguardOverview = async () => {
+    const requestId = ++adguardOverviewRequestIdRef.current;
+    adguardOverviewAbortRef.current?.abort();
+    const controller = new AbortController();
+    adguardOverviewAbortRef.current = controller;
     try {
-      setAdguardLoading(true);
-      const res = await api.get('/v1/adguard/overview', { auth: getAuth() });
+      const res = await api.get('/v1/adguard/overview', { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== adguardOverviewRequestIdRef.current) return;
       setAdguardOverview(res.data as AdGuardOverview);
       setAdguardError('');
     } catch (err: any) {
+      if (controller.signal.aborted || requestId !== adguardOverviewRequestIdRef.current
+        || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.message === 'canceled') return;
       setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.loadAdguardOverviewFailed'));
       setAdguardOverview(null);
     } finally {
-      setAdguardLoading(false);
+      if (adguardOverviewAbortRef.current === controller) {
+        adguardOverviewAbortRef.current = null;
+      }
     }
   };
 
@@ -701,6 +728,18 @@ export const MonitoringDashboard: React.FC = () => {
         adguardHistoryAbortRef.current = null;
       }
     }
+  };
+
+  const invalidateAdguardReads = () => {
+    adguardSourcesRequestIdRef.current += 1;
+    adguardSourcesAbortRef.current?.abort();
+    adguardSourcesAbortRef.current = null;
+    adguardOverviewRequestIdRef.current += 1;
+    adguardOverviewAbortRef.current?.abort();
+    adguardOverviewAbortRef.current = null;
+    adguardHistoryRequestIdRef.current += 1;
+    adguardHistoryAbortRef.current?.abort();
+    adguardHistoryAbortRef.current = null;
   };
 
   const loadStackStatus = async () => {
@@ -773,15 +812,16 @@ export const MonitoringDashboard: React.FC = () => {
 
 
   const collectAdguardNow = async () => {
+    invalidateAdguardReads();
     try {
-      setAdguardLoading(true);
+      setAdguardMutationLoading(true);
       await api.post('/v1/adguard/collect-now', {}, { auth: getAuth() });
       await Promise.all([loadAdguardOverview(), loadAdguardSources(), loadAdguardHistory(), loadStackStatus()]);
       setAdguardError('');
     } catch (err: any) {
       setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.collectAdguardFailed'));
     } finally {
-      setAdguardLoading(false);
+      setAdguardMutationLoading(false);
     }
   };
 
@@ -812,8 +852,9 @@ export const MonitoringDashboard: React.FC = () => {
   };
 
   const saveAdguardSource = async () => {
+    invalidateAdguardReads();
     try {
-      setAdguardLoading(true);
+      setAdguardMutationLoading(true);
       if (editingAdguardSourceId !== null) {
         await api.put(`/v1/adguard/sources/${editingAdguardSourceId}`, adguardForm, { auth: getAuth() });
       } else {
@@ -824,14 +865,15 @@ export const MonitoringDashboard: React.FC = () => {
     } catch (err: any) {
       setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.addAdguardSourceFailed'));
     } finally {
-      setAdguardLoading(false);
+      setAdguardMutationLoading(false);
     }
   };
 
   const deleteAdguardSource = async (source: AdGuardSource) => {
     if (!window.confirm(`${t('common.delete')} ${source.name}?`)) return;
+    invalidateAdguardReads();
     try {
-      setAdguardLoading(true);
+      setAdguardMutationLoading(true);
       await api.delete(`/v1/adguard/sources/${source.id}`, { auth: getAuth() });
       if (editingAdguardSourceId === source.id) {
         resetAdguardForm();
@@ -840,7 +882,7 @@ export const MonitoringDashboard: React.FC = () => {
     } catch (err: any) {
       setAdguardError(err?.response?.data?.detail || t('common.failed'));
     } finally {
-      setAdguardLoading(false);
+      setAdguardMutationLoading(false);
     }
   };
 
@@ -975,6 +1017,12 @@ export const MonitoringDashboard: React.FC = () => {
     stackStatusRequestIdRef.current += 1;
     stackStatusAbortRef.current?.abort();
     stackStatusAbortRef.current = null;
+    adguardSourcesRequestIdRef.current += 1;
+    adguardSourcesAbortRef.current?.abort();
+    adguardSourcesAbortRef.current = null;
+    adguardOverviewRequestIdRef.current += 1;
+    adguardOverviewAbortRef.current?.abort();
+    adguardOverviewAbortRef.current = null;
   }, []);
 
   const handleRealtimeUpdate = useCallback(
@@ -1992,8 +2040,8 @@ export const MonitoringDashboard: React.FC = () => {
             <div className="min-w-0">
               <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-cyan-300">{t('monitoringDashboard.adguardTitle')}</h3>
             </div>
-            <button className={primaryButtonClass} onClick={collectAdguardNow} disabled={adguardLoading}>
-              {adguardLoading ? t('monitoringDashboard.collecting') : t('monitoringDashboard.collectNow')}
+            <button className={primaryButtonClass} onClick={collectAdguardNow} disabled={adguardMutationLoading}>
+              {adguardMutationLoading ? t('monitoringDashboard.collecting') : t('monitoringDashboard.collectNow')}
             </button>
           </div>
 
@@ -2242,12 +2290,12 @@ export const MonitoringDashboard: React.FC = () => {
                 <button
                   className={primaryButtonClass}
                   onClick={() => void saveAdguardSource()}
-                  disabled={adguardLoading}
+                  disabled={adguardMutationLoading}
                 >
                   {editingAdguardSourceId === null ? t('common.add') : t('common.save')}
                 </button>
                 {editingAdguardSourceId !== null && (
-                  <button className={secondaryButtonClass} onClick={resetAdguardForm} disabled={adguardLoading}>
+                  <button className={secondaryButtonClass} onClick={resetAdguardForm} disabled={adguardMutationLoading}>
                     {t('common.cancel')}
                   </button>
                 )}
@@ -2272,14 +2320,14 @@ export const MonitoringDashboard: React.FC = () => {
                         <div className="mt-0.5 truncate font-mono text-[11px] text-slate-500" title={source.admin_url}>{source.admin_url}</div>
                       </div>
                       <div className="flex shrink-0 gap-2">
-                        <button className={secondaryButtonClass} type="button" onClick={() => editAdguardSource(source)} disabled={adguardLoading}>
+                        <button className={secondaryButtonClass} type="button" onClick={() => editAdguardSource(source)} disabled={adguardMutationLoading}>
                           {t('common.edit')}
                         </button>
                         <button
                           className={`${secondaryButtonClass} border-rose-400/30 text-rose-200 hover:border-rose-300/50 hover:text-rose-100`}
                           type="button"
                           onClick={() => void deleteAdguardSource(source)}
-                          disabled={adguardLoading}
+                          disabled={adguardMutationLoading}
                         >
                           {t('common.delete')}
                         </button>
