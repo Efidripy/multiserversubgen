@@ -3,6 +3,10 @@ import { getAuth } from '../auth';
 
 export type NodeLogKind = 'panel' | 'xray';
 
+export interface ReadRequestOptions {
+  signal?: AbortSignal;
+}
+
 export interface X25519KeyPair {
   privateKey?: string;
   publicKey?: string;
@@ -120,8 +124,8 @@ export async function getNodeLogs(
   return Array.isArray(payload.logs) ? payload.logs : [];
 }
 
-export async function getXrayVersions(nodeId: number): Promise<string[]> {
-  const res = await api.get(`/v1/nodes/${nodeId}/xray-versions`, { auth: getAuth() });
+export async function getXrayVersions(nodeId: number, options: ReadRequestOptions = {}): Promise<string[]> {
+  const res = await api.get(`/v1/nodes/${nodeId}/xray-versions`, { auth: getAuth(), signal: options.signal });
   return res.data?.versions || [];
 }
 
@@ -145,33 +149,33 @@ export async function updateGeofile(nodeId: number): Promise<any> {
   return res.data;
 }
 
-export async function getOutboundsTraffic(nodeId: number): Promise<any[]> {
-  const res = await api.get(`/v1/nodes/${nodeId}/outbounds-traffic`, { auth: getAuth() });
+export async function getOutboundsTraffic(nodeId: number, options: ReadRequestOptions = {}): Promise<any[]> {
+  const res = await api.get(`/v1/nodes/${nodeId}/outbounds-traffic`, { auth: getAuth(), signal: options.signal });
   return res.data?.outbounds || [];
 }
 
-export async function getNodeTraffic(nodeId: number): Promise<any> {
-  const res = await api.get(`/v1/nodes/${nodeId}/traffic`, { auth: getAuth() });
+export async function getNodeTraffic(nodeId: number, options: ReadRequestOptions = {}): Promise<any> {
+  const res = await api.get(`/v1/nodes/${nodeId}/traffic`, { auth: getAuth(), signal: options.signal });
   return res.data;
 }
 
-export async function getNodeOnlineClients(nodeId: number): Promise<any> {
-  const res = await api.get(`/v1/nodes/${nodeId}/online-clients`, { auth: getAuth() });
+export async function getNodeOnlineClients(nodeId: number, options: ReadRequestOptions = {}): Promise<any> {
+  const res = await api.get(`/v1/nodes/${nodeId}/online-clients`, { auth: getAuth(), signal: options.signal });
   return res.data;
 }
 
-export async function getXrayMetrics(nodeId: number): Promise<any> {
-  const res = await api.get(`/v1/nodes/${nodeId}/xray-metrics`, { auth: getAuth() });
+export async function getXrayMetrics(nodeId: number, options: ReadRequestOptions = {}): Promise<any> {
+  const res = await api.get(`/v1/nodes/${nodeId}/xray-metrics`, { auth: getAuth(), signal: options.signal });
   return res.data;
 }
 
-export async function getXrayObservatory(nodeId: number): Promise<any> {
-  const res = await api.get(`/v1/nodes/${nodeId}/xray-observatory`, { auth: getAuth() });
+export async function getXrayObservatory(nodeId: number, options: ReadRequestOptions = {}): Promise<any> {
+  const res = await api.get(`/v1/nodes/${nodeId}/xray-observatory`, { auth: getAuth(), signal: options.signal });
   return res.data;
 }
 
-export async function getXrayConfig(nodeId: number): Promise<any> {
-  const res = await api.get(`/v1/nodes/${nodeId}/xray-config`, { auth: getAuth() });
+export async function getXrayConfig(nodeId: number, options: ReadRequestOptions = {}): Promise<any> {
+  const res = await api.get(`/v1/nodes/${nodeId}/xray-config`, { auth: getAuth(), signal: options.signal });
   return res.data;
 }
 
@@ -180,8 +184,8 @@ export async function resetAllNodeTraffics(nodeId: number): Promise<any> {
   return res.data;
 }
 
-export async function getApiTokens(nodeId: number): Promise<any[]> {
-  const res = await api.get(`/v1/nodes/${nodeId}/api-tokens`, { auth: getAuth() });
+export async function getApiTokens(nodeId: number, options: ReadRequestOptions = {}): Promise<any[]> {
+  const res = await api.get(`/v1/nodes/${nodeId}/api-tokens`, { auth: getAuth(), signal: options.signal });
   return res.data?.tokens || res.data || [];
 }
 
