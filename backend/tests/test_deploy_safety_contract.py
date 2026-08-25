@@ -128,6 +128,18 @@ def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_
     assert 'sudo NONINTERACTIVE=true UPDATE_CHOICE=$UpdateChoice bash ./update.sh' in script
 
 
+def test_windows_remote_deploy_skip_sync_uses_explicit_prepared_workdir():
+    script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
+
+    assert '[switch]$SkipSync' in script
+    assert '$remoteWorkDir = if ($SkipSync) { $RemoteDir } else { "$RemoteDir-$runId" }' in script
+    assert script.index('$remoteWorkDir = if ($SkipSync)') < script.index('if (-not $SkipSync)')
+    assert "if (-not $SkipSync)" in script
+    assert "cd $remoteWorkDir && sudo bash ./install.sh" in script
+    assert "cd $remoteWorkDir && sudo NONINTERACTIVE=true UPDATE_CHOICE=$UpdateChoice bash ./update.sh" in script
+    assert "cd $remoteWorkDir && sudo bash scripts/ops/smoke-test.sh" in script
+
+
 def test_windows_remote_deploy_fails_closed_on_native_transport_errors():
     script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
 
