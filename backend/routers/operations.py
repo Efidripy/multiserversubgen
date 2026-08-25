@@ -1,6 +1,8 @@
+import asyncio
 import base64
 import datetime
 import io
+import os
 import sqlite3
 from services.db_bootstrap import connect
 import time
@@ -16,6 +18,40 @@ from shared.security import (
     is_supported_sqlite_backup,
     safe_content_disposition_filename,
 )
+
+
+DEFAULT_BACKUP_MAX_WORKERS = 8
+MAX_BACKUP_WORKERS = 32
+
+
+def _backup_worker_limit() -> int:
+    """Return a bounded concurrency limit for the read-only fleet backup fan-out."""
+    try:
+        configured = int(os.getenv("BACKUP_MAX_WORKERS", str(DEFAULT_BACKUP_MAX_WORKERS)))
+    except (TypeError, ValueError):
+        configured = DEFAULT_BACKUP_MAX_WORKERS
+    return min(max(configured, 1), MAX_BACKUP_WORKERS)
+
+
+async def _collect_backups(nodes, fetch_backup, *, max_workers: int | None = None):
+    """Fetch independent node backups concurrently while preserving node order."""
+    if max_workers is None:
+        worker_limit = _backup_worker_limit()
+    else:
+        worker_limit = min(max(int(max_workers), 1), MAX_BACKUP_WORKERS)
+    semaphore = asyncio.Semaphore(worker_limit)
+
+    async def _collect_one(node):
+        async with semaphore:
+            try:
+                backup = await run_in_threadpool(fetch_backup, node)
+            except Exception:
+                return {"node": node.get("name"), "error": "backup request failed"}
+            if isinstance(backup, dict):
+                return backup
+            return {"node": node.get("name"), "error": "invalid backup response"}
+
+    return await asyncio.gather(*(_collect_one(node) for node in nodes))
 
 
 def build_operations_router(
@@ -305,7 +341,7 @@ def build_operations_router(
             raise HTTPException(status_code=401)
 
         nodes = await _load_nodes()
-        backups = [await _run(server_monitor.get_database_backup, node) for node in nodes]
+        backups = await _collect_backups(nodes, server_monitor.get_database_backup)
         if request.query_params.get("format", "").lower() == "json":
             return {"backups": backups, "count": len(backups)}
 
