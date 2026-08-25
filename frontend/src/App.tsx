@@ -327,6 +327,7 @@ export const App: React.FC = () => {
     if (!isAuthenticated) return;
 
     let cancelled = false;
+    const controller = new AbortController();
 
     const buildSummary = async () => {
       setHeaderLoading(true);
@@ -358,7 +359,7 @@ export const App: React.FC = () => {
             }
             break;
           case 'monitoring': {
-            const { deps, overview, stack } = await getMonitoringHeaderSource();
+            const { deps, overview, stack } = await getMonitoringHeaderSource({ signal: controller.signal });
             const services = stack?.services ? Object.values(stack.services) as any[] : [];
             const servicesUp = services.filter((service: any) => service.ok).length;
             const sourcesTotal = overview?.summary?.sources_total || 0;
@@ -377,7 +378,7 @@ export const App: React.FC = () => {
             break;
           }
           case 'backup': {
-            const { nodes } = await getBackupHeaderSource();
+            const { nodes } = await getBackupHeaderSource({ signal: controller.signal });
             const readOnly = nodes.filter((node: any) => Boolean(node.read_only)).length;
             if (!cancelled) {
               updateHeaderSummary({
@@ -393,7 +394,7 @@ export const App: React.FC = () => {
             break;
           }
           case 'subscriptions': {
-            const { emails, stats, nodes } = await getSubscriptionsHeaderSource();
+            const { emails, stats, nodes } = await getSubscriptionsHeaderSource({ signal: controller.signal });
             const domains = new Map<string, number>();
             let downloads = 0;
             let latest = 0;
@@ -438,6 +439,7 @@ export const App: React.FC = () => {
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
   }, [activeTab, isAuthenticated, key]);
 
