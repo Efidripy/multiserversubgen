@@ -117,6 +117,21 @@ describe('reload generation guards', () => {
     expect(source).toContain('stackStatusRequestIdRef.current += 1;');
   });
 
+  it('separates AdGuard read cancellation from mutation loading state', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain('const [adguardMutationLoading, setAdguardMutationLoading] = useState(false);');
+    expect(source).not.toContain('const [adguardLoading, setAdguardLoading] = useState(false);');
+    expect(source).toContain('const adguardSourcesAbortRef = useRef<AbortController | null>(null);');
+    expect(source).toContain('const adguardOverviewAbortRef = useRef<AbortController | null>(null);');
+    expect(source).toContain("api.get('/v1/adguard/sources', { auth: getAuth(), signal: controller.signal })");
+    expect(source).toContain("api.get('/v1/adguard/overview', { auth: getAuth(), signal: controller.signal })");
+    expect(source).toContain('const invalidateAdguardReads = () => {');
+    expect(source).toContain('setAdguardMutationLoading(true);');
+    expect(source).toContain('setAdguardMutationLoading(false);');
+    expect(source).toContain('disabled={adguardMutationLoading}');
+  });
+
   it('guards TrafficStats online details and cache writes by request generation', () => {
     const source = read('src/components/TrafficStats.tsx');
 
