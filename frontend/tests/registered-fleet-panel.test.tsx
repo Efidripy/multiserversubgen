@@ -84,8 +84,32 @@ describe('RegisteredFleetPanel edit action', () => {
     fireEvent.click(screen.getByTitle('Edit'));
 
     await waitFor(() => expect(onEditNode).toHaveBeenCalledWith(node));
-    expect(mocks.listNodes).toHaveBeenCalledOnce();
+    expect(mocks.listNodes).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
     expect(onOpenNodes).not.toHaveBeenCalled();
+  });
+
+  it('aborts the explicit edit-record read when the panel unmounts', async () => {
+    let signal: AbortSignal | undefined;
+    mocks.dashboardData.fleet = [node];
+    mocks.listNodes.mockImplementation((options: { signal?: AbortSignal }) => {
+      signal = options.signal;
+      return new Promise(() => {});
+    });
+
+    const view = render(
+      <RegisteredFleetPanel
+        collapsed={false}
+        setCollapsed={vi.fn()}
+        onEditNode={vi.fn()}
+        onOpenNodes={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.getByText('edge-42')).toBeTruthy());
+    fireEvent.click(screen.getByTitle('Edit'));
+    await waitFor(() => expect(signal).toBeInstanceOf(AbortSignal));
+    view.unmount();
+    expect(signal?.aborted).toBe(true);
   });
 
   it('keeps remote node probes behind the explicit Test All control', async () => {

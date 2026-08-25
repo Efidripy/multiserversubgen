@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, Edit3, Pause, Play, RefreshCw, Trash2 } from 'lucide-react';
 import { deleteNode, getRegisteredFleetOverview, listNodes, type FleetNode } from '../api/nodes';
@@ -94,6 +94,7 @@ export function RegisteredFleetPanel({
   const [error, setError] = useState<string | null>(null);
   const [deletingNodeId, setDeletingNodeId] = useState<number | null>(null);
   const [actionNodeKey, setActionNodeKey] = useState<string | null>(null);
+  const editAbortRef = useRef<AbortController | null>(null);
 
   const refreshFleetLive = useCallback(async () => {
     setLoading(true);
@@ -167,15 +168,28 @@ export function RegisteredFleetPanel({
       onOpenNodes?.();
       return;
     }
+    editAbortRef.current?.abort();
+    const controller = new AbortController();
+    editAbortRef.current = controller;
     try {
       // Credentials are intentionally absent from the Dashboard aggregate.
       // Fetch the edit record only after an explicit operator click.
-      const record = (await listNodes()).find((item) => item.id === node.id);
+      const record = (await listNodes({ signal: controller.signal })).find((item) => item.id === node.id);
+      if (controller.signal.aborted || editAbortRef.current !== controller) return;
       onEditNode(record ? { ...record, available: node.record.available } : node.record);
-    } catch {
+    } catch (err: any) {
+      if (controller.signal.aborted || editAbortRef.current !== controller
+        || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.message === 'canceled') return;
       onOpenNodes?.();
+    } finally {
+      if (editAbortRef.current === controller) editAbortRef.current = null;
     }
   }, [onEditNode, onOpenNodes]);
+
+  useEffect(() => () => {
+    editAbortRef.current?.abort();
+    editAbortRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (!dashboardData) return;
