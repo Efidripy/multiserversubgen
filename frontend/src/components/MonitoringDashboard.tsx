@@ -877,7 +877,7 @@ export const MonitoringDashboard: React.FC = () => {
         await api.post('/v1/adguard/sources', adguardForm, { auth: getAuth() });
       }
       resetAdguardForm();
-      await Promise.all([loadAdguardSources(), collectAdguardNow()]);
+      await collectAdguardNow();
     } catch (err: any) {
       setAdguardError(err?.response?.data?.detail || t('monitoringDashboard.addAdguardSourceFailed'));
     } finally {

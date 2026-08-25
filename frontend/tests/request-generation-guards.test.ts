@@ -156,6 +156,13 @@ describe('reload generation guards', () => {
     expect(source).toContain('disabled={adguardMutationLoading}');
   });
 
+  it('uses the collection refresh as the sole post-save AdGuard source reload', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain('resetAdguardForm();\n      await collectAdguardNow();');
+    expect(source).not.toContain('await Promise.all([loadAdguardSources(), collectAdguardNow()]);');
+  });
+
   it('guards TrafficStats online details and cache writes by request generation', () => {
     const source = read('src/components/TrafficStats.tsx');
 
