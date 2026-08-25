@@ -153,6 +153,19 @@ def test_windows_remote_deploy_fails_closed_on_native_transport_errors():
     assert 'Invoke-NativeChecked -Action "OpenSSH remote copy" -FilePath $Transport.Scp -ArgumentList $args' in script
 
 
+def test_windows_openssh_rejects_unsupported_hostkey_pins_and_keeps_known_hosts_pinning():
+    script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
+
+    openssh_transport = script.index('Type    = "openssh"')
+    unsupported_pin = script.index("OpenSSH deployments do not support -HostKey pinning.")
+
+    assert unsupported_pin < openssh_transport
+    assert "HostKeyAlgorithms=" not in script
+    assert script.count('"StrictHostKeyChecking=yes"') == 2
+    assert script.count('"UserKnownHostsFile=$knownHosts"') == 2
+    assert script.count('@("-hostkey", $Transport.HostKey)') == 2
+
+
 def test_windows_remote_deploy_cleans_password_file_after_setup_failure():
     script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
 
