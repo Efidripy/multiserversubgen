@@ -34,16 +34,13 @@ def _build_runtime(tmp_path, stats, get_latest_snapshot=None):
         client_mgr=DummyClientManager(stats),
         db_path=db_path,
         traffic_stats_cache={},
-        online_clients_cache={"ts": 0.0, "data": []},
-        cache_refresh_state={"traffic": set(), "online_clients": False},
+        cache_refresh_state={"traffic": set()},
         state_lock=Lock(),
         redis_get_json=lambda key: deepcopy(redis_store.get(key)),
         redis_set_json=lambda key, value, _ttl: redis_store.__setitem__(key, deepcopy(value)),
         redis_delete=lambda *keys: [redis_store.pop(key, None) for key in keys],
         traffic_stats_cache_ttl=30,
         traffic_stats_stale_ttl=120,
-        online_clients_cache_ttl=30,
-        online_clients_stale_ttl=120,
         logger=SimpleNamespace(
             warning=lambda *args, **kwargs: None,
             info=lambda *args, **kwargs: None,
@@ -81,9 +78,8 @@ def test_invalidation_rejects_in_flight_live_stats_cache_publish(tmp_path):
 
     traffic = {"stats": {"before@example.test": {"up": 1, "down": 2}}, "group_by": "client"}
     assert runtime._store_traffic_cache("client", traffic, generation) is False
-    assert runtime._store_online_clients([{"email": "before@example.test"}], generation) is False
     assert runtime.traffic_stats_cache == {}
-    assert runtime.online_clients_cache == {"ts": 0.0, "data": []}
+    assert not hasattr(runtime, "_store_online_clients")
 
 
 def test_memory_snapshot_fallback_expires_and_remains_bounded(monkeypatch, tmp_path):
