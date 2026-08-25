@@ -262,6 +262,9 @@ finally {
     if ($passwordFile -and (Test-Path -LiteralPath $passwordFile)) {
         Remove-Item -LiteralPath $passwordFile -Force -ErrorAction SilentlyContinue
     }
+    if ($archivePath -and (Test-Path -LiteralPath $archivePath)) {
+        Remove-Item -LiteralPath $archivePath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Write-Host ""
