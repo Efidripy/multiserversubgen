@@ -495,6 +495,8 @@ export const MonitoringDashboard: React.FC = () => {
   const [blockedShowCount, setBlockedShowCount] = useState<number>(25);
   const realtimeRefreshRef = useRef(0);
   const historyLoadIdRef = useRef(0);
+  const adguardHistoryRequestIdRef = useRef(0);
+  const adguardHistoryAbortRef = useRef<AbortController | null>(null);
   const [editingAdguardSourceId, setEditingAdguardSourceId] = useState<number | null>(null);
   const [adguardForm, setAdguardForm] = useState({
     name: '',
@@ -628,16 +630,27 @@ export const MonitoringDashboard: React.FC = () => {
     }
   };
 
-  const loadAdguardHistory = async () => {
+  const loadAdguardHistory = async (requestedRangeSec = rangeSec) => {
+    const requestId = ++adguardHistoryRequestIdRef.current;
+    adguardHistoryAbortRef.current?.abort();
+    const controller = new AbortController();
+    adguardHistoryAbortRef.current = controller;
     try {
-      const bucketSec = rangeSec <= 3600 ? 60 : rangeSec <= 6 * 3600 ? 120 : rangeSec <= 24 * 3600 ? 300 : 900;
+      const bucketSec = requestedRangeSec <= 3600 ? 60 : requestedRangeSec <= 6 * 3600 ? 120 : requestedRangeSec <= 24 * 3600 ? 300 : 900;
       const res = await api.get('/v1/adguard/history', {
         auth: getAuth(),
-        params: { range_sec: rangeSec, bucket_sec: bucketSec },
+        params: { range_sec: requestedRangeSec, bucket_sec: bucketSec },
+        signal: controller.signal,
       });
+      if (requestId !== adguardHistoryRequestIdRef.current) return;
       setAdguardHistory(res.data as AdGuardHistoryResponse);
     } catch {
+      if (requestId !== adguardHistoryRequestIdRef.current) return;
       setAdguardHistory(null);
+    } finally {
+      if (adguardHistoryAbortRef.current === controller) {
+        adguardHistoryAbortRef.current = null;
+      }
     }
   };
 
@@ -765,7 +778,6 @@ export const MonitoringDashboard: React.FC = () => {
       if (cancelled) return;
       loadAdguardSources().catch(() => undefined);
       loadAdguardOverview().catch(() => undefined);
-      loadAdguardHistory().catch(() => undefined);
       loadStackStatus().catch(() => undefined);
     }, 750);
     return () => {
@@ -777,6 +789,15 @@ export const MonitoringDashboard: React.FC = () => {
   useEffect(() => {
     loadHistory(selectedScope, rangeSec);
   }, [selectedScope, rangeSec, nodes.length]);
+
+  useEffect(() => {
+    loadAdguardHistory(rangeSec);
+    return () => {
+      ++adguardHistoryRequestIdRef.current;
+      adguardHistoryAbortRef.current?.abort();
+      adguardHistoryAbortRef.current = null;
+    };
+  }, [rangeSec]);
 
   const effectiveTrafficSource: TrafficSource = !isAllScope && trafficSource !== 'nodes' ? 'nodes' : trafficSource;
   const effectiveTrafficMode: TrafficMode = effectiveTrafficSource === 'nodes' ? trafficMode : 'live';

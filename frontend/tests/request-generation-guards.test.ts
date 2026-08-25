@@ -26,4 +26,16 @@ describe('reload generation guards', () => {
     expect(source).toContain('if (inboundsAbortRef.current === controller) {');
     expect(source).toContain('setPageLoading(false);');
   });
+
+  it('reloads AdGuard history for the selected range and ignores stale responses', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain('const adguardHistoryRequestIdRef = useRef(0);');
+    expect(source).toContain('const loadAdguardHistory = async (requestedRangeSec = rangeSec) => {');
+    expect(source).toContain('const requestId = ++adguardHistoryRequestIdRef.current;');
+    expect(source).toContain('params: { range_sec: requestedRangeSec, bucket_sec: bucketSec }');
+    expect(source).toContain('if (requestId !== adguardHistoryRequestIdRef.current) return;');
+    expect(source).toContain('loadAdguardHistory(rangeSec);');
+    expect(source).toContain('adguardHistoryAbortRef.current?.abort();');
+  });
 });
