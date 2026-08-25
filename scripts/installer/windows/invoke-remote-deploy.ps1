@@ -122,12 +122,14 @@ function Get-Transport {
     if (-not $ssh -or -not $scp) {
         throw "OpenSSH ssh.exe/scp.exe not found."
     }
+    if ($HostKey) {
+        throw "OpenSSH deployments do not support -HostKey pinning. Add the exact host key to known_hosts and omit -HostKey."
+    }
 
     return @{
         Type    = "openssh"
         Ssh     = $ssh
         Scp     = $scp
-        HostKey = $HostKey
         KeyPath = $KeyPath
     }
 }
@@ -156,7 +158,6 @@ function Invoke-RemoteCommand {
     $knownHosts = Join-Path $env:USERPROFILE ".ssh\known_hosts"
     if (-not (Test-Path -LiteralPath $knownHosts)) { throw "Pinned OpenSSH known_hosts file is required: $knownHosts" }
     $args = @("-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "UserKnownHostsFile=$knownHosts", "-p", "$Port")
-    if ($Transport.HostKey) { $args += @("-o", "HostKeyAlgorithms=ssh-ed25519,ecdsa-sha2-nistp256,rsa-sha2-512,rsa-sha2-256") }
     if ($Transport.KeyPath) { $args += @("-i", $Transport.KeyPath) }
     $args += "$UserName@$HostName"
     $args += $Command
