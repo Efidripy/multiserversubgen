@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useToast } from './Toast';
 import {
   downloadAllBackups as downloadAllBackupsBlob,
@@ -46,6 +46,8 @@ export const BackupManager: React.FC = () => {
   const [backupProgress, setBackupProgress] = useState<Record<number, 'downloading' | 'success' | 'error'>>({});
   const [selectedNode, setSelectedNode] = useState<number | null>(null);
   const [importFile, setImportFile] = useState<File | null>(null);
+  const nodesRequestIdRef = useRef(0);
+  const nodesAbortRef = useRef<AbortController | null>(null);
 
   const nodeAddress = (node: Node) => {
     if (node.ip || node.port) return `${node.ip || '-'}:${node.port || '-'}`;
@@ -53,20 +55,35 @@ export const BackupManager: React.FC = () => {
   };
 
   const loadNodes = async () => {
+    nodesAbortRef.current?.abort();
+    const controller = new AbortController();
+    nodesAbortRef.current = controller;
+    const requestId = ++nodesRequestIdRef.current;
     setNodesLoading(true);
     try {
-      setNodes(await listNodes());
-    } catch (err) {
+      const nextNodes = await listNodes({ signal: controller.signal });
+      if (controller.signal.aborted || requestId !== nodesRequestIdRef.current) return;
+      setNodes(nextNodes);
+    } catch (err: any) {
+      if (controller.signal.aborted || requestId !== nodesRequestIdRef.current
+        || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.message === 'canceled') return;
       console.error('Failed to load nodes:', err);
       setNodes([]);
       setError(t('backup.loadNodesFailed'));
     } finally {
-      setNodesLoading(false);
+      if (requestId === nodesRequestIdRef.current && !controller.signal.aborted) {
+        setNodesLoading(false);
+        nodesAbortRef.current = null;
+      }
     }
   };
 
   useEffect(() => {
     void loadNodes();
+    return () => {
+      nodesAbortRef.current?.abort();
+      nodesAbortRef.current = null;
+    };
   }, []);
 
   const clearProgressSoon = (nodeId: number) => {
