@@ -95,19 +95,28 @@ export function RegisteredFleetPanel({
   const [deletingNodeId, setDeletingNodeId] = useState<number | null>(null);
   const [actionNodeKey, setActionNodeKey] = useState<string | null>(null);
   const editAbortRef = useRef<AbortController | null>(null);
+  const fleetRefreshAbortRef = useRef<AbortController | null>(null);
 
   const refreshFleetLive = useCallback(async () => {
+    fleetRefreshAbortRef.current?.abort();
+    const controller = new AbortController();
+    fleetRefreshAbortRef.current = controller;
     setLoading(true);
     setError(null);
     try {
-      const payload = await getRegisteredFleetOverview();
+      const payload = await getRegisteredFleetOverview({ signal: controller.signal });
+      if (controller.signal.aborted || fleetRefreshAbortRef.current !== controller) return;
       setNodes(payload.map(toUiNode));
     } catch (err: any) {
+      if (controller.signal.aborted || fleetRefreshAbortRef.current !== controller) return;
       setError(err?.response?.data?.detail || err?.message || 'Unable to load registered servers');
       setNodes((current) => current);
     } finally {
-      setLoaded(true);
-      setLoading(false);
+      if (fleetRefreshAbortRef.current === controller) {
+        fleetRefreshAbortRef.current = null;
+        setLoaded(true);
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -189,6 +198,8 @@ export function RegisteredFleetPanel({
   useEffect(() => () => {
     editAbortRef.current?.abort();
     editAbortRef.current = null;
+    fleetRefreshAbortRef.current?.abort();
+    fleetRefreshAbortRef.current = null;
   }, []);
 
   useEffect(() => {

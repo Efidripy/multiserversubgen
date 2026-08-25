@@ -22,6 +22,7 @@ from shared.security import (
 
 DEFAULT_BACKUP_MAX_WORKERS = 8
 MAX_BACKUP_WORKERS = 32
+MAX_FLEET_HISTORY_POINTS = 24_000
 
 
 def _backup_worker_limit() -> int:
@@ -383,7 +384,15 @@ def build_operations_router(
         def _read_history():
             with connect(db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                return conn.execute(
+                active_node_count = conn.execute(
+                    "SELECT COUNT(DISTINCT node_id) FROM node_history WHERE ts >= ?",
+                    (ts_from,),
+                ).fetchone()[0]
+                effective_limit_per_node = min(
+                    limit_per_node,
+                    max(1, MAX_FLEET_HISTORY_POINTS // active_node_count) if active_node_count else limit_per_node,
+                )
+                points = conn.execute(
                     """
                     SELECT ts, node_id, node_name, available, xray_running, cpu, online_clients, traffic_total, poll_ms
                     FROM (
@@ -395,13 +404,18 @@ def build_operations_router(
                     WHERE row_number <= ?
                     ORDER BY ts ASC, node_id ASC
                     """,
-                    (ts_from, limit_per_node),
+                    (ts_from, effective_limit_per_node),
                 ).fetchall()
+                return active_node_count, effective_limit_per_node, points
 
-        points = [dict(row) for row in await _run(_read_history)]
+        active_node_count, effective_limit_per_node, rows = await _run(_read_history)
+        points = [dict(row) for row in rows]
         return {
             "since_sec": since_sec,
             "limit_per_node": limit_per_node,
+            "effective_limit_per_node": effective_limit_per_node,
+            "point_budget": MAX_FLEET_HISTORY_POINTS,
+            "active_node_count": active_node_count,
             "count": len(points),
             "points": points,
         }

@@ -79,6 +79,15 @@ def test_windows_smoke_requires_exact_subpath_asset_prefix():
     assert '"$basePathassets/"' not in script
 
 
+def test_windows_project_smoke_keeps_remote_http_check_explicit_opt_in():
+    script = (REPO / "scripts/windows/validate-project-smoke.ps1").read_text(encoding="utf-8")
+
+    assert "[switch]$CheckRemote" in script
+    assert "if ($CheckRemote)" in script
+    assert "-CheckRemote requires PLAYWRIGHT_BASE_URL to be configured" in script
+    assert script.index("if ($CheckRemote)") < script.index("curl.exe -k -L --max-time 10")
+
+
 def test_legacy_windows_wrappers_propagate_canonical_script_exit_codes():
     expected_targets = {
         "scripts/windows/invoke-remote-deploy.ps1": "invoke-remote-deploy.ps1",
