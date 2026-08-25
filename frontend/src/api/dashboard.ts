@@ -172,11 +172,6 @@ const normalizeDashboardFleet = (raw: unknown): DashboardFleetNode[] => {
   });
 };
 
-export async function getDashboardSummary(period: DashboardTrafficPeriod = 'all_time'): Promise<DashboardSummaryData> {
-  const res = await api.get('/v1/dashboard/summary', { auth: getAuth(), params: { period } });
-  return normalizeDashboardSummary(res.data);
-}
-
 export async function getDashboardOverview(
   period: DashboardTrafficPeriod = 'all_time',
   options: { signal?: AbortSignal } = {},
