@@ -126,6 +126,7 @@ export function NodeOperationsModal({
   const [keyLoading, setKeyLoading] = useState<KeyKind | null>(null);
   const [generatedKey, setGeneratedKey] = useState<{ label: string; value: unknown } | null>(null);
   const tabRequestIdRef = useRef(0);
+  const tabAbortRef = useRef<AbortController | null>(null);
 
   const activeData = dataByTab[activeTab];
   const activeTabMeta = useMemo(() => tabs.find((tab) => tab.id === activeTab), [activeTab]);
@@ -143,44 +144,51 @@ export function NodeOperationsModal({
   }, [t, toast]);
 
   const loadTab = useCallback(async (tab: NodeOpsTab) => {
-    if (tab === 'keys' || tab === 'panel') return;
     const requestId = ++tabRequestIdRef.current;
     const isCurrentRequest = () => requestId === tabRequestIdRef.current;
+    tabAbortRef.current?.abort();
+    tabAbortRef.current = null;
+    if (tab === 'keys' || tab === 'panel') return;
+    const controller = new AbortController();
+    tabAbortRef.current = controller;
     setLoadingTab(tab);
     setError('');
     try {
       if (tab === 'traffic') {
-        const payload = await getNodeTraffic(nodeId);
+        const payload = await getNodeTraffic(nodeId, { signal: controller.signal });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, traffic: payload }));
       } else if (tab === 'online') {
-        const payload = await getNodeOnlineClients(nodeId);
+        const payload = await getNodeOnlineClients(nodeId, { signal: controller.signal });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, online: payload }));
       } else if (tab === 'metrics') {
-        const payload = await getXrayMetrics(nodeId);
+        const payload = await getXrayMetrics(nodeId, { signal: controller.signal });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, metrics: payload }));
       } else if (tab === 'outbounds') {
-        const payload = await getOutboundsTraffic(nodeId);
+        const payload = await getOutboundsTraffic(nodeId, { signal: controller.signal });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, outbounds: payload }));
       } else if (tab === 'observatory') {
-        const payload = await getXrayObservatory(nodeId);
+        const payload = await getXrayObservatory(nodeId, { signal: controller.signal });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, observatory: payload }));
       } else if (tab === 'config') {
-        const payload = await getXrayConfig(nodeId);
+        const payload = await getXrayConfig(nodeId, { signal: controller.signal });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, config: payload }));
       } else if (tab === 'versions') {
-        const payload = await getXrayVersions(nodeId);
+        const payload = await getXrayVersions(nodeId, { signal: controller.signal });
         if (isCurrentRequest()) {
           setVersions(payload);
           setSelectedVersion((current) => current || payload[0] || '');
         }
       } else if (tab === 'tokens') {
-        const payload = await getApiTokens(nodeId);
+        const payload = await getApiTokens(nodeId, { signal: controller.signal });
         if (isCurrentRequest()) setTokens(payload as ApiTokenItem[]);
       }
     } catch (err: any) {
-      if (isCurrentRequest()) setError(getErrorMessage(err, t('common.failed')));
+      if (isCurrentRequest() && !controller.signal.aborted) setError(getErrorMessage(err, t('common.failed')));
     } finally {
-      if (isCurrentRequest()) setLoadingTab(null);
+      if (isCurrentRequest()) {
+        setLoadingTab(null);
+        tabAbortRef.current = null;
+      }
     }
   }, [nodeId, t]);
 
@@ -190,6 +198,8 @@ export function NodeOperationsModal({
 
   useEffect(() => () => {
     tabRequestIdRef.current += 1;
+    tabAbortRef.current?.abort();
+    tabAbortRef.current = null;
   }, []);
 
   const handleInstallXray = async () => {
