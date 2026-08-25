@@ -64,6 +64,19 @@ describe('reload generation guards', () => {
     expect(source).toContain('latestSnapshotRequestIdRef.current += 1;');
   });
 
+  it('cancels MonitoringDashboard node-list reads on remount and unmount', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain('const nodesRequestIdRef = useRef(0);');
+    expect(source).toContain('const nodesAbortRef = useRef<AbortController | null>(null);');
+    expect(source).toContain('const requestId = ++nodesRequestIdRef.current;');
+    expect(source).toContain('nodesAbortRef.current?.abort();');
+    expect(source).toContain("api.get('/v1/nodes', { auth: getAuth(), signal: controller.signal })");
+    expect(source).toContain('if (controller.signal.aborted || requestId !== nodesRequestIdRef.current) return;');
+    expect(source).toContain('nodesRequestIdRef.current += 1;');
+    expect(source).toContain('if (nodesAbortRef.current === controller) {');
+  });
+
   it('cancels overlapping MonitoringDashboard server-status reads', () => {
     const source = read('src/components/MonitoringDashboard.tsx');
 

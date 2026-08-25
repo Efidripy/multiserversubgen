@@ -498,6 +498,8 @@ export const MonitoringDashboard: React.FC = () => {
   const historyAbortRef = useRef<AbortController | null>(null);
   const latestSnapshotRequestIdRef = useRef(0);
   const latestSnapshotAbortRef = useRef<AbortController | null>(null);
+  const nodesRequestIdRef = useRef(0);
+  const nodesAbortRef = useRef<AbortController | null>(null);
   const serverStatusRequestIdRef = useRef(0);
   const serverStatusAbortRef = useRef<AbortController | null>(null);
   const collectorStatusRequestIdRef = useRef(0);
@@ -535,11 +537,22 @@ export const MonitoringDashboard: React.FC = () => {
   );
 
   const loadNodes = async () => {
-    const res = await api.get('/v1/nodes', { auth: getAuth() });
-    const list: NodeItem[] = (res.data || []).map((n: any) => ({ id: n.id, name: n.name }));
-    setNodes(list);
-    if (!selectedScope && list.length > 0) {
-      setSelectedScope('all');
+    const requestId = ++nodesRequestIdRef.current;
+    nodesAbortRef.current?.abort();
+    const controller = new AbortController();
+    nodesAbortRef.current = controller;
+    try {
+      const res = await api.get('/v1/nodes', { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== nodesRequestIdRef.current) return;
+      const list: NodeItem[] = (res.data || []).map((n: any) => ({ id: n.id, name: n.name }));
+      setNodes(list);
+      if (!selectedScope && list.length > 0) {
+        setSelectedScope('all');
+      }
+    } finally {
+      if (nodesAbortRef.current === controller) {
+        nodesAbortRef.current = null;
+      }
     }
   };
 
@@ -999,6 +1012,9 @@ export const MonitoringDashboard: React.FC = () => {
   }, [effectiveTrafficMode, effectiveTrafficSource, effectiveTrafficStepSec, selectedScope, rangeSec]);
 
   useEffect(() => () => {
+    nodesRequestIdRef.current += 1;
+    nodesAbortRef.current?.abort();
+    nodesAbortRef.current = null;
     historyLoadIdRef.current += 1;
     historyAbortRef.current?.abort();
     historyAbortRef.current = null;
