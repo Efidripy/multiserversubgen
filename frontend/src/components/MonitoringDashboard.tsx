@@ -504,6 +504,8 @@ export const MonitoringDashboard: React.FC = () => {
   const collectorStatusAbortRef = useRef<AbortController | null>(null);
   const depsHealthRequestIdRef = useRef(0);
   const depsHealthAbortRef = useRef<AbortController | null>(null);
+  const stackStatusRequestIdRef = useRef(0);
+  const stackStatusAbortRef = useRef<AbortController | null>(null);
   const adguardHistoryRequestIdRef = useRef(0);
   const adguardHistoryAbortRef = useRef<AbortController | null>(null);
   const [editingAdguardSourceId, setEditingAdguardSourceId] = useState<number | null>(null);
@@ -702,11 +704,21 @@ export const MonitoringDashboard: React.FC = () => {
   };
 
   const loadStackStatus = async () => {
+    const requestId = ++stackStatusRequestIdRef.current;
+    stackStatusAbortRef.current?.abort();
+    const controller = new AbortController();
+    stackStatusAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/monitoring/stack', { auth: getAuth() });
+      const res = await api.get('/v1/monitoring/stack', { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== stackStatusRequestIdRef.current) return;
       setStackStatus(res.data as StackStatusResponse);
     } catch {
+      if (controller.signal.aborted || requestId !== stackStatusRequestIdRef.current) return;
       setStackStatus(null);
+    } finally {
+      if (stackStatusAbortRef.current === controller) {
+        stackStatusAbortRef.current = null;
+      }
     }
   };
 
@@ -960,6 +972,9 @@ export const MonitoringDashboard: React.FC = () => {
     depsHealthRequestIdRef.current += 1;
     depsHealthAbortRef.current?.abort();
     depsHealthAbortRef.current = null;
+    stackStatusRequestIdRef.current += 1;
+    stackStatusAbortRef.current?.abort();
+    stackStatusAbortRef.current = null;
   }, []);
 
   const handleRealtimeUpdate = useCallback(

@@ -104,6 +104,19 @@ describe('reload generation guards', () => {
     expect(source).toContain('depsHealthRequestIdRef.current += 1;');
   });
 
+  it('cancels overlapping MonitoringDashboard stack-status reads', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain('const stackStatusRequestIdRef = useRef(0);');
+    expect(source).toContain('const stackStatusAbortRef = useRef<AbortController | null>(null);');
+    expect(source).toContain('const requestId = ++stackStatusRequestIdRef.current;');
+    expect(source).toContain('stackStatusAbortRef.current?.abort();');
+    expect(source).toContain("api.get('/v1/monitoring/stack', { auth: getAuth(), signal: controller.signal })");
+    expect(source).toContain('if (controller.signal.aborted || requestId !== stackStatusRequestIdRef.current) return;');
+    expect(source).toContain('if (stackStatusAbortRef.current === controller) {');
+    expect(source).toContain('stackStatusRequestIdRef.current += 1;');
+  });
+
   it('guards TrafficStats online details and cache writes by request generation', () => {
     const source = read('src/components/TrafficStats.tsx');
 
