@@ -213,16 +213,14 @@ def _fingerprint_from_stream_settings(stream_settings: Dict) -> str:
     return "chrome"
 
 
-def _subscription_port(inbound: Dict) -> str:
-    """Return the public listener port from an inbound, with a legacy fallback."""
-    raw_port = inbound.get("port")
-    if isinstance(raw_port, bool):
-        return "443"
-    try:
-        port = int(raw_port)
-    except (TypeError, ValueError):
-        return "443"
-    return str(port) if 1 <= port <= 65535 else "443"
+def _subscription_port(_inbound: Dict) -> str:
+    """Return the public TLS listener port exposed by the reverse proxy.
+
+    The inbound ``port`` is the node-local Xray listener and is not reachable
+    by subscription clients. Public subscription links terminate at the
+    HTTPS reverse proxy, whose stable external port is always 443.
+    """
+    return "443"
 
 
 def get_links_filtered(
