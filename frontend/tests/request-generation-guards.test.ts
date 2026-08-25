@@ -64,6 +64,20 @@ describe('reload generation guards', () => {
     expect(source).toContain('latestSnapshotRequestIdRef.current += 1;');
   });
 
+  it('cancels overlapping MonitoringDashboard server-status reads', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain('const serverStatusRequestIdRef = useRef(0);');
+    expect(source).toContain('const serverStatusAbortRef = useRef<AbortController | null>(null);');
+    expect(source).toContain('const requestId = ++serverStatusRequestIdRef.current;');
+    expect(source).toContain('serverStatusAbortRef.current?.abort();');
+    expect(source).toContain("api.get('/v1/servers/status', { auth: getAuth(), signal: controller.signal })");
+    expect(source).toContain('if (controller.signal.aborted || requestId !== serverStatusRequestIdRef.current) return [];');
+    expect(source).toContain('if (requestId === serverStatusRequestIdRef.current) {');
+    expect(source).toContain('if (serverStatusAbortRef.current === controller) {');
+    expect(source).toContain('serverStatusRequestIdRef.current += 1;');
+  });
+
   it('guards TrafficStats online details and cache writes by request generation', () => {
     const source = read('src/components/TrafficStats.tsx');
 
