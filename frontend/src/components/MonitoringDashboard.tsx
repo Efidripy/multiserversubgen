@@ -502,6 +502,8 @@ export const MonitoringDashboard: React.FC = () => {
   const serverStatusAbortRef = useRef<AbortController | null>(null);
   const collectorStatusRequestIdRef = useRef(0);
   const collectorStatusAbortRef = useRef<AbortController | null>(null);
+  const depsHealthRequestIdRef = useRef(0);
+  const depsHealthAbortRef = useRef<AbortController | null>(null);
   const adguardHistoryRequestIdRef = useRef(0);
   const adguardHistoryAbortRef = useRef<AbortController | null>(null);
   const [editingAdguardSourceId, setEditingAdguardSourceId] = useState<number | null>(null);
@@ -638,11 +640,21 @@ export const MonitoringDashboard: React.FC = () => {
     Object.values(stats || {}).reduce((sum, item) => sum + Number(item?.total || 0), 0);
 
   const loadDepsHealth = async () => {
+    const requestId = ++depsHealthRequestIdRef.current;
+    depsHealthAbortRef.current?.abort();
+    const controller = new AbortController();
+    depsHealthAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/health/deps', { auth: getAuth() });
+      const res = await api.get('/v1/health/deps', { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== depsHealthRequestIdRef.current) return;
       setDepsHealth(res.data as DepsHealth);
     } catch {
+      if (controller.signal.aborted || requestId !== depsHealthRequestIdRef.current) return;
       setDepsHealth(null);
+    } finally {
+      if (depsHealthAbortRef.current === controller) {
+        depsHealthAbortRef.current = null;
+      }
     }
   };
 
@@ -945,6 +957,9 @@ export const MonitoringDashboard: React.FC = () => {
     collectorStatusRequestIdRef.current += 1;
     collectorStatusAbortRef.current?.abort();
     collectorStatusAbortRef.current = null;
+    depsHealthRequestIdRef.current += 1;
+    depsHealthAbortRef.current?.abort();
+    depsHealthAbortRef.current = null;
   }, []);
 
   const handleRealtimeUpdate = useCallback(
