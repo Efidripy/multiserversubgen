@@ -498,6 +498,8 @@ export const MonitoringDashboard: React.FC = () => {
   const historyAbortRef = useRef<AbortController | null>(null);
   const latestSnapshotRequestIdRef = useRef(0);
   const latestSnapshotAbortRef = useRef<AbortController | null>(null);
+  const serverStatusRequestIdRef = useRef(0);
+  const serverStatusAbortRef = useRef<AbortController | null>(null);
   const adguardHistoryRequestIdRef = useRef(0);
   const adguardHistoryAbortRef = useRef<AbortController | null>(null);
   const [editingAdguardSourceId, setEditingAdguardSourceId] = useState<number | null>(null);
@@ -695,20 +697,32 @@ export const MonitoringDashboard: React.FC = () => {
   };
 
   const loadServerStatuses = async () => {
+    const requestId = ++serverStatusRequestIdRef.current;
+    serverStatusAbortRef.current?.abort();
+    const controller = new AbortController();
+    serverStatusAbortRef.current = controller;
     try {
       setResourceLoading(true);
-      const res = await api.get('/v1/servers/status', { auth: getAuth() });
+      const res = await api.get('/v1/servers/status', { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== serverStatusRequestIdRef.current) return [];
       const payload = res.data as ServerStatusResponse;
       const parsed = Array.isArray(payload?.servers) ? payload.servers : [];
       setServerStatuses(parsed);
       setResourceError('');
       return parsed;
     } catch (err: any) {
+      if (controller.signal.aborted || requestId !== serverStatusRequestIdRef.current
+        || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.message === 'canceled') return [];
       setServerStatuses([]);
       setResourceError(err?.response?.data?.detail || t('serverStatus.loadFailed'));
       return [];
     } finally {
-      setResourceLoading(false);
+      if (requestId === serverStatusRequestIdRef.current) {
+        setResourceLoading(false);
+      }
+      if (serverStatusAbortRef.current === controller) {
+        serverStatusAbortRef.current = null;
+      }
     }
   };
 
@@ -913,6 +927,9 @@ export const MonitoringDashboard: React.FC = () => {
     latestSnapshotRequestIdRef.current += 1;
     latestSnapshotAbortRef.current?.abort();
     latestSnapshotAbortRef.current = null;
+    serverStatusRequestIdRef.current += 1;
+    serverStatusAbortRef.current?.abort();
+    serverStatusAbortRef.current = null;
   }, []);
 
   const handleRealtimeUpdate = useCallback(
