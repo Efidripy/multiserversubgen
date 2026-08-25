@@ -1050,26 +1050,3 @@ class LiveStatsRuntime:
             return snapshot, snapshot_stats, True
 
         return None, None, False
-
-    def get_cached_online_clients(self, nodes: List[Dict]) -> List[Dict]:
-        redis_data = self.redis_get_json("online_clients")
-        if isinstance(redis_data, list):
-            return redis_data
-
-        now = time.time()
-        if now - self.online_clients_cache["ts"] < self.online_clients_cache_ttl:
-            return self.online_clients_cache["data"]
-
-        if self.online_clients_cache["data"] and now - self.online_clients_cache["ts"] < self.online_clients_stale_ttl:
-            generation = self._cache_generation_snapshot()
-            def _refresh():
-                fresh = self.client_mgr.get_online_clients(nodes)
-                self._store_online_clients(fresh, generation)
-
-            self.start_cache_refresh("online_clients", _refresh)
-            return self.online_clients_cache["data"]
-
-        generation = self._cache_generation_snapshot()
-        data = self.client_mgr.get_online_clients(nodes)
-        self._store_online_clients(data, generation)
-        return data
