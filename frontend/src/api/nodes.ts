@@ -10,6 +10,13 @@ export interface FleetNode extends NodeRecord {
   error?: string;
 }
 
+interface FleetProbeResult {
+  id: number;
+  available: boolean;
+  latency?: number;
+  error?: string;
+}
+
 export type NodesChangedAction = 'create' | 'update' | 'delete';
 
 export interface NodesChangedDetail {
@@ -18,6 +25,7 @@ export interface NodesChangedDetail {
 }
 
 export const NODES_CHANGED_EVENT = 'sub-manager:nodes-changed';
+const FLEET_PROBE_CONCURRENCY = 8;
 
 export const dispatchNodesChanged = (detail: NodesChangedDetail) => {
   if (typeof window === 'undefined') return;
@@ -118,8 +126,8 @@ export async function listNodes(options: { signal?: AbortSignal } = {}): Promise
     .filter((node): node is NodeRecord => node !== null);
 }
 
-export async function getNodeServerStatus(nodeId: number): Promise<any> {
-  const res = await api.get(`/v1/nodes/${nodeId}/server-status`, { auth: getAuth() });
+export async function getNodeServerStatus(nodeId: number, options: { signal?: AbortSignal } = {}): Promise<any> {
+  const res = await api.get(`/v1/nodes/${nodeId}/server-status`, { auth: getAuth(), signal: options.signal });
   return res.data || {};
 }
 
@@ -128,31 +136,39 @@ export async function refreshNodesNow(): Promise<any> {
   return res.data;
 }
 
-export async function getRegisteredFleetOverview(): Promise<FleetNode[]> {
-  const nodes = await listNodes();
-  const checks = await Promise.all(
-    nodes.map(async (node) => {
+export async function getRegisteredFleetOverview(options: { signal?: AbortSignal } = {}): Promise<FleetNode[]> {
+  const nodes = await listNodes({ signal: options.signal });
+  const checks: Array<FleetProbeResult | undefined> = new Array(nodes.length);
+  let nextIndex = 0;
+  const probe = async () => {
+    while (nextIndex < nodes.length) {
+      if (options.signal?.aborted) return;
+      const index = nextIndex++;
+      const node = nodes[index];
       const started = performance.now();
       try {
-        const status = await getNodeServerStatus(node.id);
-        return {
+        const status = await getNodeServerStatus(node.id, { signal: options.signal });
+        checks[index] = {
           id: node.id,
           available: Boolean(status?.available),
           latency: Math.max(1, Math.round(performance.now() - started)),
           error: status?.error || status?.reason,
         };
       } catch (error: any) {
-        return {
+        if (options.signal?.aborted) return;
+        checks[index] = {
           id: node.id,
           available: false,
           latency: undefined,
           error: error?.response?.data?.detail || error?.message || 'Connection failed',
         };
       }
-    }),
-  );
+    }
+  };
+  const concurrency = Math.min(FLEET_PROBE_CONCURRENCY, Math.max(1, nodes.length));
+  await Promise.all(Array.from({ length: concurrency }, () => probe()));
 
-  const byId = new Map(checks.map((item) => [item.id, item]));
+  const byId = new Map(checks.filter((item): item is FleetProbeResult => Boolean(item)).map((item) => [item.id, item]));
   return nodes.map((node) => {
     const check = byId.get(node.id);
     return {
