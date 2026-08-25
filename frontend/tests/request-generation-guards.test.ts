@@ -60,7 +60,7 @@ describe('reload generation guards', () => {
     expect(source).toContain('latestSnapshotAbortRef.current?.abort();');
     expect(source).toContain("signal: controller.signal");
     expect(source).toContain('if (controller.signal.aborted || requestId !== latestSnapshotRequestIdRef.current) return null;');
-    expect(source).toContain('if (cancelled || !snapshot) return;');
+    expect(source).toContain('if (cancelled || controller.signal.aborted || !snapshot) return;');
     expect(source).toContain('latestSnapshotRequestIdRef.current += 1;');
   });
 
