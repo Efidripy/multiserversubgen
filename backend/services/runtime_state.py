@@ -14,13 +14,11 @@ class RuntimeState:
     subscription_rate_lock: Lock = field(default_factory=Lock)
     cache_refresh_lock: Lock = field(default_factory=Lock)
     traffic_stats_cache: Dict[str, tuple] = field(default_factory=dict)
-    online_clients_cache: Dict = field(default_factory=lambda: {"ts": 0.0, "data": []})
     clients_cache: Dict = field(default_factory=lambda: {"ts": 0.0, "data": []})
     inbounds_cache: Dict = field(default_factory=lambda: {"ts": 0.0, "data": []})
     cache_refresh_state: Dict = field(
         default_factory=lambda: {
             "traffic": set(),
-            "online_clients": False,
             "clients": False,
             "inbounds": False,
         }
