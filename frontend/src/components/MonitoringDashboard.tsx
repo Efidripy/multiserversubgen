@@ -495,6 +495,7 @@ export const MonitoringDashboard: React.FC = () => {
   const [blockedShowCount, setBlockedShowCount] = useState<number>(25);
   const realtimeRefreshRef = useRef(0);
   const historyLoadIdRef = useRef(0);
+  const historyAbortRef = useRef<AbortController | null>(null);
   const adguardHistoryRequestIdRef = useRef(0);
   const adguardHistoryAbortRef = useRef<AbortController | null>(null);
   const [editingAdguardSourceId, setEditingAdguardSourceId] = useState<number | null>(null);
@@ -528,24 +529,38 @@ export const MonitoringDashboard: React.FC = () => {
     }
   };
 
-  const fetchNodeHistory = async (nodeId: number, sinceSec: number, limit: number): Promise<HistoryPoint[]> => {
+  const fetchNodeHistory = async (
+    nodeId: number,
+    sinceSec: number,
+    limit: number,
+    signal: AbortSignal,
+  ): Promise<HistoryPoint[]> => {
     const res = await api.get(`/v1/history/nodes/${nodeId}`, {
       auth: getAuth(),
       params: { since_sec: sinceSec, limit },
+      signal,
     });
     return (res.data?.points || []) as HistoryPoint[];
   };
 
-  const fetchAllNodesHistory = async (sinceSec: number, limitPerNode: number): Promise<HistoryPoint[]> => {
+  const fetchAllNodesHistory = async (
+    sinceSec: number,
+    limitPerNode: number,
+    signal: AbortSignal,
+  ): Promise<HistoryPoint[]> => {
     const res = await api.get('/v1/history/nodes', {
       auth: getAuth(),
       params: { since_sec: sinceSec, limit_per_node: limitPerNode },
+      signal,
     });
     return (res.data?.points || []) as HistoryPoint[];
   };
 
   const loadHistory = async (scope: string, sinceSec: number) => {
     const loadId = ++historyLoadIdRef.current;
+    historyAbortRef.current?.abort();
+    const controller = new AbortController();
+    historyAbortRef.current = controller;
     setLoadingHistory(true);
     try {
       if (scope === 'all') {
@@ -553,13 +568,13 @@ export const MonitoringDashboard: React.FC = () => {
           return;
         }
         const perNodeLimit = sinceSec >= 7 * 24 * 3600 ? 900 : 1200;
-        const allHistory = await fetchAllNodesHistory(sinceSec, perNodeLimit);
+        const allHistory = await fetchAllNodesHistory(sinceSec, perNodeLimit, controller.signal);
         if (loadId !== historyLoadIdRef.current) return;
         setAllScopeHistory(allHistory);
         setHistory([]);
       } else {
         const nodeId = Number(scope);
-        const data = await fetchNodeHistory(nodeId, sinceSec, 2000);
+        const data = await fetchNodeHistory(nodeId, sinceSec, 2000, controller.signal);
         if (loadId !== historyLoadIdRef.current) return;
         setHistory(data);
         setAllScopeHistory([]);
@@ -572,6 +587,9 @@ export const MonitoringDashboard: React.FC = () => {
     } finally {
       if (loadId === historyLoadIdRef.current) {
         setLoadingHistory(false);
+      }
+      if (historyAbortRef.current === controller) {
+        historyAbortRef.current = null;
       }
     }
   };
@@ -877,6 +895,8 @@ export const MonitoringDashboard: React.FC = () => {
 
   useEffect(() => () => {
     historyLoadIdRef.current += 1;
+    historyAbortRef.current?.abort();
+    historyAbortRef.current = null;
   }, []);
 
   const handleRealtimeUpdate = useCallback(
