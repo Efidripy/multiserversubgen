@@ -215,11 +215,11 @@ export async function getInboundsHeaderSource(options: { signal?: AbortSignal } 
     : Array.isArray(res.data) ? res.data : [];
 }
 
-export async function getMonitoringHeaderSource(): Promise<{ deps: any; overview: any; stack: any }> {
+export async function getMonitoringHeaderSource(options: { signal?: AbortSignal } = {}): Promise<{ deps: any; overview: any; stack: any }> {
   const [depsRes, overviewRes, stackRes] = await Promise.allSettled([
-    api.get('/v1/health/deps', { auth: getAuth() }),
-    api.get('/v1/adguard/overview', { auth: getAuth() }),
-    api.get('/v1/monitoring/stack', { auth: getAuth() }),
+    api.get('/v1/health/deps', { auth: getAuth(), signal: options.signal }),
+    api.get('/v1/adguard/overview', { auth: getAuth(), signal: options.signal }),
+    api.get('/v1/monitoring/stack', { auth: getAuth(), signal: options.signal }),
   ]);
   return {
     deps: depsRes.status === 'fulfilled' ? depsRes.value.data : null,
@@ -228,14 +228,14 @@ export async function getMonitoringHeaderSource(): Promise<{ deps: any; overview
   };
 }
 
-export async function getBackupHeaderSource(): Promise<{ nodes: NodeRecord[] }> {
-  return { nodes: await listNodes() };
+export async function getBackupHeaderSource(options: { signal?: AbortSignal } = {}): Promise<{ nodes: NodeRecord[] }> {
+  return { nodes: await listNodes({ signal: options.signal }) };
 }
 
-export async function getSubscriptionsHeaderSource(): Promise<{ emails: string[]; stats: Record<string, any>; nodes: NodeRecord[] }> {
+export async function getSubscriptionsHeaderSource(options: { signal?: AbortSignal } = {}): Promise<{ emails: string[]; stats: Record<string, any>; nodes: NodeRecord[] }> {
   const [emailsRes, nodes] = await Promise.all([
-    api.get('/v1/emails', { auth: getAuth() }),
-    listNodes(),
+    api.get('/v1/emails', { auth: getAuth(), signal: options.signal }),
+    listNodes({ signal: options.signal }),
   ]);
   return {
     emails: Array.isArray(emailsRes.data?.emails) ? emailsRes.data.emails : [],
