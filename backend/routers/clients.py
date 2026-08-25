@@ -11,6 +11,8 @@ from services.system_clients import annotate_system_clients
 
 DEFAULT_CLIENT_LINK_MAX_WORKERS = 8
 MAX_CLIENT_LINK_WORKERS = 32
+DEFAULT_CLIENT_IP_SEARCH_MAX_WORKERS = 8
+MAX_CLIENT_IP_SEARCH_WORKERS = 32
 
 
 def _client_link_worker_limit() -> int:
@@ -20,6 +22,98 @@ def _client_link_worker_limit() -> int:
     except (TypeError, ValueError):
         configured = DEFAULT_CLIENT_LINK_MAX_WORKERS
     return min(max(configured, 1), MAX_CLIENT_LINK_WORKERS)
+
+
+def _client_ip_search_worker_limit() -> int:
+    """Return a bounded concurrency limit for read-only IP-search fan-out."""
+    try:
+        configured = int(os.getenv("CLIENT_IP_SEARCH_MAX_WORKERS", str(DEFAULT_CLIENT_IP_SEARCH_MAX_WORKERS)))
+    except (TypeError, ValueError):
+        configured = DEFAULT_CLIENT_IP_SEARCH_MAX_WORKERS
+    return min(max(configured, 1), MAX_CLIENT_IP_SEARCH_WORKERS)
+
+
+async def _find_clients_by_ip(
+    nodes,
+    target_ip: str,
+    fetch_clients: Callable,
+    fetch_client_ips: Callable,
+    *,
+    max_workers: Optional[int] = None,
+):
+    """Search client IPs with bounded reads while preserving fleet order.
+
+    A failure in one node's reads excludes only that node, matching the legacy
+    route's per-node failure isolation.  Results remain ordered by the input
+    node list and each node's client list.
+    """
+    if max_workers is None:
+        worker_limit = _client_ip_search_worker_limit()
+    else:
+        worker_limit = min(max(int(max_workers), 1), MAX_CLIENT_IP_SEARCH_WORKERS)
+
+    async def _call(func: Callable, *args):
+        return await run_in_threadpool(func, *args)
+
+    async def _gather_bounded(calls):
+        results = []
+        # Process fixed-size batches so a large fleet does not allocate one
+        # coroutine per client while still running independent reads in parallel.
+        for offset in range(0, len(calls), worker_limit):
+            batch = calls[offset:offset + worker_limit]
+            results.extend(
+                await asyncio.gather(
+                    *(_call(func, *args) for func, args in batch),
+                    return_exceptions=True,
+                )
+            )
+        return results
+
+    node_clients = await _gather_bounded([(fetch_clients, (node,)) for node in nodes])
+    candidates = []
+    for node_index, (node, result) in enumerate(zip(nodes, node_clients)):
+        if isinstance(result, Exception) or not isinstance(result, list):
+            candidates.append((node_index, node, []))
+            continue
+        node_candidates = []
+        for client in result:
+            if not isinstance(client, dict):
+                continue
+            email = client.get("email", "")
+            if email:
+                node_candidates.append((node_index, node, email))
+        candidates.append((node_index, node, node_candidates))
+
+    ip_requests = [
+        (node_index, node, email)
+        for node_index, node, node_candidates in candidates
+        if node_candidates
+        for _, _, email in node_candidates
+    ]
+    ip_results = await _gather_bounded([
+        (fetch_client_ips, (node, email))
+        for _, node, email in ip_requests
+    ])
+
+    failed_nodes = set()
+    matches_by_node = {}
+    for (node_index, node, email), result in zip(ip_requests, ip_results):
+        if isinstance(result, Exception):
+            failed_nodes.add(node_index)
+            continue
+        if not isinstance(result, dict):
+            continue
+        client_ips = result.get("ips", [])
+        if isinstance(client_ips, list) and target_ip in client_ips:
+            matches_by_node.setdefault(node_index, []).append(
+                {"email": email, "node": node["name"], "ips": client_ips}
+            )
+
+    matches = []
+    for node_index, _node, _node_candidates in candidates:
+        if node_index not in failed_nodes:
+            matches.extend(matches_by_node.get(node_index, []))
+    return matches
 
 
 async def _collect_node_links(nodes, fetch_links: Callable, *, max_workers: Optional[int] = None):
@@ -559,20 +653,12 @@ def build_clients_router(
         if not ip or not ip.strip():
             raise HTTPException(status_code=400, detail="ip parameter required")
         nodes = [await _run(get_node_or_404, node_id)] if node_id else await _run(node_service.list_nodes)
-        matches = []
-        for node in nodes:
-            try:
-                all_clients = await _run(client_mgr.get_all_clients, [node])
-                for c in all_clients:
-                    email = c.get("email", "")
-                    if not email:
-                        continue
-                    ip_result = await _run(client_mgr.get_client_ips, node, email)
-                    client_ips = ip_result.get("ips", [])
-                    if ip.strip() in client_ips:
-                        matches.append({"email": email, "node": node["name"], "ips": client_ips})
-            except Exception:
-                pass
+        matches = await _find_clients_by_ip(
+            nodes,
+            ip.strip(),
+            lambda node: client_mgr.get_all_clients([node]),
+            client_mgr.get_client_ips,
+        )
         return {"ip": ip, "matches": matches, "count": len(matches)}
 
     @router.post("/api/v1/clients/last-online")
