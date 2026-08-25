@@ -141,6 +141,12 @@ describe('navigation performance regressions', () => {
     expect(summary).toContain('dashboardData?.refresh()');
   });
 
+  it('keeps the dashboard API surface on the aggregate overview route', () => {
+    const dashboardApi = read('src/api/dashboard.ts');
+    expect(dashboardApi).not.toContain('getDashboardSummary');
+    expect(dashboardApi).toContain('getDashboardOverview(');
+  });
+
   it('does not retain an ignored Dashboard hero-stats prop or memo dependency', () => {
     const app = read('src/App.tsx');
     const summary = read('src/components/DashboardSummary.tsx');
