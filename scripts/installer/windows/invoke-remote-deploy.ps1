@@ -198,6 +198,7 @@ $repoRoot = Get-RepoRoot
 $null = Assert-SafeRemotePath -Path $RemoteDir
 $passwordFile = $null
 $passwordDirectory = $null
+try {
 if ($Password) {
     $passwordBase = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } else { $env:TEMP }
     $passwordDirectory = Join-Path $passwordBase "mssg-secure"
@@ -219,7 +220,6 @@ $remoteArchive = "/tmp/multiserversubgen-remote-$timestamp-$runId.tar.gz"
 $remoteLog = "/tmp/sub-manager-$Mode-$timestamp.log"
 $remoteWorkDir = if ($SkipSync) { $RemoteDir } else { "$RemoteDir-$runId" }
 
-try {
     if (-not $SkipSync) {
         Write-Host "Packing committed source archive..."
         $deployCommit = New-Archive -RepoRoot $repoRoot -ArchivePath $archivePath
