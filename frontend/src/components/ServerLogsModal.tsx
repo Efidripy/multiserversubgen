@@ -23,6 +23,7 @@ export function ServerLogsModal({ open, nodeId, nodeName, kind, onClose }: Serve
   const onCloseRef = useRef(onClose);
   const requestRef = useRef(0);
   const inFlightRef = useRef(0);
+  const abortRef = useRef<AbortController | null>(null);
   const [level, setLevel] = useState<ServerLogLevel>('info');
   // Undefined on first load keeps the legacy app-log -> journal fallback;
   // once the operator touches the checkbox, the selected source is explicit.
@@ -38,7 +39,10 @@ export function ServerLogsModal({ open, nodeId, nodeName, kind, onClose }: Serve
 
   const loadLogs = useCallback(async (silent = false) => {
     if (silent && inFlightRef.current > 0) return;
+    abortRef.current?.abort();
+    const controller = new AbortController();
     inFlightRef.current += 1;
+    abortRef.current = controller;
     const requestId = ++requestRef.current;
     if (!silent) setLoading(true);
     setError(null);
@@ -50,16 +54,17 @@ export function ServerLogsModal({ open, nodeId, nodeName, kind, onClose }: Serve
         options.level = level;
         if (syslog !== undefined) options.syslog = syslog;
       }
-      const nextLogs = await getNodeLogs(nodeId, kind, options);
-      if (requestId !== requestRef.current) return;
+      const nextLogs = await getNodeLogs(nodeId, kind, { ...options, signal: controller.signal });
+      if (requestId !== requestRef.current || controller.signal.aborted) return;
       setLogs(nextLogs.slice(-120));
       setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
     } catch (cause: any) {
-      if (requestId !== requestRef.current) return;
+      if (requestId !== requestRef.current || controller.signal.aborted) return;
       setError(String(cause?.response?.data?.detail || cause?.message || failedText));
       setLogs([]);
     } finally {
       if (requestId === requestRef.current) setLoading(false);
+      if (abortRef.current === controller) abortRef.current = null;
       inFlightRef.current = Math.max(0, inFlightRef.current - 1);
     }
   }, [failedText, kind, level, nodeId, syslog]);
@@ -72,7 +77,12 @@ export function ServerLogsModal({ open, nodeId, nodeName, kind, onClose }: Serve
       if (event.key === 'Escape') onCloseRef.current();
     };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      requestRef.current += 1;
+      abortRef.current?.abort();
+      abortRef.current = null;
+    };
   }, [loadLogs, open]);
 
   useEffect(() => {
