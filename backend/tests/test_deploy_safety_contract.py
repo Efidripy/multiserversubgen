@@ -153,6 +153,19 @@ def test_windows_remote_deploy_fails_closed_on_native_transport_errors():
     assert 'Invoke-NativeChecked -Action "OpenSSH remote copy" -FilePath $Transport.Scp -ArgumentList $args' in script
 
 
+def test_windows_remote_deploy_cleans_password_file_after_setup_failure():
+    script = (REPO / "scripts/installer/windows/invoke-remote-deploy.ps1").read_text(encoding="utf-8")
+
+    password_file_init = script.index("$passwordFile = $null")
+    protected_setup = script.index("try {", password_file_init)
+    password_setup = script.index("if ($Password) {", password_file_init)
+    transport_setup = script.index("$transport = Get-Transport", password_file_init)
+    cleanup = script.index("finally {", password_file_init)
+
+    assert password_file_init < protected_setup < password_setup < transport_setup < cleanup
+    assert "Remove-Item -LiteralPath $passwordFile -Force -ErrorAction SilentlyContinue" in script[cleanup:]
+
+
 def test_ops_backup_check_uses_consistent_runtime_database_backup():
     script = (REPO / "scripts/ops/backup-restore-check.sh").read_text(encoding="utf-8")
 
