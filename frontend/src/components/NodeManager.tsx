@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import {
   checkNodeConnection,
   createNode,
+  createNodesBounded,
   dispatchNodesChanged,
   updateNode,
   type NodeRecord,
@@ -186,9 +187,7 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
     setError('');
     setSuccess('');
     try {
-      const results = await Promise.allSettled(
-        batchPreview.map((row) => createNode(row, { emitChange: false }))
-      );
+      const results = await createNodesBounded(batchPreview, { emitChange: false });
       const succeeded = results.filter((result) => result.status === 'fulfilled').length;
       const failed = results.length - succeeded;
       if (failed > 0) {

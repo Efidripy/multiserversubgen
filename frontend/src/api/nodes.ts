@@ -26,6 +26,7 @@ export interface NodesChangedDetail {
 
 export const NODES_CHANGED_EVENT = 'sub-manager:nodes-changed';
 const FLEET_PROBE_CONCURRENCY = 8;
+export const NODE_BATCH_CREATE_CONCURRENCY = 4;
 
 export const dispatchNodesChanged = (detail: NodesChangedDetail) => {
   if (typeof window === 'undefined') return;
@@ -189,6 +190,33 @@ export async function createNode(payload: unknown, options: NodeMutationOptions 
     });
   }
   return res.data;
+}
+
+/**
+ * Apply backpressure to the SQLite-backed node-creation route while retaining
+ * the same ordered Promise.allSettled-style result for batch UI accounting.
+ */
+export async function createNodesBounded(
+  payloads: unknown[],
+  options: NodeMutationOptions = {},
+): Promise<PromiseSettledResult<any>[]> {
+  const results: PromiseSettledResult<any>[] = new Array(payloads.length);
+  let nextIndex = 0;
+
+  const worker = async () => {
+    while (nextIndex < payloads.length) {
+      const index = nextIndex++;
+      try {
+        results[index] = { status: 'fulfilled', value: await createNode(payloads[index], options) };
+      } catch (reason) {
+        results[index] = { status: 'rejected', reason };
+      }
+    }
+  };
+
+  const concurrency = Math.min(NODE_BATCH_CREATE_CONCURRENCY, payloads.length);
+  await Promise.all(Array.from({ length: concurrency }, () => worker()));
+  return results;
 }
 
 export async function updateNode(nodeId: number, payload: unknown): Promise<any> {
