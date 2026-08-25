@@ -78,6 +78,19 @@ describe('reload generation guards', () => {
     expect(source).toContain('serverStatusRequestIdRef.current += 1;');
   });
 
+  it('cancels overlapping MonitoringDashboard collector-status reads', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain('const collectorStatusRequestIdRef = useRef(0);');
+    expect(source).toContain('const collectorStatusAbortRef = useRef<AbortController | null>(null);');
+    expect(source).toContain('const requestId = ++collectorStatusRequestIdRef.current;');
+    expect(source).toContain('collectorStatusAbortRef.current?.abort();');
+    expect(source).toContain("api.get('/v1/collector/status', { auth: getAuth(), signal: controller.signal })");
+    expect(source).toContain('if (controller.signal.aborted || requestId !== collectorStatusRequestIdRef.current) return;');
+    expect(source).toContain('if (collectorStatusAbortRef.current === controller) {');
+    expect(source).toContain('collectorStatusRequestIdRef.current += 1;');
+  });
+
   it('guards TrafficStats online details and cache writes by request generation', () => {
     const source = read('src/components/TrafficStats.tsx');
 

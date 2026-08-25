@@ -500,6 +500,8 @@ export const MonitoringDashboard: React.FC = () => {
   const latestSnapshotAbortRef = useRef<AbortController | null>(null);
   const serverStatusRequestIdRef = useRef(0);
   const serverStatusAbortRef = useRef<AbortController | null>(null);
+  const collectorStatusRequestIdRef = useRef(0);
+  const collectorStatusAbortRef = useRef<AbortController | null>(null);
   const adguardHistoryRequestIdRef = useRef(0);
   const adguardHistoryAbortRef = useRef<AbortController | null>(null);
   const [editingAdguardSourceId, setEditingAdguardSourceId] = useState<number | null>(null);
@@ -727,11 +729,21 @@ export const MonitoringDashboard: React.FC = () => {
   };
 
   const loadCollectorStatus = async () => {
+    const requestId = ++collectorStatusRequestIdRef.current;
+    collectorStatusAbortRef.current?.abort();
+    const controller = new AbortController();
+    collectorStatusAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/collector/status', { auth: getAuth() });
+      const res = await api.get('/v1/collector/status', { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== collectorStatusRequestIdRef.current) return;
       setCollectorStatus(res.data as CollectorStatus);
     } catch {
+      if (controller.signal.aborted || requestId !== collectorStatusRequestIdRef.current) return;
       setCollectorStatus(null);
+    } finally {
+      if (collectorStatusAbortRef.current === controller) {
+        collectorStatusAbortRef.current = null;
+      }
     }
   };
 
@@ -930,6 +942,9 @@ export const MonitoringDashboard: React.FC = () => {
     serverStatusRequestIdRef.current += 1;
     serverStatusAbortRef.current?.abort();
     serverStatusAbortRef.current = null;
+    collectorStatusRequestIdRef.current += 1;
+    collectorStatusAbortRef.current?.abort();
+    collectorStatusAbortRef.current = null;
   }, []);
 
   const handleRealtimeUpdate = useCallback(
