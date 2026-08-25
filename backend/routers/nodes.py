@@ -15,7 +15,7 @@ from xui_session import (
     invalidate_auth_method_cache,
     invalidate_node_capabilities,
     invalidate_session_cache,
-    make_node_key,
+    make_node_key_for_node,
 )
 from shared.security import redact_url, validate_outbound_url
 
@@ -370,7 +370,11 @@ def build_nodes_router(
         try:
             with connect(db_path) as conn:
                 existing = conn.execute(
-                    "SELECT name, panel_url, username FROM nodes WHERE id = ?", (node_id,)
+                    """
+                    SELECT name, panel_url, username, ip, port, base_path, access_path, scheme
+                    FROM nodes WHERE id = ?
+                    """,
+                    (node_id,),
                 ).fetchone()
                 if not existing:
                     raise HTTPException(status_code=404, detail="Node not found")
@@ -378,6 +382,14 @@ def build_nodes_router(
                 old_name = str(existing[0] or "")
                 node_panel_url = existing[1]
                 uses_bearer_auth = str(existing[2] or "") == "bearer_token"
+                existing_connection = {
+                    "panel_url": existing[1],
+                    "ip": existing[3],
+                    "port": existing[4],
+                    "base_path": existing[5],
+                    "access_path": existing[6],
+                    "scheme": existing[7],
+                }
                 update_fields = []
                 update_values = []
 
@@ -454,12 +466,14 @@ def build_nodes_router(
         if has_bearer or has_credentials or has_url:
             # Сбрасываем кешированный метод авторизации и сессии старого endpoint.
             invalidate_auth_method_cache(node_panel_url)
-            invalidate_session_cache(make_node_key(node_panel_url or "", 443))
-            invalidate_node_capabilities(make_node_key(node_panel_url or "", 443))
+            existing_node_key = make_node_key_for_node(existing_connection)
+            invalidate_session_cache(existing_node_key)
+            invalidate_node_capabilities(existing_node_key)
             if updated_connection and updated_connection["panel_url"] != node_panel_url:
                 invalidate_auth_method_cache(updated_connection["panel_url"])
-                invalidate_session_cache(make_node_key(updated_connection["panel_url"], 443))
-                invalidate_node_capabilities(make_node_key(updated_connection["panel_url"], 443))
+                updated_node_key = make_node_key_for_node(updated_connection)
+                invalidate_session_cache(updated_node_key)
+                invalidate_node_capabilities(updated_node_key)
 
         try:
             invalidate_subscription_cache()
