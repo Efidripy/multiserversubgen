@@ -38,4 +38,16 @@ describe('reload generation guards', () => {
     expect(source).toContain('loadAdguardHistory(rangeSec);');
     expect(source).toContain('adguardHistoryAbortRef.current?.abort();');
   });
+
+  it('guards TrafficStats online details and cache writes by request generation', () => {
+    const source = read('src/components/TrafficStats.tsx');
+
+    expect(source).toContain('const onlineClientsRequestIdRef = useRef(0);');
+    expect(source).toContain('const onlineTotalsRequestIdRef = useRef(0);');
+    expect(source).toContain('const requestId = ++onlineClientsRequestIdRef.current;');
+    expect(source).toContain('const requestId = ++onlineTotalsRequestIdRef.current;');
+    expect(source).toContain('if (!isCurrentTrafficRequest(requestId, onlineClientsRequestIdRef.current)) return undefined;');
+    expect(source).toContain('if (!isCurrentTrafficRequest(requestId, onlineTotalsRequestIdRef.current)) return;');
+    expect(source).toContain('onlineClientsLoadingRequestIdRef.current !== null');
+  });
 });
