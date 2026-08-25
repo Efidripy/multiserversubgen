@@ -39,6 +39,19 @@ describe('reload generation guards', () => {
     expect(source).toContain('adguardHistoryAbortRef.current?.abort();');
   });
 
+  it('cancels superseded MonitoringDashboard history requests', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain('const historyAbortRef = useRef<AbortController | null>(null);');
+    expect(source).toContain('historyAbortRef.current?.abort();');
+    expect(source).toContain('const controller = new AbortController();');
+    expect(source).toContain('fetchAllNodesHistory(sinceSec, perNodeLimit, controller.signal)');
+    expect(source).toContain('fetchNodeHistory(nodeId, sinceSec, 2000, controller.signal)');
+    expect(source).toContain('signal,');
+    expect(source).toContain('if (historyAbortRef.current === controller) {');
+    expect(source).toContain('historyAbortRef.current = null;');
+  });
+
   it('guards TrafficStats online details and cache writes by request generation', () => {
     const source = read('src/components/TrafficStats.tsx');
 
