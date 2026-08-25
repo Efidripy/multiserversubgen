@@ -1,10 +1,51 @@
-from typing import Dict, Optional
+import asyncio
+import os
+from typing import Callable, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
 
 from services.client_notes import enrich_clients_with_notes, upsert_client_note
 from services.system_clients import annotate_system_clients
+
+
+DEFAULT_CLIENT_LINK_MAX_WORKERS = 8
+MAX_CLIENT_LINK_WORKERS = 32
+
+
+def _client_link_worker_limit() -> int:
+    """Return a bounded concurrency limit for read-only link fan-out."""
+    try:
+        configured = int(os.getenv("CLIENT_LINK_MAX_WORKERS", str(DEFAULT_CLIENT_LINK_MAX_WORKERS)))
+    except (TypeError, ValueError):
+        configured = DEFAULT_CLIENT_LINK_MAX_WORKERS
+    return min(max(configured, 1), MAX_CLIENT_LINK_WORKERS)
+
+
+async def _collect_node_links(nodes, fetch_links: Callable, *, max_workers: Optional[int] = None):
+    """Fetch independent node links concurrently while preserving node order."""
+    if max_workers is None:
+        worker_limit = _client_link_worker_limit()
+    else:
+        worker_limit = min(max(int(max_workers), 1), MAX_CLIENT_LINK_WORKERS)
+    semaphore = asyncio.Semaphore(worker_limit)
+
+    async def _collect_one(node):
+        async with semaphore:
+            return await run_in_threadpool(fetch_links, node)
+
+    results = await asyncio.gather(
+        *(_collect_one(node) for node in nodes),
+        return_exceptions=True,
+    )
+    for result in results:
+        if isinstance(result, Exception):
+            raise result
+
+    links = []
+    for node_links in results:
+        links.extend(node_links)
+    return links
 
 
 def build_clients_router(
@@ -449,10 +490,10 @@ def build_clients_router(
             nodes = [await _run(get_node_or_404, node_id)]
         else:
             nodes = await _run(node_service.list_nodes)
-        all_links = []
-        for node in nodes:
-            links = await _run(client_mgr.get_client_links, node, email)
-            all_links.extend(links)
+        all_links = await _collect_node_links(
+            nodes,
+            lambda node: client_mgr.get_client_links(node, email),
+        )
         return {"email": email, "links": all_links, "count": len(all_links)}
 
     @router.post("/api/v1/clients/bulk-enable")
@@ -681,9 +722,10 @@ def build_clients_router(
         if not user:
             raise HTTPException(status_code=401)
         nodes = [await _run(get_node_or_404, node_id)] if node_id else await _run(node_service.list_nodes)
-        all_links = []
-        for node in nodes:
-            all_links.extend(await _run(client_mgr.get_sub_links, node, sub_id))
+        all_links = await _collect_node_links(
+            nodes,
+            lambda node: client_mgr.get_sub_links(node, sub_id),
+        )
         return {"sub_id": sub_id, "links": all_links, "count": len(all_links)}
 
     return router
