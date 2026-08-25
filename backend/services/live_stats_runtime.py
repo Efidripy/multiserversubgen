@@ -30,7 +30,6 @@ class LiveStatsRuntime:
         client_mgr,
         db_path: Optional[str],
         traffic_stats_cache: Dict[str, tuple],
-        online_clients_cache: Dict,
         cache_refresh_state: Dict,
         state_lock,
         redis_get_json,
@@ -38,8 +37,6 @@ class LiveStatsRuntime:
         redis_delete,
         traffic_stats_cache_ttl: int,
         traffic_stats_stale_ttl: int,
-        online_clients_cache_ttl: int,
-        online_clients_stale_ttl: int,
         logger,
         get_latest_snapshot: Optional[Callable[[], Dict]] = None,
         get_expected_snapshot_nodes: Optional[Callable[[], int]] = None,
@@ -47,7 +44,6 @@ class LiveStatsRuntime:
         self.client_mgr = client_mgr
         self.db_path = db_path
         self.traffic_stats_cache = traffic_stats_cache
-        self.online_clients_cache = online_clients_cache
         self.cache_refresh_state = cache_refresh_state
         self.state_lock = state_lock
         self.redis_get_json = redis_get_json
@@ -55,8 +51,6 @@ class LiveStatsRuntime:
         self.redis_delete = redis_delete
         self.traffic_stats_cache_ttl = traffic_stats_cache_ttl
         self.traffic_stats_stale_ttl = traffic_stats_stale_ttl
-        self.online_clients_cache_ttl = online_clients_cache_ttl
-        self.online_clients_stale_ttl = online_clients_stale_ttl
         self.logger = logger
         self.get_latest_snapshot = get_latest_snapshot
         self.get_expected_snapshot_nodes = get_expected_snapshot_nodes
@@ -340,9 +334,7 @@ class LiveStatsRuntime:
         with self._cache_state_lock:
             self._cache_generation += 1
             self.traffic_stats_cache.clear()
-            self.online_clients_cache["ts"] = 0.0
-            self.online_clients_cache["data"] = []
-        self.redis_delete("traffic_stats:client", "traffic_stats:inbound", "traffic_stats:node", "online_clients")
+        self.redis_delete("traffic_stats:client", "traffic_stats:inbound", "traffic_stats:node")
 
     def _cache_generation_snapshot(self) -> int:
         with self._cache_state_lock:
@@ -356,16 +348,6 @@ class LiveStatsRuntime:
             self.traffic_stats_cache[group_by] = (time.time(), data)
             self.redis_set_json(f"traffic_stats:{group_by}", data, self.traffic_stats_cache_ttl)
             self._save_period_snapshots(group_by, data.get("stats", {}), time.time(), data.get("identity_stats"))
-            return True
-
-    def _store_online_clients(self, data: List[Dict], generation: int) -> bool:
-        """Publish only data that was fetched after the last invalidation."""
-        with self._cache_state_lock:
-            if generation != self._cache_generation:
-                return False
-            self.online_clients_cache["ts"] = time.time()
-            self.online_clients_cache["data"] = data
-            self.redis_set_json("online_clients", data, self.online_clients_cache_ttl)
             return True
 
     def start_cache_refresh(self, flag_key: str, worker, worker_key: Optional[str] = None) -> None:

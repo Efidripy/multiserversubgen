@@ -127,9 +127,7 @@ class AppSettings:
     sub_rate_limit_count: int
     sub_rate_limit_window_sec: int
     traffic_stats_cache_ttl: int
-    online_clients_cache_ttl: int
     traffic_stats_stale_ttl: int
-    online_clients_stale_ttl: int
     clients_cache_ttl: int
     clients_cache_stale_ttl: int
     redis_url: str
@@ -196,9 +194,7 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         sub_rate_limit_count=int(os.getenv("SUB_RATE_LIMIT_COUNT", "30")),
         sub_rate_limit_window_sec=int(os.getenv("SUB_RATE_LIMIT_WINDOW_SEC", "60")),
         traffic_stats_cache_ttl=int(os.getenv("TRAFFIC_STATS_CACHE_TTL", "20")),
-        online_clients_cache_ttl=int(os.getenv("ONLINE_CLIENTS_CACHE_TTL", "20")),
         traffic_stats_stale_ttl=int(os.getenv("TRAFFIC_STATS_STALE_TTL", "120")),
-        online_clients_stale_ttl=int(os.getenv("ONLINE_CLIENTS_STALE_TTL", "60")),
         clients_cache_ttl=int(os.getenv("CLIENTS_CACHE_TTL", "20")),
         clients_cache_stale_ttl=int(os.getenv("CLIENTS_CACHE_STALE_TTL", "180")),
         redis_url=os.getenv("REDIS_URL", "").strip(),

@@ -149,16 +149,13 @@ def test_period_snapshot_seed_is_single_flight_across_collector_callbacks():
         client_mgr=object(),
         db_path=None,
         traffic_stats_cache={},
-        online_clients_cache={"ts": 0.0, "data": []},
-        cache_refresh_state={"traffic": set(), "online_clients": False},
+        cache_refresh_state={"traffic": set()},
         state_lock=Lock(),
         redis_get_json=lambda _key: None,
         redis_set_json=lambda *_args: None,
         redis_delete=lambda *_keys: None,
         traffic_stats_cache_ttl=30,
         traffic_stats_stale_ttl=60,
-        online_clients_cache_ttl=30,
-        online_clients_stale_ttl=60,
         logger=logging.getLogger("test.snapshot_seed"),
     )
 
