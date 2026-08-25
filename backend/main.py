@@ -29,7 +29,7 @@ from services.db_bootstrap import (
 from services.node_access import get_node_or_404
 from core.app_runtime_bundle import build_app_runtime_bundle
 from core.router_registration import register_app_routers
-from services.runtime_state import build_runtime_state
+from services.runtime_state import RuntimeState
 from shared.http_config import get_requests_verify_value
 
 import sys
@@ -135,9 +135,7 @@ try:
 except Exception:
     p = _PamFallback()
 
-runtime_state = build_runtime_state(subscription_links_service=subscription_links_service)
-emails_cache = runtime_state.emails_cache
-links_cache = runtime_state.links_cache
+runtime_state = RuntimeState()
 subscription_rate_state = runtime_state.subscription_rate_state
 subscription_rate_lock = runtime_state.subscription_rate_lock
 cache_refresh_lock = runtime_state.cache_refresh_lock
@@ -148,7 +146,6 @@ auth_cache_lock = runtime_state.auth_cache_lock
 auth_cache = runtime_state.auth_cache
 AUTH_CACHE_TTL_SEC = 30
 AUTH_CACHE_NEGATIVE_TTL_SEC = 5
-_redis_client = runtime_state.redis_client
 adguard_latest = runtime_state.adguard_latest
 adguard_latest_lock = runtime_state.adguard_latest_lock
 history_write_state = runtime_state.history_write_state
