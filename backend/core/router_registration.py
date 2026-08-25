@@ -32,7 +32,6 @@ def register_app_routers(
     get_cached_traffic_stats,
     get_cached_traffic_stats_projection,
     get_cached_traffic_stats_projection_by_period,
-    get_cached_online_clients,
     list_nodes,
     xui_monitor,
     node_service,

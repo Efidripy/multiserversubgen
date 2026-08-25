@@ -41,7 +41,6 @@ def _build_test_app(*, monitoring_enabled: bool) -> FastAPI:
         get_cached_traffic_stats=main.get_cached_traffic_stats,
         get_cached_traffic_stats_projection=main.get_cached_traffic_stats_projection,
         get_cached_traffic_stats_projection_by_period=main.get_cached_traffic_stats_projection_by_period,
-        get_cached_online_clients=main.get_cached_online_clients,
         list_nodes=main.node_service.list_nodes,
         xui_monitor=main.xui_monitor,
         node_service=main.node_service,
@@ -295,11 +294,6 @@ def test_client_presence_uses_collector_projection_without_fleet_scan(monkeypatc
         "list_nodes",
         lambda: (_ for _ in ()).throw(AssertionError("presence must not enumerate nodes")),
     )
-    monkeypatch.setattr(
-        main,
-        "get_cached_online_clients",
-        lambda *_args: (_ for _ in ()).throw(AssertionError("presence must not start a fleet scan")),
-    )
     unauthenticated_app = _build_test_app(monitoring_enabled=False)
     assert TestClient(unauthenticated_app).get("/api/v1/clients/presence").status_code == 401
 
@@ -475,11 +469,6 @@ def test_dashboard_summary_uses_snapshot_cache_without_xui_fetch(monkeypatch):
         main,
         "get_cached_traffic_stats",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("traffic fetch must not run")),
-    )
-    monkeypatch.setattr(
-        main,
-        "get_cached_online_clients",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("online fetch must not run")),
     )
     monkeypatch.setattr(
         main,
