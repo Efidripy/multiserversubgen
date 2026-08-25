@@ -77,6 +77,17 @@ describe('reload generation guards', () => {
     expect(source).toContain('if (nodesAbortRef.current === controller) {');
   });
 
+  it('cancels stale live traffic aggregation reads on a sampling restart', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain('const liveTrafficAbortRef = useRef<AbortController | null>(null);');
+    expect(source).toContain('liveTrafficAbortRef.current?.abort();');
+    expect(source).toContain("loadTrafficStats('client', 1500, controller.signal)");
+    expect(source).toContain("loadTrafficStats('inbound', 1500, controller.signal)");
+    expect(source).toContain('if (cancelled || controller.signal.aborted) return;');
+    expect(source).toContain('if (liveTrafficAbortRef.current === controller) {');
+  });
+
   it('cancels overlapping MonitoringDashboard server-status reads', () => {
     const source = read('src/components/MonitoringDashboard.tsx');
 

@@ -500,6 +500,7 @@ export const MonitoringDashboard: React.FC = () => {
   const latestSnapshotAbortRef = useRef<AbortController | null>(null);
   const nodesRequestIdRef = useRef(0);
   const nodesAbortRef = useRef<AbortController | null>(null);
+  const liveTrafficAbortRef = useRef<AbortController | null>(null);
   const serverStatusRequestIdRef = useRef(0);
   const serverStatusAbortRef = useRef<AbortController | null>(null);
   const collectorStatusRequestIdRef = useRef(0);
@@ -647,10 +648,12 @@ export const MonitoringDashboard: React.FC = () => {
   const loadTrafficStats = async (
     groupBy: 'client' | 'inbound' | 'node',
     limit: number = 0,
+    signal?: AbortSignal,
   ): Promise<TrafficStatsResponse> => {
     const res = await api.get('/v1/traffic/stats', {
       auth: getAuth(),
       params: { group_by: groupBy, limit },
+      signal,
     });
     return (res.data || { stats: {}, group_by: groupBy }) as TrafficStatsResponse;
   };
@@ -950,9 +953,12 @@ export const MonitoringDashboard: React.FC = () => {
     let cancelled = false;
 
     const tick = async () => {
+      liveTrafficAbortRef.current?.abort();
+      const controller = new AbortController();
+      liveTrafficAbortRef.current = controller;
       try {
         const snapshot = await loadLatestSnapshot();
-        if (cancelled || !snapshot) return;
+        if (cancelled || controller.signal.aborted || !snapshot) return;
 
         const nodeTotals: Record<string, number> = {};
         for (const node of snapshot) {
@@ -962,12 +968,12 @@ export const MonitoringDashboard: React.FC = () => {
         let peopleTotal = 0;
         let inboundsTotal = 0;
         if (effectiveTrafficSource === 'people') {
-          const traffic = await loadTrafficStats('client', 1500);
-          if (cancelled) return;
+          const traffic = await loadTrafficStats('client', 1500, controller.signal);
+          if (cancelled || controller.signal.aborted) return;
           peopleTotal = sumTrafficTotals(traffic.stats);
         } else if (effectiveTrafficSource === 'inbounds') {
-          const traffic = await loadTrafficStats('inbound', 1500);
-          if (cancelled) return;
+          const traffic = await loadTrafficStats('inbound', 1500, controller.signal);
+          if (cancelled || controller.signal.aborted) return;
           inboundsTotal = sumTrafficTotals(traffic.stats);
         }
 
@@ -992,8 +998,13 @@ export const MonitoringDashboard: React.FC = () => {
 
         setLiveTrafficError('');
       } catch (err: any) {
-        if (!cancelled) {
+        if (!cancelled && !controller.signal.aborted
+          && err?.code !== 'ERR_CANCELED' && err?.name !== 'CanceledError' && err?.message !== 'canceled') {
           setLiveTrafficError(err?.response?.data?.detail || 'Live traffic sampling failed');
+        }
+      } finally {
+        if (liveTrafficAbortRef.current === controller) {
+          liveTrafficAbortRef.current = null;
         }
       }
     };
@@ -1007,6 +1018,8 @@ export const MonitoringDashboard: React.FC = () => {
     });
     return () => {
       cancelled = true;
+      liveTrafficAbortRef.current?.abort();
+      liveTrafficAbortRef.current = null;
       dispose();
     };
   }, [effectiveTrafficMode, effectiveTrafficSource, effectiveTrafficStepSec, selectedScope, rangeSec]);
@@ -1015,6 +1028,8 @@ export const MonitoringDashboard: React.FC = () => {
     nodesRequestIdRef.current += 1;
     nodesAbortRef.current?.abort();
     nodesAbortRef.current = null;
+    liveTrafficAbortRef.current?.abort();
+    liveTrafficAbortRef.current = null;
     historyLoadIdRef.current += 1;
     historyAbortRef.current?.abort();
     historyAbortRef.current = null;
