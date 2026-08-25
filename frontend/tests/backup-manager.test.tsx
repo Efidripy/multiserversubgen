@@ -55,10 +55,25 @@ describe('BackupManager cold path', () => {
 
     await waitFor(() => expect(screen.getAllByText('alpha').length).toBeGreaterThan(0));
 
-    expect(mocks.listNodes).toHaveBeenCalledTimes(1);
+    expect(mocks.listNodes).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
     expect(mocks.downloadAllBackups).not.toHaveBeenCalled();
     expect(mocks.downloadNodeBackup).not.toHaveBeenCalled();
     expect(mocks.sendNodeBackupToTelegram).not.toHaveBeenCalled();
+  });
+
+  it('aborts the node metadata read when the backup panel unmounts', async () => {
+    const pending = new Promise<never>(() => {});
+    mocks.listNodes.mockImplementation((options: { signal?: AbortSignal }) => {
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+      return pending;
+    });
+
+    const view = render(<BackupManager />);
+    await waitFor(() => expect(mocks.listNodes).toHaveBeenCalledTimes(1));
+    const signal = mocks.listNodes.mock.calls[0][0].signal as AbortSignal;
+
+    view.unmount();
+    expect(signal.aborted).toBe(true);
   });
 
   it('fetches a full backup only after the explicit node download action', async () => {
