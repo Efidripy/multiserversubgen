@@ -135,6 +135,8 @@ export const formatOnlineTrafficTotal = (totals: Record<string, number>, email: 
   return Object.prototype.hasOwnProperty.call(totals, key) ? format(totals[key]) : '—';
 };
 
+export const isCurrentTrafficRequest = (requestId: number, currentRequestId: number): boolean => requestId === currentRequestId;
+
 const trafficSelectionCacheKey = (groupBy: TrafficGroupBy, period: TrafficPeriod) => `${groupBy}:${period}`;
 
 export const groupOnlinePresence = (projection: ClientPresenceProjection): OnlineClient[] => {
@@ -182,6 +184,9 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   const [onlineDetailsRequested, setOnlineDetailsRequested] = useState(false);
   const trafficRequestRef = useRef(0);
   const trafficAbortRef = useRef<AbortController | null>(null);
+  const onlineClientsRequestIdRef = useRef(0);
+  const onlineClientsLoadingRequestIdRef = useRef<number | null>(null);
+  const onlineTotalsRequestIdRef = useRef(0);
   const onlineAbortRef = useRef<AbortController | null>(null);
   const onlineTotalsAbortRef = useRef<AbortController | null>(null);
   const realtimeTrafficRefreshTimerRef = useRef<number | null>(null);
@@ -331,22 +336,30 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   };
 
   const loadOnlineClients = async (silent = false) => {
+    const requestId = ++onlineClientsRequestIdRef.current;
     onlineAbortRef.current?.abort();
     const controller = new AbortController();
     onlineAbortRef.current = controller;
-    if (!silent) setOnlineLoading(true);
+    if (!silent) {
+      onlineClientsLoadingRequestIdRef.current = requestId;
+      setOnlineLoading(true);
+    }
     try {
       const items = groupOnlinePresence(await getClientPresence(controller.signal));
+      if (!isCurrentTrafficRequest(requestId, onlineClientsRequestIdRef.current)) return undefined;
       setOnlineClients(items);
       mergeStaleCacheRecord<TrafficStatsCache>(TRAFFIC_STATS_CACHE_KEY, {
         onlineClients: items,
       });
       return items;
     } catch (err: any) {
-      if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return;
+      if (controller.signal.aborted || err?.code === 'ERR_CANCELED' || !isCurrentTrafficRequest(requestId, onlineClientsRequestIdRef.current)) return;
       console.error('Failed to load online clients:', err);
     } finally {
-      if (!silent) setOnlineLoading(false);
+      if (isCurrentTrafficRequest(requestId, onlineClientsRequestIdRef.current) && onlineClientsLoadingRequestIdRef.current !== null) {
+        onlineClientsLoadingRequestIdRef.current = null;
+        setOnlineLoading(false);
+      }
     }
   };
 
@@ -354,14 +367,16 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     nextPeriod: TrafficPeriod = period,
     clients: OnlineClient[] = onlineClients,
   ) => {
-    const emails = clients.map((client) => normalizeEmailKey(client.email)).filter(Boolean);
-    if (emails.length === 0) {
-      setOnlineTrafficTotals({});
-      return;
-    }
+    const requestId = ++onlineTotalsRequestIdRef.current;
     onlineTotalsAbortRef.current?.abort();
     const controller = new AbortController();
     onlineTotalsAbortRef.current = controller;
+    const emails = clients.map((client) => normalizeEmailKey(client.email)).filter(Boolean);
+    if (emails.length === 0) {
+      if (!isCurrentTrafficRequest(requestId, onlineTotalsRequestIdRef.current)) return;
+      setOnlineTrafficTotals({});
+      return;
+    }
     try {
       const res = await api.post('/v1/traffic/client-totals', {
         emails,
@@ -374,10 +389,11 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
       const totals: Record<string, number> = Object.fromEntries(
         Object.entries(res.data?.totals || {}).map(([email, total]) => [normalizeEmailKey(email), toFiniteNumber(total)]),
       );
+      if (!isCurrentTrafficRequest(requestId, onlineTotalsRequestIdRef.current)) return;
       setOnlineTrafficTotals(totals);
       mergeStaleCacheRecord<TrafficStatsCache>(TRAFFIC_STATS_CACHE_KEY, { onlineTrafficTotals: totals });
     } catch (err: any) {
-      if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return;
+      if (controller.signal.aborted || err?.code === 'ERR_CANCELED' || !isCurrentTrafficRequest(requestId, onlineTotalsRequestIdRef.current)) return;
       console.error('Failed to load online traffic totals:', err);
     }
   };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatOnlineTrafficTotal, groupOnlinePresence } from '../src/components/TrafficStats';
+import { formatOnlineTrafficTotal, groupOnlinePresence, isCurrentTrafficRequest } from '../src/components/TrafficStats';
 
 describe('online presence grouping', () => {
   it('distinguishes a measured zero total from unavailable traffic data', () => {
@@ -28,5 +28,20 @@ describe('online presence grouping', () => {
         nodes: [{ node_id: '9', node_name: 'beta' }],
       },
     ]);
+  });
+
+  it('does not let an older online-details response overwrite a newer generation', () => {
+    let currentRequestId = 0;
+    let committed = 'initial';
+    const commit = (requestId: number, value: string) => {
+      if (isCurrentTrafficRequest(requestId, currentRequestId)) committed = value;
+    };
+
+    const olderRequestId = ++currentRequestId;
+    const newerRequestId = ++currentRequestId;
+    commit(newerRequestId, 'new');
+    commit(olderRequestId, 'old');
+
+    expect(committed).toBe('new');
   });
 });
