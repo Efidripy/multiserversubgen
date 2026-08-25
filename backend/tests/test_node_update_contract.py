@@ -50,12 +50,12 @@ def node_client(tmp_path, monkeypatch):
             (
                 1,
                 "edge-1",
-                "https://old.example.test:443/old-panel",
+                "https://old.example.test:8443/old-panel",
                 "root",
                 "root",
                 "encrypted:old-password",
                 "old.example.test",
-                "443",
+                "8443",
                 "old-panel",
                 "old-panel",
                 "https",
@@ -65,8 +65,22 @@ def node_client(tmp_path, monkeypatch):
     # URL parsing and persistence are under test; DNS egress policy is covered
     # independently and must not make this contract depend on external DNS.
     monkeypatch.setattr(nodes_router, "validate_outbound_url", lambda _url: (True, ""))
-    monkeypatch.setattr(nodes_router, "invalidate_auth_method_cache", lambda *_args: None)
-    monkeypatch.setattr(nodes_router, "invalidate_session_cache", lambda *_args: None)
+    invalidations = {"auth": [], "session": [], "capability": []}
+    monkeypatch.setattr(
+        nodes_router,
+        "invalidate_auth_method_cache",
+        invalidations["auth"].append,
+    )
+    monkeypatch.setattr(
+        nodes_router,
+        "invalidate_session_cache",
+        invalidations["session"].append,
+    )
+    monkeypatch.setattr(
+        nodes_router,
+        "invalidate_node_capabilities",
+        invalidations["capability"].append,
+    )
 
     app = FastAPI()
     app.include_router(
@@ -88,7 +102,7 @@ def node_client(tmp_path, monkeypatch):
             logger=logging.getLogger(__name__),
         )
     )
-    return TestClient(app), db_path
+    return TestClient(app), db_path, invalidations
 
 
 def _node_row(db_path: str) -> dict[str, object]:
@@ -99,7 +113,7 @@ def _node_row(db_path: str) -> dict[str, object]:
 
 
 def test_node_edit_updates_panel_url_and_password_without_overwriting_username(node_client):
-    client, db_path = node_client
+    client, db_path, invalidations = node_client
 
     response = client.put(
         "/api/v1/nodes/1",
@@ -121,10 +135,24 @@ def test_node_edit_updates_panel_url_and_password_without_overwriting_username(n
     assert stored["password"] == "encrypted:new-password"
     assert stored["username"] == "root"
     assert stored["user"] == "root"
+    assert invalidations == {
+        "auth": [
+            "https://old.example.test:8443/old-panel",
+            "https://edge.example.test:8443/new-panel",
+        ],
+        "session": [
+            "old.example.test:8443:old-panel",
+            "edge.example.test:8443:new-panel",
+        ],
+        "capability": [
+            "old.example.test:8443:old-panel",
+            "edge.example.test:8443:new-panel",
+        ],
+    }
 
 
 def test_node_edit_allows_password_only_and_preserves_username(node_client):
-    client, db_path = node_client
+    client, db_path, invalidations = node_client
 
     response = client.put("/api/v1/nodes/1", json={"password": "rotated-password"})
 
@@ -133,6 +161,11 @@ def test_node_edit_allows_password_only_and_preserves_username(node_client):
     assert stored["password"] == "encrypted:rotated-password"
     assert stored["username"] == "root"
     assert stored["user"] == "root"
+    assert invalidations == {
+        "auth": ["https://old.example.test:8443/old-panel"],
+        "session": ["old.example.test:8443:old-panel"],
+        "capability": ["old.example.test:8443:old-panel"],
+    }
 
 
 @pytest.mark.parametrize(
@@ -145,7 +178,7 @@ def test_node_edit_allows_password_only_and_preserves_username(node_client):
     ],
 )
 def test_node_edit_rejects_empty_or_conflicting_auth_fields(node_client, payload):
-    client, db_path = node_client
+    client, db_path, _invalidations = node_client
     before = _node_row(db_path)
 
     response = client.put("/api/v1/nodes/1", json=payload)
