@@ -20,17 +20,41 @@ afterEach(() => {
 
 describe('ServerLogsModal', () => {
   it('renders logs in a modal and sends level/syslog controls to the API', async () => {
-    getNodeLogs.mockResolvedValue(['2026-08-23 INFO ready']);
+    getNodeLogs.mockImplementation((_nodeId: number, _kind: string) => {
+      return Promise.resolve(['2026-08-23 INFO ready']);
+    });
     render(<ServerLogsModal open nodeId={25} nodeName="5-EST" kind="panel" onClose={vi.fn()} />);
 
     expect(screen.getByRole('dialog')).toBeTruthy();
     expect((await screen.findByRole('log')).textContent).toContain('2026-08-23 INFO ready');
-    expect(getNodeLogs).toHaveBeenCalledWith(25, 'panel', { count: 120, level: 'info' });
+    expect(getNodeLogs).toHaveBeenCalledWith(25, 'panel', expect.objectContaining({ count: 120, level: 'info', signal: expect.any(AbortSignal) }));
 
     fireEvent.change(screen.getByRole('combobox', { name: 'serverStatus.logsViewerLevel' }), { target: { value: 'notice' } });
     fireEvent.click(screen.getByRole('checkbox', { name: 'serverStatus.logsViewerSyslog' }));
 
-    await waitFor(() => expect(getNodeLogs).toHaveBeenLastCalledWith(25, 'panel', { count: 120, level: 'notice', syslog: true }));
+    await waitFor(() => expect(getNodeLogs).toHaveBeenLastCalledWith(25, 'panel', expect.objectContaining({ count: 120, level: 'notice', syslog: true, signal: expect.any(AbortSignal) })));
+  });
+
+  it('aborts an in-flight log read when the selected level changes', async () => {
+    let resolveFirst: ((logs: string[]) => void) | undefined;
+    let firstSignal: AbortSignal | undefined;
+    let calls = 0;
+    getNodeLogs.mockImplementation((_nodeId: number, _kind: string, options: { signal?: AbortSignal }) => {
+      calls += 1;
+      if (calls === 1) {
+        firstSignal = options.signal;
+        return new Promise<string[]>((resolve) => { resolveFirst = resolve; });
+      }
+      return Promise.resolve(['fresh']);
+    });
+
+    render(<ServerLogsModal open nodeId={25} nodeName="5-EST" kind="panel" onClose={vi.fn()} />);
+    await waitFor(() => expect(getNodeLogs).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByRole('combobox', { name: 'serverStatus.logsViewerLevel' }), { target: { value: 'notice' } });
+    await waitFor(() => expect(getNodeLogs).toHaveBeenCalledTimes(2));
+    expect(firstSignal?.aborted).toBe(true);
+    resolveFirst?.(['stale']);
+    expect((await screen.findByRole('log')).textContent).toContain('fresh');
   });
 
   it('closes on Escape and keeps Xray mode free of panel-only controls', async () => {

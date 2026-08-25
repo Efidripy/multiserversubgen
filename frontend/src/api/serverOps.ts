@@ -106,7 +106,7 @@ export async function generateNodeVlessEncryption(nodeId: number): Promise<Vless
 export async function getNodeLogs(
   nodeId: number,
   kind: NodeLogKind,
-  options: { count?: number; level?: string; syslog?: boolean } = {},
+  options: { count?: number; level?: string; syslog?: boolean; signal?: AbortSignal } = {},
 ): Promise<string[]> {
   const endpoint = kind === 'xray'
     ? `/v1/nodes/${nodeId}/xray-logs`
@@ -118,6 +118,7 @@ export async function getNodeLogs(
       ...(kind === 'panel' && options.syslog !== undefined ? { syslog: options.syslog } : {}),
     },
     auth: getAuth(),
+    signal: options.signal,
   });
   const payload = res.data || {};
   if (payload.error) throw new Error(String(payload.error));
