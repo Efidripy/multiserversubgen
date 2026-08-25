@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import QRCode from 'qrcode';
 import { useToast } from './Toast';
 import { useTranslation } from 'react-i18next';
@@ -79,6 +79,16 @@ const csvToList = (value: string) => value
   .map((item) => item.trim())
   .filter(Boolean);
 
+interface ReadRequest {
+  id: number;
+  signal: AbortSignal;
+}
+
+const isCancelledRead = (error: any, signal: AbortSignal) => signal.aborted
+  || error?.code === 'ERR_CANCELED'
+  || error?.name === 'CanceledError'
+  || error?.message === 'canceled';
+
 export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) => {
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -110,6 +120,20 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
   const [groupEditorOpen, setGroupEditorOpen] = useState(false);
   const [groupForm, setGroupForm] = useState<SubscriptionGroupForm>(emptyGroupForm);
   const [groupSaving, setGroupSaving] = useState(false);
+  const readRequestIdRef = useRef(0);
+  const readAbortRef = useRef<AbortController | null>(null);
+
+  const beginRead = (refresh = false): ReadRequest => {
+    readAbortRef.current?.abort();
+    const controller = new AbortController();
+    readAbortRef.current = controller;
+    const request = { id: ++readRequestIdRef.current, signal: controller.signal };
+    if (!refresh) setLoading(false);
+    return request;
+  };
+
+  const isCurrentRead = (request: ReadRequest) => request.id === readRequestIdRef.current
+    && !request.signal.aborted;
 
   useEffect(() => {
     let cancelled = false;
@@ -154,7 +178,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     }
   };
 
-  const loadEmails = async () => {
+  const loadEmails = async (request: ReadRequest) => {
     setEmailsLoading(true);
     setError('');
     setSuccessMessage('');
@@ -162,7 +186,9 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       const res = await api.get('/v1/emails', {
         params: { _ts: Date.now() },
         headers: { 'Cache-Control': 'no-cache' },
+        signal: request.signal,
       });
+      if (!isCurrentRead(request)) return;
       setEmails(Array.isArray(res.data?.emails) ? res.data.emails : []);
       setEmailTokens(res.data?.subscription_tokens && typeof res.data.subscription_tokens === 'object'
         ? res.data.subscription_tokens
@@ -171,20 +197,23 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
       setSuccessMessage(t('subscriptions.emailsRefreshed'));
       window.setTimeout(() => setSuccessMessage(''), 3000);
     } catch (err: any) {
+      if (isCancelledRead(err, request.signal) || !isCurrentRead(request)) return;
       console.error('Failed to load subscriptions:', err);
       setError(err.response?.data?.detail || t('subscriptions.refreshEmailsFailed'));
     } finally {
-      setEmailsLoading(false);
+      if (isCurrentRead(request)) setEmailsLoading(false);
     }
   };
 
-  const loadGroups = async () => {
+  const loadGroups = async (request: ReadRequest = beginRead()) => {
     setGroupsLoading(true);
     setError('');
     try {
       const res = await api.get('/v1/subscription-groups', {
         params: { _ts: Date.now() },
+        signal: request.signal,
       });
+      if (!isCurrentRead(request)) return;
       const rawGroups = Array.isArray(res.data?.groups) ? res.data.groups : [];
       setGroups(
         rawGroups.map((group: any): SubscriptionGroup => ({
@@ -201,11 +230,12 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         })),
       );
     } catch (err: any) {
+      if (isCancelledRead(err, request.signal) || !isCurrentRead(request)) return;
       console.error('Failed to load subscription groups:', err);
       setError(err.response?.data?.detail || t('subscriptions.refreshEmailsFailed'));
       setGroups([]);
     } finally {
-      setGroupsLoading(false);
+      if (isCurrentRead(request)) setGroupsLoading(false);
     }
   };
 
@@ -232,25 +262,38 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     }
   };
 
-  const loadNodes = async () => {
+  const loadNodes = async (request: ReadRequest) => {
     setNodesLoading(true);
     try {
-      setNodes(await listNodes());
-    } catch (err) {
+      const nextNodes = await listNodes({ signal: request.signal });
+      if (isCurrentRead(request)) setNodes(nextNodes);
+    } catch (err: any) {
+      if (isCancelledRead(err, request.signal) || !isCurrentRead(request)) return;
       console.error('Failed to load nodes:', err);
     } finally {
-      setNodesLoading(false);
+      if (isCurrentRead(request)) setNodesLoading(false);
     }
   };
 
   const refreshAll = async () => {
+    const request = beginRead(true);
     setLoading(true);
-    await Promise.all([loadEmails(), loadGroups(), loadNodes()]);
-    setLoading(false);
+    try {
+      await Promise.all([loadEmails(request), loadGroups(request), loadNodes(request)]);
+    } finally {
+      if (isCurrentRead(request)) {
+        setLoading(false);
+        readAbortRef.current = null;
+      }
+    }
   };
 
   useEffect(() => {
     void refreshAll();
+    return () => {
+      readAbortRef.current?.abort();
+      readAbortRef.current = null;
+    };
   }, []);
 
   const openCreateGroup = () => {
