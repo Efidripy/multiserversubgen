@@ -262,6 +262,45 @@ def test_node_period_omits_ambiguous_legacy_name_snapshot(monkeypatch, tmp_path)
     assert "no unambiguous historical baseline" in payload["note"]
 
 
+def test_node_period_indexes_legacy_names_once_for_large_identity_set(monkeypatch, tmp_path):
+    class CountingDict(dict):
+        values_calls = 0
+
+        def values(self):
+            type(self).values_calls += 1
+            return super().values()
+
+    now_ts = 500 * 3600
+    runtime = _build_runtime(tmp_path, {})
+    runtime._save_period_snapshots(
+        "node",
+        {"node-4999": {"up": 10, "down": 20, "total": 30, "count": 1}},
+        now_ts - 25 * 3600,
+    )
+    identity_stats = CountingDict({
+        f"node:{index}": {
+            "up": 20,
+            "down": 40,
+            "total": 60,
+            "count": 1,
+            "_legacy_key": f"node-{index}",
+            "_display_key": f"node-{index}",
+        }
+        for index in range(5000)
+    })
+    runtime.traffic_stats_cache["node"] = (
+        now_ts,
+        {"stats": {key: value for key, value in identity_stats.items()}, "identity_stats": identity_stats},
+    )
+    monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now_ts)
+
+    payload = runtime.get_cached_traffic_stats_projection_by_period("node", "day")
+
+    assert CountingDict.values_calls == 1
+    assert payload["stats"]["node-4999"]["total"] == 30
+    assert payload["missing_baseline_count"] == 4999
+
+
 def test_day_period_uses_snapshot_before_requested_window(monkeypatch, tmp_path):
     now_ts = 200 * 3600
     runtime = _build_runtime(
