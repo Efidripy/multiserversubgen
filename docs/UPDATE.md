@@ -8,6 +8,11 @@ git pull
 sudo ./update.sh
 ```
 
+Запускайте updater из полного Git checkout или из проверенного flat release
+bundle. Скрипт до остановки сервиса проверяет обязательные backend, frontend,
+ops, deploy, monitoring и systemd файлы. Неполный или произвольный архив он
+отклоняет до изменения runtime-state.
+
 ## Режимы `update.sh`
 
 1. Полное обновление (backend + frontend)

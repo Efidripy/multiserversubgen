@@ -130,6 +130,18 @@ def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_
     assert 'git -C $RepoRoot status --porcelain=v1 --untracked-files=all' in script
     assert 'Refusing to deploy a dirty source worktree' in script
     assert 'git -C $RepoRoot archive --format=tar.gz' in script
+    assert "$requiredEntries = @(" in script
+    assert '"$leaf/install.sh"' in script
+    assert '"$leaf/update.sh"' in script
+    assert '"$leaf/backend/main.py"' in script
+    assert '"$leaf/backend/requirements.txt"' in script
+    assert '"$leaf/scripts/installer/update.sh"' in script
+    assert '"$leaf/scripts/installer/lib/entrypoint_layout.sh"' in script
+    assert '"$leaf/scripts/installer/lib/source_layout.sh"' in script
+    assert '"$leaf/scripts/ops/lib/install_log.sh"' in script
+    assert '"$leaf/systemd/sub-manager.service"' in script
+    assert '& tar.exe -tzf $ArchivePath' in script
+    assert "Source archive is incomplete; missing required entries:" in script
     assert '.deploy-source-commit' in script
     assert r'printf %s\\n $deployCommit' in script
     assert 'bash -x' not in script
