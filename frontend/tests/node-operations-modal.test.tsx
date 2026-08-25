@@ -45,14 +45,20 @@ describe('NodeOperationsModal tab loading', () => {
   it('ignores a stale tab failure after the operator switches to a newer tab', async () => {
     let rejectTraffic: ((reason?: unknown) => void) | undefined;
     let resolveOnline: ((value: unknown) => void) | undefined;
-    getNodeTraffic.mockImplementation(() => new Promise((_, reject) => { rejectTraffic = reject; }));
+    let trafficSignal: AbortSignal | undefined;
+    getNodeTraffic.mockImplementation((_nodeId: number, options: { signal?: AbortSignal }) => {
+      trafficSignal = options.signal;
+      return new Promise((_, reject) => { rejectTraffic = reject; });
+    });
     getNodeOnlineClients.mockImplementation(() => new Promise((resolve) => { resolveOnline = resolve; }));
 
     render(<NodeOperationsModal nodeId={7} nodeName="node-a" onClose={vi.fn()} />);
-    await waitFor(() => expect(getNodeTraffic).toHaveBeenCalledWith(7));
+    await waitFor(() => expect(getNodeTraffic).toHaveBeenCalledWith(7, expect.objectContaining({ signal: expect.any(AbortSignal) })));
 
     fireEvent.click(screen.getByRole('button', { name: 'serverStatus.onlineClients' }));
-    await waitFor(() => expect(getNodeOnlineClients).toHaveBeenCalledWith(7));
+    await waitFor(() => expect(getNodeOnlineClients).toHaveBeenCalledWith(7, expect.objectContaining({ signal: expect.any(AbortSignal) })));
+
+    expect(trafficSignal?.aborted).toBe(true);
 
     rejectTraffic?.(new Error('stale traffic request'));
     resolveOnline?.({ fresh: true });
