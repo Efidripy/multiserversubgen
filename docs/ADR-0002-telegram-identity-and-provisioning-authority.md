@@ -25,6 +25,25 @@ node to become the authority for the customer lifecycle.
 - A customer may intentionally be on a subset of eligible nodes. Missing
   bindings on other eligible nodes mean `available_to_add`, never failure or
   drift.
+- Admin approval of a new person is one SQLite transaction: it creates the
+  canonical customer, changes the pending identity to `approved`, snapshots
+  every currently eligible node policy, and creates one durable job with one
+  attempt per node. It performs no remote I/O and creates no binding until a
+  later worker has reconciled the remote client.
+- The suggested customer email is derived from Telegram username, then display
+  names, then a deterministic safe fallback. It is NFKC-normalized,
+  transliterated, allowlisted and collision-checked. An administrator may
+  replace it; the committed exact value becomes immutable remote `email`.
+- Approval fails closed when no eligible local policy target exists. It must
+  not label a person as ready merely because the administrator pressed approve.
+- Linking an existing customer accepts its local `customer_id`, never a free
+  email supplied by Telegram or an administrator. The customer must already
+  have at least one exact confirmed local node binding; this link creates no
+  provisioning job and does not mutate a remote node.
+- Telegram update deduplication happens before abuse accounting. Only the 51st
+  unique no-op action in a rolling ten-minute window auto-blocks an unapproved
+  identity; the first 50 do not. Manual unblock resets the active window but
+  leaves the audit trail intact.
 - Provisioning and destructive lifecycle work run through durable jobs and
   exact binding identifiers. They reconcile before retry and never perform
   blind lookup or automatic destructive rollback.
@@ -34,7 +53,9 @@ node to become the authority for the customer lifecycle.
 The integration can be introduced behind a disabled feature flag while old
 subscription URLs keep their current contract. Suspend changes remote enable
 state without deleting the binding; delete is a later, explicit saga. Token
-rotation remains a separate operation and cannot reset persisted usage.
+rotation remains a separate operation and cannot reset persisted usage. Admin
+queue commands use optimistic row versions and idempotency receipts, so a
+second browser tab either replays the same result or receives a conflict.
 
 ## Rollback
 

@@ -8,6 +8,7 @@ from typing import Callable, Dict
 from fastapi import APIRouter, HTTPException, Request
 
 from services.telegram_registry import (
+    ApprovalUnavailableError,
     IdempotencyConflictError,
     NodePolicyUnavailableError,
     TelegramRegistry,
@@ -50,6 +51,98 @@ def build_telegram_admin_router(
         if get_user_role(username) != "admin":
             raise HTTPException(status_code=403, detail="Telegram administration requires admin role")
         return username
+
+    def translate_registry_error(exc: TelegramRegistryError) -> HTTPException:
+        if isinstance(exc, (VersionConflictError, IdempotencyConflictError, ApprovalUnavailableError)):
+            return HTTPException(status_code=409, detail=str(exc))
+        return HTTPException(status_code=400, detail=str(exc))
+
+    @router.get("/api/v1/telegram/requests")
+    def list_pending_requests(request: Request):
+        require_admin(request)
+        return {"items": [asdict(item) for item in registry.list_pending_applications()]}
+
+    @router.get("/api/v1/telegram/requests/{telegram_user_id}")
+    def get_pending_request(telegram_user_id: int, request: Request):
+        require_admin(request)
+        try:
+            return {"item": asdict(registry.get_pending_application(telegram_user_id))}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.post("/api/v1/telegram/requests/{telegram_user_id}/approve-new")
+    def approve_new_request(telegram_user_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.approve_new_application(
+                telegram_user_id=telegram_user_id,
+                expected_identity_version=data.get("expected_identity_version"),
+                email_display=data.get("email_display"),
+                idempotency_key=data.get("idempotency_key"),
+                approved_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"approval": asdict(result), "remote_io": "not_started"}
+
+    @router.post("/api/v1/telegram/requests/{telegram_user_id}/approve-existing")
+    def approve_existing_request(telegram_user_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.approve_existing_application(
+                telegram_user_id=telegram_user_id,
+                customer_id=data.get("customer_id"),
+                expected_identity_version=data.get("expected_identity_version"),
+                idempotency_key=data.get("idempotency_key"),
+                approved_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"approval": asdict(result), "remote_io": "not_started"}
+
+    @router.post("/api/v1/telegram/requests/{telegram_user_id}/reject")
+    def reject_request(telegram_user_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.reject_application(
+                telegram_user_id=telegram_user_id,
+                expected_identity_version=data.get("expected_identity_version"),
+                idempotency_key=data.get("idempotency_key"),
+                rejected_by=username,
+                reason=data.get("reason"),
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"identity": asdict(result)}
+
+    @router.post("/api/v1/telegram/identities/{telegram_user_id}/block")
+    def block_identity(telegram_user_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.block_identity(
+                telegram_user_id=telegram_user_id,
+                expected_identity_version=data.get("expected_identity_version"),
+                idempotency_key=data.get("idempotency_key"),
+                blocked_by=username,
+                reason=data.get("reason"),
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"identity": asdict(result)}
+
+    @router.post("/api/v1/telegram/identities/{telegram_user_id}/unblock")
+    def unblock_identity(telegram_user_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.unblock_identity(
+                telegram_user_id=telegram_user_id,
+                expected_identity_version=data.get("expected_identity_version"),
+                idempotency_key=data.get("idempotency_key"),
+                unblocked_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"identity": asdict(result)}
 
     @router.get("/api/v1/telegram/node-policies")
     def list_node_policies(request: Request):

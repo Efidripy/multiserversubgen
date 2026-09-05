@@ -86,6 +86,14 @@ class TelegramRegistrationService:
         if identity.access_status == "blocked":
             return [TelegramOutboundMessage(chat_id, "Сейчас это действие недоступно.")]
 
+        def no_op(message: TelegramOutboundMessage) -> list[TelegramOutboundMessage]:
+            outcome = self._registry.record_unapproved_noop(user_id)
+            if outcome.auto_blocked:
+                return [TelegramOutboundMessage(chat_id, "Сейчас это действие недоступно.")]
+            if outcome.suppress_response:
+                return []
+            return [message]
+
         if text and text.strip().startswith("/start"):
             pending = self._registry.create_pending_application(user_id)
             if pending.created:
@@ -98,11 +106,11 @@ class TelegramRegistrationService:
                 ]
             if pending.identity.access_status == "approved":
                 return [TelegramOutboundMessage(chat_id, "Ваш доступ уже подтверждён. Откройте меню, чтобы продолжить.")]
-            return [TelegramOutboundMessage(chat_id, "Заявка уже ожидает проверки. Пожалуйста, дождитесь ответа.")]
+            return no_op(TelegramOutboundMessage(chat_id, "Заявка уже ожидает проверки. Пожалуйста, дождитесь ответа."))
 
         if callback_data == "registration:intro":
             if identity.access_status != "pending":
-                return [TelegramOutboundMessage(chat_id, "Сейчас представление не требуется.")]
+                return no_op(TelegramOutboundMessage(chat_id, "Сейчас представление не требуется."))
             return [
                 TelegramOutboundMessage(
                     chat_id,
@@ -119,6 +127,6 @@ class TelegramRegistrationService:
                 return [TelegramOutboundMessage(chat_id, "Сообщение не удалось принять. Попробуйте короче.")]
             if saved:
                 return [TelegramOutboundMessage(chat_id, "Спасибо. Заявка по-прежнему ожидает проверки.")]
-            return [TelegramOutboundMessage(chat_id, "Заявка уже ожидает проверки. Пожалуйста, дождитесь ответа.")]
+            return no_op(TelegramOutboundMessage(chat_id, "Заявка уже ожидает проверки. Пожалуйста, дождитесь ответа."))
 
-        return [TelegramOutboundMessage(chat_id, "Для начала отправьте /start.")]
+        return no_op(TelegramOutboundMessage(chat_id, "Для начала отправьте /start."))

@@ -11,13 +11,14 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from routers.telegram_admin import build_telegram_admin_router
 from services.db_bootstrap import connect, init_db
+from services.telegram_registry import TelegramRegistry
 
 
 def _build_client(tmp_path, *, username: str = "admin", role: str = "admin", options=None):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     with connect(db_path) as conn:
-        conn.execute("INSERT INTO nodes (id, name) VALUES (1, 'edge-1')")
+        conn.execute("INSERT OR IGNORE INTO nodes (id, name) VALUES (1, 'edge-1')")
     app = FastAPI()
     app.include_router(
         build_telegram_admin_router(
@@ -87,3 +88,40 @@ def test_policy_route_rejects_inbound_other_than_exact_bot_contract(tmp_path):
 
     assert response.status_code == 409
     assert "eligible" in response.json()["detail"]
+
+
+def test_request_queue_is_admin_only_and_approval_queues_local_work_without_remote_io(tmp_path):
+    client = _build_client(tmp_path)
+    db_path = str(tmp_path / "admin.db")
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="Ivan_Petrov", first_name=None, last_name=None
+    )
+    pending = registry.create_pending_application(42)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (1, 1)")
+
+    queue = client.get("/api/v1/telegram/requests")
+    assert queue.status_code == 200
+    assert queue.json()["items"][0]["suggested_email"] == "ivan_petrov"
+    response = client.post(
+        "/api/v1/telegram/requests/42/approve-new",
+        json={
+            "expected_identity_version": pending.identity.row_version,
+            "email_display": "",
+            "idempotency_key": "http-approve-42",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["remote_io"] == "not_started"
+    assert response.json()["approval"]["target_node_ids"] == [1]
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings").fetchone()[0] == 0
+
+    viewer = _build_client(tmp_path, username="viewer", role="viewer")
+    assert viewer.get("/api/v1/telegram/requests").status_code == 403
+    assert viewer.post(
+        "/api/v1/telegram/requests/42/approve-new",
+        json={"expected_identity_version": 2, "idempotency_key": "viewer"},
+    ).status_code == 403

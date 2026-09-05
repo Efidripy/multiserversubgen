@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime, timezone
 
 import pytest
 
@@ -10,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.db_bootstrap import connect, init_db
 from services.telegram_registry import (
+    ApprovalUnavailableError,
     IdempotencyConflictError,
     NodePolicyUnavailableError,
     TelegramRegistry,
@@ -259,3 +261,247 @@ def test_customer_node_matrix_hides_technical_nodes_but_keeps_problem_bindings(t
     assert [(row.node_id, row.state) for row in rows] == [(1, "problem"), (2, "available_to_add")]
     assert rows[0].binding_id is not None
     assert rows[1].binding_id is None
+
+
+def test_pending_queue_suggests_safe_transliterated_name_and_approval_creates_only_local_job(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "edge-a")
+    _insert_node(db_path, 2, "edge-b")
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO telegram_node_policies (node_id, provisioning_enabled, total_bytes, validity_days, client_enabled) "
+            "VALUES (1, 1, 0, 0, 1)"
+        )
+        conn.execute(
+            "INSERT INTO telegram_node_policies (node_id, provisioning_enabled, total_bytes, validity_days, client_enabled) "
+            "VALUES (2, 1, 123, 7, 0)"
+        )
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username=None, first_name="Иван", last_name="Петров"
+    )
+    pending = registry.create_pending_application(42)
+
+    queued = registry.get_pending_application(42)
+    assert queued.suggested_email == "ivan-petrov"
+    assert queued.suggested_email_source == "telegram_name"
+
+    approved = registry.approve_new_application(
+        telegram_user_id=42,
+        expected_identity_version=pending.identity.row_version,
+        email_display=None,
+        idempotency_key="approve-42",
+        approved_by="admin",
+    )
+    replay = registry.approve_new_application(
+        telegram_user_id=42,
+        expected_identity_version=pending.identity.row_version,
+        email_display="",
+        idempotency_key="approve-42",
+        approved_by="another-admin",
+    )
+
+    assert approved == replay
+    assert approved.email_display == "ivan-petrov"
+    assert approved.email_source == "telegram_name"
+    assert approved.target_node_ids == (1, 2)
+    with connect(db_path) as conn:
+        customer = conn.execute(
+            "SELECT email_display, email_source FROM customers WHERE id = ?", (approved.customer_id,)
+        ).fetchone()
+        attempts = conn.execute(
+            """
+            SELECT node_id, inbound_id, desired_flow, desired_total_bytes, desired_validity_days,
+                   desired_client_enabled, policy_version, desired_client_id, desired_sub_id
+            FROM telegram_provisioning_attempts WHERE job_id = ? ORDER BY node_id
+            """,
+            (approved.job_id,),
+        ).fetchall()
+        identity = conn.execute(
+            "SELECT access_status, customer_id FROM telegram_identities WHERE telegram_user_id = 42"
+        ).fetchone()
+        assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM telegram_outbox WHERE event_type = 'user_provisioning_queued'").fetchone()[0] == 1
+    assert customer == ("ivan-petrov", "telegram_name")
+    assert identity == ("approved", approved.customer_id)
+    assert [row[:7] for row in attempts] == [
+        (1, 1, "xtls-rprx-vision", 0, 0, 1, 1),
+        (2, 1, "xtls-rprx-vision", 123, 7, 0, 1),
+    ]
+    assert all(len(row[7]) == 36 and len(row[8]) == 36 for row in attempts)
+
+
+def test_approval_fails_closed_without_target_and_leaves_pending_request_unchanged(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=77, chat_id=77, username="user77", first_name=None, last_name=None
+    )
+    pending = registry.create_pending_application(77)
+
+    with pytest.raises(ApprovalUnavailableError, match="no eligible"):
+        registry.approve_new_application(
+            telegram_user_id=77,
+            expected_identity_version=pending.identity.row_version,
+            email_display=None,
+            idempotency_key="approve-77",
+            approved_by="admin",
+        )
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT access_status FROM telegram_identities WHERE telegram_user_id = 77"
+        ).fetchone()[0] == "pending"
+
+
+def test_pending_queue_allocates_distinct_suggestions_for_matching_display_metadata(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    for user_id in (71, 72):
+        registry.get_or_create_identity(
+            telegram_user_id=user_id, chat_id=user_id, username="same_name", first_name=None, last_name=None
+        )
+        registry.create_pending_application(user_id)
+
+    suggested = [item.suggested_email for item in registry.list_pending_applications()]
+    assert suggested[0] == "same_name"
+    assert suggested[1].startswith("same_name-")
+    assert len(set(suggested)) == 2
+
+
+def test_existing_approval_requires_confirmed_exact_local_binding_and_never_queues_create(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "existing-edge")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="existing-user", origin="existing", email_source="existing", public_code="existing-1"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, remote_email, source, management_state)
+            VALUES (?, 1, 'existing-user', 'existing_bound', 'confirmed')
+            """,
+            (customer_id,),
+        )
+    registry.get_or_create_identity(
+        telegram_user_id=73, chat_id=73, username="existing", first_name=None, last_name=None
+    )
+    pending = registry.create_pending_application(73)
+
+    approved = registry.approve_existing_application(
+        telegram_user_id=73,
+        customer_id=customer_id,
+        expected_identity_version=pending.identity.row_version,
+        idempotency_key="existing-73",
+        approved_by="admin",
+    )
+    assert approved.customer_id == customer_id
+    assert approved.confirmed_binding_count == 1
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT access_status, customer_id FROM telegram_identities WHERE telegram_user_id = 73"
+        ).fetchone() == ("approved", customer_id)
+
+
+def test_existing_approval_rejects_customer_without_confirmed_binding(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="unconfirmed", origin="existing", email_source="existing", public_code="unconfirmed-1"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=74, chat_id=74, username="unconfirmed", first_name=None, last_name=None
+    )
+    pending = registry.create_pending_application(74)
+
+    with pytest.raises(ApprovalUnavailableError, match="no confirmed"):
+        registry.approve_existing_application(
+            telegram_user_id=74,
+            customer_id=customer_id,
+            expected_identity_version=pending.identity.row_version,
+            idempotency_key="existing-74",
+            approved_by="admin",
+        )
+
+
+def test_reject_block_and_unblock_require_versions_and_do_not_create_repeat_request(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=88, chat_id=88, username="user88", first_name=None, last_name=None
+    )
+    pending = registry.create_pending_application(88)
+    rejected = registry.reject_application(
+        telegram_user_id=88,
+        expected_identity_version=pending.identity.row_version,
+        idempotency_key="reject-88",
+        rejected_by="admin",
+        reason="not now",
+    )
+    blocked = registry.block_identity(
+        telegram_user_id=88,
+        expected_identity_version=rejected.row_version,
+        idempotency_key="block-88",
+        blocked_by="admin",
+    )
+    unblocked = registry.unblock_identity(
+        telegram_user_id=88,
+        expected_identity_version=blocked.row_version,
+        idempotency_key="unblock-88",
+        unblocked_by="admin",
+    )
+
+    assert (rejected.access_status, blocked.access_status, unblocked.access_status) == (
+        "rejected", "blocked", "eligible"
+    )
+    repeat = registry.create_pending_application(88)
+    assert repeat.created is True
+    assert repeat.identity.application_attempt == 2
+
+
+def test_noop_abuse_counter_blocks_only_the_fifty_first_unique_action_and_unblock_resets_window(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=99, chat_id=99, username="user99", first_name=None, last_name=None
+    )
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    for _ in range(50):
+        result = registry.record_unapproved_noop(99, now=base)
+        assert result.auto_blocked is False
+    blocked = registry.record_unapproved_noop(99, now=base)
+    assert blocked.auto_blocked is True
+    assert blocked.noop_count == 51
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT access_status, decision_reason FROM telegram_identities WHERE telegram_user_id = 99"
+        ).fetchone() == ("blocked", "auto_spam")
+        assert conn.execute(
+            "SELECT COUNT(*) FROM telegram_outbox WHERE event_type = 'admin_identity_auto_blocked'"
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM telegram_audit_log WHERE event_type = 'identity_auto_blocked'"
+        ).fetchone()[0] == 1
+        version = conn.execute(
+            "SELECT row_version FROM telegram_identities WHERE telegram_user_id = 99"
+        ).fetchone()[0]
+    unblocked = registry.unblock_identity(
+        telegram_user_id=99,
+        expected_identity_version=version,
+        idempotency_key="unblock-99",
+        unblocked_by="admin",
+    )
+    assert unblocked.access_status == "eligible"
+    after_reset = registry.record_unapproved_noop(99, now=base)
+    assert after_reset.noop_count == 1

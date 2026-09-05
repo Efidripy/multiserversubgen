@@ -346,6 +346,11 @@ def init_db(db_path: str) -> None:
                         CHECK(status IN ('pending', 'reconciling', 'creating', 'succeeded', 'failed', 'ambiguous', 'skipped')),
                       desired_client_id TEXT NOT NULL,
                       desired_sub_id TEXT NOT NULL,
+                      desired_flow TEXT NOT NULL DEFAULT 'xtls-rprx-vision',
+                      desired_total_bytes INTEGER NOT NULL DEFAULT 0 CHECK(desired_total_bytes >= 0),
+                      desired_validity_days INTEGER NOT NULL DEFAULT 0 CHECK(desired_validity_days >= 0),
+                      desired_client_enabled INTEGER NOT NULL DEFAULT 1
+                        CHECK(desired_client_enabled IN (0, 1)),
                       policy_version INTEGER NOT NULL CHECK(policy_version > 0),
                       remote_client_id TEXT DEFAULT NULL,
                       error_code TEXT DEFAULT NULL,
@@ -364,6 +369,39 @@ def init_db(db_path: str) -> None:
             "CREATE INDEX IF NOT EXISTS idx_telegram_provisioning_attempts_schedule "
             "ON telegram_provisioning_attempts(status, next_attempt_at)"
         )
+        # `CREATE TABLE IF NOT EXISTS` cannot extend an already created
+        # database. Keep these additive migrations next to the authority
+        # schema so a deployed DB gains the immutable attempt contract before
+        # a worker is ever allowed to perform remote I/O.
+        provisioning_attempt_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(telegram_provisioning_attempts)").fetchall()
+        }
+        provisioning_attempt_migrations = [
+            (
+                "desired_flow",
+                "ALTER TABLE telegram_provisioning_attempts "
+                "ADD COLUMN desired_flow TEXT NOT NULL DEFAULT 'xtls-rprx-vision'",
+            ),
+            (
+                "desired_total_bytes",
+                "ALTER TABLE telegram_provisioning_attempts "
+                "ADD COLUMN desired_total_bytes INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "desired_validity_days",
+                "ALTER TABLE telegram_provisioning_attempts "
+                "ADD COLUMN desired_validity_days INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "desired_client_enabled",
+                "ALTER TABLE telegram_provisioning_attempts "
+                "ADD COLUMN desired_client_enabled INTEGER NOT NULL DEFAULT 1",
+            ),
+        ]
+        for column_name, statement in provisioning_attempt_migrations:
+            if column_name not in provisioning_attempt_columns:
+                conn.execute(statement)
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_customer_operations
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,

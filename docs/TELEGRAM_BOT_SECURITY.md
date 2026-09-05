@@ -13,10 +13,13 @@ BotFather и реальные remote clients этот репозиторный �
 | `TELEGRAM_BOT_ENABLED` | `false` by default. If `true`, missing mandatory variables abort startup. |
 | `TELEGRAM_BOT_TOKEN` | Root-owned runtime secret. Never put it in Git, docs, `.env.example`, logs or audit. Rotate any token disclosed outside the runtime secret store before first launch. |
 | `TELEGRAM_PRIMARY_ADMIN_ID` | Positive signed 64-bit integer. Authorization uses only the exact numeric Telegram `from.id`. |
+| `TELEGRAM_MODE` | Only `webhook` is supported when the feature is enabled; polling is rejected until separately implemented. |
+| `TELEGRAM_WEBHOOK_SECRET` | Exact value required in `X-Telegram-Bot-Api-Secret-Token`; an absent or incorrect value is rejected. |
+| `TELEGRAM_WEBHOOK_PATH_SUFFIX` | High-entropy path component; it is compared exactly and never logged. |
+| `TELEGRAM_PUBLIC_BASE_URL` | Public HTTPS origin used for controlled webhook registration; no HTTP or implicit local fallback. |
 
-Later adapter-only settings (webhook secret, HTTPS base URL, path suffix and
-polling controls) are added with the adapter. They must have the same
-fail-closed startup validation and no implicit development fallback.
+The adapter validates every required setting fail-closed at startup and has no
+implicit development fallback.
 
 ## Threat model and controls
 

@@ -2,8 +2,8 @@
 
 Этот каталог содержит только стабильную документацию, нужную пользователю,
 оператору или интегратору после клонирования репозитория. Исключение —
-минимальный технический [ADR-0001](ADR-0001-production-composition-root.md),
-который закрепляет проверяемый composition-root contract.
+минимальные технические ADR, которые закрепляют проверяемый composition-root
+и Telegram provisioning contract.
 
 ## Начать работу
 
@@ -13,3 +13,5 @@
 - [API: короткая точка входа](API.md)
 - [API: полный справочник](API_DOCUMENTATION.md)
 - [Подписки](SUBSCRIPTION_GUIDE.md)
+- [Telegram: identity и provisioning authority](ADR-0002-telegram-identity-and-provisioning-authority.md)
+- [Telegram: безопасность и staging rollout](TELEGRAM_BOT_SECURITY.md)
