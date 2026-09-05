@@ -45,6 +45,10 @@ class ApprovalUnavailableError(TelegramRegistryError):
     """A request cannot be approved without a safe local target snapshot."""
 
 
+class LifecycleUnavailableError(TelegramRegistryError):
+    """A lifecycle command has no safe, exact set of remote targets."""
+
+
 @dataclass(frozen=True)
 class TelegramIdentity:
     telegram_user_id: int
@@ -176,6 +180,69 @@ class CustomerPage:
     total: int
     page: int
     page_size: int
+
+
+@dataclass(frozen=True)
+class CustomerOperationTarget:
+    binding_id: int
+    node_id: int
+    node_name: str
+    inbound_id: int
+    action: str
+    previous_enabled: bool | None
+
+
+@dataclass(frozen=True)
+class CustomerOperationPreview:
+    customer_id: int
+    operation_type: str
+    expected_customer_version: int
+    target_snapshot_digest: str
+    targets: tuple[CustomerOperationTarget, ...]
+    blocked_binding_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class CustomerOperationAttemptStatus:
+    binding_id: int
+    node_id: int
+    node_name: str
+    action: str
+    status: str
+    error_code: str | None
+    error_summary: str | None
+    attempt_count: int
+
+
+@dataclass(frozen=True)
+class CustomerOperationStatus:
+    operation_id: int
+    customer_id: int
+    customer_email: str
+    operation_type: str
+    status: str
+    row_version: int
+    attempt_count: int
+    target_snapshot_digest: str
+    created_at: str
+    finished_at: str | None
+    attempts: tuple[CustomerOperationAttemptStatus, ...]
+
+
+@dataclass(frozen=True)
+class CustomerOperationQueueResult:
+    operation_id: int
+    customer_id: int
+    operation_type: str
+    status: str
+    row_version: int
+
+
+@dataclass(frozen=True)
+class CustomerOperationRescheduleResult:
+    operation_id: int
+    status: str
+    row_version: int
 
 
 _RESERVED_EMAILS = {"admin", "root", "support", "system", "telegram", "bot", "null", "undefined"}
@@ -1807,6 +1874,431 @@ class TelegramRegistry:
             row_version=int(row[4]), telegram_user_id=int(row[5]) if row[5] is not None else None,
             created_at=str(row[6]), updated_at=str(row[7]),
         )
+
+    @staticmethod
+    def _lifecycle_operation_type(value: str) -> str:
+        if value not in {"suspend", "resume", "delete"}:
+            raise TelegramRegistryError("unsupported customer lifecycle operation")
+        return value
+
+    def _customer_operation_snapshot(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        customer_id: int,
+        operation_type: str,
+    ) -> tuple[CustomerOperationPreview, tuple[dict[str, Any], ...]]:
+        """Build an exact, private target snapshot without doing remote I/O."""
+
+        customer = conn.execute(
+            "SELECT status, deleted_at, row_version FROM customers WHERE id = ?",
+            (customer_id,),
+        ).fetchone()
+        if customer is None:
+            raise TelegramRegistryError("customer was not found")
+        current_status, deleted_at, row_version = str(customer[0]), customer[1], int(customer[2])
+        if deleted_at is not None or current_status == "deleted":
+            raise LifecycleUnavailableError("deleted customer cannot be changed")
+        allowed_states = {
+            "suspend": {"active", "resume_partial"},
+            "resume": {"suspended", "suspend_partial", "resume_partial"},
+            "delete": {"active", "suspended", "suspend_partial", "resume_partial"},
+        }
+        if current_status not in allowed_states[operation_type]:
+            raise LifecycleUnavailableError("customer is busy or not in a compatible lifecycle state")
+
+        rows = conn.execute(
+            """
+            SELECT b.id, b.node_id, n.name, b.inbound_id, b.remote_client_id, b.remote_sub_id,
+                   b.remote_email, b.management_state, b.desired_enabled, b.suspended_by_operation_id
+            FROM customer_node_bindings AS b
+            JOIN nodes AS n ON n.id = b.node_id
+            WHERE b.customer_id = ?
+            ORDER BY b.node_id, b.id
+            """,
+            (customer_id,),
+        ).fetchall()
+
+        targets: list[CustomerOperationTarget] = []
+        private_targets: list[dict[str, Any]] = []
+        blocked_binding_ids: list[int] = []
+        for row in rows:
+            binding_id, node_id, node_name, inbound_id = int(row[0]), int(row[1]), str(row[2]), int(row[3])
+            remote_client_id = str(row[4]) if row[4] is not None else ""
+            remote_sub_id = str(row[5]) if row[5] is not None else ""
+            remote_email = str(row[6])
+            management_state = str(row[7])
+            suspended_by_operation_id = int(row[9]) if row[9] is not None else None
+
+            if operation_type == "resume" and suspended_by_operation_id is None:
+                continue
+            if management_state != "confirmed" or not remote_client_id:
+                blocked_binding_ids.append(binding_id)
+                continue
+
+            previous_enabled: bool | None = None
+            if operation_type == "resume":
+                previous = conn.execute(
+                    """
+                    SELECT a.previous_enabled
+                    FROM telegram_customer_operation_attempts AS a
+                    JOIN telegram_customer_operations AS o ON o.id = a.operation_id
+                    WHERE a.binding_id = ? AND o.operation_type = 'suspend'
+                      AND a.action = 'set_enabled_false' AND a.status = 'succeeded'
+                    ORDER BY a.id DESC LIMIT 1
+                    """,
+                    (binding_id,),
+                ).fetchone()
+                if previous is None or previous[0] is None:
+                    blocked_binding_ids.append(binding_id)
+                    continue
+                previous_enabled = bool(previous[0])
+
+            action = {
+                "suspend": "set_enabled_false",
+                "resume": "restore_previous_enabled",
+                "delete": "delete_client",
+            }[operation_type]
+            targets.append(
+                CustomerOperationTarget(
+                    binding_id=binding_id,
+                    node_id=node_id,
+                    node_name=node_name,
+                    inbound_id=inbound_id,
+                    action=action,
+                    previous_enabled=previous_enabled,
+                )
+            )
+            private_targets.append(
+                {
+                    "binding_id": binding_id,
+                    "node_id": node_id,
+                    "inbound_id": inbound_id,
+                    "remote_client_id": remote_client_id,
+                    "remote_sub_id": remote_sub_id,
+                    "remote_email": remote_email,
+                    "action": action,
+                    "previous_enabled": previous_enabled,
+                }
+            )
+
+        snapshot = {
+            "customer_id": customer_id,
+            "operation_type": operation_type,
+            "expected_customer_version": row_version,
+            "targets": private_targets,
+            "blocked_binding_ids": blocked_binding_ids,
+        }
+        return (
+            CustomerOperationPreview(
+                customer_id=customer_id,
+                operation_type=operation_type,
+                expected_customer_version=row_version,
+                target_snapshot_digest=_payload_digest(snapshot),
+                targets=tuple(targets),
+                blocked_binding_ids=tuple(blocked_binding_ids),
+            ),
+            tuple(private_targets),
+        )
+
+    def preview_customer_operation(
+        self, *, customer_id: int, operation_type: str
+    ) -> CustomerOperationPreview:
+        normalized_customer_id = _positive_int(customer_id, "customer_id")
+        normalized_operation = self._lifecycle_operation_type(operation_type)
+        with connect(self._db_path) as conn:
+            preview, _ = self._customer_operation_snapshot(
+                conn, customer_id=normalized_customer_id, operation_type=normalized_operation
+            )
+        return preview
+
+    def _get_customer_operation_from_conn(
+        self, conn: sqlite3.Connection, operation_id: int
+    ) -> CustomerOperationStatus:
+        operation = conn.execute(
+            """
+            SELECT o.id, o.customer_id, c.email_display, o.operation_type, o.status, o.row_version,
+                   o.attempt_count, o.target_snapshot_digest, o.created_at, o.finished_at
+            FROM telegram_customer_operations AS o
+            JOIN customers AS c ON c.id = o.customer_id
+            WHERE o.id = ?
+            """,
+            (operation_id,),
+        ).fetchone()
+        if operation is None:
+            raise TelegramRegistryError("customer operation was not found")
+        attempts = conn.execute(
+            """
+            SELECT a.binding_id, a.node_id, n.name, a.action, a.status, a.error_code,
+                   a.error_summary, a.attempt_count
+            FROM telegram_customer_operation_attempts AS a
+            JOIN nodes AS n ON n.id = a.node_id
+            WHERE a.operation_id = ?
+            ORDER BY a.node_id, a.id
+            """,
+            (operation_id,),
+        ).fetchall()
+        return CustomerOperationStatus(
+            operation_id=int(operation[0]),
+            customer_id=int(operation[1]),
+            customer_email=str(operation[2]),
+            operation_type=str(operation[3]),
+            status=str(operation[4]),
+            row_version=int(operation[5]),
+            attempt_count=int(operation[6]),
+            target_snapshot_digest=str(operation[7]),
+            created_at=str(operation[8]),
+            finished_at=str(operation[9]) if operation[9] is not None else None,
+            attempts=tuple(
+                CustomerOperationAttemptStatus(
+                    binding_id=int(row[0]), node_id=int(row[1]), node_name=str(row[2]),
+                    action=str(row[3]), status=str(row[4]),
+                    error_code=str(row[5]) if row[5] is not None else None,
+                    error_summary=str(row[6]) if row[6] is not None else None,
+                    attempt_count=int(row[7]),
+                )
+                for row in attempts
+            ),
+        )
+
+    def queue_customer_operation(
+        self,
+        *,
+        customer_id: int,
+        operation_type: str,
+        expected_customer_version: int,
+        target_snapshot_digest: str,
+        idempotency_key: str,
+        created_by: str,
+    ) -> CustomerOperationQueueResult:
+        """Queue a lifecycle operation after proving its preview is still current.
+
+        This transaction intentionally does not touch a node. A worker must later
+        claim these immutable attempts, read the remote client, and reconcile
+        before it writes anything.
+        """
+
+        normalized_customer_id = _positive_int(customer_id, "customer_id")
+        normalized_operation = self._lifecycle_operation_type(operation_type)
+        expected_version = _positive_int(expected_customer_version, "expected_customer_version")
+        expected_digest = _nonempty(target_snapshot_digest, "target_snapshot_digest")
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(created_by, "created_by")
+        command_payload = {
+            "customer_id": normalized_customer_id,
+            "operation_type": normalized_operation,
+            "expected_customer_version": expected_version,
+            "target_snapshot_digest": expected_digest,
+        }
+        command_digest = _payload_digest(command_payload)
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'customer_lifecycle' AND idempotency_key = ?",
+                (key,),
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != command_digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return CustomerOperationQueueResult(**json.loads(str(receipt[1])))
+
+            preview, private_targets = self._customer_operation_snapshot(
+                conn, customer_id=normalized_customer_id, operation_type=normalized_operation
+            )
+            if preview.expected_customer_version != expected_version:
+                raise VersionConflictError("customer was updated by another operation")
+            if preview.target_snapshot_digest != expected_digest:
+                raise VersionConflictError("lifecycle target preview is stale")
+            if preview.blocked_binding_ids:
+                raise LifecycleUnavailableError("customer has bindings without an exact confirmed remote target")
+
+            queued_status = "queued" if private_targets else "succeeded"
+            next_customer_status = {
+                "suspend": "suspending" if private_targets else "suspended",
+                "resume": "resuming" if private_targets else "active",
+                "delete": "deleting" if private_targets else "deleted",
+            }[normalized_operation]
+            if normalized_operation == "delete" and not private_targets:
+                update = conn.execute(
+                    """
+                    UPDATE customers
+                    SET status = ?, deleted_at = CURRENT_TIMESTAMP, row_version = row_version + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND row_version = ? AND deleted_at IS NULL
+                    """,
+                    (next_customer_status, normalized_customer_id, expected_version),
+                )
+            else:
+                update = conn.execute(
+                    """
+                    UPDATE customers
+                    SET status = ?, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND row_version = ? AND deleted_at IS NULL
+                    """,
+                    (next_customer_status, normalized_customer_id, expected_version),
+                )
+            if update.rowcount != 1:
+                raise VersionConflictError("customer was updated by another operation")
+
+            cursor = conn.execute(
+                """
+                INSERT INTO telegram_customer_operations
+                    (customer_id, operation_type, status, target_snapshot_digest,
+                     expected_customer_version, idempotency_key, created_by, finished_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'succeeded' THEN CURRENT_TIMESTAMP ELSE NULL END)
+                """,
+                (
+                    normalized_customer_id, normalized_operation, queued_status,
+                    preview.target_snapshot_digest, expected_version, key, actor, queued_status,
+                ),
+            )
+            operation_id = int(cursor.lastrowid)
+            for target in private_targets:
+                conn.execute(
+                    """
+                    INSERT INTO telegram_customer_operation_attempts
+                        (operation_id, binding_id, node_id, inbound_id, remote_client_id, remote_sub_id,
+                         remote_email, action, previous_enabled)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        operation_id, target["binding_id"], target["node_id"], target["inbound_id"],
+                        target["remote_client_id"], target["remote_sub_id"], target["remote_email"], target["action"],
+                        int(target["previous_enabled"]) if target["previous_enabled"] is not None else None,
+                    ),
+                )
+            result = CustomerOperationQueueResult(
+                operation_id=operation_id,
+                customer_id=normalized_customer_id,
+                operation_type=normalized_operation,
+                status=queued_status,
+                row_version=1,
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
+                VALUES ('customer_lifecycle', ?, ?, ?)
+                """,
+                (key, command_digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES (?, 'admin', ?, 'customer_operation', ?, ?)
+                """,
+                (f"customer_{normalized_operation}_queued", actor, str(operation_id), command_digest),
+            )
+        return result
+
+    def get_customer_operation(self, operation_id: int) -> CustomerOperationStatus:
+        normalized_operation_id = _positive_int(operation_id, "operation_id")
+        with connect(self._db_path) as conn:
+            return self._get_customer_operation_from_conn(conn, normalized_operation_id)
+
+    def list_customer_operations(
+        self, *, customer_id: int, limit: int = 100
+    ) -> list[CustomerOperationStatus]:
+        normalized_customer_id = _positive_int(customer_id, "customer_id")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise TelegramRegistryError("limit must be an integer from 1 to 200")
+        with connect(self._db_path) as conn:
+            operation_ids = [
+                int(row[0])
+                for row in conn.execute(
+                    "SELECT id FROM telegram_customer_operations WHERE customer_id = ? "
+                    "ORDER BY id DESC LIMIT ?",
+                    (normalized_customer_id, limit),
+                ).fetchall()
+            ]
+            return [self._get_customer_operation_from_conn(conn, operation_id) for operation_id in operation_ids]
+
+    def reschedule_customer_operation(
+        self,
+        *,
+        operation_id: int,
+        expected_operation_version: int,
+        idempotency_key: str,
+        requested_by: str,
+        action: str,
+    ) -> CustomerOperationRescheduleResult:
+        """Queue a read-first lifecycle retry; conflict targets require manual repair."""
+
+        normalized_operation_id = _positive_int(operation_id, "operation_id")
+        expected_version = _positive_int(expected_operation_version, "expected_operation_version")
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(requested_by, "requested_by")
+        if action not in {"retry", "reconcile"}:
+            raise TelegramRegistryError("unsupported customer operation action")
+        payload = {
+            "operation_id": normalized_operation_id,
+            "expected_operation_version": expected_version,
+        }
+        digest = _payload_digest(payload)
+        scope = f"customer_operation_{action}"
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = ? AND idempotency_key = ?",
+                (scope, key),
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return CustomerOperationRescheduleResult(**json.loads(str(receipt[1])))
+            operation = conn.execute(
+                "SELECT status, row_version, lease_until FROM telegram_customer_operations WHERE id = ?",
+                (normalized_operation_id,),
+            ).fetchone()
+            if operation is None:
+                raise TelegramRegistryError("customer operation was not found")
+            if int(operation[1]) != expected_version:
+                raise VersionConflictError("customer operation was updated by another worker or administrator")
+            if str(operation[0]) not in {"partial", "failed"} or operation[2] is not None:
+                raise VersionConflictError("customer operation cannot be rescheduled in its current state")
+            changed = conn.execute(
+                """
+                UPDATE telegram_customer_operation_attempts
+                SET status = 'pending', error_code = NULL, error_summary = NULL, next_attempt_at = NULL,
+                    finished_at = NULL, updated_at = CURRENT_TIMESTAMP
+                WHERE operation_id = ? AND status IN ('failed', 'blocked', 'ambiguous', 'missing')
+                """,
+                (normalized_operation_id,),
+            )
+            if changed.rowcount == 0:
+                raise LifecycleUnavailableError("customer operation has no safe retryable attempts")
+            update = conn.execute(
+                """
+                UPDATE telegram_customer_operations
+                SET status = 'queued', next_attempt_at = NULL, finished_at = NULL,
+                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND row_version = ? AND lease_until IS NULL
+                """,
+                (normalized_operation_id, expected_version),
+            )
+            if update.rowcount != 1:
+                raise VersionConflictError("customer operation was updated by another worker or administrator")
+            result = CustomerOperationRescheduleResult(
+                operation_id=normalized_operation_id,
+                status="queued",
+                row_version=expected_version + 1,
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (scope, key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES (?, 'admin', ?, 'customer_operation', ?, ?)
+                """,
+                (f"customer_operation_{action}_queued", actor, str(normalized_operation_id), digest),
+            )
+        return result
 
 
 def exact_node_ids(rows: Iterable[CustomerNodeMatrixRow]) -> set[int]:

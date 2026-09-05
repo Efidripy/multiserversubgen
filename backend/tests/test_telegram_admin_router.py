@@ -204,3 +204,39 @@ def test_customer_read_endpoints_are_admin_only_and_hide_unrelated_nodes(tmp_pat
 
     viewer = _build_client(tmp_path, username="viewer", role="viewer")
     assert viewer.get("/api/v1/telegram/customers").status_code == 403
+
+
+def test_customer_lifecycle_preview_and_queue_are_admin_only_and_do_not_run_remote_io(tmp_path):
+    client = _build_client(tmp_path)
+    db_path = str(tmp_path / "admin.db")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="lifecycle-api", origin="manual", email_source="admin", public_code="lifecycle-api"
+    )
+
+    preview = client.post(
+        f"/api/v1/telegram/customers/{customer_id}/lifecycle/preview",
+        json={"operation_type": "suspend"},
+    )
+    assert preview.status_code == 200
+    preview_payload = preview.json()["preview"]
+    assert preview.json()["remote_io"] == "not_started"
+    queued = client.post(
+        f"/api/v1/telegram/customers/{customer_id}/lifecycle",
+        json={
+            "operation_type": "suspend",
+            "expected_customer_version": preview_payload["expected_customer_version"],
+            "target_snapshot_digest": preview_payload["target_snapshot_digest"],
+            "idempotency_key": "lifecycle-api-suspend",
+        },
+    )
+    assert queued.status_code == 200
+    assert queued.json()["operation"]["status"] == "succeeded"
+    assert queued.json()["remote_io"] == "not_started"
+    assert client.get(f"/api/v1/telegram/customers/{customer_id}/operations").status_code == 200
+
+    viewer = _build_client(tmp_path, username="viewer", role="viewer")
+    assert viewer.post(
+        f"/api/v1/telegram/customers/{customer_id}/lifecycle/preview",
+        json={"operation_type": "suspend"},
+    ).status_code == 403

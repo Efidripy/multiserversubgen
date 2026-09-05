@@ -13,6 +13,7 @@ from services.db_bootstrap import connect, init_db
 from services.telegram_registry import (
     ApprovalUnavailableError,
     IdempotencyConflictError,
+    LifecycleUnavailableError,
     NodePolicyUnavailableError,
     TelegramRegistry,
     TelegramRegistryError,
@@ -59,7 +60,40 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
     with connect(db_path) as conn:
         conn.execute("INSERT INTO telegram_node_policies (node_id) VALUES (1)")
         conn.execute("DELETE FROM nodes WHERE id = 1")
-        assert conn.execute("SELECT COUNT(*) FROM telegram_node_policies").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM telegram_node_policies").fetchone()[0] == 0
+
+
+def test_telegram_lifecycle_schema_migrates_legacy_operation_table_before_creating_schedule_index(tmp_path):
+    db_path = str(tmp_path / "legacy.db")
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE telegram_customer_operations
+                (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 customer_id INTEGER NOT NULL,
+                 operation_type TEXT NOT NULL,
+                 status TEXT NOT NULL,
+                 target_snapshot_digest TEXT NOT NULL,
+                 expected_customer_version INTEGER NOT NULL,
+                 idempotency_key TEXT NOT NULL UNIQUE,
+                 created_by TEXT NOT NULL,
+                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                 finished_at TEXT DEFAULT NULL)
+            """
+        )
+
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(telegram_customer_operations)").fetchall()}
+        indexes = {row[1] for row in conn.execute("PRAGMA index_list(telegram_customer_operations)").fetchall()}
+        attempt_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(telegram_customer_operation_attempts)").fetchall()
+        }
+    assert {"lease_owner", "lease_until", "attempt_count", "next_attempt_at", "row_version"} <= columns
+    assert "idx_telegram_customer_operations_schedule" in indexes
+    assert "remote_email" in attempt_columns
 
 
 def test_customer_live_email_is_unique_but_deleted_tombstone_allows_new_registration(tmp_path):
@@ -531,3 +565,125 @@ def test_noop_abuse_counter_blocks_only_the_fifty_first_unique_action_and_unbloc
     assert unblocked.access_status == "eligible"
     after_reset = registry.record_unapproved_noop(99, now=base)
     assert after_reset.noop_count == 1
+
+
+def test_customer_lifecycle_preview_queues_exact_targets_once_and_never_performs_remote_io(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "allowed")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="lifecycle-user", origin="manual", email_source="admin", public_code="lifecycle-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'remote-uuid', 'remote-sub', 'lifecycle-user',
+                    'admin_confirmed', 'confirmed', 1, 1)
+            """,
+            (customer_id,),
+        )
+
+    preview = registry.preview_customer_operation(customer_id=customer_id, operation_type="suspend")
+    assert preview.expected_customer_version == 1
+    assert preview.blocked_binding_ids == ()
+    assert preview.targets[0].action == "set_enabled_false"
+    assert not hasattr(preview.targets[0], "remote_client_id")
+
+    queued = registry.queue_customer_operation(
+        customer_id=customer_id,
+        operation_type="suspend",
+        expected_customer_version=preview.expected_customer_version,
+        target_snapshot_digest=preview.target_snapshot_digest,
+        idempotency_key="suspend-lifecycle-user",
+        created_by="admin",
+    )
+    replay = registry.queue_customer_operation(
+        customer_id=customer_id,
+        operation_type="suspend",
+        expected_customer_version=preview.expected_customer_version,
+        target_snapshot_digest=preview.target_snapshot_digest,
+        idempotency_key="suspend-lifecycle-user",
+        created_by="another-admin",
+    )
+
+    assert queued == replay
+    assert queued.status == "queued"
+    operation = registry.get_customer_operation(queued.operation_id)
+    assert operation.status == "queued"
+    assert operation.attempts[0].action == "set_enabled_false"
+    assert operation.attempts[0].status == "pending"
+    assert registry.get_customer(customer_id).status == "suspending"
+    with connect(db_path) as conn:
+        stored = conn.execute(
+            "SELECT remote_client_id, remote_sub_id FROM telegram_customer_operation_attempts"
+        ).fetchone()
+    assert stored == ("remote-uuid", "remote-sub")
+
+
+def test_customer_lifecycle_rejects_non_exact_binding_and_resume_uses_prior_suspend_state(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "allowed")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="resume-user", origin="manual", email_source="admin", public_code="resume-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'remote-uuid', 'remote-sub', 'resume-user',
+                    'admin_confirmed', 'conflict', 1, 1)
+            """,
+            (customer_id,),
+        )
+    blocked = registry.preview_customer_operation(customer_id=customer_id, operation_type="suspend")
+    assert blocked.blocked_binding_ids
+    with pytest.raises(LifecycleUnavailableError):
+        registry.queue_customer_operation(
+            customer_id=customer_id,
+            operation_type="suspend",
+            expected_customer_version=blocked.expected_customer_version,
+            target_snapshot_digest=blocked.target_snapshot_digest,
+            idempotency_key="blocked-lifecycle-user",
+            created_by="admin",
+        )
+
+    with connect(db_path) as conn:
+        binding_id = conn.execute("SELECT id FROM customer_node_bindings").fetchone()[0]
+        conn.execute("UPDATE customers SET status = 'suspended' WHERE id = ?", (customer_id,))
+        conn.execute(
+            "UPDATE customer_node_bindings SET management_state = 'confirmed', desired_enabled = 0, "
+            "suspended_by_operation_id = 99 WHERE id = ?",
+            (binding_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO telegram_customer_operations
+                (id, customer_id, operation_type, status, target_snapshot_digest,
+                 expected_customer_version, idempotency_key, created_by)
+            VALUES (99, ?, 'suspend', 'succeeded', 'old', 1, 'old-suspend', 'admin')
+            """,
+            (customer_id,),
+        )
+        conn.execute(
+            """
+            INSERT INTO telegram_customer_operation_attempts
+                (operation_id, binding_id, node_id, inbound_id, remote_client_id, remote_sub_id,
+                 action, previous_enabled, status)
+            VALUES (99, ?, 1, 1, 'remote-uuid', 'remote-sub', 'set_enabled_false', 1, 'succeeded')
+            """,
+            (binding_id,),
+        )
+
+    resume = registry.preview_customer_operation(customer_id=customer_id, operation_type="resume")
+    assert resume.blocked_binding_ids == ()
+    assert len(resume.targets) == 1
+    assert resume.targets[0].action == "restore_previous_enabled"
+    assert resume.targets[0].previous_enabled is True

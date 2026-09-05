@@ -64,6 +64,19 @@ node to become the authority for the customer lifecycle.
 - Provisioning and destructive lifecycle work run through durable jobs and
   exact binding identifiers. They reconcile before retry and never perform
   blind lookup or automatic destructive rollback.
+- Suspend, Resume and Delete begin with an admin-only preview. Its digest
+  commits the customer row version and every exact remote identifier, so a
+  stale tab cannot enqueue a broadened target set. The confirmation has its
+  own idempotency receipt and performs no inline remote I/O.
+- The lifecycle worker leases one operation at a time. It reads the exact
+  `remote_client_id` + email + `subId` before each update or delete, records
+  the real prior enable state for Suspend, and reads again after the write.
+  A timeout or post-write mismatch is `ambiguous`; a conflicting/missing
+  target is visible and never triggers a blind write retry.
+- Resume only considers bindings marked by a completed global Suspend and
+  restores their recorded prior state. A node that was already disabled stays
+  disabled. Delete tombstones the local customer and releases its Telegram
+  identity only after every exact remote target is confirmed absent.
 
 ## Consequences
 

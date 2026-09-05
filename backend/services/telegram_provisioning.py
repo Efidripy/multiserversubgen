@@ -101,6 +101,28 @@ class ClientManagerProvisioningPort:
         if added is not True:
             raise ProvisioningRemoteError("remote add outcome is unavailable")
 
+    def set_client_enabled(
+        self, *, node: dict[str, Any], inbound_id: int, client_id: str, enabled: bool
+    ) -> None:
+        """Write only after a lifecycle worker has read the exact remote client."""
+
+        try:
+            updated = self._client_manager.update_client(node, inbound_id, client_id, {"enable": enabled})
+        except Exception as exc:
+            raise ProvisioningRemoteError("remote update outcome is unavailable") from exc
+        if updated is not True:
+            raise ProvisioningRemoteError("remote update outcome is unavailable")
+
+    def delete_client(self, *, node: dict[str, Any], inbound_id: int, client_id: str) -> None:
+        """Write only after a lifecycle worker has read the exact remote client."""
+
+        try:
+            deleted = self._client_manager.delete_client(node, inbound_id, client_id)
+        except Exception as exc:
+            raise ProvisioningRemoteError("remote delete outcome is unavailable") from exc
+        if deleted is not True:
+            raise ProvisioningRemoteError("remote delete outcome is unavailable")
+
 
 @dataclass(frozen=True)
 class ClaimedAttempt:

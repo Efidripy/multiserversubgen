@@ -30,6 +30,7 @@ from services.node_access import get_node_or_404
 from core.app_runtime_bundle import build_app_runtime_bundle
 from core.router_registration import register_app_routers
 from services.runtime_state import RuntimeState
+from services.telegram_lifecycle import TelegramLifecycleWorker
 from services.telegram_provisioning import ClientManagerProvisioningPort, TelegramProvisioningWorker
 from shared.http_config import get_requests_verify_value
 
@@ -443,19 +444,31 @@ register_app_routers(
 
 
 async def _telegram_provisioning_worker_loop() -> None:
-    """Run remote provisioning only after both fail-closed runtime switches pass."""
+    """Run approved remote mutations only after both fail-closed switches pass."""
 
-    worker = TelegramProvisioningWorker(
+    port = ClientManagerProvisioningPort(client_mgr)
+    provisioning_worker = TelegramProvisioningWorker(
         db_path=DB_PATH,
         node_loader=node_service.get_node,
-        port=ClientManagerProvisioningPort(client_mgr),
+        port=port,
         worker_id=f"telegram-provisioning:{os.getpid()}",
     )
+    lifecycle_worker = TelegramLifecycleWorker(
+        db_path=DB_PATH,
+        node_loader=node_service.get_node,
+        port=port,
+        worker_id=f"telegram-lifecycle:{os.getpid()}",
+    )
     while True:
-        result = await asyncio.to_thread(worker.run_once)
+        provisioning_result = await asyncio.to_thread(provisioning_worker.run_once)
+        lifecycle_result = await asyncio.to_thread(lifecycle_worker.run_once)
         # A finite sleep also gives cancellation a predictable safe point and
         # prevents a busy loop when a fleet contains many fast local attempts.
-        await asyncio.sleep(0.1 if result.processed else SETTINGS.telegram.provisioning_worker_interval_sec)
+        await asyncio.sleep(
+            0.1
+            if provisioning_result.processed or lifecycle_result.processed
+            else SETTINGS.telegram.provisioning_worker_interval_sec
+        )
 
 
 app.router.lifespan_context = build_lifespan(

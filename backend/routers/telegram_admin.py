@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request
 from services.telegram_registry import (
     ApprovalUnavailableError,
     IdempotencyConflictError,
+    LifecycleUnavailableError,
     NodePolicyUnavailableError,
     TelegramRegistry,
     TelegramRegistryError,
@@ -53,7 +54,10 @@ def build_telegram_admin_router(
         return username
 
     def translate_registry_error(exc: TelegramRegistryError) -> HTTPException:
-        if isinstance(exc, (VersionConflictError, IdempotencyConflictError, ApprovalUnavailableError)):
+        if isinstance(
+            exc,
+            (VersionConflictError, IdempotencyConflictError, ApprovalUnavailableError, LifecycleUnavailableError),
+        ):
             return HTTPException(status_code=409, detail=str(exc))
         return HTTPException(status_code=400, detail=str(exc))
 
@@ -229,6 +233,81 @@ def build_telegram_admin_router(
             return {"items": [asdict(item) for item in registry.customer_node_matrix(customer_id)]}
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
+
+    @router.post("/api/v1/telegram/customers/{customer_id}/lifecycle/preview")
+    def preview_customer_lifecycle(customer_id: int, request: Request, data: Dict):
+        require_admin(request)
+        try:
+            preview = registry.preview_customer_operation(
+                customer_id=customer_id,
+                operation_type=data.get("operation_type"),
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"preview": asdict(preview), "remote_io": "not_started"}
+
+    @router.post("/api/v1/telegram/customers/{customer_id}/lifecycle")
+    def queue_customer_lifecycle(customer_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.queue_customer_operation(
+                customer_id=customer_id,
+                operation_type=data.get("operation_type"),
+                expected_customer_version=data.get("expected_customer_version"),
+                target_snapshot_digest=data.get("target_snapshot_digest"),
+                idempotency_key=data.get("idempotency_key"),
+                created_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"operation": asdict(result), "remote_io": "not_started"}
+
+    @router.get("/api/v1/telegram/customers/{customer_id}/operations")
+    def list_customer_lifecycle_operations(customer_id: int, request: Request, limit: int = 100):
+        require_admin(request)
+        try:
+            registry.get_customer(customer_id)
+            return {"items": [asdict(item) for item in registry.list_customer_operations(customer_id=customer_id, limit=limit)]}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.get("/api/v1/telegram/customer-operations/{operation_id}")
+    def get_customer_lifecycle_operation(operation_id: int, request: Request):
+        require_admin(request)
+        try:
+            return {"item": asdict(registry.get_customer_operation(operation_id))}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.post("/api/v1/telegram/customer-operations/{operation_id}/retry")
+    def retry_customer_lifecycle_operation(operation_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.reschedule_customer_operation(
+                operation_id=operation_id,
+                expected_operation_version=data.get("expected_operation_version"),
+                idempotency_key=data.get("idempotency_key"),
+                requested_by=username,
+                action="retry",
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"operation": asdict(result), "remote_io": "not_started"}
+
+    @router.post("/api/v1/telegram/customer-operations/{operation_id}/reconcile")
+    def reconcile_customer_lifecycle_operation(operation_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.reschedule_customer_operation(
+                operation_id=operation_id,
+                expected_operation_version=data.get("expected_operation_version"),
+                idempotency_key=data.get("idempotency_key"),
+                requested_by=username,
+                action="reconcile",
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"operation": asdict(result), "remote_io": "not_started"}
 
     @router.get("/api/v1/telegram/node-policies")
     def list_node_policies(request: Request):

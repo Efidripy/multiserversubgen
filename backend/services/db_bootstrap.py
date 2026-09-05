@@ -300,6 +300,7 @@ def init_db(db_path: str) -> None:
                         CHECK(management_state IN ('confirmed', 'missing', 'ambiguous', 'conflict')),
                       desired_enabled INTEGER NOT NULL DEFAULT 1 CHECK(desired_enabled IN (0, 1)),
                       last_enabled INTEGER DEFAULT NULL CHECK(last_enabled IN (0, 1)),
+                      suspended_by_operation_id INTEGER DEFAULT NULL,
                       last_confirmed_at TEXT DEFAULT NULL,
                       row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
                       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -313,6 +314,14 @@ def init_db(db_path: str) -> None:
             "CREATE INDEX IF NOT EXISTS idx_customer_node_bindings_customer "
             "ON customer_node_bindings(customer_id, management_state, node_id)"
         )
+        binding_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(customer_node_bindings)").fetchall()
+        }
+        if "suspended_by_operation_id" not in binding_columns:
+            conn.execute(
+                "ALTER TABLE customer_node_bindings "
+                "ADD COLUMN suspended_by_operation_id INTEGER DEFAULT NULL"
+            )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_provisioning_jobs
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -429,10 +438,40 @@ def init_db(db_path: str) -> None:
                       expected_customer_version INTEGER NOT NULL CHECK(expected_customer_version > 0),
                       idempotency_key TEXT NOT NULL UNIQUE,
                       created_by TEXT NOT NULL,
+                      lease_owner TEXT DEFAULT NULL,
+                      lease_until TEXT DEFAULT NULL,
+                      attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+                      next_attempt_at TEXT DEFAULT NULL,
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
                       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       finished_at TEXT DEFAULT NULL,
                       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT)"""
+        )
+        operation_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(telegram_customer_operations)").fetchall()
+        }
+        operation_migrations = [
+            ("lease_owner", "ALTER TABLE telegram_customer_operations ADD COLUMN lease_owner TEXT DEFAULT NULL"),
+            ("lease_until", "ALTER TABLE telegram_customer_operations ADD COLUMN lease_until TEXT DEFAULT NULL"),
+            (
+                "attempt_count",
+                "ALTER TABLE telegram_customer_operations "
+                "ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0",
+            ),
+            ("next_attempt_at", "ALTER TABLE telegram_customer_operations ADD COLUMN next_attempt_at TEXT DEFAULT NULL"),
+            (
+                "row_version",
+                "ALTER TABLE telegram_customer_operations "
+                "ADD COLUMN row_version INTEGER NOT NULL DEFAULT 1",
+            ),
+        ]
+        for column_name, statement in operation_migrations:
+            if column_name not in operation_columns:
+                conn.execute(statement)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_customer_operations_schedule "
+            "ON telegram_customer_operations(status, next_attempt_at, lease_until)"
         )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_customer_operation_attempts
@@ -443,6 +482,7 @@ def init_db(db_path: str) -> None:
                       inbound_id INTEGER NOT NULL DEFAULT 1 CHECK(inbound_id = 1),
                       remote_client_id TEXT DEFAULT NULL,
                       remote_sub_id TEXT DEFAULT NULL,
+                      remote_email TEXT NOT NULL DEFAULT '',
                       action TEXT NOT NULL CHECK(action IN (
                           'set_enabled_false', 'restore_previous_enabled', 'delete_client')),
                       previous_enabled INTEGER DEFAULT NULL CHECK(previous_enabled IN (0, 1)),
@@ -463,6 +503,14 @@ def init_db(db_path: str) -> None:
                       FOREIGN KEY(binding_id) REFERENCES customer_node_bindings(id) ON DELETE RESTRICT,
                       FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE RESTRICT)"""
         )
+        operation_attempt_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(telegram_customer_operation_attempts)").fetchall()
+        }
+        if "remote_email" not in operation_attempt_columns:
+            conn.execute(
+                "ALTER TABLE telegram_customer_operation_attempts "
+                "ADD COLUMN remote_email TEXT NOT NULL DEFAULT ''"
+            )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_updates
                      (update_id INTEGER PRIMARY KEY,
