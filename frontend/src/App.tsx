@@ -31,8 +31,9 @@ const LazyClientManager = React.lazy(() => import('./components/ClientManager').
 const LazyTrafficStats = React.lazy(() => import('./components/TrafficStats').then((module) => ({ default: module.TrafficStats })));
 const LazyMonitoringDashboard = React.lazy(() => import('./components/MonitoringDashboard').then((module) => ({ default: module.MonitoringDashboard })));
 const LazyBackupManager = React.lazy(() => import('./components/BackupManager').then((module) => ({ default: module.BackupManager })));
+const LazyTelegramAdmin = React.lazy(() => import('./components/TelegramAdmin').then((module) => ({ default: module.TelegramAdmin })));
 
-type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
+type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions' | 'telegram';
 type NoticeLevel = 'info' | 'success' | 'warning' | 'danger';
 type HeaderStatTone = 'default' | 'accent' | 'success' | 'warning' | 'danger';
 
@@ -107,6 +108,12 @@ const TAB_META: Record<TabType, { icon: IconName; labelKey: string; eyebrowKey: 
     labelKey: 'nav.subscriptions',
     eyebrowKey: 'tabEyebrow.subscriptions',
     descriptionKey: 'tabDescription.subscriptions',
+  },
+  telegram: {
+    icon: 'bell',
+    labelKey: 'nav.telegram',
+    eyebrowKey: 'tabEyebrow.telegram',
+    descriptionKey: 'tabDescription.telegram',
   },
 };
 
@@ -243,7 +250,7 @@ export const App: React.FC = () => {
       if (e.altKey) {
         const keyMap: Record<string, TabType> = {
           '1': 'dashboard', '2': 'inbounds', '3': 'clients',
-          '4': 'traffic', '5': 'monitoring', '6': 'backup', '7': 'subscriptions',
+          '4': 'traffic', '5': 'monitoring', '6': 'backup', '7': 'subscriptions', '8': 'telegram',
         };
         const tab = keyMap[e.key];
         if (tab && tab in TAB_META) {
@@ -312,7 +319,7 @@ export const App: React.FC = () => {
   }, [t]);
 
   useEffect(() => {
-    if (role !== 'admin' && (activeTab === 'backup' || activeTab === 'subscriptions')) {
+    if (role !== 'admin' && (activeTab === 'backup' || activeTab === 'subscriptions' || activeTab === 'telegram')) {
       setActiveTab('dashboard');
     }
   }, [activeTab, role]);
@@ -715,7 +722,7 @@ export const App: React.FC = () => {
   ) as Record<TabType, { icon: IconName; labelKey: string; label: string; eyebrowKey: string; descriptionKey: string; eyebrow: string; description: string }>;
 
   const visibleTabs: TabType[] = role === 'admin'
-    ? ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring', 'backup', 'subscriptions']
+    ? ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring', 'backup', 'subscriptions', 'telegram']
     : ['dashboard', 'inbounds', 'clients', 'traffic', 'monitoring'];
 
   const sidebarItems: SidebarNavItem[] = visibleTabs.map((tabId) => ({
@@ -815,6 +822,8 @@ export const App: React.FC = () => {
         return <LazyBackupManager />;
       case 'subscriptions':
         return <LazySubscriptionManager key={key} apiUrl={getApiUrl()} />;
+      case 'telegram':
+        return <LazyTelegramAdmin />;
       default:
         return null;
     }
