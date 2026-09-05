@@ -15,6 +15,7 @@
     "traffic": "Traffic Stats",
     "inbounds": "Inbound Manager",
     "subscriptions": "Subscriptions",
+    "telegram": "Telegram",
     "backup": "Backup Manager",
     "serverStatus": "Server Status",
     "groupData": "Data",
@@ -37,6 +38,46 @@
       "offline": "offline",
       "checking": "checking"
     }
+  },
+  "telegram": {
+    "title": "Telegram access",
+    "hint": "Requests, customers and safe preparation operations without browser-to-node writes.",
+    "requests": "Requests",
+    "noRequests": "No new requests",
+    "unknownUser": "User",
+    "emailForRequest": "Client name for nodes",
+    "approve": "Approve",
+    "reject": "Reject",
+    "block": "Block",
+    "blocked": "Blocked",
+    "noBlocked": "No blocked identities",
+    "unblock": "Unblock",
+    "rejectConfirm": "Reject this request?",
+    "blockConfirm": "Block this applicant?",
+    "requestUpdated": "Request updated",
+    "approvalQueued": "Approval saved; preparation runs separately.",
+    "customers": "Customers",
+    "noCustomers": "No customers found",
+    "selectCustomer": "Select a customer to manage",
+    "nodes": "Nodes",
+    "lifetimeTraffic": "Lifetime traffic",
+    "operations": "Operations",
+    "suspend": "Suspend",
+    "resume": "Resume",
+    "delete": "Delete",
+    "reconcile": "Reconcile",
+    "previewText": "Confirm: {{operation}}, targets: {{count}}.",
+    "previewBlocked": "There are unsafe targets; the operation cannot be queued.",
+    "operationQueued": "Operation queued; a separate worker performs remote work.",
+    "nodeOperationQueued": "Node change queued.",
+    "addNode": "Add",
+    "suspendNode": "Pause",
+    "resumeNode": "Enable",
+    "addNodeConfirm": "Add the user to node “{{node}}”?",
+    "loadFailed": "Could not load Telegram data",
+    "detailsFailed": "Could not load customer details",
+    "previewFailed": "Could not create a safe preview",
+    "actionFailed": "Operation failed"
   },
   "common": {
     "add": "Add",
@@ -777,7 +818,13 @@
     "addTagsTitle": "Add tags (comma-separated)",
     "tagsPrompt": "Tags for \"{{name}}\" (comma-separated):",
     "tagsSaved": "Tags saved",
-    "tagsSaveFailed": "Failed to save tags"
+    "tagsSaveFailed": "Failed to save tags",
+    "telegramPolicyOnTitle": "TG: new users can be added to this node",
+    "telegramPolicyOffTitle": "TG: enable this node for new users",
+    "telegramPolicyEnabled": "TG policy enabled for {{node}}",
+    "telegramPolicyDisabled": "TG policy disabled for {{node}}",
+    "telegramPolicyLoadFailed": "Failed to load TG node policy",
+    "telegramPolicySaveFailed": "Failed to save TG node policy"
   },
   "serverStatus": {
     "title": "Server Status",
@@ -1115,7 +1162,8 @@
     "traffic": "Traffic",
     "monitoring": "Monitoring",
     "backup": "Backup",
-    "subscriptions": "Delivery"
+    "subscriptions": "Delivery",
+    "telegram": "Access management"
   },
   "tabDescription": {
     "dashboard": "Local command overview for nodes, xray state and key operational checks.",
@@ -1124,7 +1172,8 @@
     "traffic": "",
     "monitoring": "",
     "backup": "",
-    "subscriptions": ""
+    "subscriptions": "",
+    "telegram": "Approve requests and manage customer lifecycle through safe queues."
   },
   "header": {
     "updating": "Updating data in background...",

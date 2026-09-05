@@ -88,6 +88,37 @@ function New-Archive {
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $ArchivePath)) {
         throw "Unable to create the source archive from commit $commit."
     }
+
+    $requiredEntries = @(
+        "$leaf/install.sh",
+        "$leaf/update.sh",
+        "$leaf/backend/main.py",
+        "$leaf/backend/requirements.txt",
+        "$leaf/frontend/package.json",
+        "$leaf/scripts/installer/install.sh",
+        "$leaf/scripts/installer/update.sh",
+        "$leaf/scripts/installer/lib/entrypoint_layout.sh",
+        "$leaf/scripts/installer/lib/source_layout.sh",
+        "$leaf/scripts/ops/lib/install_log.sh",
+        "$leaf/scripts/deploy/build-and-publish-frontend.sh",
+        "$leaf/scripts/deploy/verify-frontend-release.sh",
+        "$leaf/monitoring/prometheus/rules.yml",
+        "$leaf/monitoring/loki/loki-config.yml",
+        "$leaf/monitoring/promtail/promtail-config.yml",
+        "$leaf/monitoring/grafana/sub-manager-dashboard.json",
+        "$leaf/monitoring/grafana/adguard-overview-dashboard.json",
+        "$leaf/systemd/sub-manager.service"
+    )
+    $archiveEntries = @(& tar.exe -tzf $ArchivePath)
+    if ($LASTEXITCODE -ne 0) {
+        Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction SilentlyContinue
+        throw "Unable to inspect the source archive before deployment."
+    }
+    $missingEntries = @($requiredEntries | Where-Object { $_ -notin $archiveEntries })
+    if ($missingEntries.Count -gt 0) {
+        Remove-Item -LiteralPath $ArchivePath -Force -ErrorAction SilentlyContinue
+        throw "Source archive is incomplete; missing required entries: $($missingEntries -join ', ')."
+    }
     return $commit
 }
 

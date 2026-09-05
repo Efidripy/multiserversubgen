@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+INSTALLER_DIR="$(cd "${DEPLOY_DIR}/../installer" && pwd -P)"
 # shellcheck disable=SC1091
-source "$SCRIPT_DIR/scripts/installer/lib/resource_guard.sh"
-REPO_DIR="${REPO_DIR:-$SCRIPT_DIR}"
+source "$INSTALLER_DIR/lib/source_layout.sh"
+if ! mssg_resolve_source_layout "$INSTALLER_DIR"; then
+  exit 1
+fi
+# shellcheck disable=SC1091
+source "$MSSG_INSTALLER_DIR/lib/resource_guard.sh"
+REPO_DIR="${REPO_DIR:-$MSSG_SOURCE_ROOT}"
 PROJECT_DIR="${PROJECT_DIR:-/opt/sub-manager}"
 WEB_PATH="${WEB_PATH:-}"
 GRAFANA_WEB_PATH="${GRAFANA_WEB_PATH:-grafana}"
@@ -24,7 +30,7 @@ else
 fi
 VITE_GRAFANA_PATH="/${GRAFANA_WEB_PATH#/}/"
 
-FRONTEND_DIR="$SCRIPT_DIR/frontend"
+FRONTEND_DIR="$MSSG_FRONTEND_DIR"
 TARGET_BUILD_DIR="$PROJECT_DIR/build"
 TMP_BUILD_DIR="${PROJECT_DIR}/.build-next"
 PREV_BUILD_DIR="${PROJECT_DIR}/.build-prev"
@@ -58,7 +64,7 @@ if [[ -f "$TMP_BUILD_DIR/sw.js" ]]; then
 fi
 popd >/dev/null
 
-PUBLIC_DOMAIN='' PUBLIC_SCHEME='' bash "$SCRIPT_DIR/scripts/deploy/verify-frontend-release.sh" "$TMP_BUILD_DIR" "$WEB_PATH"
+PUBLIC_DOMAIN='' PUBLIC_SCHEME='' bash "$MSSG_VERIFY_FRONTEND_RELEASE_SCRIPT" "$TMP_BUILD_DIR" "$WEB_PATH"
 
 if [[ -d "$TARGET_BUILD_DIR" ]]; then
   mv "$TARGET_BUILD_DIR" "$PREV_BUILD_DIR"
@@ -71,7 +77,7 @@ rm -rf "$PREV_BUILD_DIR"
 rm -rf "$FRONTEND_DIR/node_modules" "$FRONTEND_DIR/.vite"
 
 if [[ "$SKIP_LIVE_VERIFY" == "1" || -z "$PUBLIC_DOMAIN" ]]; then
-  PUBLIC_DOMAIN='' PUBLIC_SCHEME='' bash "$SCRIPT_DIR/scripts/deploy/verify-frontend-release.sh" "$TARGET_BUILD_DIR" "$WEB_PATH"
+  PUBLIC_DOMAIN='' PUBLIC_SCHEME='' bash "$MSSG_VERIFY_FRONTEND_RELEASE_SCRIPT" "$TARGET_BUILD_DIR" "$WEB_PATH"
 else
-  bash "$SCRIPT_DIR/scripts/deploy/verify-frontend-release.sh" "$TARGET_BUILD_DIR" "$WEB_PATH" "$PUBLIC_SCHEME" "$PUBLIC_DOMAIN"
+  bash "$MSSG_VERIFY_FRONTEND_RELEASE_SCRIPT" "$TARGET_BUILD_DIR" "$WEB_PATH" "$PUBLIC_SCHEME" "$PUBLIC_DOMAIN"
 fi

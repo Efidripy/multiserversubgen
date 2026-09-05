@@ -10,8 +10,17 @@ def build_lifespan(
     snapshot_collector,
     adguard_collector_loop,
     asyncio_module,
+    telegram_provisioning_worker_loop=None,
+    telegram_outbox_worker_loop=None,
+    telegram_retention_worker_loop=None,
 ):
-    state = {"audit_worker_task": None, "adguard_collector_task": None}
+    state = {
+        "audit_worker_task": None,
+        "adguard_collector_task": None,
+        "telegram_provisioning_worker_task": None,
+        "telegram_outbox_worker_task": None,
+        "telegram_retention_worker_task": None,
+    }
 
     @asynccontextmanager
     async def lifespan(app):
@@ -21,9 +30,38 @@ def build_lifespan(
         state["audit_worker_task"] = asyncio_module.create_task(audit_worker_loop())
         await snapshot_collector.start()
         state["adguard_collector_task"] = asyncio_module.create_task(adguard_collector_loop())
+        if telegram_provisioning_worker_loop is not None:
+            state["telegram_provisioning_worker_task"] = asyncio_module.create_task(
+                telegram_provisioning_worker_loop()
+            )
+        if telegram_outbox_worker_loop is not None:
+            state["telegram_outbox_worker_task"] = asyncio_module.create_task(telegram_outbox_worker_loop())
+        if telegram_retention_worker_loop is not None:
+            state["telegram_retention_worker_task"] = asyncio_module.create_task(telegram_retention_worker_loop())
         try:
             yield
         finally:
+            if state["telegram_retention_worker_task"]:
+                state["telegram_retention_worker_task"].cancel()
+                try:
+                    await state["telegram_retention_worker_task"]
+                except asyncio_module.CancelledError:
+                    pass
+                state["telegram_retention_worker_task"] = None
+            if state["telegram_outbox_worker_task"]:
+                state["telegram_outbox_worker_task"].cancel()
+                try:
+                    await state["telegram_outbox_worker_task"]
+                except asyncio_module.CancelledError:
+                    pass
+                state["telegram_outbox_worker_task"] = None
+            if state["telegram_provisioning_worker_task"]:
+                state["telegram_provisioning_worker_task"].cancel()
+                try:
+                    await state["telegram_provisioning_worker_task"]
+                except asyncio_module.CancelledError:
+                    pass
+                state["telegram_provisioning_worker_task"] = None
             if state["audit_worker_task"]:
                 state["audit_worker_task"].cancel()
                 try:

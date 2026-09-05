@@ -1,9 +1,23 @@
 #!/bin/bash
 set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
-STANDARD_ENTRY="$SCRIPT_DIR/scripts/installer/install.sh"
-ADVANCED_ENTRY="$SCRIPT_DIR/scripts/installer/launcher.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+ENTRYPOINT_LAYOUT_LIB=""
+for candidate in \
+    "$SCRIPT_DIR/scripts/installer/lib/entrypoint_layout.sh" \
+    "$SCRIPT_DIR/installer/lib/entrypoint_layout.sh"; do
+    if [ -f "$candidate" ] && [ ! -L "$candidate" ]; then
+        ENTRYPOINT_LAYOUT_LIB="$candidate"
+        break
+    fi
+done
+if [ -z "$ENTRYPOINT_LAYOUT_LIB" ]; then
+    printf 'Unsupported installer entrypoint layout near %s. Refusing to continue.\n' "$SCRIPT_DIR" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090
+source "$ENTRYPOINT_LAYOUT_LIB"
+STANDARD_ENTRY="$(mssg_resolve_installer_entrypoint "$SCRIPT_DIR" install)" || exit 1
+ADVANCED_ENTRY="$(dirname "$STANDARD_ENTRY")/launcher.sh"
 
 run_standard_entry() {
 	exec "${BASH:-bash}" "$STANDARD_ENTRY" "$@"
