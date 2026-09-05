@@ -52,6 +52,7 @@ def build_telegram_webhook_router(
     list_nodes: Callable[[], list[dict[str, Any]]] | None = None,
     get_links_filtered: Callable[[list[dict[str, Any]], str, str | None], list[str]] | None = None,
     get_cached_inbound_options: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+    traffic_projection_loader: Callable[[], dict[str, Any]] | None = None,
 ):
     router = APIRouter()
     registry = TelegramRegistry(db_path)
@@ -63,6 +64,7 @@ def build_telegram_webhook_router(
         get_links_filtered=get_links_filtered,
         primary_admin_id=getattr(telegram_settings, "primary_admin_id", None),
         get_cached_inbound_options=get_cached_inbound_options,
+        traffic_projection_loader=traffic_projection_loader,
     )
     message_sender = sender or TelegramApiSender(telegram_settings.bot_token)
 

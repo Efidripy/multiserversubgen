@@ -52,6 +52,7 @@
     "noCustomers": "No customers found",
     "selectCustomer": "Select a customer to manage",
     "nodes": "Nodes",
+    "lifetimeTraffic": "Lifetime traffic",
     "operations": "Operations",
     "suspend": "Suspend",
     "resume": "Resume",

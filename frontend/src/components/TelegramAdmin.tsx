@@ -8,8 +8,10 @@ import {
   CustomerNode,
   CustomerOperation,
   CustomerOperationPreview,
+  CustomerTraffic,
   getCustomerNodes,
   getCustomerOperations,
+  getCustomerTraffic,
   listTelegramCustomers,
   listTelegramRequests,
   previewCustomerOperation,
@@ -28,6 +30,14 @@ const buttonClass = 'inline-flex h-9 items-center justify-center gap-2 rounded-l
 const primaryButtonClass = 'inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-cyan-300/25 bg-cyan-300 px-3 text-xs font-medium uppercase tracking-[0.12em] text-[#06111f] transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-45';
 
 const formatDate = (value: string | null) => value ? new Date(value.replace(' ', 'T')).toLocaleString() : '—';
+const formatBytes = (value: number) => {
+  if (!Number.isFinite(value) || value <= 0) return '0 Б';
+  const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+  let amount = value;
+  let unit = 0;
+  while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit += 1; }
+  return `${amount >= 10 || unit === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unit]}`;
+};
 
 export const TelegramAdmin: React.FC = () => {
   const { t } = useTranslation();
@@ -37,6 +47,7 @@ export const TelegramAdmin: React.FC = () => {
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [nodes, setNodes] = useState<CustomerNode[]>([]);
   const [operations, setOperations] = useState<CustomerOperation[]>([]);
+  const [traffic, setTraffic] = useState<CustomerTraffic | null>(null);
   const [preview, setPreview] = useState<CustomerOperationPreview | null>(null);
   const [previewNodeId, setPreviewNodeId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
@@ -68,12 +79,14 @@ export const TelegramAdmin: React.FC = () => {
     setPreview(null);
     setPreviewNodeId(null);
     try {
-      const [nextNodes, nextOperations] = await Promise.all([
+      const [nextNodes, nextOperations, nextTraffic] = await Promise.all([
         getCustomerNodes(customer.customer_id),
         getCustomerOperations(customer.customer_id),
+        getCustomerTraffic(customer.customer_id),
       ]);
       setNodes(nextNodes);
       setOperations(nextOperations);
+      setTraffic(nextTraffic);
     } catch {
       toast(t('telegram.detailsFailed'), 'error');
     }
@@ -192,6 +205,7 @@ export const TelegramAdmin: React.FC = () => {
               <h4 className="truncate text-sm text-slate-200">{selectedTitle}</h4>
               {!selectedCustomer && <p className="mt-2 text-sm font-light text-slate-500">{t('telegram.selectCustomer')}</p>}
               {selectedCustomer && <>
+                <p className="mt-2 text-xs font-light text-slate-400">{t('telegram.lifetimeTraffic')}: <span className="font-mono text-cyan-200">{formatBytes(traffic?.lifetime_bytes ?? 0)}</span></p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {(['suspend', 'resume', 'delete'] as const).map((operationType) => <button key={operationType} type="button" className={operationType === 'delete' ? `${buttonClass} border-rose-400/25 text-rose-200 hover:text-rose-100` : buttonClass} onClick={() => void makePreview(operationType)} disabled={mutating}>{t(`telegram.${operationType}`)}</button>)}
                 </div>

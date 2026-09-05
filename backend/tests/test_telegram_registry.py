@@ -114,6 +114,26 @@ def test_customer_live_email_is_unique_but_deleted_tombstone_allows_new_registra
             "UPDATE customers SET status = 'deleted', deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
             (first,),
         )
+
+
+def test_customer_traffic_ledger_survives_counter_reset_and_uses_customer_not_token_identity(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="traffic-user", origin="telegram", email_source="telegram_username", public_code="traffic-user"
+    )
+
+    first = registry.observe_customer_traffic(customer_id=customer_id, observed_bytes=100)
+    next_value = registry.observe_customer_traffic(customer_id=customer_id, observed_bytes=180)
+    after_reset = registry.observe_customer_traffic(customer_id=customer_id, observed_bytes=20)
+    after_more = registry.observe_customer_traffic(customer_id=customer_id, observed_bytes=50)
+
+    assert first.lifetime_bytes == 100
+    assert next_value.lifetime_bytes == 180
+    assert after_reset.lifetime_bytes == 200
+    assert after_more.lifetime_bytes == 230
+    assert registry.get_customer_traffic(customer_id).lifetime_bytes == 230
     second = registry.create_customer(
         email_display="Alice", origin="telegram", email_source="telegram_name", public_code="second"
     )

@@ -344,6 +344,16 @@ def init_db(db_path: str) -> None:
             "CREATE INDEX IF NOT EXISTS idx_customer_node_bindings_customer "
             "ON customer_node_bindings(customer_id, management_state, node_id)"
         )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS customer_traffic_ledger
+                     (customer_id INTEGER PRIMARY KEY,
+                      lifetime_bytes INTEGER NOT NULL DEFAULT 0 CHECK(lifetime_bytes >= 0),
+                      last_observed_bytes INTEGER NOT NULL DEFAULT 0 CHECK(last_observed_bytes >= 0),
+                      first_observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      last_observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT)"""
+        )
         binding_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(customer_node_bindings)").fetchall()
         }

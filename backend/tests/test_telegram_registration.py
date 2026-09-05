@@ -160,6 +160,33 @@ def test_approved_user_gets_opaque_subscription_link_and_rotation_invalidates_pr
     assert "подтвердить" in confirm_prompt[0].text.lower()
 
 
+def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscription_token(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="traffic_user", first_name="Traffic", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="traffic_user", origin="telegram", email_source="telegram_username", public_code="traffic-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        traffic_projection_loader=lambda: {"stats": {"traffic_user": {"total": 4096}}},
+    )
+
+    status = service.handle_update(_message(15, "/status"))
+
+    assert "4.0 КБ" in status[0].text
+    assert registry.get_customer_traffic(customer_id).lifetime_bytes == 4096
+
+
 def test_suspended_user_can_send_one_bounded_appeal_without_automatic_resume(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)

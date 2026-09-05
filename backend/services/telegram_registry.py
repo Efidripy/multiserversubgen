@@ -71,6 +71,14 @@ class TelegramCustomerAccess:
 
 
 @dataclass(frozen=True)
+class CustomerTrafficLedger:
+    customer_id: int
+    lifetime_bytes: int
+    last_observed_bytes: int
+    last_observed_at: str
+
+
+@dataclass(frozen=True)
 class NodeProvisioningPolicy:
     node_id: int
     provisioning_enabled: bool
@@ -555,6 +563,78 @@ class TelegramRegistry:
             email_display=str(row[4]) if row[4] is not None else None,
             customer_status=str(row[5]) if row[5] is not None else None,
             customer_row_version=int(row[6]) if row[6] is not None else None,
+        )
+
+    def observe_customer_traffic(self, *, customer_id: int, observed_bytes: int) -> CustomerTrafficLedger:
+        """Accumulate a customer lifetime counter independent of subscription tokens.
+
+        The source is an aggregate client counter. A lower next observation is
+        treated as a panel-side counter reset and starts a fresh epoch without
+        subtracting historical usage already recorded for this customer.
+        """
+
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        if isinstance(observed_bytes, bool) or not isinstance(observed_bytes, int) or observed_bytes < 0:
+            raise TelegramRegistryError("observed_bytes must be a non-negative integer")
+        with connect(self._db_path) as conn:
+            customer = conn.execute("SELECT 1 FROM customers WHERE id = ?", (local_customer_id,)).fetchone()
+            if customer is None:
+                raise TelegramRegistryError("customer was not found")
+            row = conn.execute(
+                "SELECT lifetime_bytes, last_observed_bytes FROM customer_traffic_ledger WHERE customer_id = ?",
+                (local_customer_id,),
+            ).fetchone()
+            if row is None:
+                lifetime, previous = observed_bytes, observed_bytes
+                conn.execute(
+                    """
+                    INSERT INTO customer_traffic_ledger
+                        (customer_id, lifetime_bytes, last_observed_bytes)
+                    VALUES (?, ?, ?)
+                    """,
+                    (local_customer_id, lifetime, previous),
+                )
+            else:
+                lifetime, previous = int(row[0]), int(row[1])
+                increment = observed_bytes - previous if observed_bytes >= previous else observed_bytes
+                lifetime += increment
+                conn.execute(
+                    """
+                    UPDATE customer_traffic_ledger
+                    SET lifetime_bytes = ?, last_observed_bytes = ?, last_observed_at = CURRENT_TIMESTAMP,
+                        row_version = row_version + 1
+                    WHERE customer_id = ?
+                    """,
+                    (lifetime, observed_bytes, local_customer_id),
+                )
+            result = conn.execute(
+                """
+                SELECT customer_id, lifetime_bytes, last_observed_bytes, last_observed_at
+                FROM customer_traffic_ledger WHERE customer_id = ?
+                """,
+                (local_customer_id,),
+            ).fetchone()
+        assert result is not None
+        return CustomerTrafficLedger(
+            customer_id=int(result[0]), lifetime_bytes=int(result[1]),
+            last_observed_bytes=int(result[2]), last_observed_at=str(result[3]),
+        )
+
+    def get_customer_traffic(self, customer_id: int) -> CustomerTrafficLedger:
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT customer_id, lifetime_bytes, last_observed_bytes, last_observed_at
+                FROM customer_traffic_ledger WHERE customer_id = ?
+                """,
+                (local_customer_id,),
+            ).fetchone()
+        if row is None:
+            return CustomerTrafficLedger(local_customer_id, 0, 0, "")
+        return CustomerTrafficLedger(
+            customer_id=int(row[0]), lifetime_bytes=int(row[1]),
+            last_observed_bytes=int(row[2]), last_observed_at=str(row[3]),
         )
 
     def submit_suspended_appeal(self, *, telegram_user_id: int, body: str) -> AppealResult:

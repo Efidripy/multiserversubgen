@@ -77,6 +77,11 @@ node to become the authority for the customer lifecycle.
   restores their recorded prior state. A node that was already disabled stays
   disabled. Delete tombstones the local customer and releases its Telegram
   identity only after every exact remote target is confirmed absent.
+- `customer_traffic_ledger` belongs to the local `customer_id`, never a
+  subscription token. It accumulates deltas from the existing read-only client
+  projection; a lower source counter begins a new epoch and cannot subtract
+  previously observed traffic. It never triggers a remote fleet read from a
+  Telegram webhook.
 
 ## Consequences
 

@@ -197,6 +197,7 @@ def register_app_routers(
                 list_nodes=list_nodes,
                 get_links_filtered=get_links_filtered,
                 get_cached_inbound_options=get_cached_inbound_options,
+                traffic_projection_loader=lambda: get_cached_traffic_stats_projection("client"),
             )
         )
     if monitoring_enabled:

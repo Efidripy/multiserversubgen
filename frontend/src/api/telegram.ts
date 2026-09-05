@@ -32,6 +32,13 @@ export type CustomerNode = {
   management_state: string | null;
 };
 
+export type CustomerTraffic = {
+  customer_id: number;
+  lifetime_bytes: number;
+  last_observed_bytes: number;
+  last_observed_at: string;
+};
+
 export type CustomerOperationAttempt = {
   binding_id: number;
   node_id: number;
@@ -91,6 +98,11 @@ export async function listTelegramCustomers(query = ''): Promise<TelegramCustome
 export async function getCustomerNodes(customerId: number): Promise<CustomerNode[]> {
   const response = await api.get(`/v1/telegram/customers/${customerId}/nodes`, { auth: getAuth() });
   return Array.isArray(response.data?.items) ? response.data.items : [];
+}
+
+export async function getCustomerTraffic(customerId: number): Promise<CustomerTraffic> {
+  const response = await api.get(`/v1/telegram/customers/${customerId}/traffic`, { auth: getAuth() });
+  return response.data?.traffic as CustomerTraffic;
 }
 
 export async function getCustomerOperations(customerId: number): Promise<CustomerOperation[]> {

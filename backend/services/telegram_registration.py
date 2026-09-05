@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from services.subscription_tokens import ensure_tokens, regenerate_token
+from services.telegram_traffic import TelegramTrafficService
 from services.telegram_registry import (
     IdempotencyConflictError,
     NodePolicyUnavailableError,
@@ -59,6 +60,7 @@ class TelegramRegistrationService:
         get_links_filtered: Callable[[list[dict[str, Any]], str, str | None], list[str]] | None = None,
         primary_admin_id: int | None = None,
         get_cached_inbound_options: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+        traffic_projection_loader: Callable[[], dict[str, Any]] | None = None,
     ):
         self._registry = registry
         self._introduction_max_chars = introduction_max_chars
@@ -67,6 +69,17 @@ class TelegramRegistrationService:
         self._get_links_filtered = get_links_filtered
         self._primary_admin_id = primary_admin_id
         self._get_cached_inbound_options = get_cached_inbound_options
+        self._traffic = TelegramTrafficService(registry, traffic_projection_loader)
+
+    @staticmethod
+    def _format_bytes(value: int) -> str:
+        units = ("Б", "КБ", "МБ", "ГБ", "ТБ")
+        amount = float(max(0, value))
+        unit = 0
+        while amount >= 1024 and unit < len(units) - 1:
+            amount /= 1024
+            unit += 1
+        return f"{amount:.1f} {units[unit]}" if unit else f"{int(amount)} {units[unit]}"
 
     @staticmethod
     def _inbound_one_supports_bot_contract(node_id: int, inbound_options: list[dict[str, Any]]) -> bool:
@@ -260,9 +273,13 @@ class TelegramRegistrationService:
         access = self._registry.get_customer_access(user_id)
         if access.access_status != "approved" or not access.customer_status:
             return TelegramOutboundMessage(chat_id, "Заявка ещё ожидает решения администратора.")
+        lifetime = None
+        if access.customer_id is not None and access.email_display:
+            lifetime = self._traffic.refresh_for_access(customer_id=access.customer_id, email=access.email_display)
+        traffic_line = f"\nТрафик за всё время: {self._format_bytes(lifetime.lifetime_bytes)}." if lifetime else ""
         return TelegramOutboundMessage(
             chat_id,
-            f"Статус доступа: {access.customer_status}.",
+            f"Статус доступа: {access.customer_status}.{traffic_line}",
             self._approved_menu(suspended=access.customer_status in {"suspended", "suspend_partial"}),
         )
 

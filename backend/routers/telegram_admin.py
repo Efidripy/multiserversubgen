@@ -257,6 +257,15 @@ def build_telegram_admin_router(
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
 
+    @router.get("/api/v1/telegram/customers/{customer_id}/traffic")
+    def get_customer_traffic(customer_id: int, request: Request):
+        require_admin(request)
+        try:
+            registry.get_customer(customer_id)
+            return {"traffic": asdict(registry.get_customer_traffic(customer_id))}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
     @router.post("/api/v1/telegram/customers/{customer_id}/nodes/{node_id}/add")
     def add_customer_node(customer_id: int, node_id: int, request: Request, data: Dict):
         username = require_admin(request)
