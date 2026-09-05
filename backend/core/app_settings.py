@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Callable, Dict, Set
 from urllib.parse import urlparse
 
+from services.telegram_transport import validate_local_proxy_url
+
 
 def _env_bool(name: str, default: str) -> bool:
     return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
@@ -151,6 +153,7 @@ class TelegramSettings:
     outbox_worker_interval_sec: int
     retention_worker_enabled: bool
     retention_worker_interval_sec: int
+    local_proxy_url: str
 
 
 def _load_telegram_settings() -> TelegramSettings:
@@ -158,6 +161,7 @@ def _load_telegram_settings() -> TelegramSettings:
     worker_requested = _env_bool("TELEGRAM_PROVISIONING_WORKER_ENABLED", "false")
     outbox_requested = _env_bool("TELEGRAM_OUTBOX_WORKER_ENABLED", "false")
     retention_requested = _env_bool("TELEGRAM_RETENTION_WORKER_ENABLED", "false")
+    local_proxy_url = validate_local_proxy_url(os.getenv("TELEGRAM_LOCAL_PROXY_URL", ""))
     if not enabled:
         if worker_requested:
             raise RuntimeError("TELEGRAM_PROVISIONING_WORKER_ENABLED requires TELEGRAM_BOT_ENABLED=true")
@@ -180,6 +184,7 @@ def _load_telegram_settings() -> TelegramSettings:
             outbox_worker_interval_sec=5,
             retention_worker_enabled=False,
             retention_worker_interval_sec=86400,
+            local_proxy_url=local_proxy_url,
         )
 
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -229,6 +234,7 @@ def _load_telegram_settings() -> TelegramSettings:
         outbox_worker_interval_sec=outbox_worker_interval_sec,
         retention_worker_enabled=retention_requested,
         retention_worker_interval_sec=retention_worker_interval_sec,
+        local_proxy_url=local_proxy_url,
     )
 
 

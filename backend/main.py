@@ -34,6 +34,7 @@ from services.telegram_lifecycle import TelegramLifecycleWorker
 from services.telegram_outbox import TelegramApiOutboxPort, TelegramOutboxWorker
 from services.telegram_retention import TelegramRetentionService
 from services.telegram_provisioning import ClientManagerProvisioningPort, TelegramProvisioningWorker
+from services.telegram_transport import TelegramApiTransport
 from shared.http_config import get_requests_verify_value
 
 import sys
@@ -479,7 +480,12 @@ async def _telegram_outbox_worker_loop() -> None:
     worker = TelegramOutboxWorker(
         db_path=DB_PATH,
         primary_admin_id=SETTINGS.telegram.primary_admin_id or 0,
-        port=TelegramApiOutboxPort(SETTINGS.telegram.bot_token),
+        port=TelegramApiOutboxPort(
+            SETTINGS.telegram.bot_token,
+            transport=TelegramApiTransport(
+                db_path=DB_PATH, local_proxy_url=SETTINGS.telegram.local_proxy_url
+            ),
+        ),
         worker_id=f"telegram-outbox:{os.getpid()}",
     )
     while True:

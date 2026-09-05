@@ -78,6 +78,16 @@ class TelegramNotificationPreferences:
 
 
 @dataclass(frozen=True)
+class TelegramTransportPreference:
+    """Non-secret delivery mode selected by a panel administrator."""
+
+    mode: str
+    row_version: int
+    updated_by: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
 class CustomerTrafficLedger:
     customer_id: int
     lifetime_bytes: int
@@ -485,6 +495,46 @@ class TelegramRegistry:
         """Configured local authority path for sibling local-only services."""
 
         return self._db_path
+
+    def get_transport_preference(self) -> TelegramTransportPreference:
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT mode, row_version, updated_by, updated_at
+                FROM telegram_transport_preferences
+                WHERE singleton_id = 1
+                """
+            ).fetchone()
+        if row is None:
+            raise TelegramRegistryError("Telegram transport preference is unavailable")
+        return TelegramTransportPreference(
+            mode=str(row[0]), row_version=int(row[1]), updated_by=str(row[2]), updated_at=str(row[3])
+        )
+
+    def set_transport_preference(
+        self, *, mode: str, expected_row_version: int, updated_by: str
+    ) -> TelegramTransportPreference:
+        normalized_mode = str(mode or "").strip().lower()
+        if normalized_mode not in {"direct", "local_proxy"}:
+            raise TelegramRegistryError("Telegram transport mode is invalid")
+        if not isinstance(expected_row_version, int) or expected_row_version < 1:
+            raise TelegramRegistryError("expected_row_version must be a positive integer")
+        actor = str(updated_by or "").strip()
+        if not actor:
+            raise TelegramRegistryError("updated_by is required")
+        with connect(self._db_path) as conn:
+            update = conn.execute(
+                """
+                UPDATE telegram_transport_preferences
+                SET mode = ?, row_version = row_version + 1,
+                    updated_by = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE singleton_id = 1 AND row_version = ?
+                """,
+                (normalized_mode, actor[:120], expected_row_version),
+            )
+            if update.rowcount != 1:
+                raise VersionConflictError("Telegram transport preference was changed by another administrator")
+        return self.get_transport_preference()
 
     def get_or_create_identity(
         self,
