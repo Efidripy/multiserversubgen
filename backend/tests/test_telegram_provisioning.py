@@ -207,3 +207,34 @@ def test_worker_skips_attempt_when_current_inbound_no_longer_supports_fixed_cont
     with connect(db_path) as conn:
         assert conn.execute("SELECT status FROM telegram_provisioning_jobs WHERE id = ?", (approval.job_id,)).fetchone()[0] == "failed"
         assert conn.execute("SELECT error_code FROM telegram_provisioning_attempts").fetchone()[0] == "inbound_contract_incompatible"
+
+
+def test_admin_reconcile_reschedules_failed_attempt_without_remote_io_and_requires_fresh_version(tmp_path):
+    db_path, approval, _attempt = _queued_job(tmp_path)
+    port = FakeProvisioningPort(compatible=False)
+    assert _worker(db_path, port).run_once().outcome == "skipped"
+    registry = TelegramRegistry(db_path)
+    failed = registry.get_provisioning_job(approval.job_id)
+    assert failed.status == "failed"
+
+    queued = registry.reschedule_provisioning_job(
+        job_id=approval.job_id,
+        expected_job_version=failed.row_version,
+        idempotency_key="reconcile-failed-job",
+        requested_by="admin",
+        action="reconcile",
+    )
+    replay = registry.reschedule_provisioning_job(
+        job_id=approval.job_id,
+        expected_job_version=failed.row_version,
+        idempotency_key="reconcile-failed-job",
+        requested_by="another-admin",
+        action="reconcile",
+    )
+
+    assert queued == replay
+    assert queued.status == "queued"
+    assert port.add_calls == []
+    refreshed = registry.get_provisioning_job(approval.job_id)
+    assert refreshed.row_version == queued.row_version
+    assert refreshed.attempts[0].status == "pending"

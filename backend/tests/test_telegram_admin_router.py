@@ -134,3 +134,43 @@ def test_request_queue_is_admin_only_and_approval_queues_local_work_without_remo
         json={"expected_identity_version": 2, "idempotency_key": "viewer"},
     ).status_code == 403
     assert viewer.get("/api/v1/telegram/jobs").status_code == 403
+
+
+def test_job_reconcile_is_admin_only_and_queues_no_remote_work_inline(tmp_path):
+    client = _build_client(tmp_path)
+    db_path = str(tmp_path / "admin.db")
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=44, chat_id=44, username="retry-user", first_name=None, last_name=None
+    )
+    pending = registry.create_pending_application(44)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (1, 1)")
+    approval = registry.approve_new_application(
+        telegram_user_id=44,
+        expected_identity_version=pending.identity.row_version,
+        email_display=None,
+        idempotency_key="queue-retry-job",
+        approved_by="admin",
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_provisioning_attempts SET status = 'failed', error_code = 'test' WHERE job_id = ?",
+            (approval.job_id,),
+        )
+        conn.execute("UPDATE telegram_provisioning_jobs SET status = 'failed' WHERE id = ?", (approval.job_id,))
+    job = registry.get_provisioning_job(approval.job_id)
+
+    response = client.post(
+        f"/api/v1/telegram/jobs/{approval.job_id}/reconcile",
+        json={"expected_job_version": job.row_version, "idempotency_key": "http-reconcile"},
+    )
+    assert response.status_code == 200
+    assert response.json()["remote_io"] == "not_started"
+    assert response.json()["job"]["status"] == "queued"
+
+    viewer = _build_client(tmp_path, username="viewer", role="viewer")
+    assert viewer.post(
+        f"/api/v1/telegram/jobs/{approval.job_id}/reconcile",
+        json={"expected_job_version": 1, "idempotency_key": "viewer-reconcile"},
+    ).status_code == 403

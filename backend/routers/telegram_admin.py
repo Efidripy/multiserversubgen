@@ -160,6 +160,36 @@ def build_telegram_admin_router(
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
 
+    @router.post("/api/v1/telegram/jobs/{job_id}/retry")
+    def retry_provisioning_job(job_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.reschedule_provisioning_job(
+                job_id=job_id,
+                expected_job_version=data.get("expected_job_version"),
+                idempotency_key=data.get("idempotency_key"),
+                requested_by=username,
+                action="retry",
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"job": asdict(result), "remote_io": "not_started"}
+
+    @router.post("/api/v1/telegram/jobs/{job_id}/reconcile")
+    def reconcile_provisioning_job(job_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.reschedule_provisioning_job(
+                job_id=job_id,
+                expected_job_version=data.get("expected_job_version"),
+                idempotency_key=data.get("idempotency_key"),
+                requested_by=username,
+                action="reconcile",
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"job": asdict(result), "remote_io": "not_started"}
+
     @router.get("/api/v1/telegram/node-policies")
     def list_node_policies(request: Request):
         require_admin(request)

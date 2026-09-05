@@ -145,9 +145,17 @@ class ProvisioningJobStatus:
     trigger: str
     status: str
     attempt_count: int
+    row_version: int
     created_at: str
     finished_at: str | None
     attempts: tuple[ProvisioningAttemptStatus, ...]
+
+
+@dataclass(frozen=True)
+class ProvisioningRescheduleResult:
+    job_id: int
+    status: str
+    row_version: int
 
 
 _RESERVED_EMAILS = {"admin", "root", "support", "system", "telegram", "bot", "null", "undefined"}
@@ -1453,7 +1461,7 @@ class TelegramRegistry:
             jobs = conn.execute(
                 """
                 SELECT j.id, j.customer_id, c.email_display, j.trigger, j.status, j.attempt_count,
-                       j.created_at, j.finished_at
+                       j.row_version, j.created_at, j.finished_at
                 FROM telegram_provisioning_jobs AS j
                 JOIN customers AS c ON c.id = j.customer_id
                 ORDER BY j.created_at DESC, j.id DESC LIMIT ?
@@ -1483,8 +1491,8 @@ class TelegramRegistry:
         return [
             ProvisioningJobStatus(
                 job_id=int(job[0]), customer_id=int(job[1]), customer_email=str(job[2]),
-                trigger=str(job[3]), status=str(job[4]), attempt_count=int(job[5]),
-                created_at=str(job[6]), finished_at=str(job[7]) if job[7] is not None else None,
+                trigger=str(job[3]), status=str(job[4]), attempt_count=int(job[5]), row_version=int(job[6]),
+                created_at=str(job[7]), finished_at=str(job[8]) if job[8] is not None else None,
                 attempts=tuple(grouped.get(int(job[0]), [])),
             )
             for job in jobs
@@ -1496,7 +1504,7 @@ class TelegramRegistry:
             job = conn.execute(
                 """
                 SELECT j.id, j.customer_id, c.email_display, j.trigger, j.status, j.attempt_count,
-                       j.created_at, j.finished_at
+                       j.row_version, j.created_at, j.finished_at
                 FROM telegram_provisioning_jobs AS j
                 JOIN customers AS c ON c.id = j.customer_id
                 WHERE j.id = ?
@@ -1518,8 +1526,8 @@ class TelegramRegistry:
             raise TelegramRegistryError("provisioning job was not found")
         return ProvisioningJobStatus(
             job_id=int(job[0]), customer_id=int(job[1]), customer_email=str(job[2]),
-            trigger=str(job[3]), status=str(job[4]), attempt_count=int(job[5]),
-            created_at=str(job[6]), finished_at=str(job[7]) if job[7] is not None else None,
+            trigger=str(job[3]), status=str(job[4]), attempt_count=int(job[5]), row_version=int(job[6]),
+            created_at=str(job[7]), finished_at=str(job[8]) if job[8] is not None else None,
             attempts=tuple(
                 ProvisioningAttemptStatus(
                     node_id=int(attempt[0]), node_name=str(attempt[1]), status=str(attempt[2]),
@@ -1531,6 +1539,87 @@ class TelegramRegistry:
                 for attempt in attempts
             ),
         )
+
+    def reschedule_provisioning_job(
+        self,
+        *,
+        job_id: int,
+        expected_job_version: int,
+        idempotency_key: str,
+        requested_by: str,
+        action: str,
+    ) -> ProvisioningRescheduleResult:
+        """Queue a safe read-first retry/reconcile; it never calls a node inline."""
+
+        normalized_job_id = _positive_int(job_id, "job_id")
+        expected_version = _positive_int(expected_job_version, "expected_job_version")
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(requested_by, "requested_by")
+        if action not in {"retry", "reconcile"}:
+            raise TelegramRegistryError("unsupported provisioning action")
+        payload = {"job_id": normalized_job_id, "expected_job_version": expected_version}
+        digest = _payload_digest(payload)
+        scope = f"provisioning_{action}"
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts WHERE scope = ? AND idempotency_key = ?",
+                (scope, key),
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return ProvisioningRescheduleResult(**json.loads(str(receipt[1])))
+            job = conn.execute(
+                "SELECT status, row_version, lease_until FROM telegram_provisioning_jobs WHERE id = ?",
+                (normalized_job_id,),
+            ).fetchone()
+            if job is None:
+                raise TelegramRegistryError("provisioning job was not found")
+            if int(job[1]) != expected_version:
+                raise VersionConflictError("provisioning job was updated by another worker or administrator")
+            if str(job[0]) not in {"queued", "partial", "failed"} or job[2] is not None:
+                raise VersionConflictError("provisioning job cannot be rescheduled in its current state")
+            changed = conn.execute(
+                """
+                UPDATE telegram_provisioning_attempts
+                SET status = 'pending', error_code = NULL, error_summary = NULL, next_attempt_at = NULL,
+                    finished_at = NULL, updated_at = CURRENT_TIMESTAMP
+                WHERE job_id = ? AND status IN ('failed', 'skipped', 'ambiguous')
+                """,
+                (normalized_job_id,),
+            )
+            if changed.rowcount == 0:
+                raise VersionConflictError("provisioning job has no retryable attempts")
+            update = conn.execute(
+                """
+                UPDATE telegram_provisioning_jobs
+                SET status = 'queued', next_attempt_at = NULL, finished_at = NULL,
+                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND row_version = ? AND lease_until IS NULL
+                """,
+                (normalized_job_id, expected_version),
+            )
+            if update.rowcount != 1:
+                raise VersionConflictError("provisioning job was updated by another worker or administrator")
+            result = ProvisioningRescheduleResult(
+                job_id=normalized_job_id, status="queued", row_version=expected_version + 1
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES (?, 'admin', ?, 'telegram_provisioning_job', ?, ?)
+                """,
+                (f"provisioning_{action}_queued", actor, str(normalized_job_id), digest),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (scope, key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+        return result
 
     def list_node_provisioning_policies(self) -> list[NodeProvisioningPolicy]:
         """Return persisted policies only; absent rows mean the safe off default."""

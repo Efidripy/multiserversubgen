@@ -327,6 +327,7 @@ def init_db(db_path: str) -> None:
                       lease_until TEXT DEFAULT NULL,
                       attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
                       next_attempt_at TEXT DEFAULT NULL,
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
                       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       finished_at TEXT DEFAULT NULL,
@@ -336,6 +337,14 @@ def init_db(db_path: str) -> None:
             "CREATE INDEX IF NOT EXISTS idx_telegram_provisioning_jobs_schedule "
             "ON telegram_provisioning_jobs(status, next_attempt_at, lease_until)"
         )
+        provisioning_job_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(telegram_provisioning_jobs)").fetchall()
+        }
+        if "row_version" not in provisioning_job_columns:
+            conn.execute(
+                "ALTER TABLE telegram_provisioning_jobs "
+                "ADD COLUMN row_version INTEGER NOT NULL DEFAULT 1"
+            )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_provisioning_attempts
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,

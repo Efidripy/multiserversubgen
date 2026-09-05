@@ -57,6 +57,10 @@ node to become the authority for the customer lifecycle.
   and requires an enabled VLESS inbound with TLS/Reality flow capability. A
   later policy toggle does not mutate a job snapshot, but an incompatible or
   unreadable current inbound still blocks that attempt safely.
+- An administrator may queue `retry` or `reconcile` for a failed/partial job
+  only with the latest job version and an idempotency key. The HTTP command
+  does not perform remote I/O; it resets only non-succeeded attempts and the
+  worker still begins its next execution with the same strict remote read.
 - Provisioning and destructive lifecycle work run through durable jobs and
   exact binding identifiers. They reconcile before retry and never perform
   blind lookup or automatic destructive rollback.

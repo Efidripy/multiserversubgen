@@ -273,7 +273,7 @@ class TelegramProvisioningWorker:
                 """
                 UPDATE telegram_provisioning_jobs
                 SET status = 'running', lease_owner = ?, lease_until = ?, attempt_count = attempt_count + 1,
-                    updated_at = CURRENT_TIMESTAMP
+                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND status IN ('queued', 'partial', 'running')
                   AND (lease_until IS NULL OR lease_until < ?)
                 """,
@@ -293,7 +293,7 @@ class TelegramProvisioningWorker:
             )
             if claimed.rowcount != 1:
                 conn.execute(
-                    "UPDATE telegram_provisioning_jobs SET status = 'partial', lease_owner = NULL, lease_until = NULL WHERE id = ?",
+                    "UPDATE telegram_provisioning_jobs SET status = 'partial', lease_owner = NULL, lease_until = NULL, row_version = row_version + 1 WHERE id = ?",
                     (job_id,),
                 )
                 return None
@@ -408,7 +408,7 @@ class TelegramProvisioningWorker:
                 """
                 UPDATE telegram_provisioning_jobs
                 SET status = 'partial', lease_owner = NULL, lease_until = NULL,
-                    next_attempt_at = ?, updated_at = CURRENT_TIMESTAMP
+                    next_attempt_at = ?, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (next_attempt, claimed.job_id),
@@ -440,7 +440,7 @@ class TelegramProvisioningWorker:
                 """
                 UPDATE telegram_provisioning_jobs
                 SET status = ?, lease_owner = NULL, lease_until = NULL, next_attempt_at = NULL,
-                    finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                    finished_at = CURRENT_TIMESTAMP, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (status, job_id),
@@ -449,7 +449,7 @@ class TelegramProvisioningWorker:
             conn.execute(
                 """
                 UPDATE telegram_provisioning_jobs
-                SET status = ?, lease_owner = NULL, lease_until = NULL, updated_at = CURRENT_TIMESTAMP
+                SET status = ?, lease_owner = NULL, lease_until = NULL, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 (status, job_id),
