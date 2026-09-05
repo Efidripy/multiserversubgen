@@ -147,14 +147,19 @@ class TelegramSettings:
     introduction_max_chars: int
     provisioning_worker_enabled: bool
     provisioning_worker_interval_sec: int
+    outbox_worker_enabled: bool
+    outbox_worker_interval_sec: int
 
 
 def _load_telegram_settings() -> TelegramSettings:
     enabled = _env_bool("TELEGRAM_BOT_ENABLED", "false")
     worker_requested = _env_bool("TELEGRAM_PROVISIONING_WORKER_ENABLED", "false")
+    outbox_requested = _env_bool("TELEGRAM_OUTBOX_WORKER_ENABLED", "false")
     if not enabled:
         if worker_requested:
             raise RuntimeError("TELEGRAM_PROVISIONING_WORKER_ENABLED requires TELEGRAM_BOT_ENABLED=true")
+        if outbox_requested:
+            raise RuntimeError("TELEGRAM_OUTBOX_WORKER_ENABLED requires TELEGRAM_BOT_ENABLED=true")
         return TelegramSettings(
             enabled=False,
             bot_token="",
@@ -166,6 +171,8 @@ def _load_telegram_settings() -> TelegramSettings:
             introduction_max_chars=700,
             provisioning_worker_enabled=False,
             provisioning_worker_interval_sec=5,
+            outbox_worker_enabled=False,
+            outbox_worker_interval_sec=5,
         )
 
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -194,6 +201,9 @@ def _load_telegram_settings() -> TelegramSettings:
     provisioning_worker_interval_sec = _bounded_env_int(
         "TELEGRAM_PROVISIONING_WORKER_INTERVAL_SEC", default=5, minimum=1, maximum=300
     )
+    outbox_worker_interval_sec = _bounded_env_int(
+        "TELEGRAM_OUTBOX_WORKER_INTERVAL_SEC", default=5, minimum=1, maximum=300
+    )
     return TelegramSettings(
         enabled=True,
         bot_token=bot_token,
@@ -205,6 +215,8 @@ def _load_telegram_settings() -> TelegramSettings:
         introduction_max_chars=introduction_max_chars,
         provisioning_worker_enabled=worker_requested,
         provisioning_worker_interval_sec=provisioning_worker_interval_sec,
+        outbox_worker_enabled=outbox_requested,
+        outbox_worker_interval_sec=outbox_worker_interval_sec,
     )
 
 

@@ -20,6 +20,8 @@ BotFather и реальные remote clients этот репозиторный �
 | `TELEGRAM_PROVISIONING_WORKER_ENABLED` | `false` by default. Starts the durable job worker only when remote writes are separately permitted. |
 | `TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES` | Separate explicit interlock. The application fails startup if the worker is requested without this value set to `true`. |
 | `TELEGRAM_PROVISIONING_WORKER_INTERVAL_SEC` | Idle poll interval, 1–300 seconds; default `5`. |
+| `TELEGRAM_OUTBOX_WORKER_ENABLED` | `false` by default. Enables only delivery of already persisted Telegram notifications; it does not permit remote node writes. |
+| `TELEGRAM_OUTBOX_WORKER_INTERVAL_SEC` | Idle poll interval for notification delivery, 1–300 seconds; default `5`. |
 
 The adapter validates every required setting fail-closed at startup and has no
 implicit development fallback.
@@ -27,6 +29,12 @@ implicit development fallback.
 Enabling the worker is a staging operation, not a deployment instruction. It
 requires a separately approved staging target, fresh node compatibility proof,
 and a smoke receipt before the same interlocks may be considered for production.
+
+Notification delivery is separately opt-in. The outbox leases one event at a
+time, records transient delivery failures with bounded retry/backoff and moves
+malformed or exhausted events to `dead_letter`. Delivery is at-least-once:
+after a transport timeout the Bot API outcome is unknowable, so a later retry
+may duplicate a notification but never repeats a customer or node mutation.
 
 ## Threat model and controls
 

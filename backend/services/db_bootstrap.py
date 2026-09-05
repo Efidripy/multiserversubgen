@@ -591,6 +591,17 @@ def init_db(db_path: str) -> None:
             "CREATE INDEX IF NOT EXISTS idx_telegram_outbox_schedule "
             "ON telegram_outbox(status, next_attempt_at)"
         )
+        outbox_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(telegram_outbox)").fetchall()
+        }
+        outbox_migrations = [
+            ("lease_owner", "ALTER TABLE telegram_outbox ADD COLUMN lease_owner TEXT DEFAULT NULL"),
+            ("lease_until", "ALTER TABLE telegram_outbox ADD COLUMN lease_until TEXT DEFAULT NULL"),
+            ("last_error_code", "ALTER TABLE telegram_outbox ADD COLUMN last_error_code TEXT DEFAULT NULL"),
+        ]
+        for column_name, statement in outbox_migrations:
+            if column_name not in outbox_columns:
+                conn.execute(statement)
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_audit_log
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,

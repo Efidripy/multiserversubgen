@@ -59,6 +59,7 @@ def test_telegram_is_disabled_by_default_and_does_not_need_runtime_secrets(monke
     assert settings.telegram.enabled is False
     assert settings.telegram.bot_token == ""
     assert settings.telegram.primary_admin_id is None
+    assert settings.telegram.outbox_worker_enabled is False
 
 
 @pytest.mark.parametrize(
@@ -134,3 +135,22 @@ def test_provisioning_worker_requires_explicit_remote_write_switch(monkeypatch):
     monkeypatch.setenv("TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES", "true")
     settings = load_app_settings(parse_mfa_users=_parse_mfa_users)
     assert settings.telegram.provisioning_worker_enabled is True
+
+
+def test_outbox_worker_requires_enabled_bot_but_never_remote_write_interlock(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_OUTBOX_WORKER_ENABLED", "true")
+    monkeypatch.delenv("TELEGRAM_BOT_ENABLED", raising=False)
+    with pytest.raises(RuntimeError, match="OUTBOX_WORKER_ENABLED"):
+        load_app_settings(parse_mfa_users=_parse_mfa_users)
+
+    monkeypatch.setenv("TELEGRAM_BOT_ENABLED", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-runtime-token")
+    monkeypatch.setenv("TELEGRAM_PRIMARY_ADMIN_ID", "108100140")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_PATH_SUFFIX", "test-path-suffix")
+    monkeypatch.setenv("TELEGRAM_PUBLIC_BASE_URL", "https://bot.example.test")
+    monkeypatch.delenv("TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES", raising=False)
+
+    settings = load_app_settings(parse_mfa_users=_parse_mfa_users)
+    assert settings.telegram.outbox_worker_enabled is True
+    assert settings.telegram.provisioning_worker_enabled is False

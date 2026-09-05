@@ -15,3 +15,4 @@
 - [Подписки](SUBSCRIPTION_GUIDE.md)
 - [Telegram: identity и provisioning authority](ADR-0002-telegram-identity-and-provisioning-authority.md)
 - [Telegram: безопасность и staging rollout](TELEGRAM_BOT_SECURITY.md)
+- [Telegram: staging runbook](TELEGRAM_STAGING_RUNBOOK.md)

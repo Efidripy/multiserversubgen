@@ -31,6 +31,7 @@ from core.app_runtime_bundle import build_app_runtime_bundle
 from core.router_registration import register_app_routers
 from services.runtime_state import RuntimeState
 from services.telegram_lifecycle import TelegramLifecycleWorker
+from services.telegram_outbox import TelegramApiOutboxPort, TelegramOutboxWorker
 from services.telegram_provisioning import ClientManagerProvisioningPort, TelegramProvisioningWorker
 from shared.http_config import get_requests_verify_value
 
@@ -471,6 +472,20 @@ async def _telegram_provisioning_worker_loop() -> None:
         )
 
 
+async def _telegram_outbox_worker_loop() -> None:
+    """Deliver local notification events only after its independent opt-in."""
+
+    worker = TelegramOutboxWorker(
+        db_path=DB_PATH,
+        primary_admin_id=SETTINGS.telegram.primary_admin_id or 0,
+        port=TelegramApiOutboxPort(SETTINGS.telegram.bot_token),
+        worker_id=f"telegram-outbox:{os.getpid()}",
+    )
+    while True:
+        result = await asyncio.to_thread(worker.run_once)
+        await asyncio.sleep(0.1 if result.processed else SETTINGS.telegram.outbox_worker_interval_sec)
+
+
 app.router.lifespan_context = build_lifespan(
     sync_node_history_names_with_nodes=sync_node_history_names_with_nodes,
     backfill_traffic_history_snapshots=live_stats_runtime.backfill_node_history_snapshots,
@@ -483,6 +498,9 @@ app.router.lifespan_context = build_lifespan(
         (lambda: _telegram_provisioning_worker_loop())
         if SETTINGS.telegram.provisioning_worker_enabled
         else None
+    ),
+    telegram_outbox_worker_loop=(
+        (lambda: _telegram_outbox_worker_loop()) if SETTINGS.telegram.outbox_worker_enabled else None
     ),
 )
 
