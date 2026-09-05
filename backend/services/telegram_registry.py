@@ -158,6 +158,26 @@ class ProvisioningRescheduleResult:
     row_version: int
 
 
+@dataclass(frozen=True)
+class CustomerListItem:
+    customer_id: int
+    email_display: str
+    origin: str
+    status: str
+    row_version: int
+    telegram_user_id: int | None
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class CustomerPage:
+    items: tuple[CustomerListItem, ...]
+    total: int
+    page: int
+    page_size: int
+
+
 _RESERVED_EMAILS = {"admin", "root", "support", "system", "telegram", "bot", "null", "undefined"}
 _TRANSLITERATION = str.maketrans(
     {
@@ -1693,6 +1713,100 @@ class TelegramRegistry:
                     )
                 )
         return result
+
+    def list_customers(
+        self,
+        *,
+        query: str = "",
+        status: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        include_deleted: bool = False,
+    ) -> CustomerPage:
+        """Page local customers only; fleet discovery remains a separate safe workflow."""
+
+        if isinstance(page, bool) or not isinstance(page, int) or page < 1:
+            raise TelegramRegistryError("page must be a positive integer")
+        if isinstance(page_size, bool) or not isinstance(page_size, int) or not 1 <= page_size <= 200:
+            raise TelegramRegistryError("page_size must be an integer from 1 to 200")
+        allowed_statuses = {
+            "active", "suspending", "suspended", "suspend_partial", "resuming", "resume_partial",
+            "deleting", "delete_partial", "deleted", "conflict",
+        }
+        if status is not None and status not in allowed_statuses:
+            raise TelegramRegistryError("customer status is invalid")
+        if not isinstance(query, str) or len(query.strip()) > 128:
+            raise TelegramRegistryError("query is invalid")
+        filters: list[str] = []
+        params: list[Any] = []
+        if not include_deleted:
+            filters.append("c.deleted_at IS NULL")
+        if status is not None:
+            filters.append("c.status = ?")
+            params.append(status)
+        if query.strip():
+            like = f"%{query.strip().casefold()}%"
+            filters.append(
+                "(c.email_canonical LIKE ? OR EXISTS ("
+                "SELECT 1 FROM telegram_identities AS ti WHERE ti.customer_id = c.id "
+                "AND (CAST(ti.telegram_user_id AS TEXT) LIKE ? OR lower(COALESCE(ti.username, '')) LIKE ?)"
+                "))"
+            )
+            params.extend([like, like, like])
+        where = " WHERE " + " AND ".join(filters) if filters else ""
+        base = (
+            " FROM customers AS c "
+            + where
+        )
+        with connect(self._db_path) as conn:
+            total = int(conn.execute("SELECT COUNT(*)" + base, params).fetchone()[0])
+            rows = conn.execute(
+                """
+                SELECT c.id, c.email_display, c.origin, c.status, c.row_version,
+                       (SELECT telegram_user_id FROM telegram_identities AS ti
+                        WHERE ti.customer_id = c.id ORDER BY ti.created_at LIMIT 1),
+                       c.created_at, c.updated_at
+                """
+                + base
+                + " ORDER BY c.updated_at DESC, c.id DESC LIMIT ? OFFSET ?",
+                params + [page_size, (page - 1) * page_size],
+            ).fetchall()
+        return CustomerPage(
+            items=tuple(
+                CustomerListItem(
+                    customer_id=int(row[0]), email_display=str(row[1]), origin=str(row[2]),
+                    status=str(row[3]), row_version=int(row[4]),
+                    telegram_user_id=int(row[5]) if row[5] is not None else None,
+                    created_at=str(row[6]), updated_at=str(row[7]),
+                )
+                for row in rows
+            ),
+            total=total,
+            page=page,
+            page_size=page_size,
+        )
+
+    def get_customer(self, customer_id: int) -> CustomerListItem:
+        normalized_customer_id = _positive_int(customer_id, "customer_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT c.id, c.email_display, c.origin, c.status, c.row_version,
+                       (SELECT telegram_user_id FROM telegram_identities AS ti
+                        WHERE ti.customer_id = c.id ORDER BY ti.created_at LIMIT 1),
+                       c.created_at, c.updated_at
+                FROM customers AS c
+                WHERE c.id = ?
+                """,
+                (normalized_customer_id,),
+            ).fetchone()
+        if row is None:
+            raise TelegramRegistryError("customer was not found")
+        return CustomerListItem(
+            customer_id=int(row[0]), email_display=str(row[1]), origin=str(row[2]), status=str(row[3]),
+            row_version=int(row[4]), telegram_user_id=int(row[5]) if row[5] is not None else None,
+            created_at=str(row[6]), updated_at=str(row[7]),
+        )
 
 
 def exact_node_ids(rows: Iterable[CustomerNodeMatrixRow]) -> set[int]:

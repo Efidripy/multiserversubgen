@@ -174,3 +174,33 @@ def test_job_reconcile_is_admin_only_and_queues_no_remote_work_inline(tmp_path):
         f"/api/v1/telegram/jobs/{approval.job_id}/reconcile",
         json={"expected_job_version": 1, "idempotency_key": "viewer-reconcile"},
     ).status_code == 403
+
+
+def test_customer_read_endpoints_are_admin_only_and_hide_unrelated_nodes(tmp_path):
+    client = _build_client(tmp_path)
+    db_path = str(tmp_path / "admin.db")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="customer-api", origin="manual", email_source="admin", public_code="customer-api"
+    )
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (1, 1)")
+
+    listing = client.get("/api/v1/telegram/customers", params={"query": "customer-api"})
+    assert listing.status_code == 200
+    assert listing.json()["total"] == 1
+    assert listing.json()["items"][0]["customer_id"] == customer_id
+    assert client.get(f"/api/v1/telegram/customers/{customer_id}").status_code == 200
+    nodes = client.get(f"/api/v1/telegram/customers/{customer_id}/nodes")
+    assert nodes.status_code == 200
+    assert nodes.json()["items"] == [{
+        "node_id": 1,
+        "node_name": "edge-1",
+        "state": "available_to_add",
+        "binding_id": None,
+        "desired_enabled": None,
+        "management_state": None,
+    }]
+
+    viewer = _build_client(tmp_path, username="viewer", role="viewer")
+    assert viewer.get("/api/v1/telegram/customers").status_code == 403

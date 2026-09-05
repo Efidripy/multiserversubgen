@@ -190,6 +190,46 @@ def build_telegram_admin_router(
             raise translate_registry_error(exc) from exc
         return {"job": asdict(result), "remote_io": "not_started"}
 
+    @router.get("/api/v1/telegram/customers")
+    def list_customers(
+        request: Request,
+        query: str = "",
+        status: str | None = None,
+        page: int = 1,
+        page_size: int = 50,
+        include_deleted: bool = False,
+    ):
+        require_admin(request)
+        try:
+            return asdict(
+                registry.list_customers(
+                    query=query,
+                    status=status,
+                    page=page,
+                    page_size=page_size,
+                    include_deleted=include_deleted,
+                )
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.get("/api/v1/telegram/customers/{customer_id}")
+    def get_customer(customer_id: int, request: Request):
+        require_admin(request)
+        try:
+            return {"item": asdict(registry.get_customer(customer_id))}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.get("/api/v1/telegram/customers/{customer_id}/nodes")
+    def get_customer_nodes(customer_id: int, request: Request):
+        require_admin(request)
+        try:
+            registry.get_customer(customer_id)
+            return {"items": [asdict(item) for item in registry.customer_node_matrix(customer_id)]}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
     @router.get("/api/v1/telegram/node-policies")
     def list_node_policies(request: Request):
         require_admin(request)

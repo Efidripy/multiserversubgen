@@ -263,6 +263,30 @@ def test_customer_node_matrix_hides_technical_nodes_but_keeps_problem_bindings(t
     assert rows[1].binding_id is None
 
 
+def test_customer_page_searches_only_local_authority_and_matrix_remains_filtered(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "technical")
+    _insert_node(db_path, 2, "allowed")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="paged-user", origin="manual", email_source="admin", public_code="paged-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (2, 1)")
+        conn.execute(
+            "INSERT INTO telegram_identities (telegram_user_id, chat_id, username, customer_id, access_status) "
+            "VALUES (777, 777, 'pager', ?, 'approved')",
+            (customer_id,),
+        )
+
+    page = registry.list_customers(query="pager", page=1, page_size=10)
+    assert page.total == 1
+    assert page.items[0].customer_id == customer_id
+    assert page.items[0].telegram_user_id == 777
+    assert [row.node_id for row in registry.customer_node_matrix(customer_id)] == [2]
+
+
 def test_pending_queue_suggests_safe_transliterated_name_and_approval_creates_only_local_job(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
