@@ -48,6 +48,20 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert "umask 077" in script
 
 
+def test_nginx_generation_routes_the_telegram_webhook_before_the_ui_catch_all():
+    expected_route = 'location ^~ /$WEB_PATH/telegram/ {'
+    expected_upstream = 'proxy_pass http://127.0.0.1:$APP_PORT/telegram/;'
+    expected_rate_limit = 'limit_req zone=telegram_webhook_zone burst=20 nodelay;'
+
+    for relative_path in ("scripts/installer/install.sh", "scripts/installer/update.sh"):
+        script = (REPO / relative_path).read_text(encoding="utf-8")
+        assert 'limit_req_zone \\$binary_remote_addr zone=telegram_webhook_zone:10m rate=10r/s;' in script
+        assert expected_route in script
+        assert expected_upstream in script
+        assert expected_rate_limit in script
+        assert script.index(expected_route) < script.index('location ^~ /$WEB_PATH/ {')
+
+
 def test_linux_only_uvloop_extra_is_pinned_and_hashed_for_require_hashes_deploys():
     expected = 'uvloop==0.22.1 ; sys_platform != "win32"'
     expected_hash = "--hash=sha256:7b5b1ac819a3f946d3b2ee07f09149578ae76066d70b44df3fa990add49a82e4"

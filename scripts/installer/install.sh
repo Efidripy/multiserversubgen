@@ -1308,6 +1308,7 @@ generate_nginx_snippet() {
 # DO NOT EDIT MANUALLY - changes will be overwritten on update.
 
 limit_req_zone \$binary_remote_addr zone=sub_grouped_zone:10m rate=2r/s;
+limit_req_zone \$binary_remote_addr zone=telegram_webhook_zone:10m rate=10r/s;
 limit_req_status 429;
 SHIELD
 
@@ -1360,6 +1361,27 @@ ${mtls_directives}${allowlist_directives}    limit_req zone=sub_grouped_zone bur
 # --- API proxy (must precede the UI catch-all location) ---
 location ^~ /$WEB_PATH/api/ {
 ${mtls_directives}${allowlist_directives}    proxy_pass http://127.0.0.1:$APP_PORT/api/;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header X-Forwarded-Host \$host;
+    proxy_intercept_errors off;
+    proxy_buffering off;
+    proxy_request_buffering off;
+    add_header Cache-Control "no-store" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "same-origin" always;
+}
+
+# --- Telegram webhook (path secret and Bot API header are verified by FastAPI) ---
+# This route intentionally does not inherit panel mTLS/IP controls: Telegram
+# delivers from its own network.  It remains isolated by an opaque URL suffix,
+# the X-Telegram-Bot-Api-Secret-Token check, and a bounded per-IP rate limit.
+location ^~ /$WEB_PATH/telegram/ {
+    limit_req zone=telegram_webhook_zone burst=20 nodelay;
+    proxy_pass http://127.0.0.1:$APP_PORT/telegram/;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
     proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
