@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const node = {
   id: 42,
@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   deleteNode: vi.fn(),
   restartXray: vi.fn(),
   stopXray: vi.fn(),
+  translate: (key: string) => key,
   dashboardData: {
     summary: null,
     fleet: [] as typeof node[],
@@ -38,7 +39,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('react-i18next', () => ({
-  useTranslation: () => ({ t: (key: string) => key }),
+  useTranslation: () => ({ t: mocks.translate }),
 }));
 
 vi.mock('../src/api/nodes', () => ({
@@ -65,6 +66,16 @@ import { RegisteredFleetPanel } from '../src/components/RegisteredFleetPanel';
 afterEach(cleanup);
 
 describe('RegisteredFleetPanel edit action', () => {
+  beforeEach(() => {
+    mocks.getRegisteredFleetOverview.mockReset();
+    mocks.listNodes.mockReset();
+    mocks.deleteNode.mockReset();
+    mocks.restartXray.mockReset();
+    mocks.stopXray.mockReset();
+    mocks.dashboardData.fleet = [];
+    mocks.dashboardData.refresh.mockReset();
+  });
+
   it('passes the selected node to the edit flow instead of opening the add-node flow', async () => {
     const onEditNode = vi.fn();
     const onOpenNodes = vi.fn();
@@ -93,7 +104,13 @@ describe('RegisteredFleetPanel edit action', () => {
     mocks.dashboardData.fleet = [node];
     mocks.listNodes.mockImplementation((options: { signal?: AbortSignal }) => {
       signal = options.signal;
-      return new Promise(() => {});
+      return new Promise((_resolve, reject) => {
+        options.signal?.addEventListener(
+          'abort',
+          () => reject(new DOMException('Request aborted', 'AbortError')),
+          { once: true },
+        );
+      });
     });
 
     const view = render(

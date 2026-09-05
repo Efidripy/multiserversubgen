@@ -52,6 +52,30 @@ def test_telegram_policy_routes_are_admin_only(tmp_path):
     assert client.put("/api/v1/telegram/node-policies/1", json=_policy_payload()).status_code == 403
 
 
+def test_transport_routes_keep_direct_default_and_reject_unconfigured_local_mode(tmp_path):
+    client = _build_client(tmp_path)
+
+    current = client.get("/api/v1/telegram/transport")
+    assert current.status_code == 200
+    assert current.json()["transport"] == {
+        "mode": "direct",
+        "row_version": 1,
+        "configured": False,
+        "reachable": False,
+        "updated_by": "system",
+        "updated_at": current.json()["transport"]["updated_at"],
+    }
+    rejected = client.put(
+        "/api/v1/telegram/transport",
+        json={"mode": "local_proxy", "expected_row_version": 1},
+    )
+    assert rejected.status_code == 409
+    assert "not configured" in rejected.json()["detail"]
+
+    viewer = _build_client(tmp_path, username="viewer", role="viewer")
+    assert viewer.get("/api/v1/telegram/transport").status_code == 403
+
+
 def test_policy_route_uses_backend_inbound_proof_and_normalizes_defaults(tmp_path):
     client = _build_client(
         tmp_path,

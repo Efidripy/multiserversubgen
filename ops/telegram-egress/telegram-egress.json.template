@@ -1,0 +1,67 @@
+{
+  "log": {
+    "loglevel": "warning"
+  },
+  "inbounds": [
+    {
+      "tag": "telegram-http-loopback",
+      "listen": "127.0.0.1",
+      "port": 1082,
+      "protocol": "http",
+      "settings": {
+        "allowTransparent": false
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"],
+        "routeOnly": true
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "tag": "eu-vless",
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "__EU_VLESS_ADDRESS__",
+            "port": 443,
+            "users": [
+              {
+                "id": "__EU_VLESS_UUID__",
+                "encryption": "none",
+                "flow": "xtls-rprx-vision"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "serverName": "__EU_REALITY_SERVER_NAME__",
+          "publicKey": "__EU_REALITY_PUBLIC_KEY__",
+          "shortId": "__EU_REALITY_SHORT_ID__",
+          "spiderX": "/"
+        }
+      }
+    },
+    {
+      "tag": "blocked",
+      "protocol": "blackhole"
+    }
+  ],
+  "routing": {
+    "domainStrategy": "AsIs",
+    "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["telegram-http-loopback"],
+        "outboundTag": "eu-vless"
+      }
+    ]
+  }
+}
