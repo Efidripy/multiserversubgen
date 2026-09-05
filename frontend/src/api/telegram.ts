@@ -58,7 +58,7 @@ export type CustomerOperation = {
 
 export type CustomerOperationPreview = {
   customer_id: number;
-  operation_type: 'suspend' | 'resume' | 'delete';
+  operation_type: 'suspend' | 'resume' | 'delete' | 'suspend_node' | 'resume_node';
   expected_customer_version: number;
   target_snapshot_digest: string;
   targets: Array<{ binding_id: number; node_id: number; node_name: string; action: string; previous_enabled: boolean | null }>;
@@ -110,6 +110,40 @@ export async function previewCustomerOperation(customerId: number, operationType
 export async function queueCustomerOperation(preview: CustomerOperationPreview): Promise<void> {
   await api.post(
     `/v1/telegram/customers/${preview.customer_id}/lifecycle`,
+    {
+      operation_type: preview.operation_type,
+      expected_customer_version: preview.expected_customer_version,
+      target_snapshot_digest: preview.target_snapshot_digest,
+      idempotency_key: newIdempotencyKey(),
+    },
+    { auth: getAuth() },
+  );
+}
+
+export async function addCustomerNode(customer: TelegramCustomer, nodeId: number): Promise<void> {
+  await api.post(
+    `/v1/telegram/customers/${customer.customer_id}/nodes/${nodeId}/add`,
+    { expected_customer_version: customer.row_version, idempotency_key: newIdempotencyKey() },
+    { auth: getAuth() },
+  );
+}
+
+export async function previewCustomerNodeOperation(
+  customerId: number,
+  nodeId: number,
+  operationType: 'suspend_node' | 'resume_node',
+): Promise<CustomerOperationPreview> {
+  const response = await api.post(
+    `/v1/telegram/customers/${customerId}/nodes/${nodeId}/operation/preview`,
+    { operation_type: operationType },
+    { auth: getAuth() },
+  );
+  return response.data?.preview as CustomerOperationPreview;
+}
+
+export async function queueCustomerNodeOperation(preview: CustomerOperationPreview, nodeId: number): Promise<void> {
+  await api.post(
+    `/v1/telegram/customers/${preview.customer_id}/nodes/${nodeId}/operation`,
     {
       operation_type: preview.operation_type,
       expected_customer_version: preview.expected_customer_version,

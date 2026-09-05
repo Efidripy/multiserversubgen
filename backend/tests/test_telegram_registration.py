@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from routers.telegram_webhook import build_telegram_webhook_router
 from services.db_bootstrap import connect, init_db
+from services.subscription_tokens import resolve_token
 from services.telegram_registration import TelegramOutboundMessage, TelegramRegistrationService
 from services.telegram_registry import TelegramRegistry
 
@@ -24,6 +25,30 @@ def _message(update_id: int, text: str) -> dict:
             "chat": {"id": 42, "type": "private"},
             "from": {"id": 42, "username": "new_user", "first_name": "New"},
             "text": text,
+        },
+    }
+
+
+def _admin_message(update_id: int, text: str) -> dict:
+    return {
+        "update_id": update_id,
+        "message": {
+            "message_id": update_id,
+            "chat": {"id": 108100140, "type": "private"},
+            "from": {"id": 108100140, "username": "owner", "first_name": "Owner"},
+            "text": text,
+        },
+    }
+
+
+def _admin_callback(update_id: int, data: str) -> dict:
+    return {
+        "update_id": update_id,
+        "callback_query": {
+            "id": f"admin-{update_id}",
+            "from": {"id": 108100140, "username": "owner", "first_name": "Owner"},
+            "message": {"chat": {"id": 108100140, "type": "private"}},
+            "data": data,
         },
     }
 
@@ -75,6 +100,127 @@ def test_pending_user_can_submit_one_voluntary_introduction(tmp_path):
     assert "необязательно" in prompt[0].text.lower()
     assert "спасибо" in accepted[0].text.lower()
     assert "ожидает" in repeated[0].text.lower()
+
+
+def test_approved_user_gets_opaque_subscription_link_and_rotation_invalidates_previous_token(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="new_user", first_name="New", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="new_user", origin="telegram", email_source="telegram_username", public_code="new-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda nodes, email, protocol: ["vless://opaque-link"],
+    )
+
+    status = service.handle_update(_message(10, "/start"))
+    link = service.handle_update(_message(11, "/subscription"))
+    old_token = link[0].text.rsplit("/", 1)[-1]
+    confirm_prompt = service.handle_update(
+        {
+            "update_id": 12,
+            "callback_query": {
+                "id": "rotate-1",
+                "from": {"id": 42, "first_name": "New"},
+                "message": {"chat": {"id": 42, "type": "private"}},
+                "data": "subscription:rotate",
+            },
+        }
+    )
+    rotated = service.handle_update(
+        {
+            "update_id": 13,
+            "callback_query": {
+                "id": "rotate-2",
+                "from": {"id": 42, "first_name": "New"},
+                "message": {"chat": {"id": 42, "type": "private"}},
+                "data": "subscription:rotate:confirm",
+            },
+        }
+    )
+    new_token = rotated[0].text.rsplit("/", 1)[-1]
+
+    assert "active" in status[0].text
+    assert "https://bot.example.test/api/v1/sub/" in link[0].text
+    assert old_token != new_token
+    assert resolve_token(db_path, "email", old_token) is None
+    assert resolve_token(db_path, "email", new_token) == "new_user"
+    assert "подтвердить" in confirm_prompt[0].text.lower()
+
+
+def test_suspended_user_can_send_one_bounded_appeal_without_automatic_resume(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="appeal_user", first_name="Appeal", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="appeal_user", origin="telegram", email_source="telegram_username", public_code="appeal-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+        conn.execute("UPDATE customers SET status = 'suspended' WHERE id = ?", (customer_id,))
+    service = TelegramRegistrationService(TelegramRegistry(db_path), introduction_max_chars=700)
+    prompt = service.handle_update(
+        {
+            "update_id": 20,
+            "callback_query": {
+                "id": "appeal-1",
+                "from": {"id": 42, "first_name": "Appeal"},
+                "message": {"chat": {"id": 42, "type": "private"}},
+                "data": "support:appeal",
+            },
+        }
+    )
+    sent = service.handle_update(_message(21, "Я всё понял и больше не буду нарушать."))
+
+    assert "администратору" in prompt[0].text.lower()
+    assert "принято" in sent[0].text.lower()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT status FROM customers WHERE id = ?", (customer_id,)).fetchone()[0] == "suspended"
+        assert conn.execute("SELECT COUNT(*) FROM telegram_appeals WHERE customer_id = ?", (customer_id,)).fetchone()[0] == 1
+
+
+def test_primary_admin_can_toggle_only_a_compatible_node_from_the_bot(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+    service = TelegramRegistrationService(
+        TelegramRegistry(db_path),
+        introduction_max_chars=700,
+        primary_admin_id=108100140,
+        list_nodes=lambda: [{"id": 1, "name": "edge-a", "enabled": 1, "read_only": 0}],
+        get_cached_inbound_options=lambda _nodes: [
+            {"node_id": 1, "id": 1, "enable": True, "protocol": "vless", "tlsFlowCapable": True}
+        ],
+    )
+
+    home = service.handle_update(_admin_message(30, "/admin"))
+    nodes = service.handle_update(_admin_callback(31, "admin:nodes:0"))
+    toggled = service.handle_update(_admin_callback(32, "admin:node:1:0"))
+
+    assert "управление" in home[0].text.lower()
+    assert "tg-ноды" in nodes[0].text.lower()
+    assert "включена" in toggled[0].text.lower()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT provisioning_enabled FROM telegram_node_policies WHERE node_id = 1").fetchone()[0] == 1
 
 
 class _Sender:

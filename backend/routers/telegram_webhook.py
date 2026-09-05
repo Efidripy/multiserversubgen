@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from urllib.error import URLError
 from urllib.request import Request as UrlRequest
 from urllib.request import urlopen
@@ -44,11 +44,25 @@ class TelegramApiSender:
             raise RuntimeError("Telegram delivery failed") from exc
 
 
-def build_telegram_webhook_router(*, telegram_settings, db_path: str, sender: TelegramMessageSender | None = None):
+def build_telegram_webhook_router(
+    *,
+    telegram_settings,
+    db_path: str,
+    sender: TelegramMessageSender | None = None,
+    list_nodes: Callable[[], list[dict[str, Any]]] | None = None,
+    get_links_filtered: Callable[[list[dict[str, Any]], str, str | None], list[str]] | None = None,
+    get_cached_inbound_options: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
+):
     router = APIRouter()
     registry = TelegramRegistry(db_path)
     service = TelegramRegistrationService(
-        registry, introduction_max_chars=telegram_settings.introduction_max_chars
+        registry,
+        introduction_max_chars=telegram_settings.introduction_max_chars,
+        public_base_url=getattr(telegram_settings, "public_base_url", ""),
+        list_nodes=list_nodes,
+        get_links_filtered=get_links_filtered,
+        primary_admin_id=getattr(telegram_settings, "primary_admin_id", None),
+        get_cached_inbound_options=get_cached_inbound_options,
     )
     message_sender = sender or TelegramApiSender(telegram_settings.bot_token)
 

@@ -60,6 +60,17 @@ class TelegramIdentity:
 
 
 @dataclass(frozen=True)
+class TelegramCustomerAccess:
+    telegram_user_id: int
+    chat_id: int
+    access_status: str
+    customer_id: int | None
+    email_display: str | None
+    customer_status: str | None
+    customer_row_version: int | None
+
+
+@dataclass(frozen=True)
 class NodeProvisioningPolicy:
     node_id: int
     provisioning_enabled: bool
@@ -131,6 +142,33 @@ class AbuseNoopResult:
 
 
 @dataclass(frozen=True)
+class AppealResult:
+    appeal_id: int
+    created: bool
+    status: str
+
+
+@dataclass(frozen=True)
+class AppealAdminItem:
+    appeal_id: int
+    telegram_user_id: int
+    customer_id: int
+    email_display: str
+    body: str
+    status: str
+    row_version: int
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class AppealResolutionResult:
+    appeal_id: int
+    status: str
+    row_version: int
+
+
+@dataclass(frozen=True)
 class ProvisioningAttemptStatus:
     node_id: int
     node_name: str
@@ -158,6 +196,15 @@ class ProvisioningJobStatus:
 @dataclass(frozen=True)
 class ProvisioningRescheduleResult:
     job_id: int
+    status: str
+    row_version: int
+
+
+@dataclass(frozen=True)
+class NodeProvisioningQueueResult:
+    job_id: int
+    customer_id: int
+    node_id: int
     status: str
     row_version: int
 
@@ -408,6 +455,12 @@ class TelegramRegistry:
     def __init__(self, db_path: str):
         self._db_path = db_path
 
+    @property
+    def database_path(self) -> str:
+        """Configured local authority path for sibling local-only services."""
+
+        return self._db_path
+
     def get_or_create_identity(
         self,
         *,
@@ -476,6 +529,182 @@ class TelegramRegistry:
             customer_id=int(row[4]) if row[4] is not None else None,
             row_version=int(row[5]),
         )
+
+    def get_customer_access(self, telegram_user_id: int) -> TelegramCustomerAccess:
+        """Resolve approved access strictly from the numeric Telegram identity."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT i.telegram_user_id, i.chat_id, i.access_status, i.customer_id,
+                       c.email_display, c.status, c.row_version
+                FROM telegram_identities AS i
+                LEFT JOIN customers AS c ON c.id = i.customer_id
+                WHERE i.telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            raise TelegramRegistryError("Telegram identity was not found")
+        return TelegramCustomerAccess(
+            telegram_user_id=int(row[0]),
+            chat_id=int(row[1]),
+            access_status=str(row[2]),
+            customer_id=int(row[3]) if row[3] is not None else None,
+            email_display=str(row[4]) if row[4] is not None else None,
+            customer_status=str(row[5]) if row[5] is not None else None,
+            customer_row_version=int(row[6]) if row[6] is not None else None,
+        )
+
+    def submit_suspended_appeal(self, *, telegram_user_id: int, body: str) -> AppealResult:
+        """Store one bounded appeal; it never changes customer access."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        normalized_body = body.strip()
+        if not 1 <= len(normalized_body) <= 1000:
+            raise TelegramRegistryError("appeal body must contain 1 to 1000 characters")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT i.customer_id, i.access_status, c.status
+                FROM telegram_identities AS i
+                JOIN customers AS c ON c.id = i.customer_id
+                WHERE i.telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if row is None or str(row[1]) != "approved" or str(row[2]) not in {
+                "suspended", "suspend_partial", "resume_partial"
+            }:
+                raise TelegramRegistryError("appeal is available only for a suspended customer")
+            try:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO telegram_appeals (telegram_user_id, customer_id, body)
+                    VALUES (?, ?, ?)
+                    """,
+                    (user_id, int(row[0]), normalized_body),
+                )
+                appeal_id = int(cursor.lastrowid)
+                result = AppealResult(appeal_id=appeal_id, created=True, status="open")
+                conn.execute(
+                    """
+                    INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
+                    VALUES ('admin_appeal_created', ?, ?, ?)
+                    """,
+                    (str(appeal_id), f"admin:appeal-created:{appeal_id}", json.dumps({"appeal_id": appeal_id})),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO telegram_audit_log
+                        (event_type, actor_type, actor_id, entity_type, entity_id)
+                    VALUES ('appeal_created', 'telegram_user', ?, 'telegram_appeal', ?)
+                    """,
+                    (str(user_id), str(appeal_id)),
+                )
+            except sqlite3.IntegrityError:
+                existing = conn.execute(
+                    """
+                    SELECT id, status FROM telegram_appeals
+                    WHERE telegram_user_id = ? AND status = 'open'
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (user_id,),
+                ).fetchone()
+                if existing is None:
+                    raise TelegramRegistryError("appeal could not be stored")
+                return AppealResult(appeal_id=int(existing[0]), created=False, status=str(existing[1]))
+        return result
+
+    def list_appeals(self, *, status: str = "open", limit: int = 100) -> list[AppealAdminItem]:
+        if status not in {"open", "handled", "rejected", "all"}:
+            raise TelegramRegistryError("appeal status is invalid")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise TelegramRegistryError("limit must be an integer from 1 to 200")
+        where = "" if status == "all" else "WHERE a.status = ?"
+        params: tuple[Any, ...] = (status, limit) if status != "all" else (limit,)
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT a.id, a.telegram_user_id, a.customer_id, c.email_display, a.body, a.status,
+                       a.row_version, a.created_at, a.updated_at
+                FROM telegram_appeals AS a
+                JOIN customers AS c ON c.id = a.customer_id
+                """
+                + where
+                + " ORDER BY a.created_at DESC, a.id DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [
+            AppealAdminItem(
+                appeal_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
+                email_display=str(row[3]), body=str(row[4]), status=str(row[5]), row_version=int(row[6]),
+                created_at=str(row[7]), updated_at=str(row[8]),
+            )
+            for row in rows
+        ]
+
+    def resolve_appeal(
+        self,
+        *,
+        appeal_id: int,
+        expected_row_version: int,
+        status: str,
+        idempotency_key: str,
+        resolved_by: str,
+    ) -> AppealResolutionResult:
+        normalized_id = _positive_int(appeal_id, "appeal_id")
+        expected_version = _positive_int(expected_row_version, "expected_row_version")
+        if status not in {"handled", "rejected"}:
+            raise TelegramRegistryError("appeal resolution status is invalid")
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(resolved_by, "resolved_by")
+        digest = _payload_digest({"appeal_id": normalized_id, "expected_row_version": expected_version, "status": status})
+        scope = "resolve_appeal"
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts WHERE scope = ? AND idempotency_key = ?",
+                (scope, key),
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return AppealResolutionResult(**json.loads(str(receipt[1])))
+            row = conn.execute(
+                "SELECT row_version, status FROM telegram_appeals WHERE id = ?", (normalized_id,)
+            ).fetchone()
+            if row is None:
+                raise TelegramRegistryError("appeal was not found")
+            if int(row[0]) != expected_version or str(row[1]) != "open":
+                raise VersionConflictError("appeal was updated by another administrator")
+            update = conn.execute(
+                """
+                UPDATE telegram_appeals
+                SET status = ?, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'open' AND row_version = ?
+                """,
+                (status, normalized_id, expected_version),
+            )
+            if update.rowcount != 1:
+                raise VersionConflictError("appeal was updated by another administrator")
+            result = AppealResolutionResult(normalized_id, status, expected_version + 1)
+            conn.execute(
+                """
+                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (scope, key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('appeal_resolved', 'admin', ?, 'telegram_appeal', ?, ?)
+                """,
+                (actor, str(normalized_id), digest),
+            )
+        return result
 
     def create_customer(
         self,
@@ -1781,6 +2010,146 @@ class TelegramRegistry:
                 )
         return result
 
+    def queue_customer_node_add(
+        self,
+        *,
+        customer_id: int,
+        node_id: int,
+        expected_customer_version: int,
+        idempotency_key: str,
+        created_by: str,
+    ) -> NodeProvisioningQueueResult:
+        """Queue one exact node add using the same reconcile-first worker as approval."""
+
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        local_node_id = _positive_int(node_id, "node_id")
+        expected_version = _positive_int(expected_customer_version, "expected_customer_version")
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(created_by, "created_by")
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'customer_node_add' AND idempotency_key = ?",
+                (key,),
+            ).fetchone()
+            payload = {
+                "customer_id": local_customer_id,
+                "node_id": local_node_id,
+                "expected_customer_version": expected_version,
+            }
+            digest = _payload_digest(payload)
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return NodeProvisioningQueueResult(**json.loads(str(receipt[1])))
+
+            customer = conn.execute(
+                "SELECT email_display, status, row_version FROM customers "
+                "WHERE id = ? AND deleted_at IS NULL",
+                (local_customer_id,),
+            ).fetchone()
+            if customer is None:
+                raise TelegramRegistryError("customer was not found")
+            if str(customer[1]) != "active":
+                raise LifecycleUnavailableError("node can be added only to an active customer")
+            if int(customer[2]) != expected_version:
+                raise VersionConflictError("customer was updated by another operation")
+            existing = conn.execute(
+                "SELECT id FROM customer_node_bindings WHERE customer_id = ? AND node_id = ? AND inbound_id = 1",
+                (local_customer_id, local_node_id),
+            ).fetchone()
+            if existing is not None:
+                raise VersionConflictError("customer is already assigned to this node")
+            pending = conn.execute(
+                """
+                SELECT 1
+                FROM telegram_provisioning_jobs AS j
+                JOIN telegram_provisioning_attempts AS a ON a.job_id = j.id
+                WHERE j.customer_id = ? AND a.node_id = ? AND a.inbound_id = 1
+                  AND j.status IN ('queued', 'running', 'partial')
+                  AND a.status IN ('pending', 'reconciling', 'creating', 'ambiguous')
+                LIMIT 1
+                """,
+                (local_customer_id, local_node_id),
+            ).fetchone()
+            if pending is not None:
+                raise LifecycleUnavailableError("customer is already being added to this node")
+            policy = conn.execute(
+                """
+                SELECT p.provisioning_enabled, p.total_bytes, p.validity_days,
+                       p.client_enabled, p.policy_version, n.enabled, n.read_only
+                FROM telegram_node_policies AS p
+                JOIN nodes AS n ON n.id = p.node_id
+                WHERE p.node_id = ?
+                """,
+                (local_node_id,),
+            ).fetchone()
+            if policy is None or not bool(policy[0]) or not bool(policy[5]) or bool(policy[6]):
+                raise NodePolicyUnavailableError("node is not eligible for Telegram provisioning")
+
+            desired_expiry_time = (
+                int(datetime.now(timezone.utc).timestamp() * 1000)
+                + int(policy[2]) * 24 * 60 * 60 * 1000
+                if int(policy[2]) > 0
+                else 0
+            )
+            snapshot = {
+                "customer_id": local_customer_id,
+                "node_id": local_node_id,
+                "email": str(customer[0]),
+                "inbound_id": BOT_INBOUND_ID,
+                "flow": BOT_CLIENT_FLOW,
+                "policy_version": int(policy[4]),
+            }
+            job = conn.execute(
+                """
+                INSERT INTO telegram_provisioning_jobs
+                    (customer_id, trigger, idempotency_key, policy_snapshot_digest, created_by)
+                VALUES (?, 'node_backfill', ?, ?, ?)
+                """,
+                (local_customer_id, f"node-add:{key}", _payload_digest(snapshot), actor),
+            )
+            job_id = int(job.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO telegram_provisioning_attempts
+                    (job_id, node_id, inbound_id, desired_client_id, desired_sub_id,
+                     desired_flow, desired_total_bytes, desired_validity_days,
+                     desired_expiry_time, desired_client_enabled, policy_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job_id, local_node_id, BOT_INBOUND_ID, str(uuid.uuid4()), str(uuid.uuid4()),
+                    BOT_CLIENT_FLOW, int(policy[1]), int(policy[2]), desired_expiry_time,
+                    int(bool(policy[3])), int(policy[4]),
+                ),
+            )
+            update = conn.execute(
+                "UPDATE customers SET row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND row_version = ? AND deleted_at IS NULL",
+                (local_customer_id, expected_version),
+            )
+            if update.rowcount != 1:
+                raise VersionConflictError("customer was updated by another operation")
+            result = NodeProvisioningQueueResult(
+                job_id=job_id, customer_id=local_customer_id, node_id=local_node_id,
+                status="queued", row_version=expected_version + 1,
+            )
+            conn.execute(
+                "INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json) "
+                "VALUES ('customer_node_add', ?, ?, ?)",
+                (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('customer_node_add_queued', 'admin', ?, 'customer', ?, ?)
+                """,
+                (actor, str(local_customer_id), digest),
+            )
+        return result
+
     def list_customers(
         self,
         *,
@@ -2011,6 +2380,215 @@ class TelegramRegistry:
                 conn, customer_id=normalized_customer_id, operation_type=normalized_operation
             )
         return preview
+
+    @staticmethod
+    def _node_operation_type(value: str) -> str:
+        if value not in {"suspend_node", "resume_node"}:
+            raise TelegramRegistryError("unsupported customer node operation")
+        return value
+
+    def _customer_node_operation_snapshot(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        customer_id: int,
+        node_id: int,
+        operation_type: str,
+    ) -> tuple[CustomerOperationPreview, dict[str, Any]]:
+        customer = conn.execute(
+            "SELECT status, row_version FROM customers WHERE id = ? AND deleted_at IS NULL",
+            (customer_id,),
+        ).fetchone()
+        if customer is None:
+            raise TelegramRegistryError("customer was not found")
+        if str(customer[0]) != "active":
+            raise LifecycleUnavailableError("node operation requires an active customer")
+        binding = conn.execute(
+            """
+            SELECT b.id, b.node_id, n.name, b.inbound_id, b.remote_client_id,
+                   b.remote_sub_id, b.remote_email, b.management_state,
+                   b.desired_enabled, b.suspended_by_operation_id
+            FROM customer_node_bindings AS b
+            JOIN nodes AS n ON n.id = b.node_id
+            WHERE b.customer_id = ? AND b.node_id = ? AND b.inbound_id = 1
+            """,
+            (customer_id, node_id),
+        ).fetchone()
+        if binding is None:
+            raise LifecycleUnavailableError("customer is not assigned to this node")
+        if str(binding[7]) != "confirmed" or not binding[4]:
+            raise LifecycleUnavailableError("node binding has no exact confirmed remote target")
+        if operation_type == "suspend_node":
+            if not bool(binding[8]):
+                raise LifecycleUnavailableError("customer is already suspended on this node")
+            action = "set_enabled_false"
+            previous_enabled = None
+        else:
+            if bool(binding[8]) or binding[9] is None:
+                raise LifecycleUnavailableError("customer is not suspended by a node operation")
+            previous = conn.execute(
+                """
+                SELECT a.previous_enabled
+                FROM telegram_customer_operation_attempts AS a
+                JOIN telegram_customer_operations AS o ON o.id = a.operation_id
+                WHERE a.binding_id = ? AND o.operation_type = 'suspend_node'
+                  AND a.action = 'set_enabled_false' AND a.status = 'succeeded'
+                ORDER BY a.id DESC LIMIT 1
+                """,
+                (int(binding[0]),),
+            ).fetchone()
+            if previous is None or previous[0] is None:
+                raise LifecycleUnavailableError("suspend snapshot is unavailable")
+            action = "restore_previous_enabled"
+            previous_enabled = bool(previous[0])
+
+        active_operation = conn.execute(
+            """
+            SELECT 1
+            FROM telegram_customer_operations AS o
+            JOIN telegram_customer_operation_attempts AS a ON a.operation_id = o.id
+            WHERE o.customer_id = ? AND a.node_id = ?
+              AND o.status IN ('queued', 'running', 'partial')
+            LIMIT 1
+            """,
+            (customer_id, node_id),
+        ).fetchone()
+        if active_operation is not None:
+            raise LifecycleUnavailableError("this node already has an active operation")
+
+        target = {
+            "binding_id": int(binding[0]),
+            "node_id": int(binding[1]),
+            "inbound_id": int(binding[3]),
+            "remote_client_id": str(binding[4]),
+            "remote_sub_id": str(binding[5] or ""),
+            "remote_email": str(binding[6]),
+            "action": action,
+            "previous_enabled": previous_enabled,
+        }
+        snapshot = {
+            "customer_id": customer_id,
+            "node_id": node_id,
+            "operation_type": operation_type,
+            "expected_customer_version": int(customer[1]),
+            "target": target,
+        }
+        preview = CustomerOperationPreview(
+            customer_id=customer_id,
+            operation_type=operation_type,
+            expected_customer_version=int(customer[1]),
+            target_snapshot_digest=_payload_digest(snapshot),
+            targets=(CustomerOperationTarget(
+                binding_id=int(binding[0]), node_id=int(binding[1]), node_name=str(binding[2]),
+                inbound_id=int(binding[3]), action=action, previous_enabled=previous_enabled,
+            ),),
+            blocked_binding_ids=(),
+        )
+        return preview, target
+
+    def preview_customer_node_operation(
+        self, *, customer_id: int, node_id: int, operation_type: str
+    ) -> CustomerOperationPreview:
+        normalized_customer_id = _positive_int(customer_id, "customer_id")
+        normalized_node_id = _positive_int(node_id, "node_id")
+        normalized_operation = self._node_operation_type(operation_type)
+        with connect(self._db_path) as conn:
+            preview, _ = self._customer_node_operation_snapshot(
+                conn, customer_id=normalized_customer_id, node_id=normalized_node_id,
+                operation_type=normalized_operation,
+            )
+        return preview
+
+    def queue_customer_node_operation(
+        self,
+        *,
+        customer_id: int,
+        node_id: int,
+        operation_type: str,
+        expected_customer_version: int,
+        target_snapshot_digest: str,
+        idempotency_key: str,
+        created_by: str,
+    ) -> CustomerOperationQueueResult:
+        normalized_customer_id = _positive_int(customer_id, "customer_id")
+        normalized_node_id = _positive_int(node_id, "node_id")
+        normalized_operation = self._node_operation_type(operation_type)
+        expected_version = _positive_int(expected_customer_version, "expected_customer_version")
+        expected_digest = _nonempty(target_snapshot_digest, "target_snapshot_digest")
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(created_by, "created_by")
+        payload = {
+            "customer_id": normalized_customer_id,
+            "node_id": normalized_node_id,
+            "operation_type": normalized_operation,
+            "expected_customer_version": expected_version,
+            "target_snapshot_digest": expected_digest,
+        }
+        digest = _payload_digest(payload)
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'customer_node_operation' AND idempotency_key = ?",
+                (key,),
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return CustomerOperationQueueResult(**json.loads(str(receipt[1])))
+            preview, target = self._customer_node_operation_snapshot(
+                conn, customer_id=normalized_customer_id, node_id=normalized_node_id,
+                operation_type=normalized_operation,
+            )
+            if preview.expected_customer_version != expected_version or preview.target_snapshot_digest != expected_digest:
+                raise VersionConflictError("node operation preview is stale")
+            update = conn.execute(
+                "UPDATE customers SET row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND row_version = ? AND status = 'active' AND deleted_at IS NULL",
+                (normalized_customer_id, expected_version),
+            )
+            if update.rowcount != 1:
+                raise VersionConflictError("customer was updated by another operation")
+            operation = conn.execute(
+                """
+                INSERT INTO telegram_customer_operations
+                    (customer_id, operation_type, status, target_snapshot_digest,
+                     expected_customer_version, idempotency_key, created_by)
+                VALUES (?, ?, 'queued', ?, ?, ?, ?)
+                """,
+                (normalized_customer_id, normalized_operation, expected_digest, expected_version, key, actor),
+            )
+            operation_id = int(operation.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO telegram_customer_operation_attempts
+                    (operation_id, binding_id, node_id, inbound_id, remote_client_id,
+                     remote_sub_id, remote_email, action, previous_enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    operation_id, target["binding_id"], target["node_id"], target["inbound_id"],
+                    target["remote_client_id"], target["remote_sub_id"], target["remote_email"],
+                    target["action"], int(target["previous_enabled"]) if target["previous_enabled"] is not None else None,
+                ),
+            )
+            result = CustomerOperationQueueResult(
+                operation_id=operation_id, customer_id=normalized_customer_id,
+                operation_type=normalized_operation, status="queued", row_version=1,
+            )
+            conn.execute(
+                "INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json) "
+                "VALUES ('customer_node_operation', ?, ?, ?)",
+                (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES (?, 'admin', ?, 'customer_operation', ?, ?)
+                """,
+                (f"customer_{normalized_operation}_queued", actor, str(operation_id), digest),
+            )
+        return result
 
     def _get_customer_operation_from_conn(
         self, conn: sqlite3.Connection, operation_id: int

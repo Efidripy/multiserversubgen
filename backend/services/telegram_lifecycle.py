@@ -410,17 +410,29 @@ class TelegramLifecycleWorker:
         }
         pending = sum(counts.get(name, 0) for name in ("pending", "ambiguous", "reconciling", "writing"))
         if pending:
-            operation_status, customer_status, finished = "partial", f"{operation_type}_partial", False
+            operation_status = "partial"
+            customer_status = None if operation_type in {"suspend_node", "resume_node"} else f"{operation_type}_partial"
+            finished = False
         elif counts and counts.get("succeeded", 0) == sum(counts.values()):
             operation_status = "succeeded"
-            customer_status = {"suspend": "suspended", "resume": "active", "delete": "deleted"}[operation_type]
+            customer_status = (
+                None
+                if operation_type in {"suspend_node", "resume_node"}
+                else {"suspend": "suspended", "resume": "active", "delete": "deleted"}[operation_type]
+            )
             finished = True
         elif not counts:
             operation_status = "succeeded"
-            customer_status = {"suspend": "suspended", "resume": "active", "delete": "deleted"}[operation_type]
+            customer_status = (
+                None
+                if operation_type in {"suspend_node", "resume_node"}
+                else {"suspend": "suspended", "resume": "active", "delete": "deleted"}[operation_type]
+            )
             finished = True
         else:
-            operation_status, customer_status, finished = "partial", f"{operation_type}_partial", True
+            operation_status = "partial"
+            customer_status = None if operation_type in {"suspend_node", "resume_node"} else f"{operation_type}_partial"
+            finished = True
 
         conn.execute(
             """
@@ -452,7 +464,7 @@ class TelegramLifecycleWorker:
                 """,
                 (customer_id,),
             )
-        else:
+        elif customer_status is not None:
             conn.execute(
                 """
                 UPDATE customers

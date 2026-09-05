@@ -4,6 +4,7 @@ import { useToast } from './Toast';
 import { UIIcon } from './UIIcon';
 import {
   approveTelegramRequest,
+  addCustomerNode,
   CustomerNode,
   CustomerOperation,
   CustomerOperationPreview,
@@ -12,7 +13,9 @@ import {
   listTelegramCustomers,
   listTelegramRequests,
   previewCustomerOperation,
+  previewCustomerNodeOperation,
   queueCustomerOperation,
+  queueCustomerNodeOperation,
   retryCustomerOperation,
   TelegramCustomer,
   TelegramRequest,
@@ -35,6 +38,7 @@ export const TelegramAdmin: React.FC = () => {
   const [nodes, setNodes] = useState<CustomerNode[]>([]);
   const [operations, setOperations] = useState<CustomerOperation[]>([]);
   const [preview, setPreview] = useState<CustomerOperationPreview | null>(null);
+  const [previewNodeId, setPreviewNodeId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
@@ -62,6 +66,7 @@ export const TelegramAdmin: React.FC = () => {
   const selectCustomer = useCallback(async (customer: TelegramCustomer) => {
     setSelectedCustomerId(customer.customer_id);
     setPreview(null);
+    setPreviewNodeId(null);
     try {
       const [nextNodes, nextOperations] = await Promise.all([
         getCustomerNodes(customer.customer_id),
@@ -93,6 +98,36 @@ export const TelegramAdmin: React.FC = () => {
     try {
       const next = await previewCustomerOperation(selectedCustomer.customer_id, operationType);
       setPreview(next);
+      setPreviewNodeId(null);
+    } catch {
+      toast(t('telegram.previewFailed'), 'error');
+    } finally {
+      setMutating(false);
+    }
+  };
+
+  const addNode = async (node: CustomerNode) => {
+    if (!selectedCustomer || !window.confirm(t('telegram.addNodeConfirm', { node: node.node_name }))) return;
+    setMutating(true);
+    try {
+      await addCustomerNode(selectedCustomer, node.node_id);
+      toast(t('telegram.nodeOperationQueued'), 'success');
+      await load();
+      await selectCustomer(selectedCustomer);
+    } catch {
+      toast(t('telegram.actionFailed'), 'error');
+    } finally {
+      setMutating(false);
+    }
+  };
+
+  const makeNodePreview = async (node: CustomerNode, operationType: 'suspend_node' | 'resume_node') => {
+    if (!selectedCustomer) return;
+    setMutating(true);
+    try {
+      const next = await previewCustomerNodeOperation(selectedCustomer.customer_id, node.node_id, operationType);
+      setPreview(next);
+      setPreviewNodeId(node.node_id);
     } catch {
       toast(t('telegram.previewFailed'), 'error');
     } finally {
@@ -104,7 +139,8 @@ export const TelegramAdmin: React.FC = () => {
     if (!preview) return;
     setMutating(true);
     try {
-      await queueCustomerOperation(preview);
+      if (previewNodeId === null) await queueCustomerOperation(preview);
+      else await queueCustomerNodeOperation(preview, previewNodeId);
       toast(t('telegram.operationQueued'), 'success');
       setPreview(null);
       await load();
@@ -159,9 +195,9 @@ export const TelegramAdmin: React.FC = () => {
                 <div className="mt-3 flex flex-wrap gap-2">
                   {(['suspend', 'resume', 'delete'] as const).map((operationType) => <button key={operationType} type="button" className={operationType === 'delete' ? `${buttonClass} border-rose-400/25 text-rose-200 hover:text-rose-100` : buttonClass} onClick={() => void makePreview(operationType)} disabled={mutating}>{t(`telegram.${operationType}`)}</button>)}
                 </div>
-                {preview && <div className="mt-3 rounded-lg border border-amber-400/25 bg-amber-400/5 p-3"><p className="text-xs text-amber-100">{t('telegram.previewText', { operation: t(`telegram.${preview.operation_type}`), count: preview.targets.length })}</p>{preview.blocked_binding_ids.length > 0 && <p className="mt-1 text-xs text-rose-200">{t('telegram.previewBlocked')}</p>}<div className="mt-2 flex gap-2"><button type="button" className={primaryButtonClass} disabled={mutating || preview.blocked_binding_ids.length > 0} onClick={() => void confirmPreview()}>{t('common.confirm')}</button><button type="button" className={buttonClass} onClick={() => setPreview(null)}>{t('common.cancel')}</button></div></div>}
+                {preview && <div className="mt-3 rounded-lg border border-amber-400/25 bg-amber-400/5 p-3"><p className="text-xs text-amber-100">{t('telegram.previewText', { operation: t(`telegram.${preview.operation_type}`, preview.operation_type), count: preview.targets.length })}</p>{preview.blocked_binding_ids.length > 0 && <p className="mt-1 text-xs text-rose-200">{t('telegram.previewBlocked')}</p>}<div className="mt-2 flex gap-2"><button type="button" className={primaryButtonClass} disabled={mutating || preview.blocked_binding_ids.length > 0} onClick={() => void confirmPreview()}>{t('common.confirm')}</button><button type="button" className={buttonClass} onClick={() => { setPreview(null); setPreviewNodeId(null); }}>{t('common.cancel')}</button></div></div>}
                 <h5 className="mt-5 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.nodes')}</h5>
-                <div className="mt-2 space-y-1">{nodes.map((node) => <div key={node.node_id} className="flex items-center justify-between gap-2 text-xs"><span className="truncate text-slate-300">{node.node_name}</span><span className="font-mono text-[10px] text-slate-500">{node.state}</span></div>)}</div>
+                <div className="mt-2 space-y-1">{nodes.map((node) => <div key={node.node_id} className="flex items-center justify-between gap-2 rounded border border-cyan-500/10 px-2 py-1.5 text-xs"><span className="truncate text-slate-300">{node.node_name}</span><div className="flex shrink-0 items-center gap-2"><span className="font-mono text-[10px] text-slate-500">{node.state}</span>{node.state === 'available_to_add' && <button type="button" className={buttonClass} disabled={mutating || selectedCustomer.status !== 'active'} onClick={() => void addNode(node)}>{t('telegram.addNode')}</button>}{node.state === 'active' && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void makeNodePreview(node, 'suspend_node')}>{t('telegram.suspendNode')}</button>}{node.state === 'suspended' && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void makeNodePreview(node, 'resume_node')}>{t('telegram.resumeNode')}</button>}</div></div>)}</div>
                 <h5 className="mt-5 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.operations')}</h5>
                 <div className="mt-2 space-y-2">{operations.map((operation) => <div key={operation.operation_id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-cyan-500/15 px-2 py-2 text-xs"><span className="text-slate-300">{operation.operation_type} · {operation.status}</span>{operation.status === 'partial' && <button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await retryCustomerOperation(operation); toast(t('telegram.operationQueued'), 'success'); await selectCustomer(selectedCustomer); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reconcile')}</button>}</div>)}</div>
               </>}

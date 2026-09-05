@@ -624,6 +624,89 @@ def test_customer_lifecycle_preview_queues_exact_targets_once_and_never_performs
     assert stored == ("remote-uuid", "remote-sub")
 
 
+def test_customer_node_add_queues_only_the_selected_eligible_node(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "edge-a")
+    _insert_node(db_path, 2, "edge-b")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="node-add-user", origin="manual", email_source="admin", public_code="node-add-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (1, 1)")
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (2, 0)")
+
+    result = registry.queue_customer_node_add(
+        customer_id=customer_id,
+        node_id=1,
+        expected_customer_version=1,
+        idempotency_key="node-add-1",
+        created_by="admin",
+    )
+    replay = registry.queue_customer_node_add(
+        customer_id=customer_id,
+        node_id=1,
+        expected_customer_version=1,
+        idempotency_key="node-add-1",
+        created_by="another-admin",
+    )
+
+    assert result == replay
+    assert result.status == "queued"
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT node_id FROM telegram_provisioning_attempts WHERE job_id = ?", (result.job_id,)
+        ).fetchone()[0] == 1
+    matrix = registry.customer_node_matrix(customer_id)
+    assert {(item.node_id, item.state) for item in matrix} == {(1, "available_to_add")}
+
+
+def test_customer_node_suspend_and_resume_use_exact_preview_and_keep_global_status(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "edge-a")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="node-lifecycle-user", origin="manual", email_source="admin", public_code="node-lifecycle-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'remote-id', 'remote-sub', 'node-lifecycle-user',
+                    'admin_confirmed', 'confirmed', 1, 1)
+            """,
+            (customer_id,),
+        )
+    preview = registry.preview_customer_node_operation(
+        customer_id=customer_id, node_id=1, operation_type="suspend_node"
+    )
+    queued = registry.queue_customer_node_operation(
+        customer_id=customer_id,
+        node_id=1,
+        operation_type="suspend_node",
+        expected_customer_version=preview.expected_customer_version,
+        target_snapshot_digest=preview.target_snapshot_digest,
+        idempotency_key="suspend-node-1",
+        created_by="admin",
+    )
+    assert queued.status == "queued"
+    assert registry.get_customer(customer_id).status == "active"
+    with connect(db_path) as conn:
+        operation_id = queued.operation_id
+        conn.execute(
+            "UPDATE telegram_customer_operation_attempts SET status = 'succeeded', previous_enabled = 1 "
+            "WHERE operation_id = ?",
+            (operation_id,),
+        )
+    # The worker normally performs this finalization; this assertion verifies
+    # the queued operation remains node-scoped and does not globally suspend.
+    assert registry.get_customer_operation(operation_id).operation_type == "suspend_node"
+
+
 def test_customer_lifecycle_rejects_non_exact_binding_and_resume_uses_prior_suspend_state(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)

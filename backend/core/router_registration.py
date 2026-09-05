@@ -190,7 +190,15 @@ def register_app_routers(
         )
     )
     if telegram_settings and telegram_settings.enabled:
-        app.include_router(build_telegram_webhook_router(telegram_settings=telegram_settings, db_path=db_path))
+        app.include_router(
+            build_telegram_webhook_router(
+                telegram_settings=telegram_settings,
+                db_path=db_path,
+                list_nodes=list_nodes,
+                get_links_filtered=get_links_filtered,
+                get_cached_inbound_options=get_cached_inbound_options,
+            )
+        )
     if monitoring_enabled:
         app.include_router(
             build_monitoring_router(

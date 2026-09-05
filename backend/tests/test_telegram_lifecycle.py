@@ -192,3 +192,52 @@ def test_conflicting_remote_email_never_triggers_lifecycle_write(tmp_path):
     operation = registry.get_customer_operation(operation_id)
     assert operation.status == "partial"
     assert operation.attempts[0].status == "conflict"
+
+
+def test_node_suspend_worker_changes_only_selected_binding_and_keeps_customer_active(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (2, 'edge-b', 1, 0)")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="node-worker", origin="manual", email_source="admin", public_code="node-worker"
+    )
+    with connect(db_path) as conn:
+        for node_id, remote_id in ((1, "remote-a"), (2, "remote-b")):
+            conn.execute(
+                """
+                INSERT INTO customer_node_bindings
+                    (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                     source, management_state, desired_enabled, last_enabled)
+                VALUES (?, ?, 1, ?, ?, 'node-worker', 'admin_confirmed', 'confirmed', 1, 1)
+                """,
+                (customer_id, node_id, remote_id, f"sub-{node_id}"),
+            )
+    preview = registry.preview_customer_node_operation(
+        customer_id=customer_id, node_id=1, operation_type="suspend_node"
+    )
+    operation = registry.queue_customer_node_operation(
+        customer_id=customer_id,
+        node_id=1,
+        operation_type="suspend_node",
+        expected_customer_version=preview.expected_customer_version,
+        target_snapshot_digest=preview.target_snapshot_digest,
+        idempotency_key="node-worker-suspend",
+        created_by="admin",
+    )
+    port = FakeLifecyclePort()
+    port.clients = [RemoteClient("remote-a", "node-worker", "sub-1", "xtls-rprx-vision", True)]
+
+    result = _worker(db_path, port).run_once()
+
+    assert result.outcome == "succeeded"
+    assert port.update_calls == [("remote-a", False)]
+    assert registry.get_customer(customer_id).status == "active"
+    assert registry.get_customer_operation(operation.operation_id).status == "succeeded"
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT node_id, desired_enabled, suspended_by_operation_id FROM customer_node_bindings ORDER BY node_id"
+        ).fetchall()
+    assert rows == [(1, 0, operation.operation_id), (2, 1, None)]

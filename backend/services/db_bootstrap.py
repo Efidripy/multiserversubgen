@@ -259,6 +259,36 @@ def init_db(db_path: str) -> None:
             "ON telegram_applications(status, created_at)"
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_appeals
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      telegram_user_id INTEGER NOT NULL,
+                      customer_id INTEGER NOT NULL,
+                      body TEXT NOT NULL CHECK(length(trim(body)) BETWEEN 1 AND 1000),
+                      status TEXT NOT NULL DEFAULT 'open'
+                        CHECK(status IN ('open', 'handled', 'rejected')),
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT)"""
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_appeals_one_open "
+            "ON telegram_appeals(telegram_user_id) WHERE status = 'open'"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_appeals_status_created "
+            "ON telegram_appeals(status, created_at)"
+        )
+        appeal_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(telegram_appeals)").fetchall()
+        }
+        if "row_version" not in appeal_columns:
+            conn.execute(
+                "ALTER TABLE telegram_appeals ADD COLUMN row_version INTEGER NOT NULL DEFAULT 1"
+            )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_node_policies
                      (node_id INTEGER PRIMARY KEY,
                       provisioning_enabled INTEGER NOT NULL DEFAULT 0

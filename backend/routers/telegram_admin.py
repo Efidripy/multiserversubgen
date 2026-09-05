@@ -66,6 +66,29 @@ def build_telegram_admin_router(
         require_admin(request)
         return {"items": [asdict(item) for item in registry.list_pending_applications()]}
 
+    @router.get("/api/v1/telegram/appeals")
+    def list_telegram_appeals(request: Request, status: str = "open", limit: int = 100):
+        require_admin(request)
+        try:
+            return {"items": [asdict(item) for item in registry.list_appeals(status=status, limit=limit)]}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.post("/api/v1/telegram/appeals/{appeal_id}/resolve")
+    def resolve_telegram_appeal(appeal_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.resolve_appeal(
+                appeal_id=appeal_id,
+                expected_row_version=data.get("expected_row_version"),
+                status=data.get("status"),
+                idempotency_key=data.get("idempotency_key"),
+                resolved_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"appeal": asdict(result), "remote_io": "not_started"}
+
     @router.get("/api/v1/telegram/requests/{telegram_user_id}")
     def get_pending_request(telegram_user_id: int, request: Request):
         require_admin(request)
@@ -233,6 +256,53 @@ def build_telegram_admin_router(
             return {"items": [asdict(item) for item in registry.customer_node_matrix(customer_id)]}
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
+
+    @router.post("/api/v1/telegram/customers/{customer_id}/nodes/{node_id}/add")
+    def add_customer_node(customer_id: int, node_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.queue_customer_node_add(
+                customer_id=customer_id,
+                node_id=node_id,
+                expected_customer_version=data.get("expected_customer_version"),
+                idempotency_key=data.get("idempotency_key"),
+                created_by=username,
+            )
+        except (VersionConflictError, IdempotencyConflictError, NodePolicyUnavailableError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"job": asdict(result), "remote_io": "not_started"}
+
+    @router.post("/api/v1/telegram/customers/{customer_id}/nodes/{node_id}/operation/preview")
+    def preview_customer_node_operation(customer_id: int, node_id: int, request: Request, data: Dict):
+        require_admin(request)
+        try:
+            preview = registry.preview_customer_node_operation(
+                customer_id=customer_id,
+                node_id=node_id,
+                operation_type=data.get("operation_type"),
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"preview": asdict(preview), "remote_io": "not_started"}
+
+    @router.post("/api/v1/telegram/customers/{customer_id}/nodes/{node_id}/operation")
+    def queue_customer_node_operation(customer_id: int, node_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.queue_customer_node_operation(
+                customer_id=customer_id,
+                node_id=node_id,
+                operation_type=data.get("operation_type"),
+                expected_customer_version=data.get("expected_customer_version"),
+                target_snapshot_digest=data.get("target_snapshot_digest"),
+                idempotency_key=data.get("idempotency_key"),
+                created_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"operation": asdict(result), "remote_io": "not_started"}
 
     @router.post("/api/v1/telegram/customers/{customer_id}/lifecycle/preview")
     def preview_customer_lifecycle(customer_id: int, request: Request, data: Dict):
