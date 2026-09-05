@@ -90,6 +90,18 @@ export async function approveTelegramRequest(request: TelegramRequest, emailDisp
   );
 }
 
+export async function rejectTelegramRequest(request: TelegramRequest): Promise<void> {
+  await api.post(`/v1/telegram/requests/${request.telegram_user_id}/reject`, {
+    expected_identity_version: request.row_version, idempotency_key: newIdempotencyKey(),
+  }, { auth: getAuth() });
+}
+
+export async function blockTelegramRequest(request: TelegramRequest): Promise<void> {
+  await api.post(`/v1/telegram/identities/${request.telegram_user_id}/block`, {
+    expected_identity_version: request.row_version, idempotency_key: newIdempotencyKey(),
+  }, { auth: getAuth() });
+}
+
 export async function listTelegramCustomers(query = ''): Promise<TelegramCustomer[]> {
   const response = await api.get('/v1/telegram/customers', { auth: getAuth(), params: { query, page_size: 100 } });
   return Array.isArray(response.data?.items) ? response.data.items : [];
