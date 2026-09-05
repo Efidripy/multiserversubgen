@@ -126,6 +126,30 @@ class AbuseNoopResult:
     noop_count: int
 
 
+@dataclass(frozen=True)
+class ProvisioningAttemptStatus:
+    node_id: int
+    node_name: str
+    status: str
+    error_code: str | None
+    error_summary: str | None
+    attempt_count: int
+    next_attempt_at: str | None
+
+
+@dataclass(frozen=True)
+class ProvisioningJobStatus:
+    job_id: int
+    customer_id: int
+    customer_email: str
+    trigger: str
+    status: str
+    attempt_count: int
+    created_at: str
+    finished_at: str | None
+    attempts: tuple[ProvisioningAttemptStatus, ...]
+
+
 _RESERVED_EMAILS = {"admin", "root", "support", "system", "telegram", "bot", "null", "undefined"}
 _TRANSLITERATION = str.maketrans(
     {
@@ -702,17 +726,24 @@ class TelegramRegistry:
             )
             job_id = int(job.lastrowid)
             for policy in policies:
+                desired_expiry_time = (
+                    int(datetime.now(timezone.utc).timestamp() * 1000)
+                    + int(policy[2]) * 24 * 60 * 60 * 1000
+                    if int(policy[2]) > 0
+                    else 0
+                )
                 conn.execute(
                     """
                     INSERT INTO telegram_provisioning_attempts
                         (job_id, node_id, inbound_id, desired_client_id, desired_sub_id,
                          desired_flow, desired_total_bytes, desired_validity_days,
-                         desired_client_enabled, policy_version)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         desired_expiry_time, desired_client_enabled, policy_version)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         job_id, int(policy[0]), BOT_INBOUND_ID, str(uuid.uuid4()), str(uuid.uuid4()),
-                        BOT_CLIENT_FLOW, int(policy[1]), int(policy[2]), int(bool(policy[3])), int(policy[4]),
+                        BOT_CLIENT_FLOW, int(policy[1]), int(policy[2]), desired_expiry_time,
+                        int(bool(policy[3])), int(policy[4]),
                     ),
                 )
             identity_update = conn.execute(
@@ -1412,6 +1443,94 @@ class TelegramRegistry:
                 """
             ).fetchall()
         return [_policy_from_row(row) for row in rows]
+
+    def list_provisioning_jobs(self, *, limit: int = 100) -> list[ProvisioningJobStatus]:
+        """Admin projection for job state; deliberately excludes remote UUIDs/sub IDs."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise TelegramRegistryError("limit must be an integer from 1 to 200")
+        with connect(self._db_path) as conn:
+            jobs = conn.execute(
+                """
+                SELECT j.id, j.customer_id, c.email_display, j.trigger, j.status, j.attempt_count,
+                       j.created_at, j.finished_at
+                FROM telegram_provisioning_jobs AS j
+                JOIN customers AS c ON c.id = j.customer_id
+                ORDER BY j.created_at DESC, j.id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            attempts = conn.execute(
+                """
+                SELECT a.job_id, a.node_id, n.name, a.status, a.error_code, a.error_summary,
+                       a.attempt_count, a.next_attempt_at
+                FROM telegram_provisioning_attempts AS a
+                JOIN nodes AS n ON n.id = a.node_id
+                ORDER BY a.job_id DESC, n.name COLLATE NOCASE, a.node_id
+                """
+            ).fetchall()
+        grouped: dict[int, list[ProvisioningAttemptStatus]] = {}
+        for job_id, node_id, node_name, status, error_code, error_summary, attempt_count, next_attempt_at in attempts:
+            grouped.setdefault(int(job_id), []).append(
+                ProvisioningAttemptStatus(
+                    node_id=int(node_id), node_name=str(node_name), status=str(status),
+                    error_code=str(error_code) if error_code is not None else None,
+                    error_summary=str(error_summary) if error_summary is not None else None,
+                    attempt_count=int(attempt_count),
+                    next_attempt_at=str(next_attempt_at) if next_attempt_at is not None else None,
+                )
+            )
+        return [
+            ProvisioningJobStatus(
+                job_id=int(job[0]), customer_id=int(job[1]), customer_email=str(job[2]),
+                trigger=str(job[3]), status=str(job[4]), attempt_count=int(job[5]),
+                created_at=str(job[6]), finished_at=str(job[7]) if job[7] is not None else None,
+                attempts=tuple(grouped.get(int(job[0]), [])),
+            )
+            for job in jobs
+        ]
+
+    def get_provisioning_job(self, job_id: int) -> ProvisioningJobStatus:
+        normalized_job_id = _positive_int(job_id, "job_id")
+        with connect(self._db_path) as conn:
+            job = conn.execute(
+                """
+                SELECT j.id, j.customer_id, c.email_display, j.trigger, j.status, j.attempt_count,
+                       j.created_at, j.finished_at
+                FROM telegram_provisioning_jobs AS j
+                JOIN customers AS c ON c.id = j.customer_id
+                WHERE j.id = ?
+                """,
+                (normalized_job_id,),
+            ).fetchone()
+            attempts = conn.execute(
+                """
+                SELECT a.node_id, n.name, a.status, a.error_code, a.error_summary,
+                       a.attempt_count, a.next_attempt_at
+                FROM telegram_provisioning_attempts AS a
+                JOIN nodes AS n ON n.id = a.node_id
+                WHERE a.job_id = ?
+                ORDER BY n.name COLLATE NOCASE, a.node_id
+                """,
+                (normalized_job_id,),
+            ).fetchall()
+        if job is None:
+            raise TelegramRegistryError("provisioning job was not found")
+        return ProvisioningJobStatus(
+            job_id=int(job[0]), customer_id=int(job[1]), customer_email=str(job[2]),
+            trigger=str(job[3]), status=str(job[4]), attempt_count=int(job[5]),
+            created_at=str(job[6]), finished_at=str(job[7]) if job[7] is not None else None,
+            attempts=tuple(
+                ProvisioningAttemptStatus(
+                    node_id=int(attempt[0]), node_name=str(attempt[1]), status=str(attempt[2]),
+                    error_code=str(attempt[3]) if attempt[3] is not None else None,
+                    error_summary=str(attempt[4]) if attempt[4] is not None else None,
+                    attempt_count=int(attempt[5]),
+                    next_attempt_at=str(attempt[6]) if attempt[6] is not None else None,
+                )
+                for attempt in attempts
+            ),
+        )
 
     def list_node_provisioning_policies(self) -> list[NodeProvisioningPolicy]:
         """Return persisted policies only; absent rows mean the safe off default."""

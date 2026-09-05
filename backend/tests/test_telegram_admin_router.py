@@ -119,9 +119,18 @@ def test_request_queue_is_admin_only_and_approval_queues_local_work_without_remo
         assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings").fetchone()[0] == 0
 
+    jobs = client.get("/api/v1/telegram/jobs")
+    assert jobs.status_code == 200
+    assert jobs.json()["items"][0]["status"] == "queued"
+    assert jobs.json()["items"][0]["attempts"][0]["node_id"] == 1
+    assert "desired_client_id" not in str(jobs.json())
+    job_id = response.json()["approval"]["job_id"]
+    assert client.get(f"/api/v1/telegram/jobs/{job_id}").status_code == 200
+
     viewer = _build_client(tmp_path, username="viewer", role="viewer")
     assert viewer.get("/api/v1/telegram/requests").status_code == 403
     assert viewer.post(
         "/api/v1/telegram/requests/42/approve-new",
         json={"expected_identity_version": 2, "idempotency_key": "viewer"},
     ).status_code == 403
+    assert viewer.get("/api/v1/telegram/jobs").status_code == 403

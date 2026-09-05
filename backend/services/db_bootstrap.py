@@ -349,6 +349,7 @@ def init_db(db_path: str) -> None:
                       desired_flow TEXT NOT NULL DEFAULT 'xtls-rprx-vision',
                       desired_total_bytes INTEGER NOT NULL DEFAULT 0 CHECK(desired_total_bytes >= 0),
                       desired_validity_days INTEGER NOT NULL DEFAULT 0 CHECK(desired_validity_days >= 0),
+                      desired_expiry_time INTEGER NOT NULL DEFAULT 0 CHECK(desired_expiry_time >= 0),
                       desired_client_enabled INTEGER NOT NULL DEFAULT 1
                         CHECK(desired_client_enabled IN (0, 1)),
                       policy_version INTEGER NOT NULL CHECK(policy_version > 0),
@@ -392,6 +393,11 @@ def init_db(db_path: str) -> None:
                 "desired_validity_days",
                 "ALTER TABLE telegram_provisioning_attempts "
                 "ADD COLUMN desired_validity_days INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "desired_expiry_time",
+                "ALTER TABLE telegram_provisioning_attempts "
+                "ADD COLUMN desired_expiry_time INTEGER NOT NULL DEFAULT 0",
             ),
             (
                 "desired_client_enabled",

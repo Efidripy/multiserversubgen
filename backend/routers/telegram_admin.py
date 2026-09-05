@@ -144,6 +144,22 @@ def build_telegram_admin_router(
             raise translate_registry_error(exc) from exc
         return {"identity": asdict(result)}
 
+    @router.get("/api/v1/telegram/jobs")
+    def list_provisioning_jobs(request: Request, limit: int = 100):
+        require_admin(request)
+        try:
+            return {"items": [asdict(item) for item in registry.list_provisioning_jobs(limit=limit)]}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.get("/api/v1/telegram/jobs/{job_id}")
+    def get_provisioning_job(job_id: int, request: Request):
+        require_admin(request)
+        try:
+            return {"item": asdict(registry.get_provisioning_job(job_id))}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
     @router.get("/api/v1/telegram/node-policies")
     def list_node_policies(request: Request):
         require_admin(request)

@@ -145,11 +145,16 @@ class TelegramSettings:
     webhook_path_suffix: str
     public_base_url: str
     introduction_max_chars: int
+    provisioning_worker_enabled: bool
+    provisioning_worker_interval_sec: int
 
 
 def _load_telegram_settings() -> TelegramSettings:
     enabled = _env_bool("TELEGRAM_BOT_ENABLED", "false")
+    worker_requested = _env_bool("TELEGRAM_PROVISIONING_WORKER_ENABLED", "false")
     if not enabled:
+        if worker_requested:
+            raise RuntimeError("TELEGRAM_PROVISIONING_WORKER_ENABLED requires TELEGRAM_BOT_ENABLED=true")
         return TelegramSettings(
             enabled=False,
             bot_token="",
@@ -159,6 +164,8 @@ def _load_telegram_settings() -> TelegramSettings:
             webhook_path_suffix="",
             public_base_url="",
             introduction_max_chars=700,
+            provisioning_worker_enabled=False,
+            provisioning_worker_interval_sec=5,
         )
 
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -179,6 +186,14 @@ def _load_telegram_settings() -> TelegramSettings:
     introduction_max_chars = _bounded_env_int(
         "TELEGRAM_INTRODUCTION_MAX_CHARS", default=700, minimum=1, maximum=700
     )
+    remote_writes_allowed = _env_bool("TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES", "false")
+    if worker_requested and not remote_writes_allowed:
+        raise RuntimeError(
+            "TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES=true is required before starting the provisioning worker"
+        )
+    provisioning_worker_interval_sec = _bounded_env_int(
+        "TELEGRAM_PROVISIONING_WORKER_INTERVAL_SEC", default=5, minimum=1, maximum=300
+    )
     return TelegramSettings(
         enabled=True,
         bot_token=bot_token,
@@ -188,6 +203,8 @@ def _load_telegram_settings() -> TelegramSettings:
         webhook_path_suffix=webhook_path_suffix,
         public_base_url=public_base_url,
         introduction_max_chars=introduction_max_chars,
+        provisioning_worker_enabled=worker_requested,
+        provisioning_worker_interval_sec=provisioning_worker_interval_sec,
     )
 
 

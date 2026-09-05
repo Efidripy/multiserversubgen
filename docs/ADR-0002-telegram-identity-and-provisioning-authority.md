@@ -44,6 +44,19 @@ node to become the authority for the customer lifecycle.
   unique no-op action in a rolling ten-minute window auto-blocks an unapproved
   identity; the first 50 do not. Manual unblock resets the active window but
   leaves the audit trail intact.
+- Each provisioning attempt also stores an absolute expiry timestamp before
+  remote I/O. Reconciliation and retry cannot silently extend a limited
+  customer's entitlement. The worker takes a recoverable SQLite job lease,
+  reads the exact inbound first, and only writes when a verified empty result
+  is available; read/add uncertainty becomes `ambiguous`, never a blind retry.
+- The existing fleet dashboard reader is not a provisioning authority because
+  it represents an unreachable node as an empty partial projection. A separate
+  strict node read adapter fails closed on auth, transport and malformed API
+  responses before the worker can attempt an add.
+- Immediately before each write, the strict adapter re-reads `inbound_id=1`
+  and requires an enabled VLESS inbound with TLS/Reality flow capability. A
+  later policy toggle does not mutate a job snapshot, but an incompatible or
+  unreadable current inbound still blocks that attempt safely.
 - Provisioning and destructive lifecycle work run through durable jobs and
   exact binding identifiers. They reconcile before retry and never perform
   blind lookup or automatic destructive rollback.

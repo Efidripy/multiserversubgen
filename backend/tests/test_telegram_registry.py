@@ -313,7 +313,7 @@ def test_pending_queue_suggests_safe_transliterated_name_and_approval_creates_on
         attempts = conn.execute(
             """
             SELECT node_id, inbound_id, desired_flow, desired_total_bytes, desired_validity_days,
-                   desired_client_enabled, policy_version, desired_client_id, desired_sub_id
+                   desired_expiry_time, desired_client_enabled, policy_version, desired_client_id, desired_sub_id
             FROM telegram_provisioning_attempts WHERE job_id = ? ORDER BY node_id
             """,
             (approved.job_id,),
@@ -325,11 +325,13 @@ def test_pending_queue_suggests_safe_transliterated_name_and_approval_creates_on
         assert conn.execute("SELECT COUNT(*) FROM telegram_outbox WHERE event_type = 'user_provisioning_queued'").fetchone()[0] == 1
     assert customer == ("ivan-petrov", "telegram_name")
     assert identity == ("approved", approved.customer_id)
-    assert [row[:7] for row in attempts] == [
+    assert [row[:5] + row[6:8] for row in attempts] == [
         (1, 1, "xtls-rprx-vision", 0, 0, 1, 1),
         (2, 1, "xtls-rprx-vision", 123, 7, 0, 1),
     ]
-    assert all(len(row[7]) == 36 and len(row[8]) == 36 for row in attempts)
+    assert attempts[0][5] == 0
+    assert attempts[1][5] > 0
+    assert all(len(row[8]) == 36 and len(row[9]) == 36 for row in attempts)
 
 
 def test_approval_fails_closed_without_target_and_leaves_pending_request_unchanged(tmp_path):

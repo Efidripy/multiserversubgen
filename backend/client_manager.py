@@ -767,6 +767,115 @@ class ClientManager:
                 logger.warning(f"Failed to aggregate clients: {exc}")
 
         return all_clients
+
+    def get_node_clients_strict(self, node: Dict) -> List[Dict]:
+        """Read one node's full client projection or raise a typed-safe error.
+
+        The dashboard-oriented ``get_all_clients`` deliberately degrades an
+        unavailable node to an empty list so a partial fleet view remains
+        useful. Provisioning cannot make that trade-off: an empty list after a
+        failed read could cause a duplicate client. This method therefore
+        distinguishes a verified empty inbound from every auth/transport/API
+        failure and is the only read surface suitable for reconcile-before-add.
+        """
+
+        session, base_url = self._get_session(node)
+        if not session:
+            raise RuntimeError("node authentication is unavailable")
+        state, clients = self._probe_v3(session, base_url)
+        if state == "supported":
+            return [self._map_v3_client(client, node) for client in clients if isinstance(client, dict)]
+        if state != "unsupported":
+            raise RuntimeError("node client read is unavailable")
+        try:
+            response = xui_request(
+                session,
+                "GET",
+                f"{base_url}/panel/api/inbounds/list",
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
+            if response.status_code != 200:
+                raise RuntimeError("legacy inbound read was rejected")
+            payload = response.json()
+            inbounds = payload.get("obj") if isinstance(payload, dict) and payload.get("success") else None
+            if not isinstance(inbounds, list):
+                raise RuntimeError("legacy inbound payload is invalid")
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError("legacy inbound read is unavailable") from exc
+
+        result: List[Dict] = []
+        for inbound in inbounds:
+            if not isinstance(inbound, dict):
+                continue
+            try:
+                settings = parse_field_as_dict(
+                    inbound.get("settings"), node_id=str(node.get("name") or node.get("id") or "node"), field_name="settings"
+                )
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("legacy inbound settings are invalid") from exc
+            for client in settings.get("clients", []):
+                if not isinstance(client, dict):
+                    continue
+                result.append({
+                    "id": client.get("id"),
+                    "email": client.get("email", ""),
+                    "enable": client.get("enable", True),
+                    "expiryTime": client.get("expiryTime", 0),
+                    "totalGB": client.get("totalGB", 0),
+                    "subId": client.get("subId", ""),
+                    "flow": client.get("flow", ""),
+                    "inbound_id": inbound.get("id"),
+                    "inbound_ids": [inbound.get("id")] if isinstance(inbound.get("id"), int) else [],
+                })
+        return result
+
+    def inbound_supports_telegram_contract_strict(self, node: Dict, inbound_id: int) -> bool:
+        """Prove the current remote inbound can accept the fixed bot contract.
+
+        A `False` result is a confirmed incompatibility; a transport, auth or
+        malformed-response problem raises instead so callers fail closed rather
+        than treating an unknown inbound as compatible.
+        """
+
+        session, base_url = self._get_session(node)
+        if not session:
+            raise RuntimeError("node authentication is unavailable")
+        try:
+            response = xui_request(
+                session,
+                "GET",
+                f"{base_url}/panel/api/inbounds/list",
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
+            if response.status_code != 200:
+                raise RuntimeError("inbound contract read was rejected")
+            payload = response.json()
+            inbounds = payload.get("obj") if isinstance(payload, dict) and payload.get("success") else None
+            if not isinstance(inbounds, list):
+                raise RuntimeError("inbound contract payload is invalid")
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError("inbound contract read is unavailable") from exc
+        for inbound in inbounds:
+            if not isinstance(inbound, dict) or inbound.get("id") != inbound_id:
+                continue
+            try:
+                stream = parse_field_as_dict(
+                    inbound.get("streamSettings"), node_id=str(node.get("name") or node.get("id") or "node"), field_name="streamSettings"
+                )
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("inbound stream settings are invalid") from exc
+            return (
+                bool(inbound.get("enable", True))
+                and str(inbound.get("protocol") or "").lower() == "vless"
+                and str(stream.get("security") or "").lower() in {"tls", "reality"}
+            )
+        return False
     
     def add_client(self, node: Dict, inbound_id: int, client_config: Dict) -> bool:
         if self._is_read_only(node):

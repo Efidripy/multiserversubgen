@@ -17,9 +17,16 @@ BotFather и реальные remote clients этот репозиторный �
 | `TELEGRAM_WEBHOOK_SECRET` | Exact value required in `X-Telegram-Bot-Api-Secret-Token`; an absent or incorrect value is rejected. |
 | `TELEGRAM_WEBHOOK_PATH_SUFFIX` | High-entropy path component; it is compared exactly and never logged. |
 | `TELEGRAM_PUBLIC_BASE_URL` | Public HTTPS origin used for controlled webhook registration; no HTTP or implicit local fallback. |
+| `TELEGRAM_PROVISIONING_WORKER_ENABLED` | `false` by default. Starts the durable job worker only when remote writes are separately permitted. |
+| `TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES` | Separate explicit interlock. The application fails startup if the worker is requested without this value set to `true`. |
+| `TELEGRAM_PROVISIONING_WORKER_INTERVAL_SEC` | Idle poll interval, 1–300 seconds; default `5`. |
 
 The adapter validates every required setting fail-closed at startup and has no
 implicit development fallback.
+
+Enabling the worker is a staging operation, not a deployment instruction. It
+requires a separately approved staging target, fresh node compatibility proof,
+and a smoke receipt before the same interlocks may be considered for production.
 
 ## Threat model and controls
 
