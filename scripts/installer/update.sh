@@ -3,11 +3,15 @@
 # --- СКРИПТ ОБНОВЛЕНИЯ MULTI-SERVER MANAGER v3.1 ---
 LOG_FILE="/opt/.sub_manager_install.log"
 INSTALLER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCRIPT_DIR="$(cd "${INSTALLER_DIR}/../.." && pwd)"
 source "${INSTALLER_DIR}/lib/locale.sh"
+source "${INSTALLER_DIR}/lib/source_layout.sh"
+if ! mssg_resolve_source_layout "$INSTALLER_DIR"; then
+    exit 1
+fi
+SCRIPT_DIR="$MSSG_SOURCE_ROOT"
 source "${INSTALLER_DIR}/lib/resource_guard.sh"
 # shellcheck source=../ops/lib/install_log.sh
-source "${SCRIPT_DIR}/scripts/ops/lib/install_log.sh"
+source "${MSSG_OPS_DIR}/lib/install_log.sh"
 source "${INSTALLER_DIR}/lib/runtime_secrets.sh"
 source "${INSTALLER_DIR}/lib/config_activation.sh"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
@@ -320,11 +324,11 @@ pick_free_local_port() {
 
 sync_backend_files() {
     mkdir -p "$PROJECT_DIR"
-    cp "$SCRIPT_DIR/backend/"*.py "$PROJECT_DIR/"
+    cp "$MSSG_BACKEND_DIR/"*.py "$PROJECT_DIR/"
     for pkg in core modules integrations routers services shared; do
-        if [ -d "$SCRIPT_DIR/backend/$pkg" ]; then
+        if [ -d "$MSSG_BACKEND_DIR/$pkg" ]; then
             rm -rf "$PROJECT_DIR/$pkg"
-            cp -r "$SCRIPT_DIR/backend/$pkg" "$PROJECT_DIR/"
+            cp -r "$MSSG_BACKEND_DIR/$pkg" "$PROJECT_DIR/"
         fi
     done
 }
@@ -450,7 +454,7 @@ configure_monitoring_stack() {
     fi
 
     mkdir -p /etc/prometheus/rules
-    cp "$SCRIPT_DIR/monitoring/prometheus/rules.yml" /etc/prometheus/rules/sub-manager-rules.yml
+    cp "$MSSG_PROMETHEUS_RULES" /etc/prometheus/rules/sub-manager-rules.yml
     cat > /etc/prometheus/prometheus.yml <<EOF
 global:
   scrape_interval: 15s
@@ -494,9 +498,9 @@ EOF
     if [ "$adguard_loki_enabled" = "true" ]; then
         if apt_install loki promtail >/dev/null 2>&1; then
             mkdir -p /etc/loki /etc/promtail /var/lib/loki /var/lib/promtail
-            cp "$SCRIPT_DIR/monitoring/loki/loki-config.yml" /etc/loki/config.yml
-            cp "$SCRIPT_DIR/monitoring/loki/loki-config.yml" /etc/loki/local-config.yaml
-            cp "$SCRIPT_DIR/monitoring/promtail/promtail-config.yml" /etc/promtail/config.yml
+            cp "$MSSG_LOKI_CONFIG" /etc/loki/config.yml
+            cp "$MSSG_LOKI_CONFIG" /etc/loki/local-config.yaml
+            cp "$MSSG_PROMTAIL_CONFIG" /etc/promtail/config.yml
             sed -i "s|__ADGUARD_QUERYLOG_PATH__|${adguard_querylog_path}|g" /etc/promtail/config.yml
             sed -i "s|__ADGUARD_SYSTEMD_UNIT__|${adguard_systemd_unit}|g" /etc/promtail/config.yml
             chown -R loki /var/lib/loki >/dev/null 2>&1 || true
@@ -542,9 +546,9 @@ providers:
       path: /var/lib/grafana/dashboards
 EOF
 
-    cp "$SCRIPT_DIR/monitoring/grafana/sub-manager-dashboard.json" /var/lib/grafana/dashboards/sub-manager-dashboard.json
+    cp "$MSSG_GRAFANA_DASHBOARD" /var/lib/grafana/dashboards/sub-manager-dashboard.json
     if [ "$has_adguard_targets" = "true" ] || [ "$loki_ready" = "true" ]; then
-        cp "$SCRIPT_DIR/monitoring/grafana/adguard-overview-dashboard.json" /var/lib/grafana/dashboards/adguard-overview-dashboard.json
+        cp "$MSSG_GRAFANA_ADGUARD_DASHBOARD" /var/lib/grafana/dashboards/adguard-overview-dashboard.json
     else
         rm -f /var/lib/grafana/dashboards/adguard-overview-dashboard.json
     fi
@@ -803,7 +807,7 @@ activate_manager_config() {
     local stage_site="$stage_dir/selected-site.conf"
     local result=0
 
-    if ! config_activation_render_service "$SCRIPT_DIR/systemd/sub-manager.service" "$stage_unit" \
+    if ! config_activation_render_service "$MSSG_SYSTEMD_TEMPLATE" "$stage_unit" \
         || ! cp -- "$SELECTED_CFG" "$stage_site" \
         || ! generate_nginx_snippet "$stage_snippet" "$stage_shield" \
         || ! ensure_nginx_snippet_include_in_cfg "$stage_site" >/dev/null \
@@ -1246,18 +1250,18 @@ case $update_choice in
         
         echo "[2/5] Обновление всех модулей Backend..."
         sync_backend_files
-        echo "  ✓ Скопировано $(ls -1 "$SCRIPT_DIR/backend/"*.py | wc -l) модулей"
+        echo "  ✓ Скопировано $(ls -1 "$MSSG_BACKEND_DIR/"*.py | wc -l) модулей"
         
         echo "[3/5] Обновление Python-зависимостей..."
         resource_guard_export_build_env
         resource_guard_require_free_mb "${UPDATE_PYTHON_MIN_FREE_MB:-700}" "before Python dependency refresh" "/" || exit 1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --require-hashes -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt" > /dev/null 2>&1
         resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"
         echo "  ✓ Зависимости обновлены"
         
         echo "[4/5] Пересборка Frontend..."
         resource_guard_require_free_mb "${UPDATE_FRONTEND_MIN_FREE_MB:-900}" "before full frontend rebuild" "/" || exit 1
-        if ! resource_guard_run_heavy env PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$SCRIPT_DIR/scripts/deploy/build-and-publish-frontend.sh"; then
+        if ! resource_guard_run_heavy env PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$MSSG_DEPLOY_DIR/build-and-publish-frontend.sh"; then
             echo "  ❌ Ошибка сборки/публикации фронтенда. Обновление прервано."
             exit 1
         fi
@@ -1281,12 +1285,12 @@ case $update_choice in
         
         echo "[2/3] Обновление модулей Backend..."
         sync_backend_files
-        echo "  ✓ Скопировано $(ls -1 "$SCRIPT_DIR/backend/"*.py | wc -l) модулей"
+        echo "  ✓ Скопировано $(ls -1 "$MSSG_BACKEND_DIR/"*.py | wc -l) модулей"
         
         echo "  → Обновление зависимостей..."
         resource_guard_export_build_env
         resource_guard_require_free_mb "${UPDATE_PYTHON_MIN_FREE_MB:-700}" "before backend dependency refresh" "/" || exit 1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --require-hashes -r "$SCRIPT_DIR/backend/requirements.txt" > /dev/null 2>&1
+        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt" > /dev/null 2>&1
         resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"
 
         echo "[3/3] Перезапуск сервиса..."
@@ -1305,7 +1309,7 @@ case $update_choice in
         echo "[1/2] Пересборка Frontend..."
         resource_guard_export_build_env
         resource_guard_require_free_mb "${UPDATE_FRONTEND_MIN_FREE_MB:-900}" "before frontend-only rebuild" "/" || exit 1
-        if ! resource_guard_run_heavy env PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$SCRIPT_DIR/scripts/deploy/build-and-publish-frontend.sh"; then
+        if ! resource_guard_run_heavy env PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$MSSG_DEPLOY_DIR/build-and-publish-frontend.sh"; then
             echo "  ❌ Ошибка сборки/публикации фронтенда. Обновление прервано."
             exit 1
         fi
@@ -1416,9 +1420,9 @@ else
 fi
 
 echo "Ops:"
-echo "  sudo bash $SCRIPT_DIR/scripts/ops/smoke-test.sh"
-echo "  sudo bash $SCRIPT_DIR/scripts/ops/backup-restore-check.sh"
-echo "  sudo bash $SCRIPT_DIR/scripts/ops/hardening-profile.sh audit"
+echo "  sudo bash $MSSG_OPS_DIR/smoke-test.sh"
+echo "  sudo bash $MSSG_OPS_DIR/backup-restore-check.sh"
+echo "  sudo bash $MSSG_OPS_DIR/hardening-profile.sh audit"
 
         if ! run_post_update_checks; then
             echo ""
@@ -1432,7 +1436,7 @@ echo ""
 echo "Для удаления старых бэкапов (>7 дней):"
 echo "  find /var/backups/${PROJECT_NAME}_backup_* -type d -mtime +7 -exec rm -rf {} +"
 echo "Verification-артефакты backup/restore сохраняются отдельно. Сначала проверьте их:"
-echo "  sudo bash $SCRIPT_DIR/scripts/ops/backup-restore-check.sh list"
+echo "  sudo bash $MSSG_OPS_DIR/backup-restore-check.sh list"
 echo "Preview их очистки (>30 дней, без удаления):"
-echo "  sudo bash $SCRIPT_DIR/scripts/ops/backup-restore-check.sh prune-verify-artifacts --older-than 30"
+echo "  sudo bash $MSSG_OPS_DIR/backup-restore-check.sh prune-verify-artifacts --older-than 30"
 echo ""

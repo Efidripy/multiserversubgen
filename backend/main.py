@@ -30,6 +30,10 @@ from services.node_access import get_node_or_404
 from core.app_runtime_bundle import build_app_runtime_bundle
 from core.router_registration import register_app_routers
 from services.runtime_state import RuntimeState
+from services.telegram_lifecycle import TelegramLifecycleWorker
+from services.telegram_outbox import TelegramApiOutboxPort, TelegramOutboxWorker
+from services.telegram_retention import TelegramRetentionService
+from services.telegram_provisioning import ClientManagerProvisioningPort, TelegramProvisioningWorker
 from shared.http_config import get_requests_verify_value
 
 import sys
@@ -437,7 +441,61 @@ register_app_routers(
     mfa_totp_ws_strict=MFA_TOTP_WS_STRICT,
     pam_authenticate=p.authenticate,
     handle_websocket_message=handle_websocket_message,
+    telegram_settings=SETTINGS.telegram,
 )
+
+
+async def _telegram_provisioning_worker_loop() -> None:
+    """Run approved remote mutations only after both fail-closed switches pass."""
+
+    port = ClientManagerProvisioningPort(client_mgr)
+    provisioning_worker = TelegramProvisioningWorker(
+        db_path=DB_PATH,
+        node_loader=node_service.get_node,
+        port=port,
+        worker_id=f"telegram-provisioning:{os.getpid()}",
+    )
+    lifecycle_worker = TelegramLifecycleWorker(
+        db_path=DB_PATH,
+        node_loader=node_service.get_node,
+        port=port,
+        worker_id=f"telegram-lifecycle:{os.getpid()}",
+    )
+    while True:
+        provisioning_result = await asyncio.to_thread(provisioning_worker.run_once)
+        lifecycle_result = await asyncio.to_thread(lifecycle_worker.run_once)
+        # A finite sleep also gives cancellation a predictable safe point and
+        # prevents a busy loop when a fleet contains many fast local attempts.
+        await asyncio.sleep(
+            0.1
+            if provisioning_result.processed or lifecycle_result.processed
+            else SETTINGS.telegram.provisioning_worker_interval_sec
+        )
+
+
+async def _telegram_outbox_worker_loop() -> None:
+    """Deliver local notification events only after its independent opt-in."""
+
+    worker = TelegramOutboxWorker(
+        db_path=DB_PATH,
+        primary_admin_id=SETTINGS.telegram.primary_admin_id or 0,
+        port=TelegramApiOutboxPort(SETTINGS.telegram.bot_token),
+        worker_id=f"telegram-outbox:{os.getpid()}",
+    )
+    while True:
+        result = await asyncio.to_thread(worker.run_once)
+        await asyncio.sleep(0.1 if result.processed else SETTINGS.telegram.outbox_worker_interval_sec)
+
+
+async def _telegram_retention_worker_loop() -> None:
+    """Run local-only Telegram data retention on its own opt-in schedule."""
+
+    worker = TelegramRetentionService(DB_PATH)
+    while True:
+        await asyncio.to_thread(worker.run_once)
+        await asyncio.sleep(SETTINGS.telegram.retention_worker_interval_sec)
+
+
 app.router.lifespan_context = build_lifespan(
     sync_node_history_names_with_nodes=sync_node_history_names_with_nodes,
     backfill_traffic_history_snapshots=live_stats_runtime.backfill_node_history_snapshots,
@@ -446,6 +504,17 @@ app.router.lifespan_context = build_lifespan(
     snapshot_collector=snapshot_collector,
     adguard_collector_loop=adguard_collector_loop,
     asyncio_module=asyncio,
+    telegram_provisioning_worker_loop=(
+        (lambda: _telegram_provisioning_worker_loop())
+        if SETTINGS.telegram.provisioning_worker_enabled
+        else None
+    ),
+    telegram_outbox_worker_loop=(
+        (lambda: _telegram_outbox_worker_loop()) if SETTINGS.telegram.outbox_worker_enabled else None
+    ),
+    telegram_retention_worker_loop=(
+        (lambda: _telegram_retention_worker_loop()) if SETTINGS.telegram.retention_worker_enabled else None
+    ),
 )
 
 

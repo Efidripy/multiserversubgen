@@ -4,6 +4,7 @@ import os
 import re
 from dataclasses import dataclass
 from typing import Callable, Dict, Set
+from urllib.parse import urlparse
 
 
 def _env_bool(name: str, default: str) -> bool:
@@ -112,6 +113,138 @@ def _env_csv_set(name: str) -> Set[str]:
     return {item.strip() for item in raw.split(",") if item.strip()}
 
 
+def _positive_int_env(name: str, *, required: bool) -> int | None:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        if required:
+            raise RuntimeError(f"{name} must be provisioned before enabling Telegram")
+        return None
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a positive 64-bit integer") from exc
+    if value <= 0 or value > 2**63 - 1:
+        raise RuntimeError(f"{name} must be a positive 64-bit integer")
+    return value
+
+
+@dataclass(frozen=True)
+class TelegramSettings:
+    """Runtime-only Telegram configuration.
+
+    The token deliberately has no development fallback: enabling an adapter
+    with an ephemeral or placeholder credential would make its identity and
+    deployment behaviour non-deterministic.
+    """
+
+    enabled: bool
+    bot_token: str
+    primary_admin_id: int | None
+    mode: str | None
+    webhook_secret: str
+    webhook_path_suffix: str
+    public_base_url: str
+    introduction_max_chars: int
+    provisioning_worker_enabled: bool
+    provisioning_worker_interval_sec: int
+    outbox_worker_enabled: bool
+    outbox_worker_interval_sec: int
+    retention_worker_enabled: bool
+    retention_worker_interval_sec: int
+
+
+def _load_telegram_settings() -> TelegramSettings:
+    enabled = _env_bool("TELEGRAM_BOT_ENABLED", "false")
+    worker_requested = _env_bool("TELEGRAM_PROVISIONING_WORKER_ENABLED", "false")
+    outbox_requested = _env_bool("TELEGRAM_OUTBOX_WORKER_ENABLED", "false")
+    retention_requested = _env_bool("TELEGRAM_RETENTION_WORKER_ENABLED", "false")
+    if not enabled:
+        if worker_requested:
+            raise RuntimeError("TELEGRAM_PROVISIONING_WORKER_ENABLED requires TELEGRAM_BOT_ENABLED=true")
+        if outbox_requested:
+            raise RuntimeError("TELEGRAM_OUTBOX_WORKER_ENABLED requires TELEGRAM_BOT_ENABLED=true")
+        if retention_requested:
+            raise RuntimeError("TELEGRAM_RETENTION_WORKER_ENABLED requires TELEGRAM_BOT_ENABLED=true")
+        return TelegramSettings(
+            enabled=False,
+            bot_token="",
+            primary_admin_id=None,
+            mode=None,
+            webhook_secret="",
+            webhook_path_suffix="",
+            public_base_url="",
+            introduction_max_chars=700,
+            provisioning_worker_enabled=False,
+            provisioning_worker_interval_sec=5,
+            outbox_worker_enabled=False,
+            outbox_worker_interval_sec=5,
+            retention_worker_enabled=False,
+            retention_worker_interval_sec=86400,
+        )
+
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not bot_token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN must be provisioned before enabling Telegram")
+    primary_admin_id = _positive_int_env("TELEGRAM_PRIMARY_ADMIN_ID", required=True)
+    mode = os.getenv("TELEGRAM_MODE", "webhook").strip().lower()
+    if mode != "webhook":
+        raise RuntimeError("TELEGRAM_MODE must be webhook until a polling adapter is implemented")
+    webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
+    webhook_path_suffix = os.getenv("TELEGRAM_WEBHOOK_PATH_SUFFIX", "").strip()
+    public_base_url = os.getenv("TELEGRAM_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if not webhook_secret or not webhook_path_suffix:
+        raise RuntimeError("TELEGRAM_WEBHOOK_SECRET and TELEGRAM_WEBHOOK_PATH_SUFFIX are required")
+    parsed_public_url = urlparse(public_base_url)
+    if parsed_public_url.scheme != "https" or not parsed_public_url.netloc:
+        raise RuntimeError("TELEGRAM_PUBLIC_BASE_URL must be an HTTPS origin")
+    introduction_max_chars = _bounded_env_int(
+        "TELEGRAM_INTRODUCTION_MAX_CHARS", default=700, minimum=1, maximum=700
+    )
+    remote_writes_allowed = _env_bool("TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES", "false")
+    if worker_requested and not remote_writes_allowed:
+        raise RuntimeError(
+            "TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES=true is required before starting the provisioning worker"
+        )
+    provisioning_worker_interval_sec = _bounded_env_int(
+        "TELEGRAM_PROVISIONING_WORKER_INTERVAL_SEC", default=5, minimum=1, maximum=300
+    )
+    outbox_worker_interval_sec = _bounded_env_int(
+        "TELEGRAM_OUTBOX_WORKER_INTERVAL_SEC", default=5, minimum=1, maximum=300
+    )
+    retention_worker_interval_sec = _bounded_env_int(
+        "TELEGRAM_RETENTION_WORKER_INTERVAL_SEC", default=86400, minimum=60, maximum=604800
+    )
+    return TelegramSettings(
+        enabled=True,
+        bot_token=bot_token,
+        primary_admin_id=primary_admin_id,
+        mode=mode,
+        webhook_secret=webhook_secret,
+        webhook_path_suffix=webhook_path_suffix,
+        public_base_url=public_base_url,
+        introduction_max_chars=introduction_max_chars,
+        provisioning_worker_enabled=worker_requested,
+        provisioning_worker_interval_sec=provisioning_worker_interval_sec,
+        outbox_worker_enabled=outbox_requested,
+        outbox_worker_interval_sec=outbox_worker_interval_sec,
+        retention_worker_enabled=retention_requested,
+        retention_worker_interval_sec=retention_worker_interval_sec,
+    )
+
+
+def _bounded_env_int(name: str, *, default: int, minimum: int, maximum: int) -> int:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be an integer from {minimum} to {maximum}") from exc
+    if value < minimum or value > maximum:
+        raise RuntimeError(f"{name} must be an integer from {minimum} to {maximum}")
+    return value
+
+
 @dataclass(frozen=True)
 class AppSettings:
     project_dir: str
@@ -167,6 +300,7 @@ class AppSettings:
     prometheus_basic_auth: str
     loki_basic_auth: str
     grafana_basic_auth: str
+    telegram: TelegramSettings
 
 
 def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> AppSettings:
@@ -234,4 +368,5 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         prometheus_basic_auth=os.getenv("PROMETHEUS_BASIC_AUTH", "").strip(),
         loki_basic_auth=os.getenv("LOKI_BASIC_AUTH", "").strip(),
         grafana_basic_auth=os.getenv("GRAFANA_BASIC_AUTH", "").strip(),
+        telegram=_load_telegram_settings(),
     )

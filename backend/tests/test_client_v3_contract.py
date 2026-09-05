@@ -54,6 +54,64 @@ def test_v3_list_404_selects_legacy_projection():
     # A v3 route absence is operation-specific; no node-wide v2 downgrade.
 
 
+def test_strict_node_read_rejects_v3_failure_instead_of_treating_it_as_empty():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", return_value=_response(503)
+    ):
+        try:
+            manager.get_node_clients_strict(_node())
+        except RuntimeError as exc:
+            assert "unavailable" in str(exc)
+        else:
+            raise AssertionError("strict provisioning read must reject an uncertain empty result")
+
+
+def test_strict_node_read_accepts_verified_legacy_empty_or_client_projection():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    legacy = {
+        "success": True,
+        "obj": [{"id": 1, "settings": '{"clients":[{"id":"id-1","email":"legacy@example.test","subId":"s-1","flow":"xtls-rprx-vision"}]}' }],
+    }
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", side_effect=[_response(404), _response(200, legacy)]
+    ):
+        clients = manager.get_node_clients_strict(_node())
+
+    assert clients == [{
+        "id": "id-1", "email": "legacy@example.test", "enable": True,
+        "expiryTime": 0, "totalGB": 0, "subId": "s-1", "flow": "xtls-rprx-vision",
+        "inbound_id": 1, "inbound_ids": [1],
+    }]
+
+
+def test_strict_inbound_contract_requires_enabled_vless_tls_or_reality():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    response_payload = {
+        "success": True,
+        "obj": [{"id": 1, "enable": True, "protocol": "vless", "streamSettings": '{"security":"reality"}'}],
+    }
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", return_value=_response(200, response_payload)
+    ):
+        assert manager.inbound_supports_telegram_contract_strict(_node(), 1) is True
+
+    response_payload["obj"][0]["streamSettings"] = '{"security":"none"}'
+    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
+        "client_manager.xui_request", return_value=_response(200, response_payload)
+    ):
+        assert manager.inbound_supports_telegram_contract_strict(_node(), 1) is False
+
+
 def test_v3_paged_clients_uses_exact_query_and_strips_full_client_fields():
     from client_manager import ClientManager
 

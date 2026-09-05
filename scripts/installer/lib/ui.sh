@@ -342,6 +342,7 @@ print_installation_report() {
     local xui_domain="$3"
     local scheme="$4"
     local grafana_path="${5:-}"
+    local ops_dir="${MSSG_OPS_DIR:-${SCRIPT_DIR}/scripts/ops}"
     local grafana_enabled="${6:-false}"
     local adguard_path="${7:-}"
     local adguard_doh_path="${8:-}"
@@ -486,13 +487,13 @@ EOF
 ${UI_YELLOW}┌─ ПОЛЕЗНЫЕ КОМАНДЫ ───────────────────────────────────┐${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}  Проверка здоровья сервиса:
-${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash "${SCRIPT_DIR}/scripts/ops/smoke-test.sh"${UI_RESET}
+${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash "${ops_dir}/smoke-test.sh"${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}  Резервная копия & восстановление:
-${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash "${SCRIPT_DIR}/scripts/ops/backup-restore-check.sh"${UI_RESET}
+${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash "${ops_dir}/backup-restore-check.sh"${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}  Проверка безопасности:
-${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash "${SCRIPT_DIR}/scripts/ops/hardening-profile.sh" audit${UI_RESET}
+${UI_YELLOW}│${UI_RESET}  ${UI_DIM}sudo bash "${ops_dir}/hardening-profile.sh" audit${UI_RESET}
 ${UI_YELLOW}│${UI_RESET}
 ${UI_YELLOW}└───────────────────────────────────────────────────────┘${UI_RESET}
 

@@ -10,6 +10,16 @@ export interface FleetNode extends NodeRecord {
   error?: string;
 }
 
+export type TelegramNodePolicy = {
+  node_id: number;
+  provisioning_enabled: boolean;
+  total_bytes: number;
+  validity_days: number;
+  client_enabled: boolean;
+  policy_version: number;
+  updated_by: string;
+};
+
 interface FleetProbeResult {
   id: number;
   available: boolean;
@@ -223,6 +233,26 @@ export async function updateNode(nodeId: number, payload: unknown): Promise<any>
   const res = await api.put(`/v1/nodes/${nodeId}`, payload, { auth: getAuth() });
   dispatchNodesChanged({ action: 'update', nodeId });
   return res.data;
+}
+
+export async function listTelegramNodePolicies(): Promise<TelegramNodePolicy[]> {
+  const res = await api.get<{ items?: TelegramNodePolicy[] }>('/v1/telegram/node-policies', { auth: getAuth() });
+  return Array.isArray(res.data?.items) ? res.data.items : [];
+}
+
+export async function updateTelegramNodePolicy(
+  nodeId: number,
+  payload: {
+    provisioning_enabled: boolean;
+    total_bytes: number;
+    validity_days: number;
+    client_enabled: boolean;
+    expected_policy_version: number;
+    idempotency_key: string;
+  },
+): Promise<TelegramNodePolicy> {
+  const res = await api.put(`/v1/telegram/node-policies/${nodeId}`, payload, { auth: getAuth() });
+  return res.data.policy as TelegramNodePolicy;
 }
 
 export async function deleteNode(nodeId: number): Promise<any> {
