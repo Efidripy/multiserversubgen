@@ -33,15 +33,19 @@ require_safe_target() {
 require_safe_target
 
 validate_persistent_runtime_secrets() {
+  local unit_definition
+
   [[ -f "$RUNTIME_SECRETS_FILE" ]] || fail "persistent runtime secrets are missing: $RUNTIME_SECRETS_FILE"
   [[ -r "$RUNTIME_SECRETS_FILE" ]] || fail "persistent runtime secrets are unreadable: $RUNTIME_SECRETS_FILE"
   [[ "$(stat -c '%a' "$RUNTIME_SECRETS_FILE")" == "600" ]] || fail "persistent runtime secrets must use mode 0600"
   grep -q '^WS_AUTH_SECRET=' "$RUNTIME_SECRETS_FILE" || fail "WS_AUTH_SECRET is missing from runtime secrets"
   grep -q '^SUBSCRIPTION_SIGNING_SECRET=' "$RUNTIME_SECRETS_FILE" || fail "SUBSCRIPTION_SIGNING_SECRET is missing from runtime secrets"
   [[ -f "$SERVICE_UNIT" ]] || fail "systemd unit is missing: $SERVICE_UNIT"
-  systemctl cat "$PROJECT_NAME" 2>/dev/null | grep -Fq "EnvironmentFile=${RUNTIME_SECRETS_FILE}" \
+  unit_definition="$(systemctl cat "$PROJECT_NAME" 2>/dev/null)" \
+    || fail "systemd unit could not be read: $PROJECT_NAME"
+  grep -Fq "EnvironmentFile=${RUNTIME_SECRETS_FILE}" <<< "$unit_definition" \
     || fail "systemd unit does not load persistent runtime secrets"
-  systemctl cat "$PROJECT_NAME" 2>/dev/null | grep -Fq 'Environment=REQUIRE_PERSISTENT_SECRETS=true' \
+  grep -Fq 'REQUIRE_PERSISTENT_SECRETS=true' <<< "$unit_definition" \
     || fail "systemd unit does not enforce persistent runtime secrets"
 }
 
