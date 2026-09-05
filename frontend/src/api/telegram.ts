@@ -41,6 +41,15 @@ export type CustomerTraffic = {
   last_observed_at: string;
 };
 
+export type TelegramTransportStatus = {
+  mode: 'direct' | 'local_proxy';
+  row_version: number;
+  configured: boolean;
+  reachable: boolean;
+  updated_by: string;
+  updated_at: string;
+};
+
 export type CustomerOperationAttempt = {
   binding_id: number;
   node_id: number;
@@ -87,6 +96,23 @@ export async function listTelegramRequests(): Promise<TelegramRequest[]> {
 export async function listBlockedTelegramIdentities(): Promise<BlockedIdentity[]> {
   const response = await api.get('/v1/telegram/identities/blocked', { auth: getAuth() });
   return Array.isArray(response.data?.items) ? response.data.items : [];
+}
+
+export async function getTelegramTransport(): Promise<TelegramTransportStatus> {
+  const response = await api.get('/v1/telegram/transport', { auth: getAuth() });
+  return response.data?.transport as TelegramTransportStatus;
+}
+
+export async function setTelegramTransport(
+  transport: TelegramTransportStatus,
+  mode: TelegramTransportStatus['mode'],
+): Promise<TelegramTransportStatus> {
+  const response = await api.put(
+    '/v1/telegram/transport',
+    { mode, expected_row_version: transport.row_version },
+    { auth: getAuth() },
+  );
+  return response.data?.transport as TelegramTransportStatus;
 }
 
 export async function approveTelegramRequest(request: TelegramRequest, emailDisplay: string): Promise<void> {

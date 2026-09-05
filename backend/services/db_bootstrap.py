@@ -172,6 +172,21 @@ def init_db(db_path: str) -> None:
         # Telegram integration is intentionally additive. These local records
         # are the authority for identity, lifecycle intent and retry state;
         # they do not replace or mutate remote 3x-ui clients by themselves.
+        # Direct Bot API access remains the portable default. A deployment may
+        # separately opt into a loopback-only proxy without exposing its URL
+        # through the panel or persisting it in SQLite.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_transport_preferences
+                     (singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
+                      mode TEXT NOT NULL DEFAULT 'direct'
+                        CHECK(mode IN ('direct', 'local_proxy')),
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      updated_by TEXT NOT NULL DEFAULT 'system',
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO telegram_transport_preferences(singleton_id, mode) VALUES (1, 'direct')"
+        )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS customers
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,

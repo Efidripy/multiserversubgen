@@ -73,6 +73,7 @@ def test_runtime_secret_rewrites_preserve_configured_telegram_settings():
         "TELEGRAM_WEBHOOK_SECRET",
         "TELEGRAM_WEBHOOK_PATH_SUFFIX",
         "TELEGRAM_PUBLIC_BASE_URL",
+        "TELEGRAM_LOCAL_PROXY_URL",
         "TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES",
         "TELEGRAM_OUTBOX_WORKER_ENABLED",
     ):

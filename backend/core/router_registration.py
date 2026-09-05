@@ -187,6 +187,7 @@ def register_app_routers(
             db_path=db_path,
             list_nodes=list_nodes,
             get_cached_inbound_options=get_cached_inbound_options,
+            telegram_settings=telegram_settings,
         )
     )
     if telegram_settings and telegram_settings.enabled:

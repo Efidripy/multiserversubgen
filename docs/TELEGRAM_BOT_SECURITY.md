@@ -17,6 +17,7 @@ BotFather и реальные remote clients этот репозиторный �
 | `TELEGRAM_WEBHOOK_SECRET` | Exact value required in `X-Telegram-Bot-Api-Secret-Token`; an absent or incorrect value is rejected. |
 | `TELEGRAM_WEBHOOK_PATH_SUFFIX` | High-entropy path component; it is compared exactly and never logged. |
 | `TELEGRAM_PUBLIC_BASE_URL` | Public HTTPS origin used for controlled webhook registration; no HTTP or implicit local fallback. |
+| `TELEGRAM_LOCAL_PROXY_URL` | Optional loopback `http://127.0.0.1:<port>` endpoint; complete HTTP proxy credentials may be embedded only in this root-owned runtime secret. It is used only after an administrator selects `Local VLESS` in the panel; otherwise Bot API stays direct. A selected local mode fails closed rather than retrying direct. |
 | `TELEGRAM_PROVISIONING_WORKER_ENABLED` | `false` by default. Starts the durable job worker only when remote writes are separately permitted. |
 | `TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES` | Separate explicit interlock. The application fails startup if the worker is requested without this value set to `true`. |
 | `TELEGRAM_PROVISIONING_WORKER_INTERVAL_SEC` | Idle poll interval, 1–300 seconds; default `5`. |
