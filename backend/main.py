@@ -32,6 +32,7 @@ from core.router_registration import register_app_routers
 from services.runtime_state import RuntimeState
 from services.telegram_lifecycle import TelegramLifecycleWorker
 from services.telegram_outbox import TelegramApiOutboxPort, TelegramOutboxWorker
+from services.telegram_retention import TelegramRetentionService
 from services.telegram_provisioning import ClientManagerProvisioningPort, TelegramProvisioningWorker
 from shared.http_config import get_requests_verify_value
 
@@ -486,6 +487,15 @@ async def _telegram_outbox_worker_loop() -> None:
         await asyncio.sleep(0.1 if result.processed else SETTINGS.telegram.outbox_worker_interval_sec)
 
 
+async def _telegram_retention_worker_loop() -> None:
+    """Run local-only Telegram data retention on its own opt-in schedule."""
+
+    worker = TelegramRetentionService(DB_PATH)
+    while True:
+        await asyncio.to_thread(worker.run_once)
+        await asyncio.sleep(SETTINGS.telegram.retention_worker_interval_sec)
+
+
 app.router.lifespan_context = build_lifespan(
     sync_node_history_names_with_nodes=sync_node_history_names_with_nodes,
     backfill_traffic_history_snapshots=live_stats_runtime.backfill_node_history_snapshots,
@@ -501,6 +511,9 @@ app.router.lifespan_context = build_lifespan(
     ),
     telegram_outbox_worker_loop=(
         (lambda: _telegram_outbox_worker_loop()) if SETTINGS.telegram.outbox_worker_enabled else None
+    ),
+    telegram_retention_worker_loop=(
+        (lambda: _telegram_retention_worker_loop()) if SETTINGS.telegram.retention_worker_enabled else None
     ),
 )
 

@@ -22,6 +22,8 @@ BotFather и реальные remote clients этот репозиторный �
 | `TELEGRAM_PROVISIONING_WORKER_INTERVAL_SEC` | Idle poll interval, 1–300 seconds; default `5`. |
 | `TELEGRAM_OUTBOX_WORKER_ENABLED` | `false` by default. Enables only delivery of already persisted Telegram notifications; it does not permit remote node writes. |
 | `TELEGRAM_OUTBOX_WORKER_INTERVAL_SEC` | Idle poll interval for notification delivery, 1–300 seconds; default `5`. |
+| `TELEGRAM_RETENTION_WORKER_ENABLED` | `false` by default. Runs only local cleanup of expired unapproved data. |
+| `TELEGRAM_RETENTION_WORKER_INTERVAL_SEC` | Retention interval, 60–604800 seconds; default `86400`. |
 
 The adapter validates every required setting fail-closed at startup and has no
 implicit development fallback.
