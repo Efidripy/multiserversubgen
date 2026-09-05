@@ -62,6 +62,24 @@ def test_nginx_generation_routes_the_telegram_webhook_before_the_ui_catch_all():
         assert script.index(expected_route) < script.index('location ^~ /$WEB_PATH/ {')
 
 
+def test_runtime_secret_rewrites_preserve_configured_telegram_settings():
+    script = (REPO / "scripts/installer/lib/runtime_secrets.sh").read_text(encoding="utf-8")
+
+    assert "local -a telegram_runtime_keys=(" in script
+    for key in (
+        "TELEGRAM_BOT_ENABLED",
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_PRIMARY_ADMIN_ID",
+        "TELEGRAM_WEBHOOK_SECRET",
+        "TELEGRAM_WEBHOOK_PATH_SUFFIX",
+        "TELEGRAM_PUBLIC_BASE_URL",
+        "TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES",
+        "TELEGRAM_OUTBOX_WORKER_ENABLED",
+    ):
+        assert key in script
+    assert 'printf \'%s=%q\\n\' "$runtime_key" "${!runtime_key}"' in script
+
+
 def test_linux_only_uvloop_extra_is_pinned_and_hashed_for_require_hashes_deploys():
     expected = 'uvloop==0.22.1 ; sys_platform != "win32"'
     expected_hash = "--hash=sha256:7b5b1ac819a3f946d3b2ee07f09149578ae76066d70b44df3fa990add49a82e4"
