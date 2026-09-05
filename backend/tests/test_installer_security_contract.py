@@ -93,7 +93,9 @@ def test_privileged_runtime_install_uses_only_hashed_production_lock():
     ):
         script = _read(relative_path)
 
-        assert "install --require-hashes -r \"$SCRIPT_DIR/backend/requirements.txt\"" in script
+        assert 'source "${INSTALLER_DIR}/lib/source_layout.sh"' in script
+        assert 'mssg_resolve_source_layout "$INSTALLER_DIR"' in script
+        assert 'install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt"' in script
         assert "backend/requirements-dev.txt" not in script
         assert "install --upgrade pip" not in script
 
@@ -204,9 +206,10 @@ def test_installation_report_uses_dynamic_repository_root():
     ui = _read("scripts/installer/lib/ui.sh")
 
     assert "/root/multiserversubgen-live/scripts/ops/" not in ui
-    assert '"${SCRIPT_DIR}/scripts/ops/smoke-test.sh"' in ui
-    assert '"${SCRIPT_DIR}/scripts/ops/backup-restore-check.sh"' in ui
-    assert '"${SCRIPT_DIR}/scripts/ops/hardening-profile.sh" audit' in ui
+    assert 'local ops_dir="${MSSG_OPS_DIR:-${SCRIPT_DIR}/scripts/ops}"' in ui
+    assert '"${ops_dir}/smoke-test.sh"' in ui
+    assert '"${ops_dir}/backup-restore-check.sh"' in ui
+    assert '"${ops_dir}/hardening-profile.sh" audit' in ui
 
 
 def test_ops_scripts_validate_installer_log_before_sourcing():
@@ -237,7 +240,11 @@ def test_installer_scripts_validate_log_before_sourcing():
         assert '\n    source "$LOG_FILE"' not in script
         assert '\nsource "$LOG_FILE"' not in script
         assert "install_log_source \"$LOG_FILE\"" in script
-        assert "scripts/ops/lib/install_log.sh" in script
+        if relative_path == "scripts/installer/remove.sh":
+            assert "scripts/ops/lib/install_log.sh" in script
+        else:
+            assert 'source "${MSSG_OPS_DIR}/lib/install_log.sh"' in script
+            assert 'source "${INSTALLER_DIR}/lib/source_layout.sh"' in script
 
     assert 'source "$source_file"' in helper
     assert 'secure_source_file()' in helper

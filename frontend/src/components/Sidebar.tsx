@@ -6,7 +6,7 @@ import { ChoiceChips } from './ChoiceChips';
 import { IconName, UIIcon } from './UIIcon';
 import { API_BASE } from '../api/client';
 
-type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions';
+type TabType = 'dashboard' | 'inbounds' | 'clients' | 'traffic' | 'monitoring' | 'backup' | 'subscriptions' | 'telegram';
 
 export interface SidebarNavItem {
   id: TabType;
@@ -71,6 +71,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     '  Alt+5 -> Monitoring',
     '  Alt+6 -> Backup',
     '  Alt+7 -> Subscriptions',
+    '  Alt+8 -> Telegram',
     '',
     'Dashboard:',
     '  Click stat tiles -> go to relevant tab',
