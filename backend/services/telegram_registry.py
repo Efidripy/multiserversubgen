@@ -71,6 +71,13 @@ class TelegramCustomerAccess:
 
 
 @dataclass(frozen=True)
+class TelegramNotificationPreferences:
+    telegram_user_id: int
+    background_notifications_enabled: bool
+    row_version: int
+
+
+@dataclass(frozen=True)
 class CustomerTrafficLedger:
     customer_id: int
     lifetime_bytes: int
@@ -564,6 +571,53 @@ class TelegramRegistry:
             customer_status=str(row[5]) if row[5] is not None else None,
             customer_row_version=int(row[6]) if row[6] is not None else None,
         )
+
+    def get_notification_preferences(self, telegram_user_id: int) -> TelegramNotificationPreferences:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            identity = conn.execute(
+                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)
+            ).fetchone()
+            if identity is None:
+                raise TelegramRegistryError("Telegram identity was not found")
+            conn.execute(
+                "INSERT OR IGNORE INTO telegram_notification_preferences (telegram_user_id) VALUES (?)",
+                (user_id,),
+            )
+            row = conn.execute(
+                """
+                SELECT background_notifications_enabled, row_version
+                FROM telegram_notification_preferences WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        assert row is not None
+        return TelegramNotificationPreferences(user_id, bool(row[0]), int(row[1]))
+
+    def toggle_background_notifications(self, telegram_user_id: int) -> TelegramNotificationPreferences:
+        """Toggle user-controlled background delivery after durable update dedupe."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            identity = conn.execute(
+                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)
+            ).fetchone()
+            if identity is None:
+                raise TelegramRegistryError("Telegram identity was not found")
+            conn.execute(
+                "INSERT OR IGNORE INTO telegram_notification_preferences (telegram_user_id) VALUES (?)",
+                (user_id,),
+            )
+            conn.execute(
+                """
+                UPDATE telegram_notification_preferences
+                SET background_notifications_enabled = CASE background_notifications_enabled WHEN 1 THEN 0 ELSE 1 END,
+                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            )
+        return self.get_notification_preferences(user_id)
 
     def observe_customer_traffic(self, *, customer_id: int, observed_bytes: int) -> CustomerTrafficLedger:
         """Accumulate a customer lifetime counter independent of subscription tokens.

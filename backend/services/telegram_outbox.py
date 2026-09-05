@@ -28,6 +28,10 @@ class OutboxPermanentError(RuntimeError):
     """The local event is no longer actionable and should be dead-lettered."""
 
 
+class OutboxSuppressed(RuntimeError):
+    """The recipient has intentionally disabled this non-interactive notification."""
+
+
 class TelegramApiOutboxPort:
     """Small runtime-only Bot API transport; endpoint is never logged."""
 
@@ -105,6 +109,9 @@ class TelegramOutboxWorker:
             return OutboxRunResult(processed=False)
         try:
             chat_id, text, markup = self._render(claimed)
+        except OutboxSuppressed:
+            self._cancel(claimed)
+            return OutboxRunResult(True, claimed.event_id, "cancelled")
         except OutboxPermanentError as exc:
             self._dead_letter(claimed, str(exc))
             return OutboxRunResult(True, claimed.event_id, "dead_letter")
@@ -178,11 +185,18 @@ class TelegramOutboxWorker:
                 raise OutboxPermanentError("invalid_user_id") from exc
             with connect(self._db_path) as conn:
                 row = conn.execute(
-                    "SELECT chat_id FROM telegram_identities WHERE telegram_user_id = ?",
+                    """
+                    SELECT i.chat_id, COALESCE(p.background_notifications_enabled, 1)
+                    FROM telegram_identities AS i
+                    LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
+                    WHERE i.telegram_user_id = ?
+                    """,
                     (user_id,),
                 ).fetchone()
             if row is None:
                 raise OutboxPermanentError("identity_not_found")
+            if not bool(row[1]):
+                raise OutboxSuppressed("notifications_disabled")
             if event.event_type == "user_provisioning_queued":
                 return int(row[0]), "Решение принято. Доступ готовится; проверьте статус немного позже.", None
             return int(row[0]), "Решение принято. Откройте меню, чтобы продолжить.", None
@@ -211,6 +225,18 @@ class TelegramOutboxWorker:
                 WHERE id = ? AND status = 'sending' AND lease_owner = ?
                 """,
                 (error_code[:80], claimed.event_id, self._worker_id),
+            )
+
+    def _cancel(self, claimed: ClaimedOutboxEvent) -> None:
+        with connect(self._db_path) as conn:
+            conn.execute(
+                """
+                UPDATE telegram_outbox
+                SET status = 'cancelled', lease_owner = NULL, lease_until = NULL,
+                    next_attempt_at = NULL, last_error_code = 'notifications_disabled', updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'sending' AND lease_owner = ?
+                """,
+                (claimed.event_id, self._worker_id),
             )
 
     def _retry_or_dead_letter(self, claimed: ClaimedOutboxEvent, error_code: str) -> None:

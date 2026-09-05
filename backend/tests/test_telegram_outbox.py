@@ -87,3 +87,27 @@ def test_user_approval_event_resolves_chat_id_only_from_numeric_identity(tmp_pat
     assert result.outcome == "sent"
     assert port.messages[0][0] == 777
     assert "готовится" in port.messages[0][1].lower()
+
+
+def test_user_can_suppress_background_outbox_messages_without_losing_the_event_audit(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="user", first_name="User", last_name=None
+    )
+    registry.toggle_background_notifications(42)
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES ('user_provisioning_queued', '42', 'three')"
+        )
+    port = FakeOutboxPort()
+
+    result = _worker(db_path, port).run_once()
+
+    assert result.outcome == "cancelled"
+    assert port.messages == []
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT status, last_error_code FROM telegram_outbox").fetchone() == (
+            "cancelled", "notifications_disabled"
+        )

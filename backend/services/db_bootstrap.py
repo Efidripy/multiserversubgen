@@ -239,6 +239,16 @@ def init_db(db_path: str) -> None:
             "ON telegram_identities(customer_id)"
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_notification_preferences
+                     (telegram_user_id INTEGER PRIMARY KEY,
+                      background_notifications_enabled INTEGER NOT NULL DEFAULT 1
+                        CHECK(background_notifications_enabled IN (0, 1)),
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE)"""
+        )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_applications
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       telegram_user_id INTEGER NOT NULL,

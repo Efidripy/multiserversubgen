@@ -35,6 +35,10 @@ time, records transient delivery failures with bounded retry/backoff and moves
 malformed or exhausted events to `dead_letter`. Delivery is at-least-once:
 after a transport timeout the Bot API outcome is unknowable, so a later retry
 may duplicate a notification but never repeats a customer or node mutation.
+Approved users can disable background delivery in the bot settings. This only
+cancels future non-interactive outbox notifications; it never suppresses a
+reply to the user's own command or alters access, audit, lifecycle or node
+state.
 
 ## Threat model and controls
 

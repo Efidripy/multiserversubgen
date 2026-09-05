@@ -187,6 +187,43 @@ def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscrip
     assert registry.get_customer_traffic(customer_id).lifetime_bytes == 4096
 
 
+def test_approved_user_can_toggle_only_background_notification_preference(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="prefs_user", first_name="Prefs", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="prefs_user", origin="telegram", email_source="telegram_username", public_code="prefs-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    menu = service.handle_update({
+        "update_id": 16,
+        "callback_query": {
+            "id": "prefs-menu", "from": {"id": 42, "first_name": "Prefs"},
+            "message": {"chat": {"id": 42, "type": "private"}}, "data": "preferences:menu",
+        },
+    })
+    toggled = service.handle_update({
+        "update_id": 17,
+        "callback_query": {
+            "id": "prefs-toggle", "from": {"id": 42, "first_name": "Prefs"},
+            "message": {"chat": {"id": 42, "type": "private"}}, "data": "preferences:toggle-background",
+        },
+    })
+
+    assert "включены" in menu[0].text
+    assert "выключены" in toggled[0].text
+    assert registry.get_notification_preferences(42).background_notifications_enabled is False
+
+
 def test_suspended_user_can_send_one_bounded_appeal_without_automatic_resume(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)

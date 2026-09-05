@@ -233,6 +233,7 @@ class TelegramRegistrationService:
         else:
             rows.extend([
                 [{"text": "↻ Сменить ссылку", "callback_data": "subscription:rotate"}],
+                [{"text": "⚙ Уведомления", "callback_data": "preferences:menu"}],
                 [{"text": "? Помощь", "callback_data": "help"}],
             ])
         return {"inline_keyboard": rows}
@@ -281,6 +282,19 @@ class TelegramRegistrationService:
             chat_id,
             f"Статус доступа: {access.customer_status}.{traffic_line}",
             self._approved_menu(suspended=access.customer_status in {"suspended", "suspend_partial"}),
+        )
+
+    def _preferences_message(self, user_id: int, chat_id: int) -> TelegramOutboundMessage:
+        preferences = self._registry.get_notification_preferences(user_id)
+        state = "включены" if preferences.background_notifications_enabled else "выключены"
+        action = "Выключить" if preferences.background_notifications_enabled else "Включить"
+        return TelegramOutboundMessage(
+            chat_id,
+            f"Фоновые уведомления: {state}. Ответы на ваши команды приходят всегда.",
+            {"inline_keyboard": [
+                [{"text": action, "callback_data": "preferences:toggle-background"}],
+                [{"text": "← Назад", "callback_data": "help"}],
+            ]},
         )
 
     def handle_update(self, update: dict[str, Any]) -> list[TelegramOutboundMessage]:
@@ -376,6 +390,11 @@ class TelegramRegistrationService:
                 )]
             if callback_data == "support:appeal":
                 return [TelegramOutboundMessage(chat_id, "Напишите одним сообщением, почему доступ нужно восстановить. Это попадёт администратору на рассмотрение.")]
+            if callback_data == "preferences:menu" or text and text.strip().startswith("/settings"):
+                return [self._preferences_message(user_id, chat_id)]
+            if callback_data == "preferences:toggle-background":
+                self._registry.toggle_background_notifications(user_id)
+                return [self._preferences_message(user_id, chat_id)]
             if callback_data == "help":
                 return [TelegramOutboundMessage(chat_id, "Используйте меню ниже для получения ссылки и проверки статуса.", self._approved_menu())]
             if text and text.strip().startswith("/status"):
