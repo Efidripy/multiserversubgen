@@ -130,6 +130,16 @@ class PendingApplication:
 
 
 @dataclass(frozen=True)
+class BlockedIdentity:
+    telegram_user_id: int
+    username: str | None
+    first_name: str | None
+    row_version: int
+    blocked_at: str | None
+    decision_reason: str | None
+
+
+@dataclass(frozen=True)
 class ApprovalResult:
     telegram_user_id: int
     customer_id: int
@@ -1041,6 +1051,26 @@ class TelegramRegistry:
                 suggested_email_source=source,
             ))
         return result
+
+    def list_blocked_identities(self, *, limit: int = 100) -> list[BlockedIdentity]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise TelegramRegistryError("limit must be an integer from 1 to 200")
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT telegram_user_id, username, first_name, row_version, blocked_at, decision_reason
+                FROM telegram_identities WHERE access_status = 'blocked'
+                ORDER BY blocked_at DESC, telegram_user_id DESC LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [
+            BlockedIdentity(int(row[0]), str(row[1]) if row[1] is not None else None,
+                            str(row[2]) if row[2] is not None else None, int(row[3]),
+                            str(row[4]) if row[4] is not None else None,
+                            str(row[5]) if row[5] is not None else None)
+            for row in rows
+        ]
 
     def get_pending_application(self, telegram_user_id: int) -> PendingApplication:
         user_id = _positive_int(telegram_user_id, "telegram_user_id")

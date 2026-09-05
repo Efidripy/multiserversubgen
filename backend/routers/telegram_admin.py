@@ -66,6 +66,14 @@ def build_telegram_admin_router(
         require_admin(request)
         return {"items": [asdict(item) for item in registry.list_pending_applications()]}
 
+    @router.get("/api/v1/telegram/identities/blocked")
+    def list_blocked_identities(request: Request, limit: int = 100):
+        require_admin(request)
+        try:
+            return {"items": [asdict(item) for item in registry.list_blocked_identities(limit=limit)]}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
     @router.get("/api/v1/telegram/appeals")
     def list_telegram_appeals(request: Request, status: str = "open", limit: int = 100):
         require_admin(request)

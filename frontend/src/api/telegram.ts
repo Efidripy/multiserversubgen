@@ -12,6 +12,8 @@ export type TelegramRequest = {
   suggested_email: string;
 };
 
+export type BlockedIdentity = { telegram_user_id: number; username: string | null; first_name: string | null; row_version: number; blocked_at: string | null; decision_reason: string | null; };
+
 export type TelegramCustomer = {
   customer_id: number;
   email_display: string;
@@ -82,6 +84,11 @@ export async function listTelegramRequests(): Promise<TelegramRequest[]> {
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
+export async function listBlockedTelegramIdentities(): Promise<BlockedIdentity[]> {
+  const response = await api.get('/v1/telegram/identities/blocked', { auth: getAuth() });
+  return Array.isArray(response.data?.items) ? response.data.items : [];
+}
+
 export async function approveTelegramRequest(request: TelegramRequest, emailDisplay: string): Promise<void> {
   await api.post(
     `/v1/telegram/requests/${request.telegram_user_id}/approve-new`,
@@ -99,6 +106,12 @@ export async function rejectTelegramRequest(request: TelegramRequest): Promise<v
 export async function blockTelegramRequest(request: TelegramRequest): Promise<void> {
   await api.post(`/v1/telegram/identities/${request.telegram_user_id}/block`, {
     expected_identity_version: request.row_version, idempotency_key: newIdempotencyKey(),
+  }, { auth: getAuth() });
+}
+
+export async function unblockTelegramIdentity(identity: BlockedIdentity): Promise<void> {
+  await api.post(`/v1/telegram/identities/${identity.telegram_user_id}/unblock`, {
+    expected_identity_version: identity.row_version, idempotency_key: newIdempotencyKey(),
   }, { auth: getAuth() });
 }
 

@@ -5,6 +5,7 @@ import { UIIcon } from './UIIcon';
 import {
   approveTelegramRequest,
   blockTelegramRequest,
+  BlockedIdentity,
   addCustomerNode,
   CustomerNode,
   CustomerOperation,
@@ -14,6 +15,7 @@ import {
   getCustomerOperations,
   getCustomerTraffic,
   listTelegramCustomers,
+  listBlockedTelegramIdentities,
   listTelegramRequests,
   previewCustomerOperation,
   previewCustomerNodeOperation,
@@ -23,6 +25,7 @@ import {
   retryCustomerOperation,
   TelegramCustomer,
   TelegramRequest,
+  unblockTelegramIdentity,
 } from '../api/telegram';
 
 const shellClass = 'min-h-screen min-w-0 bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6';
@@ -45,6 +48,7 @@ export const TelegramAdmin: React.FC = () => {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [requests, setRequests] = useState<TelegramRequest[]>([]);
+  const [blocked, setBlocked] = useState<BlockedIdentity[]>([]);
   const [customers, setCustomers] = useState<TelegramCustomer[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | null>(null);
   const [nodes, setNodes] = useState<CustomerNode[]>([]);
@@ -64,9 +68,10 @@ export const TelegramAdmin: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextRequests, nextCustomers] = await Promise.all([listTelegramRequests(), listTelegramCustomers(search)]);
+      const [nextRequests, nextCustomers, nextBlocked] = await Promise.all([listTelegramRequests(), listTelegramCustomers(search), listBlockedTelegramIdentities()]);
       setRequests(nextRequests);
       setCustomers(nextCustomers);
+      setBlocked(nextBlocked);
     } catch {
       toast(t('telegram.loadFailed'), 'error');
     } finally {
@@ -209,6 +214,10 @@ export const TelegramAdmin: React.FC = () => {
               </article>
             ))}
           </div>
+        </section>
+
+        <section className={panelClass} aria-label={t('telegram.blocked')}>
+          <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.blocked')}</h3><div className="mt-3 space-y-2">{blocked.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noBlocked')}</p>}{blocked.map((identity) => <div key={identity.telegram_user_id} className="flex items-center justify-between gap-3 rounded border border-rose-400/15 bg-[#0a0e1a] p-3"><span className="truncate text-sm text-slate-300">{identity.username ? `@${identity.username}` : identity.first_name || `#${identity.telegram_user_id}`}</span><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await unblockTelegramIdentity(identity); toast(t('telegram.requestUpdated'), 'success'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.unblock')}</button></div>)}</div>
         </section>
 
         <section className={panelClass} aria-label={t('telegram.customers')}>
