@@ -44,7 +44,24 @@ runtime_secrets_load() {
 }
 
 runtime_secrets_write() {
-    local secret_file temp_file
+    local secret_file temp_file runtime_key
+    local -a telegram_runtime_keys=(
+        TELEGRAM_BOT_ENABLED
+        TELEGRAM_BOT_TOKEN
+        TELEGRAM_PRIMARY_ADMIN_ID
+        TELEGRAM_MODE
+        TELEGRAM_WEBHOOK_SECRET
+        TELEGRAM_WEBHOOK_PATH_SUFFIX
+        TELEGRAM_PUBLIC_BASE_URL
+        TELEGRAM_INTRODUCTION_MAX_CHARS
+        TELEGRAM_PROVISIONING_WORKER_ENABLED
+        TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES
+        TELEGRAM_PROVISIONING_WORKER_INTERVAL_SEC
+        TELEGRAM_OUTBOX_WORKER_ENABLED
+        TELEGRAM_OUTBOX_WORKER_INTERVAL_SEC
+        TELEGRAM_RETENTION_WORKER_ENABLED
+        TELEGRAM_RETENTION_WORKER_INTERVAL_SEC
+    )
     secret_file="$(runtime_secrets_file)" || return 1
     if [ -L "$secret_file" ]; then
         printf 'refusing to overwrite symlinked runtime secrets: %s\n' "$secret_file" >&2
@@ -62,6 +79,13 @@ runtime_secrets_write() {
         printf 'MFA_TOTP_USERS=%q\n' "${MFA_TOTP_USERS:-}"
         printf 'WS_AUTH_SECRET=%q\n' "$WS_AUTH_SECRET"
         printf 'SUBSCRIPTION_SIGNING_SECRET=%q\n' "$SUBSCRIPTION_SIGNING_SECRET"
+        # Telegram remains opt-in, but once configured it must survive the
+        # regular installer/updater rewrite of this 0600 runtime secret file.
+        for runtime_key in "${telegram_runtime_keys[@]}"; do
+            if [ -n "${!runtime_key-}" ]; then
+                printf '%s=%q\n' "$runtime_key" "${!runtime_key}"
+            fi
+        done
     } > "$temp_file"
     mv -fT -- "$temp_file" "$secret_file"
 }
