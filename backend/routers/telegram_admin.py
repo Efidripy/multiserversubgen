@@ -16,6 +16,7 @@ from services.telegram_registry import (
     TelegramRegistryError,
     VersionConflictError,
 )
+from services.telegram_transport import TelegramApiTransport, TelegramTransportError
 
 
 def _inbound_one_supports_bot_contract(node_id: int, inbound_options: list[Dict]) -> bool:
@@ -41,9 +42,13 @@ def build_telegram_admin_router(
     db_path: str,
     list_nodes: Callable[[], list[Dict]],
     get_cached_inbound_options: Callable[[list[Dict]], list[Dict]],
+    telegram_settings=None,
 ):
     router = APIRouter()
     registry = TelegramRegistry(db_path)
+    transport = TelegramApiTransport(
+        db_path=db_path, local_proxy_url=getattr(telegram_settings, "local_proxy_url", "")
+    )
 
     def require_admin(request: Request) -> str:
         username = check_auth(request)
@@ -60,6 +65,32 @@ def build_telegram_admin_router(
         ):
             return HTTPException(status_code=409, detail=str(exc))
         return HTTPException(status_code=400, detail=str(exc))
+
+    @router.get("/api/v1/telegram/transport")
+    def get_telegram_transport(request: Request):
+        require_admin(request)
+        return {"transport": asdict(transport.status())}
+
+    @router.put("/api/v1/telegram/transport")
+    def set_telegram_transport(request: Request, data: Dict):
+        username = require_admin(request)
+        mode = data.get("mode")
+        expected_row_version = data.get("expected_row_version")
+        if mode == "local_proxy":
+            try:
+                transport.require_local_proxy_ready()
+            except TelegramTransportError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        try:
+            preference = registry.set_transport_preference(
+                mode=mode, expected_row_version=expected_row_version, updated_by=username
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        status = transport.status()
+        if status.row_version != preference.row_version:
+            raise HTTPException(status_code=409, detail="Telegram transport preference changed concurrently")
+        return {"transport": asdict(status)}
 
     @router.get("/api/v1/telegram/requests")
     def list_pending_requests(request: Request):

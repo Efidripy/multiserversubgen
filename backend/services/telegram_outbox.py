@@ -15,9 +15,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 from urllib.error import URLError
 from urllib.request import Request as UrlRequest
-from urllib.request import urlopen
 
 from services.db_bootstrap import connect
+from services.telegram_transport import TelegramApiTransport, TelegramTransportError
 
 
 class TelegramDeliveryPort(Protocol):
@@ -35,8 +35,9 @@ class OutboxSuppressed(RuntimeError):
 class TelegramApiOutboxPort:
     """Small runtime-only Bot API transport; endpoint is never logged."""
 
-    def __init__(self, bot_token: str):
+    def __init__(self, bot_token: str, *, transport: TelegramApiTransport):
         self._endpoint = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        self._transport = transport
 
     def send(self, *, chat_id: int, text: str, reply_markup: dict[str, Any] | None = None) -> None:
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
@@ -49,10 +50,10 @@ class TelegramApiOutboxPort:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=10) as response:
+            with self._transport.open(request, timeout=10) as response:
                 if response.status < 200 or response.status >= 300:
                     raise RuntimeError("Telegram delivery was rejected")
-        except (URLError, OSError, RuntimeError) as exc:
+        except (URLError, OSError, RuntimeError, TelegramTransportError) as exc:
             raise RuntimeError("Telegram delivery failed") from exc
 
 

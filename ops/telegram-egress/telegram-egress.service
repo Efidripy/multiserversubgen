@@ -1,0 +1,21 @@
+[Unit]
+Description=Multi-Server Subscription Manager Telegram local VLESS egress
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=telegram-egress
+Group=telegram-egress
+ExecStart=/usr/local/bin/xray run -c /etc/sub-manager/telegram-egress.json
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/telegram-egress
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

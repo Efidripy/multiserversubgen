@@ -53,6 +53,7 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "telegram_outbox",
             "telegram_audit_log",
             "telegram_command_receipts",
+            "telegram_transport_preferences",
         } <= tables
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 

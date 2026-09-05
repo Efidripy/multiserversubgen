@@ -7,13 +7,13 @@ import secrets
 from typing import Any, Callable, Protocol
 from urllib.error import URLError
 from urllib.request import Request as UrlRequest
-from urllib.request import urlopen
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
 from services.telegram_registration import TelegramOutboundMessage, TelegramRegistrationService
 from services.telegram_registry import TelegramRegistry
+from services.telegram_transport import TelegramApiTransport, TelegramTransportError
 
 
 class TelegramMessageSender(Protocol):
@@ -23,8 +23,9 @@ class TelegramMessageSender(Protocol):
 class TelegramApiSender:
     """Minimal Bot API sender; never logs a token-bearing endpoint."""
 
-    def __init__(self, bot_token: str):
+    def __init__(self, bot_token: str, *, transport: TelegramApiTransport):
         self._endpoint = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        self._transport = transport
 
     def send(self, message: TelegramOutboundMessage) -> None:
         payload: dict[str, Any] = {"chat_id": message.chat_id, "text": message.text}
@@ -37,10 +38,10 @@ class TelegramApiSender:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=10) as response:
+            with self._transport.open(request, timeout=10) as response:
                 if response.status < 200 or response.status >= 300:
                     raise RuntimeError("Telegram delivery was rejected")
-        except (URLError, OSError, RuntimeError) as exc:
+        except (URLError, OSError, RuntimeError, TelegramTransportError) as exc:
             raise RuntimeError("Telegram delivery failed") from exc
 
 
@@ -66,7 +67,10 @@ def build_telegram_webhook_router(
         get_cached_inbound_options=get_cached_inbound_options,
         traffic_projection_loader=traffic_projection_loader,
     )
-    message_sender = sender or TelegramApiSender(telegram_settings.bot_token)
+    message_sender = sender or TelegramApiSender(
+        telegram_settings.bot_token,
+        transport=TelegramApiTransport(db_path=db_path, local_proxy_url=telegram_settings.local_proxy_url),
+    )
 
     @router.post("/telegram/webhook/{path_suffix}", include_in_schema=False)
     async def receive_update(path_suffix: str, request: Request, data: dict[str, Any]):

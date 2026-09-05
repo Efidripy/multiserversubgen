@@ -14,6 +14,7 @@ import {
   getCustomerNodes,
   getCustomerOperations,
   getCustomerTraffic,
+  getTelegramTransport,
   listTelegramCustomers,
   listBlockedTelegramIdentities,
   listTelegramRequests,
@@ -25,6 +26,8 @@ import {
   retryCustomerOperation,
   TelegramCustomer,
   TelegramRequest,
+  TelegramTransportStatus,
+  setTelegramTransport,
   unblockTelegramIdentity,
 } from '../api/telegram';
 
@@ -60,6 +63,7 @@ export const TelegramAdmin: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [emailByRequest, setEmailByRequest] = useState<Record<number, string>>({});
+  const [transport, setTransport] = useState<TelegramTransportStatus | null>(null);
   const selectedCustomer = useMemo(
     () => customers.find((item) => item.customer_id === selectedCustomerId) ?? null,
     [customers, selectedCustomerId],
@@ -68,10 +72,13 @@ export const TelegramAdmin: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextRequests, nextCustomers, nextBlocked] = await Promise.all([listTelegramRequests(), listTelegramCustomers(search), listBlockedTelegramIdentities()]);
+      const [nextRequests, nextCustomers, nextBlocked, nextTransport] = await Promise.all([
+        listTelegramRequests(), listTelegramCustomers(search), listBlockedTelegramIdentities(), getTelegramTransport(),
+      ]);
       setRequests(nextRequests);
       setCustomers(nextCustomers);
       setBlocked(nextBlocked);
+      setTransport(nextTransport);
     } catch {
       toast(t('telegram.loadFailed'), 'error');
     } finally {
@@ -187,6 +194,21 @@ export const TelegramAdmin: React.FC = () => {
     }
   };
 
+  const selectTransport = async (mode: TelegramTransportStatus['mode']) => {
+    if (!transport || transport.mode === mode) return;
+    setMutating(true);
+    try {
+      const nextTransport = await setTelegramTransport(transport, mode);
+      setTransport(nextTransport);
+      toast(t('telegram.transportUpdated'), 'success');
+    } catch {
+      toast(t('telegram.transportUpdateFailed'), 'error');
+      await load();
+    } finally {
+      setMutating(false);
+    }
+  };
+
   const selectedTitle = useMemo(() => selectedCustomer?.email_display ?? t('telegram.selectCustomer'), [selectedCustomer, t]);
 
   return (
@@ -198,6 +220,27 @@ export const TelegramAdmin: React.FC = () => {
         </div>
         <button type="button" className={buttonClass} onClick={() => void load()} disabled={loading || mutating}><UIIcon name="refresh" size={14} />{t('common.refresh')}</button>
       </div>
+
+      <section className={`${panelClass} mb-4`} aria-label={t('telegram.transportTitle')}>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.transportTitle')}</h3>
+            <p className="mt-1 text-xs font-light text-slate-500">{t('telegram.transportHint')}</p>
+          </div>
+          <span className={`rounded border px-2 py-1 font-mono text-[10px] ${transport?.reachable ? 'border-emerald-400/25 text-emerald-200' : 'border-slate-500/25 text-slate-500'}`}>
+            {transport?.reachable ? t('telegram.transportReady') : t('telegram.transportUnavailable')}
+          </span>
+        </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button type="button" className={transport?.mode === 'direct' ? primaryButtonClass : buttonClass} disabled={mutating || !transport || transport.mode === 'direct'} onClick={() => void selectTransport('direct')}>
+            {t('telegram.transportDirect')}
+          </button>
+          <button type="button" className={transport?.mode === 'local_proxy' ? primaryButtonClass : buttonClass} disabled={mutating || !transport?.configured || !transport?.reachable || transport.mode === 'local_proxy'} onClick={() => void selectTransport('local_proxy')}>
+            {t('telegram.transportLocalProxy')}
+          </button>
+        </div>
+        {transport && !transport.configured && <p className="mt-2 text-xs text-slate-500">{t('telegram.transportNotConfigured')}</p>}
+      </section>
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(290px,0.9fr)_minmax(0,1.3fr)]">
         <section className={panelClass} aria-label={t('telegram.requests')}>
