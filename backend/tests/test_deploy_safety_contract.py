@@ -24,7 +24,10 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'WS_AUTH_SECRET is missing from runtime secrets' in script
     assert 'persistent runtime secrets must use mode 0600' in script
     assert 'systemd unit does not load persistent runtime secrets' in script
-    assert 'Environment=REQUIRE_PERSISTENT_SECRETS=true' in script
+    assert 'unit_definition="$(systemctl cat "$PROJECT_NAME" 2>/dev/null)"' in script
+    assert 'grep -Fq "EnvironmentFile=${RUNTIME_SECRETS_FILE}" <<< "$unit_definition"' in script
+    assert "grep -Fq 'REQUIRE_PERSISTENT_SECRETS=true' <<< \"$unit_definition\"" in script
+    assert 'REQUIRE_PERSISTENT_SECRETS=true' in script
     assert 'for pkg in core modules integrations routers services shared; do' in script
     assert 'for pkg in config core modules integrations routers services shared; do' not in script
     assert '".backup \'$STAGE_DIR/admin.db\'"' in script
