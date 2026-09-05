@@ -33,3 +33,5 @@ def test_required_role_policy():
     assert main._required_role_for_request("POST", "/api/v1/inbounds/1/1/del-all-clients") == "admin"
     assert main._required_role_for_request("GET", "/api/v1/nodes/1/server-logs") == "admin"
     assert main._required_role_for_request("POST", "/api/v1/subscription-tokens/email/D632-IOS/regenerate") == "admin"
+    assert main._required_role_for_request("GET", "/api/v1/telegram/node-policies") == "admin"
+    assert main._required_role_for_request("PUT", "/api/v1/telegram/node-policies/1") == "admin"

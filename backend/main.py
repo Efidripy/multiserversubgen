@@ -437,6 +437,7 @@ register_app_routers(
     mfa_totp_ws_strict=MFA_TOTP_WS_STRICT,
     pam_authenticate=p.authenticate,
     handle_websocket_message=handle_websocket_message,
+    telegram_settings=SETTINGS.telegram,
 )
 app.router.lifespan_context = build_lifespan(
     sync_node_history_names_with_nodes=sync_node_history_names_with_nodes,

@@ -777,7 +777,13 @@
     "addTagsTitle": "Добавить теги (через запятую)",
     "tagsPrompt": "Теги для \"{{name}}\" (через запятую):",
     "tagsSaved": "Теги сохранены",
-    "tagsSaveFailed": "Не удалось сохранить теги"
+    "tagsSaveFailed": "Не удалось сохранить теги",
+    "telegramPolicyOnTitle": "TG: новые пользователи могут добавляться на этот узел",
+    "telegramPolicyOffTitle": "TG: включить этот узел для новых пользователей",
+    "telegramPolicyEnabled": "TG-политика включена для {{node}}",
+    "telegramPolicyDisabled": "TG-политика выключена для {{node}}",
+    "telegramPolicyLoadFailed": "Не удалось загрузить TG-политику узлов",
+    "telegramPolicySaveFailed": "Не удалось сохранить TG-политику"
   },
   "serverStatus": {
     "title": "Статус серверов",

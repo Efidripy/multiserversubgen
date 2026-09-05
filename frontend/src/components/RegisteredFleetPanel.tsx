@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronLeft, ChevronRight, Edit3, Pause, Play, RefreshCw, Trash2 } from 'lucide-react';
-import { deleteNode, getRegisteredFleetOverview, listNodes, type FleetNode } from '../api/nodes';
+import {
+  deleteNode,
+  getRegisteredFleetOverview,
+  listNodes,
+  listTelegramNodePolicies,
+  updateTelegramNodePolicy,
+  type FleetNode,
+  type TelegramNodePolicy,
+} from '../api/nodes';
 import { restartXray, stopXray } from '../api/serverOps';
 import { useToast } from './Toast';
 import { useDashboardData } from '../services/DashboardDataContext';
@@ -20,6 +28,7 @@ interface RegisteredFleetPanelProps {
   onOpenNodes?: () => void;
   onEditNode?: (node: FleetNode) => void;
   onSummaryChange?: (summary: FleetSummary) => void;
+  canManageTelegram?: boolean;
 }
 
 type UiFleetNode = {
@@ -84,6 +93,7 @@ export function RegisteredFleetPanel({
   onOpenNodes,
   onEditNode,
   onSummaryChange,
+  canManageTelegram = false,
 }: RegisteredFleetPanelProps) {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -94,6 +104,8 @@ export function RegisteredFleetPanel({
   const [error, setError] = useState<string | null>(null);
   const [deletingNodeId, setDeletingNodeId] = useState<number | null>(null);
   const [actionNodeKey, setActionNodeKey] = useState<string | null>(null);
+  const [telegramPolicies, setTelegramPolicies] = useState<Record<number, TelegramNodePolicy>>({});
+  const [telegramPolicyNodeId, setTelegramPolicyNodeId] = useState<number | null>(null);
   const editAbortRef = useRef<AbortController | null>(null);
   const fleetRefreshAbortRef = useRef<AbortController | null>(null);
 
@@ -195,12 +207,57 @@ export function RegisteredFleetPanel({
     }
   }, [onEditNode, onOpenNodes]);
 
+  const refreshTelegramPolicies = useCallback(async () => {
+    if (!canManageTelegram) {
+      setTelegramPolicies({});
+      return;
+    }
+    try {
+      const policies = await listTelegramNodePolicies();
+      setTelegramPolicies(Object.fromEntries(policies.map((policy) => [policy.node_id, policy])));
+    } catch (err: any) {
+      const message = err?.response?.data?.detail || err?.message || t('nodes.telegramPolicyLoadFailed');
+      setError(message);
+    }
+  }, [canManageTelegram, t]);
+
+  const toggleTelegramPolicy = async (node: UiFleetNode) => {
+    if (telegramPolicyNodeId !== null) return;
+    const current = telegramPolicies[node.id];
+    setTelegramPolicyNodeId(node.id);
+    try {
+      const policy = await updateTelegramNodePolicy(node.id, {
+        provisioning_enabled: !(current?.provisioning_enabled ?? false),
+        total_bytes: current?.total_bytes ?? 0,
+        validity_days: current?.validity_days ?? 0,
+        client_enabled: current?.client_enabled ?? true,
+        expected_policy_version: current?.policy_version ?? 0,
+        idempotency_key: crypto.randomUUID(),
+      });
+      setTelegramPolicies((existing) => ({ ...existing, [node.id]: policy }));
+      toast(
+        t(policy.provisioning_enabled ? 'nodes.telegramPolicyEnabled' : 'nodes.telegramPolicyDisabled', { node: node.name }),
+        'success',
+      );
+    } catch (err: any) {
+      const message = err?.response?.data?.detail || err?.message || t('nodes.telegramPolicySaveFailed');
+      setError(message);
+      toast(message, 'error');
+    } finally {
+      setTelegramPolicyNodeId(null);
+    }
+  };
+
   useEffect(() => () => {
     editAbortRef.current?.abort();
     editAbortRef.current = null;
     fleetRefreshAbortRef.current?.abort();
     fleetRefreshAbortRef.current = null;
   }, []);
+
+  useEffect(() => {
+    void refreshTelegramPolicies();
+  }, [refreshTelegramPolicies]);
 
   useEffect(() => {
     if (!dashboardData) return;
@@ -340,6 +397,9 @@ export function RegisteredFleetPanel({
                   const isDeleting = deletingNodeId === node.id;
                   const isRestarting = actionNodeKey === `${node.id}:restart`;
                   const isStopping = actionNodeKey === `${node.id}:stop`;
+                  const telegramPolicy = telegramPolicies[node.id];
+                  const telegramPolicyEnabled = telegramPolicy?.provisioning_enabled ?? false;
+                  const isSavingTelegramPolicy = telegramPolicyNodeId === node.id;
                   return (
                     <article key={node.id} className={`rounded-lg border border-cyan-500/15 bg-[#0a0e1a] px-2.5 py-1.5 transition-all duration-200 hover:border-cyan-300/30 hover:bg-[#0b101b] ${isDeleting ? 'opacity-50' : ''}`}>
                     <div className="mb-0.5">
@@ -419,6 +479,25 @@ export function RegisteredFleetPanel({
                         <Trash2 className={`w-3.5 h-3.5 opacity-60 ${isDeleting ? 'animate-pulse' : ''}`} />
                       </button>
                     </div>
+                    {canManageTelegram && (
+                      <div className="mt-1 flex justify-end border-t border-cyan-500/10 pt-1">
+                        <button
+                          className={`min-w-8 rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wide transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                            telegramPolicyEnabled
+                              ? 'border-emerald-400/45 bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25'
+                              : 'border-cyan-500/20 bg-[#0a0e1a] text-slate-500 hover:border-cyan-300/35 hover:text-cyan-200'
+                          }`}
+                          type="button"
+                          title={t(telegramPolicyEnabled ? 'nodes.telegramPolicyOnTitle' : 'nodes.telegramPolicyOffTitle')}
+                          aria-label={t(telegramPolicyEnabled ? 'nodes.telegramPolicyOnTitle' : 'nodes.telegramPolicyOffTitle')}
+                          aria-pressed={telegramPolicyEnabled}
+                          disabled={telegramPolicyNodeId !== null}
+                          onClick={() => void toggleTelegramPolicy(node)}
+                        >
+                          {isSavingTelegramPolicy ? '…' : 'TG'}
+                        </button>
+                      </div>
+                    )}
                     </article>
                   );
                 })}

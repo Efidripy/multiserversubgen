@@ -775,6 +775,7 @@ export const App: React.FC = () => {
             <RegisteredFleetPanel
               collapsed={registeredFleetCollapsed}
               setCollapsed={setRegisteredFleetCollapsed}
+              canManageTelegram={role === 'admin'}
               onSummaryChange={handleFleetSummaryChange}
               onOpenNodes={() => {
                 setNodeIntakeOpenSignal((value) => value + 1);

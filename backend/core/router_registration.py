@@ -11,6 +11,8 @@ from routers.operations import build_operations_router
 from routers.realtime import build_realtime_router
 from routers.server_ops import build_server_ops_router
 from routers.subscriptions import build_subscriptions_router
+from routers.telegram_admin import build_telegram_admin_router
+from routers.telegram_webhook import build_telegram_webhook_router
 
 
 def register_app_routers(
@@ -83,6 +85,7 @@ def register_app_routers(
     pam_authenticate,
     handle_websocket_message,
     monitoring_enabled=True,
+    telegram_settings=None,
 ):
     app.include_router(
         build_observability_router(
@@ -177,6 +180,17 @@ def register_app_routers(
             logger=logger,
         )
     )
+    app.include_router(
+        build_telegram_admin_router(
+            check_auth=check_auth,
+            get_user_role=get_user_role,
+            db_path=db_path,
+            list_nodes=list_nodes,
+            get_cached_inbound_options=get_cached_inbound_options,
+        )
+    )
+    if telegram_settings and telegram_settings.enabled:
+        app.include_router(build_telegram_webhook_router(telegram_settings=telegram_settings, db_path=db_path))
     if monitoring_enabled:
         app.include_router(
             build_monitoring_router(
