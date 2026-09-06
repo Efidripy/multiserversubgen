@@ -1048,6 +1048,17 @@ class TelegramRegistry:
                 """,
                 (normalized, user_id, int(identity[1])),
             )
+            if result.rowcount == 1:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                    VALUES ('admin_introduction_submitted', ?, ?)
+                    """,
+                    (
+                        f"{user_id}:{int(identity[1])}",
+                        f"admin:introduction-submitted:{user_id}:{int(identity[1])}",
+                    ),
+                )
         return result.rowcount == 1
 
     def list_pending_applications(self) -> list[PendingApplication]:

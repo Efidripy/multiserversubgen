@@ -208,7 +208,14 @@ def test_introduction_is_one_time_plain_text_for_the_current_pending_attempt(tmp
     assert registry.submit_introduction(42, "Повтор", maximum_chars=700) is False
     with connect(db_path) as conn:
         text = conn.execute("SELECT introduction_text FROM telegram_applications").fetchone()[0]
+        events = conn.execute(
+            "SELECT event_type, entity_id FROM telegram_outbox ORDER BY id"
+        ).fetchall()
     assert text == "Хочу представиться"
+    assert events == [
+        ("admin_request_created", "42"),
+        ("admin_introduction_submitted", "42:1"),
+    ]
 
 
 def test_policy_command_normalizes_defaults_versions_and_replays_idempotently(tmp_path):
