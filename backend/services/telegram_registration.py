@@ -10,6 +10,7 @@ from typing import Any, Callable
 from services.subscription_tokens import ensure_tokens, regenerate_token
 from services.telegram_traffic import TelegramTrafficService
 from services.telegram_registry import (
+    DiscoveredExistingBinding,
     IdempotencyConflictError,
     LifecycleUnavailableError,
     NodePolicyUnavailableError,
@@ -17,6 +18,7 @@ from services.telegram_registry import (
     TelegramRegistryError,
     VersionConflictError,
 )
+from services.telegram_provisioning import ExistingRemoteBinding
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,7 @@ class TelegramRegistrationService:
         primary_admin_id: int | None = None,
         get_cached_inbound_options: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
         traffic_projection_loader: Callable[[], dict[str, Any]] | None = None,
+        discover_existing: Callable[[str], tuple[ExistingRemoteBinding, ...]] | None = None,
     ):
         self._registry = registry
         self._introduction_max_chars = introduction_max_chars
@@ -71,6 +74,7 @@ class TelegramRegistrationService:
         self._primary_admin_id = primary_admin_id
         self._get_cached_inbound_options = get_cached_inbound_options
         self._traffic = TelegramTrafficService(registry, traffic_projection_loader)
+        self._discover_existing = discover_existing
 
     @staticmethod
     def _format_bytes(value: int) -> str:
@@ -360,7 +364,28 @@ class TelegramRegistrationService:
                     row_version=draft.expected_row_version, page=draft.page, email_display=selected,
                 )]
             if draft.action == "existing_customer_email" and draft.telegram_user_id and draft.expected_row_version:
-                customer = self._registry.get_customer_by_email(text)
+                try:
+                    customer = self._registry.get_customer_by_email(text)
+                except TelegramRegistryError:
+                    if self._discover_existing is None:
+                        raise
+                    remote_bindings = self._discover_existing(text)
+                    if not remote_bindings:
+                        raise TelegramRegistryError("existing service username was not found")
+                    email_display = remote_bindings[0].remote_email
+                    self._registry.set_admin_draft(
+                        admin_telegram_user_id=user_id, action=draft.action,
+                        telegram_user_id=draft.telegram_user_id, expected_row_version=draft.expected_row_version,
+                        page=draft.page, value=email_display,
+                    )
+                    return [TelegramOutboundMessage(
+                        chat_id,
+                        f"Найден существующий пользователь: {email_display} на нодах: {len(remote_bindings)}. Привязать заявку без создания новых записей?",
+                        {"inline_keyboard": [
+                            [{"text": "✓ Привязать", "callback_data": f"admin:existing-discovered-confirm:{draft.telegram_user_id}:{draft.expected_row_version}:{draft.page}"}],
+                            [{"text": "← К заявке", "callback_data": f"admin:request:{draft.telegram_user_id}:{draft.expected_row_version}:{draft.page}"}],
+                        ]},
+                    )]
                 self._registry.set_admin_draft(
                     admin_telegram_user_id=user_id, action=draft.action,
                     telegram_user_id=draft.telegram_user_id, expected_row_version=draft.expected_row_version,
@@ -512,6 +537,33 @@ class TelegramRegistrationService:
                 )
                 self._registry.clear_admin_draft(user_id)
                 return [TelegramOutboundMessage(chat_id, f"Заявка привязана к {result.email_display}.", self._admin_requests_message(chat_id, page).reply_markup)]
+            if len(parts) == 5 and parts[:2] == ["admin", "existing-discovered-confirm"]:
+                target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
+                draft = self._registry.get_admin_draft(user_id)
+                if (
+                    not draft or draft.action != "existing_customer_email"
+                    or draft.telegram_user_id != target_user_id or draft.expected_row_version != version
+                    or not draft.value or self._discover_existing is None
+                ):
+                    raise VersionConflictError("existing customer draft is missing")
+                discovered = self._discover_existing(draft.value)
+                result = self._registry.adopt_discovered_existing_application(
+                    telegram_user_id=target_user_id,
+                    email_display=draft.value,
+                    bindings=tuple(
+                        DiscoveredExistingBinding(
+                            node_id=item.node_id, inbound_id=item.inbound_id,
+                            remote_client_id=item.remote_client_id, remote_sub_id=item.remote_sub_id,
+                            remote_email=item.remote_email, enabled=item.enabled,
+                        )
+                        for item in discovered
+                    ),
+                    expected_identity_version=version,
+                    idempotency_key=f"telegram-admin-adopt-existing:{update_id}:{target_user_id}",
+                    approved_by=f"telegram:{user_id}",
+                )
+                self._registry.clear_admin_draft(user_id)
+                return [TelegramOutboundMessage(chat_id, f"Заявка привязана к {result.email_display}. Найдено нод: {result.confirmed_binding_count}.", self._admin_requests_message(chat_id, page).reply_markup)]
             if len(parts) == 5 and parts[:2] == ["admin", "reject"]:
                 target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
                 self._registry.reject_application(telegram_user_id=target_user_id, expected_identity_version=version, idempotency_key=f"telegram-admin-reject:{update_id}:{target_user_id}", rejected_by=f"telegram:{user_id}")

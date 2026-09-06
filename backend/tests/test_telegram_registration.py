@@ -15,6 +15,7 @@ from services.db_bootstrap import connect, init_db
 from services.subscription_tokens import resolve_token
 from services.telegram_registration import TelegramOutboundMessage, TelegramRegistrationService
 from services.telegram_registry import TelegramRegistry
+from services.telegram_provisioning import ExistingRemoteBinding
 
 
 def _message(update_id: int, text: str) -> dict:
@@ -493,6 +494,45 @@ def test_existing_customer_link_requires_exact_input_and_separate_confirmation(t
         assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
 
 
+def test_existing_remote_customer_is_adopted_only_after_exact_discovery_confirmation(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+    registry.get_or_create_identity(
+        telegram_user_id=75, chat_id=75, username="legacy-target", first_name=None, last_name=None
+    )
+    pending = registry.create_pending_application(75)
+
+    def discover(value: str):
+        if value.casefold() != "legacy-user":
+            return ()
+        return (
+            ExistingRemoteBinding(
+                node_id=1, node_name="edge-a", inbound_id=1, remote_client_id="legacy-id",
+                remote_sub_id="legacy-sub", remote_email="legacy-user", enabled=True,
+            ),
+        )
+
+    service = TelegramRegistrationService(
+        registry, introduction_max_chars=700, primary_admin_id=108100140, discover_existing=discover
+    )
+    service.handle_update(_admin_callback(73, f"admin:existing:75:{pending.identity.row_version}:0"))
+    candidate = service.handle_update(_admin_message(74, "legacy-user"))
+    assert "Найден существующий пользователь" in candidate[0].text
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0
+    linked = service.handle_update(
+        _admin_callback(75, f"admin:existing-discovered-confirm:75:{pending.identity.row_version}:0")
+    )
+    assert "привязана" in linked[0].text.lower()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT email_display, origin FROM customers").fetchone() == ("legacy-user", "existing")
+        assert conn.execute("SELECT remote_client_id, remote_email FROM customer_node_bindings").fetchone() == ("legacy-id", "legacy-user")
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
+
+
 def test_delete_requires_typed_exact_email_before_final_confirmation(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
@@ -561,3 +601,68 @@ def test_webhook_requires_exact_suffix_and_secret_then_dispatches_private_update
     assert accepted.status_code == 200
     assert accepted.json() == {"ok": True}
     assert len(sender.messages) == 1
+
+
+def test_webhook_admin_can_adopt_a_discovered_legacy_customer_without_remote_write(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+
+    sender = _Sender()
+    settings = SimpleNamespace(
+        enabled=True,
+        bot_token="not-used-by-test-sender",
+        webhook_path_suffix="private-path",
+        webhook_secret="private-header-secret",
+        introduction_max_chars=700,
+        primary_admin_id=108100140,
+    )
+
+    def discover(value: str):
+        if value != "legacy-user":
+            return ()
+        return (
+            ExistingRemoteBinding(
+                node_id=1,
+                node_name="edge-a",
+                inbound_id=1,
+                remote_client_id="legacy-client",
+                remote_sub_id="legacy-sub",
+                remote_email="legacy-user",
+                enabled=True,
+            ),
+        )
+
+    app = FastAPI()
+    app.include_router(
+        build_telegram_webhook_router(
+            telegram_settings=settings,
+            db_path=db_path,
+            sender=sender,
+            discover_existing=discover,
+        )
+    )
+    client = TestClient(app)
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "private-header-secret"}
+
+    assert client.post("/telegram/webhook/private-path", headers=headers, json=_message(1, "/start")).status_code == 200
+    pending = TelegramRegistry(db_path).get_pending_application(42)
+    assert client.post(
+        "/telegram/webhook/private-path",
+        headers=headers,
+        json=_admin_callback(2, f"admin:existing:42:{pending.row_version}:0"),
+    ).status_code == 200
+    assert client.post(
+        "/telegram/webhook/private-path", headers=headers, json=_admin_message(3, "legacy-user")
+    ).status_code == 200
+    assert client.post(
+        "/telegram/webhook/private-path",
+        headers=headers,
+        json=_admin_callback(4, f"admin:existing-discovered-confirm:42:{pending.row_version}:0"),
+    ).status_code == 200
+
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT email_display, origin FROM customers").fetchone() == ("legacy-user", "existing")
+        assert conn.execute("SELECT remote_client_id FROM customer_node_bindings").fetchone()[0] == "legacy-client"
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0

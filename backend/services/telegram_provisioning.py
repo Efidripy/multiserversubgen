@@ -34,6 +34,79 @@ class RemoteClient:
     enabled: bool
 
 
+@dataclass(frozen=True)
+class ExistingRemoteBinding:
+    """An exact, read-only discovery result for one legacy inbound-1 client."""
+
+    node_id: int
+    node_name: str
+    inbound_id: int
+    remote_client_id: str
+    remote_sub_id: str
+    remote_email: str
+    enabled: bool
+
+
+class ClientManagerLegacyDiscovery:
+    """Discover an already-existing client without mutating any node.
+
+    Existing panel users predate the local Telegram registry.  We only adopt an
+    exact canonical email from inbound #1, and fail closed if any enabled node
+    cannot be read.  This prevents a partial fleet read from becoming a false
+    "safe to delete" local lifecycle record later.
+    """
+
+    def __init__(self, *, client_manager: Any, list_nodes: Callable[[], list[dict[str, Any]]]):
+        self._client_manager = client_manager
+        self._list_nodes = list_nodes
+
+    def discover(self, email: str) -> tuple[ExistingRemoteBinding, ...]:
+        wanted = canonicalize_email(email)
+        matches: list[ExistingRemoteBinding] = []
+        unreadable: list[str] = []
+        for node in self._list_nodes():
+            if not isinstance(node, dict) or not bool(node.get("enabled", True)):
+                continue
+            try:
+                rows = self._client_manager.get_node_clients_strict(node)
+            except Exception:
+                unreadable.append(str(node.get("name") or node.get("id") or "node"))
+                continue
+            node_matches: list[ExistingRemoteBinding] = []
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                inbound_ids = row.get("inbound_ids") if isinstance(row.get("inbound_ids"), list) else []
+                if row.get("inbound_id") != BOT_INBOUND_ID and BOT_INBOUND_ID not in inbound_ids:
+                    continue
+                try:
+                    same_email = canonicalize_email(str(row.get("email") or "")) == wanted
+                except Exception:
+                    continue
+                if not same_email:
+                    continue
+                client_id = str(row.get("id") or "")
+                if not client_id:
+                    raise ProvisioningPermanentError("legacy client has no stable identifier")
+                node_matches.append(
+                    ExistingRemoteBinding(
+                        node_id=int(node["id"]),
+                        node_name=str(node.get("name") or node["id"]),
+                        inbound_id=BOT_INBOUND_ID,
+                        remote_client_id=client_id,
+                        remote_sub_id=str(row.get("subId") or ""),
+                        remote_email=str(row.get("email") or ""),
+                        enabled=bool(row.get("enable", True)),
+                    )
+                )
+            if len(node_matches) > 1:
+                raise ProvisioningPermanentError("legacy email is ambiguous on a node")
+            matches.extend(node_matches)
+        if unreadable:
+            raise ProvisioningRemoteError("legacy discovery is incomplete")
+        return tuple(matches)
+
+
 class ProvisioningPort(Protocol):
     def supports_fixed_contract(self, *, node: dict[str, Any], inbound_id: int) -> bool: ...
 

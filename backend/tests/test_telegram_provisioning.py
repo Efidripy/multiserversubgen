@@ -4,11 +4,14 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.db_bootstrap import connect, init_db
 from services.telegram_provisioning import (
+    ClientManagerLegacyDiscovery,
     ClientManagerProvisioningPort,
     ProvisioningRemoteError,
     RemoteClient,
@@ -43,6 +46,32 @@ class FakeProvisioningPort:
                 flow=client["flow"], enabled=client["enable"],
             )
         )
+
+
+def test_legacy_discovery_fails_closed_when_any_enabled_node_cannot_be_read():
+    class ClientManager:
+        def __init__(self):
+            self.read_node_ids: list[int] = []
+
+        def get_node_clients_strict(self, node):
+            self.read_node_ids.append(node["id"])
+            if node["id"] == 2:
+                raise RuntimeError("temporary panel error")
+            return [{"id": "legacy-client", "email": "legacy-user", "inbound_id": 1, "enable": True}]
+
+    client_manager = ClientManager()
+    discovery = ClientManagerLegacyDiscovery(
+        client_manager=client_manager,
+        list_nodes=lambda: [
+            {"id": 1, "name": "edge-a", "enabled": True},
+            {"id": 2, "name": "edge-b", "enabled": True},
+        ],
+    )
+
+    with pytest.raises(ProvisioningRemoteError, match="incomplete"):
+        discovery.discover("legacy-user")
+
+    assert client_manager.read_node_ids == [1, 2]
 
 
 def _queued_job(tmp_path, *, validity_days: int = 0):

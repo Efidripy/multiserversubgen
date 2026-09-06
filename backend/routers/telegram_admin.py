@@ -9,12 +9,18 @@ from fastapi import APIRouter, HTTPException, Request
 
 from services.telegram_registry import (
     ApprovalUnavailableError,
+    DiscoveredExistingBinding,
     IdempotencyConflictError,
     LifecycleUnavailableError,
     NodePolicyUnavailableError,
     TelegramRegistry,
     TelegramRegistryError,
     VersionConflictError,
+)
+from services.telegram_provisioning import (
+    ClientManagerLegacyDiscovery,
+    ProvisioningPermanentError,
+    ProvisioningRemoteError,
 )
 from services.telegram_transport import TelegramApiTransport, TelegramTransportError
 
@@ -42,12 +48,18 @@ def build_telegram_admin_router(
     db_path: str,
     list_nodes: Callable[[], list[Dict]],
     get_cached_inbound_options: Callable[[list[Dict]], list[Dict]],
+    client_mgr=None,
     telegram_settings=None,
 ):
     router = APIRouter()
     registry = TelegramRegistry(db_path)
     transport = TelegramApiTransport(
         db_path=db_path, local_proxy_url=getattr(telegram_settings, "local_proxy_url", "")
+    )
+    legacy_discovery = (
+        ClientManagerLegacyDiscovery(client_manager=client_mgr, list_nodes=list_nodes)
+        if client_mgr is not None
+        else None
     )
 
     def require_admin(request: Request) -> str:
@@ -65,6 +77,21 @@ def build_telegram_admin_router(
         ):
             return HTTPException(status_code=409, detail=str(exc))
         return HTTPException(status_code=400, detail=str(exc))
+
+    def discover_existing(email_display: object):
+        if not isinstance(email_display, str) or not email_display.strip():
+            raise HTTPException(status_code=400, detail="existing service username/email is required")
+        if legacy_discovery is None:
+            raise HTTPException(status_code=503, detail="existing customer discovery is unavailable")
+        try:
+            bindings = legacy_discovery.discover(email_display)
+        except ProvisioningRemoteError as exc:
+            raise HTTPException(status_code=409, detail="existing customer discovery is incomplete; retry later") from exc
+        except ProvisioningPermanentError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if not bindings:
+            raise HTTPException(status_code=404, detail="existing service username/email was not found on inbound 1")
+        return bindings
 
     @router.get("/api/v1/telegram/transport")
     def get_telegram_transport(request: Request):
@@ -165,6 +192,53 @@ def build_telegram_admin_router(
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
         return {"approval": asdict(result), "remote_io": "not_started"}
+
+    @router.post("/api/v1/telegram/requests/{telegram_user_id}/discover-existing")
+    def discover_existing_request(telegram_user_id: int, request: Request, data: Dict):
+        require_admin(request)
+        try:
+            item = registry.get_pending_application(telegram_user_id)
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        if data.get("expected_identity_version") != item.row_version:
+            raise HTTPException(status_code=409, detail="application was updated by another administrator")
+        bindings = discover_existing(data.get("email_display"))
+        email_display = bindings[0].remote_email
+        return {
+            "candidate": {
+                "email_display": email_display,
+                "binding_count": len(bindings),
+                "node_names": [item.node_name for item in bindings],
+            },
+            "remote_io": "read_only",
+        }
+
+    @router.post("/api/v1/telegram/requests/{telegram_user_id}/adopt-existing")
+    def adopt_existing_request(telegram_user_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        bindings = discover_existing(data.get("email_display"))
+        try:
+            result = registry.adopt_discovered_existing_application(
+                telegram_user_id=telegram_user_id,
+                email_display=bindings[0].remote_email,
+                bindings=tuple(
+                    DiscoveredExistingBinding(
+                        node_id=item.node_id,
+                        inbound_id=item.inbound_id,
+                        remote_client_id=item.remote_client_id,
+                        remote_sub_id=item.remote_sub_id,
+                        remote_email=item.remote_email,
+                        enabled=item.enabled,
+                    )
+                    for item in bindings
+                ),
+                expected_identity_version=data.get("expected_identity_version"),
+                idempotency_key=data.get("idempotency_key"),
+                approved_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"approval": asdict(result), "remote_io": "read_only"}
 
     @router.post("/api/v1/telegram/requests/{telegram_user_id}/reject")
     def reject_request(telegram_user_id: int, request: Request, data: Dict):

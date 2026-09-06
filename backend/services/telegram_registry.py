@@ -170,6 +170,18 @@ class ExistingApprovalResult:
 
 
 @dataclass(frozen=True)
+class DiscoveredExistingBinding:
+    """Trusted remote identity captured by the read-only legacy discovery adapter."""
+
+    node_id: int
+    inbound_id: int
+    remote_client_id: str
+    remote_sub_id: str
+    remote_email: str
+    enabled: bool
+
+
+@dataclass(frozen=True)
 class AbuseNoopResult:
     auto_blocked: bool
     suppress_response: bool
@@ -1602,6 +1614,182 @@ class TelegramRegistry:
                 INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
                 VALUES ('approve_existing', ?, ?, ?)
                 """,
+                (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+        return result
+
+    def adopt_discovered_existing_application(
+        self,
+        *,
+        telegram_user_id: int,
+        email_display: str,
+        bindings: Iterable[DiscoveredExistingBinding],
+        expected_identity_version: int,
+        idempotency_key: str,
+        approved_by: str,
+    ) -> ExistingApprovalResult:
+        """Bind an old panel client after an adapter proved its exact remote identity.
+
+        The caller must obtain ``bindings`` from a strict read-only discovery.
+        This method never performs remote I/O: it atomically persists the local
+        customer/binding mirror and links the pending Telegram identity.
+        """
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        expected_version = _positive_int(expected_identity_version, "expected_identity_version")
+        display = _nonempty(email_display, "email_display")
+        canonical = canonicalize_email(display)
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(approved_by, "approved_by")
+        exact_bindings = tuple(bindings)
+        if not exact_bindings:
+            raise ApprovalUnavailableError("existing service username was not found on inbound 1")
+
+        node_ids: set[int] = set()
+        normalized_bindings: list[DiscoveredExistingBinding] = []
+        for binding in exact_bindings:
+            if not isinstance(binding, DiscoveredExistingBinding):
+                raise TelegramRegistryError("existing discovery binding is invalid")
+            node_id = _positive_int(binding.node_id, "node_id")
+            if binding.inbound_id != BOT_INBOUND_ID or node_id in node_ids:
+                raise TelegramRegistryError("existing discovery binding is ambiguous")
+            if not binding.remote_client_id.strip() or canonicalize_email(binding.remote_email) != canonical:
+                raise TelegramRegistryError("existing discovery binding is not an exact email match")
+            node_ids.add(node_id)
+            normalized_bindings.append(binding)
+
+        payload = {
+            "telegram_user_id": user_id,
+            "email": canonical,
+            "expected_identity_version": expected_version,
+            "bindings": [
+                {"node_id": item.node_id, "client_id": item.remote_client_id, "sub_id": item.remote_sub_id}
+                for item in normalized_bindings
+            ],
+        }
+        digest = _payload_digest(payload)
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'adopt_existing' AND idempotency_key = ?",
+                (key,),
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return ExistingApprovalResult(**json.loads(str(receipt[1])))
+
+            identity = conn.execute(
+                "SELECT access_status, row_version, customer_id, application_attempt "
+                "FROM telegram_identities WHERE telegram_user_id = ?",
+                (user_id,),
+            ).fetchone()
+            if identity is None or str(identity[0]) != "pending" or identity[2] is not None:
+                raise VersionConflictError("application is no longer eligible for an existing customer link")
+            if int(identity[1]) != expected_version:
+                raise VersionConflictError("application was updated by another administrator")
+            application = conn.execute(
+                "SELECT status FROM telegram_applications WHERE telegram_user_id = ? AND application_attempt = ?",
+                (user_id, int(identity[3])),
+            ).fetchone()
+            if application is None or str(application[0]) != "pending":
+                raise VersionConflictError("application attempt is no longer pending")
+            known_nodes = {
+                int(row[0])
+                for row in conn.execute(
+                    "SELECT id FROM nodes WHERE id IN (%s)" % ",".join("?" for _ in node_ids),
+                    tuple(node_ids),
+                ).fetchall()
+            }
+            if known_nodes != node_ids:
+                raise ApprovalUnavailableError("existing discovery contains an unavailable node")
+
+            customer = conn.execute(
+                "SELECT id, email_display, status FROM customers WHERE email_canonical = ? AND deleted_at IS NULL",
+                (canonical,),
+            ).fetchone()
+            if customer is None:
+                customer_id = int(
+                    conn.execute(
+                        "INSERT INTO customers (email_display, email_canonical, origin, public_code, email_source) "
+                        "VALUES (?, ?, 'existing', ?, 'existing')",
+                        (display, canonical, secrets.token_urlsafe(9)),
+                    ).lastrowid
+                )
+                customer_display = display
+            else:
+                customer_id, customer_display, customer_status = int(customer[0]), str(customer[1]), str(customer[2])
+                if customer_status not in {"active", "suspended", "suspend_partial", "resume_partial"}:
+                    raise ApprovalUnavailableError("customer is not available for Telegram linking")
+                linked_identity = conn.execute(
+                    "SELECT telegram_user_id FROM telegram_identities WHERE customer_id = ?", (customer_id,)
+                ).fetchone()
+                if linked_identity is not None:
+                    raise ApprovalUnavailableError("customer is already linked to another Telegram identity")
+
+            for binding in normalized_bindings:
+                existing = conn.execute(
+                    "SELECT id, remote_client_id, remote_sub_id, remote_email FROM customer_node_bindings "
+                    "WHERE customer_id = ? AND node_id = ? AND inbound_id = ?",
+                    (customer_id, binding.node_id, BOT_INBOUND_ID),
+                ).fetchone()
+                if existing is not None:
+                    if (
+                        str(existing[1] or "") != binding.remote_client_id
+                        or str(existing[2] or "") != binding.remote_sub_id
+                        or canonicalize_email(str(existing[3])) != canonical
+                    ):
+                        raise ApprovalUnavailableError("existing node binding conflicts with remote discovery")
+                    conn.execute(
+                        "UPDATE customer_node_bindings SET desired_enabled = ?, last_enabled = ?, "
+                        "management_state = 'confirmed', last_confirmed_at = CURRENT_TIMESTAMP, "
+                        "row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (int(binding.enabled), int(binding.enabled), int(existing[0])),
+                    )
+                    continue
+                conn.execute(
+                    "INSERT INTO customer_node_bindings "
+                    "(customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email, "
+                    "source, management_state, desired_enabled, last_enabled, last_confirmed_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, 'existing_bound', 'confirmed', ?, ?, CURRENT_TIMESTAMP)",
+                    (
+                        customer_id, binding.node_id, BOT_INBOUND_ID, binding.remote_client_id,
+                        binding.remote_sub_id, binding.remote_email, int(binding.enabled), int(binding.enabled),
+                    ),
+                )
+
+            update = conn.execute(
+                "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved', approved_at = CURRENT_TIMESTAMP, "
+                "approved_by = ?, decision_reason = NULL, updated_at = CURRENT_TIMESTAMP, row_version = row_version + 1 "
+                "WHERE telegram_user_id = ? AND access_status = 'pending' AND row_version = ?",
+                (customer_id, actor, user_id, expected_version),
+            )
+            if update.rowcount != 1:
+                raise VersionConflictError("application was updated by another administrator")
+            conn.execute(
+                "UPDATE telegram_applications SET status = 'approved', updated_at = CURRENT_TIMESTAMP "
+                "WHERE telegram_user_id = ? AND application_attempt = ? AND status = 'pending'",
+                (user_id, int(identity[3])),
+            )
+            conn.execute(
+                "INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES ('user_existing_access_approved', ?, ?)",
+                (str(user_id), f"user:existing-access-approved:{user_id}:{int(identity[3])}"),
+            )
+            result = ExistingApprovalResult(
+                telegram_user_id=user_id,
+                customer_id=customer_id,
+                email_display=customer_display,
+                confirmed_binding_count=len(normalized_bindings),
+                identity_row_version=expected_version + 1,
+            )
+            conn.execute(
+                "INSERT INTO telegram_audit_log (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest) "
+                "VALUES ('request_adopted_existing', 'admin', ?, 'telegram_identity', ?, ?)",
+                (actor, str(user_id), _payload_digest({"customer_id": customer_id, "binding_count": len(normalized_bindings)})),
+            )
+            conn.execute(
+                "INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json) "
+                "VALUES ('adopt_existing', ?, ?, ?)",
                 (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
             )
         return result
