@@ -54,6 +54,29 @@ def test_admin_request_event_is_delivered_once_after_a_durable_lease(tmp_path):
     assert _worker(db_path, port).run_once().processed is False
 
 
+def test_admin_receives_the_voluntary_introduction_for_the_exact_application_attempt(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="requester", first_name="Requester", last_name=None
+    )
+    registry.create_pending_application(42)
+    registry.submit_introduction(42, "Хочу коротко представиться.", maximum_chars=700)
+    port = FakeOutboxPort()
+
+    assert _worker(db_path, port).run_once().outcome == "sent"  # application notification
+    result = _worker(db_path, port).run_once()
+
+    assert result.outcome == "sent"
+    assert port.messages[1][0] == 108100140
+    assert "@requester" in port.messages[1][1]
+    assert "Хочу коротко представиться." in port.messages[1][1]
+    assert port.messages[1][2] == {
+        "inline_keyboard": [[{"text": "Заявки", "callback_data": "admin:requests:0"}]]
+    }
+
+
 def test_uncertain_delivery_retries_with_backoff_and_dead_letters_after_bound(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)

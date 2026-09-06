@@ -163,6 +163,33 @@ class TelegramOutboxWorker:
     def _render(self, event: ClaimedOutboxEvent) -> tuple[int, str, dict[str, Any] | None]:
         if event.event_type == "admin_request_created":
             return self._primary_admin_id, f"Новая заявка: #{event.entity_id}.", {"inline_keyboard": [[{"text": "Заявки", "callback_data": "admin:requests:0"}]]}
+        if event.event_type == "admin_introduction_submitted":
+            try:
+                user_id_text, attempt_text = event.entity_id.split(":", 1)
+                user_id, attempt = int(user_id_text), int(attempt_text)
+            except ValueError as exc:
+                raise OutboxPermanentError("invalid_introduction_reference") from exc
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT i.telegram_user_id, i.username, i.first_name, i.last_name, a.introduction_text
+                    FROM telegram_applications AS a
+                    JOIN telegram_identities AS i ON i.telegram_user_id = a.telegram_user_id
+                    WHERE a.telegram_user_id = ? AND a.application_attempt = ?
+                    """,
+                    (user_id, attempt),
+                ).fetchone()
+            if row is None or row[4] is None:
+                raise OutboxPermanentError("introduction_not_found")
+            label = (
+                f"@{row[1]}" if row[1]
+                else " ".join(part for part in (row[2], row[3]) if part) or f"#{row[0]}"
+            )
+            return (
+                self._primary_admin_id,
+                f"Представление от {label} (#{row[0]}):\n{row[4]}",
+                {"inline_keyboard": [[{"text": "Заявки", "callback_data": "admin:requests:0"}]]},
+            )
         if event.event_type == "admin_identity_auto_blocked":
             return self._primary_admin_id, f"Автоблокировка: #{event.entity_id}. Проверьте заявку при необходимости.", None
         if event.event_type == "admin_appeal_created":
