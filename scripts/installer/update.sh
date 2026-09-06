@@ -952,7 +952,14 @@ run_post_update_checks() {
     local failures=0
 
     local health_status=""
-    health_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/health" 2>/dev/null)
+    local health_attempt
+    for health_attempt in {1..15}; do
+        health_status=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${APP_PORT}/health" 2>/dev/null || true)
+        if [ "$health_status" = "200" ]; then
+            break
+        fi
+        sleep 2
+    done
     if [ "$health_status" = "200" ]; then
         echo "  ✅ /health -> HTTP 200"
     else
