@@ -154,6 +154,38 @@ export const normalizeClientRows = (
   notes: typeof c.notes === 'string' ? c.notes : '',
 }));
 
+/**
+ * Reconcile partial client snapshots with the latest enriched client list.
+ *
+ * The REST client projection contains presentation metadata such as
+ * `telegram_linked`, while the snapshot collector intentionally sends only
+ * node-owned 3x-ui fields. A partial snapshot must not erase metadata that
+ * was already loaded from REST. An explicit boolean from a complete/enriched
+ * response remains authoritative, including an explicit `false` after an
+ * unlink.
+ */
+export const mergeClientRowsWithTelegramMetadata = (
+  previous: Client[],
+  incoming: Client[],
+): Client[] => {
+  const linkedByEmail = new Map<string, boolean>();
+  previous.forEach((client) => {
+    if (client.telegram_linked === true) {
+      linkedByEmail.set(normalizeClientEmail(client.email), true);
+    }
+  });
+
+  return incoming.map((client) => {
+    if (Object.prototype.hasOwnProperty.call(client, 'telegram_linked')) {
+      return client;
+    }
+    const emailKey = normalizeClientEmail(client.email);
+    return linkedByEmail.has(emailKey)
+      ? { ...client, telegram_linked: true }
+      : client;
+  });
+};
+
 const ClientTableSkeleton = () => (
   <div className="min-w-0 overflow-hidden">
     <div className="grid min-w-0 grid-cols-1 gap-3 p-3 lg:hidden">
@@ -420,7 +452,10 @@ export const ClientManager: React.FC = () => {
     // Show cached snapshot instantly if available, then refresh in background.
     const cached = readStaleCache<ClientsPageCache>(CLIENTS_PAGE_CACHE_KEY, CLIENTS_PAGE_CACHE_MAX_AGE_MS);
     if (cached.data && (cached.data.sourceFilter ?? 'all') === 'all') {
-      if (Array.isArray(cached.data.clients)) setClients(cached.data.clients);
+      if (Array.isArray(cached.data.clients)) {
+        clientsRef.current = cached.data.clients;
+        setClients(cached.data.clients);
+      }
       if (cached.data.trafficCache && typeof cached.data.trafficCache === 'object') {
         setTrafficCache(cached.data.trafficCache);
       }
@@ -542,8 +577,9 @@ export const ClientManager: React.FC = () => {
 
       const deduped = new Map<string, Client>();
       mappedClients.forEach(c => deduped.set(clientKey(c), c));
-      const next = Array.from(deduped.values());
+      const next = mergeClientRowsWithTelegramMetadata(clientsRef.current, Array.from(deduped.values()));
 
+      clientsRef.current = next;
       setClients(next);
       writeStaleCache<ClientsPageCache>(CLIENTS_PAGE_CACHE_KEY, {
         ts: Date.now(),
@@ -820,7 +856,10 @@ export const ClientManager: React.FC = () => {
           const existingNotes = new Map(
             clientsRef.current.map((client) => [clientKey(client), client.notes || ''])
           );
-          const incoming = normalizeClientRows(update.data.clients).map((client) => ({
+          const incoming = mergeClientRowsWithTelegramMetadata(
+            clientsRef.current,
+            normalizeClientRows(update.data.clients),
+          ).map((client) => ({
             ...client,
             notes: client.notes || existingNotes.get(clientKey(client)) || '',
           }));
