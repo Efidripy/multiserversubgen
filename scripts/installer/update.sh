@@ -1277,8 +1277,14 @@ case $update_choice in
         echo "[3/5] Обновление Python-зависимостей..."
         resource_guard_export_build_env
         resource_guard_require_free_mb "${UPDATE_PYTHON_MIN_FREE_MB:-700}" "before Python dependency refresh" "/" || exit 1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt" > /dev/null 2>&1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"
+        if ! resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pip install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt" > /dev/null 2>&1; then
+            echo "  ❌ Не удалось обновить Python-зависимости. Обновление прервано."
+            exit 1
+        fi
+        if ! resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"; then
+            echo "  ❌ Не удалось скомпилировать Python-модули. Обновление прервано."
+            exit 1
+        fi
         echo "  ✓ Зависимости обновлены"
         
         echo "[4/5] Пересборка Frontend..."
@@ -1312,8 +1318,14 @@ case $update_choice in
         echo "  → Обновление зависимостей..."
         resource_guard_export_build_env
         resource_guard_require_free_mb "${UPDATE_PYTHON_MIN_FREE_MB:-700}" "before backend dependency refresh" "/" || exit 1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt" > /dev/null 2>&1
-        resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"
+        if ! resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pip install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt" > /dev/null 2>&1; then
+            echo "  ❌ Не удалось обновить Python-зависимости. Обновление прервано."
+            exit 1
+        fi
+        if ! resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"; then
+            echo "  ❌ Не удалось скомпилировать Python-модули. Обновление прервано."
+            exit 1
+        fi
 
         echo "[3/3] Перезапуск сервиса..."
         runtime_secrets_write
