@@ -193,6 +193,7 @@ def test_approved_user_gets_opaque_subscription_link_and_rotation_invalidates_pr
     assert old_token != new_token
     assert resolve_token(db_path, "email", old_token) is None
     assert resolve_token(db_path, "email", new_token) == "new_user"
+    assert "⚠️ ВНИМАНИЕ" in confirm_prompt[0].text
     assert "подтвердить" in confirm_prompt[0].text.lower()
 
 
@@ -492,7 +493,10 @@ def test_primary_admin_has_broadcasts_and_customer_profile_details(tmp_path):
     requests = service.handle_update(_admin_callback(43, "admin:requests:0"))
     request_labels = [button["text"] for row in requests[0].reply_markup["inline_keyboard"] for button in row]
     assert "⊘ Заблокированные" in request_labels
-    assert "admin-card-user" in customers[0].text
+    assert any(
+        button["text"] == "🟢 admin-card-user"
+        for row in customers[0].reply_markup["inline_keyboard"] for button in row
+    )
     assert "Трафик за всё время" in card[0].text
     assert "Никнейм: @card_user" in card[0].text
     assert "Telegram: 42" in card[0].text
@@ -506,6 +510,43 @@ def test_primary_admin_has_broadcasts_and_customer_profile_details(tmp_path):
         button["callback_data"] == f"admin:cn:{customer_id}:1:add:0"
         for row in card[0].reply_markup["inline_keyboard"] for button in row
     )
+
+
+def test_primary_admin_customers_are_shown_as_twenty_per_page_in_two_columns(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    for index in range(21):
+        customer_id = registry.create_customer(
+            email_display=f"grid-user-{index:02d}", origin="manual", email_source="admin", public_code=f"grid-{index:02d}"
+        )
+        if index == 20:
+            with connect(db_path) as conn:
+                conn.execute("UPDATE customers SET status = 'suspended' WHERE id = ?", (customer_id,))
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
+
+    first = service.handle_update(_admin_callback(80, "admin:customers:0"))[0]
+    first_rows = first.reply_markup["inline_keyboard"]
+    first_customer_rows = [row for row in first_rows if row[0]["callback_data"].startswith("admin:customer:")]
+    first_customer_buttons = [button for row in first_customer_rows for button in row]
+
+    assert first.text == "Пользователи: 21. Страница 1/2."
+    assert len(first_customer_rows) == 10
+    assert all(len(row) == 2 for row in first_customer_rows)
+    assert len(first_customer_buttons) == 20
+    assert any(button["text"].startswith("🟢") for button in first_customer_buttons)
+    assert any(button["text"].startswith("🔴") for button in first_customer_buttons)
+    assert any(button["text"] == "1/2" for row in first_rows for button in row)
+
+    second = service.handle_update(_admin_callback(81, "admin:customers:1"))[0]
+    second_rows = second.reply_markup["inline_keyboard"]
+    second_customer_rows = [row for row in second_rows if row[0]["callback_data"].startswith("admin:customer:")]
+
+    assert second.text == "Пользователи: 21. Страница 2/2."
+    assert len(second_customer_rows) == 1
+    assert len(second_customer_rows[0]) == 1
+    assert second_customer_rows[0][0]["text"].startswith("🟢")
+    assert any(button["text"] == "2/2" for row in second_rows for button in row)
 
 
 def test_primary_admin_confirms_a_direct_bot_message_before_queuing_it(tmp_path):
