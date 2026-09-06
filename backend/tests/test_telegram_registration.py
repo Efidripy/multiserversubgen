@@ -263,7 +263,7 @@ def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path)
     assert "Статус доступа" in home[0].text
 
 
-def test_primary_admin_has_user_and_blocked_sections_with_safe_customer_card(tmp_path):
+def test_primary_admin_has_three_root_sections_and_blocked_is_nested_in_requests(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -284,7 +284,10 @@ def test_primary_admin_has_user_and_blocked_sections_with_safe_customer_card(tmp
     card = service.handle_update(_admin_callback(42, f"admin:customer:{customer_id}:0"))
 
     labels = [button["text"] for row in home[0].reply_markup["inline_keyboard"] for button in row]
-    assert {"Заявки", "Пользователи", "TG-ноды", "Заблокированные"} <= set(labels)
+    assert labels == ["Заявки", "Пользователи", "TG-ноды"]
+    requests = service.handle_update(_admin_callback(43, "admin:requests:0"))
+    request_labels = [button["text"] for row in requests[0].reply_markup["inline_keyboard"] for button in row]
+    assert "⊘ Заблокированные" in request_labels
     assert "admin-card-user" in customers[0].text
     assert "Трафик за всё время" in card[0].text
     assert any(
@@ -293,7 +296,7 @@ def test_primary_admin_has_user_and_blocked_sections_with_safe_customer_card(tmp
     )
 
 
-def test_primary_admin_queues_customer_suspend_and_can_unblock_an_applicant(tmp_path):
+def test_primary_admin_confirms_customer_suspend_and_can_unblock_an_applicant(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -328,10 +331,13 @@ def test_primary_admin_queues_customer_suspend_and_can_unblock_an_applicant(tmp_
         )
     service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
 
-    suspended = service.handle_update(_admin_callback(50, f"admin:customer-op:{customer_id}:1:suspend:0"))
-    blocked_list = service.handle_update(_admin_callback(51, "admin:blocked:0"))
-    unblocked = service.handle_update(_admin_callback(52, f"admin:unblock:77:{blocked.row_version}:0"))
+    preview = service.handle_update(_admin_callback(50, f"admin:customer-op:{customer_id}:1:suspend:0"))
+    assert registry.get_customer(customer_id).status == "active"
+    suspended = service.handle_update(_admin_callback(51, f"admin:customer-op-confirm:{customer_id}:1:suspend:0"))
+    blocked_list = service.handle_update(_admin_callback(52, "admin:blocked:0"))
+    unblocked = service.handle_update(_admin_callback(53, f"admin:unblock:77:{blocked.row_version}:0"))
 
+    assert "Приостановить пользователя" in preview[0].text
     assert "Приостановка поставлена в очередь" in suspended[0].text
     assert registry.get_customer(customer_id).status == "suspending"
     assert "@blocked_user" in blocked_list[0].text
@@ -400,6 +406,125 @@ def test_primary_admin_can_toggle_only_a_compatible_node_from_the_bot(tmp_path):
     assert "включена" in toggled[0].text.lower()
     with connect(db_path) as conn:
         assert conn.execute("SELECT provisioning_enabled FROM telegram_node_policies WHERE node_id = 1").fetchone()[0] == 1
+
+
+def test_request_wizard_requires_final_confirmation_and_keeps_custom_name_after_restart(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=73, chat_id=73, username="suggested_user", first_name="Suggested", last_name=None
+    )
+    pending = registry.create_pending_application(73)
+    registry.submit_introduction(73, "Короткое представление", maximum_chars=700)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (1, 1)")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
+
+    detail = service.handle_update(_admin_callback(60, f"admin:request:73:{pending.identity.row_version}:0"))
+    assert "Короткое представление" in detail[0].text
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
+
+    choice = service.handle_update(_admin_callback(61, f"admin:new:73:{pending.identity.row_version}:0"))
+    assert any(
+        "Использовать" in button["text"]
+        for row in choice[0].reply_markup["inline_keyboard"] for button in row
+    )
+    suggested_preview = service.handle_update(_admin_callback(62, f"admin:new-use:73:{pending.identity.row_version}:0"))
+    assert "suggested_user" in suggested_preview[0].text
+    service.handle_update(_admin_callback(63, f"admin:new-input:73:{pending.identity.row_version}:0"))
+    preview = service.handle_update(_admin_message(64, "chosen-user"))
+    assert "chosen-user" in preview[0].text
+    assert any(
+        "Одобрить и создать" in button["text"]
+        for row in preview[0].reply_markup["inline_keyboard"] for button in row
+    )
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0
+
+    restarted = TelegramRegistrationService(TelegramRegistry(db_path), introduction_max_chars=700, primary_admin_id=108100140)
+    approved = restarted.handle_update(_admin_callback(65, f"admin:new-confirm:73:{pending.identity.row_version}:0"))
+
+    assert "одобрена" in approved[0].text.lower()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT email_display FROM customers").fetchone()[0] == "chosen-user"
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 1
+
+
+def test_existing_customer_link_requires_exact_input_and_separate_confirmation(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="existing-user", origin="manual", email_source="admin", public_code="existing-user"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=74, chat_id=74, username="new_person", first_name="New", last_name=None
+    )
+    pending = registry.create_pending_application(74)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'remote-id', 'remote-sub', 'existing-user',
+                    'admin_confirmed', 'confirmed', 1, 1)
+            """,
+            (customer_id,),
+        )
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
+
+    service.handle_update(_admin_callback(70, f"admin:existing:74:{pending.identity.row_version}:0"))
+    candidate = service.handle_update(_admin_message(71, "existing-user"))
+    assert "Найден пользователь" in candidate[0].text
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
+        assert conn.execute("SELECT access_status FROM telegram_identities WHERE telegram_user_id = 74").fetchone()[0] == "pending"
+
+    linked = service.handle_update(_admin_callback(72, f"admin:existing-confirm:74:{pending.identity.row_version}:{customer_id}:0"))
+    assert "привязана" in linked[0].text.lower()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT access_status, customer_id FROM telegram_identities WHERE telegram_user_id = 74").fetchone() == ("approved", customer_id)
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
+
+
+def test_delete_requires_typed_exact_email_before_final_confirmation(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="delete-user", origin="manual", email_source="admin", public_code="delete-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'remote-id', 'remote-sub', 'delete-user',
+                    'admin_confirmed', 'confirmed', 1, 1)
+            """,
+            (customer_id,),
+        )
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
+
+    prompt = service.handle_update(_admin_callback(80, f"admin:customer-delete:{customer_id}:1:0"))
+    wrong = service.handle_update(_admin_message(81, "wrong-user"))
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM telegram_customer_operations").fetchone()[0] == 0
+    preview = service.handle_update(_admin_message(82, "delete-user"))
+    queued = service.handle_update(_admin_callback(83, f"admin:customer-delete-confirm:{customer_id}:1:0"))
+
+    assert "точный service username/email" in prompt[0].text
+    assert "не совпало" in wrong[0].text
+    assert "Будет затронуто нод: 1" in preview[0].text
+    assert "поставлено в очередь" in queued[0].text
 
 
 class _Sender:
