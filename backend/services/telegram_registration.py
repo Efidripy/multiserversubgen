@@ -269,7 +269,7 @@ class TelegramRegistrationService:
         )
 
     def _admin_customers_message(self, chat_id: int, page: int) -> TelegramOutboundMessage:
-        page_size = 6
+        page_size = 20
         customer_page = self._registry.list_customers(page=max(page, 0) + 1, page_size=page_size)
         total_pages = max(1, (customer_page.total + page_size - 1) // page_size)
         current_page = min(max(page, 0), total_pages - 1)
@@ -278,13 +278,15 @@ class TelegramRegistrationService:
         if not customer_page.items:
             return TelegramOutboundMessage(chat_id, "Пользователей пока нет.", self._admin_home_menu())
         buttons: list[list[dict[str, str]]] = []
-        lines = [f"Пользователи: {customer_page.total}."]
-        for item in customer_page.items:
-            lines.append(f"• {item.email_display} · {item.status}")
-            buttons.append([{
-                "text": f"◎ {item.email_display[:30]}",
-                "callback_data": f"admin:customer:{item.customer_id}:{current_page}",
-            }])
+        for offset in range(0, len(customer_page.items), 2):
+            row: list[dict[str, str]] = []
+            for item in customer_page.items[offset:offset + 2]:
+                status_icon = "🟢" if item.status == "active" else "🔴"
+                row.append({
+                    "text": f"{status_icon} {item.email_display[:26]}",
+                    "callback_data": f"admin:customer:{item.customer_id}:{current_page}",
+                })
+            buttons.append(row)
         navigation: list[dict[str, str]] = []
         if current_page > 0:
             navigation.append({"text": "‹", "callback_data": f"admin:customers:{current_page - 1}"})
@@ -293,7 +295,11 @@ class TelegramRegistrationService:
             navigation.append({"text": "›", "callback_data": f"admin:customers:{current_page + 1}"})
         buttons.append(navigation)
         buttons.append([{"text": "← Меню", "callback_data": "admin:home"}])
-        return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
+        return TelegramOutboundMessage(
+            chat_id,
+            f"Пользователи: {customer_page.total}. Страница {current_page + 1}/{total_pages}.",
+            {"inline_keyboard": buttons},
+        )
 
     def _admin_customer_message(self, chat_id: int, customer_id: int, page: int) -> TelegramOutboundMessage:
         customer = self._registry.get_customer(customer_id)
@@ -1098,7 +1104,7 @@ class TelegramRegistrationService:
             if callback_data == "subscription:rotate":
                 return [TelegramOutboundMessage(
                     chat_id,
-                    "Старая ссылка сразу перестанет работать. Подтвердить смену?",
+                    "⚠️ ВНИМАНИЕ\n\nСтарая ссылка сразу перестанет работать. Подтвердить смену?",
                     {"inline_keyboard": [[{"text": "✓ Подтвердить смену", "callback_data": "subscription:rotate:confirm"}], [{"text": "Отмена", "callback_data": "menu:home"}]]},
                 )]
             if callback_data == "support:appeal":
