@@ -11,6 +11,11 @@
 локальный HTTP CONNECT listener, затем через отдельный VLESS-клиент на
 назначенный EU сервер. Трафик панели, нод, SSH и других сервисов не меняется.
 
+Если Telegram не может установить входящее соединение с хостом (например,
+webhook на РФ-хосте недоступен с его стороны), укажите
+`TELEGRAM_MODE=polling`. В этом режиме `sub-manager` сам получает обновления
+через тот же локальный transport; публичный webhook не используется.
+
 ```text
 sub-manager → 127.0.0.1:<local-port> (HTTP CONNECT) → VLESS Reality → EU → Telegram Bot API
 ```
@@ -30,6 +35,9 @@ sub-manager → 127.0.0.1:<local-port> (HTTP CONNECT) → VLESS Reality → EU �
   живут только в root-owned runtime secrets/config.
 - Если выбран `Локальный VLESS`, а sidecar недоступен, отправка Bot API
   завершается ошибкой. Прямого fallback нет.
+- Polling перед первым чтением снимает ранее установленный webhook, но не
+  сбрасывает ожидающие обновления. Поэтому пользовательский `/start` не
+  теряется при переходе с webhook.
 - Выбор режима хранится в SQLite как не-секретная настройка, начинается с
   `direct` и использует optimistic versioning.
 

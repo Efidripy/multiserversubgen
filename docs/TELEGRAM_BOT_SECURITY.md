@@ -13,11 +13,12 @@ BotFather и реальные remote clients этот репозиторный �
 | `TELEGRAM_BOT_ENABLED` | `false` by default. If `true`, missing mandatory variables abort startup. |
 | `TELEGRAM_BOT_TOKEN` | Root-owned runtime secret. Never put it in Git, docs, `.env.example`, logs or audit. Rotate any token disclosed outside the runtime secret store before first launch. |
 | `TELEGRAM_PRIMARY_ADMIN_ID` | Positive signed 64-bit integer. Authorization uses only the exact numeric Telegram `from.id`. |
-| `TELEGRAM_MODE` | Only `webhook` is supported when the feature is enabled; polling is rejected until separately implemented. |
-| `TELEGRAM_WEBHOOK_SECRET` | Exact value required in `X-Telegram-Bot-Api-Secret-Token`; an absent or incorrect value is rejected. |
-| `TELEGRAM_WEBHOOK_PATH_SUFFIX` | High-entropy path component; it is compared exactly and never logged. |
-| `TELEGRAM_PUBLIC_BASE_URL` | Public HTTPS origin used for controlled webhook registration; no HTTP or implicit local fallback. |
+| `TELEGRAM_MODE` | `webhook` (default) accepts incoming Telegram requests; `polling` retrieves updates over Bot API and is useful where Telegram cannot reach the host. |
+| `TELEGRAM_WEBHOOK_SECRET` | Required only in `webhook` mode: exact value required in `X-Telegram-Bot-Api-Secret-Token`. |
+| `TELEGRAM_WEBHOOK_PATH_SUFFIX` | Required only in `webhook` mode: high-entropy path component compared exactly and never logged. |
+| `TELEGRAM_PUBLIC_BASE_URL` | Required only in `webhook` mode: public HTTPS origin used for controlled webhook registration. It is also used to issue subscription links. |
 | `TELEGRAM_LOCAL_PROXY_URL` | Optional loopback `http://127.0.0.1:<port>` endpoint; complete HTTP proxy credentials may be embedded only in this root-owned runtime secret. It is used only after an administrator selects `Local VLESS` in the panel; otherwise Bot API stays direct. A selected local mode fails closed rather than retrying direct. |
+| `TELEGRAM_POLLING_TIMEOUT_SEC` | Long-poll duration for `polling` mode, 1–50 seconds; default `25`. The worker removes any prior webhook without dropping pending updates. |
 | `TELEGRAM_PROVISIONING_WORKER_ENABLED` | `false` by default. Starts the durable job worker only when remote writes are separately permitted. |
 | `TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES` | Separate explicit interlock. The application fails startup if the worker is requested without this value set to `true`. |
 | `TELEGRAM_PROVISIONING_WORKER_INTERVAL_SEC` | Idle poll interval, 1–300 seconds; default `5`. |

@@ -154,6 +154,7 @@ class TelegramSettings:
     retention_worker_enabled: bool
     retention_worker_interval_sec: int
     local_proxy_url: str
+    polling_timeout_sec: int
 
 
 def _load_telegram_settings() -> TelegramSettings:
@@ -185,6 +186,7 @@ def _load_telegram_settings() -> TelegramSettings:
             retention_worker_enabled=False,
             retention_worker_interval_sec=86400,
             local_proxy_url=local_proxy_url,
+            polling_timeout_sec=25,
         )
 
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -192,16 +194,17 @@ def _load_telegram_settings() -> TelegramSettings:
         raise RuntimeError("TELEGRAM_BOT_TOKEN must be provisioned before enabling Telegram")
     primary_admin_id = _positive_int_env("TELEGRAM_PRIMARY_ADMIN_ID", required=True)
     mode = os.getenv("TELEGRAM_MODE", "webhook").strip().lower()
-    if mode != "webhook":
-        raise RuntimeError("TELEGRAM_MODE must be webhook until a polling adapter is implemented")
+    if mode not in {"webhook", "polling"}:
+        raise RuntimeError("TELEGRAM_MODE must be webhook or polling")
     webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
     webhook_path_suffix = os.getenv("TELEGRAM_WEBHOOK_PATH_SUFFIX", "").strip()
     public_base_url = os.getenv("TELEGRAM_PUBLIC_BASE_URL", "").strip().rstrip("/")
-    if not webhook_secret or not webhook_path_suffix:
-        raise RuntimeError("TELEGRAM_WEBHOOK_SECRET and TELEGRAM_WEBHOOK_PATH_SUFFIX are required")
-    parsed_public_url = urlparse(public_base_url)
-    if parsed_public_url.scheme != "https" or not parsed_public_url.netloc:
-        raise RuntimeError("TELEGRAM_PUBLIC_BASE_URL must be an HTTPS origin")
+    if mode == "webhook":
+        if not webhook_secret or not webhook_path_suffix:
+            raise RuntimeError("TELEGRAM_WEBHOOK_SECRET and TELEGRAM_WEBHOOK_PATH_SUFFIX are required")
+        parsed_public_url = urlparse(public_base_url)
+        if parsed_public_url.scheme != "https" or not parsed_public_url.netloc:
+            raise RuntimeError("TELEGRAM_PUBLIC_BASE_URL must be an HTTPS origin")
     introduction_max_chars = _bounded_env_int(
         "TELEGRAM_INTRODUCTION_MAX_CHARS", default=700, minimum=1, maximum=700
     )
@@ -219,6 +222,9 @@ def _load_telegram_settings() -> TelegramSettings:
     retention_worker_interval_sec = _bounded_env_int(
         "TELEGRAM_RETENTION_WORKER_INTERVAL_SEC", default=86400, minimum=60, maximum=604800
     )
+    polling_timeout_sec = _bounded_env_int(
+        "TELEGRAM_POLLING_TIMEOUT_SEC", default=25, minimum=1, maximum=50
+    )
     return TelegramSettings(
         enabled=True,
         bot_token=bot_token,
@@ -235,6 +241,7 @@ def _load_telegram_settings() -> TelegramSettings:
         retention_worker_enabled=retention_requested,
         retention_worker_interval_sec=retention_worker_interval_sec,
         local_proxy_url=local_proxy_url,
+        polling_timeout_sec=polling_timeout_sec,
     )
 
 
