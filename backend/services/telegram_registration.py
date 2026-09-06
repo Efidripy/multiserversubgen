@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from services.subscription_tokens import ensure_tokens, regenerate_token
+from services.telegram_access import resolve_effective_access
 from services.telegram_traffic import TelegramTrafficService
 from services.telegram_registry import (
     DiscoveredExistingBinding,
@@ -644,15 +645,22 @@ class TelegramRegistrationService:
 
     def _subscription_message(self, *, user_id: int, chat_id: int, rotate: bool = False) -> TelegramOutboundMessage:
         access = self._registry.get_customer_access(user_id)
-        if access.access_status != "approved" or access.customer_id is None or not access.email_display:
-            return TelegramOutboundMessage(chat_id, "Сейчас доступ ещё не готов.", self._approved_menu())
-        if access.customer_status in {"suspended", "suspend_partial", "resuming", "resume_partial", "deleting", "delete_partial"}:
+        decision = resolve_effective_access(
+            access_status=access.access_status,
+            customer_id=access.customer_id,
+            email_display=access.email_display,
+            customer_status=access.customer_status,
+            blocked_from_status=access.blocked_from_status,
+        )
+        if decision.state == "suspended":
             return TelegramOutboundMessage(
                 chat_id,
                 "Доступ временно приостановлен. Если это ошибка, напишите администратору.",
                 self._approved_menu(suspended=True),
             )
-        if access.customer_status != "active" or not self._list_nodes or not self._get_links_filtered:
+        if not decision.can_receive_subscription:
+            return TelegramOutboundMessage(chat_id, "Сейчас доступ ещё не готов.", self._approved_menu())
+        if not self._list_nodes or not self._get_links_filtered:
             return TelegramOutboundMessage(chat_id, "Доступ готовится. Пожалуйста, проверьте статус позже.", self._approved_menu())
         try:
             links = self._get_links_filtered(self._list_nodes(), access.email_display, None)
@@ -819,7 +827,14 @@ class TelegramRegistrationService:
                 return [self._approved_status(user_id, chat_id)]
             if text and text.strip().startswith("/subscription"):
                 return [self._subscription_message(user_id=user_id, chat_id=chat_id)]
-            if text and access.customer_id is not None and access.customer_status in {"suspended", "suspend_partial"}:
+            decision = resolve_effective_access(
+                access_status=access.access_status,
+                customer_id=access.customer_id,
+                email_display=access.email_display,
+                customer_status=access.customer_status,
+                blocked_from_status=access.blocked_from_status,
+            )
+            if text and decision.can_submit_appeal:
                 try:
                     self._registry.submit_suspended_appeal(telegram_user_id=user_id, body=text)
                 except TelegramRegistryError:

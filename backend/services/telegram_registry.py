@@ -68,6 +68,7 @@ class TelegramCustomerAccess:
     email_display: str | None
     customer_status: str | None
     customer_row_version: int | None
+    blocked_from_status: str | None
 
 
 @dataclass(frozen=True)
@@ -756,7 +757,7 @@ class TelegramRegistry:
             row = conn.execute(
                 """
                 SELECT i.telegram_user_id, i.chat_id, i.access_status, i.customer_id,
-                       c.email_display, c.status, c.row_version
+                       c.email_display, c.status, c.row_version, i.blocked_from_status
                 FROM telegram_identities AS i
                 LEFT JOIN customers AS c ON c.id = i.customer_id
                 WHERE i.telegram_user_id = ?
@@ -773,6 +774,7 @@ class TelegramRegistry:
             email_display=str(row[4]) if row[4] is not None else None,
             customer_status=str(row[5]) if row[5] is not None else None,
             customer_row_version=int(row[6]) if row[6] is not None else None,
+            blocked_from_status=str(row[7]) if row[7] is not None else None,
         )
 
     def get_notification_preferences(self, telegram_user_id: int) -> TelegramNotificationPreferences:
