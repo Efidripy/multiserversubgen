@@ -1042,6 +1042,16 @@ class TelegramRegistrationService:
             ]},
         )
 
+    @staticmethod
+    def _required_introduction_message(chat_id: int) -> TelegramOutboundMessage:
+        return TelegramOutboundMessage(
+            chat_id,
+            "Здравствуйте.\n\n"
+            "⚠️ ВНИМАНИЕ\n\n"
+            "Чтобы отправить заявку, напишите одним сообщением немного о себе и причине обращения. "
+            "Без такого сообщения заявка не будет отправлена.",
+        )
+
     def _diagnostics_message(self, user_id: int, chat_id: int) -> TelegramOutboundMessage:
         access = self._registry.get_customer_access(user_id)
         decision = resolve_effective_access(
@@ -1141,28 +1151,26 @@ class TelegramRegistrationService:
             return [message]
 
         if text and text.strip().startswith("/start"):
-            pending = self._registry.create_pending_application(user_id)
-            if pending.created:
+            if identity.access_status == "approved":
+                return [self._approved_status(user_id, chat_id)]
+            if identity.access_status == "pending":
+                return no_op(TelegramOutboundMessage(chat_id, "Заявка уже ожидает проверки. Пожалуйста, дождитесь ответа."))
+            if self._registry.request_required_introduction(user_id):
+                return [self._required_introduction_message(chat_id)]
+            return no_op(TelegramOutboundMessage(chat_id, "Сейчас это действие недоступно."))
+
+        if callback_data == "registration:intro":
+            if identity.access_status in {"eligible", "rejected"}:
+                self._registry.request_required_introduction(user_id)
+                return [self._required_introduction_message(chat_id)]
+            if identity.access_status == "pending":
                 return [
                     TelegramOutboundMessage(
                         chat_id,
-                        "Здравствуйте. Ваша заявка принята и ожидает проверки. Пожалуйста, дождитесь ответа.",
-                        {"inline_keyboard": [[{"text": "◎ Представиться", "callback_data": "registration:intro"}]]},
+                        "Представление обязательно. Отправьте одним сообщением немного о себе и причине обращения.",
                     )
                 ]
-            if pending.identity.access_status == "approved":
-                return [self._approved_status(user_id, chat_id)]
-            return no_op(TelegramOutboundMessage(chat_id, "Заявка уже ожидает проверки. Пожалуйста, дождитесь ответа."))
-
-        if callback_data == "registration:intro":
-            if identity.access_status != "pending":
-                return no_op(TelegramOutboundMessage(chat_id, "Сейчас представление не требуется."))
-            return [
-                TelegramOutboundMessage(
-                    chat_id,
-                    "Если хотите, коротко расскажите о себе и причине обращения одним сообщением. Это необязательно.",
-                )
-            ]
+            return no_op(TelegramOutboundMessage(chat_id, "Сейчас представление не требуется."))
 
         if identity.access_status == "approved":
             access = self._registry.get_customer_access(user_id)
@@ -1232,5 +1240,31 @@ class TelegramRegistrationService:
             if saved:
                 return [TelegramOutboundMessage(chat_id, "Спасибо. Заявка по-прежнему ожидает проверки.")]
             return no_op(TelegramOutboundMessage(chat_id, "Заявка уже ожидает проверки. Пожалуйста, дождитесь ответа."))
+
+        if text and not text.strip().startswith("/") and identity.access_status in {"eligible", "rejected"}:
+            try:
+                pending = self._registry.submit_required_introduction(
+                    user_id, text, maximum_chars=self._introduction_max_chars
+                )
+            except TelegramRegistryError:
+                return [
+                    TelegramOutboundMessage(
+                        chat_id,
+                        "⚠️ ВНИМАНИЕ\n\nНапишите непустое сообщение о себе и причине обращения, но не длиннее допустимого размера.",
+                    )
+                ]
+            if pending.created:
+                return [
+                    TelegramOutboundMessage(
+                        chat_id,
+                        "Спасибо. Заявка отправлена и ожидает проверки администратора.",
+                    )
+                ]
+            return no_op(
+                TelegramOutboundMessage(
+                    chat_id,
+                    "Сначала нажмите /start, затем отправьте одним сообщением немного о себе и причине обращения.",
+                )
+            )
 
         return no_op(TelegramOutboundMessage(chat_id, "Для начала отправьте /start."))

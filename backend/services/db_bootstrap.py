@@ -231,6 +231,7 @@ def init_db(db_path: str) -> None:
                         CHECK(access_status IN ('eligible', 'pending', 'approved', 'rejected', 'blocked')),
                       request_code TEXT DEFAULT NULL UNIQUE,
                       application_attempt INTEGER NOT NULL DEFAULT 0 CHECK(application_attempt >= 0),
+                      introduction_requested_at TEXT DEFAULT NULL,
                       requested_at TEXT DEFAULT NULL,
                       approved_at TEXT DEFAULT NULL,
                       rejected_at TEXT DEFAULT NULL,
@@ -259,6 +260,11 @@ def init_db(db_path: str) -> None:
         }
         if "phone_number" not in identity_columns:
             conn.execute("ALTER TABLE telegram_identities ADD COLUMN phone_number TEXT DEFAULT NULL")
+        if "introduction_requested_at" not in identity_columns:
+            conn.execute(
+                "ALTER TABLE telegram_identities "
+                "ADD COLUMN introduction_requested_at TEXT DEFAULT NULL"
+            )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_notification_preferences
                      (telegram_user_id INTEGER PRIMARY KEY,

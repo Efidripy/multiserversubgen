@@ -1309,6 +1309,145 @@ class TelegramRegistry:
             request_code=request_code,
         )
 
+    def request_required_introduction(self, telegram_user_id: int) -> bool:
+        """Open the non-sensitive local registration step without creating an application.
+
+        A pending application and its administrator notifications are created
+        only after :meth:`submit_required_introduction` validates non-empty
+        user text. This makes an empty application impossible through the bot
+        command path while keeping the public pre-approval copy neutral.
+        """
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            update = conn.execute(
+                """
+                UPDATE telegram_identities
+                SET introduction_requested_at = COALESCE(introduction_requested_at, CURRENT_TIMESTAMP),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_user_id = ? AND access_status IN ('eligible', 'rejected')
+                """,
+                (user_id,),
+            )
+        return update.rowcount == 1
+
+    def submit_required_introduction(
+        self, telegram_user_id: int, text: str, *, maximum_chars: int
+    ) -> PendingApplicationResult:
+        """Atomically turn a prompted introduction into one pending application.
+
+        The update requires an explicit locally-recorded prompt, one bounded
+        non-whitespace body and an eligible identity. It creates the complete
+        review object, stores the text and queues administrator delivery in
+        the same SQLite transaction, so retries cannot create an empty or
+        duplicate request.
+        """
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        normalized = text.strip()
+        if not normalized or len(normalized) > maximum_chars:
+            raise TelegramRegistryError("introduction length is invalid")
+        with connect(self._db_path) as conn:
+            identity = conn.execute(
+                """
+                SELECT telegram_user_id, chat_id, access_status, application_attempt,
+                       customer_id, row_version, introduction_requested_at
+                FROM telegram_identities WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if identity is None:
+                raise TelegramRegistryError("identity must be registered before creating an application")
+            existing_identity = TelegramIdentity(
+                telegram_user_id=int(identity[0]),
+                chat_id=int(identity[1]),
+                access_status=str(identity[2]),
+                application_attempt=int(identity[3]),
+                customer_id=int(identity[4]) if identity[4] is not None else None,
+                row_version=int(identity[5]),
+            )
+            if str(identity[2]) not in {"eligible", "rejected"} or identity[6] is None:
+                return PendingApplicationResult(existing_identity, created=False, request_code=None)
+
+            next_attempt = existing_identity.application_attempt + 1
+            request_code = secrets.token_urlsafe(6)
+            update = conn.execute(
+                """
+                UPDATE telegram_identities
+                SET access_status = 'pending', request_code = ?, application_attempt = ?,
+                    introduction_requested_at = NULL, requested_at = CURRENT_TIMESTAMP,
+                    rejected_at = NULL, decision_reason = NULL, updated_at = CURRENT_TIMESTAMP,
+                    row_version = row_version + 1
+                WHERE telegram_user_id = ? AND access_status IN ('eligible', 'rejected')
+                  AND introduction_requested_at IS NOT NULL
+                """,
+                (request_code, next_attempt, user_id),
+            )
+            if update.rowcount != 1:
+                return PendingApplicationResult(existing_identity, created=False, request_code=None)
+            conn.execute(
+                """
+                INSERT INTO telegram_applications
+                    (telegram_user_id, application_attempt, introduction_text, introduction_submitted_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (user_id, next_attempt, normalized),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                VALUES ('admin_request_created', ?, ?)
+                """,
+                (str(user_id), f"admin:request-created:{user_id}:{next_attempt}"),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                VALUES ('admin_introduction_submitted', ?, ?)
+                """,
+                (
+                    f"{user_id}:{next_attempt}",
+                    f"admin:introduction-submitted:{user_id}:{next_attempt}",
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id)
+                VALUES ('request_created', 'telegram_user', ?, 'telegram_identity', ?)
+                """,
+                (str(user_id), str(user_id)),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id)
+                VALUES ('introduction_submitted', 'telegram_user', ?, 'telegram_application', ?)
+                """,
+                (str(user_id), f"{user_id}:{next_attempt}"),
+            )
+            row = conn.execute(
+                """
+                SELECT telegram_user_id, chat_id, access_status, application_attempt,
+                       customer_id, row_version
+                FROM telegram_identities WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        assert row is not None
+        return PendingApplicationResult(
+            identity=TelegramIdentity(
+                telegram_user_id=int(row[0]),
+                chat_id=int(row[1]),
+                access_status=str(row[2]),
+                application_attempt=int(row[3]),
+                customer_id=int(row[4]) if row[4] is not None else None,
+                row_version=int(row[5]),
+            ),
+            created=True,
+            request_code=request_code,
+        )
+
     def submit_introduction(self, telegram_user_id: int, text: str, *, maximum_chars: int) -> bool:
         """Store one plain-text voluntary introduction for the active attempt."""
 

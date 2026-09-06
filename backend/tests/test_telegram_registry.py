@@ -223,6 +223,37 @@ def test_pending_application_is_deduplicated_and_creates_one_admin_outbox_event(
         assert conn.execute("SELECT COUNT(*) FROM telegram_outbox").fetchone()[0] == 1
 
 
+def test_required_introduction_creates_one_complete_request_only_after_an_explicit_prompt(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username=None, first_name="Name", last_name=None
+    )
+
+    assert registry.submit_required_introduction(42, "Хочу подключиться", maximum_chars=700).created is False
+    assert registry.request_required_introduction(42) is True
+    with pytest.raises(TelegramRegistryError, match="introduction length"):
+        registry.submit_required_introduction(42, "   ", maximum_chars=700)
+
+    first = registry.submit_required_introduction(42, "Хочу подключиться", maximum_chars=700)
+    second = registry.submit_required_introduction(42, "Повтор", maximum_chars=700)
+
+    assert first.created is True
+    assert first.identity.access_status == "pending"
+    assert second.created is False
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT introduction_text FROM telegram_applications WHERE telegram_user_id = 42"
+        ).fetchone() == ("Хочу подключиться",)
+        assert conn.execute(
+            "SELECT event_type FROM telegram_outbox ORDER BY id"
+        ).fetchall() == [
+            ("admin_request_created",),
+            ("admin_introduction_submitted",),
+        ]
+
+
 def test_introduction_is_one_time_plain_text_for_the_current_pending_attempt(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)

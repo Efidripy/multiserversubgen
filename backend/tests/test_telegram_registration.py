@@ -89,7 +89,7 @@ def _approved_telegram_customer(registry: TelegramRegistry, db_path: str, *, use
     return customer_id
 
 
-def test_first_start_creates_one_pending_request_with_neutral_copy_and_dedupes(tmp_path):
+def test_first_start_requires_an_introduction_before_creating_a_pending_request(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     service = TelegramRegistrationService(TelegramRegistry(db_path), introduction_max_chars=700)
@@ -99,43 +99,51 @@ def test_first_start_creates_one_pending_request_with_neutral_copy_and_dedupes(t
     repeated_start = service.handle_update(_message(2, "/start"))
 
     assert len(first) == 1
-    assert first[0].reply_markup == {
-        "inline_keyboard": [[{"text": "◎ Представиться", "callback_data": "registration:intro"}]]
-    }
+    assert first[0].reply_markup is None
+    assert "⚠️ ВНИМАНИЕ" in first[0].text
+    assert "не будет отправлена" in first[0].text
     lowered = first[0].text.lower()
     assert not any(term in lowered for term in ("vpn", "proxy", "подписк", "сервер", "инбаунд"))
     assert duplicate == []
     assert len(repeated_start) == 1
     with connect(db_path) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM telegram_outbox").fetchone()[0] == 1
-        assert conn.execute("SELECT access_status, application_attempt FROM telegram_identities").fetchone() == (
-            "pending",
+        assert conn.execute("SELECT COUNT(*) FROM telegram_outbox").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM telegram_applications").fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT access_status, application_attempt, introduction_requested_at IS NOT NULL FROM telegram_identities"
+        ).fetchone() == (
+            "eligible",
+            0,
             1,
         )
 
 
-def test_pending_user_can_submit_one_voluntary_introduction(tmp_path):
+def test_prompted_user_must_submit_nonempty_introduction_before_the_request_is_created(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     service = TelegramRegistrationService(TelegramRegistry(db_path), introduction_max_chars=20)
     service.handle_update(_message(1, "/start"))
-    prompt = service.handle_update(
-        {
-            "update_id": 2,
-            "callback_query": {
-                "id": "callback-1",
-                "from": {"id": 42, "first_name": "New"},
-                "message": {"chat": {"id": 42, "type": "private"}},
-                "data": "registration:intro",
-            },
-        }
-    )
+    blank = service.handle_update(_message(2, "   "))
     accepted = service.handle_update(_message(3, "Привет"))
     repeated = service.handle_update(_message(4, "Ещё раз"))
 
-    assert "необязательно" in prompt[0].text.lower()
-    assert "спасибо" in accepted[0].text.lower()
+    assert "⚠️ ВНИМАНИЕ" in blank[0].text
+    assert "непустое" in blank[0].text.lower()
+    assert "отправлена" in accepted[0].text.lower()
     assert "ожидает" in repeated[0].text.lower()
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT access_status, application_attempt FROM telegram_identities WHERE telegram_user_id = 42"
+        ).fetchone() == ("pending", 1)
+        assert conn.execute(
+            "SELECT introduction_text FROM telegram_applications WHERE telegram_user_id = 42"
+        ).fetchone() == ("Привет",)
+        assert conn.execute(
+            "SELECT event_type FROM telegram_outbox ORDER BY id"
+        ).fetchall() == [
+            ("admin_request_created",),
+            ("admin_introduction_submitted",),
+        ]
 
 
 def test_bot_persists_only_a_contact_voluntarily_shared_by_the_sender(tmp_path):
@@ -1225,19 +1233,22 @@ def test_webhook_admin_can_adopt_a_discovered_legacy_customer_without_remote_wri
     headers = {"X-Telegram-Bot-Api-Secret-Token": "private-header-secret"}
 
     assert client.post("/telegram/webhook/private-path", headers=headers, json=_message(1, "/start")).status_code == 200
+    assert client.post(
+        "/telegram/webhook/private-path", headers=headers, json=_message(2, "Хочу представиться")
+    ).status_code == 200
     pending = TelegramRegistry(db_path).get_pending_application(42)
     assert client.post(
         "/telegram/webhook/private-path",
         headers=headers,
-        json=_admin_callback(2, f"admin:existing:42:{pending.row_version}:0"),
+        json=_admin_callback(3, f"admin:existing:42:{pending.row_version}:0"),
     ).status_code == 200
     assert client.post(
-        "/telegram/webhook/private-path", headers=headers, json=_admin_message(3, "legacy-user")
+        "/telegram/webhook/private-path", headers=headers, json=_admin_message(4, "legacy-user")
     ).status_code == 200
     assert client.post(
         "/telegram/webhook/private-path",
         headers=headers,
-        json=_admin_callback(4, f"admin:existing-discovered-confirm:42:{pending.row_version}:0"),
+        json=_admin_callback(5, f"admin:existing-discovered-confirm:42:{pending.row_version}:0"),
     ).status_code == 200
 
     with connect(db_path) as conn:
