@@ -105,6 +105,10 @@ runtime_ensure_service_user() {
             --shell /usr/sbin/nologin --gid "$service_user" "$service_user"
     fi
 
-    install -d -o "$service_user" -g "$service_user" -m 0750 "$service_dir"
+    # nginx serves the deliberately public frontend build below this directory.
+    # Grant only traversal to non-service users: they cannot list or read runtime
+    # files, while the nginx worker can reach build/ assets (which have their own
+    # explicit public modes).
+    install -d -o "$service_user" -g "$service_user" -m 0711 "$service_dir"
     chown -R -- "$service_user:$service_user" "$service_dir"
 }
