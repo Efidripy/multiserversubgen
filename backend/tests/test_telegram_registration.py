@@ -331,20 +331,19 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
             },
         }
     )
-    qr = service.handle_update(
-        {
-            "update_id": 22,
-            "callback_query": {
-                "id": "setup-qr",
-                "from": {"id": 42, "first_name": "QR"},
-                "message": {"chat": {"id": 42, "type": "private"}},
-                "data": "setup:qr",
-            },
-        }
-    )
+    access_choice = service.handle_update(_callback(22, "subscription:get"))
+    qr = service.handle_update(_callback(23, "subscription:qr"))
 
     assert any(button[0]["text"] == "⊞ Подключение" for button in home[0].reply_markup["inline_keyboard"])
     assert "выберите устройство" in assistant[0].text.lower()
+    assert "выберите удобный способ" in access_choice[0].text.lower()
+    assert access_choice[0].reply_markup["inline_keyboard"][0][0]["callback_data"] == "subscription:link"
+    assert access_choice[0].reply_markup["inline_keyboard"][1][0]["callback_data"] == "subscription:qr"
+    assert all(
+        button["callback_data"] != "setup:qr"
+        for row in assistant[0].reply_markup["inline_keyboard"]
+        for button in row
+    )
     assert qr[0].photo_png is not None
     assert qr[0].photo_png.startswith(b"\x89PNG\r\n\x1a\n")
     assert "https://" not in qr[0].text
@@ -382,7 +381,7 @@ def test_suspended_user_cannot_receive_qr(tmp_path):
                 "id": "setup-qr-suspended",
                 "from": {"id": 42, "first_name": "QR"},
                 "message": {"chat": {"id": 42, "type": "private"}},
-                "data": "setup:qr",
+                "data": "subscription:qr",
             },
         }
     )
@@ -945,7 +944,7 @@ def test_webhook_sender_receives_qr_as_a_photo_message(tmp_path):
                 "id": "webhook-qr",
                 "from": {"id": 42, "first_name": "QR"},
                 "message": {"chat": {"id": 42, "type": "private"}},
-                "data": "setup:qr",
+                "data": "subscription:qr",
             },
         },
     )
@@ -993,7 +992,7 @@ def test_webhook_repeated_subscription_edits_one_message_and_falls_back_only_if_
     headers = {"X-Telegram-Bot-Api-Secret-Token": "private-header-secret"}
 
     assert client.post("/telegram/webhook/private-path", headers=headers, json=_message(30, "/subscription")).status_code == 200
-    assert client.post("/telegram/webhook/private-path", headers=headers, json=_callback(31, "subscription:get")).status_code == 200
+    assert client.post("/telegram/webhook/private-path", headers=headers, json=_callback(31, "subscription:link")).status_code == 200
 
     assert len(sender.messages) == 2
     assert sender.messages[0].edit_message_id is None
