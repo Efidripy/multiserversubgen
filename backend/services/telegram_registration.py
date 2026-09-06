@@ -101,7 +101,6 @@ class TelegramRegistrationService:
                 [{"text": "Заявки", "callback_data": "admin:requests:0"}],
                 [{"text": "Пользователи", "callback_data": "admin:customers:0"}],
                 [{"text": "TG-ноды", "callback_data": "admin:nodes:0"}],
-                [{"text": "Заблокированные", "callback_data": "admin:blocked:0"}],
             ]
         }
 
@@ -150,15 +149,22 @@ class TelegramRegistrationService:
         current_page = min(max(page, 0), total_pages - 1)
         visible = requests[current_page * page_size:(current_page + 1) * page_size]
         if not visible:
-            return TelegramOutboundMessage(chat_id, "Заявок на рассмотрении нет.", self._admin_home_menu())
+            return TelegramOutboundMessage(
+                chat_id,
+                "Заявок на рассмотрении нет.",
+                {"inline_keyboard": [
+                    [{"text": "⊘ Заблокированные", "callback_data": "admin:blocked:0"}],
+                    [{"text": "← Меню", "callback_data": "admin:home"}],
+                ]},
+            )
         buttons: list[list[dict[str, str]]] = []
-        lines = ["Заявки. Подтверждение использует предложенное имя; изменить его можно в панели."]
+        lines = ["Заявки. Откройте карточку, чтобы проверить данные и принять решение."]
         for item in visible:
             title = f"@{item.username}" if item.username else (item.first_name or f"#{item.telegram_user_id}")
             lines.append(f"• {title} → {item.suggested_email}")
             buttons.append([{
-                "text": f"✓ {title[:28]}",
-                "callback_data": f"admin:approve:{item.telegram_user_id}:{item.row_version}:{current_page}",
+                "text": f"◎ {title[:28]}",
+                "callback_data": f"admin:request:{item.telegram_user_id}:{item.row_version}:{current_page}",
             }])
         navigation: list[dict[str, str]] = []
         if current_page > 0:
@@ -167,8 +173,68 @@ class TelegramRegistrationService:
         if current_page + 1 < total_pages:
             navigation.append({"text": "›", "callback_data": f"admin:requests:{current_page + 1}"})
         buttons.append(navigation)
+        buttons.append([{"text": "⊘ Заблокированные", "callback_data": "admin:blocked:0"}])
         buttons.append([{"text": "← Меню", "callback_data": "admin:home"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
+
+    def _admin_request_message(self, chat_id: int, telegram_user_id: int, page: int) -> TelegramOutboundMessage:
+        item = self._registry.get_pending_application(telegram_user_id)
+        title = f"@{item.username}" if item.username else (item.first_name or f"#{item.telegram_user_id}")
+        name = " ".join(part for part in (item.first_name, item.last_name) if part) or "—"
+        introduction = item.introduction_text or "не отправлено"
+        lines = [
+            "Заявка",
+            f"Telegram: {title}",
+            f"Имя: {name}",
+            f"ID: {item.telegram_user_id}",
+            f"Предложенное имя/email: {item.suggested_email}",
+            "Представление:",
+            introduction,
+        ]
+        return TelegramOutboundMessage(
+            chat_id,
+            "\n".join(lines),
+            {"inline_keyboard": [
+                [{"text": "Создать нового", "callback_data": f"admin:new:{item.telegram_user_id}:{item.row_version}:{page}"}],
+                [{"text": "Привязать существующего", "callback_data": f"admin:existing:{item.telegram_user_id}:{item.row_version}:{page}"}],
+                [{"text": "Отклонить", "callback_data": f"admin:reject:{item.telegram_user_id}:{item.row_version}:{page}"}],
+                [{"text": "Заблокировать", "callback_data": f"admin:block:{item.telegram_user_id}:{item.row_version}:{page}"}],
+                [{"text": "← К заявкам", "callback_data": f"admin:requests:{page}"}],
+            ]},
+        )
+
+    def _admin_new_customer_preview(
+        self, chat_id: int, *, telegram_user_id: int, row_version: int, page: int, email_display: str
+    ) -> TelegramOutboundMessage:
+        node_count = self._registry.eligible_provisioning_node_count()
+        return TelegramOutboundMessage(
+            chat_id,
+            "Проверка нового пользователя\n\n"
+            f"Имя/email для нод: {email_display}\n"
+            f"Нод для подготовки: {node_count}\n"
+            "Параметры: inbound 1, xtls-rprx-vision, без лимита и срока, включён.\n\n"
+            "Клиент и задания будут созданы только после отдельного подтверждения.",
+            {"inline_keyboard": [
+                [{"text": "✓ Одобрить и создать", "callback_data": f"admin:new-confirm:{telegram_user_id}:{row_version}:{page}"}],
+                [{"text": "✎ Ввести другое имя", "callback_data": f"admin:new-input:{telegram_user_id}:{row_version}:{page}"}],
+                [{"text": "← К заявке", "callback_data": f"admin:request:{telegram_user_id}:{row_version}:{page}"}],
+            ]},
+        )
+
+    def _admin_new_name_choice(
+        self, chat_id: int, *, telegram_user_id: int, row_version: int, page: int, suggested_email: str
+    ) -> TelegramOutboundMessage:
+        return TelegramOutboundMessage(
+            chat_id,
+            "Новое имя/email для пользователя\n\n"
+            f"Предложено: {suggested_email}\n\n"
+            "Можно принять предложение или отправить другое имя одним сообщением.",
+            {"inline_keyboard": [
+                [{"text": f"✓ Использовать {suggested_email[:28]}", "callback_data": f"admin:new-use:{telegram_user_id}:{row_version}:{page}"}],
+                [{"text": "✎ Ввести другое имя", "callback_data": f"admin:new-input:{telegram_user_id}:{row_version}:{page}"}],
+                [{"text": "← К заявке", "callback_data": f"admin:request:{telegram_user_id}:{row_version}:{page}"}],
+            ]},
+        )
 
     def _admin_customers_message(self, chat_id: int, page: int) -> TelegramOutboundMessage:
         page_size = 6
@@ -250,7 +316,10 @@ class TelegramRegistrationService:
         current_page = min(max(page, 0), total_pages - 1)
         visible = blocked[current_page * page_size:(current_page + 1) * page_size]
         if not visible:
-            return TelegramOutboundMessage(chat_id, "Заблокированных заявок нет.", self._admin_home_menu())
+            return TelegramOutboundMessage(
+                chat_id, "Заблокированных заявок нет.",
+                {"inline_keyboard": [[{"text": "← К заявкам", "callback_data": "admin:requests:0"}]]},
+            )
         lines = ["Заблокированные заявки."]
         buttons: list[list[dict[str, str]]] = []
         for item in visible:
@@ -263,12 +332,72 @@ class TelegramRegistrationService:
         navigation: list[dict[str, str]] = []
         if current_page > 0:
             navigation.append({"text": "‹", "callback_data": f"admin:blocked:{current_page - 1}"})
-        navigation.append({"text": f"{current_page + 1}/{total_pages}", "callback_data": "admin:home"})
+        navigation.append({"text": f"{current_page + 1}/{total_pages}", "callback_data": "admin:requests:0"})
         if current_page + 1 < total_pages:
             navigation.append({"text": "›", "callback_data": f"admin:blocked:{current_page + 1}"})
         buttons.append(navigation)
-        buttons.append([{"text": "← Меню", "callback_data": "admin:home"}])
+        buttons.append([{"text": "← К заявкам", "callback_data": "admin:requests:0"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
+
+    def _handle_admin_draft(
+        self, *, user_id: int, chat_id: int, text: str | None
+    ) -> list[TelegramOutboundMessage] | None:
+        if not text or text.strip().startswith("/"):
+            return None
+        draft = self._registry.get_admin_draft(user_id)
+        if draft is None:
+            return None
+        try:
+            if draft.action == "new_customer_name" and draft.telegram_user_id and draft.expected_row_version:
+                selected = self._registry.normalize_new_customer_email(text)
+                self._registry.set_admin_draft(
+                    admin_telegram_user_id=user_id, action=draft.action,
+                    telegram_user_id=draft.telegram_user_id, expected_row_version=draft.expected_row_version,
+                    page=draft.page, value=selected,
+                )
+                return [self._admin_new_customer_preview(
+                    chat_id, telegram_user_id=draft.telegram_user_id,
+                    row_version=draft.expected_row_version, page=draft.page, email_display=selected,
+                )]
+            if draft.action == "existing_customer_email" and draft.telegram_user_id and draft.expected_row_version:
+                customer = self._registry.get_customer_by_email(text)
+                self._registry.set_admin_draft(
+                    admin_telegram_user_id=user_id, action=draft.action,
+                    telegram_user_id=draft.telegram_user_id, expected_row_version=draft.expected_row_version,
+                    page=draft.page, value=customer.email_display,
+                )
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    f"Найден пользователь: {customer.email_display}. Привязать эту заявку?",
+                    {"inline_keyboard": [
+                        [{"text": "✓ Привязать", "callback_data": f"admin:existing-confirm:{draft.telegram_user_id}:{draft.expected_row_version}:{customer.customer_id}:{draft.page}"}],
+                        [{"text": "← К заявке", "callback_data": f"admin:request:{draft.telegram_user_id}:{draft.expected_row_version}:{draft.page}"}],
+                    ]},
+                )]
+            if draft.action == "delete_customer_confirmation" and draft.customer_id and draft.expected_row_version:
+                customer = self._registry.get_customer(draft.customer_id)
+                if customer.row_version != draft.expected_row_version or text.strip() != customer.email_display:
+                    return [TelegramOutboundMessage(
+                        chat_id, "Значение не совпало. Введите точный service username/email ещё раз.",
+                    )]
+                preview = self._registry.preview_customer_operation(customer_id=customer.customer_id, operation_type="delete")
+                if preview.expected_customer_version != draft.expected_row_version:
+                    raise VersionConflictError("customer is stale")
+                self._registry.set_admin_draft(
+                    admin_telegram_user_id=user_id, action=draft.action, customer_id=customer.customer_id,
+                    expected_row_version=draft.expected_row_version, page=draft.page, value=customer.email_display,
+                )
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    f"Удаление {customer.email_display}\nБудет затронуто нод: {len(preview.targets)}.\n\nПодтвердить постановку в очередь?",
+                    {"inline_keyboard": [
+                        [{"text": "✓ Подтвердить удаление", "callback_data": f"admin:customer-delete-confirm:{customer.customer_id}:{draft.expected_row_version}:{draft.page}"}],
+                        [{"text": "Отмена", "callback_data": f"admin:customer:{customer.customer_id}:{draft.page}"}],
+                    ]},
+                )]
+        except TelegramRegistryError:
+            return [TelegramOutboundMessage(chat_id, "Не удалось принять значение. Проверьте его и попробуйте ещё раз.")]
+        return None
 
     def _handle_admin(
         self, *, user_id: int, chat_id: int, update_id: int, text: str | None, callback_data: str | None
@@ -276,9 +405,14 @@ class TelegramRegistrationService:
         if user_id != self._primary_admin_id:
             return None
         if text and text.strip().startswith("/admin"):
+            self._registry.clear_admin_draft(user_id)
             return [TelegramOutboundMessage(chat_id, "Управление доступом.", self._admin_home_menu())]
         if callback_data == "admin:home":
+            self._registry.clear_admin_draft(user_id)
             return [TelegramOutboundMessage(chat_id, "Управление доступом.", self._admin_home_menu())]
+        draft_response = self._handle_admin_draft(user_id=user_id, chat_id=chat_id, text=text)
+        if draft_response is not None:
+            return draft_response
         parts = callback_data.split(":") if callback_data else []
         try:
             if len(parts) == 3 and parts[:2] == ["admin", "nodes"]:
@@ -288,9 +422,17 @@ class TelegramRegistrationService:
             if len(parts) == 3 and parts[:2] == ["admin", "customers"]:
                 return [self._admin_customers_message(chat_id, int(parts[2]))]
             if len(parts) == 4 and parts[:2] == ["admin", "customer"]:
+                self._registry.clear_admin_draft(user_id)
                 return [self._admin_customer_message(chat_id, int(parts[2]), int(parts[3]))]
             if len(parts) == 3 and parts[:2] == ["admin", "blocked"]:
                 return [self._admin_blocked_message(chat_id, int(parts[2]))]
+            if len(parts) == 5 and parts[:2] == ["admin", "request"]:
+                target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
+                item = self._registry.get_pending_application(target_user_id)
+                if item.row_version != version:
+                    raise VersionConflictError("application is stale")
+                self._registry.clear_admin_draft(user_id)
+                return [self._admin_request_message(chat_id, target_user_id, page)]
             if len(parts) == 4 and parts[:2] == ["admin", "node"]:
                 node_id, page = int(parts[2]), int(parts[3])
                 policies = {policy.node_id: policy for policy in self._registry.list_node_provisioning_policies()}
@@ -299,116 +441,138 @@ class TelegramRegistrationService:
                 compatible = False
                 if enabled:
                     if not self._list_nodes or not self._get_cached_inbound_options:
-                        raise TelegramRegistryError("Нельзя проверить совместимость inbound 1")
-                    compatible = self._inbound_one_supports_bot_contract(
-                        node_id, self._get_cached_inbound_options(self._list_nodes())
-                    )
+                        raise TelegramRegistryError("inbound validation unavailable")
+                    compatible = self._inbound_one_supports_bot_contract(node_id, self._get_cached_inbound_options(self._list_nodes()))
                 policy = self._registry.set_node_provisioning_policy(
-                    node_id=node_id,
-                    provisioning_enabled=enabled,
+                    node_id=node_id, provisioning_enabled=enabled,
                     total_bytes=current.total_bytes if current else 0,
                     validity_days=current.validity_days if current else 0,
                     client_enabled=current.client_enabled if current else True,
                     expected_policy_version=current.policy_version if current else 0,
                     idempotency_key=f"telegram-admin-node:{update_id}:{node_id}",
-                    updated_by=f"telegram:{user_id}",
-                    node_is_compatible=compatible,
+                    updated_by=f"telegram:{user_id}", node_is_compatible=compatible,
                 )
                 state = "включена" if policy.provisioning_enabled else "выключена"
                 return [TelegramOutboundMessage(chat_id, f"TG-политика ноды {state}.", self._admin_nodes_message(chat_id, page).reply_markup)]
-            if len(parts) == 5 and parts[:2] == ["admin", "approve"]:
+            if len(parts) == 5 and parts[:2] == ["admin", "new"]:
                 target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
-                result = self._registry.approve_new_application(
-                    telegram_user_id=target_user_id,
-                    expected_identity_version=version,
-                    email_display=None,
-                    idempotency_key=f"telegram-admin-approve:{update_id}:{target_user_id}",
-                    approved_by=f"telegram:{user_id}",
+                item = self._registry.get_pending_application(target_user_id)
+                if item.row_version != version:
+                    raise VersionConflictError("application is stale")
+                self._registry.set_admin_draft(
+                    admin_telegram_user_id=user_id, action="new_customer_name",
+                    telegram_user_id=target_user_id, expected_row_version=version, page=page,
                 )
-                return [TelegramOutboundMessage(
-                    chat_id,
-                    f"Заявка одобрена: {result.email_display}. Подготовка на {len(result.target_node_ids)} нодах поставлена в очередь.",
-                    self._admin_requests_message(chat_id, page).reply_markup,
-                )]
+                return [self._admin_new_name_choice(chat_id, telegram_user_id=target_user_id, row_version=version, page=page, suggested_email=item.suggested_email)]
+            if len(parts) == 5 and parts[:2] == ["admin", "new-use"]:
+                target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
+                item = self._registry.get_pending_application(target_user_id)
+                if item.row_version != version:
+                    raise VersionConflictError("application is stale")
+                self._registry.set_admin_draft(
+                    admin_telegram_user_id=user_id, action="new_customer_name",
+                    telegram_user_id=target_user_id, expected_row_version=version, page=page,
+                    value=item.suggested_email,
+                )
+                return [self._admin_new_customer_preview(chat_id, telegram_user_id=target_user_id, row_version=version, page=page, email_display=item.suggested_email)]
+            if len(parts) == 5 and parts[:2] == ["admin", "new-input"]:
+                target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
+                self._registry.set_admin_draft(
+                    admin_telegram_user_id=user_id, action="new_customer_name",
+                    telegram_user_id=target_user_id, expected_row_version=version, page=page,
+                )
+                return [TelegramOutboundMessage(chat_id, "Отправьте новое имя/email для пользователя одним сообщением.")]
+            if len(parts) == 5 and parts[:2] == ["admin", "new-confirm"]:
+                target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
+                draft = self._registry.get_admin_draft(user_id)
+                if not draft or draft.action != "new_customer_name" or draft.telegram_user_id != target_user_id or draft.expected_row_version != version or not draft.value:
+                    raise VersionConflictError("approval draft is missing")
+                result = self._registry.approve_new_application(
+                    telegram_user_id=target_user_id, expected_identity_version=version, email_display=draft.value,
+                    idempotency_key=f"telegram-admin-approve:{update_id}:{target_user_id}", approved_by=f"telegram:{user_id}",
+                )
+                self._registry.clear_admin_draft(user_id)
+                return [TelegramOutboundMessage(chat_id, f"Заявка одобрена: {result.email_display}. Подготовка на {len(result.target_node_ids)} нодах поставлена в очередь.", self._admin_requests_message(chat_id, page).reply_markup)]
+            if len(parts) == 5 and parts[:2] == ["admin", "existing"]:
+                target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
+                self._registry.set_admin_draft(
+                    admin_telegram_user_id=user_id, action="existing_customer_email",
+                    telegram_user_id=target_user_id, expected_row_version=version, page=page,
+                )
+                return [TelegramOutboundMessage(chat_id, "Отправьте точный существующий service username/email одним сообщением.")]
+            if len(parts) == 6 and parts[:2] == ["admin", "existing-confirm"]:
+                target_user_id, version, customer_id, page = int(parts[2]), int(parts[3]), int(parts[4]), int(parts[5])
+                draft = self._registry.get_admin_draft(user_id)
+                customer = self._registry.get_customer(customer_id)
+                if not draft or draft.action != "existing_customer_email" or draft.telegram_user_id != target_user_id or draft.expected_row_version != version or draft.value != customer.email_display:
+                    raise VersionConflictError("existing customer draft is missing")
+                result = self._registry.approve_existing_application(
+                    telegram_user_id=target_user_id, customer_id=customer_id, expected_identity_version=version,
+                    idempotency_key=f"telegram-admin-existing:{update_id}:{target_user_id}", approved_by=f"telegram:{user_id}",
+                )
+                self._registry.clear_admin_draft(user_id)
+                return [TelegramOutboundMessage(chat_id, f"Заявка привязана к {result.email_display}.", self._admin_requests_message(chat_id, page).reply_markup)]
+            if len(parts) == 5 and parts[:2] == ["admin", "reject"]:
+                target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
+                self._registry.reject_application(telegram_user_id=target_user_id, expected_identity_version=version, idempotency_key=f"telegram-admin-reject:{update_id}:{target_user_id}", rejected_by=f"telegram:{user_id}")
+                return [TelegramOutboundMessage(chat_id, "Заявка отклонена.", self._admin_requests_message(chat_id, page).reply_markup)]
+            if len(parts) == 5 and parts[:2] == ["admin", "block"]:
+                target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
+                self._registry.block_identity(telegram_user_id=target_user_id, expected_identity_version=version, idempotency_key=f"telegram-admin-block:{update_id}:{target_user_id}", blocked_by=f"telegram:{user_id}")
+                return [TelegramOutboundMessage(chat_id, "Заявка заблокирована.", self._admin_requests_message(chat_id, page).reply_markup)]
             if len(parts) == 5 and parts[:2] == ["admin", "unblock"]:
                 target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
-                self._registry.unblock_identity(
-                    telegram_user_id=target_user_id,
-                    expected_identity_version=version,
-                    idempotency_key=f"telegram-admin-unblock:{update_id}:{target_user_id}",
-                    unblocked_by=f"telegram:{user_id}",
-                )
-                return [TelegramOutboundMessage(chat_id, "Заявка разблокирована.", self._admin_blocked_message(chat_id, page).reply_markup)]
+                self._registry.unblock_identity(telegram_user_id=target_user_id, expected_identity_version=version, idempotency_key=f"telegram-admin-unblock:{update_id}:{target_user_id}", unblocked_by=f"telegram:{user_id}")
+                return [TelegramOutboundMessage(chat_id, "Заявка разблокирована. Доступ автоматически не выдан.", self._admin_blocked_message(chat_id, page).reply_markup)]
             if len(parts) == 5 and parts[:2] == ["admin", "customer-delete"]:
                 customer_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
                 customer = self._registry.get_customer(customer_id)
                 if customer.row_version != version:
                     raise VersionConflictError("customer is stale")
-                return [TelegramOutboundMessage(
-                    chat_id,
-                    f"Удалить {customer.email_display}? Записи будут удалены с назначенных нод.",
-                    {"inline_keyboard": [
-                        [{"text": "✓ Подтвердить удаление", "callback_data": f"admin:customer-delete-confirm:{customer_id}:{version}:{page}"}],
-                        [{"text": "Отмена", "callback_data": f"admin:customer:{customer_id}:{page}"}],
-                    ]},
-                )]
+                self._registry.set_admin_draft(admin_telegram_user_id=user_id, action="delete_customer_confirmation", customer_id=customer_id, expected_row_version=version, page=page)
+                return [TelegramOutboundMessage(chat_id, f"Чтобы удалить {customer.email_display}, отправьте точный service username/email одним сообщением.")]
             if len(parts) == 5 and parts[:2] == ["admin", "customer-delete-confirm"]:
                 customer_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
+                draft = self._registry.get_admin_draft(user_id)
+                customer = self._registry.get_customer(customer_id)
+                if not draft or draft.action != "delete_customer_confirmation" or draft.customer_id != customer_id or draft.expected_row_version != version or draft.value != customer.email_display:
+                    raise VersionConflictError("delete confirmation is missing")
                 preview = self._registry.preview_customer_operation(customer_id=customer_id, operation_type="delete")
                 if preview.expected_customer_version != version:
                     raise VersionConflictError("customer is stale")
-                self._registry.queue_customer_operation(
-                    customer_id=customer_id,
-                    operation_type="delete",
-                    expected_customer_version=preview.expected_customer_version,
-                    target_snapshot_digest=preview.target_snapshot_digest,
-                    idempotency_key=f"telegram-admin-delete:{update_id}:{customer_id}",
-                    created_by=f"telegram:{user_id}",
-                )
+                self._registry.queue_customer_operation(customer_id=customer_id, operation_type="delete", expected_customer_version=preview.expected_customer_version, target_snapshot_digest=preview.target_snapshot_digest, idempotency_key=f"telegram-admin-delete:{update_id}:{customer_id}", created_by=f"telegram:{user_id}")
+                self._registry.clear_admin_draft(user_id)
                 return [TelegramOutboundMessage(chat_id, "Удаление поставлено в очередь.", self._admin_customers_message(chat_id, page).reply_markup)]
             if len(parts) == 6 and parts[:2] == ["admin", "customer-op"]:
                 customer_id, version, operation, page = int(parts[2]), int(parts[3]), parts[4], int(parts[5])
                 preview = self._registry.preview_customer_operation(customer_id=customer_id, operation_type=operation)
                 if preview.expected_customer_version != version:
                     raise VersionConflictError("customer is stale")
-                self._registry.queue_customer_operation(
-                    customer_id=customer_id,
-                    operation_type=operation,
-                    expected_customer_version=preview.expected_customer_version,
-                    target_snapshot_digest=preview.target_snapshot_digest,
-                    idempotency_key=f"telegram-admin-customer-{operation}:{update_id}:{customer_id}",
-                    created_by=f"telegram:{user_id}",
-                )
+                verb = "Приостановить" if operation == "suspend" else "Возобновить"
+                return [TelegramOutboundMessage(chat_id, f"{verb} пользователя? Будет затронуто нод: {len(preview.targets)}.", {"inline_keyboard": [[{"text": f"✓ {verb}", "callback_data": f"admin:customer-op-confirm:{customer_id}:{version}:{operation}:{page}"}], [{"text": "Отмена", "callback_data": f"admin:customer:{customer_id}:{page}"}]]})]
+            if len(parts) == 6 and parts[:2] == ["admin", "customer-op-confirm"]:
+                customer_id, version, operation, page = int(parts[2]), int(parts[3]), parts[4], int(parts[5])
+                preview = self._registry.preview_customer_operation(customer_id=customer_id, operation_type=operation)
+                if preview.expected_customer_version != version:
+                    raise VersionConflictError("customer is stale")
+                self._registry.queue_customer_operation(customer_id=customer_id, operation_type=operation, expected_customer_version=preview.expected_customer_version, target_snapshot_digest=preview.target_snapshot_digest, idempotency_key=f"telegram-admin-customer-{operation}:{update_id}:{customer_id}", created_by=f"telegram:{user_id}")
                 verb = "Приостановка" if operation == "suspend" else "Возобновление"
                 return [TelegramOutboundMessage(chat_id, f"{verb} поставлена в очередь.", self._admin_customers_message(chat_id, page).reply_markup)]
             if len(parts) == 6 and parts[:2] == ["admin", "cn"]:
                 customer_id, node_id, action, page = int(parts[2]), int(parts[3]), parts[4], int(parts[5])
                 customer = self._registry.get_customer(customer_id)
                 if action == "add":
-                    self._registry.queue_customer_node_add(
-                        customer_id=customer_id,
-                        node_id=node_id,
-                        expected_customer_version=customer.row_version,
-                        idempotency_key=f"telegram-admin-node-add:{update_id}:{customer_id}:{node_id}",
-                        created_by=f"telegram:{user_id}",
-                    )
-                    result_text = "Добавление на ноду поставлено в очередь."
-                else:
-                    operation = f"{action}_node"
-                    preview = self._registry.preview_customer_node_operation(
-                        customer_id=customer_id, node_id=node_id, operation_type=operation
-                    )
-                    self._registry.queue_customer_node_operation(
-                        customer_id=customer_id,
-                        node_id=node_id,
-                        operation_type=operation,
-                        expected_customer_version=preview.expected_customer_version,
-                        target_snapshot_digest=preview.target_snapshot_digest,
-                        idempotency_key=f"telegram-admin-node-{action}:{update_id}:{customer_id}:{node_id}",
-                        created_by=f"telegram:{user_id}",
-                    )
-                    result_text = "Операция на ноде поставлена в очередь."
-                return [TelegramOutboundMessage(chat_id, result_text, self._admin_customer_message(chat_id, customer_id, page).reply_markup)]
+                    self._registry.queue_customer_node_add(customer_id=customer_id, node_id=node_id, expected_customer_version=customer.row_version, idempotency_key=f"telegram-admin-node-add:{update_id}:{customer_id}:{node_id}", created_by=f"telegram:{user_id}")
+                    return [TelegramOutboundMessage(chat_id, "Добавление на ноду поставлено в очередь.", self._admin_customer_message(chat_id, customer_id, page).reply_markup)]
+                operation = f"{action}_node"
+                preview = self._registry.preview_customer_node_operation(customer_id=customer_id, node_id=node_id, operation_type=operation)
+                return [TelegramOutboundMessage(chat_id, f"Подтвердить действие на ноде {preview.targets[0].node_name}?", {"inline_keyboard": [[{"text": "✓ Подтвердить", "callback_data": f"admin:cn-confirm:{customer_id}:{node_id}:{action}:{page}"}], [{"text": "Отмена", "callback_data": f"admin:customer:{customer_id}:{page}"}]]})]
+            if len(parts) == 6 and parts[:2] == ["admin", "cn-confirm"]:
+                customer_id, node_id, action, page = int(parts[2]), int(parts[3]), parts[4], int(parts[5])
+                operation = f"{action}_node"
+                preview = self._registry.preview_customer_node_operation(customer_id=customer_id, node_id=node_id, operation_type=operation)
+                self._registry.queue_customer_node_operation(customer_id=customer_id, node_id=node_id, operation_type=operation, expected_customer_version=preview.expected_customer_version, target_snapshot_digest=preview.target_snapshot_digest, idempotency_key=f"telegram-admin-node-{action}:{update_id}:{customer_id}:{node_id}", created_by=f"telegram:{user_id}")
+                return [TelegramOutboundMessage(chat_id, "Операция на ноде поставлена в очередь.", self._admin_customer_message(chat_id, customer_id, page).reply_markup)]
         except (ValueError, LifecycleUnavailableError, NodePolicyUnavailableError, VersionConflictError, IdempotencyConflictError, TelegramRegistryError):
             return [TelegramOutboundMessage(chat_id, "Команда не выполнена: данные устарели или нода не готова.", self._admin_home_menu())]
         return [TelegramOutboundMessage(chat_id, "Команда администратора не распознана.", self._admin_home_menu())]
