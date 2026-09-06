@@ -7,15 +7,20 @@ import {
   blockTelegramRequest,
   BlockedIdentity,
   addCustomerNode,
+  adoptExistingTelegramCustomer,
   CustomerNode,
   CustomerOperation,
   CustomerOperationPreview,
   CustomerTraffic,
+  discoverExistingTelegramCustomer,
+  ExistingDiscoveryCandidate,
   getCustomerNodes,
   getCustomerOperations,
   getCustomerTraffic,
   getTelegramTransport,
   listTelegramCustomers,
+  listTelegramAppeals,
+  listTelegramJobs,
   listBlockedTelegramIdentities,
   listTelegramRequests,
   previewCustomerOperation,
@@ -25,9 +30,13 @@ import {
   rejectTelegramRequest,
   retryCustomerOperation,
   TelegramCustomer,
+  TelegramAppeal,
+  ProvisioningJob,
   TelegramRequest,
   TelegramTransportStatus,
   setTelegramTransport,
+  reconcileTelegramJob,
+  resolveTelegramAppeal,
   unblockTelegramIdentity,
 } from '../api/telegram';
 
@@ -62,8 +71,10 @@ export const TelegramAdmin: React.FC = () => {
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
-  const [emailByRequest, setEmailByRequest] = useState<Record<number, string>>({});
   const [transport, setTransport] = useState<TelegramTransportStatus | null>(null);
+  const [jobs, setJobs] = useState<ProvisioningJob[]>([]);
+  const [appeals, setAppeals] = useState<TelegramAppeal[]>([]);
+  const [approval, setApproval] = useState<{ request: TelegramRequest; mode: 'new' | 'existing'; email: string; candidate?: ExistingDiscoveryCandidate } | null>(null);
   const selectedCustomer = useMemo(
     () => customers.find((item) => item.customer_id === selectedCustomerId) ?? null,
     [customers, selectedCustomerId],
@@ -72,13 +83,15 @@ export const TelegramAdmin: React.FC = () => {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextRequests, nextCustomers, nextBlocked, nextTransport] = await Promise.all([
-        listTelegramRequests(), listTelegramCustomers(search), listBlockedTelegramIdentities(), getTelegramTransport(),
+      const [nextRequests, nextCustomers, nextBlocked, nextTransport, nextJobs, nextAppeals] = await Promise.all([
+        listTelegramRequests(), listTelegramCustomers(search), listBlockedTelegramIdentities(), getTelegramTransport(), listTelegramJobs(), listTelegramAppeals(),
       ]);
       setRequests(nextRequests);
       setCustomers(nextCustomers);
       setBlocked(nextBlocked);
       setTransport(nextTransport);
+      setJobs(nextJobs);
+      setAppeals(nextAppeals);
     } catch {
       toast(t('telegram.loadFailed'), 'error');
     } finally {
@@ -106,11 +119,41 @@ export const TelegramAdmin: React.FC = () => {
     }
   }, [t, toast]);
 
-  const approve = async (request: TelegramRequest) => {
+  const confirmNew = async () => {
+    if (!approval || approval.mode !== 'new') return;
     setMutating(true);
     try {
-      await approveTelegramRequest(request, emailByRequest[request.telegram_user_id] ?? request.suggested_email);
+      await approveTelegramRequest(approval.request, approval.email);
       toast(t('telegram.approvalQueued'), 'success');
+      setApproval(null);
+      await load();
+    } catch {
+      toast(t('telegram.actionFailed'), 'error');
+    } finally {
+      setMutating(false);
+    }
+  };
+
+  const discoverExisting = async () => {
+    if (!approval || approval.mode !== 'existing') return;
+    setMutating(true);
+    try {
+      const candidate = await discoverExistingTelegramCustomer(approval.request, approval.email);
+      setApproval((current) => current ? { ...current, email: candidate.email_display, candidate } : current);
+    } catch {
+      toast(t('telegram.actionFailed'), 'error');
+    } finally {
+      setMutating(false);
+    }
+  };
+
+  const confirmExisting = async () => {
+    if (!approval || approval.mode !== 'existing' || !approval.candidate) return;
+    setMutating(true);
+    try {
+      await adoptExistingTelegramCustomer(approval.request, approval.email);
+      toast(t('telegram.requestUpdated'), 'success');
+      setApproval(null);
       await load();
     } catch {
       toast(t('telegram.actionFailed'), 'error');
@@ -252,8 +295,22 @@ export const TelegramAdmin: React.FC = () => {
                 <div className="flex items-center justify-between gap-2"><span className="truncate text-sm text-slate-200">{request.username ? `@${request.username}` : request.first_name || t('telegram.unknownUser')}</span><span className="font-mono text-[10px] text-slate-500">#{request.telegram_user_id}</span></div>
                 <p className="mt-1 text-[11px] text-slate-500">{formatDate(request.requested_at)}</p>
                 {request.introduction_text && <p className="mt-2 whitespace-pre-wrap text-xs font-light text-slate-400">{request.introduction_text}</p>}
-                <input className={`${inputClass} mt-3`} value={emailByRequest[request.telegram_user_id] ?? request.suggested_email} onChange={(event) => setEmailByRequest((state) => ({ ...state, [request.telegram_user_id]: event.target.value }))} aria-label={t('telegram.emailForRequest')} />
-                <button type="button" className={`${primaryButtonClass} mt-2 w-full`} onClick={() => void approve(request)} disabled={mutating}><UIIcon name="check" size={14} />{t('telegram.approve')}</button><div className="mt-2 grid grid-cols-2 gap-2"><button type="button" className={buttonClass} onClick={() => void decideRequest(request, 'reject')} disabled={mutating}>{t('telegram.reject')}</button><button type="button" className={`${buttonClass} border-rose-400/25 text-rose-200`} onClick={() => void decideRequest(request, 'block')} disabled={mutating}>{t('telegram.block')}</button></div>
+                {approval?.request.telegram_user_id === request.telegram_user_id ? (
+                  <div className="mt-3 rounded border border-amber-400/25 bg-amber-400/5 p-3">
+                    <p className="text-xs text-amber-100">{approval.mode === 'new' ? t('telegram.approvalNewTitle') : t('telegram.approvalExistingTitle')}</p>
+                    <input className={`${inputClass} mt-2`} value={approval.email} onChange={(event) => setApproval((current) => current ? { ...current, email: event.target.value, candidate: undefined } : current)} aria-label={t('telegram.emailForRequest')} />
+                    {approval.mode === 'new' ? (
+                      <div className="mt-2 flex gap-2"><button type="button" className={primaryButtonClass} onClick={() => void confirmNew()} disabled={mutating}>{t('common.confirm')}</button><button type="button" className={buttonClass} onClick={() => setApproval(null)}>{t('common.cancel')}</button></div>
+                    ) : (
+                      <>
+                        <p className="mt-2 text-xs font-light text-slate-500">{t('telegram.existingDiscoveryHint')}</p>
+                        {approval.candidate && <p className="mt-2 text-xs text-emerald-200">{t('telegram.existingFound', { count: approval.candidate.binding_count, nodes: approval.candidate.node_names.join(', ') })}</p>}
+                        <div className="mt-2 flex flex-wrap gap-2"><button type="button" className={buttonClass} onClick={() => void discoverExisting()} disabled={mutating}>{t('telegram.existingCheck')}</button>{approval.candidate && <button type="button" className={primaryButtonClass} onClick={() => void confirmExisting()} disabled={mutating}>✓ {t('telegram.existingBind')}</button>}<button type="button" className={buttonClass} onClick={() => setApproval(null)}>{t('common.cancel')}</button></div>
+                      </>
+                    )}
+                  </div>
+                ) : <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" className={primaryButtonClass} onClick={() => setApproval({ request, mode: 'new', email: request.suggested_email })} disabled={mutating}>{t('telegram.createNew')}</button><button type="button" className={buttonClass} onClick={() => setApproval({ request, mode: 'existing', email: '' })} disabled={mutating}>{t('telegram.bindExisting')}</button></div>}
+                <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" className={buttonClass} onClick={() => void decideRequest(request, 'reject')} disabled={mutating}>{t('telegram.reject')}</button><button type="button" className={`${buttonClass} border-rose-400/25 text-rose-200`} onClick={() => void decideRequest(request, 'block')} disabled={mutating}>{t('telegram.block')}</button></div>
               </article>
             ))}
           </div>
@@ -286,6 +343,17 @@ export const TelegramAdmin: React.FC = () => {
               </>}
             </div>
           </div>
+        </section>
+      </div>
+
+      <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
+        <section className={panelClass} aria-label={t('telegram.jobsTitle')}>
+          <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.jobsTitle')}</h3>
+          <div className="mt-3 space-y-2">{jobs.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noJobs')}</p>}{jobs.map((job) => <article key={job.job_id} className="rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="truncate text-xs text-slate-200">{job.customer_email}</span><span className="font-mono text-[10px] text-slate-500">{job.status}</span></div><p className="mt-1 text-[11px] text-slate-500">{t('telegram.nodesReady', { ready: job.attempts.filter((attempt) => attempt.status === 'succeeded').length, total: job.attempts.length })}</p>{job.attempts.some((attempt) => ['partial', 'failed', 'ambiguous', 'blocked'].includes(attempt.status)) && <button type="button" className={`${buttonClass} mt-2`} disabled={mutating} onClick={async () => { setMutating(true); try { await reconcileTelegramJob(job); toast(t('telegram.operationQueued'), 'success'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reconcile')}</button>}</article>)}</div>
+        </section>
+        <section className={panelClass} aria-label={t('telegram.appealsTitle')}>
+          <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.appealsTitle')}</h3>
+          <div className="mt-3 space-y-2">{appeals.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noAppeals')}</p>}{appeals.map((appeal) => <article key={appeal.appeal_id} className="rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><span className="block truncate text-xs text-slate-200">{appeal.email_display}</span><p className="mt-2 whitespace-pre-wrap text-xs text-slate-400">{appeal.body}</p><div className="mt-2 flex gap-2"><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await resolveTelegramAppeal(appeal, 'handled'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.closeAppeal')}</button><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await resolveTelegramAppeal(appeal, 'rejected'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reject')}</button></div></article>)}</div>
         </section>
       </div>
     </div>

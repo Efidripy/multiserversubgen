@@ -14,7 +14,7 @@ from services.db_bootstrap import connect, init_db
 from services.telegram_registry import TelegramRegistry
 
 
-def _build_client(tmp_path, *, username: str = "admin", role: str = "admin", options=None):
+def _build_client(tmp_path, *, username: str = "admin", role: str = "admin", options=None, client_mgr=None):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     with connect(db_path) as conn:
@@ -27,6 +27,7 @@ def _build_client(tmp_path, *, username: str = "admin", role: str = "admin", opt
             db_path=db_path,
             list_nodes=lambda: [{"id": 1, "name": "edge-1", "enabled": 1, "read_only": 0}],
             get_cached_inbound_options=lambda _nodes: options or [],
+            client_mgr=client_mgr,
         )
     )
     return TestClient(app)
@@ -158,6 +159,46 @@ def test_request_queue_is_admin_only_and_approval_queues_local_work_without_remo
         json={"expected_identity_version": 2, "idempotency_key": "viewer"},
     ).status_code == 403
     assert viewer.get("/api/v1/telegram/jobs").status_code == 403
+
+
+def test_existing_remote_customer_can_be_discovered_then_adopted_without_node_write(tmp_path):
+    class ClientManager:
+        @staticmethod
+        def get_node_clients_strict(_node):
+            return [{
+                "id": "legacy-client", "subId": "legacy-sub", "email": "legacy-user",
+                "enable": True, "inbound_id": 1, "inbound_ids": [1],
+            }]
+
+    client = _build_client(tmp_path, client_mgr=ClientManager())
+    db_path = str(tmp_path / "admin.db")
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=45, chat_id=45, username="legacy-applicant", first_name=None, last_name=None
+    )
+    pending = registry.create_pending_application(45)
+    discover = client.post(
+        "/api/v1/telegram/requests/45/discover-existing",
+        json={"expected_identity_version": pending.identity.row_version, "email_display": "legacy-user"},
+    )
+    assert discover.status_code == 200
+    assert discover.json()["candidate"] == {
+        "email_display": "legacy-user", "binding_count": 1, "node_names": ["edge-1"],
+    }
+    adopted = client.post(
+        "/api/v1/telegram/requests/45/adopt-existing",
+        json={
+            "expected_identity_version": pending.identity.row_version,
+            "email_display": "legacy-user",
+            "idempotency_key": "adopt-legacy-45",
+        },
+    )
+    assert adopted.status_code == 200
+    assert adopted.json()["remote_io"] == "read_only"
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT email_display, origin FROM customers").fetchone() == ("legacy-user", "existing")
+        assert conn.execute("SELECT remote_client_id FROM customer_node_bindings").fetchone()[0] == "legacy-client"
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
 
 
 def test_job_reconcile_is_admin_only_and_queues_no_remote_work_inline(tmp_path):

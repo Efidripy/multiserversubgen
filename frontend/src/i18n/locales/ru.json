@@ -86,7 +86,21 @@
     "loadFailed": "Не удалось загрузить Telegram-данные",
     "detailsFailed": "Не удалось загрузить карточку пользователя",
     "previewFailed": "Не удалось подготовить безопасный preview",
-    "actionFailed": "Операция не выполнена"
+    "actionFailed": "Операция не выполнена",
+    "jobsTitle": "Задания подготовки",
+    "noJobs": "Нет активных заданий.",
+    "nodesReady": "Готово нод: {{ready}}/{{total}}",
+    "appealsTitle": "Обращения пользователей",
+    "noAppeals": "Нет открытых обращений.",
+    "closeAppeal": "Закрыть",
+    "approvalNewTitle": "Создание нового пользователя",
+    "approvalExistingTitle": "Привязка существующего пользователя",
+    "existingCheck": "Проверить",
+    "existingBind": "Привязать",
+    "existingFound": "Найдено нод: {{count}} — {{nodes}}",
+    "existingDiscoveryHint": "Проверяются все включённые ноды; поиск ничего на них не изменяет.",
+    "createNew": "Создать нового",
+    "bindExisting": "Привязать существующего"
   },
   "common": {
     "add": "Добавить",
