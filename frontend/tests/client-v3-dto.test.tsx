@@ -4,7 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import api from '../src/api';
 import { ClientEditModal } from '../src/components/ClientEditModal';
-import { normalizeClientRows } from '../src/components/ClientManager';
+import {
+  mergeClientRowsWithTelegramMetadata,
+  normalizeClientRows,
+} from '../src/components/ClientManager';
 import { ThemeProvider } from '../src/contexts/ThemeContext';
 import '../src/i18n/config';
 
@@ -27,6 +30,40 @@ describe('3x-ui v3 client DTO', () => {
 
     expect(client.total).toBe(10 * GIB);
     expect(client.totalGB).toBe(50 * GIB);
+  });
+
+  it('keeps Telegram metadata when a partial realtime snapshot omits it', () => {
+    const previous = normalizeClientRows([{
+      email: 'alice@example.test',
+      node_id: 1,
+      telegram_linked: true,
+    }]);
+    const incoming = normalizeClientRows([{
+      email: 'alice@example.test',
+      node_id: 1,
+      up: 10,
+    }]);
+
+    const [client] = mergeClientRowsWithTelegramMetadata(previous, incoming);
+
+    expect(client.telegram_linked).toBe(true);
+  });
+
+  it('accepts an explicit unlink from an enriched response', () => {
+    const previous = normalizeClientRows([{
+      email: 'alice@example.test',
+      node_id: 1,
+      telegram_linked: true,
+    }]);
+    const incoming = normalizeClientRows([{
+      email: 'alice@example.test',
+      node_id: 1,
+      telegram_linked: false,
+    }]);
+
+    const [client] = mergeClientRowsWithTelegramMetadata(previous, incoming);
+
+    expect(client.telegram_linked).toBe(false);
   });
 
   it('sends v3 security and byte quota without defaulting an unloaded limitIp to zero', async () => {
