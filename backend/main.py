@@ -532,6 +532,8 @@ async def _telegram_polling_worker_loop() -> None:
         handle_update=service.handle_update,
         sender=TelegramApiSender(SETTINGS.telegram.bot_token, transport=transport),
         timeout_sec=SETTINGS.telegram.polling_timeout_sec,
+        fallback_subscription_message=service.fallback_subscription_message,
+        record_outbound_delivery=service.record_outbound_delivery,
     )
     while True:
         try:

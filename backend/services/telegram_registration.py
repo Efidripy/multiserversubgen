@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Callable
 
 from services.subscription_tokens import ensure_tokens, regenerate_token
@@ -24,12 +24,22 @@ from services.telegram_provisioning import ExistingRemoteBinding
 
 
 @dataclass(frozen=True)
+class TelegramSubscriptionDelivery:
+    """Non-secret receipt data for an interactive subscription message."""
+
+    telegram_user_id: int
+    token_digest: str
+
+
+@dataclass(frozen=True)
 class TelegramOutboundMessage:
     chat_id: int
     text: str
     reply_markup: dict[str, Any] | None = None
     photo_png: bytes | None = None
     photo_filename: str | None = None
+    edit_message_id: int | None = None
+    subscription_delivery: TelegramSubscriptionDelivery | None = None
 
 
 def _private_actor(
@@ -64,6 +74,11 @@ def _private_actor(
 
 class TelegramRegistrationService:
     """Handles first contact without exposing technical service details."""
+
+    _SUBSCRIPTION_INITIAL_PREFIX = (
+        "Персональная ссылка доступа, скопируйте и вставьте её в ваше приложение-клиент:"
+    )
+    _SUBSCRIPTION_REUSE_PREFIX = "Ссылка уже получена. Скопируйте и вставьте её в ваше приложение-клиент:"
 
     def __init__(
         self,
@@ -844,10 +859,51 @@ class TelegramRegistrationService:
         if unavailable is not None:
             return unavailable
         assert url is not None
+        token_digest = hashlib.sha256(url.rsplit("/", 1)[-1].encode("utf-8")).hexdigest()
+        delivery = TelegramSubscriptionDelivery(user_id, token_digest)
+        receipt = self._registry.get_subscription_message_receipt(user_id)
+        if (
+            not rotate
+            and receipt is not None
+            and receipt.chat_id == chat_id
+            and receipt.token_digest == token_digest
+        ):
+            return TelegramOutboundMessage(
+                chat_id,
+                f"{self._SUBSCRIPTION_REUSE_PREFIX}\n{url}",
+                self._approved_menu(),
+                edit_message_id=receipt.message_id,
+                subscription_delivery=delivery,
+            )
         return TelegramOutboundMessage(
             chat_id,
-            f"Персональная ссылка доступа, скопируйте и вставьте её в ваше приложение-клиент:\n{url}",
+            f"{self._SUBSCRIPTION_INITIAL_PREFIX}\n{url}",
             self._approved_menu(),
+            subscription_delivery=delivery,
+        )
+
+    def fallback_subscription_message(self, message: TelegramOutboundMessage) -> TelegramOutboundMessage | None:
+        """Use a new message only when Telegram cannot edit the original one anymore."""
+
+        if message.edit_message_id is None or message.subscription_delivery is None:
+            return None
+        return replace(
+            message,
+            text=message.text.replace(self._SUBSCRIPTION_REUSE_PREFIX, self._SUBSCRIPTION_INITIAL_PREFIX, 1),
+            edit_message_id=None,
+        )
+
+    def record_outbound_delivery(self, message: TelegramOutboundMessage, message_id: int | None) -> None:
+        """Record delivery coordinates after Telegram confirms the send or edit."""
+
+        delivery = message.subscription_delivery
+        if delivery is None or isinstance(message_id, bool) or not isinstance(message_id, int) or message_id <= 0:
+            return
+        self._registry.record_subscription_message_delivery(
+            telegram_user_id=delivery.telegram_user_id,
+            token_digest=delivery.token_digest,
+            chat_id=message.chat_id,
+            message_id=message_id,
         )
 
     @staticmethod
