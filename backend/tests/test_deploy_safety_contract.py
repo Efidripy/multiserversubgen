@@ -65,6 +65,14 @@ def test_nginx_generation_routes_the_telegram_webhook_before_the_ui_catch_all():
         assert script.index(expected_route) < script.index('location ^~ /$WEB_PATH/ {')
 
 
+def test_updater_waits_for_the_application_health_endpoint_after_restart():
+    script = (REPO / "scripts/installer/update.sh").read_text(encoding="utf-8")
+
+    assert "for health_attempt in {1..15}; do" in script
+    assert '"http://127.0.0.1:${APP_PORT}/health"' in script
+    assert "sleep 2" in script
+
+
 def test_runtime_secret_rewrites_preserve_configured_telegram_settings():
     script = (REPO / "scripts/installer/lib/runtime_secrets.sh").read_text(encoding="utf-8")
 
