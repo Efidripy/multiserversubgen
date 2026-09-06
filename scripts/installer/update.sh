@@ -396,6 +396,24 @@ print("changed" if changed else "unchanged")
 PYTHON
 }
 
+ensure_grafana_runtime_directory() {
+    if ! getent passwd grafana >/dev/null 2>&1 || ! getent group grafana >/dev/null 2>&1; then
+        echo "  ❌ Grafana system user/group is unavailable."
+        return 1
+    fi
+
+    # The packaged unit declares RuntimeDirectory=grafana. Keep this explicit
+    # tmpfiles fallback because a missing /run/grafana prevents Grafana from
+    # creating its pid file and leaves Nginx with a dead upstream after reboot
+    # or a failed package/runtime-dir transition.
+    install -d -o grafana -g grafana -m 0750 /run/grafana
+    cat > /etc/tmpfiles.d/grafana-runtime.conf <<'EOF'
+# Managed by Multi-Server Manager: Grafana pid/runtime directory.
+d /run/grafana 0750 grafana grafana -
+EOF
+    chmod 0644 /etc/tmpfiles.d/grafana-runtime.conf
+}
+
 configure_monitoring_stack() {
     if [ "${MONITORING_ENABLED:-true}" != "true" ]; then
         echo "Мониторинг отключен: пропуск настройки Prometheus/Grafana."
@@ -583,6 +601,7 @@ with open('/etc/grafana/grafana.ini', 'w') as f:
     cfg.write(f)
 PYTHON
 
+    ensure_grafana_runtime_directory || return 1
     resource_guard_restart_services_sequentially prometheus grafana-server
     echo "  ✓ Prometheus и Grafana настроены"
 }
