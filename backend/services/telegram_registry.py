@@ -265,6 +265,19 @@ class CustomerPage:
 
 
 @dataclass(frozen=True)
+class TelegramAdminDraft:
+    """A short-lived, durable input step of the primary admin's Telegram UI."""
+
+    admin_telegram_user_id: int
+    action: str
+    telegram_user_id: int | None
+    customer_id: int | None
+    expected_row_version: int | None
+    page: int
+    value: str | None
+
+
+@dataclass(frozen=True)
 class CustomerOperationTarget:
     binding_id: int
     node_id: int
@@ -495,6 +508,124 @@ class TelegramRegistry:
         """Configured local authority path for sibling local-only services."""
 
         return self._db_path
+
+    @staticmethod
+    def normalize_new_customer_email(value: str) -> str:
+        """Validate the human-facing node email before it is shown for approval."""
+
+        if not isinstance(value, str):
+            raise TelegramRegistryError("email must be a string")
+        return _validate_email_choice(value)
+
+    def set_admin_draft(
+        self,
+        *,
+        admin_telegram_user_id: int,
+        action: str,
+        telegram_user_id: int | None = None,
+        customer_id: int | None = None,
+        expected_row_version: int | None = None,
+        page: int = 0,
+        value: str | None = None,
+    ) -> TelegramAdminDraft:
+        """Persist only bounded command context; never store user application text."""
+
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        if action not in {
+            "new_customer_name", "existing_customer_email", "delete_customer_confirmation",
+        }:
+            raise TelegramRegistryError("admin draft action is invalid")
+        target_user = _positive_int(telegram_user_id, "telegram_user_id") if telegram_user_id is not None else None
+        target_customer = _positive_int(customer_id, "customer_id") if customer_id is not None else None
+        expected_version = _positive_int(expected_row_version, "expected_row_version") if expected_row_version is not None else None
+        if isinstance(page, bool) or not isinstance(page, int) or page < 0:
+            raise TelegramRegistryError("admin draft page is invalid")
+        normalized_value = value.strip() if isinstance(value, str) else None
+        if normalized_value == "":
+            normalized_value = None
+        if normalized_value is not None and len(normalized_value) > 128:
+            raise TelegramRegistryError("admin draft value is too long")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO telegram_admin_drafts
+                    (admin_telegram_user_id, action, telegram_user_id, customer_id,
+                     expected_row_version, page, value)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(admin_telegram_user_id) DO UPDATE SET
+                    action = excluded.action,
+                    telegram_user_id = excluded.telegram_user_id,
+                    customer_id = excluded.customer_id,
+                    expected_row_version = excluded.expected_row_version,
+                    page = excluded.page,
+                    value = excluded.value,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (admin_id, action, target_user, target_customer, expected_version, page, normalized_value),
+            )
+        return TelegramAdminDraft(
+            admin_telegram_user_id=admin_id,
+            action=action,
+            telegram_user_id=target_user,
+            customer_id=target_customer,
+            expected_row_version=expected_version,
+            page=page,
+            value=normalized_value,
+        )
+
+    def get_admin_draft(self, admin_telegram_user_id: int) -> TelegramAdminDraft | None:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT admin_telegram_user_id, action, telegram_user_id, customer_id,
+                       expected_row_version, page, value
+                FROM telegram_admin_drafts WHERE admin_telegram_user_id = ?
+                """,
+                (admin_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return TelegramAdminDraft(
+            admin_telegram_user_id=int(row[0]), action=str(row[1]),
+            telegram_user_id=int(row[2]) if row[2] is not None else None,
+            customer_id=int(row[3]) if row[3] is not None else None,
+            expected_row_version=int(row[4]) if row[4] is not None else None,
+            page=int(row[5]), value=str(row[6]) if row[6] is not None else None,
+        )
+
+    def clear_admin_draft(self, admin_telegram_user_id: int) -> None:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                "DELETE FROM telegram_admin_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
+            )
+
+    def get_customer_by_email(self, email: str) -> CustomerListItem:
+        """Resolve one live customer by canonical exact email, without fuzzy matching."""
+
+        canonical = canonicalize_email(email)
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                "SELECT id FROM customers WHERE email_canonical = ? AND deleted_at IS NULL", (canonical,)
+            ).fetchone()
+        if row is None:
+            raise TelegramRegistryError("customer was not found")
+        return self.get_customer(int(row[0]))
+
+    def eligible_provisioning_node_count(self) -> int:
+        """Return the local policy snapshot count shown before final approval."""
+
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM telegram_node_policies AS p
+                JOIN nodes AS n ON n.id = p.node_id
+                WHERE p.provisioning_enabled = 1 AND n.enabled = 1 AND n.read_only = 0
+                """
+            ).fetchone()
+        return int(row[0]) if row else 0
 
     def get_transport_preference(self) -> TelegramTransportPreference:
         with connect(self._db_path) as conn:

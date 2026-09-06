@@ -54,6 +54,7 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "telegram_audit_log",
             "telegram_command_receipts",
             "telegram_transport_preferences",
+            "telegram_admin_drafts",
         } <= tables
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
@@ -798,3 +799,38 @@ def test_customer_lifecycle_rejects_non_exact_binding_and_resume_uses_prior_susp
     assert len(resume.targets) == 1
     assert resume.targets[0].action == "restore_previous_enabled"
     assert resume.targets[0].previous_enabled is True
+
+
+def test_admin_draft_is_durable_bounded_and_exact_customer_lookup_is_not_fuzzy(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=501, chat_id=501, username="requester", first_name="Requester", last_name=None
+    )
+    pending = registry.create_pending_application(501)
+    customer_id = registry.create_customer(
+        email_display="existing-user", origin="manual", email_source="admin", public_code="existing-user"
+    )
+
+    saved = registry.set_admin_draft(
+        admin_telegram_user_id=108100140,
+        action="new_customer_name",
+        telegram_user_id=501,
+        expected_row_version=pending.identity.row_version,
+        page=2,
+        value="chosen-user",
+    )
+    restarted = TelegramRegistry(db_path)
+
+    assert restarted.get_admin_draft(108100140) == saved
+    assert restarted.get_customer_by_email("EXISTING-USER").customer_id == customer_id
+    with pytest.raises(TelegramRegistryError):
+        restarted.get_customer_by_email("existing")
+    with pytest.raises(TelegramRegistryError):
+        restarted.set_admin_draft(
+            admin_telegram_user_id=108100140,
+            action="invalid",
+        )
+    restarted.clear_admin_draft(108100140)
+    assert restarted.get_admin_draft(108100140) is None

@@ -332,6 +332,23 @@ def init_db(db_path: str) -> None:
             "ON telegram_node_policies(provisioning_enabled, node_id)"
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_admin_drafts
+                     (admin_telegram_user_id INTEGER PRIMARY KEY,
+                      action TEXT NOT NULL CHECK(action IN (
+                        'new_customer_name', 'existing_customer_email',
+                        'delete_customer_confirmation')),
+                      telegram_user_id INTEGER DEFAULT NULL,
+                      customer_id INTEGER DEFAULT NULL,
+                      expected_row_version INTEGER DEFAULT NULL,
+                      page INTEGER NOT NULL DEFAULT 0 CHECK(page >= 0),
+                      value TEXT DEFAULT NULL CHECK(value IS NULL OR length(value) <= 128),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
+        )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_command_receipts
                      (scope TEXT NOT NULL,
                       idempotency_key TEXT NOT NULL,

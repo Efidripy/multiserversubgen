@@ -34,6 +34,12 @@ node to become the authority for the customer lifecycle.
   names, then a deterministic safe fallback. It is NFKC-normalized,
   transliterated, allowlisted and collision-checked. An administrator may
   replace it; the committed exact value becomes immutable remote `email`.
+- The Telegram administrator flow opens an application as a read-only detail
+  first. Its intermediate selected name, existing-customer lookup or typed
+  delete acknowledgement is a bounded local SQLite draft keyed by the primary
+  administrator, so a polling-worker restart cannot turn a lost message into
+  an implicit approval. Only an explicit final confirmation calls the approval
+  or lifecycle queue transaction.
 - Approval fails closed when no eligible local policy target exists. It must
   not label a person as ready merely because the administrator pressed approve.
 - Linking an existing customer accepts its local `customer_id`, never a free
@@ -68,6 +74,9 @@ node to become the authority for the customer lifecycle.
   commits the customer row version and every exact remote identifier, so a
   stale tab cannot enqueue a broadened target set. The confirmation has its
   own idempotency receipt and performs no inline remote I/O.
+- Global and per-node Suspend/Resume require that second confirmation in the
+  Telegram UI. Delete additionally requires the administrator to type the
+  exact current service username/email before its final queue confirmation.
 - The lifecycle worker leases one operation at a time. It reads the exact
   `remote_client_id` + email + `subId` before each update or delete, records
   the real prior enable state for Suspend, and reads again after the write.
