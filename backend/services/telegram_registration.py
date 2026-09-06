@@ -32,7 +32,9 @@ class TelegramOutboundMessage:
     photo_filename: str | None = None
 
 
-def _private_actor(update: dict[str, Any]) -> tuple[int, int, dict[str, Any], str | None, str | None] | None:
+def _private_actor(
+    update: dict[str, Any],
+) -> tuple[int, int, dict[str, Any], str | None, str | None, str | None] | None:
     """Return trusted transport fields only for a private Telegram chat."""
 
     message = update.get("message")
@@ -51,7 +53,13 @@ def _private_actor(update: dict[str, Any]) -> tuple[int, int, dict[str, Any], st
         return None
     text = message.get("text") if isinstance(message, dict) and isinstance(message.get("text"), str) else None
     callback_data = callback.get("data") if isinstance(callback, dict) and isinstance(callback.get("data"), str) else None
-    return user_id, chat_id, sender, text, callback_data
+    contact = message.get("contact") if isinstance(message, dict) and isinstance(message.get("contact"), dict) else None
+    phone_number = (
+        contact.get("phone_number")
+        if contact and contact.get("user_id") == user_id and isinstance(contact.get("phone_number"), str)
+        else None
+    )
+    return user_id, chat_id, sender, text, callback_data, phone_number
 
 
 class TelegramRegistrationService:
@@ -109,6 +117,7 @@ class TelegramRegistrationService:
                 [{"text": "Заявки", "callback_data": "admin:requests:0"}],
                 [{"text": "Пользователи", "callback_data": "admin:customers:0"}],
                 [{"text": "TG-ноды", "callback_data": "admin:nodes:0"}],
+                [{"text": "Рассылки", "callback_data": "admin:broadcasts"}],
             ]
         }
 
@@ -273,11 +282,17 @@ class TelegramRegistrationService:
 
     def _admin_customer_message(self, chat_id: int, customer_id: int, page: int) -> TelegramOutboundMessage:
         customer = self._registry.get_customer(customer_id)
+        profile = self._registry.get_customer_telegram_profile(customer.customer_id)
         traffic = self._registry.get_customer_traffic(customer.customer_id)
         matrix = self._registry.customer_node_matrix(customer.customer_id)
+        full_name = " ".join(part for part in (profile.first_name, profile.last_name) if part) or "не указано"
         lines = [
             f"Пользователь: {customer.email_display}",
             f"Статус: {customer.status}",
+            f"Никнейм: @{profile.username}" if profile.username else "Никнейм: не указан",
+            f"Telegram: {profile.telegram_user_id}" if profile.telegram_user_id else "Telegram: не привязан",
+            f"Имя и фамилия: {full_name}",
+            f"Телефон: {profile.phone_number}" if profile.phone_number else "Телефон: не указан",
             f"Трафик за всё время: {self._format_bytes(traffic.lifetime_bytes)}",
             "Ноды:",
         ]
@@ -314,8 +329,27 @@ class TelegramRegistrationService:
                 "text": "Удалить пользователя…",
                 "callback_data": f"admin:customer-delete:{customer.customer_id}:{customer.row_version}:{page}",
             }])
+        if profile.telegram_user_id is not None:
+            buttons.append([{
+                "text": "✉ Написать в бот",
+                "callback_data": f"admin:message:{customer.customer_id}:{page}",
+            }])
         buttons.append([{"text": "← К пользователям", "callback_data": f"admin:customers:{page}"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
+
+    def _admin_broadcasts_message(self, chat_id: int) -> TelegramOutboundMessage:
+        recipients = self._registry.registered_broadcast_recipient_count()
+        return TelegramOutboundMessage(
+            chat_id,
+            "Рассылки\n\n"
+            f"Получатели сейчас: {recipients}.\n"
+            "Войдут только подтверждённые зарегистрированные пользователи с включёнными фоновыми уведомлениями. "
+            "Заявки, заблокированные и удалённые пользователи исключены.",
+            {"inline_keyboard": [
+                [{"text": "✉ Новое объявление", "callback_data": "admin:broadcast:new"}],
+                [{"text": "← Меню", "callback_data": "admin:home"}],
+            ]},
+        )
 
     def _admin_blocked_message(self, chat_id: int, page: int) -> TelegramOutboundMessage:
         page_size = 6
@@ -428,6 +462,46 @@ class TelegramRegistrationService:
             return [TelegramOutboundMessage(chat_id, "Не удалось принять значение. Проверьте его и попробуйте ещё раз.")]
         return None
 
+    def _handle_admin_message_draft(
+        self, *, user_id: int, chat_id: int, text: str | None
+    ) -> list[TelegramOutboundMessage] | None:
+        if not text or text.strip().startswith("/"):
+            return None
+        draft = self._registry.get_admin_message_draft(user_id)
+        if draft is None:
+            return None
+        try:
+            saved = self._registry.set_admin_message_draft(
+                admin_telegram_user_id=user_id,
+                mode=draft.mode,
+                customer_id=draft.customer_id,
+                page=draft.page,
+                body=text,
+            )
+        except TelegramRegistryError:
+            return [TelegramOutboundMessage(chat_id, "Текст не принят. Допустимо от 1 до 2000 символов.")]
+        assert saved.body is not None
+        if saved.mode == "direct" and saved.customer_id is not None:
+            customer = self._registry.get_customer(saved.customer_id)
+            return [TelegramOutboundMessage(
+                chat_id,
+                f"Отправить сообщение пользователю {customer.email_display}?\n\n{saved.body}",
+                {"inline_keyboard": [
+                    [{"text": "✓ Отправить", "callback_data": "admin:message-confirm"}],
+                    [{"text": "Отмена", "callback_data": f"admin:message-cancel:{saved.customer_id}:{saved.page}"}],
+                ]},
+            )]
+        recipients = self._registry.registered_broadcast_recipient_count()
+        return [TelegramOutboundMessage(
+            chat_id,
+            f"Разослать объявление зарегистрированным пользователям?\n"
+            f"Получателей: {recipients}.\n\n{saved.body}",
+            {"inline_keyboard": [
+                [{"text": "✓ Запустить рассылку", "callback_data": "admin:broadcast-confirm"}],
+                [{"text": "Отмена", "callback_data": "admin:broadcasts"}],
+            ]},
+        )]
+
     def _handle_admin(
         self, *, user_id: int, chat_id: int, update_id: int, text: str | None, callback_data: str | None
     ) -> list[TelegramOutboundMessage] | None:
@@ -435,25 +509,106 @@ class TelegramRegistrationService:
             return None
         if text and text.strip().startswith("/admin"):
             self._registry.clear_admin_draft(user_id)
+            self._registry.clear_admin_message_draft(user_id)
             return [TelegramOutboundMessage(chat_id, "Управление доступом.", self._admin_home_menu())]
         if callback_data == "admin:home":
             self._registry.clear_admin_draft(user_id)
+            self._registry.clear_admin_message_draft(user_id)
             return [TelegramOutboundMessage(chat_id, "Управление доступом.", self._admin_home_menu())]
+        message_draft_response = self._handle_admin_message_draft(user_id=user_id, chat_id=chat_id, text=text)
+        if message_draft_response is not None:
+            return message_draft_response
         draft_response = self._handle_admin_draft(user_id=user_id, chat_id=chat_id, text=text)
         if draft_response is not None:
             return draft_response
         parts = callback_data.split(":") if callback_data else []
         try:
+            if callback_data == "admin:broadcasts":
+                self._registry.clear_admin_draft(user_id)
+                self._registry.clear_admin_message_draft(user_id)
+                return [self._admin_broadcasts_message(chat_id)]
+            if callback_data == "admin:broadcast:new":
+                self._registry.clear_admin_draft(user_id)
+                self._registry.set_admin_message_draft(
+                    admin_telegram_user_id=user_id,
+                    mode="broadcast",
+                )
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    "Отправьте текст объявления одним сообщением. До подтверждения ничего не будет отправлено.",
+                    {"inline_keyboard": [[{"text": "Отмена", "callback_data": "admin:broadcasts"}]]},
+                )]
+            if callback_data == "admin:broadcast-confirm":
+                draft = self._registry.get_admin_message_draft(user_id)
+                if draft is None or draft.mode != "broadcast" or not draft.body:
+                    raise VersionConflictError("broadcast draft is missing")
+                result = self._registry.queue_registered_broadcast(
+                    body=draft.body,
+                    created_by=user_id,
+                    idempotency_key=f"telegram-admin-broadcast:{update_id}",
+                )
+                self._registry.clear_admin_message_draft(user_id)
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    f"Рассылка поставлена в очередь. Получателей: {result.recipient_count}.",
+                    self._admin_broadcasts_message(chat_id).reply_markup,
+                )]
+            if len(parts) == 4 and parts[:2] == ["admin", "message"]:
+                customer_id, page = int(parts[2]), int(parts[3])
+                profile = self._registry.get_customer_telegram_profile(customer_id)
+                if profile.telegram_user_id is None:
+                    raise TelegramRegistryError("customer has no Telegram identity")
+                self._registry.clear_admin_draft(user_id)
+                self._registry.set_admin_message_draft(
+                    admin_telegram_user_id=user_id,
+                    mode="direct",
+                    customer_id=customer_id,
+                    page=page,
+                )
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    "Отправьте текст пользователю одним сообщением. До подтверждения ничего не будет отправлено.",
+                    {"inline_keyboard": [[{
+                        "text": "Отмена",
+                        "callback_data": f"admin:message-cancel:{customer_id}:{page}",
+                    }]]},
+                )]
+            if callback_data == "admin:message-confirm":
+                draft = self._registry.get_admin_message_draft(user_id)
+                if draft is None or draft.mode != "direct" or draft.customer_id is None or not draft.body:
+                    raise VersionConflictError("direct-message draft is missing")
+                customer_id, page = draft.customer_id, draft.page
+                self._registry.queue_admin_direct_message(
+                    customer_id=customer_id,
+                    body=draft.body,
+                    created_by=user_id,
+                    idempotency_key=f"telegram-admin-direct:{update_id}:{customer_id}",
+                )
+                self._registry.clear_admin_message_draft(user_id)
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    "Сообщение поставлено в очередь на отправку.",
+                    self._admin_customer_message(chat_id, customer_id, page).reply_markup,
+                )]
+            if len(parts) == 5 and parts[:3] == ["admin", "message", "cancel"]:
+                customer_id, page = int(parts[3]), int(parts[4])
+                self._registry.clear_admin_message_draft(user_id)
+                return [self._admin_customer_message(chat_id, customer_id, page)]
             if len(parts) == 3 and parts[:2] == ["admin", "nodes"]:
+                self._registry.clear_admin_message_draft(user_id)
                 return [self._admin_nodes_message(chat_id, int(parts[2]))]
             if len(parts) == 3 and parts[:2] == ["admin", "requests"]:
+                self._registry.clear_admin_message_draft(user_id)
                 return [self._admin_requests_message(chat_id, int(parts[2]))]
             if len(parts) == 3 and parts[:2] == ["admin", "customers"]:
+                self._registry.clear_admin_message_draft(user_id)
                 return [self._admin_customers_message(chat_id, int(parts[2]))]
             if len(parts) == 4 and parts[:2] == ["admin", "customer"]:
                 self._registry.clear_admin_draft(user_id)
+                self._registry.clear_admin_message_draft(user_id)
                 return [self._admin_customer_message(chat_id, int(parts[2]), int(parts[3]))]
             if len(parts) == 3 and parts[:2] == ["admin", "blocked"]:
+                self._registry.clear_admin_message_draft(user_id)
                 return [self._admin_blocked_message(chat_id, int(parts[2]))]
             if len(parts) == 5 and parts[:2] == ["admin", "request"]:
                 target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
@@ -787,7 +942,7 @@ class TelegramRegistrationService:
         actor = _private_actor(update)
         if actor is None:
             return []
-        user_id, chat_id, sender, text, callback_data = actor
+        user_id, chat_id, sender, text, callback_data, phone_number = actor
         update_type = "callback_query" if callback_data is not None else "message"
         digest_source = {
             "update_id": update_id,
@@ -808,6 +963,7 @@ class TelegramRegistrationService:
             username=sender.get("username") if isinstance(sender.get("username"), str) else None,
             first_name=sender.get("first_name") if isinstance(sender.get("first_name"), str) else None,
             last_name=sender.get("last_name") if isinstance(sender.get("last_name"), str) else None,
+            phone_number=phone_number,
             locale="ru",
         )
         if not self._registry.claim_update(

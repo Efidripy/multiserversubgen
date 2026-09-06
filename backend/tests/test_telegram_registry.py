@@ -55,6 +55,8 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "telegram_command_receipts",
             "telegram_transport_preferences",
             "telegram_admin_drafts",
+            "telegram_admin_message_drafts",
+            "telegram_broadcast_jobs",
         } <= tables
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
@@ -834,3 +836,91 @@ def test_admin_draft_is_durable_bounded_and_exact_customer_lookup_is_not_fuzzy(t
         )
     restarted.clear_admin_draft(108100140)
     assert restarted.get_admin_draft(108100140) is None
+
+
+def test_customer_telegram_profile_preserves_a_voluntarily_shared_phone_number(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="profile-user", origin="telegram", email_source="telegram_username", public_code="profile-user"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42,
+        chat_id=42,
+        username="profile_user",
+        first_name="Profile",
+        last_name="User",
+        phone_number="+7 (999) 000-11-22",
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42,
+        chat_id=43,
+        username="profile_user_new",
+        first_name="New",
+        last_name="Name",
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+
+    profile = registry.get_customer_telegram_profile(customer_id)
+
+    assert profile.telegram_user_id == 42
+    assert profile.username == "profile_user_new"
+    assert profile.first_name == "New"
+    assert profile.last_name == "Name"
+    assert profile.phone_number == "+79990001122"
+
+
+def test_broadcast_queue_excludes_pending_blocked_deleted_and_opted_out_identities(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_ids = [
+        registry.create_customer(
+            email_display=f"broadcast-{index}", origin="telegram", email_source="telegram_username",
+            public_code=f"broadcast-{index}",
+        )
+        for index in range(1, 5)
+    ]
+    for user_id in range(41, 45):
+        registry.get_or_create_identity(
+            telegram_user_id=user_id, chat_id=user_id, username=f"user{user_id}", first_name="User", last_name=None
+        )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 41",
+            (customer_ids[0],),
+        )
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'blocked' WHERE telegram_user_id = 42",
+            (customer_ids[1],),
+        )
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 43",
+            (customer_ids[2],),
+        )
+        conn.execute(
+            "UPDATE customers SET status = 'deleted', deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (customer_ids[2],),
+        )
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 44",
+            (customer_ids[3],),
+        )
+    registry.toggle_background_notifications(44)
+
+    assert registry.registered_broadcast_recipient_count() == 1
+    result = registry.queue_registered_broadcast(
+        body="Системное сообщение.", created_by=108100140, idempotency_key="broadcast-filters-1"
+    )
+
+    assert result.recipient_count == 1
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT entity_id FROM telegram_outbox WHERE event_type = 'registered_broadcast'"
+        ).fetchall()
+    assert rows == [(f"{result.broadcast_id}:41",)]

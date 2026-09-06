@@ -291,6 +291,33 @@ class TelegramAdminDraft:
 
 
 @dataclass(frozen=True)
+class TelegramAdminMessageDraft:
+    """Durable, confirmation-gated message composition by the primary admin."""
+
+    admin_telegram_user_id: int
+    mode: str
+    customer_id: int | None
+    page: int
+    body: str | None
+
+
+@dataclass(frozen=True)
+class CustomerTelegramProfile:
+    customer_id: int
+    telegram_user_id: int | None
+    username: str | None
+    first_name: str | None
+    last_name: str | None
+    phone_number: str | None
+
+
+@dataclass(frozen=True)
+class BroadcastQueueResult:
+    broadcast_id: int
+    recipient_count: int
+
+
+@dataclass(frozen=True)
 class CustomerOperationTarget:
     binding_id: int
     node_id: int
@@ -372,6 +399,25 @@ def canonicalize_email(value: str) -> str:
     if not canonical:
         raise TelegramRegistryError("email must not be empty")
     return canonical
+
+
+def _normalize_phone_number(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    compact = re.sub(r"[^0-9+]", "", value)
+    if compact.count("+") > 1 or "+" in compact[1:]:
+        return None
+    digits = compact.replace("+", "")
+    return compact if 6 <= len(digits) <= 20 else None
+
+
+def _normalize_admin_message_body(value: str) -> str:
+    if not isinstance(value, str):
+        raise TelegramRegistryError("message body must be text")
+    body = value.strip()
+    if not 1 <= len(body) <= 2000:
+        raise TelegramRegistryError("message body must contain 1 to 2000 characters")
+    return body
 
 
 def _positive_int(value: int, field: str) -> int:
@@ -614,6 +660,71 @@ class TelegramRegistry:
                 "DELETE FROM telegram_admin_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
             )
 
+    def set_admin_message_draft(
+        self,
+        *,
+        admin_telegram_user_id: int,
+        mode: str,
+        customer_id: int | None = None,
+        page: int = 0,
+        body: str | None = None,
+    ) -> TelegramAdminMessageDraft:
+        """Store only the owner's bounded, confirmation-gated composition."""
+
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        if mode not in {"direct", "broadcast"}:
+            raise TelegramRegistryError("admin message draft mode is invalid")
+        target_customer = _positive_int(customer_id, "customer_id") if customer_id is not None else None
+        if mode == "direct" and target_customer is None:
+            raise TelegramRegistryError("direct message target is required")
+        if mode == "broadcast" and target_customer is not None:
+            raise TelegramRegistryError("broadcast cannot target one customer")
+        if isinstance(page, bool) or not isinstance(page, int) or page < 0:
+            raise TelegramRegistryError("admin message draft page is invalid")
+        normalized_body = _normalize_admin_message_body(body) if body is not None else None
+        with connect(self._db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO telegram_admin_message_drafts
+                    (admin_telegram_user_id, mode, customer_id, page, body)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(admin_telegram_user_id) DO UPDATE SET
+                    mode = excluded.mode,
+                    customer_id = excluded.customer_id,
+                    page = excluded.page,
+                    body = excluded.body,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (admin_id, mode, target_customer, page, normalized_body),
+            )
+        return TelegramAdminMessageDraft(admin_id, mode, target_customer, page, normalized_body)
+
+    def get_admin_message_draft(self, admin_telegram_user_id: int) -> TelegramAdminMessageDraft | None:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT admin_telegram_user_id, mode, customer_id, page, body
+                FROM telegram_admin_message_drafts
+                WHERE admin_telegram_user_id = ?
+                """,
+                (admin_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return TelegramAdminMessageDraft(
+            admin_telegram_user_id=int(row[0]), mode=str(row[1]),
+            customer_id=int(row[2]) if row[2] is not None else None,
+            page=int(row[3]), body=str(row[4]) if row[4] is not None else None,
+        )
+
+    def clear_admin_message_draft(self, admin_telegram_user_id: int) -> None:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                "DELETE FROM telegram_admin_message_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
+            )
+
     def get_customer_by_email(self, email: str) -> CustomerListItem:
         """Resolve one live customer by canonical exact email, without fuzzy matching."""
 
@@ -688,10 +799,12 @@ class TelegramRegistry:
         username: str | None,
         first_name: str | None,
         last_name: str | None,
+        phone_number: str | None = None,
         locale: str = "ru",
     ) -> TelegramIdentity:
         user_id = _positive_int(telegram_user_id, "telegram_user_id")
         normalized_locale = locale if locale in {"ru", "en"} else "ru"
+        normalized_phone = _normalize_phone_number(phone_number)
         with connect(self._db_path) as conn:
             row = conn.execute(
                 """
@@ -706,10 +819,10 @@ class TelegramRegistry:
                 conn.execute(
                     """
                     INSERT INTO telegram_identities
-                        (telegram_user_id, chat_id, username, first_name, last_name, locale)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                        (telegram_user_id, chat_id, username, first_name, last_name, phone_number, locale)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (user_id, chat_id, username, first_name, last_name, normalized_locale),
+                    (user_id, chat_id, username, first_name, last_name, normalized_phone, normalized_locale),
                 )
                 row = conn.execute(
                     """
@@ -724,11 +837,12 @@ class TelegramRegistry:
                 conn.execute(
                     """
                     UPDATE telegram_identities
-                    SET chat_id = ?, username = ?, first_name = ?, last_name = ?, locale = ?,
+                    SET chat_id = ?, username = ?, first_name = ?, last_name = ?,
+                        phone_number = COALESCE(?, phone_number), locale = ?,
                         updated_at = CURRENT_TIMESTAMP, row_version = row_version + 1
                     WHERE telegram_user_id = ?
                     """,
-                    (chat_id, username, first_name, last_name, normalized_locale, user_id),
+                    (chat_id, username, first_name, last_name, normalized_phone, normalized_locale, user_id),
                 )
                 row = conn.execute(
                     """
@@ -2789,6 +2903,165 @@ class TelegramRegistry:
             row_version=int(row[4]), telegram_user_id=int(row[5]) if row[5] is not None else None,
             created_at=str(row[6]), updated_at=str(row[7]),
         )
+
+    def get_customer_telegram_profile(self, customer_id: int) -> CustomerTelegramProfile:
+        """Return the one display-safe Telegram identity bound to a customer."""
+
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        with connect(self._db_path) as conn:
+            customer_exists = conn.execute(
+                "SELECT 1 FROM customers WHERE id = ?", (local_customer_id,)
+            ).fetchone()
+            if customer_exists is None:
+                raise TelegramRegistryError("customer was not found")
+            row = conn.execute(
+                """
+                SELECT telegram_user_id, username, first_name, last_name, phone_number
+                FROM telegram_identities
+                WHERE customer_id = ?
+                ORDER BY access_status = 'approved' DESC, created_at ASC, telegram_user_id ASC
+                LIMIT 1
+                """,
+                (local_customer_id,),
+            ).fetchone()
+        if row is None:
+            return CustomerTelegramProfile(local_customer_id, None, None, None, None, None)
+        return CustomerTelegramProfile(
+            customer_id=local_customer_id,
+            telegram_user_id=int(row[0]),
+            username=str(row[1]) if row[1] is not None else None,
+            first_name=str(row[2]) if row[2] is not None else None,
+            last_name=str(row[3]) if row[3] is not None else None,
+            phone_number=str(row[4]) if row[4] is not None else None,
+        )
+
+    @staticmethod
+    def _registered_broadcast_recipient_ids(conn: sqlite3.Connection) -> list[int]:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT i.telegram_user_id
+            FROM telegram_identities AS i
+            JOIN customers AS c ON c.id = i.customer_id
+            LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
+            WHERE i.access_status = 'approved'
+              AND c.deleted_at IS NULL
+              AND c.status NOT IN ('deleting', 'delete_partial', 'deleted')
+              AND COALESCE(p.background_notifications_enabled, 1) = 1
+            ORDER BY i.telegram_user_id
+            """
+        ).fetchall()
+        return [int(row[0]) for row in rows]
+
+    def registered_broadcast_recipient_count(self) -> int:
+        with connect(self._db_path) as conn:
+            return len(self._registered_broadcast_recipient_ids(conn))
+
+    def queue_admin_direct_message(
+        self,
+        *,
+        customer_id: int,
+        body: str,
+        created_by: int,
+        idempotency_key: str,
+    ) -> int:
+        """Queue one admin message to an already approved, live Telegram user."""
+
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        admin_id = _positive_int(created_by, "created_by")
+        normalized_body = _normalize_admin_message_body(body)
+        key = str(idempotency_key or "").strip()
+        if not key or len(key) > 180:
+            raise TelegramRegistryError("idempotency key is invalid")
+        digest = hashlib.sha256(normalized_body.encode("utf-8")).hexdigest()
+        with connect(self._db_path) as conn:
+            recipient = conn.execute(
+                """
+                SELECT i.telegram_user_id
+                FROM telegram_identities AS i
+                JOIN customers AS c ON c.id = i.customer_id
+                WHERE c.id = ? AND c.deleted_at IS NULL AND c.status NOT IN ('deleting', 'delete_partial', 'deleted')
+                  AND i.access_status = 'approved'
+                ORDER BY i.created_at ASC, i.telegram_user_id ASC
+                LIMIT 1
+                """,
+                (local_customer_id,),
+            ).fetchone()
+            if recipient is None:
+                raise TelegramRegistryError("customer has no active Telegram contact")
+            recipient_id = int(recipient[0])
+            cursor = conn.execute(
+                """
+                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
+                VALUES ('admin_direct_message', ?, ?, ?)
+                ON CONFLICT(dedupe_key) DO NOTHING
+                """,
+                (str(recipient_id), f"admin-direct:{key}", json.dumps({"body": normalized_body}, ensure_ascii=False)),
+            )
+            if cursor.rowcount == 0:
+                row = conn.execute(
+                    "SELECT id FROM telegram_outbox WHERE dedupe_key = ?", (f"admin-direct:{key}",)
+                ).fetchone()
+                assert row is not None
+                return int(row[0])
+            outbox_id = int(cursor.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('admin_direct_message_queued', 'admin', ?, 'customer', ?, ?)
+                """,
+                (str(admin_id), str(local_customer_id), digest),
+            )
+        return outbox_id
+
+    def queue_registered_broadcast(
+        self, *, body: str, created_by: int, idempotency_key: str
+    ) -> BroadcastQueueResult:
+        """Snapshot opted-in registered users into durable per-recipient outbox rows."""
+
+        admin_id = _positive_int(created_by, "created_by")
+        normalized_body = _normalize_admin_message_body(body)
+        key = str(idempotency_key or "").strip()
+        if not key or len(key) > 180:
+            raise TelegramRegistryError("idempotency key is invalid")
+        digest = hashlib.sha256(normalized_body.encode("utf-8")).hexdigest()
+        with connect(self._db_path) as conn:
+            recipient_ids = self._registered_broadcast_recipient_ids(conn)
+            if not recipient_ids:
+                raise TelegramRegistryError("no registered recipients are available")
+            existing = conn.execute(
+                "SELECT id, recipient_count FROM telegram_broadcast_jobs WHERE idempotency_key = ?",
+                (key,),
+            ).fetchone()
+            if existing is not None:
+                return BroadcastQueueResult(int(existing[0]), int(existing[1]))
+            cursor = conn.execute(
+                """
+                INSERT INTO telegram_broadcast_jobs (created_by, idempotency_key, body, recipient_count)
+                VALUES (?, ?, ?, ?)
+                """,
+                (admin_id, key, normalized_body, len(recipient_ids)),
+            )
+            broadcast_id = int(cursor.lastrowid)
+            conn.executemany(
+                """
+                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                VALUES ('registered_broadcast', ?, ?)
+                """,
+                [
+                    (f"{broadcast_id}:{recipient_id}", f"registered-broadcast:{broadcast_id}:{recipient_id}")
+                    for recipient_id in recipient_ids
+                ],
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('registered_broadcast_queued', 'admin', ?, 'broadcast', ?, ?)
+                """,
+                (str(admin_id), str(broadcast_id), digest),
+            )
+        return BroadcastQueueResult(broadcast_id=broadcast_id, recipient_count=len(recipient_ids))
 
     @staticmethod
     def _lifecycle_operation_type(value: str) -> str:
