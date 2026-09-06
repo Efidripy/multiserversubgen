@@ -1073,22 +1073,45 @@ PY
     fi
 }
 
-ensure_grafana_runtime_directory() {
+configure_grafana_pid_directory() {
     if ! getent passwd grafana >/dev/null 2>&1 || ! getent group grafana >/dev/null 2>&1; then
         echo "❌ Grafana system user/group is unavailable."
         return 1
     fi
 
-    # The packaged unit declares RuntimeDirectory=grafana. Keep this explicit
-    # tmpfiles fallback because a missing /run/grafana prevents Grafana from
-    # creating its pid file and leaves Nginx with a dead upstream after reboot
-    # or a failed package/runtime-dir transition.
-    install -d -o grafana -g grafana -m 0750 /run/grafana
-    cat > /etc/tmpfiles.d/grafana-runtime.conf <<'EOF'
-# Managed by Multi-Server Manager: Grafana pid/runtime directory.
-d /run/grafana 0750 grafana grafana -
-EOF
-    chmod 0644 /etc/tmpfiles.d/grafana-runtime.conf
+    # Some packaged systemd units remove /run/grafana during a restart but do
+    # not recreate it before Grafana starts. Keep the PID in Grafana's own
+    # persistent, service-owned data directory instead of relying on that
+    # broken RuntimeDirectory lifecycle.
+    install -d -o grafana -g grafana -m 0750 /var/lib/grafana
+    local defaults_file="/etc/default/grafana-server"
+    if [[ ! -f "$defaults_file" ]]; then
+        echo "❌ Grafana defaults file is unavailable: $defaults_file"
+        return 1
+    fi
+    if grep -q '^PID_FILE_DIR=' "$defaults_file"; then
+        sed -i 's|^PID_FILE_DIR=.*|PID_FILE_DIR=/var/lib/grafana|' "$defaults_file"
+    else
+        printf '\nPID_FILE_DIR=/var/lib/grafana\n' >> "$defaults_file"
+    fi
+    # This was created by older Multi-Server Manager releases. It is no
+    # longer needed once the PID directory is outside /run.
+    rm -f /etc/tmpfiles.d/grafana-runtime.conf
+}
+
+wait_for_grafana_http() {
+    local attempts="${1:-6}"
+    local i
+    local status=""
+    for ((i = 1; i <= attempts; i++)); do
+        status="$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${GRAFANA_HTTP_PORT}/login" 2>/dev/null || true)"
+        if [[ "$status" =~ ^(200|301|302)$ ]]; then
+            return 0
+        fi
+        sleep 2
+    done
+    echo "❌ Grafana upstream is not ready on 127.0.0.1:${GRAFANA_HTTP_PORT} (HTTP ${status:-000})."
+    return 1
 }
 
 configure_monitoring_stack() {
@@ -1278,40 +1301,17 @@ with open('/etc/grafana/grafana.ini', 'w') as f:
     cfg.write(f)
 PYTHON
 
-    ensure_grafana_runtime_directory || return 1
+    configure_grafana_pid_directory || return 1
     systemctl daemon-reload
     resource_guard_restart_services_sequentially prometheus grafana-server
 
-    local grafana_ready="false"
-    local grafana_status=""
-    local i
-    for i in 1 2 3 4 5 6; do
-        grafana_status="$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${GRAFANA_HTTP_PORT}/login" 2>/dev/null || true)"
-        if [[ "$grafana_status" =~ ^(200|301|302)$ ]]; then
-            grafana_ready="true"
-            break
-        fi
-        sleep 2
-    done
-
-    if [ "$grafana_ready" != "true" ]; then
-        echo "⚠️ Grafana upstream not ready after first start (HTTP ${grafana_status:-000}). Retrying restart once..."
+    if ! wait_for_grafana_http; then
+        echo "⚠️ Grafana upstream not ready after first start. Retrying restart once..."
         resource_guard_restart_services_sequentially grafana-server
-        for i in 1 2 3 4 5 6; do
-            grafana_status="$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:${GRAFANA_HTTP_PORT}/login" 2>/dev/null || true)"
-            if [[ "$grafana_status" =~ ^(200|301|302)$ ]]; then
-                grafana_ready="true"
-                break
-            fi
-            sleep 2
-        done
+        wait_for_grafana_http || return 1
     fi
 
-    if [ "$grafana_ready" = "true" ]; then
-        echo "✓ Grafana upstream ready on 127.0.0.1:${GRAFANA_HTTP_PORT} (HTTP ${grafana_status})"
-    else
-        echo "⚠️ Grafana upstream is still not ready (HTTP ${grafana_status:-000}). Public /${GRAFANA_WEB_PATH}/ may return 502 until service stabilizes."
-    fi
+    echo "✓ Grafana upstream ready on 127.0.0.1:${GRAFANA_HTTP_PORT}"
     echo "✓ Prometheus и Grafana настроены."
 }
 
