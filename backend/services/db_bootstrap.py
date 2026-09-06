@@ -266,6 +266,20 @@ def init_db(db_path: str) -> None:
                 "ADD COLUMN introduction_requested_at TEXT DEFAULT NULL"
             )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_preapprovals
+                     (telegram_user_id INTEGER PRIMARY KEY,
+                      customer_id INTEGER NOT NULL,
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      created_by TEXT NOT NULL,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_preapprovals_customer "
+            "ON telegram_preapprovals(customer_id)"
+        )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_notification_preferences
                      (telegram_user_id INTEGER PRIMARY KEY,
                       background_notifications_enabled INTEGER NOT NULL DEFAULT 1

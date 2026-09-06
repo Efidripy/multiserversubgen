@@ -161,6 +161,60 @@ def test_request_queue_is_admin_only_and_approval_queues_local_work_without_remo
     assert viewer.get("/api/v1/telegram/jobs").status_code == 403
 
 
+def test_preapproval_and_unlink_routes_are_admin_only_and_never_start_remote_io(tmp_path):
+    client = _build_client(tmp_path)
+    db_path = str(tmp_path / "admin.db")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="preapproved-user", origin="existing", email_source="existing", public_code="preapproved-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'preapproved-client', 'preapproved-sub', 'preapproved-user',
+                    'existing_bound', 'confirmed', 1, 1)
+            """,
+            (customer_id,),
+        )
+
+    created = client.post(
+        "/api/v1/telegram/preapprovals",
+        json={
+            "telegram_user_id": 42,
+            "customer_id": customer_id,
+            "expected_preapproval_version": 0,
+            "idempotency_key": "http-preapproval-42",
+        },
+    )
+
+    assert created.status_code == 200
+    assert created.json()["remote_io"] == "not_started"
+    assert client.get("/api/v1/telegram/preapprovals/42").json()["item"]["customer_id"] == customer_id
+
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="preapproved", first_name="Preapproved", last_name=None
+    )
+    activated = registry.activate_preapproval(42)
+    assert activated is not None
+    unlink = client.post(
+        "/api/v1/telegram/identities/42/unlink",
+        json={
+            "customer_id": customer_id,
+            "expected_identity_version": activated.identity_row_version,
+            "idempotency_key": "http-unlink-42",
+        },
+    )
+
+    assert unlink.status_code == 200
+    assert unlink.json()["remote_io"] == "not_started"
+    viewer = _build_client(tmp_path, username="viewer", role="viewer")
+    assert viewer.post("/api/v1/telegram/preapprovals", json={}).status_code == 403
+    assert viewer.post("/api/v1/telegram/identities/42/unlink", json={}).status_code == 403
+
+
 def test_existing_remote_customer_can_be_discovered_then_adopted_without_node_write(tmp_path):
     class ClientManager:
         @staticmethod

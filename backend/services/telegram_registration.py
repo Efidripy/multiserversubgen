@@ -1153,6 +1153,9 @@ class TelegramRegistrationService:
         if text and text.strip().startswith("/start"):
             if identity.access_status == "approved":
                 return [self._approved_status(user_id, chat_id)]
+            activated = self._registry.activate_preapproval(user_id)
+            if activated is not None:
+                return [self._approved_status(user_id, chat_id)]
             if identity.access_status == "pending":
                 return no_op(TelegramOutboundMessage(chat_id, "Заявка уже ожидает проверки. Пожалуйста, дождитесь ответа."))
             if self._registry.request_required_introduction(user_id):

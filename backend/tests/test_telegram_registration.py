@@ -146,6 +146,47 @@ def test_prompted_user_must_submit_nonempty_introduction_before_the_request_is_c
         ]
 
 
+def test_first_start_activates_existing_customer_preapproval_without_creating_an_application(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+    customer_id = registry.create_customer(
+        email_display="invited-user", origin="existing", email_source="existing", public_code="invited-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'invite-client', 'invite-sub', 'invited-user',
+                    'existing_bound', 'confirmed', 1, 1)
+            """,
+            (customer_id,),
+        )
+    registry.create_existing_customer_preapproval(
+        telegram_user_id=42,
+        customer_id=customer_id,
+        expected_preapproval_version=0,
+        idempotency_key="invite-42",
+        created_by="admin",
+    )
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    activated = service.handle_update(_message(10, "/start"))
+
+    assert "Статус доступа" in activated[0].text
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM telegram_applications").fetchone()[0] == 0
+        assert conn.execute("SELECT customer_id, access_status FROM telegram_identities WHERE telegram_user_id = 42").fetchone() == (
+            customer_id,
+            "approved",
+        )
+        assert conn.execute("SELECT COUNT(*) FROM telegram_preapprovals").fetchone()[0] == 0
+
+
 def test_bot_persists_only_a_contact_voluntarily_shared_by_the_sender(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)

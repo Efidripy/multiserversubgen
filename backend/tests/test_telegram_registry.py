@@ -254,6 +254,73 @@ def test_required_introduction_creates_one_complete_request_only_after_an_explic
         ]
 
 
+def test_existing_customer_preapproval_activates_only_on_first_private_start_and_unlink_keeps_bindings(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+    customer_id = registry.create_customer(
+        email_display="preapproved-user", origin="existing", email_source="existing", public_code="preapproved-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'preapproved-client', 'preapproved-sub', 'preapproved-user',
+                    'existing_bound', 'confirmed', 1, 1)
+            """,
+            (customer_id,),
+        )
+
+    preapproval = registry.create_existing_customer_preapproval(
+        telegram_user_id=42,
+        customer_id=customer_id,
+        expected_preapproval_version=0,
+        idempotency_key="preapproval-42",
+        created_by="admin",
+    )
+    assert preapproval.customer_email == "preapproved-user"
+    assert registry.get_preapproval(42) is not None
+
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="preapproved", first_name="Preapproved", last_name=None
+    )
+    activated = registry.activate_preapproval(42)
+
+    assert activated is not None
+    assert activated.customer_id == customer_id
+    assert registry.get_preapproval(42) is None
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT access_status, customer_id, row_version FROM telegram_identities WHERE telegram_user_id = 42"
+        ).fetchone()
+        binding_count = conn.execute(
+            "SELECT COUNT(*) FROM customer_node_bindings WHERE customer_id = ?", (customer_id,)
+        ).fetchone()[0]
+    assert row[:2] == ("approved", customer_id)
+    assert binding_count == 1
+
+    unlinked = registry.unlink_identity(
+        telegram_user_id=42,
+        customer_id=customer_id,
+        expected_identity_version=int(row[2]),
+        idempotency_key="unlink-42",
+        unlinked_by="admin",
+    )
+
+    assert unlinked.customer_id == customer_id
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT access_status, customer_id FROM telegram_identities WHERE telegram_user_id = 42"
+        ).fetchone() == ("eligible", None)
+        assert conn.execute(
+            "SELECT COUNT(*) FROM customer_node_bindings WHERE customer_id = ?", (customer_id,)
+        ).fetchone()[0] == 1
+
+
 def test_introduction_is_one_time_plain_text_for_the_current_pending_attempt(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
