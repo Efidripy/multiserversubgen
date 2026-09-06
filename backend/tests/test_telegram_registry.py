@@ -554,6 +554,10 @@ def test_reject_block_and_unblock_require_versions_and_do_not_create_repeat_requ
     assert (rejected.access_status, blocked.access_status, unblocked.access_status) == (
         "rejected", "blocked", "eligible"
     )
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT event_type, entity_id FROM telegram_outbox WHERE event_type = 'user_application_rejected'"
+        ).fetchone() == ("user_application_rejected", "88")
     repeat = registry.create_pending_application(88)
     assert repeat.created is True
     assert repeat.identity.application_attempt == 2

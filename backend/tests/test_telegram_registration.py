@@ -175,6 +175,7 @@ def test_approved_user_gets_opaque_subscription_link_and_rotation_invalidates_pr
     new_token = rotated[0].text.rsplit("/", 1)[-1]
 
     assert "active" in status[0].text
+    assert "Персональная ссылка доступа, скопируйте и вставьте её в ваше приложение-клиент" in link[0].text
     assert "https://bot.example.test/api/v1/sub/" in link[0].text
     assert old_token != new_token
     assert resolve_token(db_path, "email", old_token) is None

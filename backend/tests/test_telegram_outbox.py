@@ -196,3 +196,32 @@ def test_registered_broadcast_is_cancelled_when_recipient_opts_out_after_queuein
         assert conn.execute(
             "SELECT status, last_error_code FROM telegram_outbox WHERE event_type = 'registered_broadcast'"
         ).fetchone() == ("cancelled", "notifications_disabled")
+
+
+def test_user_result_notifications_cover_provisioning_rejection_and_lifecycle(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="target", first_name="Target", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.executemany(
+            "INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json) VALUES (?, '42', ?, ?)",
+            [
+                ("user_provisioning_completed", "result-provisioning", "{}"),
+                ("user_application_rejected", "result-rejected", "{}"),
+                ("user_lifecycle_completed", "result-lifecycle", '{"operation":"resume"}'),
+            ],
+        )
+    port = FakeOutboxPort()
+    worker = _worker(db_path, port)
+
+    outcomes = [worker.run_once().outcome for _ in range(3)]
+
+    assert outcomes == ["sent", "sent", "sent"]
+    assert port.messages == [
+        (777, "Доступ готов. Откройте меню и получите персональную ссылку.", None),
+        (777, "Заявка отклонена. Если хотите подать новую, отправьте /start.", None),
+        (777, "Доступ восстановлен. Откройте меню, чтобы продолжить.", None),
+    ]

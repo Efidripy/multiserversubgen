@@ -140,6 +140,9 @@ def test_worker_reads_then_creates_then_confirms_exact_binding_with_fixed_contra
     assert attempt[3] > 0
     with connect(db_path) as conn:
         assert conn.execute("SELECT status FROM telegram_provisioning_jobs WHERE id = ?", (approval.job_id,)).fetchone()[0] == "succeeded"
+        assert conn.execute(
+            "SELECT event_type, entity_id FROM telegram_outbox WHERE event_type = 'user_provisioning_completed'"
+        ).fetchone() == ("user_provisioning_completed", "55")
         binding = conn.execute(
             "SELECT remote_client_id, remote_sub_id, remote_email, desired_enabled FROM customer_node_bindings"
         ).fetchone()

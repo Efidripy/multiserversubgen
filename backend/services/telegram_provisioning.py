@@ -540,6 +540,27 @@ class TelegramProvisioningWorker:
                 """,
                 (status, job_id),
             )
+            if status == "succeeded":
+                recipients = conn.execute(
+                    """
+                    SELECT i.telegram_user_id
+                    FROM telegram_provisioning_jobs AS j
+                    JOIN telegram_identities AS i ON i.customer_id = j.customer_id
+                    WHERE j.id = ? AND i.access_status = 'approved'
+                    ORDER BY i.created_at ASC, i.telegram_user_id ASC
+                    """,
+                    (job_id,),
+                ).fetchall()
+                conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                    VALUES ('user_provisioning_completed', ?, ?)
+                    """,
+                    [
+                        (str(int(row[0])), f"user:provisioning-completed:{job_id}:{int(row[0])}")
+                        for row in recipients
+                    ],
+                )
         else:
             conn.execute(
                 """

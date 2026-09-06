@@ -2237,6 +2237,14 @@ class TelegramRegistry:
                 """,
                 (f"application_{action}ed" if action == "reject" else "identity_blocked", normalized_actor, str(user_id), _payload_digest({"reason": normalized_reason or ""})),
             )
+            if action == "reject":
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                    VALUES ('user_application_rejected', ?, ?)
+                    """,
+                    (str(user_id), f"user:application-rejected:{user_id}:{int(row[3])}"),
+                )
             conn.execute(
                 """
                 INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)

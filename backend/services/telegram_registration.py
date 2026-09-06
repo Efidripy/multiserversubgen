@@ -846,7 +846,7 @@ class TelegramRegistrationService:
         assert url is not None
         return TelegramOutboundMessage(
             chat_id,
-            f"Ваша ссылка доступа:\n{url}",
+            f"Персональная ссылка доступа, скопируйте и вставьте её в ваше приложение-клиент:\n{url}",
             self._approved_menu(),
         )
 
