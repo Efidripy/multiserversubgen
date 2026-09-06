@@ -98,6 +98,21 @@ def test_enabled_telegram_accepts_only_runtime_provided_identity(monkeypatch):
     assert settings.telegram.provisioning_worker_enabled is False
 
 
+def test_enabled_telegram_accepts_polling_without_public_webhook_values(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_ENABLED", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-runtime-token")
+    monkeypatch.setenv("TELEGRAM_PRIMARY_ADMIN_ID", "108100140")
+    monkeypatch.setenv("TELEGRAM_MODE", "polling")
+    monkeypatch.delenv("TELEGRAM_WEBHOOK_SECRET", raising=False)
+    monkeypatch.delenv("TELEGRAM_WEBHOOK_PATH_SUFFIX", raising=False)
+    monkeypatch.delenv("TELEGRAM_PUBLIC_BASE_URL", raising=False)
+
+    settings = load_app_settings(parse_mfa_users=_parse_mfa_users)
+
+    assert settings.telegram.mode == "polling"
+    assert settings.telegram.polling_timeout_sec == 25
+
+
 @pytest.mark.parametrize(
     ("name", "value", "expected"),
     [

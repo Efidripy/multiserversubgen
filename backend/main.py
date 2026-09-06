@@ -32,6 +32,9 @@ from core.router_registration import register_app_routers
 from services.runtime_state import RuntimeState
 from services.telegram_lifecycle import TelegramLifecycleWorker
 from services.telegram_outbox import TelegramApiOutboxPort, TelegramOutboxWorker
+from services.telegram_polling import TelegramBotApiClient, TelegramPollingWorker
+from services.telegram_registration import TelegramRegistrationService
+from services.telegram_registry import TelegramRegistry
 from services.telegram_retention import TelegramRetentionService
 from services.telegram_provisioning import ClientManagerProvisioningPort, TelegramProvisioningWorker
 from services.telegram_transport import TelegramApiTransport
@@ -502,6 +505,39 @@ async def _telegram_retention_worker_loop() -> None:
         await asyncio.sleep(SETTINGS.telegram.retention_worker_interval_sec)
 
 
+async def _telegram_polling_worker_loop() -> None:
+    """Use outbound long polling where Telegram cannot reach this host's webhook."""
+
+    transport = TelegramApiTransport(db_path=DB_PATH, local_proxy_url=SETTINGS.telegram.local_proxy_url)
+    service = TelegramRegistrationService(
+        TelegramRegistry(DB_PATH),
+        introduction_max_chars=SETTINGS.telegram.introduction_max_chars,
+        public_base_url=SETTINGS.telegram.public_base_url,
+        list_nodes=node_service.list_nodes,
+        get_links_filtered=get_links_filtered,
+        primary_admin_id=SETTINGS.telegram.primary_admin_id,
+        get_cached_inbound_options=inbounds_runtime.get_cached_inbound_options,
+        traffic_projection_loader=lambda: get_cached_traffic_stats_projection("client"),
+    )
+    worker = TelegramPollingWorker(
+        api=TelegramBotApiClient(SETTINGS.telegram.bot_token, transport=transport),
+        handle_update=service.handle_update,
+        sender=TelegramApiOutboxPort(SETTINGS.telegram.bot_token, transport=transport),
+        timeout_sec=SETTINGS.telegram.polling_timeout_sec,
+    )
+    while True:
+        try:
+            await asyncio.to_thread(worker.run_once)
+        except Exception:
+            # Keep the application healthy if the selected Bot API route is
+            # temporarily unavailable. The next run retries through the same
+            # fail-closed transport without changing global proxy settings.
+            logger.warning("Telegram polling request failed; retrying through configured transport")
+            await asyncio.sleep(5)
+            continue
+        await asyncio.sleep(0.1)
+
+
 app.router.lifespan_context = build_lifespan(
     sync_node_history_names_with_nodes=sync_node_history_names_with_nodes,
     backfill_traffic_history_snapshots=live_stats_runtime.backfill_node_history_snapshots,
@@ -520,6 +556,11 @@ app.router.lifespan_context = build_lifespan(
     ),
     telegram_retention_worker_loop=(
         (lambda: _telegram_retention_worker_loop()) if SETTINGS.telegram.retention_worker_enabled else None
+    ),
+    telegram_polling_worker_loop=(
+        (lambda: _telegram_polling_worker_loop())
+        if SETTINGS.telegram.enabled and SETTINGS.telegram.mode == "polling"
+        else None
     ),
 )
 
