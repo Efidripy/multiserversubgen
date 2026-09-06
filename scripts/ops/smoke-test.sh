@@ -75,6 +75,11 @@ WEB_PATH="${WEB_PATH%/}"
 PUBLIC_SCHEME="${PUBLIC_SCHEME:-https}"
 PUBLIC_DOMAIN="${PUBLIC_DOMAIN:-}"
 CURL_MAX_TIME="${CURL_MAX_TIME:-5}"
+MONITORING_ENABLED="${MONITORING_ENABLED:-false}"
+GRAFANA_WEB_PATH="${GRAFANA_WEB_PATH:-grafana}"
+GRAFANA_WEB_PATH="${GRAFANA_WEB_PATH#/}"
+GRAFANA_WEB_PATH="${GRAFANA_WEB_PATH%/}"
+GRAFANA_HTTP_PORT="${GRAFANA_HTTP_PORT:-43000}"
 
 ok=0
 fail=0
@@ -120,6 +125,20 @@ if [[ -n "$PUBLIC_DOMAIN" ]]; then
   [[ -n "$WEB_PATH" ]] && panel_path="/${WEB_PATH}/"
   panel_url="${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}${panel_path}"
   check_shell "public panel URL is reachable ($panel_url)" "code=\$(curl -fsSL --max-time '${CURL_MAX_TIME}' -o /dev/null -w '%{http_code}' '$panel_url'); [[ \"\$code\" == \"200\" || \"\$code\" == \"301\" || \"\$code\" == \"302\" || \"\$code\" == \"401\" ]]"
+fi
+
+if [[ "$MONITORING_ENABLED" == "true" ]]; then
+  if [[ ! "$GRAFANA_HTTP_PORT" =~ ^[0-9]+$ ]] || (( GRAFANA_HTTP_PORT < 1 || GRAFANA_HTTP_PORT > 65535 )); then
+    printf '[FAIL] %s\n' "Grafana port is invalid: $GRAFANA_HTTP_PORT"
+    fail=$((fail + 1))
+  else
+    check "systemd grafana-server active" systemctl is-active --quiet grafana-server
+    check_shell "local Grafana /login is reachable" "code=\$(curl -fsSL --max-time '${CURL_MAX_TIME}' -o /dev/null -w '%{http_code}' 'http://127.0.0.1:${GRAFANA_HTTP_PORT}/login'); [[ \"\$code\" == \"200\" || \"\$code\" == \"301\" || \"\$code\" == \"302\" ]]"
+    if [[ -n "$PUBLIC_DOMAIN" ]]; then
+      grafana_url="${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${GRAFANA_WEB_PATH}/login"
+      check_shell "public Grafana URL is reachable ($grafana_url)" "code=\$(curl -fsSL --max-time '${CURL_MAX_TIME}' -o /dev/null -w '%{http_code}' '$grafana_url'); [[ \"\$code\" == \"200\" || \"\$code\" == \"301\" || \"\$code\" == \"302\" ]]"
+    fi
+  fi
 fi
 
 printf '\nSmoke summary: ok=%d fail=%d\n' "$ok" "$fail"
