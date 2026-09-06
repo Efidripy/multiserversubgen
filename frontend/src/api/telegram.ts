@@ -12,6 +12,37 @@ export type TelegramRequest = {
   suggested_email: string;
 };
 
+export type ExistingDiscoveryCandidate = {
+  email_display: string;
+  binding_count: number;
+  node_names: string[];
+};
+
+export type TelegramAppeal = {
+  appeal_id: number;
+  telegram_user_id: number;
+  customer_id: number;
+  email_display: string;
+  body: string;
+  status: 'open' | 'handled' | 'rejected';
+  row_version: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ProvisioningJob = {
+  job_id: number;
+  customer_id: number;
+  customer_email: string;
+  trigger: string;
+  status: string;
+  row_version: number;
+  attempt_count: number;
+  created_at: string;
+  finished_at: string | null;
+  attempts: Array<{ node_id: number; node_name: string; status: string; error_code: string | null; error_summary: string | null; attempt_count: number; next_attempt_at: string | null }>;
+};
+
 export type BlockedIdentity = { telegram_user_id: number; username: string | null; first_name: string | null; row_version: number; blocked_at: string | null; decision_reason: string | null; };
 
 export type TelegramCustomer = {
@@ -123,6 +154,23 @@ export async function approveTelegramRequest(request: TelegramRequest, emailDisp
   );
 }
 
+export async function discoverExistingTelegramCustomer(request: TelegramRequest, emailDisplay: string): Promise<ExistingDiscoveryCandidate> {
+  const response = await api.post(
+    `/v1/telegram/requests/${request.telegram_user_id}/discover-existing`,
+    { expected_identity_version: request.row_version, email_display: emailDisplay },
+    { auth: getAuth() },
+  );
+  return response.data?.candidate as ExistingDiscoveryCandidate;
+}
+
+export async function adoptExistingTelegramCustomer(request: TelegramRequest, emailDisplay: string): Promise<void> {
+  await api.post(
+    `/v1/telegram/requests/${request.telegram_user_id}/adopt-existing`,
+    { expected_identity_version: request.row_version, email_display: emailDisplay, idempotency_key: newIdempotencyKey() },
+    { auth: getAuth() },
+  );
+}
+
 export async function rejectTelegramRequest(request: TelegramRequest): Promise<void> {
   await api.post(`/v1/telegram/requests/${request.telegram_user_id}/reject`, {
     expected_identity_version: request.row_version, idempotency_key: newIdempotencyKey(),
@@ -221,6 +269,32 @@ export async function retryCustomerOperation(operation: CustomerOperation): Prom
   await api.post(
     `/v1/telegram/customer-operations/${operation.operation_id}/reconcile`,
     { expected_operation_version: operation.row_version, idempotency_key: newIdempotencyKey() },
+    { auth: getAuth() },
+  );
+}
+
+export async function listTelegramJobs(): Promise<ProvisioningJob[]> {
+  const response = await api.get('/v1/telegram/jobs', { auth: getAuth() });
+  return Array.isArray(response.data?.items) ? response.data.items : [];
+}
+
+export async function reconcileTelegramJob(job: ProvisioningJob): Promise<void> {
+  await api.post(
+    `/v1/telegram/jobs/${job.job_id}/reconcile`,
+    { expected_job_version: job.row_version, idempotency_key: newIdempotencyKey() },
+    { auth: getAuth() },
+  );
+}
+
+export async function listTelegramAppeals(): Promise<TelegramAppeal[]> {
+  const response = await api.get('/v1/telegram/appeals', { auth: getAuth(), params: { status: 'open' } });
+  return Array.isArray(response.data?.items) ? response.data.items : [];
+}
+
+export async function resolveTelegramAppeal(appeal: TelegramAppeal, status: 'handled' | 'rejected'): Promise<void> {
+  await api.post(
+    `/v1/telegram/appeals/${appeal.appeal_id}/resolve`,
+    { status, expected_row_version: appeal.row_version, idempotency_key: newIdempotencyKey() },
     { auth: getAuth() },
   );
 }
