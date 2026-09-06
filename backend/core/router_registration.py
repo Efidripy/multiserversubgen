@@ -13,6 +13,7 @@ from routers.server_ops import build_server_ops_router
 from routers.subscriptions import build_subscriptions_router
 from routers.telegram_admin import build_telegram_admin_router
 from routers.telegram_webhook import build_telegram_webhook_router
+from services.telegram_provisioning import ClientManagerLegacyDiscovery
 
 
 def register_app_routers(
@@ -187,6 +188,7 @@ def register_app_routers(
             db_path=db_path,
             list_nodes=list_nodes,
             get_cached_inbound_options=get_cached_inbound_options,
+            client_mgr=client_mgr,
             telegram_settings=telegram_settings,
         )
     )
@@ -199,6 +201,10 @@ def register_app_routers(
                 get_links_filtered=get_links_filtered,
                 get_cached_inbound_options=get_cached_inbound_options,
                 traffic_projection_loader=lambda: get_cached_traffic_stats_projection("client"),
+                discover_existing=ClientManagerLegacyDiscovery(
+                    client_manager=client_mgr,
+                    list_nodes=list_nodes,
+                ).discover,
             )
         )
     if monitoring_enabled:

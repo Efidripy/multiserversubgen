@@ -86,7 +86,21 @@
     "loadFailed": "Could not load Telegram data",
     "detailsFailed": "Could not load customer details",
     "previewFailed": "Could not create a safe preview",
-    "actionFailed": "Operation failed"
+    "actionFailed": "Operation failed",
+    "jobsTitle": "Provisioning jobs",
+    "noJobs": "No active jobs.",
+    "nodesReady": "Nodes ready: {{ready}}/{{total}}",
+    "appealsTitle": "User appeals",
+    "noAppeals": "No open appeals.",
+    "closeAppeal": "Close",
+    "approvalNewTitle": "Create new user",
+    "approvalExistingTitle": "Bind existing user",
+    "existingCheck": "Check",
+    "existingBind": "Bind",
+    "existingFound": "Nodes found: {{count}} — {{nodes}}",
+    "existingDiscoveryHint": "All enabled nodes are checked; this lookup does not change them.",
+    "createNew": "Create new",
+    "bindExisting": "Bind existing"
   },
   "common": {
     "add": "Add",

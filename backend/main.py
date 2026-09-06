@@ -36,7 +36,11 @@ from services.telegram_polling import TelegramBotApiClient, TelegramPollingWorke
 from services.telegram_registration import TelegramRegistrationService
 from services.telegram_registry import TelegramRegistry
 from services.telegram_retention import TelegramRetentionService
-from services.telegram_provisioning import ClientManagerProvisioningPort, TelegramProvisioningWorker
+from services.telegram_provisioning import (
+    ClientManagerLegacyDiscovery,
+    ClientManagerProvisioningPort,
+    TelegramProvisioningWorker,
+)
 from services.telegram_transport import TelegramApiTransport
 from shared.http_config import get_requests_verify_value
 
@@ -518,6 +522,9 @@ async def _telegram_polling_worker_loop() -> None:
         primary_admin_id=SETTINGS.telegram.primary_admin_id,
         get_cached_inbound_options=inbounds_runtime.get_cached_inbound_options,
         traffic_projection_loader=lambda: get_cached_traffic_stats_projection("client"),
+        discover_existing=ClientManagerLegacyDiscovery(
+            client_manager=client_mgr, list_nodes=node_service.list_nodes
+        ).discover,
     )
     worker = TelegramPollingWorker(
         api=TelegramBotApiClient(SETTINGS.telegram.bot_token, transport=transport),

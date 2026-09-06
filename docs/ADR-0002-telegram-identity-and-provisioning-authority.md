@@ -42,10 +42,16 @@ node to become the authority for the customer lifecycle.
   or lifecycle queue transaction.
 - Approval fails closed when no eligible local policy target exists. It must
   not label a person as ready merely because the administrator pressed approve.
-- Linking an existing customer accepts its local `customer_id`, never a free
-  email supplied by Telegram or an administrator. The customer must already
-  have at least one exact confirmed local node binding; this link creates no
-  provisioning job and does not mutate a remote node.
+- Linking an existing customer uses one of two explicit admin-confirmed paths.
+  A locally known customer is linked by its local `customer_id` and must
+  already have an exact confirmed binding. A pre-Telegram remote-only customer
+  may be adopted only after the administrator enters an exact service
+  username/email and a strict read-only adapter finds one unambiguous canonical
+  match in `inbound_id=1` on every readable enabled node. Any unavailable node,
+  duplicate match or final re-read mismatch fails closed. Adoption atomically
+  creates or refreshes `customers(origin=existing)` and exact bindings before
+  linking the pending identity; neither path creates a provisioning job or
+  mutates a remote node.
 - Telegram update deduplication happens before abuse accounting. Only the 51st
   unique no-op action in a rolling ten-minute window auto-blocks an unapproved
   identity; the first 50 do not. Manual unblock resets the active window but
