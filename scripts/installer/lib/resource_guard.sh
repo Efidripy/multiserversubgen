@@ -206,9 +206,9 @@ resource_guard_export_build_env() {
     fi
     if [ "${RESOURCE_VERY_LOW_RESOURCE_MODE}" = "true" ]; then
         if [[ " ${NODE_OPTIONS:-} " != *" --max-old-space-size="* ]]; then
-            export NODE_OPTIONS="${NODE_OPTIONS:+${NODE_OPTIONS} }--max-old-space-size=256"
+            export NODE_OPTIONS="${NODE_OPTIONS:+${NODE_OPTIONS} }--max-old-space-size=512"
         else
-            export NODE_OPTIONS="$(printf "%s" "${NODE_OPTIONS}" | sed 's/--max-old-space-size=[0-9][0-9]*/--max-old-space-size=256/g')"
+            export NODE_OPTIONS="$(printf "%s" "${NODE_OPTIONS}" | sed 's/--max-old-space-size=[0-9][0-9]*/--max-old-space-size=512/g')"
         fi
     fi
 
