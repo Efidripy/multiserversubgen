@@ -61,6 +61,8 @@ class TelegramApiSender:
         self._transport = transport
 
     def send(self, message: TelegramOutboundMessage) -> int | None:
+        if message.delete_message_id is not None:
+            return self._delete_message(message)
         if message.edit_message_id is not None:
             return self._edit_message(message)
         if message.photo_png is not None:
@@ -98,6 +100,17 @@ class TelegramApiSender:
             method="POST",
         )
         return self._send_request(request, edited_message_id=message.edit_message_id)
+
+    def _delete_message(self, message: TelegramOutboundMessage) -> None:
+        payload = {"chat_id": message.chat_id, "message_id": message.delete_message_id}
+        request = UrlRequest(
+            f"{self._endpoint}/deleteMessage",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        self._send_request(request)
+        return None
 
     def _send_request(self, request: UrlRequest, *, edited_message_id: int | None = None) -> int | None:
         try:

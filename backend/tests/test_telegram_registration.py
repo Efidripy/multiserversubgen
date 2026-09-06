@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from routers.telegram_webhook import build_telegram_webhook_router
 from services.db_bootstrap import connect, init_db
+from services.telegram_access import TelegramSubscriptionAccessGate
 from services.telegram_delivery import TelegramMessageEditUnavailableError
 from services.subscription_tokens import resolve_token
 from services.telegram_registration import TelegramOutboundMessage, TelegramRegistrationService
@@ -65,6 +66,27 @@ def _admin_callback(update_id: int, data: str) -> dict:
             "data": data,
         },
     }
+
+
+def _callback_with_message_id(update_id: int, data: str, message_id: int) -> dict:
+    update = _callback(update_id, data)
+    update["callback_query"]["message"]["message_id"] = message_id
+    return update
+
+
+def _approved_telegram_customer(registry: TelegramRegistry, db_path: str, *, username: str = "setup_user") -> int:
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username=username, first_name="Setup", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display=username, origin="telegram", email_source="telegram_username", public_code=username
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    return customer_id
 
 
 def test_first_start_creates_one_pending_request_with_neutral_copy_and_dedupes(tmp_path):
@@ -461,10 +483,128 @@ def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path)
     })
 
     assert help_screen[0].text.startswith("Помощь")
-    assert help_screen[0].reply_markup == {
-        "inline_keyboard": [[{"text": "← Меню", "callback_data": "menu:home"}]]
+    help_callbacks = {
+        button["callback_data"]
+        for row in help_screen[0].reply_markup["inline_keyboard"]
+        for button in row
     }
+    assert {"menu:home", "setup:menu", "setup:diagnostics"} <= help_callbacks
     assert "Статус доступа" in home[0].text
+
+
+def test_initial_provisioning_blocks_link_and_qr_until_the_entire_snapshot_succeeds(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = _approved_telegram_customer(registry, db_path, username="waiting_user")
+    with connect(db_path) as conn:
+        job = conn.execute(
+            """
+            INSERT INTO telegram_provisioning_jobs
+                (customer_id, trigger, idempotency_key, status, policy_snapshot_digest, created_by)
+            VALUES (?, 'approve_new', 'test-waiting-job', 'partial', 'test-snapshot', 'test')
+            """,
+            (customer_id,),
+        )
+        job_id = int(job.lastrowid)
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    link_while_partial = service.handle_update(_message(30, "/subscription"))
+    qr_while_partial = service.handle_update(_callback(31, "subscription:qr"))
+
+    assert "готовится" in link_while_partial[0].text.lower()
+    assert "https://" not in link_while_partial[0].text
+    assert qr_while_partial[0].photo_png is None
+    assert "готовится" in qr_while_partial[0].text.lower()
+    assert TelegramSubscriptionAccessGate(db_path).can_serve_email("waiting_user") is False
+
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_provisioning_jobs SET status = 'succeeded' WHERE id = ?", (job_id,))
+    link_after_success = service.handle_update(_message(32, "/subscription"))
+
+    assert "https://bot.example.test/api/v1/sub/" in link_after_success[0].text
+    assert TelegramSubscriptionAccessGate(db_path).can_serve_email("waiting_user") is True
+
+
+def test_setup_application_buttons_use_official_urls_without_rendering_them_in_copy(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path)
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+    expected = {
+        "android": {"V2RayNG", "sing-box", "V2RayTun", "NPV Tunnel", "Happ", "Incy"},
+        "ios": {"Shadowrocket", "V2Box", "Streisand", "V2RayTun", "NPV Tunnel", "Happ", "Incy"},
+        "desktop": {"V2RayN", "Happ", "PrizrakBox", "Incy"},
+    }
+
+    for offset, (platform, expected_names) in enumerate(expected.items(), start=40):
+        message = service.handle_update(_callback(offset, f"setup:{platform}"))[0]
+        app_buttons = [
+            button
+            for row in message.reply_markup["inline_keyboard"]
+            for button in row
+            if "url" in button
+        ]
+        assert {button["text"] for button in app_buttons} == expected_names
+        assert all(set(button) == {"text", "url"} and button["url"].startswith("https://") for button in app_buttons)
+        assert all(button["url"] not in message.text for button in app_buttons)
+
+
+def test_qr_can_be_explicitly_deleted_from_the_chat(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path)
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    qr = service.handle_update(_callback(50, "subscription:qr"))[0]
+    delete_button = qr.reply_markup["inline_keyboard"][0][0]
+    deleted = service.handle_update(_callback_with_message_id(51, delete_button["callback_data"], 777))
+
+    assert delete_button["text"] == "⌫ Удалить QR"
+    assert deleted[0].delete_message_id == 777
+    assert deleted[1].text == "QR-код удалён из чата."
+
+
+def test_readiness_diagnostics_hide_internal_provisioning_details(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = _approved_telegram_customer(registry, db_path, username="diagnostics_user")
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO telegram_provisioning_jobs
+                (customer_id, trigger, idempotency_key, status, policy_snapshot_digest, created_by)
+            VALUES (?, 'approve_new', 'test-diagnostics-job', 'partial', 'secret-snapshot', 'test')
+            """,
+            (customer_id,),
+        )
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    diagnostics = service.handle_update(_callback(60, "setup:diagnostics"))[0]
+
+    assert "на всех назначенных нодах" in diagnostics.text.lower()
+    assert not any(value in diagnostics.text for value in ("edge-a", "secret-snapshot", "vless://", "token"))
 
 
 def test_primary_admin_has_broadcasts_and_customer_profile_details(tmp_path):

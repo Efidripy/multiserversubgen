@@ -69,6 +69,7 @@ class TelegramCustomerAccess:
     customer_status: str | None
     customer_row_version: int | None
     blocked_from_status: str | None
+    initial_provisioning_ready: bool = True
 
 
 @dataclass(frozen=True)
@@ -881,7 +882,7 @@ class TelegramRegistry:
             row = conn.execute(
                 """
                 SELECT i.telegram_user_id, i.chat_id, i.access_status, i.customer_id,
-                       c.email_display, c.status, c.row_version, i.blocked_from_status
+                       c.email_display, c.status, c.row_version, i.blocked_from_status, c.origin
                 FROM telegram_identities AS i
                 LEFT JOIN customers AS c ON c.id = i.customer_id
                 WHERE i.telegram_user_id = ?
@@ -890,15 +891,33 @@ class TelegramRegistry:
             ).fetchone()
         if row is None:
             raise TelegramRegistryError("Telegram identity was not found")
+        initial_provisioning_ready = True
+        customer_id = int(row[3]) if row[3] is not None else None
+        if customer_id is not None and str(row[8] or "") == "telegram":
+            with connect(self._db_path) as conn:
+                job = conn.execute(
+                    """
+                    SELECT status FROM telegram_provisioning_jobs
+                    WHERE customer_id = ? AND trigger = 'approve_new'
+                    ORDER BY id ASC LIMIT 1
+                    """,
+                    (customer_id,),
+                ).fetchone()
+            # A new Telegram customer may receive a URL only after every
+            # target from the immutable approval snapshot has succeeded.
+            # Absence of this job denotes a customer created before the
+            # snapshot workflow and must remain usable after migration.
+            initial_provisioning_ready = job is None or str(job[0]) == "succeeded"
         return TelegramCustomerAccess(
             telegram_user_id=int(row[0]),
             chat_id=int(row[1]),
             access_status=str(row[2]),
-            customer_id=int(row[3]) if row[3] is not None else None,
+            customer_id=customer_id,
             email_display=str(row[4]) if row[4] is not None else None,
             customer_status=str(row[5]) if row[5] is not None else None,
             customer_row_version=int(row[6]) if row[6] is not None else None,
             blocked_from_status=str(row[7]) if row[7] is not None else None,
+            initial_provisioning_ready=initial_provisioning_ready,
         )
 
     def get_notification_preferences(self, telegram_user_id: int) -> TelegramNotificationPreferences:

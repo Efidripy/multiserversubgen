@@ -39,12 +39,13 @@ class TelegramOutboundMessage:
     photo_png: bytes | None = None
     photo_filename: str | None = None
     edit_message_id: int | None = None
+    delete_message_id: int | None = None
     subscription_delivery: TelegramSubscriptionDelivery | None = None
 
 
 def _private_actor(
     update: dict[str, Any],
-) -> tuple[int, int, dict[str, Any], str | None, str | None, str | None] | None:
+) -> tuple[int, int, dict[str, Any], str | None, str | None, str | None, int | None] | None:
     """Return trusted transport fields only for a private Telegram chat."""
 
     message = update.get("message")
@@ -69,7 +70,11 @@ def _private_actor(
         if contact and contact.get("user_id") == user_id and isinstance(contact.get("phone_number"), str)
         else None
     )
-    return user_id, chat_id, sender, text, callback_data, phone_number
+    source_message = callback_message if callback_message is not None else message
+    source_message_id = source_message.get("message_id") if isinstance(source_message, dict) else None
+    if isinstance(source_message_id, bool) or not isinstance(source_message_id, int) or source_message_id <= 0:
+        source_message_id = None
+    return user_id, chat_id, sender, text, callback_data, phone_number, source_message_id
 
 
 class TelegramRegistrationService:
@@ -79,6 +84,32 @@ class TelegramRegistrationService:
         "Персональная ссылка доступа, скопируйте и вставьте её в ваше приложение-клиент:"
     )
     _SUBSCRIPTION_REUSE_PREFIX = "Ссылка уже получена. Скопируйте и вставьте её в ваше приложение-клиент:"
+    _SETUP_VERSION = "v1"
+    _SETUP_APPLICATIONS: dict[str, tuple[tuple[str, str], ...]] = {
+        "android": (
+            ("V2RayNG", "https://github.com/2dust/v2rayNG/releases/latest"),
+            ("sing-box", "https://sing-box.sagernet.org/clients/"),
+            ("V2RayTun", "https://v2raytun.com/"),
+            ("NPV Tunnel", "https://play.google.com/store/apps/details?id=com.napsternetlabs.napsternetv"),
+            ("Happ", "https://happ.info/"),
+            ("Incy", "https://github.com/INCY-DEV/incy-platforms/releases/latest"),
+        ),
+        "ios": (
+            ("Shadowrocket", "https://apps.apple.com/us/app/shadowrocket/id932747118"),
+            ("V2Box", "https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690"),
+            ("Streisand", "https://apps.apple.com/us/app/streisand/id6450534064"),
+            ("V2RayTun", "https://apps.apple.com/en/app/v2raytun/id6476628951"),
+            ("NPV Tunnel", "https://apps.apple.com/us/app/npv-tunnel/id1629465476"),
+            ("Happ", "https://happ.info/"),
+            ("Incy", "https://apps.apple.com/us/app/incy/id6756943388"),
+        ),
+        "desktop": (
+            ("V2RayN", "https://github.com/2dust/v2rayN/releases/latest"),
+            ("Happ", "https://happ.info/"),
+            ("PrizrakBox", "https://docs.prizrak.app/install/"),
+            ("Incy", "https://github.com/INCY-DEV/incy-platforms/releases/latest"),
+        ),
+    }
 
     def __init__(
         self,
@@ -845,12 +876,19 @@ class TelegramRegistrationService:
             email_display=access.email_display,
             customer_status=access.customer_status,
             blocked_from_status=access.blocked_from_status,
+            initial_provisioning_ready=access.initial_provisioning_ready,
         )
         if decision.state == "suspended":
             return None, TelegramOutboundMessage(
                 chat_id,
                 "Доступ временно приостановлен. Если это ошибка, напишите администратору.",
                 self._approved_menu(suspended=True),
+            )
+        if decision.state == "provisioning":
+            return None, TelegramOutboundMessage(
+                chat_id,
+                "Доступ ещё готовится на всех назначенных нодах. Проверьте статус позже.",
+                self._approved_menu(),
             )
         if not decision.can_receive_subscription:
             return None, TelegramOutboundMessage(chat_id, "Сейчас доступ ещё не готов.", self._approved_menu())
@@ -936,19 +974,25 @@ class TelegramRegistrationService:
             ]},
         )
 
-    @staticmethod
-    def _setup_guide(chat_id: int, platform: str) -> TelegramOutboundMessage:
-        headings = {"android": "Android", "ios": "iPhone / iPad", "desktop": "Компьютер"}
+    @classmethod
+    def _setup_guide(cls, chat_id: int, platform: str) -> TelegramOutboundMessage:
+        headings = {"android": "Android", "ios": "iPhone / iPad / Mac", "desktop": "Компьютер"}
         heading = headings.get(platform)
         if heading is None:
-            return TelegramOutboundMessage(chat_id, "Выберите устройство из списка.", TelegramRegistrationService._approved_menu())
+            return TelegramOutboundMessage(chat_id, "Выберите устройство из списка.", cls._approved_menu())
+        apps = cls._SETUP_APPLICATIONS[platform]
+        buttons = [[{"text": name, "url": url}] for name, url in apps]
+        buttons.extend((
+            [{"text": "◎ Получить доступ", "callback_data": "subscription:get"}],
+            [{"text": "⌁ Проверить готовность", "callback_data": "setup:diagnostics"}],
+            [{"text": "↻ Повторить инструкцию", "callback_data": f"setup:{platform}"}],
+            [{"text": "← Устройства", "callback_data": "setup:menu"}],
+            [{"text": "← Меню", "callback_data": "menu:home"}],
+        ))
         return TelegramOutboundMessage(
             chat_id,
-            f"Подключение: {heading}\n\n1. Установите совместимое приложение для подписок.\n2. В нём выберите добавление по URL или сканирование QR.\n3. Откройте «◎ Получить доступ» и выберите ссылку или QR-код.\n4. Не пересылайте ссылку и QR: это ваш личный доступ.",
-            {"inline_keyboard": [
-                [{"text": "← Устройства", "callback_data": "setup:menu"}],
-                [{"text": "← Меню", "callback_data": "menu:home"}],
-            ]},
+            f"Подключение: {heading} · инструкция {cls._SETUP_VERSION}\n\n1. Нажмите на название приложения ниже — Telegram откроет официальный источник.\n2. Установите приложение и выберите импорт по URL или QR-коду.\n3. Вернитесь в бот: «◎ Получить доступ» → ссылка или QR.\n4. Не пересылайте ссылку и QR: это ваш личный доступ.",
+            {"inline_keyboard": buttons},
         )
 
     def _setup_qr_message(self, *, user_id: int, chat_id: int) -> TelegramOutboundMessage:
@@ -963,7 +1007,10 @@ class TelegramRegistrationService:
         return TelegramOutboundMessage(
             chat_id,
             "Ваш QR-код доступа. Не пересылайте его другим людям.",
-            {"inline_keyboard": [[{"text": "← Способы доступа", "callback_data": "subscription:get"}]]},
+            {"inline_keyboard": [
+                [{"text": "⌫ Удалить QR", "callback_data": "qr:delete"}],
+                [{"text": "← Способы доступа", "callback_data": "subscription:get"}],
+            ]},
             photo_png=png,
             photo_filename="access-qr.png",
         )
@@ -995,6 +1042,30 @@ class TelegramRegistrationService:
             ]},
         )
 
+    def _diagnostics_message(self, user_id: int, chat_id: int) -> TelegramOutboundMessage:
+        access = self._registry.get_customer_access(user_id)
+        decision = resolve_effective_access(
+            access_status=access.access_status,
+            customer_id=access.customer_id,
+            email_display=access.email_display,
+            customer_status=access.customer_status,
+            blocked_from_status=access.blocked_from_status,
+            initial_provisioning_ready=access.initial_provisioning_ready,
+        )
+        if decision.state == "provisioning":
+            text = "Проверка готовности\n\nРегистрация ещё не завершилась на всех назначенных нодах. Доступ появится автоматически после успешного завершения всего набора."
+        elif decision.can_receive_subscription:
+            text = "Проверка готовности\n\nДоступ готов. Можно получить ссылку или QR-код и импортировать его в выбранное приложение."
+        elif decision.state == "suspended":
+            text = "Проверка готовности\n\nДоступ приостановлен. Через меню можно отправить сообщение администратору."
+        else:
+            text = "Проверка готовности\n\nСейчас доступ недоступен. Попробуйте позже или откройте помощь."
+        return TelegramOutboundMessage(
+            chat_id,
+            text,
+            {"inline_keyboard": [[{"text": "← Меню", "callback_data": "menu:home"}]]},
+        )
+
     @staticmethod
     def _help_message(chat_id: int) -> TelegramOutboundMessage:
         return TelegramOutboundMessage(
@@ -1004,7 +1075,11 @@ class TelegramRegistrationService:
             "↻ Сменить ссылку — сразу отключает предыдущую.\n"
             "⚙ Уведомления — включает или выключает фоновые сообщения.\n\n"
             "Если доступ приостановлен, в меню появится кнопка для сообщения администратору.",
-            {"inline_keyboard": [[{"text": "← Меню", "callback_data": "menu:home"}]]},
+            {"inline_keyboard": [
+                [{"text": "⊞ Выбрать приложение", "callback_data": "setup:menu"}],
+                [{"text": "⌁ Проверить готовность", "callback_data": "setup:diagnostics"}],
+                [{"text": "← Меню", "callback_data": "menu:home"}],
+            ]},
         )
 
     def handle_update(self, update: dict[str, Any]) -> list[TelegramOutboundMessage]:
@@ -1014,7 +1089,7 @@ class TelegramRegistrationService:
         actor = _private_actor(update)
         if actor is None:
             return []
-        user_id, chat_id, sender, text, callback_data, phone_number = actor
+        user_id, chat_id, sender, text, callback_data, phone_number, source_message_id = actor
         update_type = "callback_query" if callback_data is not None else "message"
         digest_source = {
             "update_id": update_id,
@@ -1099,6 +1174,15 @@ class TelegramRegistrationService:
                 return [self._setup_menu(chat_id)]
             if callback_data in {"setup:android", "setup:ios", "setup:desktop"}:
                 return [self._setup_guide(chat_id, callback_data.removeprefix("setup:"))]
+            if callback_data == "setup:diagnostics":
+                return [self._diagnostics_message(user_id, chat_id)]
+            if callback_data == "qr:delete":
+                if source_message_id is None:
+                    return [TelegramOutboundMessage(chat_id, "Не удалось определить QR-сообщение. Откройте новый QR-код при необходимости.", self._approved_menu())]
+                return [
+                    TelegramOutboundMessage(chat_id, "", delete_message_id=source_message_id),
+                    TelegramOutboundMessage(chat_id, "QR-код удалён из чата.", self._approved_menu()),
+                ]
             if callback_data in {"subscription:qr", "setup:qr"}:
                 return [self._setup_qr_message(user_id=user_id, chat_id=chat_id)]
             if callback_data == "subscription:rotate":
@@ -1128,6 +1212,7 @@ class TelegramRegistrationService:
                 email_display=access.email_display,
                 customer_status=access.customer_status,
                 blocked_from_status=access.blocked_from_status,
+                initial_provisioning_ready=access.initial_provisioning_ready,
             )
             if text and decision.can_submit_appeal:
                 try:
