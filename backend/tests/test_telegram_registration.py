@@ -188,6 +188,101 @@ def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscrip
     assert registry.get_customer_traffic(customer_id).lifetime_bytes == 4096
 
 
+def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="qr_user", first_name="QR", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="qr_user", origin="telegram", email_source="telegram_username", public_code="qr-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    home = service.handle_update(_message(20, "/start"))
+    assistant = service.handle_update(
+        {
+            "update_id": 21,
+            "callback_query": {
+                "id": "setup-menu",
+                "from": {"id": 42, "first_name": "QR"},
+                "message": {"chat": {"id": 42, "type": "private"}},
+                "data": "setup:menu",
+            },
+        }
+    )
+    qr = service.handle_update(
+        {
+            "update_id": 22,
+            "callback_query": {
+                "id": "setup-qr",
+                "from": {"id": 42, "first_name": "QR"},
+                "message": {"chat": {"id": 42, "type": "private"}},
+                "data": "setup:qr",
+            },
+        }
+    )
+
+    assert any(button[0]["text"] == "⊞ Подключение" for button in home[0].reply_markup["inline_keyboard"])
+    assert "выберите устройство" in assistant[0].text.lower()
+    assert qr[0].photo_png is not None
+    assert qr[0].photo_png.startswith(b"\x89PNG\r\n\x1a\n")
+    assert "https://" not in qr[0].text
+    assert "api/v1/sub" not in qr[0].text
+
+
+def test_suspended_user_cannot_receive_qr(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="suspended_qr", first_name="QR", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="suspended_qr", origin="telegram", email_source="telegram_username", public_code="suspended-qr"
+    )
+    with connect(db_path) as conn:
+        conn.execute("UPDATE customers SET status = 'suspended' WHERE id = ?", (customer_id,))
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    qr = service.handle_update(
+        {
+            "update_id": 23,
+            "callback_query": {
+                "id": "setup-qr-suspended",
+                "from": {"id": 42, "first_name": "QR"},
+                "message": {"chat": {"id": 42, "type": "private"}},
+                "data": "setup:qr",
+            },
+        }
+    )
+
+    assert qr[0].photo_png is None
+    assert "приостановлен" in qr[0].text.lower()
+
+
 def test_approved_user_can_toggle_only_background_notification_preference(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
@@ -601,6 +696,61 @@ def test_webhook_requires_exact_suffix_and_secret_then_dispatches_private_update
     assert accepted.status_code == 200
     assert accepted.json() == {"ok": True}
     assert len(sender.messages) == 1
+
+
+def test_webhook_sender_receives_qr_as_a_photo_message(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="qr_user", first_name="QR", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="qr_user", origin="telegram", email_source="telegram_username", public_code="qr-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    sender = _Sender()
+    settings = SimpleNamespace(
+        enabled=True,
+        bot_token="not-used-by-test-sender",
+        webhook_path_suffix="private-path",
+        webhook_secret="private-header-secret",
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+    )
+    app = FastAPI()
+    app.include_router(
+        build_telegram_webhook_router(
+            telegram_settings=settings,
+            db_path=db_path,
+            sender=sender,
+            list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+            get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/telegram/webhook/private-path",
+        headers={"X-Telegram-Bot-Api-Secret-Token": "private-header-secret"},
+        json={
+            "update_id": 24,
+            "callback_query": {
+                "id": "webhook-qr",
+                "from": {"id": 42, "first_name": "QR"},
+                "message": {"chat": {"id": 42, "type": "private"}},
+                "data": "setup:qr",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert sender.messages[0].photo_png is not None
+    assert sender.messages[0].photo_png.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_webhook_admin_can_adopt_a_discovered_legacy_customer_without_remote_write(tmp_path):

@@ -9,6 +9,7 @@ from typing import Any, Callable
 
 from services.subscription_tokens import ensure_tokens, regenerate_token
 from services.telegram_access import resolve_effective_access
+from services.telegram_qr import TelegramQrError, build_subscription_qr_png
 from services.telegram_traffic import TelegramTrafficService
 from services.telegram_registry import (
     DiscoveredExistingBinding,
@@ -27,6 +28,8 @@ class TelegramOutboundMessage:
     chat_id: int
     text: str
     reply_markup: dict[str, Any] | None = None
+    photo_png: bytes | None = None
+    photo_filename: str | None = None
 
 
 def _private_actor(update: dict[str, Any]) -> tuple[int, int, dict[str, Any], str | None, str | None] | None:
@@ -637,13 +640,16 @@ class TelegramRegistrationService:
             rows.append([{"text": "✉ Написать администратору", "callback_data": "support:appeal"}])
         else:
             rows.extend([
+                [{"text": "⊞ Подключение", "callback_data": "setup:menu"}],
                 [{"text": "↻ Сменить ссылку", "callback_data": "subscription:rotate"}],
                 [{"text": "⚙ Уведомления", "callback_data": "preferences:menu"}],
                 [{"text": "? Помощь", "callback_data": "help"}],
             ])
         return {"inline_keyboard": rows}
 
-    def _subscription_message(self, *, user_id: int, chat_id: int, rotate: bool = False) -> TelegramOutboundMessage:
+    def _subscription_url(
+        self, *, user_id: int, chat_id: int, rotate: bool = False
+    ) -> tuple[str | None, TelegramOutboundMessage | None]:
         access = self._registry.get_customer_access(user_id)
         decision = resolve_effective_access(
             access_status=access.access_status,
@@ -653,21 +659,21 @@ class TelegramRegistrationService:
             blocked_from_status=access.blocked_from_status,
         )
         if decision.state == "suspended":
-            return TelegramOutboundMessage(
+            return None, TelegramOutboundMessage(
                 chat_id,
                 "Доступ временно приостановлен. Если это ошибка, напишите администратору.",
                 self._approved_menu(suspended=True),
             )
         if not decision.can_receive_subscription:
-            return TelegramOutboundMessage(chat_id, "Сейчас доступ ещё не готов.", self._approved_menu())
+            return None, TelegramOutboundMessage(chat_id, "Сейчас доступ ещё не готов.", self._approved_menu())
         if not self._list_nodes or not self._get_links_filtered:
-            return TelegramOutboundMessage(chat_id, "Доступ готовится. Пожалуйста, проверьте статус позже.", self._approved_menu())
+            return None, TelegramOutboundMessage(chat_id, "Доступ готовится. Пожалуйста, проверьте статус позже.", self._approved_menu())
         try:
             links = self._get_links_filtered(self._list_nodes(), access.email_display, None)
         except Exception:
             links = []
         if not links:
-            return TelegramOutboundMessage(chat_id, "Доступ готовится. Пожалуйста, проверьте статус позже.", self._approved_menu())
+            return None, TelegramOutboundMessage(chat_id, "Доступ готовится. Пожалуйста, проверьте статус позже.", self._approved_menu())
         try:
             token = regenerate_token(self._registry.database_path, "email", access.email_display) if rotate else None
             if not token:
@@ -675,11 +681,64 @@ class TelegramRegistrationService:
         except Exception:
             token = None
         if not token or not self._public_base_url:
-            return TelegramOutboundMessage(chat_id, "Ссылку пока нельзя выдать. Пожалуйста, попробуйте позже.", self._approved_menu())
+            return None, TelegramOutboundMessage(chat_id, "Ссылку пока нельзя выдать. Пожалуйста, попробуйте позже.", self._approved_menu())
+        return f"{self._public_base_url}/api/v1/sub/{token}", None
+
+    def _subscription_message(self, *, user_id: int, chat_id: int, rotate: bool = False) -> TelegramOutboundMessage:
+        url, unavailable = self._subscription_url(user_id=user_id, chat_id=chat_id, rotate=rotate)
+        if unavailable is not None:
+            return unavailable
+        assert url is not None
         return TelegramOutboundMessage(
             chat_id,
-            f"Ваша ссылка доступа:\n{self._public_base_url}/api/v1/sub/{token}",
+            f"Ваша ссылка доступа:\n{url}",
             self._approved_menu(),
+        )
+
+    @staticmethod
+    def _setup_menu(chat_id: int) -> TelegramOutboundMessage:
+        return TelegramOutboundMessage(
+            chat_id,
+            "Подключение\n\nВыберите устройство. Затем добавьте ссылку или QR-код в совместимое приложение. Не пересылайте их другим людям.",
+            {"inline_keyboard": [
+                [{"text": "Android", "callback_data": "setup:android"}, {"text": "iPhone / iPad", "callback_data": "setup:ios"}],
+                [{"text": "Компьютер", "callback_data": "setup:desktop"}],
+                [{"text": "⊞ Показать QR", "callback_data": "setup:qr"}],
+                [{"text": "← Меню", "callback_data": "menu:home"}],
+            ]},
+        )
+
+    @staticmethod
+    def _setup_guide(chat_id: int, platform: str) -> TelegramOutboundMessage:
+        headings = {"android": "Android", "ios": "iPhone / iPad", "desktop": "Компьютер"}
+        heading = headings.get(platform)
+        if heading is None:
+            return TelegramOutboundMessage(chat_id, "Выберите устройство из списка.", TelegramRegistrationService._approved_menu())
+        return TelegramOutboundMessage(
+            chat_id,
+            f"Подключение: {heading}\n\n1. Установите совместимое приложение для подписок.\n2. В нём выберите добавление по URL или сканирование QR.\n3. Получите ссылку кнопкой «◎ Получить доступ» либо покажите QR здесь.\n4. Не пересылайте ссылку и QR: это ваш личный доступ.",
+            {"inline_keyboard": [
+                [{"text": "⊞ Показать QR", "callback_data": "setup:qr"}],
+                [{"text": "← Устройства", "callback_data": "setup:menu"}],
+                [{"text": "← Меню", "callback_data": "menu:home"}],
+            ]},
+        )
+
+    def _setup_qr_message(self, *, user_id: int, chat_id: int) -> TelegramOutboundMessage:
+        url, unavailable = self._subscription_url(user_id=user_id, chat_id=chat_id)
+        if unavailable is not None:
+            return unavailable
+        assert url is not None
+        try:
+            png = build_subscription_qr_png(url)
+        except TelegramQrError:
+            return TelegramOutboundMessage(chat_id, "QR пока не удалось подготовить. Попробуйте ещё раз позже.", self._approved_menu())
+        return TelegramOutboundMessage(
+            chat_id,
+            "Ваш QR-код доступа. Не пересылайте его другим людям.",
+            {"inline_keyboard": [[{"text": "← Подключение", "callback_data": "setup:menu"}]]},
+            photo_png=png,
+            photo_filename="access-qr.png",
         )
 
     def _approved_status(self, user_id: int, chat_id: int) -> TelegramOutboundMessage:
@@ -806,6 +865,12 @@ class TelegramRegistrationService:
             access = self._registry.get_customer_access(user_id)
             if callback_data in {"subscription:get", "subscription:rotate:confirm"}:
                 return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate=callback_data.endswith(":confirm"))]
+            if callback_data == "setup:menu":
+                return [self._setup_menu(chat_id)]
+            if callback_data in {"setup:android", "setup:ios", "setup:desktop"}:
+                return [self._setup_guide(chat_id, callback_data.removeprefix("setup:"))]
+            if callback_data == "setup:qr":
+                return [self._setup_qr_message(user_id=user_id, chat_id=chat_id)]
             if callback_data == "subscription:rotate":
                 return [TelegramOutboundMessage(
                     chat_id,

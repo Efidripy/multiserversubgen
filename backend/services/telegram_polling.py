@@ -23,7 +23,7 @@ class TelegramBotApiPort(Protocol):
 
 
 class TelegramMessagePort(Protocol):
-    def send(self, *, chat_id: int, text: str, reply_markup: dict[str, Any] | None = None) -> None: ...
+    def send(self, message: TelegramOutboundMessage) -> None: ...
 
 
 class TelegramBotApiClient:
@@ -106,10 +106,6 @@ class TelegramPollingWorker:
                 continue
             messages = self._handle_update(update)
             for message in messages:
-                self._sender.send(
-                    chat_id=message.chat_id,
-                    text=message.text,
-                    reply_markup=message.reply_markup,
-                )
+                self._sender.send(message)
             self._next_offset = update_id + 1
         return TelegramPollingRunResult(processed=bool(updates), update_count=len(updates))
