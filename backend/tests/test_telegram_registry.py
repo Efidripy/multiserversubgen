@@ -49,6 +49,7 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "telegram_customer_operations",
             "telegram_customer_operation_attempts",
             "telegram_updates",
+            "telegram_subscription_message_receipts",
             "telegram_abuse_state",
             "telegram_outbox",
             "telegram_audit_log",
@@ -59,6 +60,30 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "telegram_broadcast_jobs",
         } <= tables
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+
+def test_subscription_message_receipt_contains_only_a_token_digest_and_message_coordinates(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="receipt_user", first_name="Receipt", last_name=None
+    )
+    digest = "a" * 64
+
+    registry.record_subscription_message_delivery(
+        telegram_user_id=42, token_digest=digest, chat_id=42, message_id=101
+    )
+    receipt = registry.get_subscription_message_receipt(42)
+
+    assert receipt is not None
+    assert receipt.telegram_user_id == 42
+    assert receipt.token_digest == digest
+    assert receipt.chat_id == 42
+    assert receipt.message_id == 101
+    with connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(telegram_subscription_message_receipts)")}
+        assert columns == {"telegram_user_id", "token_digest", "chat_id", "message_id", "sent_at", "updated_at"}
 
     _insert_node(db_path, 1, "cascade-target")
     with connect(db_path) as conn:

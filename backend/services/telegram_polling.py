@@ -8,6 +8,7 @@ from typing import Any, Callable, Protocol
 from urllib.error import URLError
 from urllib.request import Request as UrlRequest
 
+from services.telegram_delivery import TelegramMessageEditUnavailableError
 from services.telegram_registration import TelegramOutboundMessage
 from services.telegram_transport import TelegramApiTransport, TelegramTransportError
 
@@ -23,7 +24,7 @@ class TelegramBotApiPort(Protocol):
 
 
 class TelegramMessagePort(Protocol):
-    def send(self, message: TelegramOutboundMessage) -> None: ...
+    def send(self, message: TelegramOutboundMessage) -> int | None: ...
 
 
 class TelegramBotApiClient:
@@ -83,6 +84,8 @@ class TelegramPollingWorker:
         handle_update: Callable[[dict[str, Any]], list[TelegramOutboundMessage]],
         sender: TelegramMessagePort,
         timeout_sec: int,
+        fallback_subscription_message: Callable[[TelegramOutboundMessage], TelegramOutboundMessage | None] | None = None,
+        record_outbound_delivery: Callable[[TelegramOutboundMessage, int | None], None] | None = None,
     ):
         if not 1 <= timeout_sec <= 50:
             raise ValueError("Telegram polling timeout must be from 1 to 50 seconds")
@@ -90,6 +93,8 @@ class TelegramPollingWorker:
         self._handle_update = handle_update
         self._sender = sender
         self._timeout_sec = timeout_sec
+        self._fallback_subscription_message = fallback_subscription_message
+        self._record_outbound_delivery = record_outbound_delivery
         self._started = False
         self._next_offset: int | None = None
 
@@ -106,6 +111,15 @@ class TelegramPollingWorker:
                 continue
             messages = self._handle_update(update)
             for message in messages:
-                self._sender.send(message)
+                try:
+                    message_id = self._sender.send(message)
+                except TelegramMessageEditUnavailableError:
+                    fallback = self._fallback_subscription_message(message) if self._fallback_subscription_message else None
+                    if fallback is None:
+                        raise
+                    message = fallback
+                    message_id = self._sender.send(message)
+                if self._record_outbound_delivery:
+                    self._record_outbound_delivery(message, message_id)
             self._next_offset = update_id + 1
         return TelegramPollingRunResult(processed=bool(updates), update_count=len(updates))
