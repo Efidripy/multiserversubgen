@@ -190,7 +190,7 @@ def register_app_routers(
             telegram_settings=telegram_settings,
         )
     )
-    if telegram_settings and telegram_settings.enabled:
+    if telegram_settings and telegram_settings.enabled and telegram_settings.mode == "webhook":
         app.include_router(
             build_telegram_webhook_router(
                 telegram_settings=telegram_settings,
