@@ -2,47 +2,20 @@
 
 from __future__ import annotations
 
-import json
 import secrets
 from typing import Any, Callable, Protocol
-from urllib.error import URLError
-from urllib.request import Request as UrlRequest
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
+from services.telegram_delivery import TelegramApiSender
 from services.telegram_registration import TelegramOutboundMessage, TelegramRegistrationService
 from services.telegram_registry import TelegramRegistry
-from services.telegram_transport import TelegramApiTransport, TelegramTransportError
+from services.telegram_transport import TelegramApiTransport
 
 
 class TelegramMessageSender(Protocol):
     def send(self, message: TelegramOutboundMessage) -> None: ...
-
-
-class TelegramApiSender:
-    """Minimal Bot API sender; never logs a token-bearing endpoint."""
-
-    def __init__(self, bot_token: str, *, transport: TelegramApiTransport):
-        self._endpoint = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-        self._transport = transport
-
-    def send(self, message: TelegramOutboundMessage) -> None:
-        payload: dict[str, Any] = {"chat_id": message.chat_id, "text": message.text}
-        if message.reply_markup is not None:
-            payload["reply_markup"] = message.reply_markup
-        request = UrlRequest(
-            self._endpoint,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
-        try:
-            with self._transport.open(request, timeout=10) as response:
-                if response.status < 200 or response.status >= 300:
-                    raise RuntimeError("Telegram delivery was rejected")
-        except (URLError, OSError, RuntimeError, TelegramTransportError) as exc:
-            raise RuntimeError("Telegram delivery failed") from exc
 
 
 def build_telegram_webhook_router(

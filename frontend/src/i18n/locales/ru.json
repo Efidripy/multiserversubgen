@@ -320,6 +320,7 @@
     "duplicateClient": "Дублировать клиента",
     "freezeClient": "Заморозить клиента",
     "expandOrCopyHint": "Клик для раскрытия | двойной клик для копирования email",
+    "telegramLinked": "Привязан к Telegram",
     "clearStoredIps": "Очистить сохраненные IP",
     "ipHistoryTitle": "История IP",
     "ipHistoryLoading": "Загрузка истории IP...",

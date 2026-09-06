@@ -8,6 +8,7 @@ remote record. Each write is protected by an exact read before and after it.
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -400,6 +401,13 @@ class TelegramLifecycleWorker:
         if operation is None:
             return
         customer_id, operation_type = int(operation[0]), str(operation[1])
+        recipient_ids = [
+            int(row[0])
+            for row in conn.execute(
+                "SELECT telegram_user_id FROM telegram_identities WHERE customer_id = ? ORDER BY telegram_user_id",
+                (customer_id,),
+            ).fetchall()
+        ]
         counts = {
             str(status): int(count)
             for status, count in conn.execute(
@@ -472,4 +480,20 @@ class TelegramLifecycleWorker:
                 WHERE id = ? AND deleted_at IS NULL
                 """,
                 (customer_status, customer_id),
+            )
+        if operation_status == "succeeded" and operation_type in {"suspend", "resume", "delete"}:
+            payload = json.dumps({"operation": operation_type}, separators=(",", ":"))
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
+                VALUES ('user_lifecycle_completed', ?, ?, ?)
+                """,
+                [
+                    (
+                        str(user_id),
+                        f"user:lifecycle-completed:{operation_id}:{user_id}",
+                        payload,
+                    )
+                    for user_id in recipient_ids
+                ],
             )

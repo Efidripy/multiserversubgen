@@ -62,6 +62,7 @@ class ClaimedOutboxEvent:
     event_id: int
     event_type: str
     entity_id: str
+    payload_json: str
     attempt_count: int
 
 
@@ -131,7 +132,7 @@ class TelegramOutboxWorker:
         with connect(self._db_path) as conn:
             row = conn.execute(
                 """
-                SELECT id, event_type, entity_id, attempt_count
+                SELECT id, event_type, entity_id, payload_json, attempt_count
                 FROM telegram_outbox
                 WHERE status IN ('queued', 'retry', 'sending')
                   AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
@@ -157,10 +158,58 @@ class TelegramOutboxWorker:
             if update.rowcount != 1:
                 return None
         return ClaimedOutboxEvent(
-            event_id=int(row[0]), event_type=str(row[1]), entity_id=str(row[2]), attempt_count=int(row[3]) + 1
+            event_id=int(row[0]), event_type=str(row[1]), entity_id=str(row[2]),
+            payload_json=str(row[3]), attempt_count=int(row[4]) + 1,
         )
 
     def _render(self, event: ClaimedOutboxEvent) -> tuple[int, str, dict[str, Any] | None]:
+        if event.event_type == "admin_direct_message":
+            try:
+                user_id = int(event.entity_id)
+                payload = json.loads(event.payload_json)
+                body = payload.get("body") if isinstance(payload, dict) else None
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise OutboxPermanentError("invalid_direct_message") from exc
+            if not isinstance(body, str) or not 1 <= len(body.strip()) <= 2000:
+                raise OutboxPermanentError("invalid_direct_message")
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT i.chat_id
+                    FROM telegram_identities AS i
+                    JOIN customers AS c ON c.id = i.customer_id
+                    WHERE i.telegram_user_id = ? AND i.access_status = 'approved'
+                      AND c.deleted_at IS NULL AND c.status NOT IN ('deleting', 'delete_partial', 'deleted')
+                    """,
+                    (user_id,),
+                ).fetchone()
+            if row is None:
+                raise OutboxSuppressed("recipient_is_no_longer_registered")
+            return int(row[0]), body.strip(), None
+        if event.event_type == "registered_broadcast":
+            try:
+                broadcast_id_text, user_id_text = event.entity_id.split(":", 1)
+                broadcast_id, user_id = int(broadcast_id_text), int(user_id_text)
+            except ValueError as exc:
+                raise OutboxPermanentError("invalid_broadcast_reference") from exc
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT i.chat_id, b.body, COALESCE(p.background_notifications_enabled, 1)
+                    FROM telegram_broadcast_jobs AS b
+                    JOIN telegram_identities AS i ON i.telegram_user_id = ?
+                    JOIN customers AS c ON c.id = i.customer_id
+                    LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
+                    WHERE b.id = ? AND i.access_status = 'approved'
+                      AND c.deleted_at IS NULL AND c.status NOT IN ('deleting', 'delete_partial', 'deleted')
+                    """,
+                    (user_id, broadcast_id),
+                ).fetchone()
+            if row is None:
+                raise OutboxSuppressed("recipient_is_no_longer_registered")
+            if not bool(row[2]):
+                raise OutboxSuppressed("notifications_disabled")
+            return int(row[0]), str(row[1]), None
         if event.event_type == "admin_request_created":
             return self._primary_admin_id, f"Новая заявка: #{event.entity_id}.", {"inline_keyboard": [[{"text": "Заявки", "callback_data": "admin:requests:0"}]]}
         if event.event_type == "admin_introduction_submitted":
@@ -206,7 +255,13 @@ class TelegramOutboxWorker:
             if row is None:
                 raise OutboxPermanentError("appeal_not_found")
             return self._primary_admin_id, f"Обращение от {row[1]} (#{row[0]}):\n{row[2]}", None
-        if event.event_type in {"user_provisioning_queued", "user_existing_access_approved"}:
+        if event.event_type in {
+            "user_provisioning_queued",
+            "user_provisioning_completed",
+            "user_existing_access_approved",
+            "user_application_rejected",
+            "user_lifecycle_completed",
+        }:
             try:
                 user_id = int(event.entity_id)
             except ValueError as exc:
@@ -227,7 +282,26 @@ class TelegramOutboxWorker:
                 raise OutboxSuppressed("notifications_disabled")
             if event.event_type == "user_provisioning_queued":
                 return int(row[0]), "Решение принято. Доступ готовится; проверьте статус немного позже.", None
-            return int(row[0]), "Решение принято. Откройте меню, чтобы продолжить.", None
+            if event.event_type == "user_provisioning_completed":
+                return int(row[0]), "Доступ готов. Откройте меню и получите персональную ссылку.", None
+            if event.event_type == "user_existing_access_approved":
+                return int(row[0]), "Решение принято. Откройте меню, чтобы продолжить.", None
+            if event.event_type == "user_application_rejected":
+                return int(row[0]), "Заявка отклонена. Если хотите подать новую, отправьте /start.", None
+            try:
+                payload = json.loads(event.payload_json)
+                operation = payload.get("operation") if isinstance(payload, dict) else None
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise OutboxPermanentError("invalid_lifecycle_notification") from exc
+            messages = {
+                "suspend": "Доступ временно приостановлен. Если это ошибка, напишите администратору.",
+                "resume": "Доступ восстановлен. Откройте меню, чтобы продолжить.",
+                "delete": "Доступ удалён. При необходимости вы можете отправить /start и подать новую заявку.",
+            }
+            message = messages.get(operation)
+            if message is None:
+                raise OutboxPermanentError("invalid_lifecycle_notification")
+            return int(row[0]), message, None
         raise OutboxPermanentError("unsupported_event_type")
 
     def _mark_sent(self, claimed: ClaimedOutboxEvent) -> None:
