@@ -260,7 +260,7 @@ $remoteWorkDir = if ($SkipSync) { $RemoteDir } else { "$RemoteDir-$runId" }
         Copy-ToRemote -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -LocalPath $archivePath -RemotePath $remoteArchive
 
         Write-Host "Extracting source tree on remote host..."
-        $extractCmd = "bash -lc 'rm -rf -- $remoteWorkDir && mkdir -p -- $remoteWorkDir && tar -xzf -- $remoteArchive -C $remoteWorkDir --strip-components=1 && printf %s\\n $deployCommit > $remoteWorkDir/.deploy-source-commit && chmod 0600 $remoteWorkDir/.deploy-source-commit && rm -f -- $remoteArchive'"
+        $extractCmd = "bash -lc 'rm -rf -- $remoteWorkDir && mkdir -p -- $remoteWorkDir && tar -xzf $remoteArchive -C $remoteWorkDir --strip-components=1 && printf %s\\n $deployCommit > $remoteWorkDir/.deploy-source-commit && chmod 0600 $remoteWorkDir/.deploy-source-commit && rm -f -- $remoteArchive'"
         Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $extractCmd
     }
 
