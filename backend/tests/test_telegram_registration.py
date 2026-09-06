@@ -103,6 +103,27 @@ def test_pending_user_can_submit_one_voluntary_introduction(tmp_path):
     assert "ожидает" in repeated[0].text.lower()
 
 
+def test_bot_persists_only_a_contact_voluntarily_shared_by_the_sender(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    service = TelegramRegistrationService(TelegramRegistry(db_path), introduction_max_chars=700)
+
+    service.handle_update({
+        "update_id": 9,
+        "message": {
+            "message_id": 9,
+            "chat": {"id": 42, "type": "private"},
+            "from": {"id": 42, "username": "new_user", "first_name": "New"},
+            "contact": {"user_id": 42, "phone_number": "+7 999 000-11-22"},
+        },
+    })
+
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT phone_number FROM telegram_identities WHERE telegram_user_id = 42"
+        ).fetchone() == ("+79990001122",)
+
+
 def test_approved_user_gets_opaque_subscription_link_and_rotation_invalidates_previous_token(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
@@ -154,6 +175,7 @@ def test_approved_user_gets_opaque_subscription_link_and_rotation_invalidates_pr
     new_token = rotated[0].text.rsplit("/", 1)[-1]
 
     assert "active" in status[0].text
+    assert "Персональная ссылка доступа, скопируйте и вставьте её в ваше приложение-клиент" in link[0].text
     assert "https://bot.example.test/api/v1/sub/" in link[0].text
     assert old_token != new_token
     assert resolve_token(db_path, "email", old_token) is None
@@ -186,6 +208,101 @@ def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscrip
 
     assert "4.0 КБ" in status[0].text
     assert registry.get_customer_traffic(customer_id).lifetime_bytes == 4096
+
+
+def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="qr_user", first_name="QR", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="qr_user", origin="telegram", email_source="telegram_username", public_code="qr-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    home = service.handle_update(_message(20, "/start"))
+    assistant = service.handle_update(
+        {
+            "update_id": 21,
+            "callback_query": {
+                "id": "setup-menu",
+                "from": {"id": 42, "first_name": "QR"},
+                "message": {"chat": {"id": 42, "type": "private"}},
+                "data": "setup:menu",
+            },
+        }
+    )
+    qr = service.handle_update(
+        {
+            "update_id": 22,
+            "callback_query": {
+                "id": "setup-qr",
+                "from": {"id": 42, "first_name": "QR"},
+                "message": {"chat": {"id": 42, "type": "private"}},
+                "data": "setup:qr",
+            },
+        }
+    )
+
+    assert any(button[0]["text"] == "⊞ Подключение" for button in home[0].reply_markup["inline_keyboard"])
+    assert "выберите устройство" in assistant[0].text.lower()
+    assert qr[0].photo_png is not None
+    assert qr[0].photo_png.startswith(b"\x89PNG\r\n\x1a\n")
+    assert "https://" not in qr[0].text
+    assert "api/v1/sub" not in qr[0].text
+
+
+def test_suspended_user_cannot_receive_qr(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="suspended_qr", first_name="QR", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="suspended_qr", origin="telegram", email_source="telegram_username", public_code="suspended-qr"
+    )
+    with connect(db_path) as conn:
+        conn.execute("UPDATE customers SET status = 'suspended' WHERE id = ?", (customer_id,))
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    qr = service.handle_update(
+        {
+            "update_id": 23,
+            "callback_query": {
+                "id": "setup-qr-suspended",
+                "from": {"id": 42, "first_name": "QR"},
+                "message": {"chat": {"id": 42, "type": "private"}},
+                "data": "setup:qr",
+            },
+        }
+    )
+
+    assert qr[0].photo_png is None
+    assert "приостановлен" in qr[0].text.lower()
 
 
 def test_approved_user_can_toggle_only_background_notification_preference(tmp_path):
@@ -264,7 +381,7 @@ def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path)
     assert "Статус доступа" in home[0].text
 
 
-def test_primary_admin_has_three_root_sections_and_blocked_is_nested_in_requests(tmp_path):
+def test_primary_admin_has_broadcasts_and_customer_profile_details(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -272,7 +389,8 @@ def test_primary_admin_has_three_root_sections_and_blocked_is_nested_in_requests
         email_display="admin-card-user", origin="telegram", email_source="telegram_username", public_code="admin-card-user"
     )
     registry.get_or_create_identity(
-        telegram_user_id=42, chat_id=42, username="card_user", first_name="Card", last_name=None
+        telegram_user_id=42, chat_id=42, username="card_user", first_name="Card", last_name="User",
+        phone_number="+79990001122",
     )
     with connect(db_path) as conn:
         conn.execute("UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42", (customer_id,))
@@ -285,16 +403,101 @@ def test_primary_admin_has_three_root_sections_and_blocked_is_nested_in_requests
     card = service.handle_update(_admin_callback(42, f"admin:customer:{customer_id}:0"))
 
     labels = [button["text"] for row in home[0].reply_markup["inline_keyboard"] for button in row]
-    assert labels == ["Заявки", "Пользователи", "TG-ноды"]
+    assert labels == ["Заявки", "Пользователи", "TG-ноды", "Рассылки"]
     requests = service.handle_update(_admin_callback(43, "admin:requests:0"))
     request_labels = [button["text"] for row in requests[0].reply_markup["inline_keyboard"] for button in row]
     assert "⊘ Заблокированные" in request_labels
     assert "admin-card-user" in customers[0].text
     assert "Трафик за всё время" in card[0].text
+    assert "Никнейм: @card_user" in card[0].text
+    assert "Telegram: 42" in card[0].text
+    assert "Имя и фамилия: Card User" in card[0].text
+    assert "Телефон: +79990001122" in card[0].text
+    assert any(
+        button["callback_data"] == f"admin:message:{customer_id}:0"
+        for row in card[0].reply_markup["inline_keyboard"] for button in row
+    )
     assert any(
         button["callback_data"] == f"admin:cn:{customer_id}:1:add:0"
         for row in card[0].reply_markup["inline_keyboard"] for button in row
     )
+
+
+def test_primary_admin_confirms_a_direct_bot_message_before_queuing_it(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="message-target", origin="telegram", email_source="telegram_username", public_code="message-target"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=4242, username="target", first_name="Target", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
+
+    prompt = service.handle_update(_admin_callback(70, f"admin:message:{customer_id}:0"))
+    preview = service.handle_update(_admin_message(71, "Проверьте личный кабинет."))
+    queued = service.handle_update(_admin_callback(72, "admin:message-confirm"))
+
+    assert "одним сообщением" in prompt[0].text.lower()
+    assert "Отправить сообщение пользователю message-target" in preview[0].text
+    assert "поставлено в очередь" in queued[0].text.lower()
+    assert registry.get_admin_message_draft(108100140) is None
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT event_type, entity_id FROM telegram_outbox WHERE event_type = 'admin_direct_message'"
+        ).fetchone() == ("admin_direct_message", "42")
+
+
+def test_primary_admin_broadcasts_only_to_registered_opted_in_users(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    active_customer = registry.create_customer(
+        email_display="active-recipient", origin="telegram", email_source="telegram_username", public_code="active-recipient"
+    )
+    muted_customer = registry.create_customer(
+        email_display="muted-recipient", origin="telegram", email_source="telegram_username", public_code="muted-recipient"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="active", first_name="Active", last_name=None
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=43, chat_id=43, username="muted", first_name="Muted", last_name=None
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=44, chat_id=44, username="pending", first_name="Pending", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (active_customer,),
+        )
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 43",
+            (muted_customer,),
+        )
+    registry.toggle_background_notifications(43)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
+
+    menu = service.handle_update(_admin_callback(80, "admin:broadcasts"))
+    prompt = service.handle_update(_admin_callback(81, "admin:broadcast:new"))
+    preview = service.handle_update(_admin_message(82, "Обновление готово."))
+    queued = service.handle_update(_admin_callback(83, "admin:broadcast-confirm"))
+
+    assert "Получатели сейчас: 1" in menu[0].text
+    assert "До подтверждения ничего не будет отправлено" in prompt[0].text
+    assert "Получателей: 1" in preview[0].text
+    assert "Получателей: 1" in queued[0].text
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM telegram_outbox WHERE event_type = 'registered_broadcast'"
+        ).fetchone()[0] == 1
 
 
 def test_primary_admin_confirms_customer_suspend_and_can_unblock_an_applicant(tmp_path):
@@ -601,6 +804,61 @@ def test_webhook_requires_exact_suffix_and_secret_then_dispatches_private_update
     assert accepted.status_code == 200
     assert accepted.json() == {"ok": True}
     assert len(sender.messages) == 1
+
+
+def test_webhook_sender_receives_qr_as_a_photo_message(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="qr_user", first_name="QR", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="qr_user", origin="telegram", email_source="telegram_username", public_code="qr-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    sender = _Sender()
+    settings = SimpleNamespace(
+        enabled=True,
+        bot_token="not-used-by-test-sender",
+        webhook_path_suffix="private-path",
+        webhook_secret="private-header-secret",
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+    )
+    app = FastAPI()
+    app.include_router(
+        build_telegram_webhook_router(
+            telegram_settings=settings,
+            db_path=db_path,
+            sender=sender,
+            list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+            get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+        )
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/telegram/webhook/private-path",
+        headers={"X-Telegram-Bot-Api-Secret-Token": "private-header-secret"},
+        json={
+            "update_id": 24,
+            "callback_query": {
+                "id": "webhook-qr",
+                "from": {"id": 42, "first_name": "QR"},
+                "message": {"chat": {"id": 42, "type": "private"}},
+                "data": "setup:qr",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert sender.messages[0].photo_png is not None
+    assert sender.messages[0].photo_png.startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_webhook_admin_can_adopt_a_discovered_legacy_customer_without_remote_write(tmp_path):

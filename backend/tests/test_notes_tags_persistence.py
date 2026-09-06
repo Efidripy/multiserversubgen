@@ -137,6 +137,45 @@ def test_client_notes_endpoint_persists_and_enriches_client_list(tmp_path):
     assert row[0] == "server note"
 
 
+def test_client_list_marks_only_bound_telegram_customers_without_identity_details(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    nodes = [{"id": 1, "name": "alpha", "ip": "1.1.1.1", "port": "443"}]
+    cached_clients = [
+        {"id": "linked", "email": " Linked.User@example.test ", "node_id": 1, "inbound_id": 11, "node_name": "alpha"},
+        {"id": "plain", "email": "plain@example.test", "node_id": 1, "inbound_id": 11, "node_name": "alpha"},
+    ]
+    with connect(db_path) as conn:
+        customer_id = conn.execute(
+            """
+            INSERT INTO customers (email_display, email_canonical, origin, public_code, email_source)
+            VALUES (?, ?, 'telegram', ?, 'telegram_username')
+            """,
+            ("Linked.User@example.test", "linked.user@example.test", "linked-user"),
+        ).lastrowid
+        conn.execute(
+            """
+            INSERT INTO telegram_identities (telegram_user_id, chat_id, customer_id, access_status)
+            VALUES (?, ?, ?, 'approved')
+            """,
+            (1, 1, customer_id),
+        )
+
+    response = _build_clients_router_test_client(
+        db_path=db_path,
+        nodes=nodes,
+        cached_clients=cached_clients,
+        cache_scopes=[],
+    ).get("/api/v1/clients")
+
+    assert response.status_code == 200
+    clients_by_email = {item["email"].strip(): item for item in response.json()["clients"]}
+    assert clients_by_email["Linked.User@example.test"]["telegram_linked"] is True
+    assert clients_by_email["plain@example.test"]["telegram_linked"] is False
+    assert "telegram_user_id" not in clients_by_email["Linked.User@example.test"]
+    assert "username" not in clients_by_email["Linked.User@example.test"]
+
+
 def test_scoped_client_routes_preserve_the_shared_fleet_cache(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)

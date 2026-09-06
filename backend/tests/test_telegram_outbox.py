@@ -134,3 +134,94 @@ def test_user_can_suppress_background_outbox_messages_without_losing_the_event_a
         assert conn.execute("SELECT status, last_error_code FROM telegram_outbox").fetchone() == (
             "cancelled", "notifications_disabled"
         )
+
+
+def test_admin_direct_message_is_delivered_to_the_approved_live_customer(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="direct-target", origin="telegram", email_source="telegram_username", public_code="direct-target"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="target", first_name="Target", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+    registry.queue_admin_direct_message(
+        customer_id=customer_id,
+        body="Сообщение от администратора.",
+        created_by=108100140,
+        idempotency_key="direct-delivery-1",
+    )
+    port = FakeOutboxPort()
+
+    result = _worker(db_path, port).run_once()
+
+    assert result.outcome == "sent"
+    assert port.messages == [(777, "Сообщение от администратора.", None)]
+
+
+def test_registered_broadcast_is_cancelled_when_recipient_opts_out_after_queueing(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="broadcast-target", origin="telegram", email_source="telegram_username", public_code="broadcast-target"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="target", first_name="Target", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+    registry.queue_registered_broadcast(
+        body="Новость для зарегистрированных пользователей.",
+        created_by=108100140,
+        idempotency_key="broadcast-delivery-1",
+    )
+    registry.toggle_background_notifications(42)
+    port = FakeOutboxPort()
+
+    result = _worker(db_path, port).run_once()
+
+    assert result.outcome == "cancelled"
+    assert port.messages == []
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT status, last_error_code FROM telegram_outbox WHERE event_type = 'registered_broadcast'"
+        ).fetchone() == ("cancelled", "notifications_disabled")
+
+
+def test_user_result_notifications_cover_provisioning_rejection_and_lifecycle(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="target", first_name="Target", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.executemany(
+            "INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json) VALUES (?, '42', ?, ?)",
+            [
+                ("user_provisioning_completed", "result-provisioning", "{}"),
+                ("user_application_rejected", "result-rejected", "{}"),
+                ("user_lifecycle_completed", "result-lifecycle", '{"operation":"resume"}'),
+            ],
+        )
+    port = FakeOutboxPort()
+    worker = _worker(db_path, port)
+
+    outcomes = [worker.run_once().outcome for _ in range(3)]
+
+    assert outcomes == ["sent", "sent", "sent"]
+    assert port.messages == [
+        (777, "Доступ готов. Откройте меню и получите персональную ссылку.", None),
+        (777, "Заявка отклонена. Если хотите подать новую, отправьте /start.", None),
+        (777, "Доступ восстановлен. Откройте меню, чтобы продолжить.", None),
+    ]

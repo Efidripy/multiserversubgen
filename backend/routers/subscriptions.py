@@ -15,6 +15,7 @@ from services.subscription_tokens import (
     regenerate_token,
     resolve_token,
 )
+from services.telegram_access import TelegramSubscriptionAccessGate
 from shared.sql import update_by_id_query
 from typing import Dict, Optional
 
@@ -40,6 +41,7 @@ def build_subscriptions_router(
     subscription_response_cache_lock = Lock()
     subscription_response_cache_ttl = 300
     subscription_response_cache_max_size = 1024
+    telegram_access_gate = TelegramSubscriptionAccessGate(db_path)
 
     def _no_cache_headers():
         return {
@@ -213,8 +215,12 @@ def build_subscriptions_router(
                 legacy_email = _resolve_legacy_email(email)
             if not legacy_email:
                 return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
+            if not telegram_access_gate.can_serve_email(legacy_email):
+                return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
             current_token = ensure_tokens(db_path, "email", [legacy_email])[legacy_email]
             return _redirect_to_current_token(request, current_token)
+        if not telegram_access_gate.can_serve_email(resolved_email):
+            return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
         allowed, retry_after = check_subscription_rate_limit(request, f"sub:{hashlib.sha256(email.encode()).hexdigest()}")
         if not allowed:
             return PlainTextResponse(
