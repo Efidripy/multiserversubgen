@@ -79,6 +79,16 @@ class TelegramNotificationPreferences:
 
 
 @dataclass(frozen=True)
+class TelegramSubscriptionMessageReceipt:
+    """Safe pointer to the one interactive message that contains a subscription URL."""
+
+    telegram_user_id: int
+    token_digest: str
+    chat_id: int
+    message_id: int
+
+
+@dataclass(frozen=True)
 class TelegramTransportPreference:
     """Non-secret delivery mode selected by a panel administrator."""
 
@@ -2282,6 +2292,59 @@ class TelegramRegistry:
             except sqlite3.IntegrityError:
                 return False
         return True
+
+    def get_subscription_message_receipt(
+        self, telegram_user_id: int
+    ) -> TelegramSubscriptionMessageReceipt | None:
+        """Read a delivery pointer without ever exposing or storing the raw token."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT telegram_user_id, token_digest, chat_id, message_id
+                FROM telegram_subscription_message_receipts
+                WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return TelegramSubscriptionMessageReceipt(
+            telegram_user_id=int(row[0]),
+            token_digest=str(row[1]),
+            chat_id=int(row[2]),
+            message_id=int(row[3]),
+        )
+
+    def record_subscription_message_delivery(
+        self,
+        *,
+        telegram_user_id: int,
+        token_digest: str,
+        chat_id: int,
+        message_id: int,
+    ) -> None:
+        """Persist only the opaque token digest and Telegram message coordinates."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        normalized_chat_id = _positive_int(chat_id, "chat_id")
+        normalized_message_id = _positive_int(message_id, "message_id")
+        normalized_digest = _nonempty(token_digest, "token_digest")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO telegram_subscription_message_receipts
+                    (telegram_user_id, token_digest, chat_id, message_id)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(telegram_user_id) DO UPDATE SET
+                    token_digest = excluded.token_digest,
+                    chat_id = excluded.chat_id,
+                    message_id = excluded.message_id,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, normalized_digest, normalized_chat_id, normalized_message_id),
+            )
 
     def set_node_provisioning_policy(
         self,

@@ -8,14 +8,14 @@ from typing import Any, Callable, Protocol
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
-from services.telegram_delivery import TelegramApiSender
+from services.telegram_delivery import TelegramApiSender, TelegramMessageEditUnavailableError
 from services.telegram_registration import TelegramOutboundMessage, TelegramRegistrationService
 from services.telegram_registry import TelegramRegistry
 from services.telegram_transport import TelegramApiTransport
 
 
 class TelegramMessageSender(Protocol):
-    def send(self, message: TelegramOutboundMessage) -> None: ...
+    def send(self, message: TelegramOutboundMessage) -> int | None: ...
 
 
 def build_telegram_webhook_router(
@@ -57,7 +57,15 @@ def build_telegram_webhook_router(
         if not secrets.compare_digest(supplied_secret, telegram_settings.webhook_secret):
             raise HTTPException(status_code=403, detail="Forbidden")
         for message in service.handle_update(data):
-            await run_in_threadpool(message_sender.send, message)
+            try:
+                message_id = await run_in_threadpool(message_sender.send, message)
+            except TelegramMessageEditUnavailableError:
+                fallback = service.fallback_subscription_message(message)
+                if fallback is None:
+                    raise
+                message = fallback
+                message_id = await run_in_threadpool(message_sender.send, message)
+            await run_in_threadpool(service.record_outbound_delivery, message, message_id)
         return {"ok": True}
 
     return router

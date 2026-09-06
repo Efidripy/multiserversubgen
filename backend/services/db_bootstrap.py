@@ -650,6 +650,17 @@ def init_db(db_path: str) -> None:
             "ON telegram_updates(status, received_at)"
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_subscription_message_receipts
+                     (telegram_user_id INTEGER PRIMARY KEY,
+                      token_digest TEXT NOT NULL,
+                      chat_id INTEGER NOT NULL,
+                      message_id INTEGER NOT NULL CHECK(message_id > 0),
+                      sent_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE)"""
+        )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_abuse_state
                      (telegram_user_id INTEGER PRIMARY KEY,
                       window_started_at TEXT DEFAULT NULL,

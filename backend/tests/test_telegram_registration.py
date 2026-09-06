@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from routers.telegram_webhook import build_telegram_webhook_router
 from services.db_bootstrap import connect, init_db
+from services.telegram_delivery import TelegramMessageEditUnavailableError
 from services.subscription_tokens import resolve_token
 from services.telegram_registration import TelegramOutboundMessage, TelegramRegistrationService
 from services.telegram_registry import TelegramRegistry
@@ -26,6 +27,18 @@ def _message(update_id: int, text: str) -> dict:
             "chat": {"id": 42, "type": "private"},
             "from": {"id": 42, "username": "new_user", "first_name": "New"},
             "text": text,
+        },
+    }
+
+
+def _callback(update_id: int, data: str) -> dict:
+    return {
+        "update_id": update_id,
+        "callback_query": {
+            "id": f"callback-{update_id}",
+            "from": {"id": 42, "username": "new_user", "first_name": "New"},
+            "message": {"chat": {"id": 42, "type": "private"}},
+            "data": data,
         },
     }
 
@@ -181,6 +194,79 @@ def test_approved_user_gets_opaque_subscription_link_and_rotation_invalidates_pr
     assert resolve_token(db_path, "email", old_token) is None
     assert resolve_token(db_path, "email", new_token) == "new_user"
     assert "подтвердить" in confirm_prompt[0].text.lower()
+
+
+def test_repeated_subscription_request_reuses_the_original_message_and_never_stores_raw_token(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="repeat_user", first_name="Repeat", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="repeat_user", origin="telegram", email_source="telegram_username", public_code="repeat-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    first = service.handle_update(_message(11, "/subscription"))[0]
+    service.record_outbound_delivery(first, 101)
+    repeated = service.handle_update(_message(12, "/subscription"))[0]
+    service.record_outbound_delivery(repeated, 101)
+
+    assert repeated.edit_message_id == 101
+    assert repeated.subscription_delivery is not None
+    assert "Ссылка уже получена" in repeated.text
+    assert "Скопируйте" in repeated.text
+    assert repeated.text.rsplit("/", 1)[-1] == first.text.rsplit("/", 1)[-1]
+    with connect(db_path) as conn:
+        stored_digest = conn.execute(
+            "SELECT token_digest FROM telegram_subscription_message_receipts WHERE telegram_user_id = 42"
+        ).fetchone()[0]
+        assert stored_digest == repeated.subscription_delivery.token_digest
+        assert first.text.rsplit("/", 1)[-1] not in stored_digest
+
+
+def test_rotated_subscription_always_creates_a_new_message_instead_of_editing_the_old_link(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="rotate_user", first_name="Rotate", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="rotate_user", origin="telegram", email_source="telegram_username", public_code="rotate-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    first = service.handle_update(_message(11, "/subscription"))[0]
+    service.record_outbound_delivery(first, 101)
+    rotated = service.handle_update(_callback(12, "subscription:rotate:confirm"))[0]
+
+    assert rotated.edit_message_id is None
+    assert rotated.subscription_delivery is not None
+    assert rotated.subscription_delivery.token_digest != first.subscription_delivery.token_digest
 
 
 def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscription_token(tmp_path):
@@ -774,8 +860,16 @@ class _Sender:
     def __init__(self):
         self.messages: list[TelegramOutboundMessage] = []
 
-    def send(self, message: TelegramOutboundMessage) -> None:
+    def send(self, message: TelegramOutboundMessage) -> int:
         self.messages.append(message)
+        return len(self.messages)
+
+
+class _EditFallbackSender(_Sender):
+    def send(self, message: TelegramOutboundMessage) -> int:
+        if message.edit_message_id is not None:
+            raise TelegramMessageEditUnavailableError("message deleted")
+        return super().send(message)
 
 
 def test_webhook_requires_exact_suffix_and_secret_then_dispatches_private_update(tmp_path):
@@ -859,6 +953,52 @@ def test_webhook_sender_receives_qr_as_a_photo_message(tmp_path):
     assert response.status_code == 200
     assert sender.messages[0].photo_png is not None
     assert sender.messages[0].photo_png.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_webhook_repeated_subscription_edits_one_message_and_falls_back_only_if_it_was_deleted(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="webhook_repeat", first_name="Webhook", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="webhook_repeat", origin="telegram", email_source="telegram_username", public_code="webhook-repeat"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    sender = _EditFallbackSender()
+    settings = SimpleNamespace(
+        enabled=True,
+        bot_token="not-used-by-test-sender",
+        webhook_path_suffix="private-path",
+        webhook_secret="private-header-secret",
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+    )
+    app = FastAPI()
+    app.include_router(
+        build_telegram_webhook_router(
+            telegram_settings=settings,
+            db_path=db_path,
+            sender=sender,
+            list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+            get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+        )
+    )
+    client = TestClient(app)
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "private-header-secret"}
+
+    assert client.post("/telegram/webhook/private-path", headers=headers, json=_message(30, "/subscription")).status_code == 200
+    assert client.post("/telegram/webhook/private-path", headers=headers, json=_callback(31, "subscription:get")).status_code == 200
+
+    assert len(sender.messages) == 2
+    assert sender.messages[0].edit_message_id is None
+    assert sender.messages[1].edit_message_id is None
+    assert "Персональная ссылка доступа" in sender.messages[1].text
 
 
 def test_webhook_admin_can_adopt_a_discovered_legacy_customer_without_remote_write(tmp_path):
