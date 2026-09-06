@@ -817,6 +817,18 @@ class TelegramRegistrationService:
             ])
         return {"inline_keyboard": rows}
 
+    @staticmethod
+    def _access_choice_message(chat_id: int) -> TelegramOutboundMessage:
+        return TelegramOutboundMessage(
+            chat_id,
+            "Получить доступ\n\nВыберите удобный способ: скопировать персональную ссылку или показать QR-код для сканирования в приложении.",
+            {"inline_keyboard": [
+                [{"text": "⊙ Получить ссылку", "callback_data": "subscription:link"}],
+                [{"text": "⊞ Показать QR-код", "callback_data": "subscription:qr"}],
+                [{"text": "← Меню", "callback_data": "menu:home"}],
+            ]},
+        )
+
     def _subscription_url(
         self, *, user_id: int, chat_id: int, rotate: bool = False
     ) -> tuple[str | None, TelegramOutboundMessage | None]:
@@ -910,11 +922,10 @@ class TelegramRegistrationService:
     def _setup_menu(chat_id: int) -> TelegramOutboundMessage:
         return TelegramOutboundMessage(
             chat_id,
-            "Подключение\n\nВыберите устройство. Затем добавьте ссылку или QR-код в совместимое приложение. Не пересылайте их другим людям.",
+            "Подключение\n\nВыберите устройство и следуйте инструкции для совместимого приложения. Ссылку или QR-код можно получить отдельной кнопкой «◎ Получить доступ». Не пересылайте их другим людям.",
             {"inline_keyboard": [
                 [{"text": "Android", "callback_data": "setup:android"}, {"text": "iPhone / iPad", "callback_data": "setup:ios"}],
                 [{"text": "Компьютер", "callback_data": "setup:desktop"}],
-                [{"text": "⊞ Показать QR", "callback_data": "setup:qr"}],
                 [{"text": "← Меню", "callback_data": "menu:home"}],
             ]},
         )
@@ -927,9 +938,8 @@ class TelegramRegistrationService:
             return TelegramOutboundMessage(chat_id, "Выберите устройство из списка.", TelegramRegistrationService._approved_menu())
         return TelegramOutboundMessage(
             chat_id,
-            f"Подключение: {heading}\n\n1. Установите совместимое приложение для подписок.\n2. В нём выберите добавление по URL или сканирование QR.\n3. Получите ссылку кнопкой «◎ Получить доступ» либо покажите QR здесь.\n4. Не пересылайте ссылку и QR: это ваш личный доступ.",
+            f"Подключение: {heading}\n\n1. Установите совместимое приложение для подписок.\n2. В нём выберите добавление по URL или сканирование QR.\n3. Откройте «◎ Получить доступ» и выберите ссылку или QR-код.\n4. Не пересылайте ссылку и QR: это ваш личный доступ.",
             {"inline_keyboard": [
-                [{"text": "⊞ Показать QR", "callback_data": "setup:qr"}],
                 [{"text": "← Устройства", "callback_data": "setup:menu"}],
                 [{"text": "← Меню", "callback_data": "menu:home"}],
             ]},
@@ -947,7 +957,7 @@ class TelegramRegistrationService:
         return TelegramOutboundMessage(
             chat_id,
             "Ваш QR-код доступа. Не пересылайте его другим людям.",
-            {"inline_keyboard": [[{"text": "← Подключение", "callback_data": "setup:menu"}]]},
+            {"inline_keyboard": [[{"text": "← Способы доступа", "callback_data": "subscription:get"}]]},
             photo_png=png,
             photo_filename="access-qr.png",
         )
@@ -984,7 +994,7 @@ class TelegramRegistrationService:
         return TelegramOutboundMessage(
             chat_id,
             "Помощь\n\n"
-            "◎ Получить доступ — выдаёт вашу текущую ссылку.\n"
+            "◎ Получить доступ — предлагает персональную ссылку или QR-код.\n"
             "↻ Сменить ссылку — сразу отключает предыдущую.\n"
             "⚙ Уведомления — включает или выключает фоновые сообщения.\n\n"
             "Если доступ приостановлен, в меню появится кнопка для сообщения администратору.",
@@ -1075,13 +1085,15 @@ class TelegramRegistrationService:
 
         if identity.access_status == "approved":
             access = self._registry.get_customer_access(user_id)
-            if callback_data in {"subscription:get", "subscription:rotate:confirm"}:
+            if callback_data == "subscription:get":
+                return [self._access_choice_message(chat_id)]
+            if callback_data in {"subscription:link", "subscription:rotate:confirm"}:
                 return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate=callback_data.endswith(":confirm"))]
             if callback_data == "setup:menu":
                 return [self._setup_menu(chat_id)]
             if callback_data in {"setup:android", "setup:ios", "setup:desktop"}:
                 return [self._setup_guide(chat_id, callback_data.removeprefix("setup:"))]
-            if callback_data == "setup:qr":
+            if callback_data in {"subscription:qr", "setup:qr"}:
                 return [self._setup_qr_message(user_id=user_id, chat_id=chat_id)]
             if callback_data == "subscription:rotate":
                 return [TelegramOutboundMessage(
