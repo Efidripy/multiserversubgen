@@ -11,3 +11,4 @@ prometheus-client
 redis
 pyotp
 orjson
+qrcode==8.2

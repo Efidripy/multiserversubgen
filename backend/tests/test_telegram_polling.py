@@ -27,8 +27,8 @@ class _Sender:
     def __init__(self):
         self.messages = []
 
-    def send(self, *, chat_id, text, reply_markup=None):
-        self.messages.append((chat_id, text, reply_markup))
+    def send(self, message):
+        self.messages.append(message)
 
 
 def test_polling_keeps_pending_updates_when_switching_from_webhook():
@@ -55,4 +55,4 @@ def test_polling_keeps_pending_updates_when_switching_from_webhook():
     assert api.deleted_webhooks == 1
     assert api.offsets == [(None, 25), (18, 25)]
     assert handled == [17]
-    assert sender.messages == [(101, "received", None)]
+    assert sender.messages == [TelegramOutboundMessage(chat_id=101, text="received")]

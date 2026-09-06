@@ -5,6 +5,7 @@ import os
 import sys
 import time
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -13,6 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from routers.subscriptions import build_subscriptions_router
 from services.db_bootstrap import connect, init_db
 from services.subscription_tokens import ensure_tokens, regenerate_token
+from services.telegram_access import TelegramSubscriptionAccessGate, resolve_effective_access
+from services.telegram_registry import TelegramRegistry
 
 
 class _Nodes:
@@ -103,3 +106,93 @@ def test_expired_secret_hmac_format_migrates_by_known_identifier(tmp_path):
 
     assert response.status_code == 302
     assert "." not in response.headers["location"].removeprefix("./")
+
+
+@pytest.mark.parametrize(
+    ("access_status", "customer_status", "blocked_from_status", "expected"),
+    [
+        ("approved", "active", None, ("active", True, True, False)),
+        ("approved", "suspended", None, ("suspended", False, False, True)),
+        ("approved", "delete_partial", None, ("revoking", False, False, False)),
+        ("approved", "conflict", None, ("unavailable", False, False, False)),
+        ("blocked", "active", "approved", ("blocked", False, True, False)),
+        ("blocked", "active", "pending", ("blocked", False, False, False)),
+    ],
+)
+def test_effective_access_is_explicit_and_fail_closed(
+    access_status, customer_status, blocked_from_status, expected
+):
+    decision = resolve_effective_access(
+        access_status=access_status,
+        customer_id=7,
+        email_display="safe-user",
+        customer_status=customer_status,
+        blocked_from_status=blocked_from_status,
+    )
+
+    assert (
+        decision.state,
+        decision.can_receive_subscription,
+        decision.can_use_public_subscription,
+        decision.can_submit_appeal,
+    ) == expected
+
+
+def test_public_subscription_is_denied_when_a_linked_telegram_customer_is_suspended(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="linked", first_name="Linked", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="linked-user",
+        origin="telegram",
+        email_source="telegram_username",
+        public_code="linked-user",
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' "
+            "WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+
+    client = TestClient(_build_app(db_path, ["linked-user"]))
+    token = ensure_tokens(db_path, "email", ["linked-user"])["linked-user"]
+
+    assert client.get(f"/api/v1/sub/{token}").status_code == 200
+    with connect(db_path) as conn:
+        conn.execute("UPDATE customers SET status = 'suspended' WHERE id = ?", (customer_id,))
+
+    denied = client.get(f"/api/v1/sub/{token}")
+    assert denied.status_code == 404
+    assert denied.text == "Not found"
+    assert TelegramSubscriptionAccessGate(db_path).can_serve_email("linked-user") is False
+
+
+def test_bot_block_after_approval_does_not_revoke_an_existing_public_subscription(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=43, chat_id=43, username="blocked", first_name="Blocked", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="blocked-user",
+        origin="telegram",
+        email_source="telegram_username",
+        public_code="blocked-user",
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'blocked', "
+            "blocked_from_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+
+    client = TestClient(_build_app(db_path, ["blocked-user"]))
+    token = ensure_tokens(db_path, "email", ["blocked-user"])["blocked-user"]
+
+    assert TelegramSubscriptionAccessGate(db_path).can_serve_email("blocked-user") is True
+    assert client.get(f"/api/v1/sub/{token}").status_code == 200

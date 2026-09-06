@@ -320,6 +320,7 @@
     "duplicateClient": "Duplicate client",
     "freezeClient": "Freeze client",
     "expandOrCopyHint": "Click to expand details | Double-click to copy email",
+    "telegramLinked": "Linked to Telegram",
     "clearStoredIps": "Clear stored IPs",
     "ipHistoryTitle": "IP history",
     "ipHistoryLoading": "Loading IP history...",

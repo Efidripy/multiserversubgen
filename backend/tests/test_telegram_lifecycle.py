@@ -53,7 +53,14 @@ def _queue(tmp_path, operation_type: str):
     customer_id = registry.create_customer(
         email_display="lifecycle-worker", origin="manual", email_source="admin", public_code="lifecycle-worker"
     )
+    registry.get_or_create_identity(
+        telegram_user_id=55, chat_id=55, username="lifecycle_user", first_name=None, last_name=None
+    )
     with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 55",
+            (customer_id,),
+        )
         conn.execute(
             """
             INSERT INTO customer_node_bindings
@@ -102,6 +109,9 @@ def test_suspend_then_resume_reconciles_exact_client_and_restores_only_prior_ena
         assert conn.execute(
             "SELECT desired_enabled, last_enabled, suspended_by_operation_id FROM customer_node_bindings"
         ).fetchone() == (0, 0, suspend_operation_id)
+        assert conn.execute(
+            "SELECT event_type, entity_id, payload_json FROM telegram_outbox WHERE event_type = 'user_lifecycle_completed'"
+        ).fetchone() == ("user_lifecycle_completed", "55", '{"operation":"suspend"}')
 
     resume_preview = registry.preview_customer_operation(customer_id=customer_id, operation_type="resume")
     resume = registry.queue_customer_operation(
@@ -141,6 +151,12 @@ def test_delete_requires_read_after_write_and_only_tombstones_after_exact_remote
         assert conn.execute("SELECT management_state, desired_enabled FROM customer_node_bindings").fetchone() == (
             "missing", 0
         )
+        assert conn.execute(
+            "SELECT event_type, entity_id, payload_json FROM telegram_outbox WHERE event_type = 'user_lifecycle_completed'"
+        ).fetchone() == ("user_lifecycle_completed", "55", '{"operation":"delete"}')
+        assert conn.execute(
+            "SELECT access_status, customer_id FROM telegram_identities WHERE telegram_user_id = 55"
+        ).fetchone() == ("eligible", None)
 
 
 def test_uncertain_lifecycle_write_is_ambiguous_and_not_replayed_immediately(tmp_path):

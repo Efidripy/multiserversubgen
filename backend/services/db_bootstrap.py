@@ -225,6 +225,7 @@ def init_db(db_path: str) -> None:
                       username TEXT DEFAULT NULL,
                       first_name TEXT DEFAULT NULL,
                       last_name TEXT DEFAULT NULL,
+                      phone_number TEXT DEFAULT NULL,
                       locale TEXT NOT NULL DEFAULT 'ru' CHECK(locale IN ('ru', 'en')),
                       access_status TEXT NOT NULL DEFAULT 'eligible'
                         CHECK(access_status IN ('eligible', 'pending', 'approved', 'rejected', 'blocked')),
@@ -253,6 +254,11 @@ def init_db(db_path: str) -> None:
             "CREATE INDEX IF NOT EXISTS idx_telegram_identities_customer "
             "ON telegram_identities(customer_id)"
         )
+        identity_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(telegram_identities)").fetchall()
+        }
+        if "phone_number" not in identity_columns:
+            conn.execute("ALTER TABLE telegram_identities ADD COLUMN phone_number TEXT DEFAULT NULL")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_notification_preferences
                      (telegram_user_id INTEGER PRIMARY KEY,
@@ -348,6 +354,39 @@ def init_db(db_path: str) -> None:
                         ON DELETE CASCADE,
                       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
         )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_admin_message_drafts
+                     (admin_telegram_user_id INTEGER PRIMARY KEY,
+                      mode TEXT NOT NULL CHECK(mode IN ('direct', 'broadcast')),
+                      customer_id INTEGER DEFAULT NULL,
+                      page INTEGER NOT NULL DEFAULT 0 CHECK(page >= 0),
+                      body TEXT DEFAULT NULL CHECK(body IS NULL OR length(body) BETWEEN 1 AND 2000),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_broadcast_jobs
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      created_by INTEGER NOT NULL,
+                      idempotency_key TEXT NOT NULL UNIQUE,
+                      body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 2000),
+                      recipient_count INTEGER NOT NULL CHECK(recipient_count >= 0),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""
+        )
+        broadcast_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(telegram_broadcast_jobs)").fetchall()
+        }
+        if "idempotency_key" not in broadcast_columns:
+            conn.execute("ALTER TABLE telegram_broadcast_jobs ADD COLUMN idempotency_key TEXT DEFAULT NULL")
+            conn.execute(
+                "UPDATE telegram_broadcast_jobs SET idempotency_key = 'legacy-' || id "
+                "WHERE idempotency_key IS NULL"
+            )
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_broadcast_jobs_idempotency "
+                "ON telegram_broadcast_jobs(idempotency_key)"
+            )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_command_receipts
                      (scope TEXT NOT NULL,

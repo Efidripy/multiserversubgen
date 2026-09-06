@@ -31,6 +31,7 @@ from core.app_runtime_bundle import build_app_runtime_bundle
 from core.router_registration import register_app_routers
 from services.runtime_state import RuntimeState
 from services.telegram_lifecycle import TelegramLifecycleWorker
+from services.telegram_delivery import TelegramApiSender
 from services.telegram_outbox import TelegramApiOutboxPort, TelegramOutboxWorker
 from services.telegram_polling import TelegramBotApiClient, TelegramPollingWorker
 from services.telegram_registration import TelegramRegistrationService
@@ -529,7 +530,7 @@ async def _telegram_polling_worker_loop() -> None:
     worker = TelegramPollingWorker(
         api=TelegramBotApiClient(SETTINGS.telegram.bot_token, transport=transport),
         handle_update=service.handle_update,
-        sender=TelegramApiOutboxPort(SETTINGS.telegram.bot_token, transport=transport),
+        sender=TelegramApiSender(SETTINGS.telegram.bot_token, transport=transport),
         timeout_sec=SETTINGS.telegram.polling_timeout_sec,
     )
     while True:

@@ -44,6 +44,7 @@ interface Client {
   comment?: string;
   is_system?: boolean;
   notes?: string;
+  telegram_linked?: boolean;
 }
 
 interface TrafficData {
@@ -2551,7 +2552,7 @@ export const ClientManager: React.FC = () => {
               return <article key={group.key} className="min-w-0 overflow-hidden rounded-lg bg-[#0a0e1a] p-3 ring-1 ring-cyan-500/10">
                 <div className="flex min-w-0 items-start gap-2">
                   <input className={checkboxClass} type="checkbox" checked={selectionState === 'all'} aria-checked={selectionState === 'partial' ? 'mixed' : selectionState === 'all'} aria-label={t('clients.selectEmailGroup', { email: group.email })} ref={(input) => { if (input) input.indeterminate = selectionState === 'partial'; }} onChange={() => toggleGroupSelection(group)} />
-                  <button type="button" className="min-w-0 flex-1 text-left" aria-expanded={expanded} aria-label={expanded ? t('clients.collapseClientGroup', { email: group.email }) : t('clients.expandClientGroup', { email: group.email })} onClick={() => toggleGroupExpanded(group)}><span className={tableLongEmailClass} title={group.email}>{expanded ? '−' : '+'} {group.email}</span><span className="mt-1 block truncate text-xs text-slate-500">{getGroupSummary(group)}</span></button>
+                  <button type="button" className="min-w-0 flex-1 text-left" aria-expanded={expanded} aria-label={expanded ? t('clients.collapseClientGroup', { email: group.email }) : t('clients.expandClientGroup', { email: group.email })} onClick={() => toggleGroupExpanded(group)}><span className="flex min-w-0 items-center gap-2"><span className={tableLongEmailClass} title={group.email}>{expanded ? '−' : '+'} {group.email}</span>{group.clients.some((client) => client.telegram_linked) && <span className={cn(badgeBaseClass, 'shrink-0 border-cyan-500/20 bg-[#0f1420] text-cyan-300')} title={t('clients.telegramLinked')} aria-label={t('clients.telegramLinked')}>TG</span>}</span><span className="mt-1 block truncate text-xs text-slate-500">{getGroupSummary(group)}</span></button>
                 </div>
                 {expanded && <div className="mt-3 grid min-w-0 grid-cols-1 gap-2">{group.clients.map(renderMobileChild)}</div>}
               </article>;
@@ -2562,7 +2563,7 @@ export const ClientManager: React.FC = () => {
               const selectionState = getGroupSelectionState(group);
               const expanded = expandedEmailKeys.has(group.key);
               return <React.Fragment key={group.key}>
-                <tr className="bg-cyan-500/5 text-slate-100"><td className="px-3 py-3"><input className={checkboxClass} type="checkbox" checked={selectionState === 'all'} aria-checked={selectionState === 'partial' ? 'mixed' : selectionState === 'all'} aria-label={t('clients.selectEmailGroup', { email: group.email })} ref={(input) => { if (input) input.indeterminate = selectionState === 'partial'; }} onChange={() => toggleGroupSelection(group)} /></td><td colSpan={denseView ? 8 : 10} className="px-3 py-3"><button type="button" className="flex min-w-0 items-center gap-2 text-left" aria-expanded={expanded} aria-label={expanded ? t('clients.collapseClientGroup', { email: group.email }) : t('clients.expandClientGroup', { email: group.email })} onClick={() => toggleGroupExpanded(group)}><span className="font-mono text-cyan-300">{expanded ? '−' : '+'}</span><span className="min-w-0"><span className={tableLongEmailClass} title={group.email}>{group.email}</span><span className="mt-1 block truncate text-xs text-slate-500">{getGroupSummary(group)}</span></span></button></td></tr>
+                <tr className="bg-cyan-500/5 text-slate-100"><td className="px-3 py-3"><input className={checkboxClass} type="checkbox" checked={selectionState === 'all'} aria-checked={selectionState === 'partial' ? 'mixed' : selectionState === 'all'} aria-label={t('clients.selectEmailGroup', { email: group.email })} ref={(input) => { if (input) input.indeterminate = selectionState === 'partial'; }} onChange={() => toggleGroupSelection(group)} /></td><td colSpan={denseView ? 8 : 10} className="px-3 py-3"><button type="button" className="flex min-w-0 items-center gap-2 text-left" aria-expanded={expanded} aria-label={expanded ? t('clients.collapseClientGroup', { email: group.email }) : t('clients.expandClientGroup', { email: group.email })} onClick={() => toggleGroupExpanded(group)}><span className="font-mono text-cyan-300">{expanded ? '−' : '+'}</span><span className="min-w-0"><span className="flex min-w-0 items-center gap-2"><span className={tableLongEmailClass} title={group.email}>{group.email}</span>{group.clients.some((client) => client.telegram_linked) && <span className={cn(badgeBaseClass, 'shrink-0 border-cyan-500/20 bg-[#0f1420] text-cyan-300')} title={t('clients.telegramLinked')} aria-label={t('clients.telegramLinked')}>TG</span>}</span><span className="mt-1 block truncate text-xs text-slate-500">{getGroupSummary(group)}</span></span></button></td></tr>
                 {expanded && group.clients.map(renderDesktopChild)}
               </React.Fragment>;
             })}
