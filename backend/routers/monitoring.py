@@ -250,19 +250,23 @@ def build_monitoring_router(
         loki_auth = parse_basic_auth_pair(loki_basic_auth)
         graf_auth = parse_basic_auth_pair(grafana_basic_auth)
 
-        prometheus = http_probe(prometheus_url, "/-/ready", basic_auth=prom_auth)
-        loki = http_probe(loki_url, "/ready", basic_auth=loki_auth)
-        grafana = http_probe(grafana_url, "/api/health", basic_auth=graf_auth)
+        prometheus = http_probe(
+            prometheus_url, "/-/ready", basic_auth=prom_auth, allow_trusted_loopback=True
+        )
+        loki = http_probe(loki_url, "/ready", basic_auth=loki_auth, allow_trusted_loopback=True)
+        grafana = http_probe(
+            grafana_url, "/api/health", basic_auth=graf_auth, allow_trusted_loopback=True
+        )
 
         prom_metrics = {}
         if prometheus.get("ok"):
             prom_metrics = {
-                "up_sum": prom_query(prometheus_url, "sum(up)", basic_auth=prom_auth),
-                "adguard_queries_sum": prom_query(prometheus_url, "sum(sub_manager_adguard_dns_queries_total)", basic_auth=prom_auth),
-                "adguard_blocked_sum": prom_query(prometheus_url, "sum(sub_manager_adguard_dns_blocked_total)", basic_auth=prom_auth),
-                "adguard_block_rate_avg": prom_query(prometheus_url, "avg(sub_manager_adguard_dns_block_rate_percent)", basic_auth=prom_auth),
-                "node_online_sum": prom_query(prometheus_url, "sum(sub_manager_node_available)", basic_auth=prom_auth),
-                "node_clients_sum": prom_query(prometheus_url, "sum(sub_manager_node_online_clients)", basic_auth=prom_auth),
+                "up_sum": prom_query(prometheus_url, "sum(up)", basic_auth=prom_auth, allow_trusted_loopback=True),
+                "adguard_queries_sum": prom_query(prometheus_url, "sum(sub_manager_adguard_dns_queries_total)", basic_auth=prom_auth, allow_trusted_loopback=True),
+                "adguard_blocked_sum": prom_query(prometheus_url, "sum(sub_manager_adguard_dns_blocked_total)", basic_auth=prom_auth, allow_trusted_loopback=True),
+                "adguard_block_rate_avg": prom_query(prometheus_url, "avg(sub_manager_adguard_dns_block_rate_percent)", basic_auth=prom_auth, allow_trusted_loopback=True),
+                "node_online_sum": prom_query(prometheus_url, "sum(sub_manager_node_available)", basic_auth=prom_auth, allow_trusted_loopback=True),
+                "node_clients_sum": prom_query(prometheus_url, "sum(sub_manager_node_online_clients)", basic_auth=prom_auth, allow_trusted_loopback=True),
             }
 
         return {
