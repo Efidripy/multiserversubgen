@@ -334,3 +334,41 @@ def test_manual_english_locale_survives_callback_without_language_code_and_local
     assert not _contains_cyrillic(preferences[0].reply_markup)
     assert "removed from the chat" in qr_deleted[1].text
     assert not _contains_cyrillic(qr_deleted[1].reply_markup)
+
+
+def test_manual_locale_is_not_overwritten_by_the_telegram_client_language_on_callbacks(tmp_path):
+    db_path = str(tmp_path / "manual-locale-priority.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="alice", first_name="Alice", last_name=None, locale="en"
+    )
+    customer_id = registry.create_customer(
+        email_display="alice", origin="telegram", email_source="telegram_username", public_code="alice-manual-locale"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(TelegramRegistry(db_path), introduction_max_chars=700)
+
+    changed = service.handle_update({
+        "update_id": 1,
+        "callback_query": {
+            "id": "language-ru", "from": {"id": 42, "first_name": "Alice", "language_code": "en-US"},
+            "message": {"message_id": 10, "chat": {"id": 42, "type": "private"}}, "data": "language:set:ru",
+        },
+    })
+    menu = service.handle_update({
+        "update_id": 2,
+        "callback_query": {
+            "id": "menu-ru", "from": {"id": 42, "first_name": "Alice", "language_code": "en-US"},
+            "message": {"message_id": 11, "chat": {"id": 42, "type": "private"}}, "data": "menu:home",
+        },
+    })
+
+    assert registry.get_locale(42) == "ru"
+    assert "Язык интерфейса: русский." in changed[0].text
+    assert "Статус доступа" in menu[0].text
+    assert "Access" not in menu[0].text
