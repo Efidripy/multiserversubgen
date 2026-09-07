@@ -856,6 +856,50 @@ def test_primary_admin_confirms_a_direct_bot_message_before_queuing_it(tmp_path)
         ).fetchone() == ("admin_direct_message", "42")
 
 
+def test_primary_admin_sees_registration_introduction_and_can_replace_it_with_private_note(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="note_target", first_name="Note", last_name="Target"
+    )
+    registry.create_pending_application(42)
+    registry.submit_introduction(42, "Исходное представление пользователя", maximum_chars=700)
+    customer_id = registry.create_customer(
+        email_display="note-target", origin="telegram", email_source="telegram_username", public_code="note-target"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+        conn.execute("UPDATE telegram_applications SET status = 'approved' WHERE telegram_user_id = 42")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
+
+    service.handle_update(_callback(69, f"admin:customer-note:{customer_id}:0"))
+    assert registry.get_customer_admin_note(customer_id) is None
+    original = service.handle_update(_admin_callback(70, f"admin:customer:{customer_id}:0"))[0]
+    prompt = service.handle_update(_admin_callback(71, f"admin:customer-note:{customer_id}:0"))[0]
+    updated = service.handle_update(_admin_message(72, "  Заметка администратора  "))[0]
+
+    assert "Заметка из заявки:\nИсходное представление пользователя" in original.text
+    assert any(
+        button["text"] == "✎ Изменить заметку"
+        for row in original.reply_markup["inline_keyboard"] for button in row
+    )
+    assert "видят только администраторы" in prompt.text
+    assert "Заметка администратора:\nЗаметка администратора" in updated.text
+    assert registry.get_customer_admin_note(customer_id).body == "Заметка администратора"
+    with connect(db_path) as conn:
+        introduction = conn.execute("SELECT introduction_text FROM telegram_applications").fetchone()[0]
+    assert introduction == "Исходное представление пользователя"
+    callback_values = [
+        button["callback_data"]
+        for row in updated.reply_markup["inline_keyboard"] for button in row
+    ]
+    assert all("Заметка администратора" not in value for value in callback_values)
+
+
 def test_primary_admin_broadcasts_only_to_registered_opted_in_users(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)

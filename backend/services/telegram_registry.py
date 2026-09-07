@@ -384,6 +384,15 @@ class TelegramAdminMessageDraft:
 
 
 @dataclass(frozen=True)
+class TelegramCustomerNoteDraft:
+    """Durable destination for one pending customer-note text input."""
+
+    admin_telegram_user_id: int
+    customer_id: int
+    page: int
+
+
+@dataclass(frozen=True)
 class CustomerTelegramProfile:
     customer_id: int
     telegram_user_id: int | None
@@ -391,6 +400,16 @@ class CustomerTelegramProfile:
     first_name: str | None
     last_name: str | None
     phone_number: str | None
+
+
+@dataclass(frozen=True)
+class CustomerAdminNote:
+    """One private, administrator-authored note attached to a customer."""
+
+    customer_id: int
+    body: str
+    updated_by_telegram_user_id: int
+    updated_at: str
 
 
 @dataclass(frozen=True)
@@ -805,6 +824,56 @@ class TelegramRegistry:
         with connect(self._db_path) as conn:
             conn.execute(
                 "DELETE FROM telegram_admin_message_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
+            )
+
+    def set_customer_note_draft(
+        self, *, admin_telegram_user_id: int, customer_id: int, page: int
+    ) -> TelegramCustomerNoteDraft:
+        """Persist note-entry destination only; the note text is not staged."""
+
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        if isinstance(page, bool) or not isinstance(page, int) or page < 0:
+            raise TelegramRegistryError("admin draft page is invalid")
+        with connect(self._db_path) as conn:
+            customer_exists = conn.execute(
+                "SELECT 1 FROM customers WHERE id = ?", (local_customer_id,)
+            ).fetchone()
+            if customer_exists is None:
+                raise TelegramRegistryError("customer was not found")
+            conn.execute(
+                """
+                INSERT INTO telegram_customer_note_drafts (admin_telegram_user_id, customer_id, page)
+                VALUES (?, ?, ?)
+                ON CONFLICT(admin_telegram_user_id) DO UPDATE SET
+                    customer_id = excluded.customer_id,
+                    page = excluded.page,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (admin_id, local_customer_id, page),
+            )
+        return TelegramCustomerNoteDraft(admin_id, local_customer_id, page)
+
+    def get_customer_note_draft(self, admin_telegram_user_id: int) -> TelegramCustomerNoteDraft | None:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT customer_id, page
+                FROM telegram_customer_note_drafts
+                WHERE admin_telegram_user_id = ?
+                """,
+                (admin_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return TelegramCustomerNoteDraft(admin_id, int(row[0]), int(row[1]))
+
+    def clear_customer_note_draft(self, admin_telegram_user_id: int) -> None:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                "DELETE FROM telegram_customer_note_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
             )
 
     def get_customer_by_email(self, email: str) -> CustomerListItem:
@@ -4025,6 +4094,119 @@ class TelegramRegistry:
             first_name=str(row[2]) if row[2] is not None else None,
             last_name=str(row[3]) if row[3] is not None else None,
             phone_number=str(row[4]) if row[4] is not None else None,
+        )
+
+    def get_customer_admin_note(self, customer_id: int) -> CustomerAdminNote | None:
+        """Return the private override note without exposing it through public APIs."""
+
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        with connect(self._db_path) as conn:
+            customer_exists = conn.execute(
+                "SELECT 1 FROM customers WHERE id = ?", (local_customer_id,)
+            ).fetchone()
+            if customer_exists is None:
+                raise TelegramRegistryError("customer was not found")
+            row = conn.execute(
+                """
+                SELECT body, updated_by_telegram_user_id, updated_at
+                FROM telegram_customer_notes
+                WHERE customer_id = ?
+                """,
+                (local_customer_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return CustomerAdminNote(
+            customer_id=local_customer_id,
+            body=str(row[0]),
+            updated_by_telegram_user_id=int(row[1]),
+            updated_at=str(row[2]),
+        )
+
+    def get_customer_registration_introduction(self, customer_id: int) -> str | None:
+        """Return the approved registration text retained as the historical source."""
+
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        with connect(self._db_path) as conn:
+            customer_exists = conn.execute(
+                "SELECT 1 FROM customers WHERE id = ?", (local_customer_id,)
+            ).fetchone()
+            if customer_exists is None:
+                raise TelegramRegistryError("customer was not found")
+            row = conn.execute(
+                """
+                SELECT a.introduction_text
+                FROM telegram_identities AS i
+                JOIN telegram_applications AS a
+                  ON a.telegram_user_id = i.telegram_user_id
+                 AND a.application_attempt = i.application_attempt
+                WHERE i.customer_id = ?
+                  AND a.status = 'approved'
+                  AND a.introduction_text IS NOT NULL
+                ORDER BY a.introduction_submitted_at DESC, a.id DESC
+                LIMIT 1
+                """,
+                (local_customer_id,),
+            ).fetchone()
+        return str(row[0]) if row is not None else None
+
+    def set_customer_admin_note(
+        self,
+        *,
+        customer_id: int,
+        body: str,
+        updated_by_telegram_user_id: int,
+    ) -> CustomerAdminNote:
+        """Create or replace an administrator-only customer note atomically."""
+
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        admin_id = _positive_int(updated_by_telegram_user_id, "updated_by_telegram_user_id")
+        normalized_body = body.strip() if isinstance(body, str) else ""
+        if not 1 <= len(normalized_body) <= 1000:
+            raise TelegramRegistryError("customer note must contain 1 to 1000 characters")
+        with connect(self._db_path) as conn:
+            customer_exists = conn.execute(
+                "SELECT 1 FROM customers WHERE id = ?", (local_customer_id,)
+            ).fetchone()
+            if customer_exists is None:
+                raise TelegramRegistryError("customer was not found")
+            identity_exists = conn.execute(
+                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (admin_id,)
+            ).fetchone()
+            if identity_exists is None:
+                raise TelegramRegistryError("note author was not found")
+            conn.execute(
+                """
+                INSERT INTO telegram_customer_notes (customer_id, body, updated_by_telegram_user_id)
+                VALUES (?, ?, ?)
+                ON CONFLICT(customer_id) DO UPDATE SET
+                    body = excluded.body,
+                    updated_by_telegram_user_id = excluded.updated_by_telegram_user_id,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (local_customer_id, normalized_body, admin_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('customer_note_updated', 'admin', ?, 'customer', ?, ?)
+                """,
+                (str(admin_id), str(local_customer_id), _payload_digest({"body": normalized_body})),
+            )
+            row = conn.execute(
+                """
+                SELECT body, updated_by_telegram_user_id, updated_at
+                FROM telegram_customer_notes WHERE customer_id = ?
+                """,
+                (local_customer_id,),
+            ).fetchone()
+        assert row is not None
+        return CustomerAdminNote(
+            customer_id=local_customer_id,
+            body=str(row[0]),
+            updated_by_telegram_user_id=int(row[1]),
+            updated_at=str(row[2]),
         )
 
     @staticmethod
