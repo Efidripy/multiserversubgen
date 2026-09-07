@@ -176,6 +176,36 @@ def test_collector_traffic_projection_keeps_duplicate_node_names_separate(tmp_pa
     assert inbound["identity_stats"]["node:2:inbound:7"]["total"] == 70
 
 
+def test_telegram_quota_usage_requires_a_fresh_exact_collector_snapshot(monkeypatch, tmp_path):
+    now = 1000.0
+    snapshot = {
+        "timestamp": now,
+        "nodes": [
+            {
+                "node_id": 1,
+                "available": True,
+                "timestamp": now,
+                "inbounds": [
+                    {"id": 1, "clientStats": [{"email": "quota@example.test", "up": 300, "down": 500}]},
+                    {"id": 2, "clientStats": [{"email": "quota@example.test", "up": 900, "down": 900}]},
+                ],
+            }
+        ],
+    }
+    runtime = _build_runtime(tmp_path, {}, get_latest_snapshot=lambda: snapshot)
+    monkeypatch.setattr("services.live_stats_runtime.time.time", lambda: now)
+    bindings = (SimpleNamespace(node_id=1, inbound_id=1),)
+
+    assert runtime.get_cached_telegram_quota_usage(
+        email="Quota@Example.Test", bindings=bindings, max_age_seconds=60
+    ) == 800
+
+    snapshot["nodes"][0]["timestamp"] = now - 61
+    assert runtime.get_cached_telegram_quota_usage(
+        email="quota@example.test", bindings=bindings, max_age_seconds=60
+    ) is None
+
+
 def test_node_period_uses_stable_identity_after_rename(monkeypatch, tmp_path):
     now_ts = 500 * 3600
     runtime = _build_runtime(tmp_path, {})

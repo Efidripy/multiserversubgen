@@ -39,12 +39,13 @@ class TelegramOutboundMessage:
     photo_png: bytes | None = None
     photo_filename: str | None = None
     edit_message_id: int | None = None
+    delete_message_id: int | None = None
     subscription_delivery: TelegramSubscriptionDelivery | None = None
 
 
 def _private_actor(
     update: dict[str, Any],
-) -> tuple[int, int, dict[str, Any], str | None, str | None, str | None] | None:
+) -> tuple[int, int, dict[str, Any], str | None, str | None, str | None, int | None] | None:
     """Return trusted transport fields only for a private Telegram chat."""
 
     message = update.get("message")
@@ -69,7 +70,11 @@ def _private_actor(
         if contact and contact.get("user_id") == user_id and isinstance(contact.get("phone_number"), str)
         else None
     )
-    return user_id, chat_id, sender, text, callback_data, phone_number
+    source_message = callback_message if callback_message is not None else message
+    source_message_id = source_message.get("message_id") if isinstance(source_message, dict) else None
+    if isinstance(source_message_id, bool) or not isinstance(source_message_id, int) or source_message_id <= 0:
+        source_message_id = None
+    return user_id, chat_id, sender, text, callback_data, phone_number, source_message_id
 
 
 class TelegramRegistrationService:
@@ -78,7 +83,39 @@ class TelegramRegistrationService:
     _SUBSCRIPTION_INITIAL_PREFIX = (
         "Персональная ссылка доступа, скопируйте и вставьте её в ваше приложение-клиент:"
     )
-    _SUBSCRIPTION_REUSE_PREFIX = "Ссылка уже получена. Скопируйте и вставьте её в ваше приложение-клиент:"
+    _SETUP_VERSION = "v1"
+    _SETUP_APPLICATIONS: dict[str, tuple[tuple[str, str], ...]] = {
+        "android": (
+            ("V2RayNG", "https://github.com/2dust/v2rayNG/releases/latest"),
+            ("sing-box", "https://sing-box.sagernet.org/clients/"),
+            ("V2RayTun", "https://v2raytun.com/"),
+            ("NPV Tunnel", "https://play.google.com/store/apps/details?id=com.napsternetlabs.napsternetv"),
+            ("Happ", "https://happ.info/"),
+            ("Incy", "https://github.com/INCY-DEV/incy-platforms/releases/latest"),
+        ),
+        "ios": (
+            ("Shadowrocket", "https://apps.apple.com/us/app/shadowrocket/id932747118"),
+            ("V2Box", "https://apps.apple.com/us/app/v2box-v2ray-client/id6446814690"),
+            ("Streisand", "https://apps.apple.com/us/app/streisand/id6450534064"),
+            ("V2RayTun", "https://apps.apple.com/en/app/v2raytun/id6476628951"),
+            ("NPV Tunnel", "https://apps.apple.com/us/app/npv-tunnel/id1629465476"),
+            ("Happ", "https://happ.info/"),
+            ("Incy", "https://apps.apple.com/us/app/incy/id6756943388"),
+        ),
+        "desktop": (
+            ("V2RayN", "https://github.com/2dust/v2rayN/releases/latest"),
+            ("Happ", "https://happ.info/"),
+            ("PrizrakBox", "https://docs.prizrak.app/install/"),
+            ("Incy", "https://github.com/INCY-DEV/incy-platforms/releases/latest"),
+        ),
+    }
+    _SUPPORT_CATEGORIES = {
+        "link": "Ссылка не открывается",
+        "connection": "Подключение не работает",
+        "device": "Сменил устройство",
+        "directions": "Мало или нет направлений",
+        "other": "Другое",
+    }
 
     def __init__(
         self,
@@ -845,12 +882,19 @@ class TelegramRegistrationService:
             email_display=access.email_display,
             customer_status=access.customer_status,
             blocked_from_status=access.blocked_from_status,
+            initial_provisioning_ready=access.initial_provisioning_ready,
         )
         if decision.state == "suspended":
             return None, TelegramOutboundMessage(
                 chat_id,
                 "Доступ временно приостановлен. Если это ошибка, напишите администратору.",
                 self._approved_menu(suspended=True),
+            )
+        if decision.state == "provisioning":
+            return None, TelegramOutboundMessage(
+                chat_id,
+                "Доступ ещё готовится на всех назначенных нодах. Проверьте статус позже.",
+                self._approved_menu(),
             )
         if not decision.can_receive_subscription:
             return None, TelegramOutboundMessage(chat_id, "Сейчас доступ ещё не готов.", self._approved_menu())
@@ -872,42 +916,41 @@ class TelegramRegistrationService:
             return None, TelegramOutboundMessage(chat_id, "Ссылку пока нельзя выдать. Пожалуйста, попробуйте позже.", self._approved_menu())
         return f"{self._public_base_url}/api/v1/sub/{token}", None
 
-    def _subscription_message(self, *, user_id: int, chat_id: int, rotate: bool = False) -> TelegramOutboundMessage:
+    def _subscription_message(
+        self,
+        *,
+        user_id: int,
+        chat_id: int,
+        rotate: bool = False,
+        edit_message_id: int | None = None,
+    ) -> TelegramOutboundMessage:
+        """Prepare a subscription URL for the current user interaction.
+
+        A URL requested via an inline callback replaces that callback's own
+        access-choice card.  A historical receipt is deliberately not used as
+        an edit target: it is delivery/audit data, not navigation state.
+        """
         url, unavailable = self._subscription_url(user_id=user_id, chat_id=chat_id, rotate=rotate)
         if unavailable is not None:
             return unavailable
         assert url is not None
         token_digest = hashlib.sha256(url.rsplit("/", 1)[-1].encode("utf-8")).hexdigest()
         delivery = TelegramSubscriptionDelivery(user_id, token_digest)
-        receipt = self._registry.get_subscription_message_receipt(user_id)
-        if (
-            not rotate
-            and receipt is not None
-            and receipt.chat_id == chat_id
-            and receipt.token_digest == token_digest
-        ):
-            return TelegramOutboundMessage(
-                chat_id,
-                f"{self._SUBSCRIPTION_REUSE_PREFIX}\n{url}",
-                self._approved_menu(),
-                edit_message_id=receipt.message_id,
-                subscription_delivery=delivery,
-            )
         return TelegramOutboundMessage(
             chat_id,
             f"{self._SUBSCRIPTION_INITIAL_PREFIX}\n{url}",
             self._approved_menu(),
+            edit_message_id=None if rotate else edit_message_id,
             subscription_delivery=delivery,
         )
 
     def fallback_subscription_message(self, message: TelegramOutboundMessage) -> TelegramOutboundMessage | None:
-        """Use a new message only when Telegram cannot edit the original one anymore."""
+        """Use a new message only when Telegram cannot edit the current card anymore."""
 
         if message.edit_message_id is None or message.subscription_delivery is None:
             return None
         return replace(
             message,
-            text=message.text.replace(self._SUBSCRIPTION_REUSE_PREFIX, self._SUBSCRIPTION_INITIAL_PREFIX, 1),
             edit_message_id=None,
         )
 
@@ -936,19 +979,25 @@ class TelegramRegistrationService:
             ]},
         )
 
-    @staticmethod
-    def _setup_guide(chat_id: int, platform: str) -> TelegramOutboundMessage:
-        headings = {"android": "Android", "ios": "iPhone / iPad", "desktop": "Компьютер"}
+    @classmethod
+    def _setup_guide(cls, chat_id: int, platform: str) -> TelegramOutboundMessage:
+        headings = {"android": "Android", "ios": "iPhone / iPad / Mac", "desktop": "Компьютер"}
         heading = headings.get(platform)
         if heading is None:
-            return TelegramOutboundMessage(chat_id, "Выберите устройство из списка.", TelegramRegistrationService._approved_menu())
+            return TelegramOutboundMessage(chat_id, "Выберите устройство из списка.", cls._approved_menu())
+        apps = cls._SETUP_APPLICATIONS[platform]
+        buttons = [[{"text": name, "url": url}] for name, url in apps]
+        buttons.extend((
+            [{"text": "◎ Получить доступ", "callback_data": "subscription:get"}],
+            [{"text": "⌁ Проверить готовность", "callback_data": "setup:diagnostics"}],
+            [{"text": "↻ Повторить инструкцию", "callback_data": f"setup:{platform}"}],
+            [{"text": "← Устройства", "callback_data": "setup:menu"}],
+            [{"text": "← Меню", "callback_data": "menu:home"}],
+        ))
         return TelegramOutboundMessage(
             chat_id,
-            f"Подключение: {heading}\n\n1. Установите совместимое приложение для подписок.\n2. В нём выберите добавление по URL или сканирование QR.\n3. Откройте «◎ Получить доступ» и выберите ссылку или QR-код.\n4. Не пересылайте ссылку и QR: это ваш личный доступ.",
-            {"inline_keyboard": [
-                [{"text": "← Устройства", "callback_data": "setup:menu"}],
-                [{"text": "← Меню", "callback_data": "menu:home"}],
-            ]},
+            f"Подключение: {heading} · инструкция {cls._SETUP_VERSION}\n\n1. Нажмите на название приложения ниже — Telegram откроет официальный источник.\n2. Установите приложение и выберите импорт по URL или QR-коду.\n3. Вернитесь в бот: «◎ Получить доступ» → ссылка или QR.\n4. Не пересылайте ссылку и QR: это ваш личный доступ.",
+            {"inline_keyboard": buttons},
         )
 
     def _setup_qr_message(self, *, user_id: int, chat_id: int) -> TelegramOutboundMessage:
@@ -963,7 +1012,10 @@ class TelegramRegistrationService:
         return TelegramOutboundMessage(
             chat_id,
             "Ваш QR-код доступа. Не пересылайте его другим людям.",
-            {"inline_keyboard": [[{"text": "← Способы доступа", "callback_data": "subscription:get"}]]},
+            {"inline_keyboard": [
+                [{"text": "⌫ Удалить QR", "callback_data": "qr:delete"}],
+                [{"text": "← Способы доступа", "callback_data": "subscription:get"}],
+            ]},
             photo_png=png,
             photo_filename="access-qr.png",
         )
@@ -975,7 +1027,13 @@ class TelegramRegistrationService:
         lifetime = None
         if access.customer_id is not None and access.email_display:
             lifetime = self._traffic.refresh_for_access(customer_id=access.customer_id, email=access.email_display)
-        traffic_line = f"\nТрафик за всё время: {self._format_bytes(lifetime.lifetime_bytes)}." if lifetime else ""
+        if lifetime is None or not lifetime.last_observed_at:
+            traffic_line = "\nДанные о трафике пока не поступали."
+        else:
+            traffic_line = (
+                f"\nТрафик за всё время: {self._format_bytes(lifetime.lifetime_bytes)}."
+                f"\nПоследнее обновление данных: {lifetime.last_observed_at}."
+            )
         return TelegramOutboundMessage(
             chat_id,
             f"Статус доступа: {access.customer_status}.{traffic_line}",
@@ -984,27 +1042,90 @@ class TelegramRegistrationService:
 
     def _preferences_message(self, user_id: int, chat_id: int) -> TelegramOutboundMessage:
         preferences = self._registry.get_notification_preferences(user_id)
-        state = "включены" if preferences.background_notifications_enabled else "выключены"
-        action = "Выключить" if preferences.background_notifications_enabled else "Включить"
+        background_state = "включены" if preferences.background_notifications_enabled else "выключены"
+        expiry_state = "включены" if preferences.expiry_reminders_enabled else "выключены"
+        traffic_state = "включены" if preferences.traffic_reminders_enabled else "выключены"
+        background_action = "Выключить" if preferences.background_notifications_enabled else "Включить"
+        expiry_action = "Выключить" if preferences.expiry_reminders_enabled else "Включить"
+        traffic_action = "Выключить" if preferences.traffic_reminders_enabled else "Включить"
         return TelegramOutboundMessage(
             chat_id,
-            f"Фоновые уведомления: {state}. Ответы на ваши команды приходят всегда.",
+            "Фоновые уведомления: " + background_state + ".\n"
+            "Напоминания о сроке: " + expiry_state + ".\n"
+            "Напоминания о трафике: " + traffic_state + ".\n\n"
+            "Ответы на ваши команды приходят всегда.",
             {"inline_keyboard": [
-                [{"text": action, "callback_data": "preferences:toggle-background"}],
+                [{"text": f"{background_action} фоновые", "callback_data": "preferences:toggle-background"}],
+                [{"text": f"{expiry_action} напоминания о сроке", "callback_data": "preferences:toggle-expiry"}],
+                [{"text": f"{traffic_action} напоминания о трафике", "callback_data": "preferences:toggle-traffic"}],
                 [{"text": "← Меню", "callback_data": "menu:home"}],
             ]},
         )
 
     @staticmethod
-    def _help_message(chat_id: int) -> TelegramOutboundMessage:
+    def _required_introduction_message(chat_id: int) -> TelegramOutboundMessage:
+        return TelegramOutboundMessage(
+            chat_id,
+            "Здравствуйте.\n\n"
+            "⚠️ ВНИМАНИЕ\n\n"
+            "Чтобы отправить заявку, напишите одним сообщением немного о себе и причине обращения. "
+            "Без такого сообщения заявка не будет отправлена.",
+        )
+
+    def _diagnostics_message(self, user_id: int, chat_id: int) -> TelegramOutboundMessage:
+        access = self._registry.get_customer_access(user_id)
+        decision = resolve_effective_access(
+            access_status=access.access_status,
+            customer_id=access.customer_id,
+            email_display=access.email_display,
+            customer_status=access.customer_status,
+            blocked_from_status=access.blocked_from_status,
+            initial_provisioning_ready=access.initial_provisioning_ready,
+        )
+        if decision.state == "provisioning":
+            text = "Проверка готовности\n\nРегистрация ещё не завершилась на всех назначенных нодах. Доступ появится автоматически после успешного завершения всего набора."
+        elif decision.can_receive_subscription:
+            text = "Проверка готовности\n\nДоступ готов. Можно получить ссылку или QR-код и импортировать его в выбранное приложение."
+        elif decision.state == "suspended":
+            text = "Проверка готовности\n\nДоступ приостановлен. Через меню можно отправить сообщение администратору."
+        else:
+            text = "Проверка готовности\n\nСейчас доступ недоступен. Попробуйте позже или откройте помощь."
+        return TelegramOutboundMessage(
+            chat_id,
+            text,
+            {"inline_keyboard": [[{"text": "← Меню", "callback_data": "menu:home"}]]},
+        )
+
+    def _help_message(self, chat_id: int) -> TelegramOutboundMessage:
+        notice = self._registry.get_service_notice()
+        notice_text = f"\n\nВременное сообщение:\n{notice.body}" if notice.is_active and notice.body else ""
         return TelegramOutboundMessage(
             chat_id,
             "Помощь\n\n"
             "◎ Получить доступ — предлагает персональную ссылку или QR-код.\n"
             "↻ Сменить ссылку — сразу отключает предыдущую.\n"
             "⚙ Уведомления — включает или выключает фоновые сообщения.\n\n"
-            "Если доступ приостановлен, в меню появится кнопка для сообщения администратору.",
-            {"inline_keyboard": [[{"text": "← Меню", "callback_data": "menu:home"}]]},
+            "Если доступ приостановлен, в меню появится кнопка для сообщения администратору."
+            + notice_text,
+            {"inline_keyboard": [
+                [{"text": "⊞ Выбрать приложение", "callback_data": "setup:menu"}],
+                [{"text": "⌁ Проверить готовность", "callback_data": "setup:diagnostics"}],
+                [{"text": "✉ Написать в поддержку", "callback_data": "support:menu"}],
+                [{"text": "← Меню", "callback_data": "menu:home"}],
+            ]},
+        )
+
+    @classmethod
+    def _support_category_message(cls, chat_id: int) -> TelegramOutboundMessage:
+        rows = [
+            [{"text": label, "callback_data": f"support:category:{category}"}]
+            for category, label in cls._SUPPORT_CATEGORIES.items()
+        ]
+        rows.append([{"text": "← Помощь", "callback_data": "help"}])
+        return TelegramOutboundMessage(
+            chat_id,
+            "Поддержка\n\nВыберите тему обращения. Затем отправьте одно сообщение с описанием проблемы.",
+            {"inline_keyboard": rows},
         )
 
     def handle_update(self, update: dict[str, Any]) -> list[TelegramOutboundMessage]:
@@ -1014,7 +1135,7 @@ class TelegramRegistrationService:
         actor = _private_actor(update)
         if actor is None:
             return []
-        user_id, chat_id, sender, text, callback_data, phone_number = actor
+        user_id, chat_id, sender, text, callback_data, phone_number, source_message_id = actor
         update_type = "callback_query" if callback_data is not None else "message"
         digest_source = {
             "update_id": update_id,
@@ -1066,39 +1187,79 @@ class TelegramRegistrationService:
             return [message]
 
         if text and text.strip().startswith("/start"):
-            pending = self._registry.create_pending_application(user_id)
-            if pending.created:
+            if identity.access_status == "approved":
+                return [self._approved_status(user_id, chat_id)]
+            activated = self._registry.activate_preapproval(user_id)
+            if activated is not None:
+                return [self._approved_status(user_id, chat_id)]
+            if identity.access_status == "pending":
+                return no_op(TelegramOutboundMessage(chat_id, "Заявка уже ожидает проверки. Пожалуйста, дождитесь ответа."))
+            if self._registry.request_required_introduction(user_id):
+                return [self._required_introduction_message(chat_id)]
+            return no_op(TelegramOutboundMessage(chat_id, "Сейчас это действие недоступно."))
+
+        if callback_data == "registration:intro":
+            if identity.access_status in {"eligible", "rejected"}:
+                self._registry.request_required_introduction(user_id)
+                return [self._required_introduction_message(chat_id)]
+            if identity.access_status == "pending":
                 return [
                     TelegramOutboundMessage(
                         chat_id,
-                        "Здравствуйте. Ваша заявка принята и ожидает проверки. Пожалуйста, дождитесь ответа.",
-                        {"inline_keyboard": [[{"text": "◎ Представиться", "callback_data": "registration:intro"}]]},
+                        "Представление обязательно. Отправьте одним сообщением немного о себе и причине обращения.",
                     )
                 ]
-            if pending.identity.access_status == "approved":
-                return [self._approved_status(user_id, chat_id)]
-            return no_op(TelegramOutboundMessage(chat_id, "Заявка уже ожидает проверки. Пожалуйста, дождитесь ответа."))
-
-        if callback_data == "registration:intro":
-            if identity.access_status != "pending":
-                return no_op(TelegramOutboundMessage(chat_id, "Сейчас представление не требуется."))
-            return [
-                TelegramOutboundMessage(
-                    chat_id,
-                    "Если хотите, коротко расскажите о себе и причине обращения одним сообщением. Это необязательно.",
-                )
-            ]
+            return no_op(TelegramOutboundMessage(chat_id, "Сейчас представление не требуется."))
 
         if identity.access_status == "approved":
             access = self._registry.get_customer_access(user_id)
             if callback_data == "subscription:get":
                 return [self._access_choice_message(chat_id)]
-            if callback_data in {"subscription:link", "subscription:rotate:confirm"}:
-                return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate=callback_data.endswith(":confirm"))]
+            if callback_data == "subscription:link":
+                return [
+                    self._subscription_message(
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        edit_message_id=source_message_id,
+                    )
+                ]
+            if callback_data == "subscription:rotate:confirm":
+                return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate=True)]
             if callback_data == "setup:menu":
                 return [self._setup_menu(chat_id)]
             if callback_data in {"setup:android", "setup:ios", "setup:desktop"}:
                 return [self._setup_guide(chat_id, callback_data.removeprefix("setup:"))]
+            if callback_data == "setup:diagnostics":
+                return [self._diagnostics_message(user_id, chat_id)]
+            if callback_data == "support:menu":
+                return [self._support_category_message(chat_id)]
+            if callback_data and callback_data.startswith("support:category:"):
+                category = callback_data.removeprefix("support:category:")
+                label = self._SUPPORT_CATEGORIES.get(category)
+                if label is None:
+                    return [TelegramOutboundMessage(chat_id, "Выберите тему обращения из списка.", self._approved_menu())]
+                try:
+                    self._registry.begin_support_request(telegram_user_id=user_id, category=category)
+                except TelegramRegistryError as exc:
+                    message = (
+                        "У вас уже есть открытое обращение. Дождитесь ответа администратора."
+                        if "open support" in str(exc)
+                        else "Новое обращение пока недоступно. Попробуйте позже."
+                    )
+                    return [TelegramOutboundMessage(chat_id, message, self._approved_menu())]
+                return [
+                    TelegramOutboundMessage(
+                        chat_id,
+                        f"Тема: {label}.\n\nТеперь отправьте одним сообщением описание проблемы. Максимум 1000 символов.",
+                    )
+                ]
+            if callback_data == "qr:delete":
+                if source_message_id is None:
+                    return [TelegramOutboundMessage(chat_id, "Не удалось определить QR-сообщение. Откройте новый QR-код при необходимости.", self._approved_menu())]
+                return [
+                    TelegramOutboundMessage(chat_id, "", delete_message_id=source_message_id),
+                    TelegramOutboundMessage(chat_id, "QR-код удалён из чата.", self._approved_menu()),
+                ]
             if callback_data in {"subscription:qr", "setup:qr"}:
                 return [self._setup_qr_message(user_id=user_id, chat_id=chat_id)]
             if callback_data == "subscription:rotate":
@@ -1114,6 +1275,12 @@ class TelegramRegistrationService:
             if callback_data == "preferences:toggle-background":
                 self._registry.toggle_background_notifications(user_id)
                 return [self._preferences_message(user_id, chat_id)]
+            if callback_data == "preferences:toggle-expiry":
+                self._registry.toggle_expiry_reminders(user_id)
+                return [self._preferences_message(user_id, chat_id)]
+            if callback_data == "preferences:toggle-traffic":
+                self._registry.toggle_traffic_reminders(user_id)
+                return [self._preferences_message(user_id, chat_id)]
             if callback_data == "menu:home":
                 return [self._approved_status(user_id, chat_id)]
             if callback_data == "help":
@@ -1122,12 +1289,34 @@ class TelegramRegistrationService:
                 return [self._approved_status(user_id, chat_id)]
             if text and text.strip().startswith("/subscription"):
                 return [self._subscription_message(user_id=user_id, chat_id=chat_id)]
+            if text:
+                try:
+                    support_request = self._registry.submit_pending_support_request(
+                        telegram_user_id=user_id, body=text
+                    )
+                except TelegramRegistryError:
+                    return [
+                        TelegramOutboundMessage(
+                            chat_id,
+                            "Не удалось принять обращение. Проверьте, что сообщение непустое и не длиннее 1000 символов.",
+                            self._approved_menu(),
+                        )
+                    ]
+                if support_request is not None:
+                    return [
+                        TelegramOutboundMessage(
+                            chat_id,
+                            "Обращение принято и передано администратору.",
+                            self._approved_menu(),
+                        )
+                    ]
             decision = resolve_effective_access(
                 access_status=access.access_status,
                 customer_id=access.customer_id,
                 email_display=access.email_display,
                 customer_status=access.customer_status,
                 blocked_from_status=access.blocked_from_status,
+                initial_provisioning_ready=access.initial_provisioning_ready,
             )
             if text and decision.can_submit_appeal:
                 try:
@@ -1147,5 +1336,31 @@ class TelegramRegistrationService:
             if saved:
                 return [TelegramOutboundMessage(chat_id, "Спасибо. Заявка по-прежнему ожидает проверки.")]
             return no_op(TelegramOutboundMessage(chat_id, "Заявка уже ожидает проверки. Пожалуйста, дождитесь ответа."))
+
+        if text and not text.strip().startswith("/") and identity.access_status in {"eligible", "rejected"}:
+            try:
+                pending = self._registry.submit_required_introduction(
+                    user_id, text, maximum_chars=self._introduction_max_chars
+                )
+            except TelegramRegistryError:
+                return [
+                    TelegramOutboundMessage(
+                        chat_id,
+                        "⚠️ ВНИМАНИЕ\n\nНапишите непустое сообщение о себе и причине обращения, но не длиннее допустимого размера.",
+                    )
+                ]
+            if pending.created:
+                return [
+                    TelegramOutboundMessage(
+                        chat_id,
+                        "Спасибо. Заявка отправлена и ожидает проверки администратора.",
+                    )
+                ]
+            return no_op(
+                TelegramOutboundMessage(
+                    chat_id,
+                    "Сначала нажмите /start, затем отправьте одним сообщением немного о себе и причине обращения.",
+                )
+            )
 
         return no_op(TelegramOutboundMessage(chat_id, "Для начала отправьте /start."))

@@ -93,3 +93,17 @@ def test_sender_edits_the_original_subscription_message_instead_of_sending_anoth
     }
     assert timeout == 10
     assert message_id == 101
+
+
+def test_sender_deletes_qr_message_without_sending_its_text():
+    transport = _Transport()
+    result = TelegramApiSender("test-token", transport=transport).send(
+        TelegramOutboundMessage(chat_id=42, text="ignored", delete_message_id=77)
+    )
+
+    request, timeout = transport.requests[0]
+    assert request.full_url.endswith("/deleteMessage")
+    assert json.loads(request.data) == {"chat_id": 42, "message_id": 77}
+    assert b"ignored" not in request.data
+    assert timeout == 10
+    assert result is None

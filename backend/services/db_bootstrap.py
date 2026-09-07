@@ -231,6 +231,7 @@ def init_db(db_path: str) -> None:
                         CHECK(access_status IN ('eligible', 'pending', 'approved', 'rejected', 'blocked')),
                       request_code TEXT DEFAULT NULL UNIQUE,
                       application_attempt INTEGER NOT NULL DEFAULT 0 CHECK(application_attempt >= 0),
+                      introduction_requested_at TEXT DEFAULT NULL,
                       requested_at TEXT DEFAULT NULL,
                       approved_at TEXT DEFAULT NULL,
                       rejected_at TEXT DEFAULT NULL,
@@ -259,16 +260,54 @@ def init_db(db_path: str) -> None:
         }
         if "phone_number" not in identity_columns:
             conn.execute("ALTER TABLE telegram_identities ADD COLUMN phone_number TEXT DEFAULT NULL")
+        if "introduction_requested_at" not in identity_columns:
+            conn.execute(
+                "ALTER TABLE telegram_identities "
+                "ADD COLUMN introduction_requested_at TEXT DEFAULT NULL"
+            )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_preapprovals
+                     (telegram_user_id INTEGER PRIMARY KEY,
+                      customer_id INTEGER NOT NULL,
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      created_by TEXT NOT NULL,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_preapprovals_customer "
+            "ON telegram_preapprovals(customer_id)"
+        )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_notification_preferences
                      (telegram_user_id INTEGER PRIMARY KEY,
                       background_notifications_enabled INTEGER NOT NULL DEFAULT 1
                         CHECK(background_notifications_enabled IN (0, 1)),
+                      expiry_reminders_enabled INTEGER NOT NULL DEFAULT 1
+                        CHECK(expiry_reminders_enabled IN (0, 1)),
+                      traffic_reminders_enabled INTEGER NOT NULL DEFAULT 0
+                        CHECK(traffic_reminders_enabled IN (0, 1)),
                       row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
                       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
                         ON DELETE CASCADE)"""
         )
+        notification_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(telegram_notification_preferences)").fetchall()
+        }
+        if "expiry_reminders_enabled" not in notification_columns:
+            conn.execute(
+                "ALTER TABLE telegram_notification_preferences "
+                "ADD COLUMN expiry_reminders_enabled INTEGER NOT NULL DEFAULT 1"
+            )
+        if "traffic_reminders_enabled" not in notification_columns:
+            # Traffic notifications are opt-in. Existing users must not start
+            # receiving a new category merely because the application upgrades.
+            conn.execute(
+                "ALTER TABLE telegram_notification_preferences "
+                "ADD COLUMN traffic_reminders_enabled INTEGER NOT NULL DEFAULT 0"
+            )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_applications
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -319,6 +358,75 @@ def init_db(db_path: str) -> None:
             conn.execute(
                 "ALTER TABLE telegram_appeals ADD COLUMN row_version INTEGER NOT NULL DEFAULT 1"
             )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_user_drafts
+                     (telegram_user_id INTEGER PRIMARY KEY,
+                      action TEXT NOT NULL CHECK(action IN ('support_request')),
+                      customer_id INTEGER NOT NULL,
+                      category TEXT NOT NULL CHECK(category IN (
+                        'link', 'connection', 'device', 'directions', 'other')),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_support_requests
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      telegram_user_id INTEGER NOT NULL,
+                      customer_id INTEGER NOT NULL,
+                      category TEXT NOT NULL CHECK(category IN (
+                        'link', 'connection', 'device', 'directions', 'other')),
+                      body TEXT NOT NULL CHECK(length(trim(body)) BETWEEN 1 AND 1000),
+                      status TEXT NOT NULL DEFAULT 'open'
+                        CHECK(status IN ('open', 'read', 'resolved')),
+                      admin_response TEXT DEFAULT NULL CHECK(
+                        admin_response IS NULL OR length(trim(admin_response)) BETWEEN 1 AND 1000),
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      resolved_at TEXT DEFAULT NULL,
+                      FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT)"""
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_support_one_open "
+            "ON telegram_support_requests(customer_id) WHERE status IN ('open', 'read')"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_support_status_created "
+            "ON telegram_support_requests(status, created_at)"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_reminder_receipts
+                     (customer_id INTEGER NOT NULL,
+                      reminder_kind TEXT NOT NULL CHECK(reminder_kind IN ('expiry')),
+                      threshold_days INTEGER NOT NULL CHECK(threshold_days IN (1, 3, 7)),
+                      expires_at INTEGER NOT NULL CHECK(expires_at > 0),
+                      queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      PRIMARY KEY(customer_id, reminder_kind, threshold_days, expires_at),
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_traffic_reminder_receipts
+                     (customer_id INTEGER NOT NULL,
+                      quota_plan_digest TEXT NOT NULL,
+                      threshold_percent INTEGER NOT NULL CHECK(threshold_percent IN (80, 95, 100)),
+                      queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      PRIMARY KEY(customer_id, quota_plan_digest, threshold_percent),
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_service_notice
+                     (id INTEGER PRIMARY KEY CHECK(id = 1),
+                      body TEXT DEFAULT NULL CHECK(body IS NULL OR length(trim(body)) BETWEEN 1 AND 1000),
+                      is_active INTEGER NOT NULL DEFAULT 0 CHECK(is_active IN (0, 1)),
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      updated_by TEXT NOT NULL DEFAULT 'system',
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""
+        )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_node_policies
                      (node_id INTEGER PRIMARY KEY,

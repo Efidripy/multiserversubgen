@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 from datetime import datetime, timezone
 
@@ -58,8 +59,36 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "telegram_admin_drafts",
             "telegram_admin_message_drafts",
             "telegram_broadcast_jobs",
+            "telegram_user_drafts",
+            "telegram_support_requests",
+            "telegram_service_notice",
+            "telegram_traffic_reminder_receipts",
         } <= tables
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+
+def test_notification_preferences_migrate_traffic_reminders_as_opt_in(tmp_path):
+    db_path = str(tmp_path / "legacy-admin.db")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE telegram_notification_preferences
+                (telegram_user_id INTEGER PRIMARY KEY,
+                 background_notifications_enabled INTEGER NOT NULL DEFAULT 1,
+                 expiry_reminders_enabled INTEGER NOT NULL DEFAULT 1,
+                 row_version INTEGER NOT NULL DEFAULT 1,
+                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)
+            """
+        )
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        columns = {
+            row[1]: row[4]
+            for row in conn.execute("PRAGMA table_info(telegram_notification_preferences)").fetchall()
+        }
+    assert "traffic_reminders_enabled" in columns
+    assert columns["traffic_reminders_enabled"] == "0"
 
 
 def test_subscription_message_receipt_contains_only_a_token_digest_and_message_coordinates(tmp_path):
@@ -221,6 +250,104 @@ def test_pending_application_is_deduplicated_and_creates_one_admin_outbox_event(
     with connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM telegram_applications").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM telegram_outbox").fetchone()[0] == 1
+
+
+def test_required_introduction_creates_one_complete_request_only_after_an_explicit_prompt(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username=None, first_name="Name", last_name=None
+    )
+
+    assert registry.submit_required_introduction(42, "Хочу подключиться", maximum_chars=700).created is False
+    assert registry.request_required_introduction(42) is True
+    with pytest.raises(TelegramRegistryError, match="introduction length"):
+        registry.submit_required_introduction(42, "   ", maximum_chars=700)
+
+    first = registry.submit_required_introduction(42, "Хочу подключиться", maximum_chars=700)
+    second = registry.submit_required_introduction(42, "Повтор", maximum_chars=700)
+
+    assert first.created is True
+    assert first.identity.access_status == "pending"
+    assert second.created is False
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT introduction_text FROM telegram_applications WHERE telegram_user_id = 42"
+        ).fetchone() == ("Хочу подключиться",)
+        assert conn.execute(
+            "SELECT event_type FROM telegram_outbox ORDER BY id"
+        ).fetchall() == [
+            ("admin_request_created",),
+            ("admin_introduction_submitted",),
+        ]
+
+
+def test_existing_customer_preapproval_activates_only_on_first_private_start_and_unlink_keeps_bindings(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+    customer_id = registry.create_customer(
+        email_display="preapproved-user", origin="existing", email_source="existing", public_code="preapproved-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'preapproved-client', 'preapproved-sub', 'preapproved-user',
+                    'existing_bound', 'confirmed', 1, 1)
+            """,
+            (customer_id,),
+        )
+
+    preapproval = registry.create_existing_customer_preapproval(
+        telegram_user_id=42,
+        customer_id=customer_id,
+        expected_preapproval_version=0,
+        idempotency_key="preapproval-42",
+        created_by="admin",
+    )
+    assert preapproval.customer_email == "preapproved-user"
+    assert registry.get_preapproval(42) is not None
+
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="preapproved", first_name="Preapproved", last_name=None
+    )
+    activated = registry.activate_preapproval(42)
+
+    assert activated is not None
+    assert activated.customer_id == customer_id
+    assert registry.get_preapproval(42) is None
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT access_status, customer_id, row_version FROM telegram_identities WHERE telegram_user_id = 42"
+        ).fetchone()
+        binding_count = conn.execute(
+            "SELECT COUNT(*) FROM customer_node_bindings WHERE customer_id = ?", (customer_id,)
+        ).fetchone()[0]
+    assert row[:2] == ("approved", customer_id)
+    assert binding_count == 1
+
+    unlinked = registry.unlink_identity(
+        telegram_user_id=42,
+        customer_id=customer_id,
+        expected_identity_version=int(row[2]),
+        idempotency_key="unlink-42",
+        unlinked_by="admin",
+    )
+
+    assert unlinked.customer_id == customer_id
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT access_status, customer_id FROM telegram_identities WHERE telegram_user_id = 42"
+        ).fetchone() == ("eligible", None)
+        assert conn.execute(
+            "SELECT COUNT(*) FROM customer_node_bindings WHERE customer_id = ?", (customer_id,)
+        ).fetchone()[0] == 1
 
 
 def test_introduction_is_one_time_plain_text_for_the_current_pending_attempt(tmp_path):
@@ -953,3 +1080,98 @@ def test_broadcast_queue_excludes_pending_blocked_deleted_and_opted_out_identiti
             "SELECT entity_id FROM telegram_outbox WHERE event_type = 'registered_broadcast'"
         ).fetchall()
     assert rows == [(f"{result.broadcast_id}:41",)]
+
+
+def test_active_customer_support_request_is_durable_singleton_and_has_a_resolution_cooldown(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="support-user", origin="telegram", email_source="telegram_username", public_code="support-user"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="support_user", first_name="Support", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+
+    registry.begin_support_request(telegram_user_id=42, category="connection")
+    request = registry.submit_pending_support_request(
+        telegram_user_id=42, body="Подключение не устанавливается."
+    )
+
+    assert request is not None
+    assert request.category == "connection"
+    assert request.body == "Подключение не устанавливается."
+    assert request.status == "open"
+    with pytest.raises(TelegramRegistryError, match="open support"):
+        registry.begin_support_request(telegram_user_id=42, category="other")
+
+    result = registry.resolve_support_request(
+        support_request_id=request.support_request_id,
+        expected_row_version=request.row_version,
+        response="Проверьте, пожалуйста, настройки приложения.",
+        idempotency_key="resolve-support-42",
+        resolved_by="admin",
+    )
+
+    assert result.status == "resolved"
+    assert result.row_version == request.row_version + 1
+    with pytest.raises(TelegramRegistryError, match="cooldown"):
+        registry.begin_support_request(telegram_user_id=42, category="other")
+    with pytest.raises(VersionConflictError):
+        registry.resolve_support_request(
+            support_request_id=request.support_request_id,
+            expected_row_version=request.row_version,
+            response=None,
+            idempotency_key="resolve-support-stale",
+            resolved_by="admin",
+        )
+    with pytest.raises(IdempotencyConflictError):
+        registry.resolve_support_request(
+            support_request_id=request.support_request_id,
+            expected_row_version=request.row_version,
+            response="Другой ответ",
+            idempotency_key="resolve-support-42",
+            resolved_by="admin",
+        )
+
+
+def test_service_notice_is_versioned_idempotent_and_can_be_cleared(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+
+    initial = registry.get_service_notice()
+    created = registry.set_service_notice(
+        body="Проводим краткие технические работы.",
+        expected_row_version=initial.row_version,
+        idempotency_key="notice-create",
+        updated_by="admin",
+    )
+    replay = registry.set_service_notice(
+        body="Проводим краткие технические работы.",
+        expected_row_version=initial.row_version,
+        idempotency_key="notice-create",
+        updated_by="admin",
+    )
+    cleared = registry.set_service_notice(
+        body=None,
+        expected_row_version=created.row_version,
+        idempotency_key="notice-clear",
+        updated_by="admin",
+    )
+
+    assert initial.body is None and initial.is_active is False and initial.row_version == 0
+    assert created.is_active is True
+    assert replay == created
+    assert cleared.is_active is False
+    assert cleared.body is None
+    with pytest.raises(VersionConflictError):
+        registry.set_service_notice(
+            body="Устаревшая запись", expected_row_version=created.row_version,
+            idempotency_key="notice-stale", updated_by="admin"
+        )
