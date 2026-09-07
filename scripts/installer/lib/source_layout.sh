@@ -33,6 +33,8 @@ mssg_resolve_source_layout() {
         "monitoring/prometheus/rules.yml" \
         "monitoring/loki/loki-config.yml" \
         "monitoring/promtail/promtail-config.yml" \
+        "monitoring/promtail/promtail-journal-scrape.yml" \
+        "scripts/ops/reconcile-promtail-config.sh" \
         "monitoring/grafana/sub-manager-dashboard.json" \
         "monitoring/grafana/adguard-overview-dashboard.json" \
         "systemd/sub-manager.service"; then
@@ -45,6 +47,8 @@ mssg_resolve_source_layout() {
         MSSG_PROMETHEUS_RULES="$canonical_root/monitoring/prometheus/rules.yml"
         MSSG_LOKI_CONFIG="$canonical_root/monitoring/loki/loki-config.yml"
         MSSG_PROMTAIL_CONFIG="$canonical_root/monitoring/promtail/promtail-config.yml"
+        MSSG_PROMTAIL_JOURNAL_CONFIG="$canonical_root/monitoring/promtail/promtail-journal-scrape.yml"
+        MSSG_PROMTAIL_RECONCILE_SCRIPT="$canonical_root/scripts/ops/reconcile-promtail-config.sh"
         MSSG_GRAFANA_DASHBOARD="$canonical_root/monitoring/grafana/sub-manager-dashboard.json"
         MSSG_GRAFANA_ADGUARD_DASHBOARD="$canonical_root/monitoring/grafana/adguard-overview-dashboard.json"
         MSSG_SYSTEMD_TEMPLATE="$canonical_root/systemd/sub-manager.service"
@@ -65,6 +69,8 @@ mssg_resolve_source_layout() {
         "prometheus/rules.yml" \
         "loki/loki-config.yml" \
         "promtail/promtail-config.yml" \
+        "promtail/promtail-journal-scrape.yml" \
+        "ops/reconcile-promtail-config.sh" \
         "grafana/sub-manager-dashboard.json" \
         "grafana/adguard-overview-dashboard.json" \
         "sub-manager.service"; then
@@ -77,6 +83,8 @@ mssg_resolve_source_layout() {
         MSSG_PROMETHEUS_RULES="$flat_root/prometheus/rules.yml"
         MSSG_LOKI_CONFIG="$flat_root/loki/loki-config.yml"
         MSSG_PROMTAIL_CONFIG="$flat_root/promtail/promtail-config.yml"
+        MSSG_PROMTAIL_JOURNAL_CONFIG="$flat_root/promtail/promtail-journal-scrape.yml"
+        MSSG_PROMTAIL_RECONCILE_SCRIPT="$flat_root/ops/reconcile-promtail-config.sh"
         MSSG_GRAFANA_DASHBOARD="$flat_root/grafana/sub-manager-dashboard.json"
         MSSG_GRAFANA_ADGUARD_DASHBOARD="$flat_root/grafana/adguard-overview-dashboard.json"
         MSSG_SYSTEMD_TEMPLATE="$flat_root/sub-manager.service"
