@@ -279,6 +279,86 @@ class LiveStatsRuntime:
                 **({"identity_stats": projection["identity_stats"]} if isinstance(projection.get("identity_stats"), dict) else {}),
             }
 
+    def get_cached_telegram_quota_usage(
+        self,
+        *,
+        email: str,
+        bindings: tuple[object, ...],
+        max_age_seconds: int,
+    ) -> int | None:
+        """Sum exact current counters for a finite TG quota without any RPC.
+
+        Generic client projections intentionally aggregate every node and
+        inbound that happens to use an email. That is not safe for quota
+        warnings. This reader accepts only a complete, fresh collector snapshot
+        covering every exact local ``node + inbound #1`` binding.
+        """
+
+        if not self.get_latest_snapshot or not email or max_age_seconds < 1 or not bindings:
+            return None
+        snapshot = self.get_latest_snapshot()
+        if not isinstance(snapshot, dict):
+            return None
+        nodes = snapshot.get("nodes")
+        if not isinstance(nodes, list):
+            return None
+        wanted_email = email.casefold()
+        node_map: dict[int, dict] = {}
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            try:
+                node_id = int(node.get("node_id", node.get("id")))
+            except (TypeError, ValueError):
+                continue
+            if node_id in node_map:
+                return None
+            node_map[node_id] = node
+
+        now = time.time()
+        total = 0
+        seen: set[tuple[int, int]] = set()
+        for binding in bindings:
+            try:
+                node_id, inbound_id = int(binding.node_id), int(binding.inbound_id)
+            except (AttributeError, TypeError, ValueError):
+                return None
+            binding_key = (node_id, inbound_id)
+            if binding_key in seen:
+                return None
+            seen.add(binding_key)
+            node = node_map.get(node_id)
+            if not node or not bool(node.get("available", False)):
+                return None
+            try:
+                observed_at = float(node.get("timestamp"))
+            except (TypeError, ValueError):
+                return None
+            if observed_at > now + 60 or now - observed_at > max_age_seconds:
+                return None
+            inbounds = node.get("inbounds")
+            if not isinstance(inbounds, list):
+                return None
+            matching_inbounds = [
+                inbound for inbound in inbounds
+                if isinstance(inbound, dict) and inbound.get("id") == inbound_id
+            ]
+            if len(matching_inbounds) != 1:
+                return None
+            client_stats = matching_inbounds[0].get("clientStats")
+            if not isinstance(client_stats, list):
+                return None
+            matching_clients = [
+                client for client in client_stats
+                if isinstance(client, dict) and str(client.get("email") or "").casefold() == wanted_email
+            ]
+            if len(matching_clients) > 1:
+                return None
+            if matching_clients:
+                client = matching_clients[0]
+                total += self._metric(client.get("up")) + self._metric(client.get("down"))
+        return total
+
     def seed_period_snapshots_from_collector(self, now_ts: Optional[float] = None) -> Dict[str, bool]:
         """Persist current period baselines from collector data, never a fleet read."""
         # Every completed node poll invokes this method.  Without a

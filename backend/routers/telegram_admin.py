@@ -124,6 +124,32 @@ def build_telegram_admin_router(
         require_admin(request)
         return {"items": [asdict(item) for item in registry.list_pending_applications()]}
 
+    @router.get("/api/v1/telegram/preapprovals/{telegram_user_id}")
+    def get_telegram_preapproval(telegram_user_id: int, request: Request):
+        require_admin(request)
+        try:
+            item = registry.get_preapproval(telegram_user_id)
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        if item is None:
+            raise HTTPException(status_code=404, detail="preapproval was not found")
+        return {"item": asdict(item)}
+
+    @router.post("/api/v1/telegram/preapprovals")
+    def create_telegram_preapproval(request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.create_existing_customer_preapproval(
+                telegram_user_id=data.get("telegram_user_id"),
+                customer_id=data.get("customer_id"),
+                expected_preapproval_version=data.get("expected_preapproval_version"),
+                idempotency_key=data.get("idempotency_key"),
+                created_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"preapproval": asdict(result), "remote_io": "not_started"}
+
     @router.get("/api/v1/telegram/identities/blocked")
     def list_blocked_identities(request: Request, limit: int = 100):
         require_admin(request)
@@ -154,6 +180,48 @@ def build_telegram_admin_router(
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
         return {"appeal": asdict(result), "remote_io": "not_started"}
+
+    @router.get("/api/v1/telegram/support")
+    def list_telegram_support_requests(request: Request, status: str = "open", limit: int = 100):
+        require_admin(request)
+        try:
+            return {"items": [asdict(item) for item in registry.list_support_requests(status=status, limit=limit)]}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.post("/api/v1/telegram/support/{support_request_id}/resolve")
+    def resolve_telegram_support_request(support_request_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.resolve_support_request(
+                support_request_id=support_request_id,
+                expected_row_version=data.get("expected_row_version"),
+                response=data.get("response"),
+                idempotency_key=data.get("idempotency_key"),
+                resolved_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"support_request": asdict(result), "remote_io": "not_started"}
+
+    @router.get("/api/v1/telegram/service-notice")
+    def get_telegram_service_notice(request: Request):
+        require_admin(request)
+        return {"notice": asdict(registry.get_service_notice())}
+
+    @router.put("/api/v1/telegram/service-notice")
+    def set_telegram_service_notice(request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.set_service_notice(
+                body=data.get("body"),
+                expected_row_version=data.get("expected_row_version"),
+                idempotency_key=data.get("idempotency_key"),
+                updated_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"notice": asdict(result), "remote_io": "not_started"}
 
     @router.get("/api/v1/telegram/requests/{telegram_user_id}")
     def get_pending_request(telegram_user_id: int, request: Request):
@@ -283,6 +351,21 @@ def build_telegram_admin_router(
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
         return {"identity": asdict(result)}
+
+    @router.post("/api/v1/telegram/identities/{telegram_user_id}/unlink")
+    def unlink_identity(telegram_user_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.unlink_identity(
+                telegram_user_id=telegram_user_id,
+                customer_id=data.get("customer_id"),
+                expected_identity_version=data.get("expected_identity_version"),
+                idempotency_key=data.get("idempotency_key"),
+                unlinked_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"unlink": asdict(result), "remote_io": "not_started"}
 
     @router.get("/api/v1/telegram/jobs")
     def list_provisioning_jobs(request: Request, limit: int = 100):
