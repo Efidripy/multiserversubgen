@@ -454,9 +454,26 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
 
     assert any(button[0]["text"] == "⊞ Подключение" for button in home[0].reply_markup["inline_keyboard"])
     assert "выберите устройство" in assistant[0].text.lower()
-    assert "выберите удобный способ" in access_choice[0].text.lower()
-    assert access_choice[0].reply_markup["inline_keyboard"][0][0]["callback_data"] == "subscription:link"
-    assert access_choice[0].reply_markup["inline_keyboard"][1][0]["callback_data"] == "subscription:qr"
+    assert "выберите удобное действие" in access_choice[0].text.lower()
+    home_actions = {
+        button["callback_data"]
+        for row in home[0].reply_markup["inline_keyboard"]
+        for button in row
+    }
+    access_actions = {
+        button["callback_data"]
+        for row in access_choice[0].reply_markup["inline_keyboard"]
+        for button in row
+    }
+    guide_actions = {
+        button["callback_data"]
+        for row in service.handle_update(_callback(24, "setup:android"))[0].reply_markup["inline_keyboard"]
+        for button in row
+        if "callback_data" in button
+    }
+    assert {"subscription:rotate", "setup:diagnostics"}.isdisjoint(home_actions)
+    assert {"subscription:link", "subscription:qr", "setup:diagnostics", "subscription:rotate"}.issubset(access_actions)
+    assert "setup:diagnostics" not in guide_actions
     assert all(
         button["callback_data"] != "setup:qr"
         for row in assistant[0].reply_markup["inline_keyboard"]
@@ -606,7 +623,8 @@ def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path)
         for row in help_screen[0].reply_markup["inline_keyboard"]
         for button in row
     }
-    assert {"menu:home", "setup:menu", "setup:diagnostics"} <= help_callbacks
+    assert {"menu:home", "setup:menu", "subscription:get"} <= help_callbacks
+    assert "setup:diagnostics" not in help_callbacks
     assert "Статус доступа" in home[0].text
 
 
