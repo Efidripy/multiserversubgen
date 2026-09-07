@@ -394,6 +394,18 @@ class TelegramCustomerNoteDraft:
 
 
 @dataclass(frozen=True)
+class TelegramSupportReplyDraft:
+    """One confirmation-gated reply to an unresolved customer support request."""
+
+    admin_telegram_user_id: int
+    support_request_id: int
+    customer_id: int
+    expected_row_version: int
+    page: int
+    body: str | None
+
+
+@dataclass(frozen=True)
 class CustomerTelegramProfile:
     customer_id: int
     telegram_user_id: int | None
@@ -1023,6 +1035,84 @@ class TelegramRegistry:
                 "DELETE FROM telegram_customer_note_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
             )
 
+    def set_support_reply_draft(
+        self,
+        *,
+        admin_telegram_user_id: int,
+        support_request_id: int,
+        customer_id: int,
+        expected_row_version: int,
+        page: int,
+        body: str | None = None,
+    ) -> TelegramSupportReplyDraft:
+        """Persist a bounded admin reply only after proving the ticket is still unresolved."""
+
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        request_id = _positive_int(support_request_id, "support_request_id")
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        expected_version = _positive_int(expected_row_version, "expected_row_version")
+        if isinstance(page, bool) or not isinstance(page, int) or page < 0:
+            raise TelegramRegistryError("admin draft page is invalid")
+        normalized_body = body.strip() if isinstance(body, str) else None
+        if normalized_body == "":
+            raise TelegramRegistryError("support response must contain 1 to 1000 characters")
+        if normalized_body is not None and not 1 <= len(normalized_body) <= 1000:
+            raise TelegramRegistryError("support response must contain 1 to 1000 characters")
+        with connect(self._db_path) as conn:
+            ticket = conn.execute(
+                "SELECT customer_id, status, row_version FROM telegram_support_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+            if (
+                ticket is None
+                or int(ticket[0]) != local_customer_id
+                or str(ticket[1]) not in {"open", "read"}
+                or int(ticket[2]) != expected_version
+            ):
+                raise VersionConflictError("support request was updated by another administrator")
+            conn.execute(
+                """
+                INSERT INTO telegram_support_reply_drafts
+                    (admin_telegram_user_id, support_request_id, customer_id, expected_row_version, page, body)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(admin_telegram_user_id) DO UPDATE SET
+                    support_request_id = excluded.support_request_id,
+                    customer_id = excluded.customer_id,
+                    expected_row_version = excluded.expected_row_version,
+                    page = excluded.page,
+                    body = excluded.body,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (admin_id, request_id, local_customer_id, expected_version, page, normalized_body),
+            )
+        return TelegramSupportReplyDraft(
+            admin_id, request_id, local_customer_id, expected_version, page, normalized_body
+        )
+
+    def get_support_reply_draft(self, admin_telegram_user_id: int) -> TelegramSupportReplyDraft | None:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT support_request_id, customer_id, expected_row_version, page, body
+                FROM telegram_support_reply_drafts WHERE admin_telegram_user_id = ?
+                """,
+                (admin_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return TelegramSupportReplyDraft(
+            admin_id, int(row[0]), int(row[1]), int(row[2]), int(row[3]),
+            str(row[4]) if row[4] is not None else None,
+        )
+
+    def clear_support_reply_draft(self, admin_telegram_user_id: int) -> None:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                "DELETE FROM telegram_support_reply_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
+            )
+
     def get_customer_by_email(self, email: str) -> CustomerListItem:
         """Resolve one live customer by canonical exact email, without fuzzy matching."""
 
@@ -1136,11 +1226,11 @@ class TelegramRegistry:
                     """
                     UPDATE telegram_identities
                     SET chat_id = ?, username = ?, first_name = ?, last_name = ?,
-                        phone_number = COALESCE(?, phone_number), locale = COALESCE(?, locale),
+                        phone_number = COALESCE(?, phone_number),
                         updated_at = CURRENT_TIMESTAMP, row_version = row_version + 1
                     WHERE telegram_user_id = ?
                     """,
-                    (chat_id, username, first_name, last_name, normalized_phone, normalized_locale, user_id),
+                    (chat_id, username, first_name, last_name, normalized_phone, user_id),
                 )
                 row = conn.execute(
                     """
@@ -2110,6 +2200,33 @@ class TelegramRegistry:
                 + where
                 + " ORDER BY s.created_at DESC, s.id DESC LIMIT ?",
                 params,
+            ).fetchall()
+        return [
+            TelegramSupportRequest(
+                support_request_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
+                email_display=str(row[3]), category=str(row[4]), body=str(row[5]), status=str(row[6]),
+                row_version=int(row[7]), created_at=str(row[8]), updated_at=str(row[9]),
+                admin_response=str(row[10]) if row[10] is not None else None,
+            )
+            for row in rows
+        ]
+
+    def list_customer_support_requests(self, customer_id: int, *, limit: int = 20) -> list[TelegramSupportRequest]:
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise TelegramRegistryError("limit must be an integer from 1 to 100")
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT s.id, s.telegram_user_id, s.customer_id, c.email_display,
+                       s.category, s.body, s.status, s.row_version, s.created_at,
+                       s.updated_at, s.admin_response
+                FROM telegram_support_requests AS s
+                JOIN customers AS c ON c.id = s.customer_id
+                WHERE s.customer_id = ?
+                ORDER BY s.created_at DESC, s.id DESC LIMIT ?
+                """,
+                (local_customer_id, limit),
             ).fetchall()
         return [
             TelegramSupportRequest(

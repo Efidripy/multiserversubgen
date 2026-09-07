@@ -495,6 +495,21 @@ def init_db(db_path: str) -> None:
                         ON DELETE CASCADE)"""
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_support_reply_drafts
+                     (admin_telegram_user_id INTEGER PRIMARY KEY,
+                      support_request_id INTEGER NOT NULL,
+                      customer_id INTEGER NOT NULL,
+                      expected_row_version INTEGER NOT NULL CHECK(expected_row_version > 0),
+                      page INTEGER NOT NULL DEFAULT 0 CHECK(page >= 0),
+                      body TEXT DEFAULT NULL CHECK(body IS NULL OR length(trim(body)) BETWEEN 1 AND 1000),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(support_request_id) REFERENCES telegram_support_requests(id) ON DELETE CASCADE,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+                      FOREIGN KEY(admin_telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE)"""
+        )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_broadcast_jobs
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       created_by INTEGER NOT NULL,
