@@ -8,12 +8,15 @@ from datetime import datetime, timezone
 from typing import Callable
 
 from services.db_bootstrap import connect
+from services.telegram_registry import CustomerTrafficQuotaBinding, TelegramRegistry
 
 
 @dataclass(frozen=True)
 class TelegramReminderRunResult:
     scanned: int
     queued: int
+    traffic_scanned: int = 0
+    traffic_queued: int = 0
 
 
 def _utc_now() -> datetime:
@@ -23,9 +26,16 @@ def _utc_now() -> datetime:
 class TelegramReminderService:
     """Queue expiry notices only; it never fetches or mutates a remote node."""
 
-    def __init__(self, db_path: str, *, now: Callable[[], datetime] = _utc_now):
+    def __init__(
+        self,
+        db_path: str,
+        *,
+        now: Callable[[], datetime] = _utc_now,
+        traffic_snapshot_loader: Callable[[str, tuple[CustomerTrafficQuotaBinding, ...]], int | None] | None = None,
+    ):
         self._db_path = db_path
         self._now = now
+        self._traffic_snapshot_loader = traffic_snapshot_loader
 
     @staticmethod
     def _threshold_days(remaining_seconds: int) -> int | None:
@@ -91,4 +101,77 @@ class TelegramReminderService:
                     ),
                 )
                 queued += 1
-        return TelegramReminderRunResult(scanned=len(rows), queued=queued)
+        traffic_scanned, traffic_queued = self._queue_traffic_reminders()
+        return TelegramReminderRunResult(
+            scanned=len(rows), queued=queued, traffic_scanned=traffic_scanned, traffic_queued=traffic_queued
+        )
+
+    def _queue_traffic_reminders(self) -> tuple[int, int]:
+        """Queue at most one highest newly crossed traffic band per plan.
+
+        The source callable is a local collector projection. A missing or
+        ambiguous value is deliberately a no-op; this worker never refreshes a
+        cache and therefore never contacts a node itself.
+        """
+
+        if self._traffic_snapshot_loader is None:
+            return 0, 0
+        candidates = TelegramRegistry(self._db_path).list_traffic_reminder_candidates()
+        queued = 0
+        for candidate in candidates:
+            try:
+                observed_bytes = self._traffic_snapshot_loader(candidate.email_display, candidate.bindings)
+            except Exception:
+                continue
+            if observed_bytes is None or isinstance(observed_bytes, bool) or observed_bytes < 0:
+                continue
+            due = [
+                threshold for threshold in (80, 95, 100)
+                if int(observed_bytes) * 100 >= candidate.quota_total_bytes * threshold
+            ]
+            if not due:
+                continue
+            threshold = max(due)
+            with connect(self._db_path) as conn:
+                receipt = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO telegram_traffic_reminder_receipts
+                        (customer_id, quota_plan_digest, threshold_percent)
+                    VALUES (?, ?, ?)
+                    """,
+                    (candidate.customer_id, candidate.quota_plan_digest, threshold),
+                )
+                if receipt.rowcount != 1:
+                    continue
+                # A delayed first observation can cross several bands. Record
+                # the lower bands too, then send only the strongest signal.
+                for lower_threshold in due:
+                    if lower_threshold != threshold:
+                        conn.execute(
+                            """
+                            INSERT OR IGNORE INTO telegram_traffic_reminder_receipts
+                                (customer_id, quota_plan_digest, threshold_percent)
+                            VALUES (?, ?, ?)
+                            """,
+                            (candidate.customer_id, candidate.quota_plan_digest, lower_threshold),
+                        )
+                conn.execute(
+                    """
+                    INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
+                    VALUES ('user_traffic_reminder', ?, ?, ?)
+                    """,
+                    (
+                        str(candidate.telegram_user_id),
+                        f"user:traffic-reminder:{candidate.customer_id}:{candidate.quota_plan_digest}:{threshold}",
+                        json.dumps(
+                            {
+                                "percent": threshold,
+                                "used_bytes": int(observed_bytes),
+                                "limit_bytes": candidate.quota_total_bytes,
+                            },
+                            separators=(",", ":"),
+                        ),
+                    ),
+                )
+                queued += 1
+        return len(candidates), queued

@@ -83,7 +83,6 @@ class TelegramRegistrationService:
     _SUBSCRIPTION_INITIAL_PREFIX = (
         "Персональная ссылка доступа, скопируйте и вставьте её в ваше приложение-клиент:"
     )
-    _SUBSCRIPTION_REUSE_PREFIX = "Ссылка уже получена. Скопируйте и вставьте её в ваше приложение-клиент:"
     _SETUP_VERSION = "v1"
     _SETUP_APPLICATIONS: dict[str, tuple[tuple[str, str], ...]] = {
         "android": (
@@ -917,42 +916,41 @@ class TelegramRegistrationService:
             return None, TelegramOutboundMessage(chat_id, "Ссылку пока нельзя выдать. Пожалуйста, попробуйте позже.", self._approved_menu())
         return f"{self._public_base_url}/api/v1/sub/{token}", None
 
-    def _subscription_message(self, *, user_id: int, chat_id: int, rotate: bool = False) -> TelegramOutboundMessage:
+    def _subscription_message(
+        self,
+        *,
+        user_id: int,
+        chat_id: int,
+        rotate: bool = False,
+        edit_message_id: int | None = None,
+    ) -> TelegramOutboundMessage:
+        """Prepare a subscription URL for the current user interaction.
+
+        A URL requested via an inline callback replaces that callback's own
+        access-choice card.  A historical receipt is deliberately not used as
+        an edit target: it is delivery/audit data, not navigation state.
+        """
         url, unavailable = self._subscription_url(user_id=user_id, chat_id=chat_id, rotate=rotate)
         if unavailable is not None:
             return unavailable
         assert url is not None
         token_digest = hashlib.sha256(url.rsplit("/", 1)[-1].encode("utf-8")).hexdigest()
         delivery = TelegramSubscriptionDelivery(user_id, token_digest)
-        receipt = self._registry.get_subscription_message_receipt(user_id)
-        if (
-            not rotate
-            and receipt is not None
-            and receipt.chat_id == chat_id
-            and receipt.token_digest == token_digest
-        ):
-            return TelegramOutboundMessage(
-                chat_id,
-                f"{self._SUBSCRIPTION_REUSE_PREFIX}\n{url}",
-                self._approved_menu(),
-                edit_message_id=receipt.message_id,
-                subscription_delivery=delivery,
-            )
         return TelegramOutboundMessage(
             chat_id,
             f"{self._SUBSCRIPTION_INITIAL_PREFIX}\n{url}",
             self._approved_menu(),
+            edit_message_id=None if rotate else edit_message_id,
             subscription_delivery=delivery,
         )
 
     def fallback_subscription_message(self, message: TelegramOutboundMessage) -> TelegramOutboundMessage | None:
-        """Use a new message only when Telegram cannot edit the original one anymore."""
+        """Use a new message only when Telegram cannot edit the current card anymore."""
 
         if message.edit_message_id is None or message.subscription_delivery is None:
             return None
         return replace(
             message,
-            text=message.text.replace(self._SUBSCRIPTION_REUSE_PREFIX, self._SUBSCRIPTION_INITIAL_PREFIX, 1),
             edit_message_id=None,
         )
 
@@ -1046,16 +1044,20 @@ class TelegramRegistrationService:
         preferences = self._registry.get_notification_preferences(user_id)
         background_state = "включены" if preferences.background_notifications_enabled else "выключены"
         expiry_state = "включены" if preferences.expiry_reminders_enabled else "выключены"
+        traffic_state = "включены" if preferences.traffic_reminders_enabled else "выключены"
         background_action = "Выключить" if preferences.background_notifications_enabled else "Включить"
         expiry_action = "Выключить" if preferences.expiry_reminders_enabled else "Включить"
+        traffic_action = "Выключить" if preferences.traffic_reminders_enabled else "Включить"
         return TelegramOutboundMessage(
             chat_id,
             "Фоновые уведомления: " + background_state + ".\n"
-            "Напоминания о сроке: " + expiry_state + ".\n\n"
+            "Напоминания о сроке: " + expiry_state + ".\n"
+            "Напоминания о трафике: " + traffic_state + ".\n\n"
             "Ответы на ваши команды приходят всегда.",
             {"inline_keyboard": [
                 [{"text": f"{background_action} фоновые", "callback_data": "preferences:toggle-background"}],
                 [{"text": f"{expiry_action} напоминания о сроке", "callback_data": "preferences:toggle-expiry"}],
+                [{"text": f"{traffic_action} напоминания о трафике", "callback_data": "preferences:toggle-traffic"}],
                 [{"text": "← Меню", "callback_data": "menu:home"}],
             ]},
         )
@@ -1213,8 +1215,16 @@ class TelegramRegistrationService:
             access = self._registry.get_customer_access(user_id)
             if callback_data == "subscription:get":
                 return [self._access_choice_message(chat_id)]
-            if callback_data in {"subscription:link", "subscription:rotate:confirm"}:
-                return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate=callback_data.endswith(":confirm"))]
+            if callback_data == "subscription:link":
+                return [
+                    self._subscription_message(
+                        user_id=user_id,
+                        chat_id=chat_id,
+                        edit_message_id=source_message_id,
+                    )
+                ]
+            if callback_data == "subscription:rotate:confirm":
+                return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate=True)]
             if callback_data == "setup:menu":
                 return [self._setup_menu(chat_id)]
             if callback_data in {"setup:android", "setup:ios", "setup:desktop"}:
@@ -1267,6 +1277,9 @@ class TelegramRegistrationService:
                 return [self._preferences_message(user_id, chat_id)]
             if callback_data == "preferences:toggle-expiry":
                 self._registry.toggle_expiry_reminders(user_id)
+                return [self._preferences_message(user_id, chat_id)]
+            if callback_data == "preferences:toggle-traffic":
+                self._registry.toggle_traffic_reminders(user_id)
                 return [self._preferences_message(user_id, chat_id)]
             if callback_data == "menu:home":
                 return [self._approved_status(user_id, chat_id)]

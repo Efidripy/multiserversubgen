@@ -332,6 +332,38 @@ class TelegramOutboxWorker:
                 raise OutboxSuppressed("notifications_disabled")
             day_text = "день" if days == 1 else "дня" if days in {2, 3, 4} else "дней"
             return int(row[0]), f"Напоминание: срок доступа истекает примерно через {days} {day_text}.", None
+        if event.event_type == "user_traffic_reminder":
+            try:
+                user_id = int(event.entity_id)
+                payload = json.loads(event.payload_json)
+                percent = payload.get("percent") if isinstance(payload, dict) else None
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise OutboxPermanentError("invalid_traffic_reminder") from exc
+            if percent not in {80, 95, 100}:
+                raise OutboxPermanentError("invalid_traffic_reminder")
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT i.chat_id, COALESCE(p.background_notifications_enabled, 1),
+                           COALESCE(p.traffic_reminders_enabled, 0)
+                    FROM telegram_identities AS i
+                    JOIN customers AS c ON c.id = i.customer_id
+                    LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
+                    WHERE i.telegram_user_id = ? AND i.access_status = 'approved'
+                      AND c.status = 'active' AND c.deleted_at IS NULL
+                    """,
+                    (user_id,),
+                ).fetchone()
+            if row is None:
+                raise OutboxSuppressed("recipient_is_no_longer_registered")
+            if not bool(row[1]) or not bool(row[2]):
+                raise OutboxSuppressed("notifications_disabled")
+            messages = {
+                80: "Напоминание: использовано примерно 80% доступного трафика.",
+                95: "Напоминание: использовано примерно 95% доступного трафика.",
+                100: "Напоминание: доступный трафик исчерпан.",
+            }
+            return int(row[0]), messages[percent], None
         if event.event_type in {
             "user_provisioning_queued",
             "user_provisioning_completed",

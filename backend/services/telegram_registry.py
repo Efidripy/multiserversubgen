@@ -78,6 +78,7 @@ class TelegramNotificationPreferences:
     telegram_user_id: int
     background_notifications_enabled: bool
     expiry_reminders_enabled: bool
+    traffic_reminders_enabled: bool
     row_version: int
 
 
@@ -107,6 +108,27 @@ class CustomerTrafficLedger:
     lifetime_bytes: int
     last_observed_bytes: int
     last_observed_at: str
+
+
+@dataclass(frozen=True)
+class CustomerTrafficQuotaBinding:
+    """One current TG-managed client binding eligible for quota observation."""
+
+    node_id: int
+    inbound_id: int
+    remote_client_id: str
+
+
+@dataclass(frozen=True)
+class CustomerTrafficQuotaCandidate:
+    """A fully provisioned, finite traffic plan safe to evaluate locally."""
+
+    telegram_user_id: int
+    customer_id: int
+    email_display: str
+    quota_total_bytes: int
+    quota_plan_digest: str
+    bindings: tuple[CustomerTrafficQuotaBinding, ...]
 
 
 @dataclass(frozen=True)
@@ -1306,13 +1328,14 @@ class TelegramRegistry:
             )
             row = conn.execute(
                 """
-                SELECT background_notifications_enabled, expiry_reminders_enabled, row_version
+                SELECT background_notifications_enabled, expiry_reminders_enabled,
+                       traffic_reminders_enabled, row_version
                 FROM telegram_notification_preferences WHERE telegram_user_id = ?
                 """,
                 (user_id,),
             ).fetchone()
         assert row is not None
-        return TelegramNotificationPreferences(user_id, bool(row[0]), bool(row[1]), int(row[2]))
+        return TelegramNotificationPreferences(user_id, bool(row[0]), bool(row[1]), bool(row[2]), int(row[3]))
 
     def toggle_background_notifications(self, telegram_user_id: int) -> TelegramNotificationPreferences:
         """Toggle user-controlled background delivery after durable update dedupe."""
@@ -1363,6 +1386,120 @@ class TelegramRegistry:
                 (user_id,),
             )
         return self.get_notification_preferences(user_id)
+
+    def toggle_traffic_reminders(self, telegram_user_id: int) -> TelegramNotificationPreferences:
+        """Toggle opt-in finite-quota notices; command replies remain unaffected."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            identity = conn.execute(
+                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)
+            ).fetchone()
+            if identity is None:
+                raise TelegramRegistryError("Telegram identity was not found")
+            conn.execute(
+                "INSERT OR IGNORE INTO telegram_notification_preferences (telegram_user_id) VALUES (?)",
+                (user_id,),
+            )
+            conn.execute(
+                """
+                UPDATE telegram_notification_preferences
+                SET traffic_reminders_enabled = CASE traffic_reminders_enabled WHEN 1 THEN 0 ELSE 1 END,
+                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            )
+        return self.get_notification_preferences(user_id)
+
+    def list_traffic_reminder_candidates(self) -> tuple[CustomerTrafficQuotaCandidate, ...]:
+        """Return only complete, finite TG traffic plans without node I/O.
+
+        A customer is eligible only when every currently enabled confirmed
+        binding has an exact successful immutable provisioning attempt. The
+        finite quota is intentionally the sum of those per-node limits because
+        each node enforces its own client counter.
+        """
+
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT i.telegram_user_id, c.id, c.email_display,
+                       b.node_id, b.inbound_id, b.remote_client_id,
+                       a.desired_total_bytes
+                FROM telegram_identities AS i
+                JOIN customers AS c ON c.id = i.customer_id
+                JOIN customer_node_bindings AS b ON b.customer_id = c.id
+                JOIN nodes AS n ON n.id = b.node_id
+                LEFT JOIN telegram_notification_preferences AS p
+                  ON p.telegram_user_id = i.telegram_user_id
+                LEFT JOIN telegram_provisioning_attempts AS a ON a.id = (
+                    SELECT candidate.id
+                    FROM telegram_provisioning_attempts AS candidate
+                    JOIN telegram_provisioning_jobs AS j ON j.id = candidate.job_id
+                    WHERE j.customer_id = c.id
+                      AND candidate.node_id = b.node_id
+                      AND candidate.inbound_id = b.inbound_id
+                      AND candidate.remote_client_id = b.remote_client_id
+                      AND candidate.status = 'succeeded'
+                    ORDER BY candidate.id DESC
+                    LIMIT 1
+                )
+                WHERE i.access_status = 'approved'
+                  AND c.status = 'active' AND c.deleted_at IS NULL
+                  AND b.management_state = 'confirmed' AND b.desired_enabled = 1
+                  AND n.enabled = 1
+                  AND COALESCE(p.background_notifications_enabled, 1) = 1
+                  AND COALESCE(p.traffic_reminders_enabled, 0) = 1
+                  AND (
+                    c.origin != 'telegram'
+                    OR NOT EXISTS (
+                        SELECT 1 FROM telegram_provisioning_jobs AS initial_job
+                        WHERE initial_job.customer_id = c.id
+                          AND initial_job.trigger = 'approve_new'
+                          AND initial_job.status != 'succeeded'
+                    )
+                  )
+                ORDER BY i.telegram_user_id, b.node_id, b.inbound_id
+                """
+            ).fetchall()
+
+        grouped: dict[tuple[int, int, str], list[tuple[int, int, str, int | None]]] = {}
+        for row in rows:
+            key = (int(row[0]), int(row[1]), str(row[2]))
+            grouped.setdefault(key, []).append((int(row[3]), int(row[4]), str(row[5]), row[6]))
+
+        candidates: list[CustomerTrafficQuotaCandidate] = []
+        for (telegram_user_id, customer_id, email_display), bindings in grouped.items():
+            if not bindings or any(item[3] is None or int(item[3]) <= 0 for item in bindings):
+                continue
+            quota_bindings = tuple(
+                CustomerTrafficQuotaBinding(node_id=node_id, inbound_id=inbound_id, remote_client_id=remote_client_id)
+                for node_id, inbound_id, remote_client_id, _quota in bindings
+            )
+            quota_plan = {
+                "customer_id": customer_id,
+                "bindings": [
+                    {
+                        "node_id": binding.node_id,
+                        "inbound_id": binding.inbound_id,
+                        "remote_client_id": binding.remote_client_id,
+                        "total_bytes": int(quota),
+                    }
+                    for binding, (_node_id, _inbound_id, _remote_client_id, quota) in zip(quota_bindings, bindings)
+                ],
+            }
+            candidates.append(
+                CustomerTrafficQuotaCandidate(
+                    telegram_user_id=telegram_user_id,
+                    customer_id=customer_id,
+                    email_display=email_display,
+                    quota_total_bytes=sum(int(item[3]) for item in bindings),
+                    quota_plan_digest=_payload_digest(quota_plan),
+                    bindings=quota_bindings,
+                )
+            )
+        return tuple(candidates)
 
     def observe_customer_traffic(self, *, customer_id: int, observed_bytes: int) -> CustomerTrafficLedger:
         """Accumulate a customer lifetime counter independent of subscription tokens.

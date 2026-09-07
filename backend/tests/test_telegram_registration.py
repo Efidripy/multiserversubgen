@@ -268,7 +268,7 @@ def test_approved_user_gets_opaque_subscription_link_and_rotation_invalidates_pr
     assert "подтвердить" in confirm_prompt[0].text.lower()
 
 
-def test_repeated_subscription_request_reuses_the_original_message_and_never_stores_raw_token(tmp_path):
+def test_subscription_link_edits_its_own_callback_message_and_never_stores_raw_token(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -291,15 +291,16 @@ def test_repeated_subscription_request_reuses_the_original_message_and_never_sto
         get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
     )
 
-    first = service.handle_update(_message(11, "/subscription"))[0]
+    first = service.handle_update(_callback_with_message_id(11, "subscription:link", 101))[0]
     service.record_outbound_delivery(first, 101)
-    repeated = service.handle_update(_message(12, "/subscription"))[0]
-    service.record_outbound_delivery(repeated, 101)
+    repeated = service.handle_update(_callback_with_message_id(12, "subscription:link", 202))[0]
+    service.record_outbound_delivery(repeated, 202)
 
-    assert repeated.edit_message_id == 101
+    assert first.edit_message_id == 101
+    assert repeated.edit_message_id == 202
     assert repeated.subscription_delivery is not None
-    assert "Ссылка уже получена" in repeated.text
-    assert "Скопируйте" in repeated.text
+    assert "Персональная ссылка доступа" in repeated.text
+    assert "скопируйте" in repeated.text
     assert repeated.text.rsplit("/", 1)[-1] == first.text.rsplit("/", 1)[-1]
     with connect(db_path) as conn:
         stored_digest = conn.execute(
@@ -307,6 +308,38 @@ def test_repeated_subscription_request_reuses_the_original_message_and_never_sto
         ).fetchone()[0]
         assert stored_digest == repeated.subscription_delivery.token_digest
         assert first.text.rsplit("/", 1)[-1] not in stored_digest
+
+
+def test_subscription_command_sends_a_new_visible_message_instead_of_editing_a_historical_receipt(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="command_user", first_name="Command", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="command_user", origin="telegram", email_source="telegram_username", public_code="command-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    previous = service.handle_update(_callback_with_message_id(11, "subscription:link", 101))[0]
+    service.record_outbound_delivery(previous, 101)
+    command = service.handle_update(_message(12, "/subscription"))[0]
+
+    assert command.edit_message_id is None
+    assert command.subscription_delivery is not None
+    assert command.subscription_delivery.token_digest == previous.subscription_delivery.token_digest
 
 
 def test_rotated_subscription_always_creates_a_new_message_instead_of_editing_the_old_link(tmp_path):
@@ -513,12 +546,21 @@ def test_approved_user_can_toggle_only_background_notification_preference(tmp_pa
             "message": {"chat": {"id": 42, "type": "private"}}, "data": "preferences:toggle-expiry",
         },
     })
+    traffic_toggled = service.handle_update({
+        "update_id": 19,
+        "callback_query": {
+            "id": "prefs-traffic-toggle", "from": {"id": 42, "first_name": "Prefs"},
+            "message": {"chat": {"id": 42, "type": "private"}}, "data": "preferences:toggle-traffic",
+        },
+    })
 
     assert "включены" in menu[0].text
     assert "выключены" in toggled[0].text
     assert "Напоминания о сроке: выключены" in expiry_toggled[0].text
+    assert "Напоминания о трафике: включены" in traffic_toggled[0].text
     assert registry.get_notification_preferences(42).background_notifications_enabled is False
     assert registry.get_notification_preferences(42).expiry_reminders_enabled is False
+    assert registry.get_notification_preferences(42).traffic_reminders_enabled is True
 
 
 def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path):
@@ -1238,7 +1280,7 @@ def test_webhook_sender_receives_qr_as_a_photo_message(tmp_path):
     assert sender.messages[0].photo_png.startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_webhook_repeated_subscription_edits_one_message_and_falls_back_only_if_it_was_deleted(tmp_path):
+def test_webhook_subscription_link_falls_back_to_a_new_message_if_the_current_card_was_deleted(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -1276,7 +1318,11 @@ def test_webhook_repeated_subscription_edits_one_message_and_falls_back_only_if_
     headers = {"X-Telegram-Bot-Api-Secret-Token": "private-header-secret"}
 
     assert client.post("/telegram/webhook/private-path", headers=headers, json=_message(30, "/subscription")).status_code == 200
-    assert client.post("/telegram/webhook/private-path", headers=headers, json=_callback(31, "subscription:link")).status_code == 200
+    assert client.post(
+        "/telegram/webhook/private-path",
+        headers=headers,
+        json=_callback_with_message_id(31, "subscription:link", 401),
+    ).status_code == 200
 
     assert len(sender.messages) == 2
     assert sender.messages[0].edit_message_id is None

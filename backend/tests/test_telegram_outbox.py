@@ -298,3 +298,35 @@ def test_expiry_reminder_delivery_respects_its_specific_user_preference(tmp_path
                VALUES ('user_expiry_reminder', '42', 'expiry-suppressed', '{"days":1,"expires_at":2}')"""
         )
     assert _worker(db_path, port).run_once().outcome == "cancelled"
+
+
+def test_traffic_reminder_delivery_is_opt_in_and_uses_its_specific_preference(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="traffic-target", origin="telegram", email_source="telegram_username", public_code="traffic-target"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="traffic_target", first_name="Traffic", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+        conn.execute(
+            """INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
+               VALUES ('user_traffic_reminder', '42', 'traffic-suppressed', '{\"percent\":80}')"""
+        )
+    port = FakeOutboxPort()
+
+    assert _worker(db_path, port).run_once().outcome == "cancelled"
+    registry.toggle_traffic_reminders(42)
+    with connect(db_path) as conn:
+        conn.execute(
+            """INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
+               VALUES ('user_traffic_reminder', '42', 'traffic-delivery', '{\"percent\":95}')"""
+        )
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert port.messages == [(777, "Напоминание: использовано примерно 95% доступного трафика.", None)]

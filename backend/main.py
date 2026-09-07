@@ -512,9 +512,17 @@ async def _telegram_retention_worker_loop() -> None:
 
 
 async def _telegram_reminder_worker_loop() -> None:
-    """Queue expiry notices from local immutable snapshots; never calls a node."""
+    """Queue local expiry and exact-snapshot traffic notices; never calls a node."""
 
-    worker = TelegramReminderService(DB_PATH)
+    max_snapshot_age_seconds = max(300, SETTINGS.telegram.reminder_worker_interval_sec * 2)
+    worker = TelegramReminderService(
+        DB_PATH,
+        traffic_snapshot_loader=lambda email, bindings: live_stats_runtime.get_cached_telegram_quota_usage(
+            email=email,
+            bindings=bindings,
+            max_age_seconds=max_snapshot_age_seconds,
+        ),
+    )
     while True:
         await asyncio.to_thread(worker.run_once)
         await asyncio.sleep(SETTINGS.telegram.reminder_worker_interval_sec)

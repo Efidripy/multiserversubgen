@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 from datetime import datetime, timezone
 
@@ -61,8 +62,33 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "telegram_user_drafts",
             "telegram_support_requests",
             "telegram_service_notice",
+            "telegram_traffic_reminder_receipts",
         } <= tables
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+
+def test_notification_preferences_migrate_traffic_reminders_as_opt_in(tmp_path):
+    db_path = str(tmp_path / "legacy-admin.db")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE telegram_notification_preferences
+                (telegram_user_id INTEGER PRIMARY KEY,
+                 background_notifications_enabled INTEGER NOT NULL DEFAULT 1,
+                 expiry_reminders_enabled INTEGER NOT NULL DEFAULT 1,
+                 row_version INTEGER NOT NULL DEFAULT 1,
+                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)
+            """
+        )
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        columns = {
+            row[1]: row[4]
+            for row in conn.execute("PRAGMA table_info(telegram_notification_preferences)").fetchall()
+        }
+    assert "traffic_reminders_enabled" in columns
+    assert columns["traffic_reminders_enabled"] == "0"
 
 
 def test_subscription_message_receipt_contains_only_a_token_digest_and_message_coordinates(tmp_path):

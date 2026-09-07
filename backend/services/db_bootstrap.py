@@ -286,6 +286,8 @@ def init_db(db_path: str) -> None:
                         CHECK(background_notifications_enabled IN (0, 1)),
                       expiry_reminders_enabled INTEGER NOT NULL DEFAULT 1
                         CHECK(expiry_reminders_enabled IN (0, 1)),
+                      traffic_reminders_enabled INTEGER NOT NULL DEFAULT 0
+                        CHECK(traffic_reminders_enabled IN (0, 1)),
                       row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
                       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
@@ -298,6 +300,13 @@ def init_db(db_path: str) -> None:
             conn.execute(
                 "ALTER TABLE telegram_notification_preferences "
                 "ADD COLUMN expiry_reminders_enabled INTEGER NOT NULL DEFAULT 1"
+            )
+        if "traffic_reminders_enabled" not in notification_columns:
+            # Traffic notifications are opt-in. Existing users must not start
+            # receiving a new category merely because the application upgrades.
+            conn.execute(
+                "ALTER TABLE telegram_notification_preferences "
+                "ADD COLUMN traffic_reminders_enabled INTEGER NOT NULL DEFAULT 0"
             )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_applications
@@ -398,6 +407,15 @@ def init_db(db_path: str) -> None:
                       expires_at INTEGER NOT NULL CHECK(expires_at > 0),
                       queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       PRIMARY KEY(customer_id, reminder_kind, threshold_days, expires_at),
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_traffic_reminder_receipts
+                     (customer_id INTEGER NOT NULL,
+                      quota_plan_digest TEXT NOT NULL,
+                      threshold_percent INTEGER NOT NULL CHECK(threshold_percent IN (80, 95, 100)),
+                      queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      PRIMARY KEY(customer_id, quota_plan_digest, threshold_percent),
                       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
         )
         conn.execute(
