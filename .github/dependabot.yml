@@ -3,26 +3,23 @@ updates:
   - package-ecosystem: npm
     directory: /frontend
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 2
+      interval: monthly
+    # Routine version bumps are handled deliberately, not as background PR noise.
+    # Security alerts remain enabled and are grouped into one reviewable change.
+    open-pull-requests-limit: 0
     groups:
-      frontend-production-minor-patch:
-        dependency-type: production
-        update-types:
-          - minor
-          - patch
-      frontend-development-minor-patch:
-        dependency-type: development
-        update-types:
-          - minor
-          - patch
+      frontend-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
   - package-ecosystem: pip
     directory: /backend
     schedule:
-      interval: weekly
-    open-pull-requests-limit: 2
+      interval: monthly
+    # Keep critical fixes, but do not open routine version-update PRs.
+    open-pull-requests-limit: 0
     groups:
-      backend-minor-patch:
-        update-types:
-          - minor
-          - patch
+      backend-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
