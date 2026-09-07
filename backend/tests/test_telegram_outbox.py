@@ -225,3 +225,43 @@ def test_user_result_notifications_cover_provisioning_rejection_and_lifecycle(tm
         (777, "Заявка отклонена. Если хотите подать новую, отправьте /start.", None),
         (777, "Доступ восстановлен. Откройте меню, чтобы продолжить.", None),
     ]
+
+
+def test_support_events_notify_only_admin_then_the_linked_user_when_resolved(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="support-target", origin="telegram", email_source="telegram_username", public_code="support-target"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="support_target", first_name="Support", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+    registry.begin_support_request(telegram_user_id=42, category="connection")
+    request = registry.submit_pending_support_request(telegram_user_id=42, body="Не получается подключиться.")
+    assert request is not None
+    port = FakeOutboxPort()
+
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert port.messages == [
+        (108100140, "Обращение в поддержку от support-target (#42).\nТема: Подключение не работает\n\nНе получается подключиться.", None)
+    ]
+
+    registry.resolve_support_request(
+        support_request_id=request.support_request_id,
+        expected_row_version=request.row_version,
+        response="Проверьте настройки приложения и попробуйте ещё раз.",
+        idempotency_key="support-outbox-resolution",
+        resolved_by="admin",
+    )
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert port.messages[-1] == (
+        777,
+        "Обращение рассмотрено администратором.\n\nОтвет:\nПроверьте настройки приложения и попробуйте ещё раз.",
+        None,
+    )

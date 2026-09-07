@@ -58,6 +58,8 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "telegram_admin_drafts",
             "telegram_admin_message_drafts",
             "telegram_broadcast_jobs",
+            "telegram_user_drafts",
+            "telegram_support_requests",
         } <= tables
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
@@ -1051,3 +1053,61 @@ def test_broadcast_queue_excludes_pending_blocked_deleted_and_opted_out_identiti
             "SELECT entity_id FROM telegram_outbox WHERE event_type = 'registered_broadcast'"
         ).fetchall()
     assert rows == [(f"{result.broadcast_id}:41",)]
+
+
+def test_active_customer_support_request_is_durable_singleton_and_has_a_resolution_cooldown(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="support-user", origin="telegram", email_source="telegram_username", public_code="support-user"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="support_user", first_name="Support", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+
+    registry.begin_support_request(telegram_user_id=42, category="connection")
+    request = registry.submit_pending_support_request(
+        telegram_user_id=42, body="Подключение не устанавливается."
+    )
+
+    assert request is not None
+    assert request.category == "connection"
+    assert request.body == "Подключение не устанавливается."
+    assert request.status == "open"
+    with pytest.raises(TelegramRegistryError, match="open support"):
+        registry.begin_support_request(telegram_user_id=42, category="other")
+
+    result = registry.resolve_support_request(
+        support_request_id=request.support_request_id,
+        expected_row_version=request.row_version,
+        response="Проверьте, пожалуйста, настройки приложения.",
+        idempotency_key="resolve-support-42",
+        resolved_by="admin",
+    )
+
+    assert result.status == "resolved"
+    assert result.row_version == request.row_version + 1
+    with pytest.raises(TelegramRegistryError, match="cooldown"):
+        registry.begin_support_request(telegram_user_id=42, category="other")
+    with pytest.raises(VersionConflictError):
+        registry.resolve_support_request(
+            support_request_id=request.support_request_id,
+            expected_row_version=request.row_version,
+            response=None,
+            idempotency_key="resolve-support-stale",
+            resolved_by="admin",
+        )
+    with pytest.raises(IdempotencyConflictError):
+        registry.resolve_support_request(
+            support_request_id=request.support_request_id,
+            expected_row_version=request.row_version,
+            response="Другой ответ",
+            idempotency_key="resolve-support-42",
+            resolved_by="admin",
+        )

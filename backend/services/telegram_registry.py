@@ -23,6 +23,7 @@ from services.db_bootstrap import connect
 
 BOT_INBOUND_ID = 1
 BOT_CLIENT_FLOW = "xtls-rprx-vision"
+SUPPORT_CATEGORIES = frozenset({"link", "connection", "device", "directions", "other"})
 
 
 class TelegramRegistryError(RuntimeError):
@@ -240,6 +241,27 @@ class AppealAdminItem:
 @dataclass(frozen=True)
 class AppealResolutionResult:
     appeal_id: int
+    status: str
+    row_version: int
+
+
+@dataclass(frozen=True)
+class TelegramSupportRequest:
+    support_request_id: int
+    telegram_user_id: int
+    customer_id: int
+    category: str
+    body: str
+    status: str
+    row_version: int
+    created_at: str
+    updated_at: str
+    admin_response: str | None
+
+
+@dataclass(frozen=True)
+class TelegramSupportResolution:
+    support_request_id: int
     status: str
     row_version: int
 
@@ -1525,6 +1547,236 @@ class TelegramRegistry:
                 VALUES ('appeal_resolved', 'admin', ?, 'telegram_appeal', ?, ?)
                 """,
                 (actor, str(normalized_id), digest),
+            )
+        return result
+
+    def begin_support_request(self, *, telegram_user_id: int, category: str) -> None:
+        """Remember one bounded support category without creating a ticket yet."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        if category not in SUPPORT_CATEGORIES:
+            raise TelegramRegistryError("support category is invalid")
+        with connect(self._db_path) as conn:
+            identity = conn.execute(
+                """
+                SELECT i.customer_id, i.access_status, c.status
+                FROM telegram_identities AS i
+                JOIN customers AS c ON c.id = i.customer_id
+                WHERE i.telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if identity is None or str(identity[1]) != "approved" or str(identity[2]) != "active":
+                raise TelegramRegistryError("support is available only for an active customer")
+            customer_id = int(identity[0])
+            open_request = conn.execute(
+                """
+                SELECT 1 FROM telegram_support_requests
+                WHERE customer_id = ? AND status IN ('open', 'read')
+                """,
+                (customer_id,),
+            ).fetchone()
+            if open_request is not None:
+                raise TelegramRegistryError("an open support request already exists")
+            cooldown = conn.execute(
+                """
+                SELECT 1 FROM telegram_support_requests
+                WHERE customer_id = ? AND status = 'resolved'
+                  AND resolved_at > datetime('now', '-24 hours')
+                """,
+                (customer_id,),
+            ).fetchone()
+            if cooldown is not None:
+                raise TelegramRegistryError("support request cooldown is active")
+            conn.execute(
+                """
+                INSERT INTO telegram_user_drafts
+                    (telegram_user_id, action, customer_id, category)
+                VALUES (?, 'support_request', ?, ?)
+                ON CONFLICT(telegram_user_id) DO UPDATE SET
+                    action = 'support_request', customer_id = excluded.customer_id,
+                    category = excluded.category, updated_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, customer_id, category),
+            )
+
+    def submit_pending_support_request(
+        self, *, telegram_user_id: int, body: str
+    ) -> TelegramSupportRequest | None:
+        """Create a ticket only from an explicit support draft and bounded text."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        normalized_body = body.strip()
+        if not 1 <= len(normalized_body) <= 1000:
+            raise TelegramRegistryError("support request body must contain 1 to 1000 characters")
+        with connect(self._db_path) as conn:
+            draft = conn.execute(
+                """
+                SELECT customer_id, category FROM telegram_user_drafts
+                WHERE telegram_user_id = ? AND action = 'support_request'
+                """,
+                (user_id,),
+            ).fetchone()
+            if draft is None:
+                return None
+            customer_id, category = int(draft[0]), str(draft[1])
+            identity = conn.execute(
+                """
+                SELECT i.customer_id, i.access_status, c.status
+                FROM telegram_identities AS i
+                JOIN customers AS c ON c.id = i.customer_id
+                WHERE i.telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if (
+                identity is None
+                or int(identity[0]) != customer_id
+                or str(identity[1]) != "approved"
+                or str(identity[2]) != "active"
+            ):
+                raise TelegramRegistryError("support is available only for an active customer")
+            try:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO telegram_support_requests
+                        (telegram_user_id, customer_id, category, body)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (user_id, customer_id, category, normalized_body),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise TelegramRegistryError("an open support request already exists") from exc
+            request_id = int(cursor.lastrowid)
+            conn.execute("DELETE FROM telegram_user_drafts WHERE telegram_user_id = ?", (user_id,))
+            conn.execute(
+                """
+                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                VALUES ('admin_support_created', ?, ?)
+                """,
+                (str(request_id), f"admin:support-created:{request_id}"),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id)
+                VALUES ('support_created', 'telegram_user', ?, 'telegram_support_request', ?)
+                """,
+                (str(user_id), str(request_id)),
+            )
+            row = conn.execute(
+                """
+                SELECT id, telegram_user_id, customer_id, category, body, status,
+                       row_version, created_at, updated_at, admin_response
+                FROM telegram_support_requests WHERE id = ?
+                """,
+                (request_id,),
+            ).fetchone()
+        assert row is not None
+        return TelegramSupportRequest(
+            support_request_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
+            category=str(row[3]), body=str(row[4]), status=str(row[5]), row_version=int(row[6]),
+            created_at=str(row[7]), updated_at=str(row[8]),
+            admin_response=str(row[9]) if row[9] is not None else None,
+        )
+
+    def list_support_requests(self, *, status: str = "open", limit: int = 100) -> list[TelegramSupportRequest]:
+        if status not in {"open", "read", "resolved", "all"}:
+            raise TelegramRegistryError("support request status is invalid")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise TelegramRegistryError("limit must be an integer from 1 to 200")
+        where = "" if status == "all" else "WHERE status = ?"
+        params: tuple[Any, ...] = (status, limit) if status != "all" else (limit,)
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, telegram_user_id, customer_id, category, body, status,
+                       row_version, created_at, updated_at, admin_response
+                FROM telegram_support_requests
+                """
+                + where
+                + " ORDER BY created_at DESC, id DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [
+            TelegramSupportRequest(
+                support_request_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
+                category=str(row[3]), body=str(row[4]), status=str(row[5]), row_version=int(row[6]),
+                created_at=str(row[7]), updated_at=str(row[8]),
+                admin_response=str(row[9]) if row[9] is not None else None,
+            )
+            for row in rows
+        ]
+
+    def resolve_support_request(
+        self,
+        *,
+        support_request_id: int,
+        expected_row_version: int,
+        response: str | None,
+        idempotency_key: str,
+        resolved_by: str,
+    ) -> TelegramSupportResolution:
+        request_id = _positive_int(support_request_id, "support_request_id")
+        expected_version = _positive_int(expected_row_version, "expected_row_version")
+        normalized_response = response.strip() if isinstance(response, str) else None
+        if normalized_response is not None and not 1 <= len(normalized_response) <= 1000:
+            raise TelegramRegistryError("support response must contain 1 to 1000 characters")
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(resolved_by, "resolved_by")
+        digest = _payload_digest({
+            "support_request_id": request_id, "expected_row_version": expected_version,
+            "response": normalized_response,
+        })
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'resolve_support_request' AND idempotency_key = ?",
+                (key,),
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return TelegramSupportResolution(**json.loads(str(receipt[1])))
+            row = conn.execute(
+                "SELECT telegram_user_id, status, row_version FROM telegram_support_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+            if row is None or str(row[1]) not in {"open", "read"} or int(row[2]) != expected_version:
+                raise VersionConflictError("support request was updated by another administrator")
+            update = conn.execute(
+                """
+                UPDATE telegram_support_requests
+                SET status = 'resolved', admin_response = ?, resolved_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP, row_version = row_version + 1
+                WHERE id = ? AND status IN ('open', 'read') AND row_version = ?
+                """,
+                (normalized_response, request_id, expected_version),
+            )
+            if update.rowcount != 1:
+                raise VersionConflictError("support request was updated by another administrator")
+            result = TelegramSupportResolution(request_id, "resolved", expected_version + 1)
+            conn.execute(
+                """
+                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                VALUES ('user_support_resolved', ?, ?)
+                """,
+                (str(request_id), f"user:support-resolved:{request_id}"),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('support_resolved', 'admin', ?, 'telegram_support_request', ?, ?)
+                """,
+                (actor, str(request_id), digest),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
+                VALUES ('resolve_support_request', ?, ?, ?)
+                """,
+                (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
             )
         return result
 

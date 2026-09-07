@@ -359,3 +359,53 @@ def test_customer_lifecycle_preview_and_queue_are_admin_only_and_do_not_run_remo
         f"/api/v1/telegram/customers/{customer_id}/lifecycle/preview",
         json={"operation_type": "suspend"},
     ).status_code == 403
+
+
+def test_support_routes_are_admin_only_and_resolution_remains_local(tmp_path):
+    client = _build_client(tmp_path)
+    db_path = str(tmp_path / "admin.db")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="support-api", origin="telegram", email_source="telegram_username", public_code="support-api"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="support_api", first_name="Support", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+    registry.begin_support_request(telegram_user_id=42, category="link")
+    request = registry.submit_pending_support_request(telegram_user_id=42, body="Ссылка не открывается.")
+    assert request is not None
+
+    listed = client.get("/api/v1/telegram/support")
+    assert listed.status_code == 200
+    assert listed.json()["items"] == [{
+        "support_request_id": request.support_request_id,
+        "telegram_user_id": 42,
+        "customer_id": customer_id,
+        "category": "link",
+        "body": "Ссылка не открывается.",
+        "status": "open",
+        "row_version": 1,
+        "created_at": listed.json()["items"][0]["created_at"],
+        "updated_at": listed.json()["items"][0]["updated_at"],
+        "admin_response": None,
+    }]
+    resolved = client.post(
+        f"/api/v1/telegram/support/{request.support_request_id}/resolve",
+        json={
+            "expected_row_version": request.row_version,
+            "response": "Проверьте, что ссылка скопирована целиком.",
+            "idempotency_key": "resolve-support-api",
+        },
+    )
+    assert resolved.status_code == 200
+    assert resolved.json()["remote_io"] == "not_started"
+    assert resolved.json()["support_request"]["status"] == "resolved"
+
+    viewer = _build_client(tmp_path, username="viewer", role="viewer")
+    assert viewer.get("/api/v1/telegram/support").status_code == 403
+    assert viewer.post(f"/api/v1/telegram/support/{request.support_request_id}/resolve", json={}).status_code == 403

@@ -255,6 +255,55 @@ class TelegramOutboxWorker:
             if row is None:
                 raise OutboxPermanentError("appeal_not_found")
             return self._primary_admin_id, f"Обращение от {row[1]} (#{row[0]}):\n{row[2]}", None
+        if event.event_type == "admin_support_created":
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT s.telegram_user_id, c.email_display, s.category, s.body
+                    FROM telegram_support_requests AS s
+                    JOIN customers AS c ON c.id = s.customer_id
+                    WHERE s.id = ?
+                    """,
+                    (event.entity_id,),
+                ).fetchone()
+            if row is None:
+                raise OutboxPermanentError("support_request_not_found")
+            labels = {
+                "link": "Ссылка не открывается",
+                "connection": "Подключение не работает",
+                "device": "Сменил устройство",
+                "directions": "Мало или нет направлений",
+                "other": "Другое",
+            }
+            label = labels.get(str(row[2]))
+            if label is None:
+                raise OutboxPermanentError("invalid_support_category")
+            return (
+                self._primary_admin_id,
+                f"Обращение в поддержку от {row[1]} (#{row[0]}).\nТема: {label}\n\n{row[3]}",
+                None,
+            )
+        if event.event_type == "user_support_resolved":
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT i.chat_id, s.admin_response, COALESCE(p.background_notifications_enabled, 1)
+                    FROM telegram_support_requests AS s
+                    JOIN telegram_identities AS i ON i.telegram_user_id = s.telegram_user_id
+                    LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
+                    WHERE s.id = ? AND s.status = 'resolved'
+                    """,
+                    (event.entity_id,),
+                ).fetchone()
+            if row is None:
+                raise OutboxPermanentError("support_request_not_found")
+            if not bool(row[2]):
+                raise OutboxSuppressed("notifications_disabled")
+            response = str(row[1]).strip() if row[1] is not None else ""
+            text = "Обращение рассмотрено администратором."
+            if response:
+                text += f"\n\nОтвет:\n{response}"
+            return int(row[0]), text, None
         if event.event_type in {
             "user_provisioning_queued",
             "user_provisioning_completed",

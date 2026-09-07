@@ -110,6 +110,13 @@ class TelegramRegistrationService:
             ("Incy", "https://github.com/INCY-DEV/incy-platforms/releases/latest"),
         ),
     }
+    _SUPPORT_CATEGORIES = {
+        "link": "Ссылка не открывается",
+        "connection": "Подключение не работает",
+        "device": "Сменил устройство",
+        "directions": "Мало или нет направлений",
+        "other": "Другое",
+    }
 
     def __init__(
         self,
@@ -1088,8 +1095,22 @@ class TelegramRegistrationService:
             {"inline_keyboard": [
                 [{"text": "⊞ Выбрать приложение", "callback_data": "setup:menu"}],
                 [{"text": "⌁ Проверить готовность", "callback_data": "setup:diagnostics"}],
+                [{"text": "✉ Написать в поддержку", "callback_data": "support:menu"}],
                 [{"text": "← Меню", "callback_data": "menu:home"}],
             ]},
+        )
+
+    @classmethod
+    def _support_category_message(cls, chat_id: int) -> TelegramOutboundMessage:
+        rows = [
+            [{"text": label, "callback_data": f"support:category:{category}"}]
+            for category, label in cls._SUPPORT_CATEGORIES.items()
+        ]
+        rows.append([{"text": "← Помощь", "callback_data": "help"}])
+        return TelegramOutboundMessage(
+            chat_id,
+            "Поддержка\n\nВыберите тему обращения. Затем отправьте одно сообщение с описанием проблемы.",
+            {"inline_keyboard": rows},
         )
 
     def handle_update(self, update: dict[str, Any]) -> list[TelegramOutboundMessage]:
@@ -1187,6 +1208,28 @@ class TelegramRegistrationService:
                 return [self._setup_guide(chat_id, callback_data.removeprefix("setup:"))]
             if callback_data == "setup:diagnostics":
                 return [self._diagnostics_message(user_id, chat_id)]
+            if callback_data == "support:menu":
+                return [self._support_category_message(chat_id)]
+            if callback_data and callback_data.startswith("support:category:"):
+                category = callback_data.removeprefix("support:category:")
+                label = self._SUPPORT_CATEGORIES.get(category)
+                if label is None:
+                    return [TelegramOutboundMessage(chat_id, "Выберите тему обращения из списка.", self._approved_menu())]
+                try:
+                    self._registry.begin_support_request(telegram_user_id=user_id, category=category)
+                except TelegramRegistryError as exc:
+                    message = (
+                        "У вас уже есть открытое обращение. Дождитесь ответа администратора."
+                        if "open support" in str(exc)
+                        else "Новое обращение пока недоступно. Попробуйте позже."
+                    )
+                    return [TelegramOutboundMessage(chat_id, message, self._approved_menu())]
+                return [
+                    TelegramOutboundMessage(
+                        chat_id,
+                        f"Тема: {label}.\n\nТеперь отправьте одним сообщением описание проблемы. Максимум 1000 символов.",
+                    )
+                ]
             if callback_data == "qr:delete":
                 if source_message_id is None:
                     return [TelegramOutboundMessage(chat_id, "Не удалось определить QR-сообщение. Откройте новый QR-код при необходимости.", self._approved_menu())]
@@ -1217,6 +1260,27 @@ class TelegramRegistrationService:
                 return [self._approved_status(user_id, chat_id)]
             if text and text.strip().startswith("/subscription"):
                 return [self._subscription_message(user_id=user_id, chat_id=chat_id)]
+            if text:
+                try:
+                    support_request = self._registry.submit_pending_support_request(
+                        telegram_user_id=user_id, body=text
+                    )
+                except TelegramRegistryError:
+                    return [
+                        TelegramOutboundMessage(
+                            chat_id,
+                            "Не удалось принять обращение. Проверьте, что сообщение непустое и не длиннее 1000 символов.",
+                            self._approved_menu(),
+                        )
+                    ]
+                if support_request is not None:
+                    return [
+                        TelegramOutboundMessage(
+                            chat_id,
+                            "Обращение принято и передано администратору.",
+                            self._approved_menu(),
+                        )
+                    ]
             decision = resolve_effective_access(
                 access_status=access.access_status,
                 customer_id=access.customer_id,

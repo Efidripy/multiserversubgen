@@ -901,6 +901,33 @@ def test_suspended_user_can_send_one_bounded_appeal_without_automatic_resume(tmp
         assert conn.execute("SELECT COUNT(*) FROM telegram_appeals WHERE customer_id = ?", (customer_id,)).fetchone()[0] == 1
 
 
+def test_active_user_can_submit_one_categorized_support_request_without_affecting_nodes(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="support_user")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    help_message = service.handle_update(_callback(1, "help"))
+    menu = service.handle_update(_callback(2, "support:menu"))
+    prompt = service.handle_update(_callback(3, "support:category:connection"))
+    accepted = service.handle_update(_message(4, "Приложение не подключается."))
+    duplicate = service.handle_update(_callback(5, "support:category:other"))
+
+    assert "поддерж" in help_message[0].reply_markup["inline_keyboard"][2][0]["text"].lower()
+    assert menu[0].reply_markup["inline_keyboard"][1][0] == {
+        "text": "Подключение не работает", "callback_data": "support:category:connection"
+    }
+    assert "максимум 1000" in prompt[0].text.lower()
+    assert "принято" in accepted[0].text.lower()
+    assert "открытое обращение" in duplicate[0].text.lower()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT category, body FROM telegram_support_requests").fetchone() == (
+            "connection", "Приложение не подключается."
+        )
+        assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings").fetchone()[0] == 0
+
+
 def test_primary_admin_can_toggle_only_a_compatible_node_from_the_bot(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
