@@ -1218,9 +1218,14 @@ EOF
             mkdir -p /etc/loki /etc/promtail /var/lib/loki /var/lib/promtail
             cp "$MSSG_LOKI_CONFIG" /etc/loki/config.yml
             cp "$MSSG_LOKI_CONFIG" /etc/loki/local-config.yaml
-            cp "$MSSG_PROMTAIL_CONFIG" /etc/promtail/config.yml
-            sed -i "s|__ADGUARD_QUERYLOG_PATH__|${adguard_querylog_path}|g" /etc/promtail/config.yml
-            sed -i "s|__ADGUARD_SYSTEMD_UNIT__|${adguard_systemd_unit}|g" /etc/promtail/config.yml
+            if ! ADGUARD_QUERYLOG_PATH="$adguard_querylog_path" \
+                ADGUARD_SYSTEMD_UNIT="$adguard_systemd_unit" \
+                PROMTAIL_CONFIG_TEMPLATE="$MSSG_PROMTAIL_CONFIG" \
+                PROMTAIL_JOURNAL_TEMPLATE="$MSSG_PROMTAIL_JOURNAL_CONFIG" \
+                "$MSSG_PROMTAIL_RECONCILE_SCRIPT"; then
+                echo "⚠️ Не удалось безопасно собрать конфигурацию promtail. Продолжаем без логов AdGuard."
+                return 1
+            fi
             chown -R loki /var/lib/loki >/dev/null 2>&1 || true
             chown -R promtail /var/lib/promtail >/dev/null 2>&1 || true
             chmod 0755 /var/lib/loki /var/lib/promtail >/dev/null 2>&1 || true

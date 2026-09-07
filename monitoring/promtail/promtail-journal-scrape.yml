@@ -1,0 +1,15 @@
+  - job_name: adguard-journal
+    journal:
+      path: __PROMTAIL_JOURNAL_PATH__
+      max_age: 12h
+      labels:
+        job: adguard-journal
+        host: ${HOSTNAME}
+    relabel_configs:
+      - source_labels: [__journal__systemd_unit]
+        regex: __ADGUARD_SYSTEMD_UNIT__
+        action: keep
+      - source_labels: [__journal__priority_keyword]
+        target_label: level
+      - source_labels: [__journal__hostname]
+        target_label: node

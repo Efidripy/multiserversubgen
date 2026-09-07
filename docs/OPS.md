@@ -99,6 +99,13 @@ curl -fsSL -o /dev/null -w '%{http_code}\n' https://<your-domain>/<web-path>/ass
 - `monitoring/loki/`
 - `monitoring/promtail/`
 
+Promtail собирает AdGuard querylog всегда, когда включён Loki-профиль. Journal
+scrape добавляется только при наличии читаемого `/var/log/journal` или, как
+fallback, `/run/log/journal`; отсутствие обоих каталогов — нормальный режим,
+который не должен приводить к перезапускам сервиса. Для ручной сверки после
+изменения monitoring-конфига используйте `systemctl status promtail` и
+`journalctl -u promtail -n 50 --no-pager`.
+
 ## Полезные скрипты
 
 - `scripts/ops/smoke-test.sh`
