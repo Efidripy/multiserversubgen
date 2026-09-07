@@ -506,10 +506,19 @@ def test_approved_user_can_toggle_only_background_notification_preference(tmp_pa
             "message": {"chat": {"id": 42, "type": "private"}}, "data": "preferences:toggle-background",
         },
     })
+    expiry_toggled = service.handle_update({
+        "update_id": 18,
+        "callback_query": {
+            "id": "prefs-expiry-toggle", "from": {"id": 42, "first_name": "Prefs"},
+            "message": {"chat": {"id": 42, "type": "private"}}, "data": "preferences:toggle-expiry",
+        },
+    })
 
     assert "включены" in menu[0].text
     assert "выключены" in toggled[0].text
+    assert "Напоминания о сроке: выключены" in expiry_toggled[0].text
     assert registry.get_notification_preferences(42).background_notifications_enabled is False
+    assert registry.get_notification_preferences(42).expiry_reminders_enabled is False
 
 
 def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path):

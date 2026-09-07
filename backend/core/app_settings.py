@@ -153,6 +153,8 @@ class TelegramSettings:
     outbox_worker_interval_sec: int
     retention_worker_enabled: bool
     retention_worker_interval_sec: int
+    reminder_worker_enabled: bool
+    reminder_worker_interval_sec: int
     local_proxy_url: str
     polling_timeout_sec: int
 
@@ -162,6 +164,7 @@ def _load_telegram_settings() -> TelegramSettings:
     worker_requested = _env_bool("TELEGRAM_PROVISIONING_WORKER_ENABLED", "false")
     outbox_requested = _env_bool("TELEGRAM_OUTBOX_WORKER_ENABLED", "false")
     retention_requested = _env_bool("TELEGRAM_RETENTION_WORKER_ENABLED", "false")
+    reminder_requested = _env_bool("TELEGRAM_REMINDER_WORKER_ENABLED", "false")
     local_proxy_url = validate_local_proxy_url(os.getenv("TELEGRAM_LOCAL_PROXY_URL", ""))
     if not enabled:
         if worker_requested:
@@ -170,6 +173,8 @@ def _load_telegram_settings() -> TelegramSettings:
             raise RuntimeError("TELEGRAM_OUTBOX_WORKER_ENABLED requires TELEGRAM_BOT_ENABLED=true")
         if retention_requested:
             raise RuntimeError("TELEGRAM_RETENTION_WORKER_ENABLED requires TELEGRAM_BOT_ENABLED=true")
+        if reminder_requested:
+            raise RuntimeError("TELEGRAM_REMINDER_WORKER_ENABLED requires TELEGRAM_BOT_ENABLED=true")
         return TelegramSettings(
             enabled=False,
             bot_token="",
@@ -185,6 +190,8 @@ def _load_telegram_settings() -> TelegramSettings:
             outbox_worker_interval_sec=5,
             retention_worker_enabled=False,
             retention_worker_interval_sec=86400,
+            reminder_worker_enabled=False,
+            reminder_worker_interval_sec=3600,
             local_proxy_url=local_proxy_url,
             polling_timeout_sec=25,
         )
@@ -222,6 +229,9 @@ def _load_telegram_settings() -> TelegramSettings:
     retention_worker_interval_sec = _bounded_env_int(
         "TELEGRAM_RETENTION_WORKER_INTERVAL_SEC", default=86400, minimum=60, maximum=604800
     )
+    reminder_worker_interval_sec = _bounded_env_int(
+        "TELEGRAM_REMINDER_WORKER_INTERVAL_SEC", default=3600, minimum=60, maximum=86400
+    )
     polling_timeout_sec = _bounded_env_int(
         "TELEGRAM_POLLING_TIMEOUT_SEC", default=25, minimum=1, maximum=50
     )
@@ -240,6 +250,8 @@ def _load_telegram_settings() -> TelegramSettings:
         outbox_worker_interval_sec=outbox_worker_interval_sec,
         retention_worker_enabled=retention_requested,
         retention_worker_interval_sec=retention_worker_interval_sec,
+        reminder_worker_enabled=reminder_requested,
+        reminder_worker_interval_sec=reminder_worker_interval_sec,
         local_proxy_url=local_proxy_url,
         polling_timeout_sec=polling_timeout_sec,
     )

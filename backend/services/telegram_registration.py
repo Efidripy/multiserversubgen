@@ -1044,13 +1044,18 @@ class TelegramRegistrationService:
 
     def _preferences_message(self, user_id: int, chat_id: int) -> TelegramOutboundMessage:
         preferences = self._registry.get_notification_preferences(user_id)
-        state = "включены" if preferences.background_notifications_enabled else "выключены"
-        action = "Выключить" if preferences.background_notifications_enabled else "Включить"
+        background_state = "включены" if preferences.background_notifications_enabled else "выключены"
+        expiry_state = "включены" if preferences.expiry_reminders_enabled else "выключены"
+        background_action = "Выключить" if preferences.background_notifications_enabled else "Включить"
+        expiry_action = "Выключить" if preferences.expiry_reminders_enabled else "Включить"
         return TelegramOutboundMessage(
             chat_id,
-            f"Фоновые уведомления: {state}. Ответы на ваши команды приходят всегда.",
+            "Фоновые уведомления: " + background_state + ".\n"
+            "Напоминания о сроке: " + expiry_state + ".\n\n"
+            "Ответы на ваши команды приходят всегда.",
             {"inline_keyboard": [
-                [{"text": action, "callback_data": "preferences:toggle-background"}],
+                [{"text": f"{background_action} фоновые", "callback_data": "preferences:toggle-background"}],
+                [{"text": f"{expiry_action} напоминания о сроке", "callback_data": "preferences:toggle-expiry"}],
                 [{"text": "← Меню", "callback_data": "menu:home"}],
             ]},
         )
@@ -1259,6 +1264,9 @@ class TelegramRegistrationService:
                 return [self._preferences_message(user_id, chat_id)]
             if callback_data == "preferences:toggle-background":
                 self._registry.toggle_background_notifications(user_id)
+                return [self._preferences_message(user_id, chat_id)]
+            if callback_data == "preferences:toggle-expiry":
+                self._registry.toggle_expiry_reminders(user_id)
                 return [self._preferences_message(user_id, chat_id)]
             if callback_data == "menu:home":
                 return [self._approved_status(user_id, chat_id)]

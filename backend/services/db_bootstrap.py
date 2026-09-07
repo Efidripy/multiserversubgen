@@ -284,11 +284,21 @@ def init_db(db_path: str) -> None:
                      (telegram_user_id INTEGER PRIMARY KEY,
                       background_notifications_enabled INTEGER NOT NULL DEFAULT 1
                         CHECK(background_notifications_enabled IN (0, 1)),
+                      expiry_reminders_enabled INTEGER NOT NULL DEFAULT 1
+                        CHECK(expiry_reminders_enabled IN (0, 1)),
                       row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
                       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
                         ON DELETE CASCADE)"""
         )
+        notification_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(telegram_notification_preferences)").fetchall()
+        }
+        if "expiry_reminders_enabled" not in notification_columns:
+            conn.execute(
+                "ALTER TABLE telegram_notification_preferences "
+                "ADD COLUMN expiry_reminders_enabled INTEGER NOT NULL DEFAULT 1"
+            )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_applications
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -379,6 +389,16 @@ def init_db(db_path: str) -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_telegram_support_status_created "
             "ON telegram_support_requests(status, created_at)"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_reminder_receipts
+                     (customer_id INTEGER NOT NULL,
+                      reminder_kind TEXT NOT NULL CHECK(reminder_kind IN ('expiry')),
+                      threshold_days INTEGER NOT NULL CHECK(threshold_days IN (1, 3, 7)),
+                      expires_at INTEGER NOT NULL CHECK(expires_at > 0),
+                      queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      PRIMARY KEY(customer_id, reminder_kind, threshold_days, expires_at),
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
         )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_service_notice
