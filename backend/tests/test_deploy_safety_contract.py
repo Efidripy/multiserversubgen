@@ -44,6 +44,11 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'chmod 0755 "$PROJECT_DIR"' in script
     assert '"$PROJECT_DIR/venv/bin/uvicorn" --version >/dev/null' in script
     assert 'rollback_and_exit' in script
+    assert 'reconcile_promtail_after_health()' in script
+    assert 'systemctl cat promtail.service >/dev/null 2>&1 || return 0' in script
+    assert '"$helper" --restart-active' in script
+    assert 'PROMTAIL_CONFIG_ROLLBACK' in script
+    assert script.rindex('reconcile_promtail_after_health') > script.rindex('wait_for_health')
     frontend_build = (REPO / "scripts/deploy/build-and-publish-frontend.sh").read_text(encoding="utf-8")
     assert 'export NODE_OPTIONS="$FRONTEND_NODE_OPTIONS"' in frontend_build
     assert 'find "$TARGET_BUILD_DIR" -type d -exec chmod 0755 {} +' in frontend_build
@@ -183,7 +188,9 @@ def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_
     assert '"$leaf/scripts/installer/lib/entrypoint_layout.sh"' in script
     assert '"$leaf/scripts/installer/lib/source_layout.sh"' in script
     assert '"$leaf/scripts/ops/lib/install_log.sh"' in script
+    assert '"$leaf/scripts/ops/reconcile-promtail-config.sh"' in script
     assert '"$leaf/systemd/sub-manager.service"' in script
+    assert '"$leaf/monitoring/promtail/promtail-journal-scrape.yml"' in script
     assert '& tar.exe -tzf $ArchivePath' in script
     assert "Source archive is incomplete; missing required entries:" in script
     assert '.deploy-source-commit' in script

@@ -13,6 +13,9 @@ GRAFANA_WEB_PATH="${GRAFANA_WEB_PATH:-grafana}"
 DEPLOY_REF="${DEPLOY_REF:-HEAD}"
 RUNTIME_SECRETS_FILE="/etc/${PROJECT_NAME}/runtime-secrets.env"
 SERVICE_UNIT="/etc/systemd/system/${PROJECT_NAME}.service"
+PROMTAIL_CONFIG="/etc/promtail/config.yml"
+PROMTAIL_CONFIG_ROLLBACK=""
+PROMTAIL_CONFIG_WAS_PRESENT=0
 
 fail() {
   printf 'Deploy refused: %s\n' "$*" >&2
@@ -82,6 +85,12 @@ restore_previous() {
   fi
   systemctl start "$PROJECT_NAME" || true
   systemctl reload nginx || true
+
+  if [[ "$PROMTAIL_CONFIG_WAS_PRESENT" == "1" && -n "$PROMTAIL_CONFIG_ROLLBACK" && -f "$PROMTAIL_CONFIG_ROLLBACK" ]]; then
+    install -o root -g root -m 0644 "$PROMTAIL_CONFIG_ROLLBACK" "$PROMTAIL_CONFIG" || true
+    systemctl reset-failed promtail.service || true
+    systemctl restart promtail.service || true
+  fi
 }
 
 rollback_and_exit() {
@@ -108,6 +117,29 @@ wait_for_health() {
     sleep 1
   done
   return 1
+}
+
+reconcile_promtail_after_health() {
+  local helper="$REPO_DIR/scripts/ops/reconcile-promtail-config.sh"
+  local base_template="$REPO_DIR/monitoring/promtail/promtail-config.yml"
+  local journal_template="$REPO_DIR/monitoring/promtail/promtail-journal-scrape.yml"
+
+  systemctl cat promtail.service >/dev/null 2>&1 || return 0
+  [[ -x "$helper" && -f "$base_template" && -f "$journal_template" ]] \
+    || fail "Promtail is managed but the immutable reconciliation sources are incomplete"
+
+  if [[ -f "$PROMTAIL_CONFIG" ]]; then
+    PROMTAIL_CONFIG_ROLLBACK="$(mktemp /tmp/${PROJECT_NAME}-promtail-config.XXXXXX)"
+    install -o root -g root -m 0600 "$PROMTAIL_CONFIG" "$PROMTAIL_CONFIG_ROLLBACK"
+    PROMTAIL_CONFIG_WAS_PRESENT=1
+  fi
+
+  if ! PROMTAIL_CONFIG_TEMPLATE="$base_template" \
+      PROMTAIL_JOURNAL_TEMPLATE="$journal_template" \
+      PROMTAIL_CONFIG_PATH="$PROMTAIL_CONFIG" \
+      "$helper" --restart-active; then
+    fail "Promtail reconciliation failed after application health became ready"
+  fi
 }
 
 mkdir -p -m 0700 -- "$BACKUP_ROOT" "$PROJECT_PARENT"
@@ -167,6 +199,9 @@ if ! wait_for_health; then
   rollback_and_exit
 fi
 
+reconcile_promtail_after_health
+
 trap - ERR
+[[ -n "$PROMTAIL_CONFIG_ROLLBACK" ]] && rm -f -- "$PROMTAIL_CONFIG_ROLLBACK"
 [[ -d "$QUARANTINE_DIR" ]] && rm -rf -- "$QUARANTINE_DIR"
 printf 'Deploy completed: commit=%s backup=%s\n' "$DEPLOY_COMMIT" "${BACKUP_TAR:-none}"
