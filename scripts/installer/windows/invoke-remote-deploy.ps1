@@ -100,11 +100,13 @@ function New-Archive {
         "$leaf/scripts/installer/lib/entrypoint_layout.sh",
         "$leaf/scripts/installer/lib/source_layout.sh",
         "$leaf/scripts/ops/lib/install_log.sh",
+        "$leaf/scripts/ops/reconcile-promtail-config.sh",
         "$leaf/scripts/deploy/build-and-publish-frontend.sh",
         "$leaf/scripts/deploy/verify-frontend-release.sh",
         "$leaf/monitoring/prometheus/rules.yml",
         "$leaf/monitoring/loki/loki-config.yml",
         "$leaf/monitoring/promtail/promtail-config.yml",
+        "$leaf/monitoring/promtail/promtail-journal-scrape.yml",
         "$leaf/monitoring/grafana/sub-manager-dashboard.json",
         "$leaf/monitoring/grafana/adguard-overview-dashboard.json",
         "$leaf/systemd/sub-manager.service"
