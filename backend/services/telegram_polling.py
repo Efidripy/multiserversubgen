@@ -30,8 +30,8 @@ class TelegramMessagePort(Protocol):
 class TelegramBotApiClient:
     """Small Bot API client that always uses the request-local Telegram transport."""
 
-    def __init__(self, bot_token: str, *, transport: TelegramApiTransport):
-        self._endpoint = f"https://api.telegram.org/bot{bot_token}"
+    def __init__(self, bot_token: str | Callable[[], str], *, transport: TelegramApiTransport):
+        self._token_provider = bot_token if callable(bot_token) else lambda: bot_token
         self._transport = transport
 
     def delete_webhook(self) -> None:
@@ -51,7 +51,7 @@ class TelegramBotApiClient:
 
     def _call(self, method: str, payload: dict[str, Any], *, timeout: int) -> Any:
         request = UrlRequest(
-            f"{self._endpoint}/{method}",
+            f"https://api.telegram.org/bot{self._token_provider()}/{method}",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
