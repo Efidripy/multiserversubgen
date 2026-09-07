@@ -37,6 +37,8 @@ def _multipart_photo_body(message: TelegramOutboundMessage) -> tuple[bytes, str]
     add_field("chat_id", str(message.chat_id))
     if message.text:
         add_field("caption", message.text)
+    if message.parse_mode:
+        add_field("parse_mode", message.parse_mode)
     if message.reply_markup is not None:
         add_field("reply_markup", json.dumps(message.reply_markup, ensure_ascii=False, separators=(",", ":")))
     filename = message.photo_filename or "access-qr.png"
@@ -78,6 +80,8 @@ class TelegramApiSender:
             )
         else:
             payload: dict[str, Any] = {"chat_id": message.chat_id, "text": message.text}
+            if message.parse_mode:
+                payload["parse_mode"] = message.parse_mode
             if message.reply_markup is not None:
                 payload["reply_markup"] = message.reply_markup
             request = UrlRequest(
@@ -94,6 +98,8 @@ class TelegramApiSender:
             "message_id": message.edit_message_id,
             "text": message.text,
         }
+        if message.parse_mode:
+            payload["parse_mode"] = message.parse_mode
         if message.reply_markup is not None:
             payload["reply_markup"] = message.reply_markup
         request = UrlRequest(
