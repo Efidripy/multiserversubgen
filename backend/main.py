@@ -556,6 +556,8 @@ async def _telegram_polling_worker_loop() -> None:
         discover_existing=ClientManagerLegacyDiscovery(
             client_manager=client_mgr, list_nodes=node_service.list_nodes
         ).discover,
+        customer_active_icon_custom_emoji_id=SETTINGS.telegram.customer_active_icon_custom_emoji_id,
+        customer_inactive_icon_custom_emoji_id=SETTINGS.telegram.customer_inactive_icon_custom_emoji_id,
     )
     worker = TelegramPollingWorker(
         api=TelegramBotApiClient(telegram_token_provider.get_token, transport=transport),
