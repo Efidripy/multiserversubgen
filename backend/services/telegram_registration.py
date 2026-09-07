@@ -336,6 +336,8 @@ class TelegramRegistrationService:
         traffic = self._registry.get_customer_traffic(customer.customer_id)
         matrix = self._registry.customer_node_matrix(customer.customer_id)
         admin_note = self._registry.get_customer_admin_note(customer.customer_id)
+        support_requests = self._registry.list_customer_support_requests(customer.customer_id)
+        unresolved_support_count = sum(item.status in {"open", "read"} for item in support_requests)
         registration_introduction = (
             self._registry.get_customer_registration_introduction(customer.customer_id)
             if admin_note is None
@@ -363,6 +365,10 @@ class TelegramRegistrationService:
         buttons.append([{
             "text": note_button_text,
             "callback_data": f"admin:customer-note:{customer.customer_id}:{page}",
+        }])
+        buttons.append([{
+            "text": f"💬 Обращения: {unresolved_support_count} новых / {len(support_requests) - unresolved_support_count} в истории",
+            "callback_data": f"admin:support:{customer.customer_id}:{page}",
         }])
         for item in matrix:
             label = item.node_name.replace("\n", " ")[:30]
@@ -402,6 +408,54 @@ class TelegramRegistrationService:
                 "callback_data": f"admin:message:{customer.customer_id}:{page}",
             }])
         buttons.append([{"text": "← К пользователям", "callback_data": f"admin:customers:{page}"}])
+        return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
+
+    @staticmethod
+    def _support_preview(value: str | None, maximum: int = 300) -> str:
+        normalized = (value or "").strip()
+        return normalized if len(normalized) <= maximum else normalized[: maximum - 1].rstrip() + "…"
+
+    def _admin_customer_support_message(self, chat_id: int, customer_id: int, page: int) -> TelegramOutboundMessage:
+        customer = self._registry.get_customer(customer_id)
+        requests = self._registry.list_customer_support_requests(customer.customer_id)
+        unresolved = [item for item in requests if item.status in {"open", "read"}]
+        history = [item for item in requests if item.status == "resolved"]
+        category_labels = {
+            "link": "Ссылка",
+            "connection": "Подключение",
+            "device": "Смена устройства",
+            "directions": "Направления",
+            "other": "Другое",
+        }
+        lines = [f"Обращения: {customer.email_display}", "", "Новые / без ответа:"]
+        if unresolved:
+            for item in unresolved[:5]:
+                lines.extend((
+                    f"#{item.support_request_id} · {category_labels.get(item.category, item.category)} · {item.created_at}",
+                    self._support_preview(item.body),
+                ))
+        else:
+            lines.append("— нет")
+        lines.extend(("", "История:"))
+        if history:
+            for item in history[:5]:
+                lines.extend((
+                    f"#{item.support_request_id} · {category_labels.get(item.category, item.category)} · {item.updated_at}",
+                    f"Пользователь: {self._support_preview(item.body)}",
+                    f"Ответ: {self._support_preview(item.admin_response) or 'без текста'}",
+                ))
+        else:
+            lines.append("— пока нет")
+        buttons = [
+            [{
+                "text": f"↩ Ответить #{item.support_request_id}",
+                "callback_data": (
+                    f"admin:support-reply:{item.support_request_id}:{item.row_version}:{customer.customer_id}:{page}"
+                ),
+            }]
+            for item in unresolved[:5]
+        ]
+        buttons.append([{"text": "← К пользователю", "callback_data": f"admin:customer:{customer.customer_id}:{page}"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
 
     def _admin_broadcasts_message(self, chat_id: int) -> TelegramOutboundMessage:
@@ -548,6 +602,36 @@ class TelegramRegistrationService:
         self._registry.clear_customer_note_draft(user_id)
         return [self._admin_customer_message(chat_id, draft.customer_id, draft.page)]
 
+    def _handle_support_reply_draft(
+        self, *, user_id: int, chat_id: int, text: str | None
+    ) -> list[TelegramOutboundMessage] | None:
+        if not text or text.strip().startswith("/"):
+            return None
+        draft = self._registry.get_support_reply_draft(user_id)
+        if draft is None:
+            return None
+        try:
+            saved = self._registry.set_support_reply_draft(
+                admin_telegram_user_id=user_id,
+                support_request_id=draft.support_request_id,
+                customer_id=draft.customer_id,
+                expected_row_version=draft.expected_row_version,
+                page=draft.page,
+                body=text,
+            )
+        except TelegramRegistryError:
+            return [TelegramOutboundMessage(chat_id, "Ответ не принят. Допустимо от 1 до 1000 символов.")]
+        assert saved.body is not None
+        customer = self._registry.get_customer(saved.customer_id)
+        return [TelegramOutboundMessage(
+            chat_id,
+            f"Отправить ответ пользователю {customer.email_display}?\n\n{saved.body}",
+            {"inline_keyboard": [
+                [{"text": "✓ Отправить ответ", "callback_data": "admin:support-reply-confirm"}],
+                [{"text": "Отмена", "callback_data": f"admin:support-reply-cancel:{saved.customer_id}:{saved.page}"}],
+            ]},
+        )]
+
     def _handle_admin_message_draft(
         self, *, user_id: int, chat_id: int, text: str | None
     ) -> list[TelegramOutboundMessage] | None:
@@ -597,16 +681,22 @@ class TelegramRegistrationService:
             self._registry.clear_admin_draft(user_id)
             self._registry.clear_admin_message_draft(user_id)
             self._registry.clear_customer_note_draft(user_id)
+            self._registry.clear_support_reply_draft(user_id)
             return [TelegramOutboundMessage(chat_id, "Управление доступом.", self._admin_home_menu())]
         if callback_data == "admin:home":
             self._registry.clear_admin_draft(user_id)
             self._registry.clear_admin_message_draft(user_id)
             self._registry.clear_customer_note_draft(user_id)
+            self._registry.clear_support_reply_draft(user_id)
             return [TelegramOutboundMessage(chat_id, "Управление доступом.", self._admin_home_menu())]
-        if callback_data is not None:
+        if callback_data is not None and callback_data != "admin:support-reply-confirm":
             # A navigation click deliberately cancels a pending text entry, so
-            # a later unrelated message cannot overwrite a customer note.
+            # a later unrelated message cannot overwrite an admin input.
             self._registry.clear_customer_note_draft(user_id)
+            self._registry.clear_support_reply_draft(user_id)
+        support_reply_draft_response = self._handle_support_reply_draft(user_id=user_id, chat_id=chat_id, text=text)
+        if support_reply_draft_response is not None:
+            return support_reply_draft_response
         message_draft_response = self._handle_admin_message_draft(user_id=user_id, chat_id=chat_id, text=text)
         if message_draft_response is not None:
             return message_draft_response
@@ -648,6 +738,52 @@ class TelegramRegistrationService:
                     f"Рассылка поставлена в очередь. Получателей: {result.recipient_count}.",
                     self._admin_broadcasts_message(chat_id).reply_markup,
                 )]
+            if len(parts) == 4 and parts[:2] == ["admin", "support"]:
+                customer_id, page = int(parts[2]), int(parts[3])
+                self._registry.clear_admin_draft(user_id)
+                self._registry.clear_admin_message_draft(user_id)
+                return [self._admin_customer_support_message(chat_id, customer_id, page)]
+            if len(parts) == 6 and parts[:2] == ["admin", "support-reply"]:
+                request_id, version, customer_id, page = (int(parts[2]), int(parts[3]), int(parts[4]), int(parts[5]))
+                self._registry.clear_admin_draft(user_id)
+                self._registry.clear_admin_message_draft(user_id)
+                self._registry.set_support_reply_draft(
+                    admin_telegram_user_id=user_id,
+                    support_request_id=request_id,
+                    customer_id=customer_id,
+                    expected_row_version=version,
+                    page=page,
+                )
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    "Отправьте ответ пользователю одним сообщением. До подтверждения он не будет отправлен.",
+                    {"inline_keyboard": [[{
+                        "text": "Отмена",
+                        "callback_data": f"admin:support:{customer_id}:{page}",
+                    }]]},
+                )]
+            if callback_data == "admin:support-reply-confirm":
+                draft = self._registry.get_support_reply_draft(user_id)
+                if draft is None or not draft.body:
+                    raise VersionConflictError("support reply draft is missing")
+                result = self._registry.resolve_support_request(
+                    support_request_id=draft.support_request_id,
+                    expected_row_version=draft.expected_row_version,
+                    response=draft.body,
+                    idempotency_key=f"telegram-admin-support-reply:{update_id}:{draft.support_request_id}",
+                    resolved_by=f"telegram:{user_id}",
+                )
+                self._registry.clear_support_reply_draft(user_id)
+                history_message = self._admin_customer_support_message(chat_id, draft.customer_id, draft.page)
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    f"Ответ отправлен, обращение #{result.support_request_id} перенесено в историю.\n\n{history_message.text}",
+                    history_message.reply_markup,
+                )]
+            if len(parts) == 4 and parts[:2] == ["admin", "support-reply-cancel"]:
+                customer_id, page = int(parts[2]), int(parts[3])
+                self._registry.clear_support_reply_draft(user_id)
+                return [self._admin_customer_support_message(chat_id, customer_id, page)]
             if len(parts) == 4 and parts[:2] == ["admin", "message"]:
                 customer_id, page = int(parts[2]), int(parts[3])
                 profile = self._registry.get_customer_telegram_profile(customer_id)

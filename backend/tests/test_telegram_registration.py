@@ -1059,6 +1059,37 @@ def test_active_user_can_submit_one_categorized_support_request_without_affectin
         assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings").fetchone()[0] == 0
 
 
+def test_primary_admin_can_review_and_reply_to_customer_support_from_the_bot(tmp_path):
+    db_path = str(tmp_path / "admin-support.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = _approved_telegram_customer(registry, db_path, username="support-user")
+    registry.begin_support_request(telegram_user_id=42, category="connection")
+    request = registry.submit_pending_support_request(telegram_user_id=42, body="Приложение не подключается.")
+    assert request is not None
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
+
+    customer = service.handle_update(_admin_callback(10, f"admin:customer:{customer_id}:0"))[0]
+    support = service.handle_update(_admin_callback(11, f"admin:support:{customer_id}:0"))[0]
+    prompt = service.handle_update(
+        _admin_callback(12, f"admin:support-reply:{request.support_request_id}:{request.row_version}:{customer_id}:0")
+    )[0]
+    preview = service.handle_update(_admin_message(13, "Проверьте настройки и попробуйте снова."))[0]
+    resolved = service.handle_update(_admin_callback(14, "admin:support-reply-confirm"))[0]
+
+    assert any(button["text"].startswith("💬 Обращения: 1") for row in customer.reply_markup["inline_keyboard"] for button in row)
+    assert "Новые / без ответа" in support.text
+    assert "Приложение не подключается." in support.text
+    assert "одним сообщением" in prompt.text
+    assert "Отправить ответ пользователю support-user" in preview.text
+    assert "перенесено в историю" in resolved.text
+    assert registry.list_customer_support_requests(customer_id)[0].status == "resolved"
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM telegram_outbox WHERE event_type = 'user_support_resolved'"
+        ).fetchone()[0] == 1
+
+
 def test_primary_admin_can_toggle_only_a_compatible_node_from_the_bot(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
