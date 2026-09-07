@@ -770,7 +770,7 @@ def test_primary_admin_has_broadcasts_and_customer_profile_details(tmp_path):
     request_labels = [button["text"] for row in requests[0].reply_markup["inline_keyboard"] for button in row]
     assert "⊘ Заблокированные" in request_labels
     assert any(
-        button["text"] == "🟢 admin-card-user"
+        button["text"] == "🟢◎ admin-card-user"
         for row in customers[0].reply_markup["inline_keyboard"] for button in row
     )
     assert "Трафик за всё время" in card[0].text
@@ -1069,6 +1069,7 @@ def test_primary_admin_can_review_and_reply_to_customer_support_from_the_bot(tmp
     assert request is not None
     service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
 
+    customers = service.handle_update(_admin_callback(9, "admin:customers:0"))[0]
     customer = service.handle_update(_admin_callback(10, f"admin:customer:{customer_id}:0"))[0]
     support = service.handle_update(_admin_callback(11, f"admin:support:{customer_id}:0"))[0]
     prompt = service.handle_update(
@@ -1077,6 +1078,7 @@ def test_primary_admin_can_review_and_reply_to_customer_support_from_the_bot(tmp
     preview = service.handle_update(_admin_message(13, "Проверьте настройки и попробуйте снова."))[0]
     resolved = service.handle_update(_admin_callback(14, "admin:support-reply-confirm"))[0]
 
+    assert any(button["text"] == "🟢◎ support-user ✉ 1" for row in customers.reply_markup["inline_keyboard"] for button in row)
     assert any(button["text"].startswith("💬 Обращения: 1") for row in customer.reply_markup["inline_keyboard"] for button in row)
     assert "Новые / без ответа" in support.text
     assert "Приложение не подключается." in support.text
@@ -1084,6 +1086,11 @@ def test_primary_admin_can_review_and_reply_to_customer_support_from_the_bot(tmp
     assert "Отправить ответ пользователю support-user" in preview.text
     assert "перенесено в историю" in resolved.text
     assert registry.list_customer_support_requests(customer_id)[0].status == "resolved"
+    next_prompt = service.handle_update(_callback(15, "support:category:other"))[0]
+    next_request = service.handle_update(_message(16, "Появился новый вопрос."))[0]
+    assert "ещё не отправлено" in next_prompt.text
+    assert "принято" in next_request.text.lower()
+    assert len(registry.list_customer_support_requests(customer_id)) == 2
     with connect(db_path) as conn:
         assert conn.execute(
             "SELECT COUNT(*) FROM telegram_outbox WHERE event_type = 'user_support_resolved'"
