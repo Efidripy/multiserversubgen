@@ -42,6 +42,12 @@ def build_telegram_webhook_router(
         get_cached_inbound_options=get_cached_inbound_options,
         traffic_projection_loader=traffic_projection_loader,
         discover_existing=discover_existing,
+        customer_active_icon_custom_emoji_id=getattr(
+            telegram_settings, "customer_active_icon_custom_emoji_id", ""
+        ),
+        customer_inactive_icon_custom_emoji_id=getattr(
+            telegram_settings, "customer_inactive_icon_custom_emoji_id", ""
+        ),
     )
     message_sender = sender or TelegramApiSender(
         token_provider.get_token if token_provider is not None else telegram_settings.bot_token,
