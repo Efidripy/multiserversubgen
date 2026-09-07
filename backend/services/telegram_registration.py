@@ -310,14 +310,16 @@ class TelegramRegistrationService:
         for offset in range(0, len(customer_page.items), 2):
             row: list[dict[str, str]] = []
             for item in customer_page.items[offset:offset + 2]:
-                # Telegram's inline keyboard API has no coloured text or custom
-                # icon styling. Keep the project's minimal ◎ glyph, while the
-                # adjoining native colour marker remains visible on every client.
-                status_icon = "🟢◎" if item.status == "active" else "🔴◎"
-                support_badge = f" ✉ {item.open_support_count}" if item.open_support_count else ""
+                # Keep one minimal status glyph. Telegram renders the semantic
+                # colour through the documented button style instead of a second
+                # adjacent coloured-circle emoji.
+                status_style = "success" if item.status == "active" else "danger"
+                support_badge = f"✉ {item.open_support_count}" if item.open_support_count else None
+                label = " ".join(part for part in ("◎", support_badge, item.email_display[:21]) if part)
                 row.append({
-                    "text": f"{status_icon} {item.email_display[:21]}{support_badge}",
+                    "text": label,
                     "callback_data": f"admin:customer:{item.customer_id}:{current_page}",
+                    "style": status_style,
                 })
             buttons.append(row)
         navigation: list[dict[str, str]] = []

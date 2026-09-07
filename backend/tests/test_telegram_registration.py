@@ -770,7 +770,7 @@ def test_primary_admin_has_broadcasts_and_customer_profile_details(tmp_path):
     request_labels = [button["text"] for row in requests[0].reply_markup["inline_keyboard"] for button in row]
     assert "⊘ Заблокированные" in request_labels
     assert any(
-        button["text"] == "🟢◎ admin-card-user"
+        button["text"] == "◎ admin-card-user" and button["style"] == "success"
         for row in customers[0].reply_markup["inline_keyboard"] for button in row
     )
     assert "Трафик за всё время" in card[0].text
@@ -810,8 +810,9 @@ def test_primary_admin_customers_are_shown_as_twenty_per_page_in_two_columns(tmp
     assert len(first_customer_rows) == 10
     assert all(len(row) == 2 for row in first_customer_rows)
     assert len(first_customer_buttons) == 20
-    assert any(button["text"].startswith("🟢") for button in first_customer_buttons)
-    assert any(button["text"].startswith("🔴") for button in first_customer_buttons)
+    assert all(button["text"].startswith("◎ ") for button in first_customer_buttons)
+    assert any(button["style"] == "success" for button in first_customer_buttons)
+    assert any(button["style"] == "danger" for button in first_customer_buttons)
     assert any(button["text"] == "1/2" for row in first_rows for button in row)
 
     second = service.handle_update(_admin_callback(81, "admin:customers:1"))[0]
@@ -821,7 +822,8 @@ def test_primary_admin_customers_are_shown_as_twenty_per_page_in_two_columns(tmp
     assert second.text == "Пользователи: 21. Страница 2/2."
     assert len(second_customer_rows) == 1
     assert len(second_customer_rows[0]) == 1
-    assert second_customer_rows[0][0]["text"].startswith("🟢")
+    assert second_customer_rows[0][0]["text"].startswith("◎ ")
+    assert second_customer_rows[0][0]["style"] == "success"
     assert any(button["text"] == "2/2" for row in second_rows for button in row)
 
 
@@ -1078,7 +1080,10 @@ def test_primary_admin_can_review_and_reply_to_customer_support_from_the_bot(tmp
     preview = service.handle_update(_admin_message(13, "Проверьте настройки и попробуйте снова."))[0]
     resolved = service.handle_update(_admin_callback(14, "admin:support-reply-confirm"))[0]
 
-    assert any(button["text"] == "🟢◎ support-user ✉ 1" for row in customers.reply_markup["inline_keyboard"] for button in row)
+    assert any(
+        button["text"] == "◎ ✉ 1 support-user" and button["style"] == "success"
+        for row in customers.reply_markup["inline_keyboard"] for button in row
+    )
     assert any(button["text"].startswith("💬 Обращения: 1") for row in customer.reply_markup["inline_keyboard"] for button in row)
     assert "Новые / без ответа" in support.text
     assert "Приложение не подключается." in support.text
