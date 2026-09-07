@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import secrets
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest
 
@@ -56,9 +56,12 @@ def _multipart_photo_body(message: TelegramOutboundMessage) -> tuple[bytes, str]
 class TelegramApiSender:
     """Request-local Bot API sender; never logs endpoints, links or QR bytes."""
 
-    def __init__(self, bot_token: str, *, transport: TelegramApiTransport):
-        self._endpoint = f"https://api.telegram.org/bot{bot_token}"
+    def __init__(self, bot_token: str | Callable[[], str], *, transport: TelegramApiTransport):
+        self._token_provider = bot_token if callable(bot_token) else lambda: bot_token
         self._transport = transport
+
+    def _endpoint(self) -> str:
+        return f"https://api.telegram.org/bot{self._token_provider()}"
 
     def send(self, message: TelegramOutboundMessage) -> int | None:
         if message.delete_message_id is not None:
@@ -68,7 +71,7 @@ class TelegramApiSender:
         if message.photo_png is not None:
             body, boundary = _multipart_photo_body(message)
             request = UrlRequest(
-                f"{self._endpoint}/sendPhoto",
+                f"{self._endpoint()}/sendPhoto",
                 data=body,
                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
                 method="POST",
@@ -78,7 +81,7 @@ class TelegramApiSender:
             if message.reply_markup is not None:
                 payload["reply_markup"] = message.reply_markup
             request = UrlRequest(
-                f"{self._endpoint}/sendMessage",
+                f"{self._endpoint()}/sendMessage",
                 data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                 headers={"Content-Type": "application/json"},
                 method="POST",
@@ -94,7 +97,7 @@ class TelegramApiSender:
         if message.reply_markup is not None:
             payload["reply_markup"] = message.reply_markup
         request = UrlRequest(
-            f"{self._endpoint}/editMessageText",
+            f"{self._endpoint()}/editMessageText",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -104,7 +107,7 @@ class TelegramApiSender:
     def _delete_message(self, message: TelegramOutboundMessage) -> None:
         payload = {"chat_id": message.chat_id, "message_id": message.delete_message_id}
         request = UrlRequest(
-            f"{self._endpoint}/deleteMessage",
+            f"{self._endpoint()}/deleteMessage",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",

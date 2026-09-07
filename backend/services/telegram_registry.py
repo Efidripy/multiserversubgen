@@ -273,6 +273,7 @@ class TelegramSupportRequest:
     support_request_id: int
     telegram_user_id: int
     customer_id: int
+    email_display: str
     category: str
     body: str
     status: str
@@ -481,6 +482,109 @@ class CustomerOperationRescheduleResult:
     row_version: int
 
 
+@dataclass(frozen=True)
+class TelegramAdminDashboard:
+    pending_requests: int
+    active_customers: int
+    suspended_customers: int
+    lifecycle_attention: int
+    provisioning_attention: int
+    open_appeals: int
+    open_support_requests: int
+    open_drift_findings: int
+    scheduled_lifecycle_actions: int
+
+
+@dataclass(frozen=True)
+class CustomerTimelineEvent:
+    event_type: str
+    entity_type: str
+    entity_id: str
+    created_at: str
+    actor_type: str | None = None
+    actor_id: str | None = None
+    status: str | None = None
+
+
+@dataclass(frozen=True)
+class CustomerTag:
+    customer_id: int
+    tag: str
+
+
+@dataclass(frozen=True)
+class TelegramSavedFilter:
+    filter_id: int
+    name: str
+    query: str
+    status: str | None
+    tags: tuple[str, ...]
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class LifecycleSchedule:
+    schedule_id: int
+    customer_id: int
+    customer_email: str
+    operation_type: str
+    expected_customer_version: int
+    target_snapshot_digest: str
+    execute_not_before: str
+    status: str
+    row_version: int
+    operation_id: int | None
+    created_at: str
+
+
+@dataclass(frozen=True)
+class BulkLifecyclePreviewItem:
+    customer_id: int
+    customer_email: str
+    expected_customer_version: int
+    target_snapshot_digest: str
+    target_count: int
+
+
+@dataclass(frozen=True)
+class BulkLifecyclePreview:
+    operation_type: str
+    target_snapshot_digest: str
+    items: tuple[BulkLifecyclePreviewItem, ...]
+
+
+@dataclass(frozen=True)
+class BulkLifecycleItemStatus:
+    customer_id: int
+    customer_email: str
+    operation_id: int
+    status: str
+
+
+@dataclass(frozen=True)
+class BulkLifecycleStatus:
+    bulk_job_id: int
+    operation_type: str
+    created_at: str
+    items: tuple[BulkLifecycleItemStatus, ...]
+
+
+@dataclass(frozen=True)
+class DriftFinding:
+    finding_id: int
+    kind: str
+    customer_id: int | None
+    customer_email: str | None
+    node_id: int
+    node_name: str
+    remote_email: str
+    remote_client_id: str
+    remote_sub_id: str
+    status: str
+    row_version: int
+    last_seen_at: str
+
+
 _RESERVED_EMAILS = {"admin", "root", "support", "system", "telegram", "bot", "null", "undefined"}
 _TRANSLITERATION = str.maketrans(
     {
@@ -559,6 +663,49 @@ def _default_client_enabled(value: Any) -> bool:
 def _payload_digest(payload: dict[str, Any]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def _timestamp(value: datetime) -> str:
+    return value.astimezone(timezone.utc).replace(tzinfo=None, microsecond=0).isoformat(sep=" ")
+
+
+def _parse_future_timestamp(value: object, field: str, *, minimum_minutes: int = 5) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise TelegramRegistryError(f"{field} must be an ISO timestamp")
+    try:
+        candidate = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise TelegramRegistryError(f"{field} must be an ISO timestamp") from exc
+    if candidate.tzinfo is None:
+        candidate = candidate.replace(tzinfo=timezone.utc)
+    normalized = candidate.astimezone(timezone.utc).replace(microsecond=0)
+    if normalized < _utc_now() + timedelta(minutes=minimum_minutes):
+        raise TelegramRegistryError(f"{field} must be at least {minimum_minutes} minutes in the future")
+    if normalized > _utc_now() + timedelta(days=366):
+        raise TelegramRegistryError(f"{field} must be within one year")
+    return _timestamp(normalized)
+
+
+def _normalize_tag(value: object) -> str:
+    if not isinstance(value, str):
+        raise TelegramRegistryError("tag must be text")
+    normalized = unicodedata.normalize("NFKC", value).strip().casefold()
+    if not 1 <= len(normalized) <= 48 or any(char in normalized for char in "\r\n\t"):
+        raise TelegramRegistryError("tag must contain 1 to 48 printable characters")
+    return normalized
+
+
+def _normalize_tags(values: object) -> tuple[str, ...]:
+    if not isinstance(values, (list, tuple)):
+        raise TelegramRegistryError("tags must be a list")
+    normalized = tuple(sorted({_normalize_tag(value) for value in values}))
+    if len(normalized) > 12:
+        raise TelegramRegistryError("at most 12 tags are allowed")
+    return normalized
 
 
 def _stable_identity_suffix(telegram_user_id: int) -> str:
@@ -951,10 +1098,10 @@ class TelegramRegistry:
         first_name: str | None,
         last_name: str | None,
         phone_number: str | None = None,
-        locale: str = "ru",
+        locale: str | None = None,
     ) -> TelegramIdentity:
         user_id = _positive_int(telegram_user_id, "telegram_user_id")
-        normalized_locale = locale if locale in {"ru", "en"} else "ru"
+        normalized_locale = locale if locale in {"ru", "en"} else None
         normalized_phone = _normalize_phone_number(phone_number)
         with connect(self._db_path) as conn:
             row = conn.execute(
@@ -973,7 +1120,7 @@ class TelegramRegistry:
                         (telegram_user_id, chat_id, username, first_name, last_name, phone_number, locale)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (user_id, chat_id, username, first_name, last_name, normalized_phone, normalized_locale),
+                    (user_id, chat_id, username, first_name, last_name, normalized_phone, normalized_locale or "ru"),
                 )
                 row = conn.execute(
                     """
@@ -989,7 +1136,7 @@ class TelegramRegistry:
                     """
                     UPDATE telegram_identities
                     SET chat_id = ?, username = ?, first_name = ?, last_name = ?,
-                        phone_number = COALESCE(?, phone_number), locale = ?,
+                        phone_number = COALESCE(?, phone_number), locale = COALESCE(?, locale),
                         updated_at = CURRENT_TIMESTAMP, row_version = row_version + 1
                     WHERE telegram_user_id = ?
                     """,
@@ -1013,6 +1160,26 @@ class TelegramRegistry:
             customer_id=int(row[4]) if row[4] is not None else None,
             row_version=int(row[5]),
         )
+
+    def get_locale(self, telegram_user_id: int) -> str:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute("SELECT locale FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)).fetchone()
+        if row is None:
+            raise TelegramRegistryError("telegram identity is unavailable")
+        return "en" if row[0] == "en" else "ru"
+
+    def set_locale(self, telegram_user_id: int, locale: object) -> str:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        normalized = "en" if locale == "en" else "ru"
+        with connect(self._db_path) as conn:
+            updated = conn.execute(
+                "UPDATE telegram_identities SET locale = ?, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP WHERE telegram_user_id = ?",
+                (normalized, user_id),
+            )
+            if updated.rowcount != 1:
+                raise TelegramRegistryError("telegram identity is unavailable")
+        return normalized
 
     def get_preapproval(self, telegram_user_id: int) -> TelegramPreapproval | None:
         user_id = _positive_int(telegram_user_id, "telegram_user_id")
@@ -1907,18 +2074,21 @@ class TelegramRegistry:
             )
             row = conn.execute(
                 """
-                SELECT id, telegram_user_id, customer_id, category, body, status,
-                       row_version, created_at, updated_at, admin_response
-                FROM telegram_support_requests WHERE id = ?
+                SELECT s.id, s.telegram_user_id, s.customer_id, c.email_display,
+                       s.category, s.body, s.status, s.row_version, s.created_at,
+                       s.updated_at, s.admin_response
+                FROM telegram_support_requests AS s
+                JOIN customers AS c ON c.id = s.customer_id
+                WHERE s.id = ?
                 """,
                 (request_id,),
             ).fetchone()
         assert row is not None
         return TelegramSupportRequest(
             support_request_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
-            category=str(row[3]), body=str(row[4]), status=str(row[5]), row_version=int(row[6]),
-            created_at=str(row[7]), updated_at=str(row[8]),
-            admin_response=str(row[9]) if row[9] is not None else None,
+            email_display=str(row[3]), category=str(row[4]), body=str(row[5]), status=str(row[6]),
+            row_version=int(row[7]), created_at=str(row[8]), updated_at=str(row[9]),
+            admin_response=str(row[10]) if row[10] is not None else None,
         )
 
     def list_support_requests(self, *, status: str = "open", limit: int = 100) -> list[TelegramSupportRequest]:
@@ -1926,25 +2096,27 @@ class TelegramRegistry:
             raise TelegramRegistryError("support request status is invalid")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
             raise TelegramRegistryError("limit must be an integer from 1 to 200")
-        where = "" if status == "all" else "WHERE status = ?"
+        where = "" if status == "all" else "WHERE s.status = ?"
         params: tuple[Any, ...] = (status, limit) if status != "all" else (limit,)
         with connect(self._db_path) as conn:
             rows = conn.execute(
                 """
-                SELECT id, telegram_user_id, customer_id, category, body, status,
-                       row_version, created_at, updated_at, admin_response
-                FROM telegram_support_requests
+                SELECT s.id, s.telegram_user_id, s.customer_id, c.email_display,
+                       s.category, s.body, s.status, s.row_version, s.created_at,
+                       s.updated_at, s.admin_response
+                FROM telegram_support_requests AS s
+                JOIN customers AS c ON c.id = s.customer_id
                 """
                 + where
-                + " ORDER BY created_at DESC, id DESC LIMIT ?",
+                + " ORDER BY s.created_at DESC, s.id DESC LIMIT ?",
                 params,
             ).fetchall()
         return [
             TelegramSupportRequest(
                 support_request_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
-                category=str(row[3]), body=str(row[4]), status=str(row[5]), row_version=int(row[6]),
-                created_at=str(row[7]), updated_at=str(row[8]),
-                admin_response=str(row[9]) if row[9] is not None else None,
+                email_display=str(row[3]), category=str(row[4]), body=str(row[5]), status=str(row[6]),
+                row_version=int(row[7]), created_at=str(row[8]), updated_at=str(row[9]),
+                admin_response=str(row[10]) if row[10] is not None else None,
             )
             for row in rows
         ]
@@ -4970,6 +5142,952 @@ class TelegramRegistry:
                 (f"customer_operation_{action}_queued", actor, str(normalized_operation_id), digest),
             )
         return result
+
+    def get_admin_dashboard(self) -> TelegramAdminDashboard:
+        """Return only local operational counts; never probes a node."""
+
+        with connect(self._db_path) as conn:
+            def count(sql: str, parameters: tuple[Any, ...] = ()) -> int:
+                row = conn.execute(sql, parameters).fetchone()
+                return int(row[0]) if row is not None else 0
+
+            return TelegramAdminDashboard(
+                pending_requests=count("SELECT COUNT(*) FROM telegram_identities WHERE access_status = 'pending'"),
+                active_customers=count("SELECT COUNT(*) FROM customers WHERE status = 'active' AND deleted_at IS NULL"),
+                suspended_customers=count("SELECT COUNT(*) FROM customers WHERE status = 'suspended' AND deleted_at IS NULL"),
+                lifecycle_attention=count(
+                    "SELECT COUNT(*) FROM telegram_customer_operations "
+                    "WHERE status IN ('partial', 'failed', 'running')"
+                ),
+                provisioning_attention=count(
+                    "SELECT COUNT(*) FROM telegram_provisioning_jobs "
+                    "WHERE status IN ('partial', 'failed', 'running')"
+                ),
+                open_appeals=count("SELECT COUNT(*) FROM telegram_appeals WHERE status = 'open'"),
+                open_support_requests=count(
+                    "SELECT COUNT(*) FROM telegram_support_requests WHERE status IN ('open', 'read')"
+                ),
+                open_drift_findings=count("SELECT COUNT(*) FROM telegram_drift_findings WHERE status = 'open'"),
+                scheduled_lifecycle_actions=count(
+                    "SELECT COUNT(*) FROM telegram_lifecycle_schedules WHERE status = 'scheduled'"
+                ),
+            )
+
+    def list_customer_tags(self, customer_id: int) -> tuple[CustomerTag, ...]:
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                "SELECT customer_id, tag FROM telegram_customer_tags WHERE customer_id = ? ORDER BY tag",
+                (local_customer_id,),
+            ).fetchall()
+        return tuple(CustomerTag(customer_id=int(row[0]), tag=str(row[1])) for row in rows)
+
+    def set_customer_tags(
+        self, *, customer_id: int, tags: object, updated_by: str
+    ) -> tuple[CustomerTag, ...]:
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        normalized_tags = _normalize_tags(tags)
+        actor = _nonempty(updated_by, "updated_by")
+        with connect(self._db_path) as conn:
+            customer = conn.execute(
+                "SELECT 1 FROM customers WHERE id = ? AND deleted_at IS NULL", (local_customer_id,)
+            ).fetchone()
+            if customer is None:
+                raise TelegramRegistryError("customer was not found")
+            conn.execute("DELETE FROM telegram_customer_tags WHERE customer_id = ?", (local_customer_id,))
+            conn.executemany(
+                "INSERT INTO telegram_customer_tags(customer_id, tag, created_by) VALUES (?, ?, ?)",
+                [(local_customer_id, tag, actor) for tag in normalized_tags],
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('customer_tags_updated', 'admin', ?, 'customer', ?, ?)
+                """,
+                (actor, str(local_customer_id), _payload_digest({"tags": normalized_tags})),
+            )
+        return tuple(CustomerTag(customer_id=local_customer_id, tag=tag) for tag in normalized_tags)
+
+    def list_saved_filters(self, *, admin_username: str) -> tuple[TelegramSavedFilter, ...]:
+        actor = _nonempty(admin_username, "admin_username")
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, name, query, status, tags_json, updated_at
+                FROM telegram_admin_saved_filters
+                WHERE admin_username = ?
+                ORDER BY updated_at DESC, id DESC
+                """,
+                (actor,),
+            ).fetchall()
+        result: list[TelegramSavedFilter] = []
+        for row in rows:
+            try:
+                tags = _normalize_tags(json.loads(str(row[4])))
+            except (ValueError, TypeError, json.JSONDecodeError, TelegramRegistryError):
+                tags = ()
+            result.append(TelegramSavedFilter(
+                filter_id=int(row[0]), name=str(row[1]), query=str(row[2]),
+                status=str(row[3]) if row[3] is not None else None,
+                tags=tags, updated_at=str(row[5]),
+            ))
+        return tuple(result)
+
+    def save_filter(
+        self, *, admin_username: str, name: object, query: object, status: object, tags: object
+    ) -> TelegramSavedFilter:
+        actor = _nonempty(admin_username, "admin_username")
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 80:
+            raise TelegramRegistryError("filter name must contain 1 to 80 characters")
+        if not isinstance(query, str) or len(query.strip()) > 160:
+            raise TelegramRegistryError("filter query must contain at most 160 characters")
+        normalized_status = status.strip() if isinstance(status, str) else None
+        allowed_statuses = {
+            "active", "suspending", "suspended", "suspend_partial", "resuming", "resume_partial",
+            "deleting", "delete_partial", "deleted", "conflict",
+        }
+        if normalized_status == "":
+            normalized_status = None
+        if normalized_status not in allowed_statuses and normalized_status is not None:
+            raise TelegramRegistryError("filter status is invalid")
+        normalized_tags = _normalize_tags(tags)
+        normalized_name = unicodedata.normalize("NFKC", name).strip()
+        normalized_query = unicodedata.normalize("NFKC", query).strip()
+        tags_json = json.dumps(normalized_tags, ensure_ascii=False, separators=(",", ":"))
+        with connect(self._db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO telegram_admin_saved_filters(admin_username, name, query, status, tags_json)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(admin_username, name) DO UPDATE SET
+                    query = excluded.query, status = excluded.status, tags_json = excluded.tags_json,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (actor, normalized_name, normalized_query, normalized_status, tags_json),
+            )
+            row = conn.execute(
+                """
+                SELECT id, name, query, status, tags_json, updated_at
+                FROM telegram_admin_saved_filters WHERE admin_username = ? AND name = ?
+                """,
+                (actor, normalized_name),
+            ).fetchone()
+        assert row is not None
+        return TelegramSavedFilter(
+            filter_id=int(row[0]), name=str(row[1]), query=str(row[2]),
+            status=str(row[3]) if row[3] is not None else None,
+            tags=normalized_tags, updated_at=str(row[5]),
+        )
+
+    def delete_saved_filter(self, *, admin_username: str, filter_id: int) -> None:
+        actor = _nonempty(admin_username, "admin_username")
+        normalized_filter_id = _positive_int(filter_id, "filter_id")
+        with connect(self._db_path) as conn:
+            deleted = conn.execute(
+                "DELETE FROM telegram_admin_saved_filters WHERE id = ? AND admin_username = ?",
+                (normalized_filter_id, actor),
+            )
+            if deleted.rowcount != 1:
+                raise TelegramRegistryError("saved filter was not found")
+
+    def customer_timeline(self, *, customer_id: int, limit: int = 100) -> tuple[CustomerTimelineEvent, ...]:
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise TelegramRegistryError("limit must be an integer from 1 to 200")
+        with connect(self._db_path) as conn:
+            exists = conn.execute("SELECT 1 FROM customers WHERE id = ?", (local_customer_id,)).fetchone()
+            if exists is None:
+                raise TelegramRegistryError("customer was not found")
+            rows = conn.execute(
+                """
+                SELECT event_type, entity_type, entity_id, created_at, actor_type, actor_id, status
+                FROM (
+                    SELECT event_type, entity_type, entity_id, created_at, actor_type, actor_id, NULL AS status
+                    FROM telegram_audit_log
+                    WHERE (entity_type = 'customer' AND entity_id = ?)
+                       OR (entity_type = 'customer_operation' AND entity_id IN (
+                           SELECT CAST(id AS TEXT) FROM telegram_customer_operations WHERE customer_id = ?
+                       ))
+                    UNION ALL
+                    SELECT 'lifecycle:' || operation_type, 'customer_operation', CAST(id AS TEXT),
+                           updated_at, 'system', NULL, status
+                    FROM telegram_customer_operations WHERE customer_id = ?
+                    UNION ALL
+                    SELECT 'provisioning:' || trigger, 'provisioning_job', CAST(id AS TEXT),
+                           created_at, 'system', NULL, status
+                    FROM telegram_provisioning_jobs WHERE customer_id = ?
+                ) ORDER BY created_at DESC LIMIT ?
+                """,
+                (str(local_customer_id), local_customer_id, local_customer_id, local_customer_id, limit),
+            ).fetchall()
+        return tuple(CustomerTimelineEvent(
+            event_type=str(row[0]), entity_type=str(row[1]), entity_id=str(row[2]), created_at=str(row[3]),
+            actor_type=str(row[4]) if row[4] is not None else None,
+            actor_id=str(row[5]) if row[5] is not None else None,
+            status=str(row[6]) if row[6] is not None else None,
+        ) for row in rows)
+
+    def get_customer_read_only_view(self, customer_id: int) -> dict[str, Any]:
+        """A no-token projection of what the linked person can currently see."""
+
+        customer = self.get_customer(customer_id)
+        profile = self.get_customer_telegram_profile(customer.customer_id)
+        with connect(self._db_path) as conn:
+            initial_job = conn.execute(
+                """
+                SELECT status FROM telegram_provisioning_jobs
+                WHERE customer_id = ? AND trigger = 'approve_new'
+                ORDER BY id ASC LIMIT 1
+                """,
+                (customer.customer_id,),
+            ).fetchone()
+        initial_ready = initial_job is None or str(initial_job[0]) == "succeeded"
+        return {
+            "customer_id": customer.customer_id,
+            "identity_linked": profile.telegram_user_id is not None,
+            "identity_access_status": "approved" if profile.telegram_user_id is not None else None,
+            "customer_status": customer.status,
+            "connection_available": customer.status == "active" and initial_ready,
+            "connection_reason": None if customer.status == "active" and initial_ready else (
+                "initial_provisioning" if not initial_ready else "lifecycle"
+            ),
+            "token_revealed": False,
+        }
+
+    def create_lifecycle_schedule(
+        self,
+        *,
+        customer_id: int,
+        operation_type: object,
+        execute_not_before: object,
+        expected_customer_version: int,
+        target_snapshot_digest: str,
+        idempotency_key: str,
+        created_by: str,
+    ) -> LifecycleSchedule:
+        """Store a cancellable grace-period command, without touching a node."""
+
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        if operation_type not in {"suspend", "delete"}:
+            raise TelegramRegistryError("only suspend and delete may be scheduled")
+        expected_version = _positive_int(expected_customer_version, "expected_customer_version")
+        expected_digest = _nonempty(target_snapshot_digest, "target_snapshot_digest")
+        execute_at = _parse_future_timestamp(execute_not_before, "execute_not_before")
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(created_by, "created_by")
+        payload = {
+            "customer_id": local_customer_id, "operation_type": operation_type,
+            "expected_customer_version": expected_version, "target_snapshot_digest": expected_digest,
+            "execute_not_before": execute_at,
+        }
+        payload_digest = _payload_digest(payload)
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'lifecycle_schedule' AND idempotency_key = ?", (key,)
+            ).fetchone()
+            if receipt is not None:
+                if str(receipt[0]) != payload_digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return LifecycleSchedule(**json.loads(str(receipt[1])))
+            preview, _targets = self._customer_operation_snapshot(
+                conn, customer_id=local_customer_id, operation_type=str(operation_type)
+            )
+            if preview.expected_customer_version != expected_version or preview.target_snapshot_digest != expected_digest:
+                raise VersionConflictError("lifecycle target preview is stale")
+            if preview.blocked_binding_ids:
+                raise LifecycleUnavailableError("customer has bindings without an exact confirmed remote target")
+            cursor = conn.execute(
+                """
+                INSERT INTO telegram_lifecycle_schedules
+                    (customer_id, operation_type, expected_customer_version, target_snapshot_digest,
+                     execute_not_before, idempotency_key, created_by)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (local_customer_id, operation_type, expected_version, expected_digest, execute_at, key, actor),
+            )
+            schedule = LifecycleSchedule(
+                schedule_id=int(cursor.lastrowid), customer_id=local_customer_id,
+                customer_email=self.get_customer(local_customer_id).email_display,
+                operation_type=str(operation_type), expected_customer_version=expected_version,
+                target_snapshot_digest=expected_digest, execute_not_before=execute_at,
+                status="scheduled", row_version=1, operation_id=None, created_at="",
+            )
+            created_at = conn.execute(
+                "SELECT created_at FROM telegram_lifecycle_schedules WHERE id = ?", (schedule.schedule_id,)
+            ).fetchone()
+            assert created_at is not None
+            schedule = LifecycleSchedule(**{**asdict(schedule), "created_at": str(created_at[0])})
+            conn.execute(
+                "INSERT INTO telegram_command_receipts(scope, idempotency_key, payload_digest, result_json) "
+                "VALUES ('lifecycle_schedule', ?, ?, ?)",
+                (key, payload_digest, json.dumps(asdict(schedule), separators=(",", ":"))),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('customer_lifecycle_scheduled', 'admin', ?, 'customer', ?, ?)
+                """,
+                (actor, str(local_customer_id), payload_digest),
+            )
+        return schedule
+
+    def _schedule_from_row(self, row: tuple[Any, ...]) -> LifecycleSchedule:
+        return LifecycleSchedule(
+            schedule_id=int(row[0]), customer_id=int(row[1]), customer_email=str(row[2]),
+            operation_type=str(row[3]), expected_customer_version=int(row[4]),
+            target_snapshot_digest=str(row[5]), execute_not_before=str(row[6]), status=str(row[7]),
+            row_version=int(row[8]), operation_id=int(row[9]) if row[9] is not None else None,
+            created_at=str(row[10]),
+        )
+
+    def list_lifecycle_schedules(
+        self, *, customer_id: int | None = None, status: str = "all", limit: int = 100
+    ) -> tuple[LifecycleSchedule, ...]:
+        if status not in {"all", "scheduled", "activating", "queued", "cancelled", "stale", "failed"}:
+            raise TelegramRegistryError("schedule status is invalid")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise TelegramRegistryError("limit must be an integer from 1 to 200")
+        where: list[str] = []
+        values: list[Any] = []
+        if customer_id is not None:
+            where.append("s.customer_id = ?")
+            values.append(_positive_int(customer_id, "customer_id"))
+        if status != "all":
+            where.append("s.status = ?")
+            values.append(status)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        values.append(limit)
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT s.id, s.customer_id, c.email_display, s.operation_type, s.expected_customer_version,
+                       s.target_snapshot_digest, s.execute_not_before, s.status, s.row_version,
+                       s.operation_id, s.created_at
+                FROM telegram_lifecycle_schedules AS s
+                JOIN customers AS c ON c.id = s.customer_id
+                {clause}
+                ORDER BY s.execute_not_before DESC, s.id DESC LIMIT ?
+                """,
+                tuple(values),
+            ).fetchall()
+        return tuple(self._schedule_from_row(row) for row in rows)
+
+    def cancel_lifecycle_schedule(
+        self, *, schedule_id: int, expected_row_version: int, cancelled_by: str, reason: object = None
+    ) -> LifecycleSchedule:
+        local_schedule_id = _positive_int(schedule_id, "schedule_id")
+        expected_version = _positive_int(expected_row_version, "expected_row_version")
+        actor = _nonempty(cancelled_by, "cancelled_by")
+        normalized_reason = str(reason).strip()[:240] if reason is not None else None
+        with connect(self._db_path) as conn:
+            updated = conn.execute(
+                """
+                UPDATE telegram_lifecycle_schedules
+                SET status = 'cancelled', cancel_reason = ?, row_version = row_version + 1,
+                    lease_owner = NULL, lease_until = NULL, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'scheduled' AND row_version = ?
+                """,
+                (normalized_reason or None, local_schedule_id, expected_version),
+            )
+            if updated.rowcount != 1:
+                raise VersionConflictError("schedule is no longer cancellable")
+            row = conn.execute(
+                """
+                SELECT s.id, s.customer_id, c.email_display, s.operation_type, s.expected_customer_version,
+                       s.target_snapshot_digest, s.execute_not_before, s.status, s.row_version,
+                       s.operation_id, s.created_at
+                FROM telegram_lifecycle_schedules AS s JOIN customers AS c ON c.id = s.customer_id
+                WHERE s.id = ?
+                """,
+                (local_schedule_id,),
+            ).fetchone()
+            assert row is not None
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('customer_lifecycle_schedule_cancelled', 'admin', ?, 'customer_schedule', ?, ?)
+                """,
+                (actor, str(local_schedule_id), _payload_digest({"reason": normalized_reason or ""})),
+            )
+        return self._schedule_from_row(row)
+
+    def claim_due_lifecycle_schedule(
+        self, *, worker_id: str, now: datetime | None = None, lease_seconds: int = 60
+    ) -> LifecycleSchedule | None:
+        actor = _nonempty(worker_id, "worker_id")
+        if lease_seconds <= 0:
+            raise TelegramRegistryError("lease_seconds must be positive")
+        current = _timestamp(now or _utc_now())
+        lease_until = _timestamp((now or _utc_now()) + timedelta(seconds=lease_seconds))
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT s.id, s.customer_id, c.email_display, s.operation_type, s.expected_customer_version,
+                       s.target_snapshot_digest, s.execute_not_before, s.status, s.row_version,
+                       s.operation_id, s.created_at
+                FROM telegram_lifecycle_schedules AS s JOIN customers AS c ON c.id = s.customer_id
+                WHERE s.status IN ('scheduled', 'activating') AND s.execute_not_before <= ?
+                  AND (s.lease_until IS NULL OR s.lease_until < ?)
+                ORDER BY s.execute_not_before, s.id LIMIT 1
+                """,
+                (current, current),
+            ).fetchone()
+            if row is None:
+                return None
+            claimed = conn.execute(
+                """
+                UPDATE telegram_lifecycle_schedules
+                SET status = 'activating', lease_owner = ?, lease_until = ?,
+                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status IN ('scheduled', 'activating')
+                  AND (lease_until IS NULL OR lease_until < ?)
+                """,
+                (actor, lease_until, int(row[0]), current),
+            )
+            if claimed.rowcount != 1:
+                return None
+            row = list(row)
+            row[7] = "activating"
+            row[8] = int(row[8]) + 1
+        return self._schedule_from_row(tuple(row))
+
+    def complete_lifecycle_schedule(
+        self, *, schedule_id: int, operation_id: int | None, outcome: str
+    ) -> None:
+        if outcome not in {"queued", "stale", "failed"}:
+            raise TelegramRegistryError("schedule outcome is invalid")
+        with connect(self._db_path) as conn:
+            updated = conn.execute(
+                """
+                UPDATE telegram_lifecycle_schedules
+                SET status = ?, operation_id = ?, lease_owner = NULL, lease_until = NULL,
+                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND status = 'activating'
+                """,
+                (outcome, operation_id, _positive_int(schedule_id, "schedule_id")),
+            )
+            if updated.rowcount != 1:
+                raise VersionConflictError("schedule completion lost its lease")
+
+    @staticmethod
+    def _bulk_preview_digest(operation_type: str, items: Iterable[BulkLifecyclePreviewItem]) -> str:
+        return _payload_digest({
+            "operation_type": operation_type,
+            "items": [
+                {
+                    "customer_id": item.customer_id,
+                    "expected_customer_version": item.expected_customer_version,
+                    "target_snapshot_digest": item.target_snapshot_digest,
+                }
+                for item in sorted(items, key=lambda item: item.customer_id)
+            ],
+        })
+
+    def preview_bulk_customer_operations(
+        self, *, customer_ids: object, operation_type: object
+    ) -> BulkLifecyclePreview:
+        if operation_type not in {"suspend", "resume", "delete"}:
+            raise TelegramRegistryError("bulk operation is invalid")
+        if not isinstance(customer_ids, (list, tuple)):
+            raise TelegramRegistryError("customer_ids must be a list")
+        normalized_ids = tuple(sorted({_positive_int(value, "customer_id") for value in customer_ids}))
+        if not 1 <= len(normalized_ids) <= 100:
+            raise TelegramRegistryError("bulk preview requires 1 to 100 customers")
+        with connect(self._db_path) as conn:
+            items: list[BulkLifecyclePreviewItem] = []
+            for customer_id in normalized_ids:
+                preview, _targets = self._customer_operation_snapshot(
+                    conn, customer_id=customer_id, operation_type=str(operation_type)
+                )
+                if preview.blocked_binding_ids:
+                    raise LifecycleUnavailableError(
+                        f"customer {customer_id} has bindings without an exact confirmed remote target"
+                    )
+                email = conn.execute("SELECT email_display FROM customers WHERE id = ?", (customer_id,)).fetchone()
+                assert email is not None
+                items.append(BulkLifecyclePreviewItem(
+                    customer_id=customer_id, customer_email=str(email[0]),
+                    expected_customer_version=preview.expected_customer_version,
+                    target_snapshot_digest=preview.target_snapshot_digest,
+                    target_count=len(preview.targets),
+                ))
+        return BulkLifecyclePreview(
+            operation_type=str(operation_type),
+            target_snapshot_digest=self._bulk_preview_digest(str(operation_type), items),
+            items=tuple(items),
+        )
+
+    @staticmethod
+    def _parse_bulk_preview_items(values: object) -> tuple[BulkLifecyclePreviewItem, ...]:
+        if not isinstance(values, list) or not values:
+            raise TelegramRegistryError("bulk preview items are required")
+        items: list[BulkLifecyclePreviewItem] = []
+        seen: set[int] = set()
+        for value in values:
+            if not isinstance(value, dict):
+                raise TelegramRegistryError("bulk preview item is invalid")
+            customer_id = _positive_int(value.get("customer_id"), "customer_id")
+            if customer_id in seen:
+                raise TelegramRegistryError("bulk preview contains a duplicate customer")
+            seen.add(customer_id)
+            version = _positive_int(value.get("expected_customer_version"), "expected_customer_version")
+            digest = _nonempty(value.get("target_snapshot_digest"), "target_snapshot_digest")
+            items.append(BulkLifecyclePreviewItem(
+                customer_id=customer_id, customer_email="", expected_customer_version=version,
+                target_snapshot_digest=digest, target_count=0,
+            ))
+        if len(items) > 100:
+            raise TelegramRegistryError("bulk preview may contain at most 100 customers")
+        return tuple(sorted(items, key=lambda item: item.customer_id))
+
+    def _insert_bulk_lifecycle_operation(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        preview: CustomerOperationPreview,
+        private_targets: list[dict[str, Any]],
+        operation_type: str,
+        idempotency_key: str,
+        created_by: str,
+    ) -> CustomerOperationQueueResult:
+        """Insert the same immutable records as a normal lifecycle command.
+
+        The caller has already revalidated every member in one transaction;
+        this helper intentionally does no remote I/O and does not expose the
+        target identifiers in its return value.
+        """
+
+        queued_status = "queued" if private_targets else "succeeded"
+        next_customer_status = {
+            "suspend": "suspending" if private_targets else "suspended",
+            "resume": "resuming" if private_targets else "active",
+            "delete": "deleting" if private_targets else "deleted",
+        }[operation_type]
+        if operation_type == "delete" and not private_targets:
+            update = conn.execute(
+                """
+                UPDATE customers
+                SET status = ?, deleted_at = CURRENT_TIMESTAMP, row_version = row_version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND row_version = ? AND deleted_at IS NULL
+                """,
+                (next_customer_status, preview.customer_id, preview.expected_customer_version),
+            )
+        else:
+            update = conn.execute(
+                """
+                UPDATE customers SET status = ?, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND row_version = ? AND deleted_at IS NULL
+                """,
+                (next_customer_status, preview.customer_id, preview.expected_customer_version),
+            )
+        if update.rowcount != 1:
+            raise VersionConflictError("customer was updated by another operation")
+        cursor = conn.execute(
+            """
+            INSERT INTO telegram_customer_operations
+                (customer_id, operation_type, status, target_snapshot_digest,
+                 expected_customer_version, idempotency_key, created_by, finished_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'succeeded' THEN CURRENT_TIMESTAMP ELSE NULL END)
+            """,
+            (
+                preview.customer_id, operation_type, queued_status, preview.target_snapshot_digest,
+                preview.expected_customer_version, idempotency_key, created_by, queued_status,
+            ),
+        )
+        operation_id = int(cursor.lastrowid)
+        for target in private_targets:
+            conn.execute(
+                """
+                INSERT INTO telegram_customer_operation_attempts
+                    (operation_id, binding_id, node_id, inbound_id, remote_client_id, remote_sub_id,
+                     remote_email, action, previous_enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    operation_id, target["binding_id"], target["node_id"], target["inbound_id"],
+                    target["remote_client_id"], target["remote_sub_id"], target["remote_email"],
+                    target["action"], int(target["previous_enabled"])
+                    if target["previous_enabled"] is not None else None,
+                ),
+            )
+        return CustomerOperationQueueResult(
+            operation_id=operation_id, customer_id=preview.customer_id,
+            operation_type=operation_type, status=queued_status, row_version=1,
+        )
+
+    def queue_bulk_customer_operations(
+        self,
+        *,
+        operation_type: object,
+        target_snapshot_digest: object,
+        items: object,
+        idempotency_key: str,
+        created_by: str,
+    ) -> BulkLifecycleStatus:
+        """Atomically queue a reviewed batch of normal lifecycle operations."""
+
+        if operation_type not in {"suspend", "resume", "delete"}:
+            raise TelegramRegistryError("bulk operation is invalid")
+        parsed_items = self._parse_bulk_preview_items(items)
+        expected_bulk_digest = _nonempty(target_snapshot_digest, "target_snapshot_digest")
+        if self._bulk_preview_digest(str(operation_type), parsed_items) != expected_bulk_digest:
+            raise VersionConflictError("bulk lifecycle preview is stale")
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(created_by, "created_by")
+        payload = {"operation_type": operation_type, "target_snapshot_digest": expected_bulk_digest}
+        payload_digest = _payload_digest(payload)
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'bulk_customer_lifecycle' AND idempotency_key = ?", (key,)
+            ).fetchone()
+            if receipt is not None:
+                if str(receipt[0]) != payload_digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return self.get_bulk_lifecycle_status(int(json.loads(str(receipt[1]))["bulk_job_id"]))
+
+            snapshots: list[tuple[CustomerOperationPreview, list[dict[str, Any]], str]] = []
+            for item in parsed_items:
+                preview, private_targets = self._customer_operation_snapshot(
+                    conn, customer_id=item.customer_id, operation_type=str(operation_type)
+                )
+                if (
+                    preview.expected_customer_version != item.expected_customer_version
+                    or preview.target_snapshot_digest != item.target_snapshot_digest
+                    or preview.blocked_binding_ids
+                ):
+                    raise VersionConflictError("at least one bulk lifecycle target is stale")
+                email = conn.execute("SELECT email_display FROM customers WHERE id = ?", (item.customer_id,)).fetchone()
+                assert email is not None
+                snapshots.append((preview, private_targets, str(email[0])))
+            cursor = conn.execute(
+                """
+                INSERT INTO telegram_bulk_lifecycle_jobs
+                    (operation_type, target_snapshot_digest, created_by, idempotency_key)
+                VALUES (?, ?, ?, ?)
+                """,
+                (operation_type, expected_bulk_digest, actor, key),
+            )
+            bulk_job_id = int(cursor.lastrowid)
+            for preview, private_targets, _email in snapshots:
+                result = self._insert_bulk_lifecycle_operation(
+                    conn, preview=preview, private_targets=private_targets, operation_type=str(operation_type),
+                    idempotency_key=f"bulk:{bulk_job_id}:{preview.customer_id}", created_by=actor,
+                )
+                conn.execute(
+                    "INSERT INTO telegram_bulk_lifecycle_items(bulk_job_id, customer_id, operation_id) VALUES (?, ?, ?)",
+                    (bulk_job_id, preview.customer_id, result.operation_id),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO telegram_audit_log
+                        (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                    VALUES (?, 'admin', ?, 'customer_operation', ?, ?)
+                    """,
+                    (f"customer_{operation_type}_queued_bulk", actor, str(result.operation_id), expected_bulk_digest),
+                )
+            conn.execute(
+                "INSERT INTO telegram_command_receipts(scope, idempotency_key, payload_digest, result_json) "
+                "VALUES ('bulk_customer_lifecycle', ?, ?, ?)",
+                (key, payload_digest, json.dumps({"bulk_job_id": bulk_job_id}, separators=(",", ":"))),
+            )
+        return self.get_bulk_lifecycle_status(bulk_job_id)
+
+    def get_bulk_lifecycle_status(self, bulk_job_id: int) -> BulkLifecycleStatus:
+        local_bulk_job_id = _positive_int(bulk_job_id, "bulk_job_id")
+        with connect(self._db_path) as conn:
+            job = conn.execute(
+                "SELECT operation_type, created_at FROM telegram_bulk_lifecycle_jobs WHERE id = ?",
+                (local_bulk_job_id,),
+            ).fetchone()
+            if job is None:
+                raise TelegramRegistryError("bulk lifecycle job was not found")
+            rows = conn.execute(
+                """
+                SELECT item.customer_id, customer.email_display, item.operation_id, operation.status
+                FROM telegram_bulk_lifecycle_items AS item
+                JOIN customers AS customer ON customer.id = item.customer_id
+                JOIN telegram_customer_operations AS operation ON operation.id = item.operation_id
+                WHERE item.bulk_job_id = ? ORDER BY customer.email_display COLLATE NOCASE, item.customer_id
+                """,
+                (local_bulk_job_id,),
+            ).fetchall()
+        return BulkLifecycleStatus(
+            bulk_job_id=local_bulk_job_id, operation_type=str(job[0]), created_at=str(job[1]),
+            items=tuple(BulkLifecycleItemStatus(
+                customer_id=int(row[0]), customer_email=str(row[1]), operation_id=int(row[2]), status=str(row[3])
+            ) for row in rows),
+        )
+
+    def drift_inventory(self, *, node_ids: object = None) -> dict[str, Any]:
+        """Return a minimal local comparison set for a strictly read-only scan."""
+
+        selected: tuple[int, ...] | None = None
+        if node_ids is not None:
+            if not isinstance(node_ids, (list, tuple)):
+                raise TelegramRegistryError("node_ids must be a list")
+            selected = tuple(sorted({_positive_int(value, "node_id") for value in node_ids}))
+            if not 1 <= len(selected) <= 20:
+                raise TelegramRegistryError("drift scan requires 1 to 20 nodes")
+        clause = ""
+        parameters: list[Any] = []
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            clause = f" AND n.id IN ({placeholders})"
+            parameters.extend(selected)
+        with connect(self._db_path) as conn:
+            nodes = conn.execute(
+                f"""
+                SELECT n.id, n.name FROM telegram_node_policies AS policy
+                JOIN nodes AS n ON n.id = policy.node_id
+                WHERE policy.provisioning_enabled = 1 AND n.enabled = 1 AND n.read_only = 0{clause}
+                ORDER BY n.name COLLATE NOCASE, n.id
+                """,
+                tuple(parameters),
+            ).fetchall()
+            node_id_values = tuple(int(row[0]) for row in nodes)
+            if not node_id_values:
+                return {"nodes": (), "bindings": (), "customers": ()}
+            placeholders = ",".join("?" for _ in node_id_values)
+            bindings = conn.execute(
+                f"""
+                SELECT b.id, b.customer_id, b.node_id, b.remote_client_id, b.remote_sub_id, b.remote_email,
+                       b.desired_enabled, c.email_display, c.email_canonical
+                FROM customer_node_bindings AS b
+                JOIN customers AS c ON c.id = b.customer_id
+                WHERE b.management_state = 'confirmed' AND b.inbound_id = 1 AND b.node_id IN ({placeholders})
+                """,
+                node_id_values,
+            ).fetchall()
+            customers = conn.execute(
+                "SELECT id, email_display, email_canonical FROM customers WHERE deleted_at IS NULL"
+            ).fetchall()
+        return {
+            "nodes": tuple({"node_id": int(row[0]), "node_name": str(row[1])} for row in nodes),
+            "bindings": tuple({
+                "binding_id": int(row[0]), "customer_id": int(row[1]), "node_id": int(row[2]),
+                "remote_client_id": str(row[3] or ""), "remote_sub_id": str(row[4] or ""),
+                "remote_email": str(row[5]), "desired_enabled": bool(row[6]),
+                "customer_email": str(row[7]), "customer_canonical": str(row[8]),
+            } for row in bindings),
+            "customers": tuple({
+                "customer_id": int(row[0]), "email_display": str(row[1]), "email_canonical": str(row[2]),
+            } for row in customers),
+        }
+
+    def record_drift_findings(self, *, scanned_node_ids: object, findings: object) -> tuple[DriftFinding, ...]:
+        if not isinstance(scanned_node_ids, (list, tuple)):
+            raise TelegramRegistryError("scanned_node_ids must be a list")
+        node_ids = tuple(sorted({_positive_int(value, "node_id") for value in scanned_node_ids}))
+        if not node_ids:
+            return ()
+        if not isinstance(findings, list):
+            raise TelegramRegistryError("drift findings must be a list")
+        normalized: list[dict[str, Any]] = []
+        for item in findings:
+            if not isinstance(item, dict) or item.get("kind") not in {"binding_missing", "binding_conflict", "orphan_remote"}:
+                raise TelegramRegistryError("drift finding is invalid")
+            node_id = _positive_int(item.get("node_id"), "node_id")
+            if node_id not in node_ids:
+                raise TelegramRegistryError("drift finding refers to an unscanned node")
+            customer_id = item.get("customer_id")
+            if customer_id is not None:
+                customer_id = _positive_int(customer_id, "customer_id")
+            remote_email = str(item.get("remote_email") or "").strip()
+            remote_client_id = str(item.get("remote_client_id") or "").strip()
+            remote_sub_id = str(item.get("remote_sub_id") or "").strip()
+            if len(remote_email) > 128 or len(remote_client_id) > 128 or len(remote_sub_id) > 128:
+                raise TelegramRegistryError("drift finding identity is too long")
+            key = _payload_digest({
+                "kind": item["kind"], "customer_id": customer_id, "node_id": node_id,
+                "remote_email": remote_email.casefold(), "remote_client_id": remote_client_id,
+                "remote_sub_id": remote_sub_id,
+            })
+            normalized.append({
+                "finding_key": key, "kind": item["kind"], "customer_id": customer_id, "node_id": node_id,
+                "remote_email": remote_email, "remote_client_id": remote_client_id,
+                "remote_sub_id": remote_sub_id,
+                "details_json": json.dumps(item.get("details") if isinstance(item.get("details"), dict) else {},
+                                           ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+            })
+        with connect(self._db_path) as conn:
+            placeholders = ",".join("?" for _ in node_ids)
+            current_keys = {item["finding_key"] for item in normalized}
+            if current_keys:
+                key_placeholders = ",".join("?" for _ in current_keys)
+                conn.execute(
+                    f"""
+                    UPDATE telegram_drift_findings SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP,
+                        row_version = row_version + 1
+                    WHERE status = 'open' AND node_id IN ({placeholders}) AND finding_key NOT IN ({key_placeholders})
+                    """,
+                    (*node_ids, *current_keys),
+                )
+            else:
+                conn.execute(
+                    f"""
+                    UPDATE telegram_drift_findings SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP,
+                        row_version = row_version + 1
+                    WHERE status = 'open' AND node_id IN ({placeholders})
+                    """,
+                    node_ids,
+                )
+            for item in normalized:
+                conn.execute(
+                    """
+                    INSERT INTO telegram_drift_findings
+                        (finding_key, kind, customer_id, node_id, remote_email, remote_client_id,
+                         remote_sub_id, details_json)
+                    VALUES (:finding_key, :kind, :customer_id, :node_id, :remote_email, :remote_client_id,
+                            :remote_sub_id, :details_json)
+                    ON CONFLICT(finding_key) DO UPDATE SET
+                        details_json = excluded.details_json, last_seen_at = CURRENT_TIMESTAMP,
+                        status = CASE WHEN telegram_drift_findings.status = 'resolved' THEN 'open'
+                                      ELSE telegram_drift_findings.status END,
+                        resolved_at = CASE WHEN telegram_drift_findings.status = 'resolved' THEN NULL
+                                           ELSE telegram_drift_findings.resolved_at END,
+                        row_version = telegram_drift_findings.row_version + 1
+                    """,
+                    item,
+                )
+        return self.list_drift_findings(status="open", limit=200)
+
+    def list_drift_findings(self, *, status: str = "open", limit: int = 100) -> tuple[DriftFinding, ...]:
+        if status not in {"open", "adopted", "ignored", "resolved", "all"}:
+            raise TelegramRegistryError("drift status is invalid")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise TelegramRegistryError("limit must be an integer from 1 to 200")
+        clause = "" if status == "all" else "WHERE finding.status = ?"
+        parameters = (limit,) if status == "all" else (status, limit)
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT finding.id, finding.kind, finding.customer_id, customer.email_display, finding.node_id,
+                       node.name, finding.remote_email, finding.remote_client_id, finding.remote_sub_id,
+                       finding.status, finding.row_version, finding.last_seen_at
+                FROM telegram_drift_findings AS finding
+                JOIN nodes AS node ON node.id = finding.node_id
+                LEFT JOIN customers AS customer ON customer.id = finding.customer_id
+                {clause}
+                ORDER BY CASE finding.status WHEN 'open' THEN 0 ELSE 1 END, finding.last_seen_at DESC, finding.id DESC
+                LIMIT ?
+                """,
+                parameters,
+            ).fetchall()
+        return tuple(DriftFinding(
+            finding_id=int(row[0]), kind=str(row[1]), customer_id=int(row[2]) if row[2] is not None else None,
+            customer_email=str(row[3]) if row[3] is not None else None, node_id=int(row[4]), node_name=str(row[5]),
+            remote_email=str(row[6]), remote_client_id=str(row[7]), remote_sub_id=str(row[8]),
+            status=str(row[9]), row_version=int(row[10]), last_seen_at=str(row[11]),
+        ) for row in rows)
+
+    def resolve_drift_finding(
+        self, *, finding_id: int, expected_row_version: int, status: str, resolved_by: str
+    ) -> DriftFinding:
+        if status not in {"ignored", "resolved"}:
+            raise TelegramRegistryError("drift resolution is invalid")
+        local_finding_id = _positive_int(finding_id, "finding_id")
+        expected_version = _positive_int(expected_row_version, "expected_row_version")
+        actor = _nonempty(resolved_by, "resolved_by")
+        with connect(self._db_path) as conn:
+            updated = conn.execute(
+                """
+                UPDATE telegram_drift_findings
+                SET status = ?, resolved_at = CURRENT_TIMESTAMP, row_version = row_version + 1
+                WHERE id = ? AND status = 'open' AND row_version = ?
+                """,
+                (status, local_finding_id, expected_version),
+            )
+            if updated.rowcount != 1:
+                raise VersionConflictError("drift finding is stale")
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id)
+                VALUES ('drift_finding_resolved', 'admin', ?, 'drift_finding', ?)
+                """,
+                (actor, str(local_finding_id)),
+            )
+        return next(item for item in self.list_drift_findings(status="all", limit=200) if item.finding_id == local_finding_id)
+
+    def adopt_drift_binding(
+        self,
+        *,
+        finding_id: int,
+        expected_row_version: int,
+        remote_email: str,
+        remote_client_id: str,
+        remote_sub_id: str,
+        remote_enabled: bool,
+        adopted_by: str,
+    ) -> DriftFinding:
+        """Adopt a re-read exact orphan as a local binding; never writes a node."""
+
+        local_finding_id = _positive_int(finding_id, "finding_id")
+        expected_version = _positive_int(expected_row_version, "expected_row_version")
+        actor = _nonempty(adopted_by, "adopted_by")
+        canonical = canonicalize_email(remote_email)
+        with connect(self._db_path) as conn:
+            finding = conn.execute(
+                """
+                SELECT customer_id, node_id, remote_email, remote_client_id, remote_sub_id
+                FROM telegram_drift_findings
+                WHERE id = ? AND kind = 'orphan_remote' AND status = 'open' AND row_version = ?
+                """,
+                (local_finding_id, expected_version),
+            ).fetchone()
+            if finding is None or finding[0] is None:
+                raise VersionConflictError("drift finding is not adoptable")
+            if (
+                canonicalize_email(str(finding[2])) != canonical
+                or str(finding[3]) != str(remote_client_id)
+                or str(finding[4]) != str(remote_sub_id)
+            ):
+                raise VersionConflictError("remote record changed; scan it again")
+            exists = conn.execute(
+                "SELECT 1 FROM customer_node_bindings WHERE customer_id = ? AND node_id = ? AND inbound_id = 1",
+                (int(finding[0]), int(finding[1])),
+            ).fetchone()
+            if exists is not None:
+                raise VersionConflictError("customer already has an inbound 1 binding on this node")
+            conn.execute(
+                """
+                INSERT INTO customer_node_bindings
+                    (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                     source, management_state, desired_enabled, last_enabled, last_confirmed_at)
+                VALUES (?, ?, 1, ?, ?, ?, 'admin_confirmed', 'confirmed', ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (int(finding[0]), int(finding[1]), str(remote_client_id), str(remote_sub_id), remote_email,
+                 int(remote_enabled), int(remote_enabled)),
+            )
+            conn.execute(
+                "UPDATE customers SET row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (int(finding[0]),),
+            )
+            updated = conn.execute(
+                """
+                UPDATE telegram_drift_findings
+                SET status = 'adopted', resolved_at = CURRENT_TIMESTAMP, row_version = row_version + 1
+                WHERE id = ? AND row_version = ?
+                """,
+                (local_finding_id, expected_version),
+            )
+            if updated.rowcount != 1:
+                raise VersionConflictError("drift finding changed while adopting")
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id)
+                VALUES ('drift_binding_adopted', 'admin', ?, 'drift_finding', ?)
+                """,
+                (actor, str(local_finding_id)),
+            )
+        return next(item for item in self.list_drift_findings(status="all", limit=200) if item.finding_id == local_finding_id)
 
 
 def exact_node_ids(rows: Iterable[CustomerNodeMatrixRow]) -> set[int]:

@@ -30,6 +30,27 @@ BotFather и реальные remote clients этот репозиторный �
 The adapter validates every required setting fail-closed at startup and has no
 implicit development fallback.
 
+## Управление Bot API token из панели
+
+В `Telegram → Bot API token` администратор может задать token конкретного
+бота без редактирования окружения. Это override для текущей инсталляции:
+
+- значение проходит проверку формата, шифруется тем же keyring, что и другие
+  секреты панели, и сохраняется только в локальной SQLite БД;
+- API и UI никогда не возвращают token: доступны лишь статус, источник и
+  последние четыре символа; введённое значение очищается из формы после
+  попытки сохранения;
+- изменение использует optimistic `row_version`, поэтому устаревшая вкладка не
+  может затереть новый token;
+- `Вернуть ENV` удаляет только panel override. Тогда снова используется
+  `TELEGRAM_BOT_TOKEN`, если он задан.
+
+Polling и исходящая доставка читают актуальный token на каждом Bot API вызове,
+поэтому panel override применяется без перезапуска. В webhook-режиме Telegram
+не узнаёт token нового бота автоматически: после смены отдельно зарегистрируйте
+webhook у нового бота через контролируемую операционную процедуру. Не вставляйте
+token в тикеты, shell history, скриншоты или audit-записи.
+
 Enabling the worker is a staging operation, not a deployment instruction. It
 requires a separately approved staging target, fresh node compatibility proof,
 and a smoke receipt before the same interlocks may be considered for production.

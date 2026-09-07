@@ -51,6 +51,19 @@
     "transportNotConfigured": "Локальный transport не настроен. Прямой режим остаётся безопасным значением по умолчанию.",
     "transportUpdated": "Транспорт Telegram обновлён",
     "transportUpdateFailed": "Не удалось изменить транспорт Telegram",
+    "botTokenTitle": "Bot API token",
+    "botTokenHint": "Токен сохраняется только в зашифрованном виде и больше не показывается в панели. После смены токена в webhook-режиме зарегистрируйте webhook у нового бота отдельно.",
+    "botTokenInputLabel": "Новый Bot API token",
+    "botTokenPlaceholder": "Введите новый token",
+    "botTokenConfigured": "настроен · ••••{{suffix}}",
+    "botTokenNotConfigured": "не настроен",
+    "botTokenSaved": "Bot API token сохранён",
+    "botTokenSaveFailed": "Не удалось сохранить Bot API token",
+    "botTokenUseEnvironment": "Вернуть ENV",
+    "botTokenClearConfirm": "Удалить панельный token и вернуться к значению из окружения?",
+    "botTokenCleared": "Панельный token удалён; используется значение из окружения, если оно задано.",
+    "botTokenPanelSource": "Источник: панель. Показаны только последние 4 символа.",
+    "botTokenEnvironmentSource": "Источник: переменная окружения или token ещё не задан.",
     "requests": "Заявки",
     "noRequests": "Новых заявок нет",
     "unknownUser": "Пользователь",
@@ -101,6 +114,58 @@
     "existingDiscoveryHint": "Проверяются все включённые ноды; поиск ничего на них не изменяет.",
     "createNew": "Создать нового",
     "bindExisting": "Привязать существующего"
+    ,"dashboardTitle": "Оперативный статус"
+    ,"dashboardPending": "заявки"
+    ,"dashboardActive": "активные"
+    ,"dashboardSuspended": "приостановлены"
+    ,"dashboardProvisioning": "подготовка"
+    ,"dashboardLifecycle": "lifecycle"
+    ,"dashboardDrift": "расхождения"
+    ,"tagsTitle": "Теги"
+    ,"tagsPlaceholder": "например: vip, оплачено"
+    ,"tagsSaved": "Теги сохранены"
+    ,"timelineTitle": "История"
+    ,"timelineEmpty": "Событий пока нет"
+    ,"scheduleAt": "Выполнить не раньше"
+    ,"scheduleAction": "Запланировать"
+    ,"scheduleCreated": "Операция запланирована"
+    ,"schedulesTitle": "Запланированные действия"
+    ,"noSchedules": "Нет запланированных действий"
+    ,"scheduleCancelConfirm": "Отменить это запланированное действие?"
+    ,"scheduleCancelled": "Запланированное действие отменено"
+    ,"bulkSelectCustomer": "Выбрать пользователя {{email}} для массовой операции"
+    ,"bulkTitle": "Массовые операции"
+    ,"bulkHint": "Только Suspend/Resume. Сначала создаётся неизменяемый preview, затем отдельные безопасные операции для каждого пользователя."
+    ,"bulkSelected": "выбрано: {{count}}"
+    ,"bulkPreviewText": "Preview: {{operation}}, пользователей: {{count}}."
+    ,"bulkConfirm": "Поставить в очередь отдельные операции для {{count}} пользователей?"
+    ,"driftTitle": "Сверка записей"
+    ,"driftHint": "Только безопасное чтение. Обычное присутствие пользователя лишь на части TG-нод не считается ошибкой."
+    ,"driftScan": "Сканировать"
+    ,"driftScanDone": "Сверка завершена"
+    ,"noDrift": "Открытых расхождений нет"
+    ,"driftResolve": "Закрыть"
+    ,"driftAdopt": "Принять запись"
+    ,"driftAdoptConfirm": "Принять эту удалённую запись как локально подтверждённую? Удалённая нода не будет изменена."
+    ,"supportTitle": "Обращения в поддержку"
+    ,"supportHint": "Сверху — обращения, которые ждут вашего ответа. После отправки ответа они переходят в историю, а пользователь получает сообщение через очередь."
+    ,"supportOpenCount": "неотвеченные: {{count}}"
+    ,"supportOpenTitle": "Неотвеченные"
+    ,"noOpenSupport": "Неотвеченных обращений нет."
+    ,"supportHistoryTitle": "История обращений"
+    ,"noSupportHistory": "История пока пуста."
+    ,"supportReply": "Ответить"
+    ,"supportReplyLabel": "Ответ пользователю"
+    ,"supportSendReply": "Отправить ответ"
+    ,"supportNoReply": "Ответ не добавлен"
+    ,"supportResolved": "Ответ отправлен в очередь"
+    ,"supportCategory": {
+      "link": "Ссылка не открывается",
+      "connection": "Подключение не работает",
+      "device": "Сменил устройство",
+      "directions": "Мало или нет направлений",
+      "other": "Другое"
+    }
   },
   "common": {
     "add": "Добавить",

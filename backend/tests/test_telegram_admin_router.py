@@ -386,6 +386,7 @@ def test_support_routes_are_admin_only_and_resolution_remains_local(tmp_path):
         "support_request_id": request.support_request_id,
         "telegram_user_id": 42,
         "customer_id": customer_id,
+        "email_display": "support-api",
         "category": "link",
         "body": "Ссылка не открывается.",
         "status": "open",

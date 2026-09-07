@@ -38,12 +38,14 @@ from services.telegram_registration import TelegramRegistrationService
 from services.telegram_registry import TelegramRegistry
 from services.telegram_retention import TelegramRetentionService
 from services.telegram_reminders import TelegramReminderService
+from services.telegram_schedules import TelegramScheduleWorker
 from services.telegram_provisioning import (
     ClientManagerLegacyDiscovery,
     ClientManagerProvisioningPort,
     TelegramProvisioningWorker,
 )
 from services.telegram_transport import TelegramApiTransport
+from services.telegram_bot_config import TelegramBotTokenProvider
 from shared.http_config import get_requests_verify_value
 
 import sys
@@ -98,6 +100,7 @@ AUDIT_ACTIVE_SLEEP_SEC = SETTINGS.audit_active_sleep_sec
 ROLE_VIEWERS = SETTINGS.role_viewers
 ROLE_OPERATORS = SETTINGS.role_operators
 ROLE_ADMINS = SETTINGS.role_admins
+ROLE_OWNERS = SETTINGS.role_owners
 MFA_TOTP_ENABLED = SETTINGS.mfa_totp_enabled
 MFA_TOTP_USERS = SETTINGS.mfa_totp_users
 MFA_TOTP_WS_STRICT = SETTINGS.mfa_totp_ws_strict
@@ -280,6 +283,9 @@ HTTP_REQUEST_LATENCY = metrics.http_request_latency
 )
 
 bootstrap_db(DB_PATH)
+telegram_token_provider = TelegramBotTokenProvider(
+    db_path=DB_PATH, encrypt=encrypt, decrypt=decrypt, fallback_token=SETTINGS.telegram.bot_token
+)
 
 
 def _persist_node_version(snapshot: dict) -> None:
@@ -452,6 +458,8 @@ register_app_routers(
     pam_authenticate=p.authenticate,
     handle_websocket_message=handle_websocket_message,
     telegram_settings=SETTINGS.telegram,
+    telegram_token_provider=telegram_token_provider,
+    is_owner=lambda username: username in ROLE_OWNERS,
 )
 
 
@@ -471,14 +479,18 @@ async def _telegram_provisioning_worker_loop() -> None:
         port=port,
         worker_id=f"telegram-lifecycle:{os.getpid()}",
     )
+    schedule_worker = TelegramScheduleWorker(
+        registry=TelegramRegistry(DB_PATH), worker_id=f"telegram-schedule:{os.getpid()}"
+    )
     while True:
+        schedule_result = await asyncio.to_thread(schedule_worker.run_once)
         provisioning_result = await asyncio.to_thread(provisioning_worker.run_once)
         lifecycle_result = await asyncio.to_thread(lifecycle_worker.run_once)
         # A finite sleep also gives cancellation a predictable safe point and
         # prevents a busy loop when a fleet contains many fast local attempts.
         await asyncio.sleep(
             0.1
-            if provisioning_result.processed or lifecycle_result.processed
+            if schedule_result.processed or provisioning_result.processed or lifecycle_result.processed
             else SETTINGS.telegram.provisioning_worker_interval_sec
         )
 
@@ -490,7 +502,7 @@ async def _telegram_outbox_worker_loop() -> None:
         db_path=DB_PATH,
         primary_admin_id=SETTINGS.telegram.primary_admin_id or 0,
         port=TelegramApiOutboxPort(
-            SETTINGS.telegram.bot_token,
+            telegram_token_provider.get_token,
             transport=TelegramApiTransport(
                 db_path=DB_PATH, local_proxy_url=SETTINGS.telegram.local_proxy_url
             ),
@@ -546,9 +558,9 @@ async def _telegram_polling_worker_loop() -> None:
         ).discover,
     )
     worker = TelegramPollingWorker(
-        api=TelegramBotApiClient(SETTINGS.telegram.bot_token, transport=transport),
+        api=TelegramBotApiClient(telegram_token_provider.get_token, transport=transport),
         handle_update=service.handle_update,
-        sender=TelegramApiSender(SETTINGS.telegram.bot_token, transport=transport),
+        sender=TelegramApiSender(telegram_token_provider.get_token, transport=transport),
         timeout_sec=SETTINGS.telegram.polling_timeout_sec,
         fallback_subscription_message=service.fallback_subscription_message,
         record_outbound_delivery=service.record_outbound_delivery,
