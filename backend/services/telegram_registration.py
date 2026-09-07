@@ -343,6 +343,12 @@ class TelegramRegistrationService:
         profile = self._registry.get_customer_telegram_profile(customer.customer_id)
         traffic = self._registry.get_customer_traffic(customer.customer_id)
         matrix = self._registry.customer_node_matrix(customer.customer_id)
+        admin_note = self._registry.get_customer_admin_note(customer.customer_id)
+        registration_introduction = (
+            self._registry.get_customer_registration_introduction(customer.customer_id)
+            if admin_note is None
+            else None
+        )
         full_name = " ".join(part for part in (profile.first_name, profile.last_name) if part) or "не указано"
         lines = [
             f"Пользователь: {customer.email_display}",
@@ -352,9 +358,20 @@ class TelegramRegistrationService:
             f"Имя и фамилия: {full_name}",
             f"Телефон: {profile.phone_number}" if profile.phone_number else "Телефон: не указан",
             f"Трафик за всё время: {self._format_bytes(traffic.lifetime_bytes)}",
-            "Ноды:",
         ]
+        if admin_note is not None:
+            lines.extend(("Заметка администратора:", admin_note.body))
+        elif registration_introduction is not None:
+            lines.extend(("Заметка из заявки:", registration_introduction))
+        else:
+            lines.append("Заметка: не добавлена")
+        lines.append("Ноды:")
         buttons: list[list[dict[str, str]]] = []
+        note_button_text = "✎ Изменить заметку" if admin_note is not None or registration_introduction is not None else "+ Добавить заметку"
+        buttons.append([{
+            "text": note_button_text,
+            "callback_data": f"admin:customer-note:{customer.customer_id}:{page}",
+        }])
         for item in matrix:
             label = item.node_name.replace("\n", " ")[:30]
             state_label = {
@@ -520,6 +537,25 @@ class TelegramRegistrationService:
             return [TelegramOutboundMessage(chat_id, "Не удалось принять значение. Проверьте его и попробуйте ещё раз.")]
         return None
 
+    def _handle_customer_note_draft(
+        self, *, user_id: int, chat_id: int, text: str | None
+    ) -> list[TelegramOutboundMessage] | None:
+        if not text or text.strip().startswith("/"):
+            return None
+        draft = self._registry.get_customer_note_draft(user_id)
+        if draft is None:
+            return None
+        try:
+            self._registry.set_customer_admin_note(
+                customer_id=draft.customer_id,
+                body=text,
+                updated_by_telegram_user_id=user_id,
+            )
+        except TelegramRegistryError:
+            return [TelegramOutboundMessage(chat_id, "Заметка не принята. Допустимо от 1 до 1000 символов.")]
+        self._registry.clear_customer_note_draft(user_id)
+        return [self._admin_customer_message(chat_id, draft.customer_id, draft.page)]
+
     def _handle_admin_message_draft(
         self, *, user_id: int, chat_id: int, text: str | None
     ) -> list[TelegramOutboundMessage] | None:
@@ -568,14 +604,23 @@ class TelegramRegistrationService:
         if text and text.strip().startswith("/admin"):
             self._registry.clear_admin_draft(user_id)
             self._registry.clear_admin_message_draft(user_id)
+            self._registry.clear_customer_note_draft(user_id)
             return [TelegramOutboundMessage(chat_id, "Управление доступом.", self._admin_home_menu())]
         if callback_data == "admin:home":
             self._registry.clear_admin_draft(user_id)
             self._registry.clear_admin_message_draft(user_id)
+            self._registry.clear_customer_note_draft(user_id)
             return [TelegramOutboundMessage(chat_id, "Управление доступом.", self._admin_home_menu())]
+        if callback_data is not None:
+            # A navigation click deliberately cancels a pending text entry, so
+            # a later unrelated message cannot overwrite a customer note.
+            self._registry.clear_customer_note_draft(user_id)
         message_draft_response = self._handle_admin_message_draft(user_id=user_id, chat_id=chat_id, text=text)
         if message_draft_response is not None:
             return message_draft_response
+        customer_note_draft_response = self._handle_customer_note_draft(user_id=user_id, chat_id=chat_id, text=text)
+        if customer_note_draft_response is not None:
+            return customer_note_draft_response
         draft_response = self._handle_admin_draft(user_id=user_id, chat_id=chat_id, text=text)
         if draft_response is not None:
             return draft_response
@@ -664,7 +709,26 @@ class TelegramRegistrationService:
             if len(parts) == 4 and parts[:2] == ["admin", "customer"]:
                 self._registry.clear_admin_draft(user_id)
                 self._registry.clear_admin_message_draft(user_id)
+                self._registry.clear_customer_note_draft(user_id)
                 return [self._admin_customer_message(chat_id, int(parts[2]), int(parts[3]))]
+            if len(parts) == 4 and parts[:2] == ["admin", "customer-note"]:
+                customer_id, page = int(parts[2]), int(parts[3])
+                self._registry.get_customer(customer_id)
+                self._registry.clear_admin_message_draft(user_id)
+                self._registry.clear_admin_draft(user_id)
+                self._registry.set_customer_note_draft(
+                    admin_telegram_user_id=user_id,
+                    customer_id=customer_id,
+                    page=page,
+                )
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    "Отправьте одним сообщением заметку о пользователе. До 1000 символов; её видят только администраторы.",
+                    {"inline_keyboard": [[{
+                        "text": "Отмена",
+                        "callback_data": f"admin:customer:{customer_id}:{page}",
+                    }]]},
+                )]
             if len(parts) == 3 and parts[:2] == ["admin", "blocked"]:
                 self._registry.clear_admin_message_draft(user_id)
                 return [self._admin_blocked_message(chat_id, int(parts[2]))]
