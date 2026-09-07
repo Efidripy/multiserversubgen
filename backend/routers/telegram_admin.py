@@ -23,6 +23,8 @@ from services.telegram_provisioning import (
     ProvisioningRemoteError,
 )
 from services.telegram_transport import TelegramApiTransport, TelegramTransportError
+from services.telegram_drift import TelegramDriftScanner
+from services.telegram_bot_config import TelegramBotConfigurationError
 
 
 def _inbound_one_supports_bot_contract(node_id: int, inbound_options: list[Dict]) -> bool:
@@ -50,6 +52,8 @@ def build_telegram_admin_router(
     get_cached_inbound_options: Callable[[list[Dict]], list[Dict]],
     client_mgr=None,
     telegram_settings=None,
+    is_owner: Callable[[str], bool] | None = None,
+    token_provider=None,
 ):
     router = APIRouter()
     registry = TelegramRegistry(db_path)
@@ -61,6 +65,10 @@ def build_telegram_admin_router(
         if client_mgr is not None
         else None
     )
+    drift_scanner = (
+        TelegramDriftScanner(registry=registry, list_nodes=list_nodes, client_manager=client_mgr)
+        if client_mgr is not None else None
+    )
 
     def require_admin(request: Request) -> str:
         username = check_auth(request)
@@ -70,6 +78,12 @@ def build_telegram_admin_router(
             raise HTTPException(status_code=403, detail="Telegram administration requires admin role")
         return username
 
+    def require_owner(request: Request) -> str:
+        username = require_admin(request)
+        if is_owner is None or not is_owner(username):
+            raise HTTPException(status_code=403, detail="Bulk delete requires the Owner role")
+        return username
+
     def translate_registry_error(exc: TelegramRegistryError) -> HTTPException:
         if isinstance(
             exc,
@@ -77,6 +91,37 @@ def build_telegram_admin_router(
         ):
             return HTTPException(status_code=409, detail=str(exc))
         return HTTPException(status_code=400, detail=str(exc))
+
+    @router.get("/api/v1/telegram/bot-configuration")
+    def get_bot_configuration(request: Request):
+        require_admin(request)
+        if token_provider is None:
+            raise HTTPException(status_code=503, detail="Bot API token configuration is unavailable")
+        return {"configuration": asdict(token_provider.status())}
+
+    @router.put("/api/v1/telegram/bot-configuration")
+    def set_bot_configuration(request: Request, data: Dict):
+        username = require_admin(request)
+        if token_provider is None:
+            raise HTTPException(status_code=503, detail="Bot API token configuration is unavailable")
+        try:
+            status = token_provider.set_token(
+                token=data.get("bot_token"), expected_row_version=data.get("expected_row_version"), updated_by=username
+            )
+        except TelegramBotConfigurationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"configuration": asdict(status)}
+
+    @router.delete("/api/v1/telegram/bot-configuration")
+    def clear_bot_configuration(request: Request, expected_row_version: int):
+        username = require_admin(request)
+        if token_provider is None:
+            raise HTTPException(status_code=503, detail="Bot API token configuration is unavailable")
+        try:
+            status = token_provider.clear_token(expected_row_version=expected_row_version, updated_by=username)
+        except TelegramBotConfigurationError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {"configuration": asdict(status)}
 
     def discover_existing(email_display: object):
         if not isinstance(email_display, str) or not email_display.strip():
@@ -123,6 +168,11 @@ def build_telegram_admin_router(
     def list_pending_requests(request: Request):
         require_admin(request)
         return {"items": [asdict(item) for item in registry.list_pending_applications()]}
+
+    @router.get("/api/v1/telegram/dashboard")
+    def get_telegram_dashboard(request: Request):
+        require_admin(request)
+        return {"dashboard": asdict(registry.get_admin_dashboard())}
 
     @router.get("/api/v1/telegram/preapprovals/{telegram_user_id}")
     def get_telegram_preapproval(telegram_user_id: int, request: Request):
@@ -444,6 +494,65 @@ def build_telegram_admin_router(
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
 
+    @router.get("/api/v1/telegram/customers/{customer_id}/tags")
+    def get_customer_tags(customer_id: int, request: Request):
+        require_admin(request)
+        try:
+            return {"items": [asdict(item) for item in registry.list_customer_tags(customer_id)]}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.put("/api/v1/telegram/customers/{customer_id}/tags")
+    def set_customer_tags(customer_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            return {"items": [asdict(item) for item in registry.set_customer_tags(
+                customer_id=customer_id, tags=data.get("tags"), updated_by=username
+            )]}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.get("/api/v1/telegram/customers/{customer_id}/timeline")
+    def get_customer_timeline(customer_id: int, request: Request, limit: int = 100):
+        require_admin(request)
+        try:
+            return {"items": [asdict(item) for item in registry.customer_timeline(customer_id=customer_id, limit=limit)]}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.get("/api/v1/telegram/customers/{customer_id}/view")
+    def get_customer_read_only_view(customer_id: int, request: Request):
+        require_admin(request)
+        try:
+            return {"view": registry.get_customer_read_only_view(customer_id)}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.get("/api/v1/telegram/filters")
+    def list_saved_filters(request: Request):
+        username = require_admin(request)
+        return {"items": [asdict(item) for item in registry.list_saved_filters(admin_username=username)]}
+
+    @router.put("/api/v1/telegram/filters")
+    def save_filter(request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            return {"item": asdict(registry.save_filter(
+                admin_username=username, name=data.get("name"), query=data.get("query", ""),
+                status=data.get("status"), tags=data.get("tags", []),
+            ))}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.delete("/api/v1/telegram/filters/{filter_id}")
+    def delete_filter(filter_id: int, request: Request):
+        username = require_admin(request)
+        try:
+            registry.delete_saved_filter(admin_username=username, filter_id=filter_id)
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"status": "deleted"}
+
     @router.get("/api/v1/telegram/customers/{customer_id}/nodes")
     def get_customer_nodes(customer_id: int, request: Request):
         require_admin(request)
@@ -536,6 +645,131 @@ def build_telegram_admin_router(
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
         return {"operation": asdict(result), "remote_io": "not_started"}
+
+    @router.get("/api/v1/telegram/lifecycle-schedules")
+    def list_lifecycle_schedules(request: Request, customer_id: int | None = None, status: str = "all", limit: int = 100):
+        require_admin(request)
+        try:
+            return {"items": [asdict(item) for item in registry.list_lifecycle_schedules(
+                customer_id=customer_id, status=status, limit=limit
+            )]}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.post("/api/v1/telegram/customers/{customer_id}/lifecycle/schedule")
+    def schedule_customer_lifecycle(customer_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            schedule = registry.create_lifecycle_schedule(
+                customer_id=customer_id, operation_type=data.get("operation_type"),
+                execute_not_before=data.get("execute_not_before"),
+                expected_customer_version=data.get("expected_customer_version"),
+                target_snapshot_digest=data.get("target_snapshot_digest"),
+                idempotency_key=data.get("idempotency_key"), created_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"schedule": asdict(schedule), "remote_io": "not_started"}
+
+    @router.post("/api/v1/telegram/lifecycle-schedules/{schedule_id}/cancel")
+    def cancel_lifecycle_schedule(schedule_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            schedule = registry.cancel_lifecycle_schedule(
+                schedule_id=schedule_id, expected_row_version=data.get("expected_row_version"),
+                cancelled_by=username, reason=data.get("reason"),
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"schedule": asdict(schedule), "remote_io": "not_started"}
+
+    @router.post("/api/v1/telegram/bulk-lifecycle/preview")
+    def preview_bulk_lifecycle(request: Request, data: Dict):
+        require_admin(request)
+        try:
+            preview = registry.preview_bulk_customer_operations(
+                customer_ids=data.get("customer_ids"), operation_type=data.get("operation_type")
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"preview": asdict(preview), "remote_io": "not_started"}
+
+    @router.post("/api/v1/telegram/bulk-lifecycle")
+    def queue_bulk_lifecycle(request: Request, data: Dict):
+        operation_type = data.get("operation_type")
+        username = require_owner(request) if operation_type == "delete" else require_admin(request)
+        try:
+            job = registry.queue_bulk_customer_operations(
+                operation_type=operation_type, target_snapshot_digest=data.get("target_snapshot_digest"),
+                items=data.get("items"), idempotency_key=data.get("idempotency_key"), created_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"job": asdict(job), "remote_io": "not_started"}
+
+    @router.get("/api/v1/telegram/bulk-lifecycle/{bulk_job_id}")
+    def get_bulk_lifecycle(bulk_job_id: int, request: Request):
+        require_admin(request)
+        try:
+            return {"job": asdict(registry.get_bulk_lifecycle_status(bulk_job_id))}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.post("/api/v1/telegram/drift/scan")
+    def scan_telegram_drift(request: Request, data: Dict):
+        require_admin(request)
+        if drift_scanner is None:
+            raise HTTPException(status_code=503, detail="drift scan is unavailable")
+        try:
+            result = drift_scanner.scan(node_ids=data.get("node_ids"))
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail="drift scan could not complete safely") from exc
+        return {"scan": asdict(result), "remote_io": "read_only"}
+
+    @router.get("/api/v1/telegram/drift")
+    def list_telegram_drift(request: Request, status: str = "open", limit: int = 100):
+        require_admin(request)
+        try:
+            return {"items": [asdict(item) for item in registry.list_drift_findings(status=status, limit=limit)]}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.post("/api/v1/telegram/drift/{finding_id}/resolve")
+    def resolve_telegram_drift(finding_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            item = registry.resolve_drift_finding(
+                finding_id=finding_id, expected_row_version=data.get("expected_row_version"),
+                status=data.get("status"), resolved_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"item": asdict(item), "remote_io": "not_started"}
+
+    @router.post("/api/v1/telegram/drift/{finding_id}/adopt")
+    def adopt_telegram_drift(finding_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        if drift_scanner is None:
+            raise HTTPException(status_code=503, detail="drift adoption is unavailable")
+        try:
+            remote = drift_scanner.re_read_orphan(finding_id)
+            if remote is None:
+                raise HTTPException(status_code=409, detail="remote orphan changed; scan it again")
+            item = registry.adopt_drift_binding(
+                finding_id=finding_id, expected_row_version=data.get("expected_row_version"),
+                remote_email=remote["remote_email"], remote_client_id=remote["remote_client_id"],
+                remote_sub_id=remote["remote_sub_id"], remote_enabled=bool(remote["remote_enabled"]),
+                adopted_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=409, detail="remote orphan could not be re-read safely") from exc
+        return {"item": asdict(item), "remote_io": "read_only"}
 
     @router.get("/api/v1/telegram/customers/{customer_id}/operations")
     def list_customer_lifecycle_operations(customer_id: int, request: Request, limit: int = 100):

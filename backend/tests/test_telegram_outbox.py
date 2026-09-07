@@ -112,6 +112,24 @@ def test_user_approval_event_resolves_chat_id_only_from_numeric_identity(tmp_pat
     assert "готовится" in port.messages[0][1].lower()
 
 
+def test_user_outbox_uses_persisted_english_locale(tmp_path):
+    db_path = str(tmp_path / "english-outbox.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="user", first_name="User", last_name=None, locale="en"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES ('user_provisioning_completed', '42', 'english-provisioned')"
+        )
+    port = FakeOutboxPort()
+
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert "Access is ready" in port.messages[0][1]
+    assert "Доступ готов" not in port.messages[0][1]
+
+
 def test_user_can_suppress_background_outbox_messages_without_losing_the_event_audit(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
@@ -245,6 +263,8 @@ def test_support_events_notify_only_admin_then_the_linked_user_when_resolved(tmp
     registry.begin_support_request(telegram_user_id=42, category="connection")
     request = registry.submit_pending_support_request(telegram_user_id=42, body="Не получается подключиться.")
     assert request is not None
+    assert request.email_display == "support-target"
+    assert [item.support_request_id for item in registry.list_support_requests(status="open")] == [request.support_request_id]
     port = FakeOutboxPort()
 
     assert _worker(db_path, port).run_once().outcome == "sent"
@@ -259,6 +279,7 @@ def test_support_events_notify_only_admin_then_the_linked_user_when_resolved(tmp
         idempotency_key="support-outbox-resolution",
         resolved_by="admin",
     )
+    assert [item.support_request_id for item in registry.list_support_requests(status="resolved")] == [request.support_request_id]
     assert _worker(db_path, port).run_once().outcome == "sent"
     assert port.messages[-1] == (
         777,

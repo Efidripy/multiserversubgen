@@ -87,6 +87,8 @@ def register_app_routers(
     handle_websocket_message,
     monitoring_enabled=True,
     telegram_settings=None,
+    telegram_token_provider=None,
+    is_owner=None,
 ):
     app.include_router(
         build_observability_router(
@@ -190,6 +192,8 @@ def register_app_routers(
             get_cached_inbound_options=get_cached_inbound_options,
             client_mgr=client_mgr,
             telegram_settings=telegram_settings,
+            is_owner=is_owner or (lambda _username: False),
+            token_provider=telegram_token_provider,
         )
     )
     if telegram_settings and telegram_settings.enabled and telegram_settings.mode == "webhook":
@@ -205,6 +209,7 @@ def register_app_routers(
                     client_manager=client_mgr,
                     list_nodes=list_nodes,
                 ).discover,
+                token_provider=telegram_token_provider,
             )
         )
     if monitoring_enabled:

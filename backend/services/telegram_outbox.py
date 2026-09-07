@@ -17,6 +17,7 @@ from urllib.error import URLError
 from urllib.request import Request as UrlRequest
 
 from services.db_bootstrap import connect
+from services.telegram_locale import normalize_telegram_locale
 from services.telegram_transport import TelegramApiTransport, TelegramTransportError
 
 
@@ -35,8 +36,8 @@ class OutboxSuppressed(RuntimeError):
 class TelegramApiOutboxPort:
     """Small runtime-only Bot API transport; endpoint is never logged."""
 
-    def __init__(self, bot_token: str, *, transport: TelegramApiTransport):
-        self._endpoint = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    def __init__(self, bot_token: str | Callable[[], str], *, transport: TelegramApiTransport):
+        self._token_provider = bot_token if callable(bot_token) else lambda: bot_token
         self._transport = transport
 
     def send(self, *, chat_id: int, text: str, reply_markup: dict[str, Any] | None = None) -> None:
@@ -44,7 +45,7 @@ class TelegramApiOutboxPort:
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         request = UrlRequest(
-            self._endpoint,
+            f"https://api.telegram.org/bot{self._token_provider()}/sendMessage",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -287,7 +288,7 @@ class TelegramOutboxWorker:
             with connect(self._db_path) as conn:
                 row = conn.execute(
                     """
-                    SELECT i.chat_id, s.admin_response, COALESCE(p.background_notifications_enabled, 1)
+                    SELECT i.chat_id, s.admin_response, COALESCE(p.background_notifications_enabled, 1), i.locale
                     FROM telegram_support_requests AS s
                     JOIN telegram_identities AS i ON i.telegram_user_id = s.telegram_user_id
                     LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
@@ -300,9 +301,10 @@ class TelegramOutboxWorker:
             if not bool(row[2]):
                 raise OutboxSuppressed("notifications_disabled")
             response = str(row[1]).strip() if row[1] is not None else ""
-            text = "Обращение рассмотрено администратором."
+            locale = normalize_telegram_locale(row[3])
+            text = "Your support request was reviewed by the administrator." if locale == "en" else "Обращение рассмотрено администратором."
             if response:
-                text += f"\n\nОтвет:\n{response}"
+                text += f"\n\n{'Reply' if locale == 'en' else 'Ответ'}:\n{response}"
             return int(row[0]), text, None
         if event.event_type == "user_expiry_reminder":
             try:
@@ -317,7 +319,7 @@ class TelegramOutboxWorker:
                 row = conn.execute(
                     """
                     SELECT i.chat_id, COALESCE(p.background_notifications_enabled, 1),
-                           COALESCE(p.expiry_reminders_enabled, 1)
+                           COALESCE(p.expiry_reminders_enabled, 1), i.locale
                     FROM telegram_identities AS i
                     JOIN customers AS c ON c.id = i.customer_id
                     LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
@@ -330,6 +332,9 @@ class TelegramOutboxWorker:
                 raise OutboxSuppressed("recipient_is_no_longer_registered")
             if not bool(row[1]) or not bool(row[2]):
                 raise OutboxSuppressed("notifications_disabled")
+            locale = normalize_telegram_locale(row[3])
+            if locale == "en":
+                return int(row[0]), f"Reminder: access expires in about {days} {'day' if days == 1 else 'days'}.", None
             day_text = "день" if days == 1 else "дня" if days in {2, 3, 4} else "дней"
             return int(row[0]), f"Напоминание: срок доступа истекает примерно через {days} {day_text}.", None
         if event.event_type == "user_traffic_reminder":
@@ -345,7 +350,7 @@ class TelegramOutboxWorker:
                 row = conn.execute(
                     """
                     SELECT i.chat_id, COALESCE(p.background_notifications_enabled, 1),
-                           COALESCE(p.traffic_reminders_enabled, 0)
+                           COALESCE(p.traffic_reminders_enabled, 0), i.locale
                     FROM telegram_identities AS i
                     JOIN customers AS c ON c.id = i.customer_id
                     LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
@@ -358,11 +363,15 @@ class TelegramOutboxWorker:
                 raise OutboxSuppressed("recipient_is_no_longer_registered")
             if not bool(row[1]) or not bool(row[2]):
                 raise OutboxSuppressed("notifications_disabled")
-            messages = {
+            messages = ({
+                80: "Reminder: about 80% of available traffic has been used.",
+                95: "Reminder: about 95% of available traffic has been used.",
+                100: "Reminder: available traffic is exhausted.",
+            } if normalize_telegram_locale(row[3]) == "en" else {
                 80: "Напоминание: использовано примерно 80% доступного трафика.",
                 95: "Напоминание: использовано примерно 95% доступного трафика.",
                 100: "Напоминание: доступный трафик исчерпан.",
-            }
+            })
             return int(row[0]), messages[percent], None
         if event.event_type in {
             "user_provisioning_queued",
@@ -378,7 +387,7 @@ class TelegramOutboxWorker:
             with connect(self._db_path) as conn:
                 row = conn.execute(
                     """
-                    SELECT i.chat_id, COALESCE(p.background_notifications_enabled, 1)
+                    SELECT i.chat_id, COALESCE(p.background_notifications_enabled, 1), i.locale
                     FROM telegram_identities AS i
                     LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
                     WHERE i.telegram_user_id = ?
@@ -389,24 +398,29 @@ class TelegramOutboxWorker:
                 raise OutboxPermanentError("identity_not_found")
             if not bool(row[1]):
                 raise OutboxSuppressed("notifications_disabled")
+            locale = normalize_telegram_locale(row[2])
             if event.event_type == "user_provisioning_queued":
-                return int(row[0]), "Решение принято. Доступ готовится; проверьте статус немного позже.", None
+                return int(row[0]), "Decision accepted. Access is being prepared; check the status a little later." if locale == "en" else "Решение принято. Доступ готовится; проверьте статус немного позже.", None
             if event.event_type == "user_provisioning_completed":
-                return int(row[0]), "Доступ готов. Откройте меню и получите персональную ссылку.", None
+                return int(row[0]), "Access is ready. Open the menu and get your personal link." if locale == "en" else "Доступ готов. Откройте меню и получите персональную ссылку.", None
             if event.event_type == "user_existing_access_approved":
-                return int(row[0]), "Решение принято. Откройте меню, чтобы продолжить.", None
+                return int(row[0]), "Decision accepted. Open the menu to continue." if locale == "en" else "Решение принято. Откройте меню, чтобы продолжить.", None
             if event.event_type == "user_application_rejected":
-                return int(row[0]), "Заявка отклонена. Если хотите подать новую, отправьте /start.", None
+                return int(row[0]), "The request was declined. Send /start to submit a new request." if locale == "en" else "Заявка отклонена. Если хотите подать новую, отправьте /start.", None
             try:
                 payload = json.loads(event.payload_json)
                 operation = payload.get("operation") if isinstance(payload, dict) else None
             except (TypeError, ValueError, json.JSONDecodeError) as exc:
                 raise OutboxPermanentError("invalid_lifecycle_notification") from exc
-            messages = {
+            messages = ({
+                "suspend": "Access is temporarily suspended. If this is an error, write to the administrator.",
+                "resume": "Access has been restored. Open the menu to continue.",
+                "delete": "Access was deleted. You can send /start and submit a new request if needed.",
+            } if locale == "en" else {
                 "suspend": "Доступ временно приостановлен. Если это ошибка, напишите администратору.",
                 "resume": "Доступ восстановлен. Откройте меню, чтобы продолжить.",
                 "delete": "Доступ удалён. При необходимости вы можете отправить /start и подать новую заявку.",
-            }
+            })
             message = messages.get(operation)
             if message is None:
                 raise OutboxPermanentError("invalid_lifecycle_notification")

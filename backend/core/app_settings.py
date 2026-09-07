@@ -313,6 +313,7 @@ class AppSettings:
     role_viewers: Set[str]
     role_operators: Set[str]
     role_admins: Set[str]
+    role_owners: Set[str]
     mfa_totp_enabled: bool
     mfa_totp_users: Dict[str, str]
     mfa_totp_ws_strict: bool
@@ -381,6 +382,9 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         role_viewers=_env_csv_set("ROLE_VIEWERS"),
         role_operators=_env_csv_set("ROLE_OPERATORS"),
         role_admins=_env_csv_set("ROLE_ADMINS") or {"admin"},
+        # Owner deliberately does not inherit every administrator.  Bulk
+        # deletion is permanently unavailable to a future delegated admin.
+        role_owners=_env_csv_set("ROLE_OWNERS") or {"admin"},
         mfa_totp_enabled=_env_bool("MFA_TOTP_ENABLED", "false"),
         mfa_totp_users=parse_mfa_users(os.getenv("MFA_TOTP_USERS", "").strip()),
         mfa_totp_ws_strict=_env_bool("MFA_TOTP_WS_STRICT", "true"),

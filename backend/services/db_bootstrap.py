@@ -188,6 +188,16 @@ def init_db(db_path: str) -> None:
             "INSERT OR IGNORE INTO telegram_transport_preferences(singleton_id, mode) VALUES (1, 'direct')"
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_bot_configuration
+                     (singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
+                      encrypted_bot_token TEXT DEFAULT NULL,
+                      token_suffix TEXT DEFAULT NULL,
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      updated_by TEXT NOT NULL DEFAULT 'system',
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""
+        )
+        conn.execute("INSERT OR IGNORE INTO telegram_bot_configuration(singleton_id) VALUES (1)")
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS customers
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       email_display TEXT NOT NULL,
@@ -723,6 +733,115 @@ def init_db(db_path: str) -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_telegram_customer_operations_schedule "
             "ON telegram_customer_operations(status, next_attempt_at, lease_until)"
+        )
+        # Operational metadata and scheduling are deliberately additive.  They
+        # never alter the immutable, reconcile-first lifecycle operation
+        # contract above: a schedule only asks the registry to queue the same
+        # versioned operation later, and a bulk job is a read model over normal
+        # per-customer operations.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_customer_tags
+                     (customer_id INTEGER NOT NULL,
+                      tag TEXT NOT NULL CHECK(length(trim(tag)) BETWEEN 1 AND 48),
+                      created_by TEXT NOT NULL,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      PRIMARY KEY(customer_id, tag),
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_customer_tags_tag "
+            "ON telegram_customer_tags(tag, customer_id)"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_admin_saved_filters
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      admin_username TEXT NOT NULL,
+                      name TEXT NOT NULL CHECK(length(trim(name)) BETWEEN 1 AND 80),
+                      query TEXT NOT NULL DEFAULT '' CHECK(length(query) <= 160),
+                      status TEXT DEFAULT NULL CHECK(status IS NULL OR status IN (
+                          'active', 'suspending', 'suspended', 'suspend_partial',
+                          'resuming', 'resume_partial', 'deleting', 'delete_partial',
+                          'deleted', 'conflict')),
+                      tags_json TEXT NOT NULL DEFAULT '[]',
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      UNIQUE(admin_username, name))"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_admin_saved_filters_owner "
+            "ON telegram_admin_saved_filters(admin_username, updated_at DESC)"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_lifecycle_schedules
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      customer_id INTEGER NOT NULL,
+                      operation_type TEXT NOT NULL CHECK(operation_type IN ('suspend', 'delete')),
+                      expected_customer_version INTEGER NOT NULL CHECK(expected_customer_version > 0),
+                      target_snapshot_digest TEXT NOT NULL,
+                      execute_not_before TEXT NOT NULL,
+                      status TEXT NOT NULL DEFAULT 'scheduled'
+                        CHECK(status IN ('scheduled', 'activating', 'queued', 'cancelled', 'stale', 'failed')),
+                      lease_owner TEXT DEFAULT NULL,
+                      lease_until TEXT DEFAULT NULL,
+                      operation_id INTEGER DEFAULT NULL,
+                      idempotency_key TEXT NOT NULL UNIQUE,
+                      created_by TEXT NOT NULL,
+                      cancel_reason TEXT DEFAULT NULL,
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT,
+                      FOREIGN KEY(operation_id) REFERENCES telegram_customer_operations(id) ON DELETE SET NULL)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_lifecycle_schedules_due "
+            "ON telegram_lifecycle_schedules(status, execute_not_before, lease_until)"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_bulk_lifecycle_jobs
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      operation_type TEXT NOT NULL CHECK(operation_type IN ('suspend', 'resume', 'delete')),
+                      target_snapshot_digest TEXT NOT NULL,
+                      created_by TEXT NOT NULL,
+                      idempotency_key TEXT NOT NULL UNIQUE,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_bulk_lifecycle_items
+                     (bulk_job_id INTEGER NOT NULL,
+                      customer_id INTEGER NOT NULL,
+                      operation_id INTEGER NOT NULL,
+                      PRIMARY KEY(bulk_job_id, customer_id),
+                      FOREIGN KEY(bulk_job_id) REFERENCES telegram_bulk_lifecycle_jobs(id) ON DELETE CASCADE,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT,
+                      FOREIGN KEY(operation_id) REFERENCES telegram_customer_operations(id) ON DELETE RESTRICT)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_bulk_lifecycle_items_operation "
+            "ON telegram_bulk_lifecycle_items(operation_id)"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_drift_findings
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      finding_key TEXT NOT NULL UNIQUE,
+                      kind TEXT NOT NULL CHECK(kind IN ('binding_missing', 'binding_conflict', 'orphan_remote')),
+                      customer_id INTEGER DEFAULT NULL,
+                      node_id INTEGER NOT NULL,
+                      remote_email TEXT NOT NULL DEFAULT '',
+                      remote_client_id TEXT NOT NULL DEFAULT '',
+                      remote_sub_id TEXT NOT NULL DEFAULT '',
+                      details_json TEXT NOT NULL DEFAULT '{}',
+                      status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'adopted', 'ignored', 'resolved')),
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      last_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      resolved_at TEXT DEFAULT NULL,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE SET NULL,
+                      FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_drift_findings_open "
+            "ON telegram_drift_findings(status, node_id, last_seen_at DESC)"
         )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_customer_operation_attempts
