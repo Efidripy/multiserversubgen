@@ -350,6 +350,7 @@ class CustomerListItem:
     telegram_user_id: int | None
     created_at: str
     updated_at: str
+    open_support_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -2076,16 +2077,6 @@ class TelegramRegistry:
             ).fetchone()
             if open_request is not None:
                 raise TelegramRegistryError("an open support request already exists")
-            cooldown = conn.execute(
-                """
-                SELECT 1 FROM telegram_support_requests
-                WHERE customer_id = ? AND status = 'resolved'
-                  AND resolved_at > datetime('now', '-24 hours')
-                """,
-                (customer_id,),
-            ).fetchone()
-            if cooldown is not None:
-                raise TelegramRegistryError("support request cooldown is active")
             conn.execute(
                 """
                 INSERT INTO telegram_user_drafts
@@ -4311,7 +4302,9 @@ class TelegramRegistry:
                 SELECT c.id, c.email_display, c.origin, c.status, c.row_version,
                        (SELECT telegram_user_id FROM telegram_identities AS ti
                         WHERE ti.customer_id = c.id ORDER BY ti.created_at LIMIT 1),
-                       c.created_at, c.updated_at
+                       c.created_at, c.updated_at,
+                       (SELECT COUNT(*) FROM telegram_support_requests AS tsr
+                        WHERE tsr.customer_id = c.id AND tsr.status IN ('open', 'read'))
                 """
                 + base
                 + " ORDER BY c.updated_at DESC, c.id DESC LIMIT ? OFFSET ?",
@@ -4323,7 +4316,7 @@ class TelegramRegistry:
                     customer_id=int(row[0]), email_display=str(row[1]), origin=str(row[2]),
                     status=str(row[3]), row_version=int(row[4]),
                     telegram_user_id=int(row[5]) if row[5] is not None else None,
-                    created_at=str(row[6]), updated_at=str(row[7]),
+                    created_at=str(row[6]), updated_at=str(row[7]), open_support_count=int(row[8]),
                 )
                 for row in rows
             ),
@@ -4340,7 +4333,9 @@ class TelegramRegistry:
                 SELECT c.id, c.email_display, c.origin, c.status, c.row_version,
                        (SELECT telegram_user_id FROM telegram_identities AS ti
                         WHERE ti.customer_id = c.id ORDER BY ti.created_at LIMIT 1),
-                       c.created_at, c.updated_at
+                       c.created_at, c.updated_at,
+                       (SELECT COUNT(*) FROM telegram_support_requests AS tsr
+                        WHERE tsr.customer_id = c.id AND tsr.status IN ('open', 'read'))
                 FROM customers AS c
                 WHERE c.id = ?
                 """,
@@ -4351,7 +4346,7 @@ class TelegramRegistry:
         return CustomerListItem(
             customer_id=int(row[0]), email_display=str(row[1]), origin=str(row[2]), status=str(row[3]),
             row_version=int(row[4]), telegram_user_id=int(row[5]) if row[5] is not None else None,
-            created_at=str(row[6]), updated_at=str(row[7]),
+            created_at=str(row[6]), updated_at=str(row[7]), open_support_count=int(row[8]),
         )
 
     def get_customer_telegram_profile(self, customer_id: int) -> CustomerTelegramProfile:
