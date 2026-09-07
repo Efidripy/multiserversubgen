@@ -11,6 +11,33 @@ import requests
 from shared.security import validate_outbound_url
 
 
+def _is_trusted_loopback_monitoring_url(value: str) -> bool:
+    """Allow only a root-owned, HTTP loopback base URL for stack probes.
+
+    Monitoring URLs come from the service runtime configuration, not from a
+    request. They still must not accept credentials, paths, query strings, or
+    non-loopback hosts. All user-supplied outbound destinations continue to
+    use the shared SSRF guard unchanged.
+    """
+    try:
+        parsed = urlparse(str(value or "").strip())
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        parsed.scheme == "http"
+        and parsed.hostname in {"127.0.0.1", "::1"}
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path in {"", "/"}
+        and not parsed.params
+        and not parsed.query
+        and not parsed.fragment
+        and port is not None
+        and 1 <= port <= 65535
+    )
+
+
 class AdGuardRuntime:
     def __init__(
         self,
@@ -196,12 +223,23 @@ class AdGuardRuntime:
             return None
         return user, pwd
 
-    def http_probe(self, url: str, path: str, timeout: int = 4, basic_auth: Optional[Tuple[str, str]] = None) -> Dict:
+    def http_probe(
+        self,
+        url: str,
+        path: str,
+        timeout: int = 4,
+        basic_auth: Optional[Tuple[str, str]] = None,
+        *,
+        allow_trusted_loopback: bool = False,
+    ) -> Dict:
         if not url:
             return {"enabled": False, "url": "", "ok": False, "status_code": None, "error": "disabled"}
         full = f"{url.rstrip('/')}{path}"
         try:
-            valid, error = validate_outbound_url(url, allow_private=False, require_https=urlparse(url).scheme == "https")
+            trusted_loopback = allow_trusted_loopback and _is_trusted_loopback_monitoring_url(url)
+            valid, error = (True, "") if trusted_loopback else validate_outbound_url(
+                url, allow_private=False, require_https=urlparse(url).scheme == "https"
+            )
             if not valid:
                 return {"enabled": True, "url": url, "ok": False, "status_code": None, "error": error}
             resp = requests.get(full, timeout=timeout, verify=self.requests_verify, auth=basic_auth, allow_redirects=False)
@@ -215,11 +253,21 @@ class AdGuardRuntime:
         except Exception as exc:
             return {"enabled": True, "url": url, "ok": False, "status_code": None, "error": str(exc)}
 
-    def prom_query(self, prom_url: str, query: str, basic_auth: Optional[Tuple[str, str]] = None) -> Optional[float]:
+    def prom_query(
+        self,
+        prom_url: str,
+        query: str,
+        basic_auth: Optional[Tuple[str, str]] = None,
+        *,
+        allow_trusted_loopback: bool = False,
+    ) -> Optional[float]:
         if not prom_url:
             return None
         try:
-            valid, _ = validate_outbound_url(prom_url, allow_private=False, require_https=urlparse(prom_url).scheme == "https")
+            trusted_loopback = allow_trusted_loopback and _is_trusted_loopback_monitoring_url(prom_url)
+            valid, _ = (True, "") if trusted_loopback else validate_outbound_url(
+                prom_url, allow_private=False, require_https=urlparse(prom_url).scheme == "https"
+            )
             if not valid:
                 return None
             resp = requests.get(
