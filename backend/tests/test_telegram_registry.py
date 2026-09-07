@@ -58,6 +58,8 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "telegram_transport_preferences",
             "telegram_admin_drafts",
             "telegram_admin_message_drafts",
+            "telegram_customer_notes",
+            "telegram_customer_note_drafts",
             "telegram_broadcast_jobs",
             "telegram_user_drafts",
             "telegram_support_requests",
@@ -992,6 +994,46 @@ def test_admin_draft_is_durable_bounded_and_exact_customer_lookup_is_not_fuzzy(t
         )
     restarted.clear_admin_draft(108100140)
     assert restarted.get_admin_draft(108100140) is None
+
+
+def test_customer_admin_note_is_durable_bounded_and_audited_without_plaintext(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="note-user", origin="telegram", email_source="telegram_username", public_code="note-user"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=108100140, chat_id=108100140, username="owner", first_name="Owner", last_name=None
+    )
+    draft = registry.set_customer_note_draft(
+        admin_telegram_user_id=108100140, customer_id=customer_id, page=3
+    )
+
+    saved = registry.set_customer_admin_note(
+        customer_id=customer_id,
+        body="  Проверенная заметка  ",
+        updated_by_telegram_user_id=108100140,
+    )
+    restarted = TelegramRegistry(db_path)
+
+    assert saved.body == "Проверенная заметка"
+    assert restarted.get_customer_admin_note(customer_id) == saved
+    assert restarted.get_customer_note_draft(108100140) == draft
+    restarted.clear_customer_note_draft(108100140)
+    assert restarted.get_customer_note_draft(108100140) is None
+    with connect(db_path) as conn:
+        event = conn.execute(
+            "SELECT event_type, payload_digest FROM telegram_audit_log WHERE event_type = 'customer_note_updated'"
+        ).fetchone()
+    assert event[0] == "customer_note_updated"
+    assert event[1] != "Проверенная заметка"
+    with pytest.raises(TelegramRegistryError):
+        registry.set_customer_admin_note(
+            customer_id=customer_id,
+            body=" " * 1001,
+            updated_by_telegram_user_id=108100140,
+        )
 
 
 def test_customer_telegram_profile_preserves_a_voluntarily_shared_phone_number(tmp_path):
