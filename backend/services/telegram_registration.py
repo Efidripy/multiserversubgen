@@ -1029,7 +1029,13 @@ class TelegramRegistrationService:
         lifetime = None
         if access.customer_id is not None and access.email_display:
             lifetime = self._traffic.refresh_for_access(customer_id=access.customer_id, email=access.email_display)
-        traffic_line = f"\nТрафик за всё время: {self._format_bytes(lifetime.lifetime_bytes)}." if lifetime else ""
+        if lifetime is None or not lifetime.last_observed_at:
+            traffic_line = "\nДанные о трафике пока не поступали."
+        else:
+            traffic_line = (
+                f"\nТрафик за всё время: {self._format_bytes(lifetime.lifetime_bytes)}."
+                f"\nПоследнее обновление данных: {lifetime.last_observed_at}."
+            )
         return TelegramOutboundMessage(
             chat_id,
             f"Статус доступа: {access.customer_status}.{traffic_line}",

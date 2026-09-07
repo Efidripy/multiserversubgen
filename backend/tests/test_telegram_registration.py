@@ -365,7 +365,20 @@ def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscrip
     status = service.handle_update(_message(15, "/status"))
 
     assert "4.0 КБ" in status[0].text
+    assert "Последнее обновление данных:" in status[0].text
     assert registry.get_customer_traffic(customer_id).lifetime_bytes == 4096
+
+
+def test_approved_status_is_honest_when_no_traffic_projection_has_been_observed(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="freshness_user")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    status = service.handle_update(_message(16, "/status"))
+
+    assert "Данные о трафике пока не поступали." in status[0].text
 
 
 def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_path):
