@@ -37,6 +37,7 @@ class TelegramOutboundMessage:
     chat_id: int
     text: str
     reply_markup: dict[str, Any] | None = None
+    parse_mode: str | None = None
     photo_png: bytes | None = None
     photo_filename: str | None = None
     edit_message_id: int | None = None
@@ -81,7 +82,6 @@ def _private_actor(
 class TelegramRegistrationService:
     """Handles first contact without exposing technical service details."""
 
-    _SETUP_VERSION = "v1"
     _SETUP_APPLICATIONS: dict[str, tuple[tuple[str, str], ...]] = {
         "android": (
             ("V2RayNG", "https://github.com/2dust/v2rayNG/releases/latest"),
@@ -1195,9 +1195,7 @@ class TelegramRegistrationService:
 
     @classmethod
     def _setup_guide(cls, chat_id: int, platform: str, locale: str = "ru") -> TelegramOutboundMessage:
-        headings = {"android": "Android", "ios": "iPhone / iPad / Mac", "desktop": "Компьютер" if locale == "ru" else "Computer"}
-        heading = headings.get(platform)
-        if heading is None:
+        if platform not in cls._SETUP_APPLICATIONS:
             return TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), cls._approved_menu(locale))
         apps = cls._SETUP_APPLICATIONS[platform]
         buttons = [[{"text": name, "url": url}] for name, url in apps]
@@ -1209,7 +1207,7 @@ class TelegramRegistrationService:
         ))
         return TelegramOutboundMessage(
             chat_id,
-            tr(locale, "setup_guide", heading=heading, version=cls._SETUP_VERSION),
+            tr(locale, "setup_guide"),
             {"inline_keyboard": buttons},
         )
 
@@ -1257,6 +1255,7 @@ class TelegramRegistrationService:
                 traffic=traffic_line,
             ),
             self._approved_menu(locale, suspended=access.customer_status in {"suspended", "suspend_partial"}),
+            parse_mode="HTML",
         )
 
     def _preferences_message(self, user_id: int, chat_id: int, locale: str = "ru") -> TelegramOutboundMessage:

@@ -398,7 +398,10 @@ def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscrip
     status = service.handle_update(_message(15, "/status"))
 
     assert "4.0 КБ" in status[0].text
-    assert "Последнее обновление данных:" in status[0].text
+    assert "<b>Статус доступа:</b>" in status[0].text
+    assert "<b>Трафик за всё время:</b>" in status[0].text
+    assert "<b>Последнее обновление данных:</b>" in status[0].text
+    assert status[0].parse_mode == "HTML"
     assert registry.get_customer_traffic(customer_id).lifetime_bytes == 4096
 
 
@@ -453,8 +456,19 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
     qr = service.handle_update(_callback(23, "subscription:qr"))
 
     assert any(button[0]["text"] == "⊞ Подключение" for button in home[0].reply_markup["inline_keyboard"])
+    assert assistant[0].text.startswith("Выберите устройство")
+    assert not assistant[0].text.startswith("Подключение")
+    assert access_choice[0].text.startswith("Выберите удобное действие")
+    assert not access_choice[0].text.startswith("Получить доступ")
     assert "выберите устройство" in assistant[0].text.lower()
     assert "выберите удобное действие" in access_choice[0].text.lower()
+    diagnostics = service.handle_update(_callback(24, "setup:diagnostics"))[0]
+    assert diagnostics.text.startswith("Доступ готов")
+    assert not diagnostics.text.startswith("Проверка готовности")
+    for offset, platform in enumerate(("android", "ios", "desktop"), start=25):
+        guide = service.handle_update(_callback(offset, f"setup:{platform}"))[0]
+        assert guide.text.startswith("1.")
+        assert not guide.text.startswith("Подключение")
     home_actions = {
         button["callback_data"]
         for row in home[0].reply_markup["inline_keyboard"]
@@ -467,7 +481,7 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
     }
     guide_actions = {
         button["callback_data"]
-        for row in service.handle_update(_callback(24, "setup:android"))[0].reply_markup["inline_keyboard"]
+        for row in service.handle_update(_callback(28, "setup:android"))[0].reply_markup["inline_keyboard"]
         for button in row
         if "callback_data" in button
     }
@@ -616,7 +630,8 @@ def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path)
         },
     })
 
-    assert help_screen[0].text.startswith("Помощь")
+    assert help_screen[0].text.startswith("◎ Получить доступ")
+    assert not help_screen[0].text.startswith("Помощь")
     assert "Проводим краткие технические работы." in help_screen[0].text
     help_callbacks = {
         button["callback_data"]
