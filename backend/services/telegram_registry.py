@@ -23,6 +23,7 @@ from services.db_bootstrap import connect
 
 BOT_INBOUND_ID = 1
 BOT_CLIENT_FLOW = "xtls-rprx-vision"
+SUPPORT_CATEGORIES = frozenset({"link", "connection", "device", "directions", "other"})
 
 
 class TelegramRegistryError(RuntimeError):
@@ -69,12 +70,15 @@ class TelegramCustomerAccess:
     customer_status: str | None
     customer_row_version: int | None
     blocked_from_status: str | None
+    initial_provisioning_ready: bool = True
 
 
 @dataclass(frozen=True)
 class TelegramNotificationPreferences:
     telegram_user_id: int
     background_notifications_enabled: bool
+    expiry_reminders_enabled: bool
+    traffic_reminders_enabled: bool
     row_version: int
 
 
@@ -104,6 +108,27 @@ class CustomerTrafficLedger:
     lifetime_bytes: int
     last_observed_bytes: int
     last_observed_at: str
+
+
+@dataclass(frozen=True)
+class CustomerTrafficQuotaBinding:
+    """One current TG-managed client binding eligible for quota observation."""
+
+    node_id: int
+    inbound_id: int
+    remote_client_id: str
+
+
+@dataclass(frozen=True)
+class CustomerTrafficQuotaCandidate:
+    """A fully provisioned, finite traffic plan safe to evaluate locally."""
+
+    telegram_user_id: int
+    customer_id: int
+    email_display: str
+    quota_total_bytes: int
+    quota_plan_digest: str
+    bindings: tuple[CustomerTrafficQuotaBinding, ...]
 
 
 @dataclass(frozen=True)
@@ -148,6 +173,23 @@ class PendingApplication:
     introduction_text: str | None
     suggested_email: str
     suggested_email_source: str
+
+
+@dataclass(frozen=True)
+class TelegramPreapproval:
+    telegram_user_id: int
+    customer_id: int
+    customer_email: str
+    row_version: int
+    created_by: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class TelegramUnlinkResult:
+    telegram_user_id: int
+    customer_id: int
+    identity_row_version: int
 
 
 @dataclass(frozen=True)
@@ -224,6 +266,36 @@ class AppealResolutionResult:
     appeal_id: int
     status: str
     row_version: int
+
+
+@dataclass(frozen=True)
+class TelegramSupportRequest:
+    support_request_id: int
+    telegram_user_id: int
+    customer_id: int
+    category: str
+    body: str
+    status: str
+    row_version: int
+    created_at: str
+    updated_at: str
+    admin_response: str | None
+
+
+@dataclass(frozen=True)
+class TelegramSupportResolution:
+    support_request_id: int
+    status: str
+    row_version: int
+
+
+@dataclass(frozen=True)
+class TelegramServiceNotice:
+    body: str | None
+    is_active: bool
+    row_version: int
+    updated_by: str
+    updated_at: str | None
 
 
 @dataclass(frozen=True)
@@ -873,6 +945,329 @@ class TelegramRegistry:
             row_version=int(row[5]),
         )
 
+    def get_preapproval(self, telegram_user_id: int) -> TelegramPreapproval | None:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT p.telegram_user_id, p.customer_id, c.email_display,
+                       p.row_version, p.created_by, p.created_at
+                FROM telegram_preapprovals AS p
+                JOIN customers AS c ON c.id = p.customer_id
+                WHERE p.telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return TelegramPreapproval(
+            telegram_user_id=int(row[0]), customer_id=int(row[1]), customer_email=str(row[2]),
+            row_version=int(row[3]), created_by=str(row[4]), created_at=str(row[5]),
+        )
+
+    def create_existing_customer_preapproval(
+        self,
+        *,
+        telegram_user_id: int,
+        customer_id: int,
+        expected_preapproval_version: int,
+        idempotency_key: str,
+        created_by: str,
+    ) -> TelegramPreapproval:
+        """Pre-authorize one numeric Telegram ID for one verified existing customer.
+
+        The command is local-only. It cannot create remote clients, reveal a
+        subscription URL, or overwrite a blocked/linked Telegram identity.
+        Activation waits for the exact ID's first private ``/start``.
+        """
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        if (
+            isinstance(expected_preapproval_version, bool)
+            or not isinstance(expected_preapproval_version, int)
+            or expected_preapproval_version < 0
+        ):
+            raise TelegramRegistryError("expected_preapproval_version is invalid")
+        expected_version = expected_preapproval_version
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(created_by, "created_by")
+        payload = {
+            "telegram_user_id": user_id,
+            "customer_id": local_customer_id,
+            "expected_preapproval_version": expected_version,
+        }
+        digest = _payload_digest(payload)
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'create_preapproval' AND idempotency_key = ?",
+                (key,),
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return TelegramPreapproval(**json.loads(str(receipt[1])))
+
+            customer = conn.execute(
+                """
+                SELECT email_display, email_canonical, status
+                FROM customers WHERE id = ? AND deleted_at IS NULL
+                """,
+                (local_customer_id,),
+            ).fetchone()
+            if customer is None or str(customer[2]) not in {"active", "suspended", "suspend_partial", "resume_partial"}:
+                raise ApprovalUnavailableError("customer is not available for Telegram preapproval")
+            bindings = conn.execute(
+                """
+                SELECT remote_email FROM customer_node_bindings
+                WHERE customer_id = ? AND management_state = 'confirmed'
+                """,
+                (local_customer_id,),
+            ).fetchall()
+            if not bindings or any(canonicalize_email(str(item[0])) != str(customer[1]) for item in bindings):
+                raise ApprovalUnavailableError("customer has no confirmed exact node binding")
+            linked = conn.execute(
+                "SELECT telegram_user_id FROM telegram_identities WHERE customer_id = ?",
+                (local_customer_id,),
+            ).fetchone()
+            if linked is not None and int(linked[0]) != user_id:
+                raise ApprovalUnavailableError("customer is already linked to another Telegram identity")
+            identity = conn.execute(
+                "SELECT access_status, customer_id FROM telegram_identities WHERE telegram_user_id = ?",
+                (user_id,),
+            ).fetchone()
+            if identity is not None:
+                if str(identity[0]) == "blocked":
+                    raise ApprovalUnavailableError("blocked identity cannot receive a preapproval")
+                if identity[1] is not None and int(identity[1]) != local_customer_id:
+                    raise ApprovalUnavailableError("Telegram identity is already linked to another customer")
+                if str(identity[0]) == "approved" and identity[1] is not None and int(identity[1]) == local_customer_id:
+                    raise ApprovalUnavailableError("Telegram identity is already approved for this customer")
+                if str(identity[0]) == "pending":
+                    raise ApprovalUnavailableError("pending application must be decided before preapproval")
+
+            existing = conn.execute(
+                "SELECT customer_id, row_version FROM telegram_preapprovals WHERE telegram_user_id = ?",
+                (user_id,),
+            ).fetchone()
+            if existing is None:
+                if expected_version != 0:
+                    raise VersionConflictError("preapproval does not exist")
+                conn.execute(
+                    """
+                    INSERT INTO telegram_preapprovals (telegram_user_id, customer_id, created_by)
+                    VALUES (?, ?, ?)
+                    """,
+                    (user_id, local_customer_id, actor),
+                )
+            else:
+                if int(existing[1]) != expected_version:
+                    raise VersionConflictError("preapproval was updated by another administrator")
+                conn.execute(
+                    """
+                    UPDATE telegram_preapprovals
+                    SET customer_id = ?, created_by = ?, row_version = row_version + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE telegram_user_id = ? AND row_version = ?
+                    """,
+                    (local_customer_id, actor, user_id, expected_version),
+                )
+            preapproval = conn.execute(
+                """
+                SELECT p.telegram_user_id, p.customer_id, c.email_display,
+                       p.row_version, p.created_by, p.created_at
+                FROM telegram_preapprovals AS p
+                JOIN customers AS c ON c.id = p.customer_id
+                WHERE p.telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            assert preapproval is not None
+            result = TelegramPreapproval(
+                telegram_user_id=int(preapproval[0]), customer_id=int(preapproval[1]),
+                customer_email=str(preapproval[2]), row_version=int(preapproval[3]),
+                created_by=str(preapproval[4]), created_at=str(preapproval[5]),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('preapproval_saved', 'admin', ?, 'telegram_preapproval', ?, ?)
+                """,
+                (actor, str(user_id), digest),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
+                VALUES ('create_preapproval', ?, ?, ?)
+                """,
+                (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+        return result
+
+    def activate_preapproval(self, telegram_user_id: int) -> ExistingApprovalResult | None:
+        """Consume a preapproval after the authorized user starts a private chat."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            preapproval = conn.execute(
+                "SELECT customer_id FROM telegram_preapprovals WHERE telegram_user_id = ?",
+                (user_id,),
+            ).fetchone()
+            if preapproval is None:
+                return None
+            customer_id = int(preapproval[0])
+            identity = conn.execute(
+                """
+                SELECT access_status, customer_id, application_attempt, row_version
+                FROM telegram_identities WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if identity is None or str(identity[0]) == "blocked":
+                return None
+            if str(identity[0]) not in {"eligible", "rejected"} or identity[1] is not None:
+                return None
+            customer = conn.execute(
+                """
+                SELECT email_display, email_canonical, status
+                FROM customers WHERE id = ? AND deleted_at IS NULL
+                """,
+                (customer_id,),
+            ).fetchone()
+            if customer is None or str(customer[2]) not in {"active", "suspended", "suspend_partial", "resume_partial"}:
+                return None
+            bindings = conn.execute(
+                """
+                SELECT remote_email FROM customer_node_bindings
+                WHERE customer_id = ? AND management_state = 'confirmed'
+                """,
+                (customer_id,),
+            ).fetchall()
+            if not bindings or any(canonicalize_email(str(item[0])) != str(customer[1]) for item in bindings):
+                return None
+            linked = conn.execute(
+                "SELECT telegram_user_id FROM telegram_identities WHERE customer_id = ?",
+                (customer_id,),
+            ).fetchone()
+            if linked is not None and int(linked[0]) != user_id:
+                return None
+            update = conn.execute(
+                """
+                UPDATE telegram_identities
+                SET customer_id = ?, access_status = 'approved', approved_at = CURRENT_TIMESTAMP,
+                    approved_by = 'preapproval', decision_reason = NULL,
+                    introduction_requested_at = NULL, updated_at = CURRENT_TIMESTAMP,
+                    row_version = row_version + 1
+                WHERE telegram_user_id = ? AND access_status IN ('eligible', 'rejected')
+                  AND customer_id IS NULL
+                """,
+                (customer_id, user_id),
+            )
+            if update.rowcount != 1:
+                return None
+            conn.execute("DELETE FROM telegram_preapprovals WHERE telegram_user_id = ?", (user_id,))
+            next_version = int(identity[3]) + 1
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                VALUES ('user_existing_access_approved', ?, ?)
+                """,
+                (str(user_id), f"user:preapproval-activated:{user_id}:{customer_id}"),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('preapproval_activated', 'telegram_user', ?, 'telegram_identity', ?, ?)
+                """,
+                (str(user_id), str(user_id), _payload_digest({"customer_id": customer_id})),
+            )
+        return ExistingApprovalResult(
+            telegram_user_id=user_id, customer_id=customer_id, email_display=str(customer[0]),
+            confirmed_binding_count=len(bindings), identity_row_version=next_version,
+        )
+
+    def unlink_identity(
+        self,
+        *,
+        telegram_user_id: int,
+        customer_id: int,
+        expected_identity_version: int,
+        idempotency_key: str,
+        unlinked_by: str,
+    ) -> TelegramUnlinkResult:
+        """Remove only the local Telegram association; remote clients are untouched."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        expected_version = _positive_int(expected_identity_version, "expected_identity_version")
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(unlinked_by, "unlinked_by")
+        payload = {
+            "telegram_user_id": user_id, "customer_id": local_customer_id,
+            "expected_identity_version": expected_version,
+        }
+        digest = _payload_digest(payload)
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'unlink_identity' AND idempotency_key = ?",
+                (key,),
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return TelegramUnlinkResult(**json.loads(str(receipt[1])))
+            identity = conn.execute(
+                """
+                SELECT access_status, customer_id, row_version
+                FROM telegram_identities WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if identity is None or str(identity[0]) != "approved" or identity[1] != local_customer_id:
+                raise VersionConflictError("identity is not approved for this customer")
+            if int(identity[2]) != expected_version:
+                raise VersionConflictError("identity was updated by another administrator")
+            customer = conn.execute(
+                "SELECT status FROM customers WHERE id = ? AND deleted_at IS NULL", (local_customer_id,)
+            ).fetchone()
+            if customer is None or str(customer[0]) in {"deleting", "delete_partial", "deleted"}:
+                raise LifecycleUnavailableError("customer cannot be unlinked during deletion")
+            update = conn.execute(
+                """
+                UPDATE telegram_identities
+                SET customer_id = NULL, access_status = 'eligible', request_code = NULL,
+                    approved_at = NULL, approved_by = NULL, decision_reason = 'unlinked',
+                    blocked_from_status = NULL, introduction_requested_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP, row_version = row_version + 1
+                WHERE telegram_user_id = ? AND customer_id = ? AND access_status = 'approved'
+                  AND row_version = ?
+                """,
+                (user_id, local_customer_id, expected_version),
+            )
+            if update.rowcount != 1:
+                raise VersionConflictError("identity was updated by another administrator")
+            result = TelegramUnlinkResult(user_id, local_customer_id, expected_version + 1)
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('identity_unlinked', 'admin', ?, 'telegram_identity', ?, ?)
+                """,
+                (actor, str(user_id), digest),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
+                VALUES ('unlink_identity', ?, ?, ?)
+                """,
+                (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+        return result
+
     def get_customer_access(self, telegram_user_id: int) -> TelegramCustomerAccess:
         """Resolve approved access strictly from the numeric Telegram identity."""
 
@@ -881,7 +1276,7 @@ class TelegramRegistry:
             row = conn.execute(
                 """
                 SELECT i.telegram_user_id, i.chat_id, i.access_status, i.customer_id,
-                       c.email_display, c.status, c.row_version, i.blocked_from_status
+                       c.email_display, c.status, c.row_version, i.blocked_from_status, c.origin
                 FROM telegram_identities AS i
                 LEFT JOIN customers AS c ON c.id = i.customer_id
                 WHERE i.telegram_user_id = ?
@@ -890,15 +1285,33 @@ class TelegramRegistry:
             ).fetchone()
         if row is None:
             raise TelegramRegistryError("Telegram identity was not found")
+        initial_provisioning_ready = True
+        customer_id = int(row[3]) if row[3] is not None else None
+        if customer_id is not None and str(row[8] or "") == "telegram":
+            with connect(self._db_path) as conn:
+                job = conn.execute(
+                    """
+                    SELECT status FROM telegram_provisioning_jobs
+                    WHERE customer_id = ? AND trigger = 'approve_new'
+                    ORDER BY id ASC LIMIT 1
+                    """,
+                    (customer_id,),
+                ).fetchone()
+            # A new Telegram customer may receive a URL only after every
+            # target from the immutable approval snapshot has succeeded.
+            # Absence of this job denotes a customer created before the
+            # snapshot workflow and must remain usable after migration.
+            initial_provisioning_ready = job is None or str(job[0]) == "succeeded"
         return TelegramCustomerAccess(
             telegram_user_id=int(row[0]),
             chat_id=int(row[1]),
             access_status=str(row[2]),
-            customer_id=int(row[3]) if row[3] is not None else None,
+            customer_id=customer_id,
             email_display=str(row[4]) if row[4] is not None else None,
             customer_status=str(row[5]) if row[5] is not None else None,
             customer_row_version=int(row[6]) if row[6] is not None else None,
             blocked_from_status=str(row[7]) if row[7] is not None else None,
+            initial_provisioning_ready=initial_provisioning_ready,
         )
 
     def get_notification_preferences(self, telegram_user_id: int) -> TelegramNotificationPreferences:
@@ -915,13 +1328,14 @@ class TelegramRegistry:
             )
             row = conn.execute(
                 """
-                SELECT background_notifications_enabled, row_version
+                SELECT background_notifications_enabled, expiry_reminders_enabled,
+                       traffic_reminders_enabled, row_version
                 FROM telegram_notification_preferences WHERE telegram_user_id = ?
                 """,
                 (user_id,),
             ).fetchone()
         assert row is not None
-        return TelegramNotificationPreferences(user_id, bool(row[0]), int(row[1]))
+        return TelegramNotificationPreferences(user_id, bool(row[0]), bool(row[1]), bool(row[2]), int(row[3]))
 
     def toggle_background_notifications(self, telegram_user_id: int) -> TelegramNotificationPreferences:
         """Toggle user-controlled background delivery after durable update dedupe."""
@@ -947,6 +1361,145 @@ class TelegramRegistry:
                 (user_id,),
             )
         return self.get_notification_preferences(user_id)
+
+    def toggle_expiry_reminders(self, telegram_user_id: int) -> TelegramNotificationPreferences:
+        """Toggle only pre-expiry reminders; command replies remain unaffected."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            identity = conn.execute(
+                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)
+            ).fetchone()
+            if identity is None:
+                raise TelegramRegistryError("Telegram identity was not found")
+            conn.execute(
+                "INSERT OR IGNORE INTO telegram_notification_preferences (telegram_user_id) VALUES (?)",
+                (user_id,),
+            )
+            conn.execute(
+                """
+                UPDATE telegram_notification_preferences
+                SET expiry_reminders_enabled = CASE expiry_reminders_enabled WHEN 1 THEN 0 ELSE 1 END,
+                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            )
+        return self.get_notification_preferences(user_id)
+
+    def toggle_traffic_reminders(self, telegram_user_id: int) -> TelegramNotificationPreferences:
+        """Toggle opt-in finite-quota notices; command replies remain unaffected."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            identity = conn.execute(
+                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)
+            ).fetchone()
+            if identity is None:
+                raise TelegramRegistryError("Telegram identity was not found")
+            conn.execute(
+                "INSERT OR IGNORE INTO telegram_notification_preferences (telegram_user_id) VALUES (?)",
+                (user_id,),
+            )
+            conn.execute(
+                """
+                UPDATE telegram_notification_preferences
+                SET traffic_reminders_enabled = CASE traffic_reminders_enabled WHEN 1 THEN 0 ELSE 1 END,
+                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            )
+        return self.get_notification_preferences(user_id)
+
+    def list_traffic_reminder_candidates(self) -> tuple[CustomerTrafficQuotaCandidate, ...]:
+        """Return only complete, finite TG traffic plans without node I/O.
+
+        A customer is eligible only when every currently enabled confirmed
+        binding has an exact successful immutable provisioning attempt. The
+        finite quota is intentionally the sum of those per-node limits because
+        each node enforces its own client counter.
+        """
+
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT i.telegram_user_id, c.id, c.email_display,
+                       b.node_id, b.inbound_id, b.remote_client_id,
+                       a.desired_total_bytes
+                FROM telegram_identities AS i
+                JOIN customers AS c ON c.id = i.customer_id
+                JOIN customer_node_bindings AS b ON b.customer_id = c.id
+                JOIN nodes AS n ON n.id = b.node_id
+                LEFT JOIN telegram_notification_preferences AS p
+                  ON p.telegram_user_id = i.telegram_user_id
+                LEFT JOIN telegram_provisioning_attempts AS a ON a.id = (
+                    SELECT candidate.id
+                    FROM telegram_provisioning_attempts AS candidate
+                    JOIN telegram_provisioning_jobs AS j ON j.id = candidate.job_id
+                    WHERE j.customer_id = c.id
+                      AND candidate.node_id = b.node_id
+                      AND candidate.inbound_id = b.inbound_id
+                      AND candidate.remote_client_id = b.remote_client_id
+                      AND candidate.status = 'succeeded'
+                    ORDER BY candidate.id DESC
+                    LIMIT 1
+                )
+                WHERE i.access_status = 'approved'
+                  AND c.status = 'active' AND c.deleted_at IS NULL
+                  AND b.management_state = 'confirmed' AND b.desired_enabled = 1
+                  AND n.enabled = 1
+                  AND COALESCE(p.background_notifications_enabled, 1) = 1
+                  AND COALESCE(p.traffic_reminders_enabled, 0) = 1
+                  AND (
+                    c.origin != 'telegram'
+                    OR NOT EXISTS (
+                        SELECT 1 FROM telegram_provisioning_jobs AS initial_job
+                        WHERE initial_job.customer_id = c.id
+                          AND initial_job.trigger = 'approve_new'
+                          AND initial_job.status != 'succeeded'
+                    )
+                  )
+                ORDER BY i.telegram_user_id, b.node_id, b.inbound_id
+                """
+            ).fetchall()
+
+        grouped: dict[tuple[int, int, str], list[tuple[int, int, str, int | None]]] = {}
+        for row in rows:
+            key = (int(row[0]), int(row[1]), str(row[2]))
+            grouped.setdefault(key, []).append((int(row[3]), int(row[4]), str(row[5]), row[6]))
+
+        candidates: list[CustomerTrafficQuotaCandidate] = []
+        for (telegram_user_id, customer_id, email_display), bindings in grouped.items():
+            if not bindings or any(item[3] is None or int(item[3]) <= 0 for item in bindings):
+                continue
+            quota_bindings = tuple(
+                CustomerTrafficQuotaBinding(node_id=node_id, inbound_id=inbound_id, remote_client_id=remote_client_id)
+                for node_id, inbound_id, remote_client_id, _quota in bindings
+            )
+            quota_plan = {
+                "customer_id": customer_id,
+                "bindings": [
+                    {
+                        "node_id": binding.node_id,
+                        "inbound_id": binding.inbound_id,
+                        "remote_client_id": binding.remote_client_id,
+                        "total_bytes": int(quota),
+                    }
+                    for binding, (_node_id, _inbound_id, _remote_client_id, quota) in zip(quota_bindings, bindings)
+                ],
+            }
+            candidates.append(
+                CustomerTrafficQuotaCandidate(
+                    telegram_user_id=telegram_user_id,
+                    customer_id=customer_id,
+                    email_display=email_display,
+                    quota_total_bytes=sum(int(item[3]) for item in bindings),
+                    quota_plan_digest=_payload_digest(quota_plan),
+                    bindings=quota_bindings,
+                )
+            )
+        return tuple(candidates)
 
     def observe_customer_traffic(self, *, customer_id: int, observed_bytes: int) -> CustomerTrafficLedger:
         """Accumulate a customer lifetime counter independent of subscription tokens.
@@ -1169,6 +1722,335 @@ class TelegramRegistry:
             )
         return result
 
+    def begin_support_request(self, *, telegram_user_id: int, category: str) -> None:
+        """Remember one bounded support category without creating a ticket yet."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        if category not in SUPPORT_CATEGORIES:
+            raise TelegramRegistryError("support category is invalid")
+        with connect(self._db_path) as conn:
+            identity = conn.execute(
+                """
+                SELECT i.customer_id, i.access_status, c.status
+                FROM telegram_identities AS i
+                JOIN customers AS c ON c.id = i.customer_id
+                WHERE i.telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if identity is None or str(identity[1]) != "approved" or str(identity[2]) != "active":
+                raise TelegramRegistryError("support is available only for an active customer")
+            customer_id = int(identity[0])
+            open_request = conn.execute(
+                """
+                SELECT 1 FROM telegram_support_requests
+                WHERE customer_id = ? AND status IN ('open', 'read')
+                """,
+                (customer_id,),
+            ).fetchone()
+            if open_request is not None:
+                raise TelegramRegistryError("an open support request already exists")
+            cooldown = conn.execute(
+                """
+                SELECT 1 FROM telegram_support_requests
+                WHERE customer_id = ? AND status = 'resolved'
+                  AND resolved_at > datetime('now', '-24 hours')
+                """,
+                (customer_id,),
+            ).fetchone()
+            if cooldown is not None:
+                raise TelegramRegistryError("support request cooldown is active")
+            conn.execute(
+                """
+                INSERT INTO telegram_user_drafts
+                    (telegram_user_id, action, customer_id, category)
+                VALUES (?, 'support_request', ?, ?)
+                ON CONFLICT(telegram_user_id) DO UPDATE SET
+                    action = 'support_request', customer_id = excluded.customer_id,
+                    category = excluded.category, updated_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, customer_id, category),
+            )
+
+    def submit_pending_support_request(
+        self, *, telegram_user_id: int, body: str
+    ) -> TelegramSupportRequest | None:
+        """Create a ticket only from an explicit support draft and bounded text."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        normalized_body = body.strip()
+        if not 1 <= len(normalized_body) <= 1000:
+            raise TelegramRegistryError("support request body must contain 1 to 1000 characters")
+        with connect(self._db_path) as conn:
+            draft = conn.execute(
+                """
+                SELECT customer_id, category FROM telegram_user_drafts
+                WHERE telegram_user_id = ? AND action = 'support_request'
+                """,
+                (user_id,),
+            ).fetchone()
+            if draft is None:
+                return None
+            customer_id, category = int(draft[0]), str(draft[1])
+            identity = conn.execute(
+                """
+                SELECT i.customer_id, i.access_status, c.status
+                FROM telegram_identities AS i
+                JOIN customers AS c ON c.id = i.customer_id
+                WHERE i.telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if (
+                identity is None
+                or int(identity[0]) != customer_id
+                or str(identity[1]) != "approved"
+                or str(identity[2]) != "active"
+            ):
+                raise TelegramRegistryError("support is available only for an active customer")
+            try:
+                cursor = conn.execute(
+                    """
+                    INSERT INTO telegram_support_requests
+                        (telegram_user_id, customer_id, category, body)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (user_id, customer_id, category, normalized_body),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise TelegramRegistryError("an open support request already exists") from exc
+            request_id = int(cursor.lastrowid)
+            conn.execute("DELETE FROM telegram_user_drafts WHERE telegram_user_id = ?", (user_id,))
+            conn.execute(
+                """
+                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                VALUES ('admin_support_created', ?, ?)
+                """,
+                (str(request_id), f"admin:support-created:{request_id}"),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id)
+                VALUES ('support_created', 'telegram_user', ?, 'telegram_support_request', ?)
+                """,
+                (str(user_id), str(request_id)),
+            )
+            row = conn.execute(
+                """
+                SELECT id, telegram_user_id, customer_id, category, body, status,
+                       row_version, created_at, updated_at, admin_response
+                FROM telegram_support_requests WHERE id = ?
+                """,
+                (request_id,),
+            ).fetchone()
+        assert row is not None
+        return TelegramSupportRequest(
+            support_request_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
+            category=str(row[3]), body=str(row[4]), status=str(row[5]), row_version=int(row[6]),
+            created_at=str(row[7]), updated_at=str(row[8]),
+            admin_response=str(row[9]) if row[9] is not None else None,
+        )
+
+    def list_support_requests(self, *, status: str = "open", limit: int = 100) -> list[TelegramSupportRequest]:
+        if status not in {"open", "read", "resolved", "all"}:
+            raise TelegramRegistryError("support request status is invalid")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise TelegramRegistryError("limit must be an integer from 1 to 200")
+        where = "" if status == "all" else "WHERE status = ?"
+        params: tuple[Any, ...] = (status, limit) if status != "all" else (limit,)
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, telegram_user_id, customer_id, category, body, status,
+                       row_version, created_at, updated_at, admin_response
+                FROM telegram_support_requests
+                """
+                + where
+                + " ORDER BY created_at DESC, id DESC LIMIT ?",
+                params,
+            ).fetchall()
+        return [
+            TelegramSupportRequest(
+                support_request_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
+                category=str(row[3]), body=str(row[4]), status=str(row[5]), row_version=int(row[6]),
+                created_at=str(row[7]), updated_at=str(row[8]),
+                admin_response=str(row[9]) if row[9] is not None else None,
+            )
+            for row in rows
+        ]
+
+    def resolve_support_request(
+        self,
+        *,
+        support_request_id: int,
+        expected_row_version: int,
+        response: str | None,
+        idempotency_key: str,
+        resolved_by: str,
+    ) -> TelegramSupportResolution:
+        request_id = _positive_int(support_request_id, "support_request_id")
+        expected_version = _positive_int(expected_row_version, "expected_row_version")
+        normalized_response = response.strip() if isinstance(response, str) else None
+        if normalized_response is not None and not 1 <= len(normalized_response) <= 1000:
+            raise TelegramRegistryError("support response must contain 1 to 1000 characters")
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(resolved_by, "resolved_by")
+        digest = _payload_digest({
+            "support_request_id": request_id, "expected_row_version": expected_version,
+            "response": normalized_response,
+        })
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'resolve_support_request' AND idempotency_key = ?",
+                (key,),
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return TelegramSupportResolution(**json.loads(str(receipt[1])))
+            row = conn.execute(
+                "SELECT telegram_user_id, status, row_version FROM telegram_support_requests WHERE id = ?",
+                (request_id,),
+            ).fetchone()
+            if row is None or str(row[1]) not in {"open", "read"} or int(row[2]) != expected_version:
+                raise VersionConflictError("support request was updated by another administrator")
+            update = conn.execute(
+                """
+                UPDATE telegram_support_requests
+                SET status = 'resolved', admin_response = ?, resolved_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP, row_version = row_version + 1
+                WHERE id = ? AND status IN ('open', 'read') AND row_version = ?
+                """,
+                (normalized_response, request_id, expected_version),
+            )
+            if update.rowcount != 1:
+                raise VersionConflictError("support request was updated by another administrator")
+            result = TelegramSupportResolution(request_id, "resolved", expected_version + 1)
+            conn.execute(
+                """
+                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                VALUES ('user_support_resolved', ?, ?)
+                """,
+                (str(request_id), f"user:support-resolved:{request_id}"),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('support_resolved', 'admin', ?, 'telegram_support_request', ?, ?)
+                """,
+                (actor, str(request_id), digest),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
+                VALUES ('resolve_support_request', ?, ?, ?)
+                """,
+                (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+        return result
+
+    def get_service_notice(self) -> TelegramServiceNotice:
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                "SELECT body, is_active, row_version, updated_by, updated_at FROM telegram_service_notice WHERE id = 1"
+            ).fetchone()
+        if row is None:
+            return TelegramServiceNotice(None, False, 0, "system", None)
+        return TelegramServiceNotice(
+            body=str(row[0]) if row[0] is not None else None,
+            is_active=bool(row[1]),
+            row_version=int(row[2]),
+            updated_by=str(row[3]),
+            updated_at=str(row[4]),
+        )
+
+    def set_service_notice(
+        self,
+        *,
+        body: str | None,
+        expected_row_version: int,
+        idempotency_key: str,
+        updated_by: str,
+    ) -> TelegramServiceNotice:
+        if (
+            isinstance(expected_row_version, bool)
+            or not isinstance(expected_row_version, int)
+            or expected_row_version < 0
+        ):
+            raise TelegramRegistryError("expected_row_version must be a non-negative integer")
+        expected_version = expected_row_version
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(updated_by, "updated_by")
+        normalized_body = body.strip() if isinstance(body, str) else None
+        if normalized_body is not None and not 1 <= len(normalized_body) <= 1000:
+            raise TelegramRegistryError("service notice must contain 1 to 1000 characters")
+        digest = _payload_digest({"body": normalized_body, "expected_row_version": expected_version})
+        scope = "set_service_notice"
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts WHERE scope = ? AND idempotency_key = ?",
+                (scope, key),
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return TelegramServiceNotice(**json.loads(str(receipt[1])))
+            current = conn.execute(
+                "SELECT row_version FROM telegram_service_notice WHERE id = 1"
+            ).fetchone()
+            current_version = int(current[0]) if current is not None else 0
+            if current_version != expected_version:
+                raise VersionConflictError("service notice was updated by another administrator")
+            if current is None:
+                conn.execute(
+                    "INSERT INTO telegram_service_notice (id, body, is_active, updated_by) VALUES (1, ?, ?, ?)",
+                    (normalized_body, int(normalized_body is not None), actor),
+                )
+                result_version = 1
+            else:
+                update = conn.execute(
+                    """
+                    UPDATE telegram_service_notice
+                    SET body = ?, is_active = ?, row_version = row_version + 1,
+                        updated_by = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = 1 AND row_version = ?
+                    """,
+                    (normalized_body, int(normalized_body is not None), actor, expected_version),
+                )
+                if update.rowcount != 1:
+                    raise VersionConflictError("service notice was updated by another administrator")
+                result_version = expected_version + 1
+            row = conn.execute(
+                "SELECT body, is_active, row_version, updated_by, updated_at FROM telegram_service_notice WHERE id = 1"
+            ).fetchone()
+            assert row is not None
+            result = TelegramServiceNotice(
+                body=str(row[0]) if row[0] is not None else None,
+                is_active=bool(row[1]),
+                row_version=result_version,
+                updated_by=str(row[3]),
+                updated_at=str(row[4]),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
+                VALUES (?, ?, ?, ?)
+                """,
+                (scope, key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('service_notice_updated', 'admin', ?, 'telegram_service_notice', '1', ?)
+                """,
+                (actor, digest),
+            )
+        return result
+
     def create_customer(
         self,
         *,
@@ -1267,6 +2149,145 @@ class TelegramRegistry:
                 VALUES ('request_created', 'telegram_user', ?, 'telegram_identity', ?)
                 """,
                 (str(user_id), str(user_id)),
+            )
+            row = conn.execute(
+                """
+                SELECT telegram_user_id, chat_id, access_status, application_attempt,
+                       customer_id, row_version
+                FROM telegram_identities WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        assert row is not None
+        return PendingApplicationResult(
+            identity=TelegramIdentity(
+                telegram_user_id=int(row[0]),
+                chat_id=int(row[1]),
+                access_status=str(row[2]),
+                application_attempt=int(row[3]),
+                customer_id=int(row[4]) if row[4] is not None else None,
+                row_version=int(row[5]),
+            ),
+            created=True,
+            request_code=request_code,
+        )
+
+    def request_required_introduction(self, telegram_user_id: int) -> bool:
+        """Open the non-sensitive local registration step without creating an application.
+
+        A pending application and its administrator notifications are created
+        only after :meth:`submit_required_introduction` validates non-empty
+        user text. This makes an empty application impossible through the bot
+        command path while keeping the public pre-approval copy neutral.
+        """
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            update = conn.execute(
+                """
+                UPDATE telegram_identities
+                SET introduction_requested_at = COALESCE(introduction_requested_at, CURRENT_TIMESTAMP),
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_user_id = ? AND access_status IN ('eligible', 'rejected')
+                """,
+                (user_id,),
+            )
+        return update.rowcount == 1
+
+    def submit_required_introduction(
+        self, telegram_user_id: int, text: str, *, maximum_chars: int
+    ) -> PendingApplicationResult:
+        """Atomically turn a prompted introduction into one pending application.
+
+        The update requires an explicit locally-recorded prompt, one bounded
+        non-whitespace body and an eligible identity. It creates the complete
+        review object, stores the text and queues administrator delivery in
+        the same SQLite transaction, so retries cannot create an empty or
+        duplicate request.
+        """
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        normalized = text.strip()
+        if not normalized or len(normalized) > maximum_chars:
+            raise TelegramRegistryError("introduction length is invalid")
+        with connect(self._db_path) as conn:
+            identity = conn.execute(
+                """
+                SELECT telegram_user_id, chat_id, access_status, application_attempt,
+                       customer_id, row_version, introduction_requested_at
+                FROM telegram_identities WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            if identity is None:
+                raise TelegramRegistryError("identity must be registered before creating an application")
+            existing_identity = TelegramIdentity(
+                telegram_user_id=int(identity[0]),
+                chat_id=int(identity[1]),
+                access_status=str(identity[2]),
+                application_attempt=int(identity[3]),
+                customer_id=int(identity[4]) if identity[4] is not None else None,
+                row_version=int(identity[5]),
+            )
+            if str(identity[2]) not in {"eligible", "rejected"} or identity[6] is None:
+                return PendingApplicationResult(existing_identity, created=False, request_code=None)
+
+            next_attempt = existing_identity.application_attempt + 1
+            request_code = secrets.token_urlsafe(6)
+            update = conn.execute(
+                """
+                UPDATE telegram_identities
+                SET access_status = 'pending', request_code = ?, application_attempt = ?,
+                    introduction_requested_at = NULL, requested_at = CURRENT_TIMESTAMP,
+                    rejected_at = NULL, decision_reason = NULL, updated_at = CURRENT_TIMESTAMP,
+                    row_version = row_version + 1
+                WHERE telegram_user_id = ? AND access_status IN ('eligible', 'rejected')
+                  AND introduction_requested_at IS NOT NULL
+                """,
+                (request_code, next_attempt, user_id),
+            )
+            if update.rowcount != 1:
+                return PendingApplicationResult(existing_identity, created=False, request_code=None)
+            conn.execute(
+                """
+                INSERT INTO telegram_applications
+                    (telegram_user_id, application_attempt, introduction_text, introduction_submitted_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (user_id, next_attempt, normalized),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                VALUES ('admin_request_created', ?, ?)
+                """,
+                (str(user_id), f"admin:request-created:{user_id}:{next_attempt}"),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                VALUES ('admin_introduction_submitted', ?, ?)
+                """,
+                (
+                    f"{user_id}:{next_attempt}",
+                    f"admin:introduction-submitted:{user_id}:{next_attempt}",
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id)
+                VALUES ('request_created', 'telegram_user', ?, 'telegram_identity', ?)
+                """,
+                (str(user_id), str(user_id)),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id)
+                VALUES ('introduction_submitted', 'telegram_user', ?, 'telegram_application', ?)
+                """,
+                (str(user_id), f"{user_id}:{next_attempt}"),
             )
             row = conn.execute(
                 """

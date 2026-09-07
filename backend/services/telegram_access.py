@@ -35,6 +35,7 @@ def resolve_effective_access(
     email_display: str | None,
     customer_status: str | None,
     blocked_from_status: str | None = None,
+    initial_provisioning_ready: bool = True,
 ) -> TelegramEffectiveAccess:
     """Resolve access without performing I/O.
 
@@ -55,6 +56,8 @@ def resolve_effective_access(
         return TelegramEffectiveAccess("revoking", False, False, False)
     if customer_status != "active":
         return TelegramEffectiveAccess("unavailable", False, False, False)
+    if not initial_provisioning_ready:
+        return TelegramEffectiveAccess("provisioning", False, False, False)
     if access_status == "approved":
         return TelegramEffectiveAccess("active", True, True, False)
     if access_status == "blocked":
@@ -115,11 +118,27 @@ class TelegramSubscriptionAccessGate:
         customer_id, display, origin, status, _deleted_at, identity_status, blocked_from = live_rows[0]
         if identity_status is None:
             return str(origin) != "telegram"
+        initial_provisioning_ready = True
+        if str(origin) == "telegram":
+            with connect(self._db_path) as conn:
+                job = conn.execute(
+                    """
+                    SELECT status FROM telegram_provisioning_jobs
+                    WHERE customer_id = ? AND trigger = 'approve_new'
+                    ORDER BY id ASC LIMIT 1
+                    """,
+                    (int(customer_id),),
+                ).fetchone()
+            # No initial job means this is a legacy/migrated Telegram
+            # customer. New approvals always create one and therefore remain
+            # fail-closed until its immutable node snapshot has succeeded.
+            initial_provisioning_ready = job is None or str(job[0]) == "succeeded"
         decision = resolve_effective_access(
             access_status=str(identity_status),
             customer_id=int(customer_id),
             email_display=str(display),
             customer_status=str(status),
             blocked_from_status=str(blocked_from) if blocked_from is not None else None,
+            initial_provisioning_ready=initial_provisioning_ready,
         )
         return decision.can_use_public_subscription

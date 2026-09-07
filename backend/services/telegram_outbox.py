@@ -255,6 +255,115 @@ class TelegramOutboxWorker:
             if row is None:
                 raise OutboxPermanentError("appeal_not_found")
             return self._primary_admin_id, f"Обращение от {row[1]} (#{row[0]}):\n{row[2]}", None
+        if event.event_type == "admin_support_created":
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT s.telegram_user_id, c.email_display, s.category, s.body
+                    FROM telegram_support_requests AS s
+                    JOIN customers AS c ON c.id = s.customer_id
+                    WHERE s.id = ?
+                    """,
+                    (event.entity_id,),
+                ).fetchone()
+            if row is None:
+                raise OutboxPermanentError("support_request_not_found")
+            labels = {
+                "link": "Ссылка не открывается",
+                "connection": "Подключение не работает",
+                "device": "Сменил устройство",
+                "directions": "Мало или нет направлений",
+                "other": "Другое",
+            }
+            label = labels.get(str(row[2]))
+            if label is None:
+                raise OutboxPermanentError("invalid_support_category")
+            return (
+                self._primary_admin_id,
+                f"Обращение в поддержку от {row[1]} (#{row[0]}).\nТема: {label}\n\n{row[3]}",
+                None,
+            )
+        if event.event_type == "user_support_resolved":
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT i.chat_id, s.admin_response, COALESCE(p.background_notifications_enabled, 1)
+                    FROM telegram_support_requests AS s
+                    JOIN telegram_identities AS i ON i.telegram_user_id = s.telegram_user_id
+                    LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
+                    WHERE s.id = ? AND s.status = 'resolved'
+                    """,
+                    (event.entity_id,),
+                ).fetchone()
+            if row is None:
+                raise OutboxPermanentError("support_request_not_found")
+            if not bool(row[2]):
+                raise OutboxSuppressed("notifications_disabled")
+            response = str(row[1]).strip() if row[1] is not None else ""
+            text = "Обращение рассмотрено администратором."
+            if response:
+                text += f"\n\nОтвет:\n{response}"
+            return int(row[0]), text, None
+        if event.event_type == "user_expiry_reminder":
+            try:
+                user_id = int(event.entity_id)
+                payload = json.loads(event.payload_json)
+                days = payload.get("days") if isinstance(payload, dict) else None
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise OutboxPermanentError("invalid_expiry_reminder") from exc
+            if days not in {1, 3, 7}:
+                raise OutboxPermanentError("invalid_expiry_reminder")
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT i.chat_id, COALESCE(p.background_notifications_enabled, 1),
+                           COALESCE(p.expiry_reminders_enabled, 1)
+                    FROM telegram_identities AS i
+                    JOIN customers AS c ON c.id = i.customer_id
+                    LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
+                    WHERE i.telegram_user_id = ? AND i.access_status = 'approved'
+                      AND c.status = 'active' AND c.deleted_at IS NULL
+                    """,
+                    (user_id,),
+                ).fetchone()
+            if row is None:
+                raise OutboxSuppressed("recipient_is_no_longer_registered")
+            if not bool(row[1]) or not bool(row[2]):
+                raise OutboxSuppressed("notifications_disabled")
+            day_text = "день" if days == 1 else "дня" if days in {2, 3, 4} else "дней"
+            return int(row[0]), f"Напоминание: срок доступа истекает примерно через {days} {day_text}.", None
+        if event.event_type == "user_traffic_reminder":
+            try:
+                user_id = int(event.entity_id)
+                payload = json.loads(event.payload_json)
+                percent = payload.get("percent") if isinstance(payload, dict) else None
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise OutboxPermanentError("invalid_traffic_reminder") from exc
+            if percent not in {80, 95, 100}:
+                raise OutboxPermanentError("invalid_traffic_reminder")
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT i.chat_id, COALESCE(p.background_notifications_enabled, 1),
+                           COALESCE(p.traffic_reminders_enabled, 0)
+                    FROM telegram_identities AS i
+                    JOIN customers AS c ON c.id = i.customer_id
+                    LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
+                    WHERE i.telegram_user_id = ? AND i.access_status = 'approved'
+                      AND c.status = 'active' AND c.deleted_at IS NULL
+                    """,
+                    (user_id,),
+                ).fetchone()
+            if row is None:
+                raise OutboxSuppressed("recipient_is_no_longer_registered")
+            if not bool(row[1]) or not bool(row[2]):
+                raise OutboxSuppressed("notifications_disabled")
+            messages = {
+                80: "Напоминание: использовано примерно 80% доступного трафика.",
+                95: "Напоминание: использовано примерно 95% доступного трафика.",
+                100: "Напоминание: доступный трафик исчерпан.",
+            }
+            return int(row[0]), messages[percent], None
         if event.event_type in {
             "user_provisioning_queued",
             "user_provisioning_completed",

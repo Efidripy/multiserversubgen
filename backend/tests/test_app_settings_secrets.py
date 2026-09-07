@@ -187,3 +187,22 @@ def test_retention_worker_requires_enabled_bot_but_never_remote_write_interlock(
     settings = load_app_settings(parse_mfa_users=_parse_mfa_users)
     assert settings.telegram.retention_worker_enabled is True
     assert settings.telegram.provisioning_worker_enabled is False
+
+
+def test_reminder_worker_requires_enabled_bot_but_not_remote_write_permission(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_REMINDER_WORKER_ENABLED", "true")
+    monkeypatch.delenv("TELEGRAM_BOT_ENABLED", raising=False)
+    with pytest.raises(RuntimeError, match="REMINDER_WORKER_ENABLED"):
+        load_app_settings(parse_mfa_users=_parse_mfa_users)
+
+    monkeypatch.setenv("TELEGRAM_BOT_ENABLED", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-runtime-token")
+    monkeypatch.setenv("TELEGRAM_PRIMARY_ADMIN_ID", "108100140")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_PATH_SUFFIX", "test-path-suffix")
+    monkeypatch.setenv("TELEGRAM_PUBLIC_BASE_URL", "https://bot.example.test")
+    monkeypatch.delenv("TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES", raising=False)
+
+    settings = load_app_settings(parse_mfa_users=_parse_mfa_users)
+    assert settings.telegram.reminder_worker_enabled is True
+    assert settings.telegram.provisioning_worker_enabled is False

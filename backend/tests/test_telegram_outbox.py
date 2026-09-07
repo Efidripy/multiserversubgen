@@ -225,3 +225,108 @@ def test_user_result_notifications_cover_provisioning_rejection_and_lifecycle(tm
         (777, "Заявка отклонена. Если хотите подать новую, отправьте /start.", None),
         (777, "Доступ восстановлен. Откройте меню, чтобы продолжить.", None),
     ]
+
+
+def test_support_events_notify_only_admin_then_the_linked_user_when_resolved(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="support-target", origin="telegram", email_source="telegram_username", public_code="support-target"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="support_target", first_name="Support", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+    registry.begin_support_request(telegram_user_id=42, category="connection")
+    request = registry.submit_pending_support_request(telegram_user_id=42, body="Не получается подключиться.")
+    assert request is not None
+    port = FakeOutboxPort()
+
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert port.messages == [
+        (108100140, "Обращение в поддержку от support-target (#42).\nТема: Подключение не работает\n\nНе получается подключиться.", None)
+    ]
+
+    registry.resolve_support_request(
+        support_request_id=request.support_request_id,
+        expected_row_version=request.row_version,
+        response="Проверьте настройки приложения и попробуйте ещё раз.",
+        idempotency_key="support-outbox-resolution",
+        resolved_by="admin",
+    )
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert port.messages[-1] == (
+        777,
+        "Обращение рассмотрено администратором.\n\nОтвет:\nПроверьте настройки приложения и попробуйте ещё раз.",
+        None,
+    )
+
+
+def test_expiry_reminder_delivery_respects_its_specific_user_preference(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="expiry-target", origin="telegram", email_source="telegram_username", public_code="expiry-target"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="expiry_target", first_name="Expiry", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+        conn.execute(
+            """INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
+               VALUES ('user_expiry_reminder', '42', 'expiry-delivery', '{"days":3,"expires_at":1}')"""
+        )
+    port = FakeOutboxPort()
+
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert port.messages == [(777, "Напоминание: срок доступа истекает примерно через 3 дня.", None)]
+
+    registry.toggle_expiry_reminders(42)
+    with connect(db_path) as conn:
+        conn.execute(
+            """INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
+               VALUES ('user_expiry_reminder', '42', 'expiry-suppressed', '{"days":1,"expires_at":2}')"""
+        )
+    assert _worker(db_path, port).run_once().outcome == "cancelled"
+
+
+def test_traffic_reminder_delivery_is_opt_in_and_uses_its_specific_preference(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="traffic-target", origin="telegram", email_source="telegram_username", public_code="traffic-target"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="traffic_target", first_name="Traffic", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+        conn.execute(
+            """INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
+               VALUES ('user_traffic_reminder', '42', 'traffic-suppressed', '{\"percent\":80}')"""
+        )
+    port = FakeOutboxPort()
+
+    assert _worker(db_path, port).run_once().outcome == "cancelled"
+    registry.toggle_traffic_reminders(42)
+    with connect(db_path) as conn:
+        conn.execute(
+            """INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
+               VALUES ('user_traffic_reminder', '42', 'traffic-delivery', '{\"percent\":95}')"""
+        )
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert port.messages == [(777, "Напоминание: использовано примерно 95% доступного трафика.", None)]

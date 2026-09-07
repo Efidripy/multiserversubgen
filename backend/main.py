@@ -37,6 +37,7 @@ from services.telegram_polling import TelegramBotApiClient, TelegramPollingWorke
 from services.telegram_registration import TelegramRegistrationService
 from services.telegram_registry import TelegramRegistry
 from services.telegram_retention import TelegramRetentionService
+from services.telegram_reminders import TelegramReminderService
 from services.telegram_provisioning import (
     ClientManagerLegacyDiscovery,
     ClientManagerProvisioningPort,
@@ -510,6 +511,23 @@ async def _telegram_retention_worker_loop() -> None:
         await asyncio.sleep(SETTINGS.telegram.retention_worker_interval_sec)
 
 
+async def _telegram_reminder_worker_loop() -> None:
+    """Queue local expiry and exact-snapshot traffic notices; never calls a node."""
+
+    max_snapshot_age_seconds = max(300, SETTINGS.telegram.reminder_worker_interval_sec * 2)
+    worker = TelegramReminderService(
+        DB_PATH,
+        traffic_snapshot_loader=lambda email, bindings: live_stats_runtime.get_cached_telegram_quota_usage(
+            email=email,
+            bindings=bindings,
+            max_age_seconds=max_snapshot_age_seconds,
+        ),
+    )
+    while True:
+        await asyncio.to_thread(worker.run_once)
+        await asyncio.sleep(SETTINGS.telegram.reminder_worker_interval_sec)
+
+
 async def _telegram_polling_worker_loop() -> None:
     """Use outbound long polling where Telegram cannot reach this host's webhook."""
 
@@ -566,6 +584,9 @@ app.router.lifespan_context = build_lifespan(
     ),
     telegram_retention_worker_loop=(
         (lambda: _telegram_retention_worker_loop()) if SETTINGS.telegram.retention_worker_enabled else None
+    ),
+    telegram_reminder_worker_loop=(
+        (lambda: _telegram_reminder_worker_loop()) if SETTINGS.telegram.reminder_worker_enabled else None
     ),
     telegram_polling_worker_loop=(
         (lambda: _telegram_polling_worker_loop())
