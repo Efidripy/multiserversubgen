@@ -1083,15 +1083,17 @@ class TelegramRegistrationService:
             {"inline_keyboard": [[{"text": "← Меню", "callback_data": "menu:home"}]]},
         )
 
-    @staticmethod
-    def _help_message(chat_id: int) -> TelegramOutboundMessage:
+    def _help_message(self, chat_id: int) -> TelegramOutboundMessage:
+        notice = self._registry.get_service_notice()
+        notice_text = f"\n\nВременное сообщение:\n{notice.body}" if notice.is_active and notice.body else ""
         return TelegramOutboundMessage(
             chat_id,
             "Помощь\n\n"
             "◎ Получить доступ — предлагает персональную ссылку или QR-код.\n"
             "↻ Сменить ссылку — сразу отключает предыдущую.\n"
             "⚙ Уведомления — включает или выключает фоновые сообщения.\n\n"
-            "Если доступ приостановлен, в меню появится кнопка для сообщения администратору.",
+            "Если доступ приостановлен, в меню появится кнопка для сообщения администратору."
+            + notice_text,
             {"inline_keyboard": [
                 [{"text": "⊞ Выбрать приложение", "callback_data": "setup:menu"}],
                 [{"text": "⌁ Проверить готовность", "callback_data": "setup:diagnostics"}],

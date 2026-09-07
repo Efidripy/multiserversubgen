@@ -60,6 +60,7 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "telegram_broadcast_jobs",
             "telegram_user_drafts",
             "telegram_support_requests",
+            "telegram_service_notice",
         } <= tables
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
@@ -1110,4 +1111,41 @@ def test_active_customer_support_request_is_durable_singleton_and_has_a_resoluti
             response="Другой ответ",
             idempotency_key="resolve-support-42",
             resolved_by="admin",
+        )
+
+
+def test_service_notice_is_versioned_idempotent_and_can_be_cleared(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+
+    initial = registry.get_service_notice()
+    created = registry.set_service_notice(
+        body="Проводим краткие технические работы.",
+        expected_row_version=initial.row_version,
+        idempotency_key="notice-create",
+        updated_by="admin",
+    )
+    replay = registry.set_service_notice(
+        body="Проводим краткие технические работы.",
+        expected_row_version=initial.row_version,
+        idempotency_key="notice-create",
+        updated_by="admin",
+    )
+    cleared = registry.set_service_notice(
+        body=None,
+        expected_row_version=created.row_version,
+        idempotency_key="notice-clear",
+        updated_by="admin",
+    )
+
+    assert initial.body is None and initial.is_active is False and initial.row_version == 0
+    assert created.is_active is True
+    assert replay == created
+    assert cleared.is_active is False
+    assert cleared.body is None
+    with pytest.raises(VersionConflictError):
+        registry.set_service_notice(
+            body="Устаревшая запись", expected_row_version=created.row_version,
+            idempotency_key="notice-stale", updated_by="admin"
         )

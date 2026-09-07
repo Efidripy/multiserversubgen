@@ -381,6 +381,15 @@ def init_db(db_path: str) -> None:
             "ON telegram_support_requests(status, created_at)"
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_service_notice
+                     (id INTEGER PRIMARY KEY CHECK(id = 1),
+                      body TEXT DEFAULT NULL CHECK(body IS NULL OR length(trim(body)) BETWEEN 1 AND 1000),
+                      is_active INTEGER NOT NULL DEFAULT 0 CHECK(is_active IN (0, 1)),
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      updated_by TEXT NOT NULL DEFAULT 'system',
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""
+        )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_node_policies
                      (node_id INTEGER PRIMARY KEY,
                       provisioning_enabled INTEGER NOT NULL DEFAULT 0

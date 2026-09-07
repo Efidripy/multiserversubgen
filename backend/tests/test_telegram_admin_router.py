@@ -409,3 +409,26 @@ def test_support_routes_are_admin_only_and_resolution_remains_local(tmp_path):
     viewer = _build_client(tmp_path, username="viewer", role="viewer")
     assert viewer.get("/api/v1/telegram/support").status_code == 403
     assert viewer.post(f"/api/v1/telegram/support/{request.support_request_id}/resolve", json={}).status_code == 403
+
+
+def test_service_notice_routes_are_admin_only_and_do_not_start_remote_io(tmp_path):
+    client = _build_client(tmp_path)
+
+    initial = client.get("/api/v1/telegram/service-notice")
+    assert initial.status_code == 200
+    assert initial.json()["notice"]["is_active"] is False
+    updated = client.put(
+        "/api/v1/telegram/service-notice",
+        json={
+            "body": "Проводим краткие технические работы.",
+            "expected_row_version": initial.json()["notice"]["row_version"],
+            "idempotency_key": "notice-api-update",
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["remote_io"] == "not_started"
+    assert updated.json()["notice"]["is_active"] is True
+
+    viewer = _build_client(tmp_path, username="viewer", role="viewer")
+    assert viewer.get("/api/v1/telegram/service-notice").status_code == 403
+    assert viewer.put("/api/v1/telegram/service-notice", json={}).status_code == 403

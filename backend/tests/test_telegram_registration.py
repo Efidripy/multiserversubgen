@@ -514,6 +514,10 @@ def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path)
             "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
             (customer_id, identity.telegram_user_id),
         )
+    registry.set_service_notice(
+        body="Проводим краткие технические работы.", expected_row_version=0,
+        idempotency_key="help-notice", updated_by="admin"
+    )
     service = TelegramRegistrationService(registry, introduction_max_chars=700)
 
     help_screen = service.handle_update({
@@ -532,6 +536,7 @@ def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path)
     })
 
     assert help_screen[0].text.startswith("Помощь")
+    assert "Проводим краткие технические работы." in help_screen[0].text
     help_callbacks = {
         button["callback_data"]
         for row in help_screen[0].reply_markup["inline_keyboard"]

@@ -204,6 +204,25 @@ def build_telegram_admin_router(
             raise translate_registry_error(exc) from exc
         return {"support_request": asdict(result), "remote_io": "not_started"}
 
+    @router.get("/api/v1/telegram/service-notice")
+    def get_telegram_service_notice(request: Request):
+        require_admin(request)
+        return {"notice": asdict(registry.get_service_notice())}
+
+    @router.put("/api/v1/telegram/service-notice")
+    def set_telegram_service_notice(request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.set_service_notice(
+                body=data.get("body"),
+                expected_row_version=data.get("expected_row_version"),
+                idempotency_key=data.get("idempotency_key"),
+                updated_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"notice": asdict(result), "remote_io": "not_started"}
+
     @router.get("/api/v1/telegram/requests/{telegram_user_id}")
     def get_pending_request(telegram_user_id: int, request: Request):
         require_admin(request)
