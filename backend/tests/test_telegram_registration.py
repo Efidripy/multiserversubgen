@@ -770,7 +770,7 @@ def test_primary_admin_has_broadcasts_and_customer_profile_details(tmp_path):
     request_labels = [button["text"] for row in requests[0].reply_markup["inline_keyboard"] for button in row]
     assert "⊘ Заблокированные" in request_labels
     assert any(
-        button["text"] == "◎ admin-card-user" and button["style"] == "success"
+        button["text"] == "◎ admin-card-user" and "style" not in button
         for row in customers[0].reply_markup["inline_keyboard"] for button in row
     )
     assert "Трафик за всё время" in card[0].text
@@ -799,7 +799,13 @@ def test_primary_admin_customers_are_shown_as_twenty_per_page_in_two_columns(tmp
         if index == 20:
             with connect(db_path) as conn:
                 conn.execute("UPDATE customers SET status = 'suspended' WHERE id = ?", (customer_id,))
-    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        primary_admin_id=108100140,
+        customer_active_icon_custom_emoji_id="5368324170671202286",
+        customer_inactive_icon_custom_emoji_id="5368324170671202287",
+    )
 
     first = service.handle_update(_admin_callback(80, "admin:customers:0"))[0]
     first_rows = first.reply_markup["inline_keyboard"]
@@ -810,9 +816,12 @@ def test_primary_admin_customers_are_shown_as_twenty_per_page_in_two_columns(tmp
     assert len(first_customer_rows) == 10
     assert all(len(row) == 2 for row in first_customer_rows)
     assert len(first_customer_buttons) == 20
-    assert all(button["text"].startswith("◎ ") for button in first_customer_buttons)
-    assert any(button["style"] == "success" for button in first_customer_buttons)
-    assert any(button["style"] == "danger" for button in first_customer_buttons)
+    assert all(not button["text"].startswith("◎ ") for button in first_customer_buttons)
+    assert all(
+        button["icon_custom_emoji_id"] in {"5368324170671202286", "5368324170671202287"}
+        for button in first_customer_buttons
+    )
+    assert all("style" not in button for button in first_customer_buttons)
     assert any(button["text"] == "1/2" for row in first_rows for button in row)
 
     second = service.handle_update(_admin_callback(81, "admin:customers:1"))[0]
@@ -822,8 +831,12 @@ def test_primary_admin_customers_are_shown_as_twenty_per_page_in_two_columns(tmp
     assert second.text == "Пользователи: 21. Страница 2/2."
     assert len(second_customer_rows) == 1
     assert len(second_customer_rows[0]) == 1
-    assert second_customer_rows[0][0]["text"].startswith("◎ ")
-    assert second_customer_rows[0][0]["style"] == "success"
+    assert not second_customer_rows[0][0]["text"].startswith("◎ ")
+    all_customer_buttons = first_customer_buttons + [button for row in second_customer_rows for button in row]
+    icons_by_label = {button["text"]: button["icon_custom_emoji_id"] for button in all_customer_buttons}
+    assert icons_by_label["grid-user-20"] == "5368324170671202287"
+    assert icons_by_label["grid-user-19"] == "5368324170671202286"
+    assert "style" not in second_customer_rows[0][0]
     assert any(button["text"] == "2/2" for row in second_rows for button in row)
 
 
@@ -842,7 +855,13 @@ def test_primary_admin_confirms_a_direct_bot_message_before_queuing_it(tmp_path)
             "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
             (customer_id,),
         )
-    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        primary_admin_id=108100140,
+        customer_active_icon_custom_emoji_id="5368324170671202286",
+        customer_inactive_icon_custom_emoji_id="5368324170671202287",
+    )
 
     prompt = service.handle_update(_admin_callback(70, f"admin:message:{customer_id}:0"))
     preview = service.handle_update(_admin_message(71, "Проверьте личный кабинет."))
@@ -1069,7 +1088,13 @@ def test_primary_admin_can_review_and_reply_to_customer_support_from_the_bot(tmp
     registry.begin_support_request(telegram_user_id=42, category="connection")
     request = registry.submit_pending_support_request(telegram_user_id=42, body="Приложение не подключается.")
     assert request is not None
-    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        primary_admin_id=108100140,
+        customer_active_icon_custom_emoji_id="5368324170671202286",
+        customer_inactive_icon_custom_emoji_id="5368324170671202287",
+    )
 
     customers = service.handle_update(_admin_callback(9, "admin:customers:0"))[0]
     customer = service.handle_update(_admin_callback(10, f"admin:customer:{customer_id}:0"))[0]
@@ -1081,7 +1106,9 @@ def test_primary_admin_can_review_and_reply_to_customer_support_from_the_bot(tmp
     resolved = service.handle_update(_admin_callback(14, "admin:support-reply-confirm"))[0]
 
     assert any(
-        button["text"] == "◎ ✉ 1 support-user" and button["style"] == "success"
+        button["text"] == "✉ 1 support-user"
+        and button["icon_custom_emoji_id"] == "5368324170671202286"
+        and "style" not in button
         for row in customers.reply_markup["inline_keyboard"] for button in row
     )
     assert any(button["text"].startswith("💬 Обращения: 1") for row in customer.reply_markup["inline_keyboard"] for button in row)

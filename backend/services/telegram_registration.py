@@ -121,6 +121,8 @@ class TelegramRegistrationService:
         get_cached_inbound_options: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
         traffic_projection_loader: Callable[[], dict[str, Any]] | None = None,
         discover_existing: Callable[[str], tuple[ExistingRemoteBinding, ...]] | None = None,
+        customer_active_icon_custom_emoji_id: str = "",
+        customer_inactive_icon_custom_emoji_id: str = "",
     ):
         self._registry = registry
         self._introduction_max_chars = introduction_max_chars
@@ -131,6 +133,8 @@ class TelegramRegistrationService:
         self._get_cached_inbound_options = get_cached_inbound_options
         self._traffic = TelegramTrafficService(registry, traffic_projection_loader)
         self._discover_existing = discover_existing
+        self._customer_active_icon_custom_emoji_id = customer_active_icon_custom_emoji_id.strip()
+        self._customer_inactive_icon_custom_emoji_id = customer_inactive_icon_custom_emoji_id.strip()
 
     @staticmethod
     def _format_bytes(value: int, locale: str = "ru") -> str:
@@ -310,17 +314,28 @@ class TelegramRegistrationService:
         for offset in range(0, len(customer_page.items), 2):
             row: list[dict[str, str]] = []
             for item in customer_page.items[offset:offset + 2]:
-                # Keep one minimal status glyph. Telegram renders the semantic
-                # colour through the documented button style instead of a second
-                # adjacent coloured-circle emoji.
-                status_style = "success" if item.status == "active" else "danger"
+                # A configured custom emoji replaces the monochrome fallback
+                # glyph. The button itself deliberately keeps Telegram's normal
+                # background so the status signal is limited to the one outline.
+                status_icon = (
+                    self._customer_active_icon_custom_emoji_id
+                    if item.status == "active"
+                    else self._customer_inactive_icon_custom_emoji_id
+                )
                 support_badge = f"✉ {item.open_support_count}" if item.open_support_count else None
-                label = " ".join(part for part in ("◎", support_badge, item.email_display[:21]) if part)
-                row.append({
+                label_parts = (
+                    (support_badge, item.email_display[:21])
+                    if status_icon
+                    else ("◎", support_badge, item.email_display[:21])
+                )
+                label = " ".join(part for part in label_parts if part)
+                button = {
                     "text": label,
                     "callback_data": f"admin:customer:{item.customer_id}:{current_page}",
-                    "style": status_style,
-                })
+                }
+                if status_icon:
+                    button["icon_custom_emoji_id"] = status_icon
+                row.append(button)
             buttons.append(row)
         navigation: list[dict[str, str]] = []
         if current_page > 0:

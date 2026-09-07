@@ -157,6 +157,25 @@ class TelegramSettings:
     reminder_worker_interval_sec: int
     local_proxy_url: str
     polling_timeout_sec: int
+    customer_active_icon_custom_emoji_id: str
+    customer_inactive_icon_custom_emoji_id: str
+
+
+def _optional_custom_emoji_id(name: str) -> str:
+    """Accept a Telegram custom-emoji identifier without converting its string form."""
+
+    value = os.getenv(name, "").strip()
+    if not value:
+        return ""
+    if not value.isascii() or not value.isdecimal():
+        raise RuntimeError(f"{name} must be a positive Telegram custom emoji identifier")
+    try:
+        numeric_value = int(value)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a positive Telegram custom emoji identifier") from exc
+    if numeric_value <= 0 or numeric_value > 2**63 - 1:
+        raise RuntimeError(f"{name} must be a positive Telegram custom emoji identifier")
+    return value
 
 
 def _load_telegram_settings() -> TelegramSettings:
@@ -194,6 +213,8 @@ def _load_telegram_settings() -> TelegramSettings:
             reminder_worker_interval_sec=3600,
             local_proxy_url=local_proxy_url,
             polling_timeout_sec=25,
+            customer_active_icon_custom_emoji_id="",
+            customer_inactive_icon_custom_emoji_id="",
         )
 
     bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -235,6 +256,17 @@ def _load_telegram_settings() -> TelegramSettings:
     polling_timeout_sec = _bounded_env_int(
         "TELEGRAM_POLLING_TIMEOUT_SEC", default=25, minimum=1, maximum=50
     )
+    customer_active_icon_custom_emoji_id = _optional_custom_emoji_id(
+        "TELEGRAM_CUSTOMER_ACTIVE_ICON_CUSTOM_EMOJI_ID"
+    )
+    customer_inactive_icon_custom_emoji_id = _optional_custom_emoji_id(
+        "TELEGRAM_CUSTOMER_INACTIVE_ICON_CUSTOM_EMOJI_ID"
+    )
+    if bool(customer_active_icon_custom_emoji_id) != bool(customer_inactive_icon_custom_emoji_id):
+        raise RuntimeError(
+            "TELEGRAM_CUSTOMER_ACTIVE_ICON_CUSTOM_EMOJI_ID and "
+            "TELEGRAM_CUSTOMER_INACTIVE_ICON_CUSTOM_EMOJI_ID must be configured together"
+        )
     return TelegramSettings(
         enabled=True,
         bot_token=bot_token,
@@ -254,6 +286,8 @@ def _load_telegram_settings() -> TelegramSettings:
         reminder_worker_interval_sec=reminder_worker_interval_sec,
         local_proxy_url=local_proxy_url,
         polling_timeout_sec=polling_timeout_sec,
+        customer_active_icon_custom_emoji_id=customer_active_icon_custom_emoji_id,
+        customer_inactive_icon_custom_emoji_id=customer_inactive_icon_custom_emoji_id,
     )
 
 

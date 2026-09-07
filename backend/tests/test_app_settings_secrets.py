@@ -96,6 +96,45 @@ def test_enabled_telegram_accepts_only_runtime_provided_identity(monkeypatch):
     assert settings.telegram.mode == "webhook"
     assert settings.telegram.introduction_max_chars == 700
     assert settings.telegram.provisioning_worker_enabled is False
+    assert settings.telegram.customer_active_icon_custom_emoji_id == ""
+    assert settings.telegram.customer_inactive_icon_custom_emoji_id == ""
+
+
+def test_enabled_telegram_accepts_a_complete_customer_status_emoji_pair(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_ENABLED", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-runtime-token")
+    monkeypatch.setenv("TELEGRAM_PRIMARY_ADMIN_ID", "108100140")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_PATH_SUFFIX", "test-path-suffix")
+    monkeypatch.setenv("TELEGRAM_PUBLIC_BASE_URL", "https://bot.example.test")
+    monkeypatch.setenv("TELEGRAM_CUSTOMER_ACTIVE_ICON_CUSTOM_EMOJI_ID", "5368324170671202286")
+    monkeypatch.setenv("TELEGRAM_CUSTOMER_INACTIVE_ICON_CUSTOM_EMOJI_ID", "5368324170671202287")
+
+    settings = load_app_settings(parse_mfa_users=_parse_mfa_users)
+
+    assert settings.telegram.customer_active_icon_custom_emoji_id == "5368324170671202286"
+    assert settings.telegram.customer_inactive_icon_custom_emoji_id == "5368324170671202287"
+
+
+@pytest.mark.parametrize(
+    ("active", "inactive", "expected"),
+    [
+        ("5368324170671202286", "", "must be configured together"),
+        ("bad-id", "5368324170671202287", "positive Telegram custom emoji identifier"),
+    ],
+)
+def test_enabled_telegram_rejects_incomplete_or_invalid_customer_status_emoji_pair(monkeypatch, active, inactive, expected):
+    monkeypatch.setenv("TELEGRAM_BOT_ENABLED", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-runtime-token")
+    monkeypatch.setenv("TELEGRAM_PRIMARY_ADMIN_ID", "108100140")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_PATH_SUFFIX", "test-path-suffix")
+    monkeypatch.setenv("TELEGRAM_PUBLIC_BASE_URL", "https://bot.example.test")
+    monkeypatch.setenv("TELEGRAM_CUSTOMER_ACTIVE_ICON_CUSTOM_EMOJI_ID", active)
+    monkeypatch.setenv("TELEGRAM_CUSTOMER_INACTIVE_ICON_CUSTOM_EMOJI_ID", inactive)
+
+    with pytest.raises(RuntimeError, match=expected):
+        load_app_settings(parse_mfa_users=_parse_mfa_users)
 
 
 def test_enabled_telegram_accepts_polling_without_public_webhook_values(monkeypatch):

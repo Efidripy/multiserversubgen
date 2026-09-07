@@ -19,6 +19,8 @@ BotFather и реальные remote clients этот репозиторный �
 | `TELEGRAM_PUBLIC_BASE_URL` | Required only in `webhook` mode: public HTTPS origin used for controlled webhook registration. It is also used to issue subscription links. |
 | `TELEGRAM_LOCAL_PROXY_URL` | Optional loopback `http://127.0.0.1:<port>` endpoint; complete HTTP proxy credentials may be embedded only in this root-owned runtime secret. It is used only after an administrator selects `Local VLESS` in the panel; otherwise Bot API stays direct. A selected local mode fails closed rather than retrying direct. |
 | `TELEGRAM_POLLING_TIMEOUT_SEC` | Long-poll duration for `polling` mode, 1–50 seconds; default `25`. The worker removes any prior webhook without dropping pending updates. |
+| `TELEGRAM_CUSTOMER_ACTIVE_ICON_CUSTOM_EMOJI_ID` | Optional positive custom emoji ID used before an active customer in the private admin list. Must be set together with the inactive ID. The bot owner needs Telegram Premium (or an additional bot username purchased through Fragment), otherwise Telegram rejects this UI field. |
+| `TELEGRAM_CUSTOMER_INACTIVE_ICON_CUSTOM_EMOJI_ID` | Optional positive custom emoji ID used before a suspended/inactive customer. Must be set together with the active ID. When neither ID is configured, the list safely uses monochrome `◎` and never colours the entire button. |
 | `TELEGRAM_PROVISIONING_WORKER_ENABLED` | `false` by default. Starts the durable job worker only when remote writes are separately permitted. |
 | `TELEGRAM_PROVISIONING_ALLOW_REMOTE_WRITES` | Separate explicit interlock. The application fails startup if the worker is requested without this value set to `true`. |
 | `TELEGRAM_PROVISIONING_WORKER_INTERVAL_SEC` | Idle poll interval, 1–300 seconds; default `5`. |
