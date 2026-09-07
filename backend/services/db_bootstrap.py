@@ -474,6 +474,17 @@ def init_db(db_path: str) -> None:
                       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_customer_note_drafts
+                     (admin_telegram_user_id INTEGER PRIMARY KEY,
+                      customer_id INTEGER NOT NULL,
+                      page INTEGER NOT NULL DEFAULT 0 CHECK(page >= 0),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+                      FOREIGN KEY(admin_telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE)"""
+        )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_broadcast_jobs
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       created_by INTEGER NOT NULL,
@@ -532,6 +543,17 @@ def init_db(db_path: str) -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_customer_node_bindings_customer "
             "ON customer_node_bindings(customer_id, management_state, node_id)"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_customer_notes
+                     (customer_id INTEGER PRIMARY KEY,
+                      body TEXT NOT NULL CHECK(length(body) BETWEEN 1 AND 1000),
+                      updated_by_telegram_user_id INTEGER NOT NULL,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT,
+                      FOREIGN KEY(updated_by_telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE RESTRICT)"""
         )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS customer_traffic_ledger
