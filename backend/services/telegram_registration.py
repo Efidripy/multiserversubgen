@@ -854,7 +854,6 @@ class TelegramRegistrationService:
         else:
             rows.extend([
                 [{"text": "⊞ Подключение", "callback_data": "setup:menu"}],
-                [{"text": "↻ Сменить ссылку", "callback_data": "subscription:rotate"}],
                 [{"text": "⚙ Уведомления", "callback_data": "preferences:menu"}],
                 [{"text": "? Помощь", "callback_data": "help"}],
             ])
@@ -864,10 +863,12 @@ class TelegramRegistrationService:
     def _access_choice_message(chat_id: int) -> TelegramOutboundMessage:
         return TelegramOutboundMessage(
             chat_id,
-            "Получить доступ\n\nВыберите удобный способ: скопировать персональную ссылку или показать QR-код для сканирования в приложении.",
+            "Получить доступ\n\nВыберите удобное действие: скопировать персональную ссылку, показать QR-код, проверить готовность или сменить ссылку.",
             {"inline_keyboard": [
                 [{"text": "⊙ Получить ссылку", "callback_data": "subscription:link"}],
                 [{"text": "⊞ Показать QR-код", "callback_data": "subscription:qr"}],
+                [{"text": "⌁ Проверить готовность", "callback_data": "setup:diagnostics"}],
+                [{"text": "↻ Сменить ссылку", "callback_data": "subscription:rotate"}],
                 [{"text": "← Меню", "callback_data": "menu:home"}],
             ]},
         )
@@ -989,7 +990,6 @@ class TelegramRegistrationService:
         buttons = [[{"text": name, "url": url}] for name, url in apps]
         buttons.extend((
             [{"text": "◎ Получить доступ", "callback_data": "subscription:get"}],
-            [{"text": "⌁ Проверить готовность", "callback_data": "setup:diagnostics"}],
             [{"text": "↻ Повторить инструкцию", "callback_data": f"setup:{platform}"}],
             [{"text": "← Устройства", "callback_data": "setup:menu"}],
             [{"text": "← Меню", "callback_data": "menu:home"}],
@@ -1102,14 +1102,14 @@ class TelegramRegistrationService:
         return TelegramOutboundMessage(
             chat_id,
             "Помощь\n\n"
-            "◎ Получить доступ — предлагает персональную ссылку или QR-код.\n"
-            "↻ Сменить ссылку — сразу отключает предыдущую.\n"
+            "◎ Получить доступ — ссылка, QR-код, проверка готовности и смена ссылки.\n"
+            "↻ Смена ссылки сразу отключает предыдущую.\n"
             "⚙ Уведомления — включает или выключает фоновые сообщения.\n\n"
             "Если доступ приостановлен, в меню появится кнопка для сообщения администратору."
             + notice_text,
             {"inline_keyboard": [
                 [{"text": "⊞ Выбрать приложение", "callback_data": "setup:menu"}],
-                [{"text": "⌁ Проверить готовность", "callback_data": "setup:diagnostics"}],
+                [{"text": "◎ Получить доступ", "callback_data": "subscription:get"}],
                 [{"text": "✉ Написать в поддержку", "callback_data": "support:menu"}],
                 [{"text": "← Меню", "callback_data": "menu:home"}],
             ]},
@@ -1266,7 +1266,7 @@ class TelegramRegistrationService:
                 return [TelegramOutboundMessage(
                     chat_id,
                     "⚠️ ВНИМАНИЕ\n\nСтарая ссылка сразу перестанет работать. Подтвердить смену?",
-                    {"inline_keyboard": [[{"text": "✓ Подтвердить смену", "callback_data": "subscription:rotate:confirm"}], [{"text": "Отмена", "callback_data": "menu:home"}]]},
+                    {"inline_keyboard": [[{"text": "✓ Подтвердить смену", "callback_data": "subscription:rotate:confirm"}], [{"text": "Отмена", "callback_data": "subscription:get"}]]},
                 )]
             if callback_data == "support:appeal":
                 return [TelegramOutboundMessage(chat_id, "Напишите одним сообщением, почему доступ нужно восстановить. Это попадёт администратору на рассмотрение.")]
