@@ -503,6 +503,7 @@ def test_customer_page_searches_only_local_authority_and_matrix_remains_filtered
     assert page.total == 1
     assert page.items[0].customer_id == customer_id
     assert page.items[0].telegram_user_id == 777
+    assert page.items[0].open_support_count == 0
     assert [row.node_id for row in registry.customer_node_matrix(customer_id)] == [2]
 
 
@@ -1124,7 +1125,7 @@ def test_broadcast_queue_excludes_pending_blocked_deleted_and_opted_out_identiti
     assert rows == [(f"{result.broadcast_id}:41",)]
 
 
-def test_active_customer_support_request_is_durable_singleton_and_has_a_resolution_cooldown(tmp_path):
+def test_active_customer_support_request_is_durable_singleton_and_allows_immediate_follow_up(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -1162,8 +1163,12 @@ def test_active_customer_support_request_is_durable_singleton_and_has_a_resoluti
 
     assert result.status == "resolved"
     assert result.row_version == request.row_version + 1
-    with pytest.raises(TelegramRegistryError, match="cooldown"):
-        registry.begin_support_request(telegram_user_id=42, category="other")
+    registry.begin_support_request(telegram_user_id=42, category="other")
+    follow_up = registry.submit_pending_support_request(
+        telegram_user_id=42, body="После ответа появился другой вопрос."
+    )
+    assert follow_up is not None
+    assert follow_up.status == "open"
     with pytest.raises(VersionConflictError):
         registry.resolve_support_request(
             support_request_id=request.support_request_id,
