@@ -235,6 +235,19 @@ def test_snapshots_latest_smoke(monkeypatch):
 
 def test_monitoring_stack_smoke(monkeypatch):
     monkeypatch.setattr(main.p, "authenticate", lambda u, p: True)
+    probe_calls = []
+    query_calls = []
+
+    def probe(url, path, **kwargs):
+        probe_calls.append((url, path, kwargs))
+        return {"ok": True, "status_code": 200, "error": ""}
+
+    def query(url, expression, **kwargs):
+        query_calls.append((url, expression, kwargs))
+        return 1.0
+
+    monkeypatch.setattr(main.adguard_runtime, "http_probe", probe)
+    monkeypatch.setattr(main.adguard_runtime, "prom_query", query)
     client = TestClient(_build_test_app(monitoring_enabled=True))
 
     response = client.get("/api/v1/monitoring/stack", headers=_basic_auth())
@@ -244,6 +257,10 @@ def test_monitoring_stack_smoke(monkeypatch):
     assert "services" in payload
     assert "prometheus" in payload["services"]
     assert "public_paths" in payload
+    assert len(probe_calls) == 3
+    assert all(call[2]["allow_trusted_loopback"] is True for call in probe_calls)
+    assert len(query_calls) == 6
+    assert all(call[2]["allow_trusted_loopback"] is True for call in query_calls)
 
 
 def test_clients_find_by_ip_auth_required(monkeypatch):

@@ -14,6 +14,7 @@ import main
 import xui_session
 from routers.auth import build_auth_router
 from routers.realtime import build_realtime_router
+from services.adguard_runtime import _is_trusted_loopback_monitoring_url
 from shared.security import bounded_log_count, redact_mapping, safe_content_disposition_filename, validate_outbound_url, validate_path_segment
 
 
@@ -243,6 +244,24 @@ def test_shared_security_guards_bound_network_paths_and_logs(monkeypatch):
         raise AssertionError("path traversal segment was accepted")
     assert "\r" not in safe_content_disposition_filename("bad\r\nname.db")
     assert redact_mapping({"Authorization": "Bearer secret"})["Authorization"] == "<redacted>"
+
+
+def test_trusted_loopback_monitoring_url_is_narrow_and_does_not_change_shared_ssrf_policy():
+    assert _is_trusted_loopback_monitoring_url("http://127.0.0.1:9090") is True
+    assert _is_trusted_loopback_monitoring_url("http://[::1]:3100/") is True
+
+    for unsafe in (
+        "https://127.0.0.1:9090",
+        "http://localhost:9090",
+        "http://127.0.0.1:9090/metrics",
+        "http://127.0.0.1:9090/?redirect=http://example.test",
+        "http://user:pass@127.0.0.1:9090",
+        "http://127.0.0.2:9090",
+        "http://127.0.0.1",
+    ):
+        assert _is_trusted_loopback_monitoring_url(unsafe) is False
+
+    assert validate_outbound_url("http://127.0.0.1:9090", require_https=False)[0] is False
 
 
 def test_mutation_rejects_cross_origin_browser_request(monkeypatch):
