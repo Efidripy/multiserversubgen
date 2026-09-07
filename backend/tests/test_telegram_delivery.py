@@ -50,6 +50,20 @@ def test_sender_uses_json_send_message_for_text():
     assert message_id == 101
 
 
+def test_sender_preserves_an_explicit_html_parse_mode():
+    transport = _Transport()
+    TelegramApiSender("test-token", transport=transport).send(
+        TelegramOutboundMessage(chat_id=42, text="<b>Status:</b> active", parse_mode="HTML")
+    )
+
+    request, _timeout = transport.requests[0]
+    assert json.loads(request.data) == {
+        "chat_id": 42,
+        "text": "<b>Status:</b> active",
+        "parse_mode": "HTML",
+    }
+
+
 def test_sender_uses_multipart_send_photo_for_qr():
     transport = _Transport()
     png = b"\x89PNG\r\n\x1a\nexample"
