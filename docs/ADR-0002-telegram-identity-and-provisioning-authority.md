@@ -12,6 +12,12 @@ node to become the authority for the customer lifecycle.
 - `telegram_identities.telegram_user_id` is the only Telegram identity key.
   Telegram username, names, chat text and callback data are untrusted display
   metadata, never authorization input.
+- A Bot API token may be supplied by the root-owned environment or by the
+  administrator through a write-only panel override. The override is encrypted
+  locally, versioned, and returned only as configuration status plus its final
+  four characters; no token is exposed through HTTP, audit or browser storage.
+  Polling/outbox resolve it at call time. Changing a webhook bot still requires
+  a separately controlled webhook registration for that bot.
 - `customers` is the local authority for approved service identity and lifecycle
   intent. Remote 3x-ui records are reconciled projections, not the source of
   access decisions.

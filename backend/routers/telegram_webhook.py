@@ -28,6 +28,7 @@ def build_telegram_webhook_router(
     get_cached_inbound_options: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None,
     traffic_projection_loader: Callable[[], dict[str, Any]] | None = None,
     discover_existing: Callable[[str], tuple[Any, ...]] | None = None,
+    token_provider=None,
 ):
     router = APIRouter()
     registry = TelegramRegistry(db_path)
@@ -43,7 +44,7 @@ def build_telegram_webhook_router(
         discover_existing=discover_existing,
     )
     message_sender = sender or TelegramApiSender(
-        telegram_settings.bot_token,
+        token_provider.get_token if token_provider is not None else telegram_settings.bot_token,
         transport=TelegramApiTransport(db_path=db_path, local_proxy_url=telegram_settings.local_proxy_url),
     )
 

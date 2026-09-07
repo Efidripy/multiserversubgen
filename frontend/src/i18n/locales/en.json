@@ -51,6 +51,19 @@
     "transportNotConfigured": "The local transport is not configured. Direct mode remains the safe default.",
     "transportUpdated": "Telegram transport updated",
     "transportUpdateFailed": "Could not update Telegram transport",
+    "botTokenTitle": "Bot API token",
+    "botTokenHint": "The token is stored encrypted and is never shown in the panel again. After switching tokens in webhook mode, register the webhook for the new bot separately.",
+    "botTokenInputLabel": "New Bot API token",
+    "botTokenPlaceholder": "Enter a new token",
+    "botTokenConfigured": "configured · ••••{{suffix}}",
+    "botTokenNotConfigured": "not configured",
+    "botTokenSaved": "Bot API token saved",
+    "botTokenSaveFailed": "Could not save Bot API token",
+    "botTokenUseEnvironment": "Use ENV",
+    "botTokenClearConfirm": "Remove the panel token and return to the environment value?",
+    "botTokenCleared": "Panel token removed; the environment value is used when configured.",
+    "botTokenPanelSource": "Source: panel. Only the final 4 characters are shown.",
+    "botTokenEnvironmentSource": "Source: environment variable, or no token is configured yet.",
     "requests": "Requests",
     "noRequests": "No new requests",
     "unknownUser": "User",
@@ -101,6 +114,58 @@
     "existingDiscoveryHint": "All enabled nodes are checked; this lookup does not change them.",
     "createNew": "Create new",
     "bindExisting": "Bind existing"
+    ,"dashboardTitle": "Operational status"
+    ,"dashboardPending": "requests"
+    ,"dashboardActive": "active"
+    ,"dashboardSuspended": "suspended"
+    ,"dashboardProvisioning": "provisioning"
+    ,"dashboardLifecycle": "lifecycle"
+    ,"dashboardDrift": "drift"
+    ,"tagsTitle": "Tags"
+    ,"tagsPlaceholder": "for example: vip, paid"
+    ,"tagsSaved": "Tags saved"
+    ,"timelineTitle": "Timeline"
+    ,"timelineEmpty": "No events yet"
+    ,"scheduleAt": "Do not execute before"
+    ,"scheduleAction": "Schedule"
+    ,"scheduleCreated": "Operation scheduled"
+    ,"schedulesTitle": "Scheduled actions"
+    ,"noSchedules": "No scheduled actions"
+    ,"scheduleCancelConfirm": "Cancel this scheduled action?"
+    ,"scheduleCancelled": "Scheduled action cancelled"
+    ,"bulkSelectCustomer": "Select customer {{email}} for a bulk operation"
+    ,"bulkTitle": "Bulk operations"
+    ,"bulkHint": "Suspend/Resume only. An immutable preview is created first, then one safe operation per customer."
+    ,"bulkSelected": "selected: {{count}}"
+    ,"bulkPreviewText": "Preview: {{operation}}, customers: {{count}}."
+    ,"bulkConfirm": "Queue separate operations for {{count}} customers?"
+    ,"driftTitle": "Record reconciliation"
+    ,"driftHint": "Read-only only. A customer intentionally present on only some TG nodes is not drift."
+    ,"driftScan": "Scan"
+    ,"driftScanDone": "Reconciliation complete"
+    ,"noDrift": "No open findings"
+    ,"driftResolve": "Resolve"
+    ,"driftAdopt": "Adopt record"
+    ,"driftAdoptConfirm": "Adopt this remote record as a locally confirmed binding? The remote node will not be changed."
+    ,"supportTitle": "Support requests"
+    ,"supportHint": "Unanswered requests appear first. Sending a reply moves it to history and queues a message for the customer."
+    ,"supportOpenCount": "unanswered: {{count}}"
+    ,"supportOpenTitle": "Unanswered"
+    ,"noOpenSupport": "There are no unanswered requests."
+    ,"supportHistoryTitle": "Request history"
+    ,"noSupportHistory": "The request history is empty."
+    ,"supportReply": "Reply"
+    ,"supportReplyLabel": "Reply to customer"
+    ,"supportSendReply": "Send reply"
+    ,"supportNoReply": "No reply was added"
+    ,"supportResolved": "Reply queued for delivery"
+    ,"supportCategory": {
+      "link": "Link does not open",
+      "connection": "Connection does not work",
+      "device": "Changed device",
+      "directions": "Few or no routes work",
+      "other": "Other"
+    }
   },
   "common": {
     "add": "Add",
