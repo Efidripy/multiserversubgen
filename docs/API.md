@@ -26,6 +26,10 @@
   удаляет сессию.
 - для защищенных production-инсталляций рекомендуется HTTPS + ограничение доступа на уровне nginx
 - `GET /health` и `GET /api/v1/auth/mfa-status` являются public health/status endpoints.
+- `GET /metrics` не является public endpoint: без Basic Auth он доступен только
+  прямому локальному Prometheus scrape с `127.0.0.1`/`::1` и без
+  `X-Forwarded-For`. Запросы через nginx и любые внешние запросы по-прежнему
+  требуют обычную аутентификацию.
 - `GET /api/v1/sub/{token}` и `GET /api/v1/sub-grouped/{token}` не используют
   Basic Auth: доступ даёт стабильный opaque token, который возвращают
   защищённые `/api/v1/emails` и `/api/v1/subscription-groups`. Ссылка меняется

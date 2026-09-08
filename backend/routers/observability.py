@@ -21,7 +21,7 @@ def build_observability_router(
 
     @router.get("/metrics")
     async def metrics(request: Request):
-        if not getattr(request.state, "auth_user", None):
+        if not getattr(request.state, "auth_user", None) and not getattr(request.state, "metrics_loopback_allowed", False):
             raise HTTPException(status_code=401, detail="Unauthorized")
         return render_metrics()
 

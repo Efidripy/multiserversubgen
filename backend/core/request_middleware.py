@@ -9,6 +9,23 @@ from fastapi.responses import JSONResponse
 from shared.security import safe_request_id
 
 
+def is_trusted_loopback_metrics_scrape(request: Request) -> bool:
+    """Allow the local Prometheus process to scrape metrics without panel auth.
+
+    The application is commonly reached from nginx over loopback as well, so a
+    loopback peer alone is not sufficient: nginx supplies ``X-Forwarded-For``
+    for public requests. Prometheus connects directly and does not send that
+    header. This keeps metrics unavailable to anonymous browser traffic while
+    avoiding credentials in the Prometheus configuration.
+    """
+    peer_host = getattr(request.client, "host", "") if request.client else ""
+    return (
+        request.url.path == "/metrics"
+        and peer_host in {"127.0.0.1", "::1"}
+        and not request.headers.get("X-Forwarded-For", "").strip()
+    )
+
+
 def build_request_controls_and_audit_middleware(
     *,
     is_public_endpoint,
@@ -51,11 +68,12 @@ def build_request_controls_and_audit_middleware(
         request.state.auth_role = None
         request.state.auth_mfa_ok = False
         request.state.auth_via = None
+        request.state.metrics_loopback_allowed = is_trusted_loopback_metrics_scrape(request)
 
         response = None
 
         protected_path = path.startswith("/api/v1/") or path == "/metrics"
-        if protected_path and not is_public_endpoint(path):
+        if protected_path and not request.state.metrics_loopback_allowed and not is_public_endpoint(path):
             auth_user = check_basic_auth_header(request.headers.get("Authorization"))
             auth_via = "basic" if auth_user else None
             if not auth_user:
