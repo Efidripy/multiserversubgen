@@ -17,6 +17,11 @@ browser-панели Basic Auth используется только для boo
 принимают постоянный opaque token, сохранённый сервером, а не raw email или
 group id.
 
+`GET /metrics` остаётся защищённым control-plane endpoint. Единственное
+техническое исключение — прямой scrape с loopback (`127.0.0.1`/`::1`) без
+заголовка `X-Forwarded-For`, используемый локальным Prometheus. Запрос через
+nginx или с внешнего адреса без Basic Auth получает `401`.
+
 ```bash
 Authorization: Basic base64(username:password)
 ```
