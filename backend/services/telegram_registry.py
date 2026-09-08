@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Callable, Iterable
 
 from services.db_bootstrap import connect
+from services.telegram_access import SUSPENDED_STATUSES
 
 
 BOT_INBOUND_ID = 1
@@ -1917,9 +1918,11 @@ class TelegramRegistry:
                 """,
                 (user_id,),
             ).fetchone()
-            if row is None or str(row[1]) != "approved" or str(row[2]) not in {
-                "suspended", "suspend_partial", "resume_partial"
-            }:
+            if (
+                row is None
+                or str(row[1]) != "approved"
+                or str(row[2]) not in SUSPENDED_STATUSES
+            ):
                 raise TelegramRegistryError("appeal is available only for a suspended customer")
             try:
                 cursor = conn.execute(

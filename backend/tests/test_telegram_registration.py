@@ -1031,7 +1031,7 @@ def test_primary_admin_confirms_customer_suspend_and_can_unblock_an_applicant(tm
     assert registry.create_pending_application(77).created is True
 
 
-def test_suspended_user_can_send_one_bounded_appeal_without_automatic_resume(tmp_path):
+def test_suspending_user_can_send_one_bounded_appeal_without_automatic_resume(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -1046,7 +1046,9 @@ def test_suspended_user_can_send_one_bounded_appeal_without_automatic_resume(tmp
             "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
             (customer_id, identity.telegram_user_id),
         )
-        conn.execute("UPDATE customers SET status = 'suspended' WHERE id = ?", (customer_id,))
+        # The bot already presents the suspended menu while node operations
+        # are still being applied. The appeal path must remain usable then.
+        conn.execute("UPDATE customers SET status = 'suspending' WHERE id = ?", (customer_id,))
     service = TelegramRegistrationService(TelegramRegistry(db_path), introduction_max_chars=700)
     prompt = service.handle_update(
         {
@@ -1064,7 +1066,7 @@ def test_suspended_user_can_send_one_bounded_appeal_without_automatic_resume(tmp
     assert "администратору" in prompt[0].text.lower()
     assert "принято" in sent[0].text.lower()
     with connect(db_path) as conn:
-        assert conn.execute("SELECT status FROM customers WHERE id = ?", (customer_id,)).fetchone()[0] == "suspended"
+        assert conn.execute("SELECT status FROM customers WHERE id = ?", (customer_id,)).fetchone()[0] == "suspending"
         assert conn.execute("SELECT COUNT(*) FROM telegram_appeals WHERE customer_id = ?", (customer_id,)).fetchone()[0] == 1
 
 

@@ -246,7 +246,7 @@ class TelegramOutboxWorker:
             with connect(self._db_path) as conn:
                 row = conn.execute(
                     """
-                    SELECT a.telegram_user_id, c.email_display, a.body
+                    SELECT a.customer_id, a.telegram_user_id, c.email_display, a.body
                     FROM telegram_appeals AS a
                     JOIN customers AS c ON c.id = a.customer_id
                     WHERE a.id = ?
@@ -255,7 +255,13 @@ class TelegramOutboxWorker:
                 ).fetchone()
             if row is None:
                 raise OutboxPermanentError("appeal_not_found")
-            return self._primary_admin_id, f"Обращение от {row[1]} (#{row[0]}):\n{row[2]}", None
+            return (
+                self._primary_admin_id,
+                f"Обращение от {row[2]} (#{row[1]}):\n{row[3]}",
+                {"inline_keyboard": [[{
+                    "text": "Пользователь", "callback_data": f"admin:customer:{row[0]}:0"
+                }]]},
+            )
         if event.event_type == "admin_support_created":
             with connect(self._db_path) as conn:
                 row = conn.execute(

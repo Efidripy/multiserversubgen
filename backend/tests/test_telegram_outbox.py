@@ -288,6 +288,45 @@ def test_support_events_notify_only_admin_then_the_linked_user_when_resolved(tmp
     )
 
 
+def test_suspending_customer_appeal_notifies_admin_and_opens_customer_card(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="appeal-target", origin="telegram", email_source="telegram_username", public_code="appeal-target"
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="appeal_target", first_name="Appeal", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (customer_id,),
+        )
+        conn.execute("UPDATE customers SET status = 'suspending' WHERE id = ?", (customer_id,))
+
+    appeal = registry.submit_suspended_appeal(
+        telegram_user_id=42, body="Пожалуйста, рассмотрите моё обращение."
+    )
+    assert appeal.created is True
+    port = FakeOutboxPort()
+
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert port.messages == [
+        (
+            108100140,
+            "Обращение от appeal-target (#42):\nПожалуйста, рассмотрите моё обращение.",
+            {"inline_keyboard": [[{
+                "text": "Пользователь", "callback_data": f"admin:customer:{customer_id}:0"
+            }]]},
+        )
+    ]
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT status FROM telegram_outbox WHERE event_type = 'admin_appeal_created'"
+        ).fetchone()[0] == "sent"
+
+
 def test_expiry_reminder_delivery_respects_its_specific_user_preference(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)

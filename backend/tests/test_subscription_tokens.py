@@ -112,7 +112,11 @@ def test_expired_secret_hmac_format_migrates_by_known_identifier(tmp_path):
     ("access_status", "customer_status", "blocked_from_status", "expected"),
     [
         ("approved", "active", None, ("active", True, True, False)),
+        ("approved", "suspending", None, ("suspended", False, False, True)),
         ("approved", "suspended", None, ("suspended", False, False, True)),
+        ("approved", "suspend_partial", None, ("suspended", False, False, True)),
+        ("approved", "resuming", None, ("suspended", False, False, True)),
+        ("approved", "resume_partial", None, ("suspended", False, False, True)),
         ("approved", "delete_partial", None, ("revoking", False, False, False)),
         ("approved", "conflict", None, ("unavailable", False, False, False)),
         ("blocked", "active", "approved", ("blocked", False, True, False)),
