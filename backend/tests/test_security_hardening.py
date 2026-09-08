@@ -264,6 +264,21 @@ def test_trusted_loopback_monitoring_url_is_narrow_and_does_not_change_shared_ss
     assert validate_outbound_url("http://127.0.0.1:9090", require_https=False)[0] is False
 
 
+def test_metrics_allows_only_direct_loopback_prometheus_scrapes_without_auth(monkeypatch):
+    monkeypatch.setattr(main.p, "authenticate", lambda _u, _p: False)
+
+    local_scrape = TestClient(main.app, client=("127.0.0.1", 39090)).get("/metrics")
+    proxied_public_request = TestClient(main.app, client=("127.0.0.1", 39091)).get(
+        "/metrics", headers={"X-Forwarded-For": "198.51.100.42"}
+    )
+    direct_external_request = TestClient(main.app, client=("198.51.100.42", 39092)).get("/metrics")
+
+    assert local_scrape.status_code == 200
+    assert "sub_manager_" in local_scrape.text
+    assert proxied_public_request.status_code == 401
+    assert direct_external_request.status_code == 401
+
+
 def test_mutation_rejects_cross_origin_browser_request(monkeypatch):
     monkeypatch.setattr(main.p, "authenticate", lambda _u, _p: True)
     client = TestClient(main.app)
