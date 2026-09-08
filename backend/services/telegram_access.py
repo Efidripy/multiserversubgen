@@ -50,7 +50,10 @@ def resolve_effective_access(
             "suspended",
             False,
             False,
-            access_status == "approved" and customer_status in {"suspended", "suspend_partial"},
+            # Suspension deliberately removes subscription access, but an
+            # approved customer must retain one bounded appeal path to the
+            # administrator for the whole lifecycle transition.
+            access_status == "approved",
         )
     if customer_status in REVOKING_STATUSES:
         return TelegramEffectiveAccess("revoking", False, False, False)
