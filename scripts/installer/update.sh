@@ -807,6 +807,7 @@ location = /$GRAFANA_WEB_PATH {
 }
 location ^~ /$GRAFANA_WEB_PATH/ {
 ${mtls_directives}${allowlist_directives}    proxy_pass http://127.0.0.1:$GRAFANA_HTTP_PORT;
+    proxy_intercept_errors off;
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
