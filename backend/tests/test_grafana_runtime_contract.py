@@ -35,3 +35,12 @@ def test_smoke_checks_the_grafana_unit_and_both_routing_hops_when_enabled():
     assert 'local Grafana /login is reachable' in smoke
     assert 'public Grafana URL is reachable' in smoke
     assert 'GRAFANA_HTTP_PORT < 1 || GRAFANA_HTTP_PORT > 65535' in smoke
+
+
+def test_grafana_subpath_proxy_preserves_upstream_login_statuses():
+    for relative_path in ("scripts/installer/install.sh", "scripts/installer/update.sh"):
+        script = _read(relative_path)
+        grafana_location = script.split("# --- Grafana under dedicated path ---", 1)[1].split("SNIPPET", 1)[0]
+
+        assert "proxy_pass http://127.0.0.1:$GRAFANA_HTTP_PORT;" in grafana_location
+        assert "proxy_intercept_errors off;" in grafana_location
