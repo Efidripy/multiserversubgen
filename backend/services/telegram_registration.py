@@ -209,7 +209,7 @@ class TelegramRegistrationService:
         if current_page + 1 < total_pages:
             navigation.append({"text": "›", "callback_data": f"admin:nodes:{current_page + 1}"})
         buttons.append(navigation)
-        buttons.append([{"text": "← Меню", "callback_data": "admin:home"}])
+        buttons.append([{"text": "← Назад", "callback_data": "admin:home"}])
         return TelegramOutboundMessage(chat_id, "TG-ноды. Нажмите на ноду, чтобы открыть её меню.", {"inline_keyboard": buttons})
 
     def _admin_node_message(self, chat_id: int, node_id: int, page: int) -> TelegramOutboundMessage:
@@ -262,7 +262,7 @@ class TelegramRegistrationService:
                 }])
         except LifecycleUnavailableError:
             lines.append("Удаление пользователей: дождитесь завершения текущей операции")
-        buttons.append([{"text": "← TG-ноды", "callback_data": f"admin:nodes:{page}"}])
+        buttons.append([{"text": "← Назад", "callback_data": f"admin:nodes:{page}"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
 
     def _admin_requests_message(self, chat_id: int, page: int) -> TelegramOutboundMessage:
@@ -277,7 +277,7 @@ class TelegramRegistrationService:
                 "Заявок на рассмотрении нет.",
                 {"inline_keyboard": [
                     [{"text": "⊘ Заблокированные", "callback_data": "admin:blocked:0"}],
-                    [{"text": "← Меню", "callback_data": "admin:home"}],
+                    [{"text": "← Назад", "callback_data": "admin:home"}],
                 ]},
             )
         buttons: list[list[dict[str, str]]] = []
@@ -297,7 +297,7 @@ class TelegramRegistrationService:
             navigation.append({"text": "›", "callback_data": f"admin:requests:{current_page + 1}"})
         buttons.append(navigation)
         buttons.append([{"text": "⊘ Заблокированные", "callback_data": "admin:blocked:0"}])
-        buttons.append([{"text": "← Меню", "callback_data": "admin:home"}])
+        buttons.append([{"text": "← Назад", "callback_data": "admin:home"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
 
     def _admin_request_message(self, chat_id: int, telegram_user_id: int, page: int) -> TelegramOutboundMessage:
@@ -322,7 +322,7 @@ class TelegramRegistrationService:
                 [{"text": "Привязать существующего", "callback_data": f"admin:existing:{item.telegram_user_id}:{item.row_version}:{page}"}],
                 [{"text": "Отклонить", "callback_data": f"admin:reject:{item.telegram_user_id}:{item.row_version}:{page}"}],
                 [{"text": "Заблокировать", "callback_data": f"admin:block:{item.telegram_user_id}:{item.row_version}:{page}"}],
-                [{"text": "← К заявкам", "callback_data": f"admin:requests:{page}"}],
+                [{"text": "← Назад", "callback_data": f"admin:requests:{page}"}],
             ]},
         )
 
@@ -340,7 +340,7 @@ class TelegramRegistrationService:
             {"inline_keyboard": [
                 [{"text": "✓ Одобрить и создать", "callback_data": f"admin:new-confirm:{telegram_user_id}:{row_version}:{page}"}],
                 [{"text": "✎ Ввести другое имя", "callback_data": f"admin:new-input:{telegram_user_id}:{row_version}:{page}"}],
-                [{"text": "← К заявке", "callback_data": f"admin:request:{telegram_user_id}:{row_version}:{page}"}],
+                [{"text": "← Назад", "callback_data": f"admin:request:{telegram_user_id}:{row_version}:{page}"}],
             ]},
         )
 
@@ -355,7 +355,7 @@ class TelegramRegistrationService:
             {"inline_keyboard": [
                 [{"text": f"✓ Использовать {suggested_email[:28]}", "callback_data": f"admin:new-use:{telegram_user_id}:{row_version}:{page}"}],
                 [{"text": "✎ Ввести другое имя", "callback_data": f"admin:new-input:{telegram_user_id}:{row_version}:{page}"}],
-                [{"text": "← К заявке", "callback_data": f"admin:request:{telegram_user_id}:{row_version}:{page}"}],
+                [{"text": "← Назад", "callback_data": f"admin:request:{telegram_user_id}:{row_version}:{page}"}],
             ]},
         )
 
@@ -369,32 +369,28 @@ class TelegramRegistrationService:
         if not customer_page.items:
             return TelegramOutboundMessage(chat_id, "Пользователей пока нет.", self._admin_home_menu())
         buttons: list[list[dict[str, str]]] = []
-        for offset in range(0, len(customer_page.items), 2):
-            row: list[dict[str, str]] = []
-            for item in customer_page.items[offset:offset + 2]:
-                # A configured custom emoji replaces the monochrome fallback
-                # glyph. The button itself deliberately keeps Telegram's normal
-                # background so the status signal is limited to the one outline.
-                status_icon = (
-                    self._customer_active_icon_custom_emoji_id
-                    if item.status == "active"
-                    else self._customer_inactive_icon_custom_emoji_id
-                )
-                support_badge = f"✉ {item.open_support_count}" if item.open_support_count else None
-                label_parts = (
-                    (support_badge, item.email_display[:21])
-                    if status_icon
-                    else ("◎", support_badge, item.email_display[:21])
-                )
-                label = " ".join(part for part in label_parts if part)
-                button = {
-                    "text": label,
-                    "callback_data": f"admin:customer:{item.customer_id}:{current_page}",
-                }
-                if status_icon:
-                    button["icon_custom_emoji_id"] = status_icon
-                row.append(button)
-            buttons.append(row)
+        for item in customer_page.items:
+            # A configured custom emoji replaces the monochrome fallback glyph.
+            # One customer per row lets Telegram give the button the full chat width.
+            status_icon = (
+                self._customer_active_icon_custom_emoji_id
+                if item.status == "active"
+                else self._customer_inactive_icon_custom_emoji_id
+            )
+            support_badge = f"✉ {item.open_support_count}" if item.open_support_count else None
+            label_parts = (
+                (support_badge, item.email_display[:21])
+                if status_icon
+                else ("◎", support_badge, item.email_display[:21])
+            )
+            label = " ".join(part for part in label_parts if part)
+            customer_button = {
+                "text": label,
+                "callback_data": f"admin:customer:{item.customer_id}:{current_page}",
+            }
+            if status_icon:
+                customer_button["icon_custom_emoji_id"] = status_icon
+            buttons.append([customer_button])
         navigation: list[dict[str, str]] = []
         if current_page > 0:
             navigation.append({"text": "‹", "callback_data": f"admin:customers:{current_page - 1}"})
@@ -402,7 +398,7 @@ class TelegramRegistrationService:
         if current_page + 1 < total_pages:
             navigation.append({"text": "›", "callback_data": f"admin:customers:{current_page + 1}"})
         buttons.append(navigation)
-        buttons.append([{"text": "← Меню", "callback_data": "admin:home"}])
+        buttons.append([{"text": "← Назад", "callback_data": "admin:home"}])
         return TelegramOutboundMessage(
             chat_id,
             f"Пользователи: {customer_page.total}. Страница {current_page + 1}/{total_pages}.",
@@ -417,6 +413,7 @@ class TelegramRegistrationService:
         admin_note = self._registry.get_customer_admin_note(customer.customer_id)
         support_requests = self._registry.list_customer_support_requests(customer.customer_id)
         token_events = self._registry.list_subscription_token_events(customer.customer_id, limit=3)
+        subscription_links = self._registry.list_customer_subscription_links(customer.customer_id)
         quality_reports = self._registry.list_customer_quality_reports(customer.customer_id, limit=2)
         unresolved_support_count = sum(item.status in {"open", "read"} for item in support_requests)
         registration_introduction = (
@@ -438,6 +435,18 @@ class TelegramRegistrationService:
             lines.append("Перевыпуск ссылки: " + "; ".join(
                 f"{event.created_at} ({event.reason or event.event_type})" for event in token_events
             ))
+        if subscription_links:
+            status_labels = {"active": "активна", "revoked": "отозвана", "expired": "истекла"}
+            kind_prefixes = {"primary": "⊙", "personal": "⊙", "guest": "↗"}
+            lines.append("Ссылки:")
+            for link in subscription_links:
+                details = status_labels.get(link.status, link.status)
+                if link.expires_at is not None:
+                    expires_at = datetime.fromtimestamp(link.expires_at, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
+                    details += f" до {expires_at}" if link.status == "active" else f" (до {expires_at})"
+                lines.append(f"{kind_prefixes.get(link.kind, '•')} {link.label} — {details}; выдана {link.created_at}")
+        else:
+            lines.append("Ссылки: ещё не выдавались")
         if quality_reports:
             quality_labels = {
                 "ok": "всё хорошо", "slow": "медленно", "connection": "не подключается", "routes": "не везде",
@@ -500,7 +509,7 @@ class TelegramRegistrationService:
                 "text": "✉ Написать в бот",
                 "callback_data": f"admin:message:{customer.customer_id}:{page}",
             }])
-        buttons.append([{"text": "← К пользователям", "callback_data": f"admin:customers:{page}"}])
+        buttons.append([{"text": "← Назад", "callback_data": f"admin:customers:{page}"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
 
     @staticmethod
@@ -548,7 +557,7 @@ class TelegramRegistrationService:
             }]
             for item in unresolved[:5]
         ]
-        buttons.append([{"text": "← К пользователю", "callback_data": f"admin:customer:{customer.customer_id}:{page}"}])
+        buttons.append([{"text": "← Назад", "callback_data": f"admin:customer:{customer.customer_id}:{page}"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
 
     def _admin_broadcasts_message(self, chat_id: int) -> TelegramOutboundMessage:
@@ -561,7 +570,7 @@ class TelegramRegistrationService:
             "Заявки, заблокированные и удалённые пользователи исключены.",
             {"inline_keyboard": [
                 [{"text": "✉ Новое объявление", "callback_data": "admin:broadcast:new"}],
-                [{"text": "← Меню", "callback_data": "admin:home"}],
+                [{"text": "← Назад", "callback_data": "admin:home"}],
             ]},
         )
 
@@ -576,7 +585,7 @@ class TelegramRegistrationService:
             return TelegramOutboundMessage(
                 chat_id,
                 "Проблем синхронизации сейчас нет.",
-                {"inline_keyboard": [[{"text": "← Меню", "callback_data": "admin:home"}]]},
+                {"inline_keyboard": [[{"text": "← Назад", "callback_data": "admin:home"}]]},
             )
         lines = [f"Проблемы синхронизации: {len(issues)}."]
         buttons: list[list[dict[str, str]]] = []
@@ -591,7 +600,7 @@ class TelegramRegistrationService:
                 "text": f"#{job.job_id} · {job.customer_email[:28]}",
                 "callback_data": f"admin:issue:{job.job_id}:{job.row_version}",
             }])
-        buttons.append([{"text": "← Меню", "callback_data": "admin:home"}])
+        buttons.append([{"text": "← Назад", "callback_data": "admin:home"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
 
     def _admin_issue_message(self, chat_id: int, job_id: int, expected_version: int) -> TelegramOutboundMessage:
@@ -624,7 +633,7 @@ class TelegramRegistrationService:
                     "text": f"TG-нода · {attempt.node_name[:28]}",
                     "callback_data": f"admin:node:{attempt.node_id}:0",
                 }])
-        buttons.append([{"text": "← К проблемам", "callback_data": "admin:issues"}])
+        buttons.append([{"text": "← Назад", "callback_data": "admin:issues"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
 
     def _admin_service_notice_message(self, chat_id: int) -> TelegramOutboundMessage:
@@ -642,7 +651,7 @@ class TelegramRegistrationService:
                 "text": "⌫ Вернуть штатный статус",
                 "callback_data": f"admin:notice:disable:{notice.row_version}",
             }])
-        buttons.append([{"text": "← Меню", "callback_data": "admin:home"}])
+        buttons.append([{"text": "← Назад", "callback_data": "admin:home"}])
         return TelegramOutboundMessage(chat_id, text, {"inline_keyboard": buttons})
 
     def _admin_blocked_message(self, chat_id: int, page: int) -> TelegramOutboundMessage:
@@ -654,7 +663,7 @@ class TelegramRegistrationService:
         if not visible:
             return TelegramOutboundMessage(
                 chat_id, "Заблокированных заявок нет.",
-                {"inline_keyboard": [[{"text": "← К заявкам", "callback_data": "admin:requests:0"}]]},
+                {"inline_keyboard": [[{"text": "← Назад", "callback_data": "admin:requests:0"}]]},
             )
         lines = ["Заблокированные заявки."]
         buttons: list[list[dict[str, str]]] = []
@@ -672,7 +681,7 @@ class TelegramRegistrationService:
         if current_page + 1 < total_pages:
             navigation.append({"text": "›", "callback_data": f"admin:blocked:{current_page + 1}"})
         buttons.append(navigation)
-        buttons.append([{"text": "← К заявкам", "callback_data": "admin:requests:0"}])
+        buttons.append([{"text": "← Назад", "callback_data": "admin:requests:0"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
 
     def _handle_admin_draft(
@@ -715,7 +724,7 @@ class TelegramRegistrationService:
                         f"Найден существующий пользователь: {email_display} на нодах: {len(remote_bindings)}. Привязать заявку без создания новых записей?",
                         {"inline_keyboard": [
                             [{"text": "✓ Привязать", "callback_data": f"admin:existing-discovered-confirm:{draft.telegram_user_id}:{draft.expected_row_version}:{draft.page}"}],
-                            [{"text": "← К заявке", "callback_data": f"admin:request:{draft.telegram_user_id}:{draft.expected_row_version}:{draft.page}"}],
+                            [{"text": "← Назад", "callback_data": f"admin:request:{draft.telegram_user_id}:{draft.expected_row_version}:{draft.page}"}],
                         ]},
                     )]
                 self._registry.set_admin_draft(
@@ -728,7 +737,7 @@ class TelegramRegistrationService:
                     f"Найден пользователь: {customer.email_display}. Привязать эту заявку?",
                     {"inline_keyboard": [
                         [{"text": "✓ Привязать", "callback_data": f"admin:existing-confirm:{draft.telegram_user_id}:{draft.expected_row_version}:{customer.customer_id}:{draft.page}"}],
-                        [{"text": "← К заявке", "callback_data": f"admin:request:{draft.telegram_user_id}:{draft.expected_row_version}:{draft.page}"}],
+                        [{"text": "← Назад", "callback_data": f"admin:request:{draft.telegram_user_id}:{draft.expected_row_version}:{draft.page}"}],
                     ]},
                 )]
             if draft.action == "delete_customer_confirmation" and draft.customer_id and draft.expected_row_version:
@@ -1540,8 +1549,21 @@ class TelegramRegistrationService:
             {"inline_keyboard": buttons},
         )
 
-    def _setup_qr_message(self, *, user_id: int, chat_id: int, locale: str = "ru") -> TelegramOutboundMessage:
-        url, unavailable = self._subscription_url(user_id=user_id, chat_id=chat_id, locale=locale)
+    def _setup_qr_message(
+        self,
+        *,
+        user_id: int,
+        chat_id: int,
+        subscription_device_id: int | None = None,
+        return_callback: str = "subscription:get",
+        locale: str = "ru",
+    ) -> TelegramOutboundMessage:
+        url, unavailable = self._subscription_url(
+            user_id=user_id,
+            chat_id=chat_id,
+            subscription_device_id=subscription_device_id,
+            locale=locale,
+        )
         if unavailable is not None:
             return unavailable
         assert url is not None
@@ -1554,7 +1576,7 @@ class TelegramRegistrationService:
             tr(locale, "qr_caption"),
             {"inline_keyboard": [
                 [{"text": button(locale, "delete_qr"), "callback_data": "qr:delete"}],
-                [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+                [{"text": button(locale, "menu"), "callback_data": return_callback}],
             ]},
             photo_png=png,
             photo_filename="access-qr.png",
@@ -1729,7 +1751,7 @@ class TelegramRegistrationService:
         )
         buttons.extend((
             [{"text": button(locale, "new_device"), "callback_data": "subscription:link:new"}],
-            [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+            [{"text": button(locale, "menu"), "callback_data": "subscription:get"}],
         ))
         return TelegramOutboundMessage(chat_id, tr(locale, "link_device_choice"), {"inline_keyboard": buttons})
 
@@ -1744,7 +1766,7 @@ class TelegramRegistrationService:
         )
         buttons.extend((
             [{"text": button(locale, "rotate_all"), "callback_data": "subscription:rotate:all"}],
-            [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+            [{"text": button(locale, "menu"), "callback_data": "subscription:get"}],
         ))
         return TelegramOutboundMessage(chat_id, tr(locale, "rotate_device_choice"), {"inline_keyboard": buttons})
 
@@ -1810,9 +1832,10 @@ class TelegramRegistrationService:
             tr(locale, "device_actions", label=primary.label),
             {"inline_keyboard": [
                 [{"text": button(locale, "show_link"), "callback_data": "subscription:link:primary"}],
+                [{"text": button(locale, "show_qr"), "callback_data": "subscription:qr:primary"}],
                 [{"text": button(locale, "rename"), "callback_data": f"device:rename:{primary.device_id}"}],
                 [{"text": button(locale, "rotate"), "callback_data": "subscription:rotate:primary"}],
-                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
+                [{"text": button(locale, "menu"), "callback_data": "devices:menu"}],
             ]},
         )
 
@@ -1827,9 +1850,10 @@ class TelegramRegistrationService:
             tr(locale, "device_actions", label=device.label),
             {"inline_keyboard": [
                 [{"text": button(locale, "show_link"), "callback_data": f"subscription:link:device:{device.device_id}"}],
+                [{"text": button(locale, "show_qr"), "callback_data": f"subscription:qr:device:{device.device_id}"}],
                 [{"text": button(locale, "rename"), "callback_data": f"subscription-device:rename:{device.device_id}"}],
                 [{"text": button(locale, "revoke"), "callback_data": f"subscription-device:revoke:{device.device_id}"}],
-                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
+                [{"text": button(locale, "menu"), "callback_data": "devices:menu"}],
             ]},
         )
 
@@ -1843,7 +1867,7 @@ class TelegramRegistrationService:
             }]
             for threshold in (50, 80, 95, 100)
         ]
-        rows.append([{"text": button(locale, "notifications"), "callback_data": "preferences:menu"}])
+        rows.append([{"text": button(locale, "menu"), "callback_data": "preferences:menu"}])
         return TelegramOutboundMessage(chat_id, tr(locale, "traffic_thresholds"), {"inline_keyboard": rows})
 
     def _service_status_message(self, chat_id: int, locale: str) -> TelegramOutboundMessage:
@@ -2041,6 +2065,13 @@ class TelegramRegistrationService:
                 return [self._subscription_message(
                     user_id=user_id, chat_id=chat_id, edit_message_id=source_message_id, locale=locale,
                 )]
+            if callback_data == "subscription:qr:primary":
+                return [self._setup_qr_message(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    return_callback="subscription-primary:menu",
+                    locale=locale,
+                )]
             if callback_data == "subscription:link:new":
                 try:
                     device = self._registry.create_subscription_device(
@@ -2067,12 +2098,24 @@ class TelegramRegistrationService:
                     edit_message_id=source_message_id,
                     locale=locale,
                 )]
+            if callback_data and callback_data.startswith("subscription:qr:device:"):
+                try:
+                    device_id = int(callback_data.rsplit(":", 1)[-1])
+                except ValueError:
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                return [self._setup_qr_message(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    subscription_device_id=device_id,
+                    return_callback=f"subscription-device:menu:{device_id}",
+                    locale=locale,
+                )]
             if callback_data == "subscription:rotate:confirm":
                 return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate=True, locale=locale)]
             if callback_data == "subscription:rotate:primary":
                 return [TelegramOutboundMessage(chat_id, tr(locale, "rotation_device"), {"inline_keyboard": [
                     [{"text": button(locale, "confirm"), "callback_data": "subscription:rotate:primary:confirm"}],
-                    [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+                    [{"text": button(locale, "menu"), "callback_data": "subscription:get"}],
                 ]})]
             if callback_data == "subscription:rotate:primary:confirm":
                 return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate=True, locale=locale)]
@@ -2094,12 +2137,12 @@ class TelegramRegistrationService:
                     )]
                 return [TelegramOutboundMessage(chat_id, tr(locale, "rotation_device"), {"inline_keyboard": [
                     [{"text": button(locale, "confirm"), "callback_data": f"subscription:rotate:device:{device_id}:confirm"}],
-                    [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+                    [{"text": button(locale, "menu"), "callback_data": "subscription:get"}],
                 ]})]
             if callback_data == "subscription:rotate:all":
                 return [TelegramOutboundMessage(chat_id, tr(locale, "rotation_all"), {"inline_keyboard": [
                     [{"text": button(locale, "confirm"), "callback_data": "subscription:rotate:all:confirm"}],
-                    [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+                    [{"text": button(locale, "menu"), "callback_data": "subscription:get"}],
                 ]})]
             if callback_data == "subscription:rotate:all:confirm":
                 return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate_all=True, locale=locale)]
@@ -2137,7 +2180,7 @@ class TelegramRegistrationService:
                 return [TelegramOutboundMessage(
                     chat_id,
                     tr(locale, "device_rename_prompt"),
-                    {"inline_keyboard": [[{"text": button(locale, "devices"), "callback_data": "devices:menu"}]]},
+                    {"inline_keyboard": [[{"text": button(locale, "menu"), "callback_data": "devices:menu"}]]},
                 )]
             if callback_data and callback_data.startswith("subscription-device:rename:"):
                 try:
@@ -2150,7 +2193,7 @@ class TelegramRegistrationService:
                 return [TelegramOutboundMessage(
                     chat_id,
                     tr(locale, "device_rename_prompt"),
-                    {"inline_keyboard": [[{"text": button(locale, "devices"), "callback_data": "devices:menu"}]]},
+                    {"inline_keyboard": [[{"text": button(locale, "menu"), "callback_data": "devices:menu"}]]},
                 )]
             if callback_data and callback_data.startswith("subscription-device:revoke:"):
                 parts = callback_data.split(":")
@@ -2165,7 +2208,7 @@ class TelegramRegistrationService:
                         return [TelegramOutboundMessage(chat_id, tr(locale, "device_revoke_confirm"), {
                             "inline_keyboard": [
                                 [{"text": button(locale, "confirm"), "callback_data": f"subscription-device:revoke:{device_id}:confirm"}],
-                                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
+                                [{"text": button(locale, "menu"), "callback_data": "devices:menu"}],
                             ]
                         })]
                     if parts[3] != "confirm":

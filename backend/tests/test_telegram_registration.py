@@ -460,7 +460,7 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
     access_choice = service.handle_update(_callback(22, "subscription:get"))
     qr = service.handle_update(_callback(23, "subscription:qr"))
 
-    assert any(button[0]["text"] == "⊙ Мои устройства" for button in home[0].reply_markup["inline_keyboard"])
+    assert any(button[0]["text"] == "⊙ Мои ссылки" for button in home[0].reply_markup["inline_keyboard"])
     assert assistant[0].text.startswith("Выберите устройство")
     assert not assistant[0].text.startswith("Подключение")
     assert access_choice[0].text.startswith("Выберите удобное действие")
@@ -527,12 +527,13 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
     assert access_button_texts[:5] == [
         "⊙ Получить ссылку", "⊞ Показать QR-код", "↗ Гостевая ссылка", "⊙ Мои ссылки", "↻ Сменить ссылку",
     ]
+    assert access_choice[0].reply_markup["inline_keyboard"][-1][0]["text"] == "← Назад"
 
 
-def test_approved_menu_uses_my_devices_in_english():
+def test_approved_menu_uses_my_links_in_english():
     rows = TelegramRegistrationService._approved_menu("en")["inline_keyboard"]
 
-    assert any(row[0]["text"] == "⊙ My devices" for row in rows)
+    assert any(row[0]["text"] == "⊙ My links" for row in rows)
 
 
 def test_suspended_user_cannot_receive_qr(tmp_path):
@@ -888,7 +889,7 @@ def test_approved_user_can_create_and_revoke_a_guest_link_and_send_quality_feedb
 
     assert "ВНИМАНИЕ" in choice.text
     assert "/api/v1/guest-sub/" in created.text
-    assert devices.text.startswith("Мои устройства")
+    assert devices.text.startswith("Мои ссылки")
     assert "Гостевая ссылка" in devices.text
     assert "Как сейчас работает" in quality_kind.text
     assert "устройстве" in quality_platform.text
@@ -1018,17 +1019,21 @@ def test_subscription_device_actions_show_rename_and_soft_revoke_only_that_link(
         for item in row
     }
     shown = service.handle_update(_callback(4, f"subscription:link:device:{device.device_id}"))[0]
-    confirm = service.handle_update(_callback(5, f"subscription-device:revoke:{device.device_id}"))[0]
-    revoked = service.handle_update(_callback(6, f"subscription-device:revoke:{device.device_id}:confirm"))[0]
+    qr = service.handle_update(_callback(5, f"subscription:qr:device:{device.device_id}"))[0]
+    confirm = service.handle_update(_callback(6, f"subscription-device:revoke:{device.device_id}"))[0]
+    revoked = service.handle_update(_callback(7, f"subscription-device:revoke:{device.device_id}:confirm"))[0]
 
     assert f"Устройство: {device.label}" in actions.text
     assert {
         f"subscription:link:device:{device.device_id}",
+        f"subscription:qr:device:{device.device_id}",
         f"subscription-device:rename:{device.device_id}",
         f"subscription-device:revoke:{device.device_id}",
     }.issubset(action_callbacks)
-    assert {"⊙ Показать ссылку", "✎ Переименовать", "⌫ Отозвать"}.issubset(action_texts)
+    assert {"⊙ Показать ссылку", "⊞ Показать QR-код", "✎ Переименовать", "⌫ Отозвать", "← Назад"}.issubset(action_texts)
     assert "/api/v1/sub/" in shown.text
+    assert qr.photo_png is not None
+    assert qr.reply_markup["inline_keyboard"][1] == [{"text": "← Назад", "callback_data": f"subscription-device:menu:{device.device_id}"}]
     assert "ВНИМАНИЕ" in confirm.text
     assert "отозвана" in revoked.text
     assert registry.list_subscription_devices(42) == ()
@@ -1075,10 +1080,37 @@ def test_primary_device_actions_show_link_rename_and_primary_only_rotation(tmp_p
         for item in row
     }
 
-    assert {"subscription:link:primary", "subscription:rotate:primary"}.issubset(action_callbacks)
+    assert {"subscription:link:primary", "subscription:qr:primary", "subscription:rotate:primary"}.issubset(action_callbacks)
     assert any(callback.startswith("device:rename:") for callback in action_callbacks)
-    assert {"⊙ Показать ссылку", "✎ Переименовать", "↻ Сменить ссылку"}.issubset(action_texts)
+    assert {"⊙ Показать ссылку", "⊞ Показать QR-код", "✎ Переименовать", "↻ Сменить ссылку", "← Назад"}.issubset(action_texts)
     assert not any(callback.startswith("subscription-device:revoke:") for callback in action_callbacks)
+
+
+def test_admin_customer_card_shows_issued_link_metadata_without_bearer_urls(tmp_path):
+    db_path = str(tmp_path / "admin-link-metadata.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = _approved_telegram_customer(registry, db_path, username="link_metadata")
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        primary_admin_id=108100140,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    service.handle_update(_callback(1, "subscription:link:primary"))
+    service.handle_update(_callback(2, "subscription:link:new"))
+    service.handle_update(_callback(3, "subscription:guest:1"))
+    card = service.handle_update(_admin_callback(4, f"admin:customer:{customer_id}:0"))[0]
+
+    assert "Ссылки:" in card.text
+    assert "⊙ Основная ссылка — активна" in card.text
+    assert "⊙ Новое устройство — активна" in card.text
+    assert "↗ Гостевая ссылка — активна до" in card.text
+    assert "api/v1/" not in card.text
+    assert "https://" not in card.text
 
 
 def test_primary_admin_can_view_issue_queue_and_set_or_cancel_a_neutral_service_notice(tmp_path):
@@ -1105,7 +1137,7 @@ def test_primary_admin_can_view_issue_queue_and_set_or_cancel_a_neutral_service_
     assert registry.get_service_notice().body == "Проводятся краткие технические работы."
 
 
-def test_primary_admin_customers_are_shown_as_twenty_per_page_in_two_columns(tmp_path):
+def test_primary_admin_customers_are_shown_as_twenty_full_width_rows_per_page(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -1130,8 +1162,8 @@ def test_primary_admin_customers_are_shown_as_twenty_per_page_in_two_columns(tmp
     first_customer_buttons = [button for row in first_customer_rows for button in row]
 
     assert first.text == "Пользователи: 21. Страница 1/2."
-    assert len(first_customer_rows) == 10
-    assert all(len(row) == 2 for row in first_customer_rows)
+    assert len(first_customer_rows) == 20
+    assert all(len(row) == 1 for row in first_customer_rows)
     assert len(first_customer_buttons) == 20
     assert all(not button["text"].startswith("◎ ") for button in first_customer_buttons)
     assert all(
