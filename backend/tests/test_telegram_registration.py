@@ -849,7 +849,7 @@ def test_primary_admin_has_broadcasts_and_customer_profile_details(tmp_path):
     request_labels = [button["text"] for row in requests[0].reply_markup["inline_keyboard"] for button in row]
     assert "⊘ Заблокированные" in request_labels
     assert any(
-        button["text"] == "◎ admin-card-user" and "style" not in button
+        button["text"].replace("\u2007", "") == "◎ admin-card-user" and "style" not in button
         for row in customers[0].reply_markup["inline_keyboard"] for button in row
     )
     assert "Трафик за всё время" in card[0].text
@@ -1104,13 +1104,19 @@ def test_admin_customer_card_shows_issued_link_metadata_without_bearer_urls(tmp_
     service.handle_update(_callback(2, "subscription:link:new"))
     service.handle_update(_callback(3, "subscription:guest:1"))
     card = service.handle_update(_admin_callback(4, f"admin:customer:{customer_id}:0"))[0]
+    links = service.handle_update(_admin_callback(5, f"admin:customer-links:{customer_id}:0"))[0]
 
-    assert "Ссылки:" in card.text
-    assert "⊙ Основная ссылка — активна" in card.text
-    assert "⊙ Новое устройство — активна" in card.text
-    assert "↗ Гостевая ссылка — активна до" in card.text
-    assert "api/v1/" not in card.text
-    assert "https://" not in card.text
+    assert "Ссылки:" not in card.text
+    assert any(
+        button["callback_data"] == f"admin:customer-links:{customer_id}:0"
+        for row in card.reply_markup["inline_keyboard"] for button in row
+    )
+    assert "Ссылки клиента:" in links.text
+    assert "⊙ Основная ссылка — активна" in links.text
+    assert "⊙ Новое устройство — активна" in links.text
+    assert "↗ Гостевая ссылка — активна до" in links.text
+    assert "api/v1/" not in links.text
+    assert "https://" not in links.text
 
 
 def test_primary_admin_can_view_issue_queue_and_set_or_cancel_a_neutral_service_notice(tmp_path):
@@ -1137,7 +1143,7 @@ def test_primary_admin_can_view_issue_queue_and_set_or_cancel_a_neutral_service_
     assert registry.get_service_notice().body == "Проводятся краткие технические работы."
 
 
-def test_primary_admin_customers_are_shown_as_twenty_full_width_rows_per_page(tmp_path):
+def test_primary_admin_customers_are_shown_as_twenty_two_column_buttons_per_page(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -1162,10 +1168,13 @@ def test_primary_admin_customers_are_shown_as_twenty_full_width_rows_per_page(tm
     first_customer_buttons = [button for row in first_customer_rows for button in row]
 
     assert first.text == "Пользователи: 21. Страница 1/2."
-    assert len(first_customer_rows) == 20
-    assert all(len(row) == 1 for row in first_customer_rows)
+    assert len(first_customer_rows) == 10
+    assert all(len(row) == 2 for row in first_customer_rows)
     assert len(first_customer_buttons) == 20
     assert all(not button["text"].startswith("◎ ") for button in first_customer_buttons)
+    assert all(button["text"].startswith("\u2007\u2007") for button in first_customer_buttons)
+    assert all(button["text"].endswith("\u2007\u2007") for button in first_customer_buttons)
+    assert all(len(button["text"].replace("\u2007", "")) <= 20 for button in first_customer_buttons)
     assert all(
         button["icon_custom_emoji_id"] in {"5368324170671202286", "5368324170671202287"}
         for button in first_customer_buttons
@@ -1182,7 +1191,10 @@ def test_primary_admin_customers_are_shown_as_twenty_full_width_rows_per_page(tm
     assert len(second_customer_rows[0]) == 1
     assert not second_customer_rows[0][0]["text"].startswith("◎ ")
     all_customer_buttons = first_customer_buttons + [button for row in second_customer_rows for button in row]
-    icons_by_label = {button["text"]: button["icon_custom_emoji_id"] for button in all_customer_buttons}
+    icons_by_label = {
+        button["text"].replace("\u2007", "").strip(): button["icon_custom_emoji_id"]
+        for button in all_customer_buttons
+    }
     assert icons_by_label["grid-user-20"] == "5368324170671202287"
     assert icons_by_label["grid-user-19"] == "5368324170671202286"
     assert "style" not in second_customer_rows[0][0]
@@ -1461,7 +1473,7 @@ def test_primary_admin_can_review_and_reply_to_customer_support_from_the_bot(tmp
     resolved = service.handle_update(_admin_callback(14, "admin:support-reply-confirm"))[0]
 
     assert any(
-        button["text"] == "✉ 1 support-user"
+        button["text"].replace("\u2007", "") == "✉ 1 support-user"
         and button["icon_custom_emoji_id"] == "5368324170671202286"
         and "style" not in button
         for row in customers.reply_markup["inline_keyboard"] for button in row
