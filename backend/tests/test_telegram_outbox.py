@@ -147,7 +147,30 @@ def test_user_node_added_notification_is_localized_and_requires_a_node_name(tmp_
     port = FakeOutboxPort()
 
     assert _worker(db_path, port).run_once().outcome == "sent"
-    assert port.messages == [(777, "Another server was added to your access: edge-eu.\n\nEnjoy using it.", None)]
+    assert port.messages == [(
+        777,
+        "Another server was added to your access: edge-eu.\n\n"
+        "Enjoy using it.\n\n"
+        "Tap \"Update subscription\" in your client app.",
+        None,
+    )]
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_identities SET locale = 'ru' WHERE telegram_user_id = 42")
+        conn.execute(
+            """
+            INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
+            VALUES ('user_node_added', '42', 'node-added-ru', '{"node_name":"edge-ru"}')
+            """
+        )
+
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert port.messages[-1] == (
+        777,
+        "Вам добавили ещё один сервер: edge-ru.\n\n"
+        "Приятного использования.\n\n"
+        "Нажмите кнопку «Обновить подписку» в клиенте.",
+        None,
+    )
 
 
 def test_user_can_suppress_background_outbox_messages_without_losing_the_event_audit(tmp_path):

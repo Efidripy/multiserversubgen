@@ -66,6 +66,7 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "telegram_support_requests",
             "telegram_service_notice",
             "telegram_traffic_reminder_receipts",
+            "telegram_traffic_reminder_receipts_v2",
         } <= tables
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
@@ -92,6 +93,39 @@ def test_notification_preferences_migrate_traffic_reminders_as_opt_in(tmp_path):
         }
     assert "traffic_reminders_enabled" in columns
     assert columns["traffic_reminders_enabled"] == "0"
+    assert "traffic_reminder_thresholds" in columns
+    assert columns["traffic_reminder_thresholds"] == "'[80,95,100]'"
+
+
+def test_traffic_reminder_receipts_copy_into_additive_v2_without_dropping_legacy_data(tmp_path):
+    db_path = str(tmp_path / "legacy-traffic-receipts.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="receipt-user", origin="telegram", email_source="telegram_username", public_code="receipt-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO telegram_traffic_reminder_receipts
+                (customer_id, quota_plan_digest, threshold_percent)
+            VALUES (?, 'legacy-plan', 80)
+            """,
+            (customer_id,),
+        )
+        conn.execute("DROP TABLE telegram_traffic_reminder_receipts_v2")
+
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT threshold_percent FROM telegram_traffic_reminder_receipts_v2 WHERE customer_id = ?",
+            (customer_id,),
+        ).fetchone() == (80,)
+        assert conn.execute(
+            "SELECT threshold_percent FROM telegram_traffic_reminder_receipts WHERE customer_id = ?",
+            (customer_id,),
+        ).fetchone() == (80,)
 
 
 def test_subscription_message_receipt_contains_only_a_token_digest_and_message_coordinates(tmp_path):

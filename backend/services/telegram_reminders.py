@@ -126,7 +126,7 @@ class TelegramReminderService:
             if observed_bytes is None or isinstance(observed_bytes, bool) or observed_bytes < 0:
                 continue
             due = [
-                threshold for threshold in (80, 95, 100)
+                threshold for threshold in candidate.traffic_reminder_thresholds
                 if int(observed_bytes) * 100 >= candidate.quota_total_bytes * threshold
             ]
             if not due:
@@ -135,7 +135,7 @@ class TelegramReminderService:
             with connect(self._db_path) as conn:
                 receipt = conn.execute(
                     """
-                    INSERT OR IGNORE INTO telegram_traffic_reminder_receipts
+                    INSERT OR IGNORE INTO telegram_traffic_reminder_receipts_v2
                         (customer_id, quota_plan_digest, threshold_percent)
                     VALUES (?, ?, ?)
                     """,
@@ -149,7 +149,7 @@ class TelegramReminderService:
                     if lower_threshold != threshold:
                         conn.execute(
                             """
-                            INSERT OR IGNORE INTO telegram_traffic_reminder_receipts
+                            INSERT OR IGNORE INTO telegram_traffic_reminder_receipts_v2
                                 (customer_id, quota_plan_digest, threshold_percent)
                             VALUES (?, ?, ?)
                             """,

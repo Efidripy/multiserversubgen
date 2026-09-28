@@ -16,6 +16,7 @@ from services.subscription_tokens import (
     resolve_token,
 )
 from services.telegram_access import TelegramSubscriptionAccessGate
+from services.telegram_registry import TelegramRegistry
 from shared.sql import update_by_id_query
 from typing import Dict, Optional
 
@@ -42,6 +43,7 @@ def build_subscriptions_router(
     subscription_response_cache_ttl = 300
     subscription_response_cache_max_size = 1024
     telegram_access_gate = TelegramSubscriptionAccessGate(db_path)
+    telegram_registry = TelegramRegistry(db_path)
 
     def _no_cache_headers():
         return {
@@ -254,6 +256,41 @@ def build_subscriptions_router(
                 )
 
         return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
+
+    @router.get("/api/v1/guest-sub/{token}")
+    def get_guest_sub(request: Request, token: str, protocol: Optional[str] = None):
+        """Deliver one active, expiring guest subscription without token redirects."""
+
+        guest_link = telegram_registry.resolve_guest_subscription_link(token)
+        if guest_link is None or not telegram_access_gate.can_serve_email(guest_link.email_display):
+            return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
+        allowed, retry_after = check_subscription_rate_limit(
+            request, f"guest-sub:{hashlib.sha256(token.encode()).hexdigest()}"
+        )
+        if not allowed:
+            return PlainTextResponse(
+                content=f"Rate limit exceeded. Retry after {retry_after}s",
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+        with connect(db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            _ensure_stats_table(conn)
+            links = get_links_filtered(node_service.list_nodes(), guest_link.email_display, protocol)
+            if links:
+                now = datetime.datetime.now().strftime("%d.%m %H:%M")
+                with connect(db_path) as db:
+                    db.execute(
+                        "INSERT INTO stats (email, count, last_download) VALUES (?, 1, ?) "
+                        "ON CONFLICT(email) DO UPDATE SET count=count+1, last_download=?",
+                        (guest_link.email_display, now, now),
+                    )
+                    db.commit()
+                return PlainTextResponse(
+                    content=base64.b64encode("\n".join(links).encode()).decode(),
+                    headers=_no_cache_headers(),
+                )
+        return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
 
     @router.get("/api/v1/sub-grouped/{identifier}")
     def get_sub_grouped(
