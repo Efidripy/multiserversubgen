@@ -298,6 +298,7 @@ def init_db(db_path: str) -> None:
                         CHECK(expiry_reminders_enabled IN (0, 1)),
                       traffic_reminders_enabled INTEGER NOT NULL DEFAULT 0
                         CHECK(traffic_reminders_enabled IN (0, 1)),
+                      traffic_reminder_thresholds TEXT NOT NULL DEFAULT '[80,95,100]',
                       row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
                       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
@@ -317,6 +318,11 @@ def init_db(db_path: str) -> None:
             conn.execute(
                 "ALTER TABLE telegram_notification_preferences "
                 "ADD COLUMN traffic_reminders_enabled INTEGER NOT NULL DEFAULT 0"
+            )
+        if "traffic_reminder_thresholds" not in notification_columns:
+            conn.execute(
+                "ALTER TABLE telegram_notification_preferences "
+                "ADD COLUMN traffic_reminder_thresholds TEXT NOT NULL DEFAULT '[80,95,100]'"
             )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_applications
@@ -428,6 +434,26 @@ def init_db(db_path: str) -> None:
                       PRIMARY KEY(customer_id, quota_plan_digest, threshold_percent),
                       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
         )
+        # SQLite cannot widen a CHECK constraint in place. Keep the legacy
+        # table intact, copy its dedupe receipts once, and let new code use an
+        # additive v2 table that also supports the owner-selected 50% band.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_traffic_reminder_receipts_v2
+                     (customer_id INTEGER NOT NULL,
+                      quota_plan_digest TEXT NOT NULL,
+                      threshold_percent INTEGER NOT NULL CHECK(threshold_percent IN (50, 80, 95, 100)),
+                      queued_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      PRIMARY KEY(customer_id, quota_plan_digest, threshold_percent),
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO telegram_traffic_reminder_receipts_v2
+                (customer_id, quota_plan_digest, threshold_percent, queued_at)
+            SELECT customer_id, quota_plan_digest, threshold_percent, queued_at
+            FROM telegram_traffic_reminder_receipts
+            """
+        )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_service_notice
                      (id INTEGER PRIMARY KEY CHECK(id = 1),
@@ -436,6 +462,96 @@ def init_db(db_path: str) -> None:
                       row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
                       updated_by TEXT NOT NULL DEFAULT 'system',
                       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_service_notice_drafts
+                     (admin_telegram_user_id INTEGER PRIMARY KEY,
+                      expected_row_version INTEGER NOT NULL CHECK(expected_row_version >= 0),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(admin_telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_guest_subscription_links
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      customer_id INTEGER NOT NULL,
+                      email_display TEXT NOT NULL,
+                      token TEXT NOT NULL UNIQUE,
+                      expires_at INTEGER NOT NULL CHECK(expires_at > 0),
+                      created_by_telegram_user_id INTEGER NOT NULL,
+                      revoked_by_telegram_user_id INTEGER DEFAULT NULL,
+                      revoked_at TEXT DEFAULT NULL,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+                      FOREIGN KEY(created_by_telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE,
+                      FOREIGN KEY(revoked_by_telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE SET NULL)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_guest_links_customer_expiry "
+            "ON telegram_guest_subscription_links(customer_id, expires_at DESC)"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_logical_devices
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      customer_id INTEGER NOT NULL,
+                      kind TEXT NOT NULL CHECK(kind IN ('primary', 'guest')),
+                      label TEXT NOT NULL CHECK(length(trim(label)) BETWEEN 1 AND 80),
+                      guest_link_id INTEGER DEFAULT NULL UNIQUE,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE,
+                      FOREIGN KEY(guest_link_id) REFERENCES telegram_guest_subscription_links(id)
+                        ON DELETE SET NULL)"""
+        )
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_logical_devices_primary "
+            "ON telegram_logical_devices(customer_id) WHERE kind = 'primary'"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_logical_device_drafts
+                     (telegram_user_id INTEGER PRIMARY KEY,
+                      device_id INTEGER NOT NULL,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE,
+                      FOREIGN KEY(device_id) REFERENCES telegram_logical_devices(id) ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_quality_reports
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      telegram_user_id INTEGER NOT NULL,
+                      customer_id INTEGER NOT NULL,
+                      kind TEXT NOT NULL CHECK(kind IN ('ok', 'slow', 'connection', 'routes')),
+                      platform TEXT NOT NULL CHECK(platform IN ('android', 'ios', 'desktop', 'other')),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_quality_reports_customer_created "
+            "ON telegram_quality_reports(customer_id, created_at DESC)"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS subscription_token_events
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      kind TEXT NOT NULL,
+                      identifier TEXT NOT NULL,
+                      event_type TEXT NOT NULL CHECK(event_type IN ('created', 'rotated')),
+                      actor_type TEXT NOT NULL CHECK(actor_type IN ('telegram_user', 'admin', 'system')),
+                      actor_id TEXT DEFAULT NULL,
+                      reason TEXT DEFAULT NULL,
+                      token_digest TEXT NOT NULL,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_subscription_token_events_identifier "
+            "ON subscription_token_events(kind, identifier, id DESC)"
         )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_node_policies
