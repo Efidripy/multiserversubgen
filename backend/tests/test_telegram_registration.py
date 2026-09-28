@@ -780,7 +780,14 @@ def test_primary_admin_has_broadcasts_and_customer_profile_details(tmp_path):
     card = service.handle_update(_admin_callback(42, f"admin:customer:{customer_id}:0"))
 
     labels = [button["text"] for row in home[0].reply_markup["inline_keyboard"] for button in row]
-    assert labels == ["Заявки", "Пользователи", "TG-ноды", "Рассылки"]
+    assert labels == [
+        "Заявки",
+        "Пользователи",
+        "TG-ноды",
+        "Проблемы синхронизации",
+        "Статус сервиса",
+        "Рассылки",
+    ]
     requests = service.handle_update(_admin_callback(43, "admin:requests:0"))
     request_labels = [button["text"] for row in requests[0].reply_markup["inline_keyboard"] for button in row]
     assert "⊘ Заблокированные" in request_labels
@@ -801,6 +808,63 @@ def test_primary_admin_has_broadcasts_and_customer_profile_details(tmp_path):
         button["callback_data"] == f"admin:cn:{customer_id}:1:add:0"
         for row in card[0].reply_markup["inline_keyboard"] for button in row
     )
+
+
+def test_approved_user_can_create_and_revoke_a_guest_link_and_send_quality_feedback(tmp_path):
+    db_path = str(tmp_path / "guest-flow.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="guest_flow")
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    choice = service.handle_update(_callback(100, "subscription:guest"))[0]
+    created = service.handle_update(_callback(101, "subscription:guest:6"))[0]
+    devices = service.handle_update(_callback(102, "devices:menu"))[0]
+    quality_kind = service.handle_update(_callback(103, "quality:menu"))[0]
+    quality_platform = service.handle_update(_callback(104, "quality:kind:slow"))[0]
+    quality_sent = service.handle_update(_callback(105, "quality:platform:slow:ios"))[0]
+
+    assert "ВНИМАНИЕ" in choice.text
+    assert "/api/v1/guest-sub/" in created.text
+    assert "Гостевая ссылка" in devices.text
+    assert "Как сейчас работает" in quality_kind.text
+    assert "устройстве" in quality_platform.text
+    assert "сигнал отправлен" in quality_sent.text
+    with connect(db_path) as conn:
+        guest_link_id = conn.execute("SELECT id FROM telegram_guest_subscription_links").fetchone()[0]
+    revoked = service.handle_update(_callback(106, f"guest:revoke:{guest_link_id}"))[0]
+
+    assert "отозвана" in revoked.text
+
+
+def test_primary_admin_can_view_issue_queue_and_set_or_cancel_a_neutral_service_notice(tmp_path):
+    db_path = str(tmp_path / "admin-ops.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=108100140)
+
+    no_issues = service.handle_update(_admin_callback(201, "admin:issues"))[0]
+    status = service.handle_update(_admin_callback(202, "admin:service"))[0]
+    prompt = service.handle_update(_admin_callback(203, "admin:notice:edit:0"))[0]
+    saved = service.handle_update(_admin_message(204, "Проводятся краткие технические работы."))[0]
+    active = registry.get_service_notice()
+    service.handle_update(_admin_callback(205, f"admin:notice:edit:{active.row_version}"))
+    service.handle_update(_admin_callback(206, "admin:service"))
+    cancelled = service.handle_update(_admin_message(207, "Это не должно стать объявлением."))[0]
+
+    assert "Проблем синхронизации" in no_issues.text
+    assert "штатная работа" in status.text
+    assert "нейтральное сообщение" in prompt.text
+    assert "временное сообщение активно" in saved.text
+    assert active.is_active and active.body == "Проводятся краткие технические работы."
+    assert "Команда администратора не распознана" in cancelled.text
+    assert registry.get_service_notice().body == "Проводятся краткие технические работы."
 
 
 def test_primary_admin_customers_are_shown_as_twenty_per_page_in_two_columns(tmp_path):

@@ -290,6 +290,40 @@ class TelegramOutboxWorker:
                 f"Обращение в поддержку от {row[1]} (#{row[0]}).\nТема: {label}\n\n{row[3]}",
                 None,
             )
+        if event.event_type == "admin_quality_report_created":
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT q.customer_id, c.email_display, q.kind, q.platform
+                    FROM telegram_quality_reports AS q
+                    JOIN customers AS c ON c.id = q.customer_id
+                    WHERE q.id = ?
+                    """,
+                    (event.entity_id,),
+                ).fetchone()
+            if row is None:
+                raise OutboxPermanentError("quality_report_not_found")
+            kinds = {
+                "ok": "Всё хорошо",
+                "slow": "Медленно",
+                "connection": "Не подключается",
+                "routes": "Работает не везде",
+            }
+            platforms = {
+                "android": "Android",
+                "ios": "iPhone / iPad",
+                "desktop": "Компьютер",
+                "other": "Другое устройство",
+            }
+            if str(row[2]) not in kinds or str(row[3]) not in platforms:
+                raise OutboxPermanentError("invalid_quality_report")
+            return (
+                self._primary_admin_id,
+                f"Сигнал качества от {row[1]}.\nОценка: {kinds[str(row[2])]}\nУстройство: {platforms[str(row[3])]}",
+                {"inline_keyboard": [[{
+                    "text": "Пользователь", "callback_data": f"admin:customer:{row[0]}:0"
+                }]]},
+            )
         if event.event_type == "user_support_resolved":
             with connect(self._db_path) as conn:
                 row = conn.execute(
@@ -419,9 +453,9 @@ class TelegramOutboxWorker:
                 if not node_name or len(node_name) > 256:
                     raise OutboxPermanentError("invalid_node_added_notification")
                 message = (
-                    f"Another server was added to your access: {node_name}.\n\nEnjoy using it."
+                    f"Another server was added to your access: {node_name}.\n\nEnjoy using it.\n\nTap \"Update subscription\" in your client app."
                     if locale == "en"
-                    else f"Вам добавили ещё один сервер: {node_name}.\n\nПриятного использования."
+                    else f"Вам добавили ещё один сервер: {node_name}.\n\nПриятного использования.\n\nНажмите кнопку «Обновить подписку» в клиенте."
                 )
                 return int(row[0]), message, None
             if event.event_type == "user_existing_access_approved":

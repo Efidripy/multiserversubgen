@@ -25,6 +25,25 @@ from services.telegram_access import SUSPENDED_STATUSES
 BOT_INBOUND_ID = 1
 BOT_CLIENT_FLOW = "xtls-rprx-vision"
 SUPPORT_CATEGORIES = frozenset({"link", "connection", "device", "directions", "other"})
+TRAFFIC_REMINDER_THRESHOLDS = frozenset({50, 80, 95, 100})
+GUEST_LINK_DURATIONS_HOURS = frozenset({1, 3, 6, 12, 24})
+
+
+def _normalize_traffic_thresholds(value: object) -> tuple[int, ...]:
+    """Return one safe, ordered preference set or the stable default."""
+
+    raw = value
+    if isinstance(value, str):
+        try:
+            raw = json.loads(value)
+        except json.JSONDecodeError:
+            raw = None
+    if not isinstance(raw, (list, tuple, set, frozenset)):
+        return (80, 95, 100)
+    if any(not isinstance(item, int) or isinstance(item, bool) for item in raw):
+        return (80, 95, 100)
+    thresholds = tuple(sorted(set(raw)))
+    return thresholds if set(thresholds).issubset(TRAFFIC_REMINDER_THRESHOLDS) else (80, 95, 100)
 
 
 class TelegramRegistryError(RuntimeError):
@@ -80,6 +99,7 @@ class TelegramNotificationPreferences:
     background_notifications_enabled: bool
     expiry_reminders_enabled: bool
     traffic_reminders_enabled: bool
+    traffic_reminder_thresholds: tuple[int, ...]
     row_version: int
 
 
@@ -130,6 +150,56 @@ class CustomerTrafficQuotaCandidate:
     quota_total_bytes: int
     quota_plan_digest: str
     bindings: tuple[CustomerTrafficQuotaBinding, ...]
+    traffic_reminder_thresholds: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class TelegramGuestSubscriptionLink:
+    """A short-lived guest bearer link. Its token is returned only at creation."""
+
+    guest_link_id: int
+    customer_id: int
+    email_display: str
+    expires_at: int
+    status: str
+    token: str | None = None
+
+
+@dataclass(frozen=True)
+class TelegramLogicalDevice:
+    device_id: int
+    customer_id: int
+    kind: str
+    label: str
+    guest_link_id: int | None
+    status: str
+    created_at: str
+    expires_at: int | None
+
+
+@dataclass(frozen=True)
+class TelegramQualityReport:
+    report_id: int
+    telegram_user_id: int
+    customer_id: int
+    kind: str
+    platform: str
+    created_at: str
+
+
+@dataclass(frozen=True)
+class TelegramServiceNoticeDraft:
+    admin_telegram_user_id: int
+    expected_row_version: int
+
+
+@dataclass(frozen=True)
+class TelegramSubscriptionTokenEvent:
+    event_type: str
+    actor_type: str
+    actor_id: str | None
+    reason: str | None
+    created_at: str
 
 
 @dataclass(frozen=True)
@@ -1678,13 +1748,20 @@ class TelegramRegistry:
             row = conn.execute(
                 """
                 SELECT background_notifications_enabled, expiry_reminders_enabled,
-                       traffic_reminders_enabled, row_version
+                       traffic_reminders_enabled, traffic_reminder_thresholds, row_version
                 FROM telegram_notification_preferences WHERE telegram_user_id = ?
                 """,
                 (user_id,),
             ).fetchone()
         assert row is not None
-        return TelegramNotificationPreferences(user_id, bool(row[0]), bool(row[1]), bool(row[2]), int(row[3]))
+        return TelegramNotificationPreferences(
+            user_id,
+            bool(row[0]),
+            bool(row[1]),
+            bool(row[2]),
+            _normalize_traffic_thresholds(row[3]),
+            int(row[4]),
+        )
 
     def toggle_background_notifications(self, telegram_user_id: int) -> TelegramNotificationPreferences:
         """Toggle user-controlled background delivery after durable update dedupe."""
@@ -1761,6 +1838,360 @@ class TelegramRegistry:
             )
         return self.get_notification_preferences(user_id)
 
+    def toggle_traffic_reminder_threshold(
+        self, telegram_user_id: int, threshold_percent: int
+    ) -> TelegramNotificationPreferences:
+        """Toggle one user-selected finite-traffic reminder threshold."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        if isinstance(threshold_percent, bool) or threshold_percent not in TRAFFIC_REMINDER_THRESHOLDS:
+            raise TelegramRegistryError("traffic reminder threshold is invalid")
+        with connect(self._db_path) as conn:
+            identity = conn.execute(
+                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)
+            ).fetchone()
+            if identity is None:
+                raise TelegramRegistryError("Telegram identity was not found")
+            conn.execute(
+                "INSERT OR IGNORE INTO telegram_notification_preferences (telegram_user_id) VALUES (?)",
+                (user_id,),
+            )
+            current = conn.execute(
+                "SELECT traffic_reminder_thresholds FROM telegram_notification_preferences WHERE telegram_user_id = ?",
+                (user_id,),
+            ).fetchone()
+            thresholds = set(_normalize_traffic_thresholds(current[0] if current else None))
+            if threshold_percent in thresholds:
+                thresholds.remove(threshold_percent)
+            else:
+                thresholds.add(threshold_percent)
+            # A traffic category with no selected bands is equivalent to off,
+            # but retain the empty selection so the user's next enable is explicit.
+            conn.execute(
+                """
+                UPDATE telegram_notification_preferences
+                SET traffic_reminder_thresholds = ?,
+                    traffic_reminders_enabled = ?,
+                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_user_id = ?
+                """,
+                (json.dumps(sorted(thresholds), separators=(",", ":")), int(bool(thresholds)), user_id),
+            )
+        return self.get_notification_preferences(user_id)
+
+    @staticmethod
+    def _active_telegram_customer(conn: sqlite3.Connection, telegram_user_id: int) -> tuple[int, str]:
+        row = conn.execute(
+            """
+            SELECT c.id, c.email_display
+            FROM telegram_identities AS i
+            JOIN customers AS c ON c.id = i.customer_id
+            WHERE i.telegram_user_id = ? AND i.access_status = 'approved'
+              AND c.status = 'active' AND c.deleted_at IS NULL
+            """,
+            (telegram_user_id,),
+        ).fetchone()
+        if row is None:
+            raise TelegramRegistryError("active Telegram customer access is required")
+        return int(row[0]), str(row[1])
+
+    def create_guest_subscription_link(
+        self, *, telegram_user_id: int, duration_hours: int
+    ) -> TelegramGuestSubscriptionLink:
+        """Issue one revocable guest link without changing the personal token.
+
+        A new guest link revokes the user's previous active guest link. This
+        deliberately makes the share surface easy to understand and bounds
+        accidental exposure while keeping the primary subscription untouched.
+        """
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        if isinstance(duration_hours, bool) or duration_hours not in GUEST_LINK_DURATIONS_HOURS:
+            raise TelegramRegistryError("guest link duration is invalid")
+        expires_at = int(datetime.now(timezone.utc).timestamp()) + duration_hours * 60 * 60
+        with connect(self._db_path) as conn:
+            customer_id, email_display = self._active_telegram_customer(conn, user_id)
+            conn.execute(
+                """
+                UPDATE telegram_guest_subscription_links
+                SET revoked_at = CURRENT_TIMESTAMP, revoked_by_telegram_user_id = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE customer_id = ? AND revoked_at IS NULL AND expires_at > ?
+                """,
+                (user_id, customer_id, int(datetime.now(timezone.utc).timestamp())),
+            )
+            for _ in range(5):
+                token = secrets.token_urlsafe(32)
+                try:
+                    cursor = conn.execute(
+                        """
+                        INSERT INTO telegram_guest_subscription_links
+                            (customer_id, email_display, token, expires_at, created_by_telegram_user_id)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (customer_id, email_display, token, expires_at, user_id),
+                    )
+                    break
+                except sqlite3.IntegrityError:
+                    continue
+            else:
+                raise TelegramRegistryError("could not allocate guest link")
+            guest_link_id = int(cursor.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO telegram_logical_devices (customer_id, kind, label, guest_link_id)
+                VALUES (?, 'guest', 'Гостевая ссылка', ?)
+                """,
+                (customer_id, guest_link_id),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('guest_link_created', 'telegram_user', ?, 'telegram_guest_link', ?, ?)
+                """,
+                (str(user_id), str(guest_link_id), _payload_digest({"duration_hours": duration_hours})),
+            )
+        return TelegramGuestSubscriptionLink(
+            guest_link_id=guest_link_id,
+            customer_id=customer_id,
+            email_display=email_display,
+            expires_at=expires_at,
+            status="active",
+            token=token,
+        )
+
+    def resolve_guest_subscription_link(self, token: str) -> TelegramGuestSubscriptionLink | None:
+        """Resolve only a live guest bearer token for the anonymous endpoint."""
+
+        if not isinstance(token, str) or not 20 <= len(token) <= 256:
+            return None
+        current_epoch = int(datetime.now(timezone.utc).timestamp())
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT g.id, g.customer_id, g.email_display, g.expires_at
+                FROM telegram_guest_subscription_links AS g
+                JOIN customers AS c ON c.id = g.customer_id
+                WHERE g.token = ? AND g.revoked_at IS NULL AND g.expires_at > ?
+                  AND c.status = 'active' AND c.deleted_at IS NULL
+                """,
+                (token, current_epoch),
+            ).fetchone()
+        if row is None:
+            return None
+        return TelegramGuestSubscriptionLink(
+            guest_link_id=int(row[0]), customer_id=int(row[1]), email_display=str(row[2]),
+            expires_at=int(row[3]), status="active",
+        )
+
+    def _ensure_primary_logical_device(self, conn: sqlite3.Connection, customer_id: int) -> None:
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO telegram_logical_devices (customer_id, kind, label)
+            VALUES (?, 'primary', 'Основное подключение')
+            """,
+            (customer_id,),
+        )
+
+    def list_logical_devices(self, telegram_user_id: int) -> tuple[TelegramLogicalDevice, ...]:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        current_epoch = int(datetime.now(timezone.utc).timestamp())
+        with connect(self._db_path) as conn:
+            customer_id, _email_display = self._active_telegram_customer(conn, user_id)
+            self._ensure_primary_logical_device(conn, customer_id)
+            rows = conn.execute(
+                """
+                SELECT d.id, d.customer_id, d.kind, d.label, d.guest_link_id, d.created_at,
+                       g.expires_at, g.revoked_at
+                FROM telegram_logical_devices AS d
+                LEFT JOIN telegram_guest_subscription_links AS g ON g.id = d.guest_link_id
+                WHERE d.customer_id = ?
+                ORDER BY CASE d.kind WHEN 'primary' THEN 0 ELSE 1 END, d.id DESC
+                """,
+                (customer_id,),
+            ).fetchall()
+        devices: list[TelegramLogicalDevice] = []
+        for row in rows:
+            if str(row[2]) == "primary":
+                status, expires_at = "active", None
+            elif row[7] is not None:
+                status, expires_at = "revoked", int(row[6]) if row[6] is not None else None
+            elif row[6] is None or int(row[6]) <= current_epoch:
+                status, expires_at = "expired", int(row[6]) if row[6] is not None else None
+            else:
+                status, expires_at = "active", int(row[6])
+            devices.append(TelegramLogicalDevice(
+                device_id=int(row[0]), customer_id=int(row[1]), kind=str(row[2]), label=str(row[3]),
+                guest_link_id=int(row[4]) if row[4] is not None else None, status=status,
+                created_at=str(row[5]), expires_at=expires_at,
+            ))
+        return tuple(devices)
+
+    def set_logical_device_label(
+        self, *, telegram_user_id: int, device_id: int, label: str
+    ) -> TelegramLogicalDevice:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        local_device_id = _positive_int(device_id, "device_id")
+        normalized_label = label.strip() if isinstance(label, str) else ""
+        if not 1 <= len(normalized_label) <= 80:
+            raise TelegramRegistryError("logical device label must contain 1 to 80 characters")
+        with connect(self._db_path) as conn:
+            customer_id, _email_display = self._active_telegram_customer(conn, user_id)
+            row = conn.execute(
+                """
+                SELECT id, kind, guest_link_id, created_at FROM telegram_logical_devices
+                WHERE id = ? AND customer_id = ?
+                """,
+                (local_device_id, customer_id),
+            ).fetchone()
+            if row is None:
+                raise TelegramRegistryError("logical device was not found")
+            conn.execute(
+                "UPDATE telegram_logical_devices SET label = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (normalized_label, local_device_id),
+            )
+        devices = {item.device_id: item for item in self.list_logical_devices(user_id)}
+        return devices[local_device_id]
+
+    def set_logical_device_draft(self, *, telegram_user_id: int, device_id: int) -> None:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        local_device_id = _positive_int(device_id, "device_id")
+        with connect(self._db_path) as conn:
+            customer_id, _email_display = self._active_telegram_customer(conn, user_id)
+            if conn.execute(
+                "SELECT 1 FROM telegram_logical_devices WHERE id = ? AND customer_id = ?",
+                (local_device_id, customer_id),
+            ).fetchone() is None:
+                raise TelegramRegistryError("logical device was not found")
+            conn.execute(
+                """
+                INSERT INTO telegram_logical_device_drafts (telegram_user_id, device_id)
+                VALUES (?, ?)
+                ON CONFLICT(telegram_user_id) DO UPDATE SET
+                    device_id = excluded.device_id, updated_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, local_device_id),
+            )
+
+    def get_logical_device_draft(self, telegram_user_id: int) -> int | None:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                "SELECT device_id FROM telegram_logical_device_drafts WHERE telegram_user_id = ?", (user_id,)
+            ).fetchone()
+        return int(row[0]) if row is not None else None
+
+    def clear_logical_device_draft(self, telegram_user_id: int) -> None:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            conn.execute("DELETE FROM telegram_logical_device_drafts WHERE telegram_user_id = ?", (user_id,))
+
+    def revoke_guest_subscription_link(self, *, telegram_user_id: int, guest_link_id: int) -> None:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        link_id = _positive_int(guest_link_id, "guest_link_id")
+        with connect(self._db_path) as conn:
+            customer_id, _email_display = self._active_telegram_customer(conn, user_id)
+            row = conn.execute(
+                "SELECT revoked_at FROM telegram_guest_subscription_links WHERE id = ? AND customer_id = ?",
+                (link_id, customer_id),
+            ).fetchone()
+            if row is None:
+                raise TelegramRegistryError("guest link was not found")
+            if row[0] is None:
+                conn.execute(
+                    """
+                    UPDATE telegram_guest_subscription_links
+                    SET revoked_at = CURRENT_TIMESTAMP, revoked_by_telegram_user_id = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (user_id, link_id),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO telegram_audit_log
+                        (event_type, actor_type, actor_id, entity_type, entity_id)
+                    VALUES ('guest_link_revoked', 'telegram_user', ?, 'telegram_guest_link', ?)
+                    """,
+                    (str(user_id), str(link_id)),
+                )
+
+    def submit_quality_report(
+        self, *, telegram_user_id: int, kind: str, platform: str
+    ) -> TelegramQualityReport:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        if kind not in {"ok", "slow", "connection", "routes"}:
+            raise TelegramRegistryError("quality report type is invalid")
+        if platform not in {"android", "ios", "desktop", "other"}:
+            raise TelegramRegistryError("quality report platform is invalid")
+        with connect(self._db_path) as conn:
+            customer_id, _email_display = self._active_telegram_customer(conn, user_id)
+            cursor = conn.execute(
+                """
+                INSERT INTO telegram_quality_reports (telegram_user_id, customer_id, kind, platform)
+                VALUES (?, ?, ?, ?)
+                """,
+                (user_id, customer_id, kind, platform),
+            )
+            report_id = int(cursor.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key)
+                VALUES ('admin_quality_report_created', ?, ?)
+                """,
+                (str(report_id), f"admin:quality-report:{report_id}"),
+            )
+            row = conn.execute(
+                "SELECT created_at FROM telegram_quality_reports WHERE id = ?", (report_id,)
+            ).fetchone()
+        assert row is not None
+        return TelegramQualityReport(report_id, user_id, customer_id, kind, platform, str(row[0]))
+
+    def list_customer_quality_reports(
+        self, customer_id: int, *, limit: int = 5
+    ) -> tuple[TelegramQualityReport, ...]:
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
+            raise TelegramRegistryError("quality report limit is invalid")
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT id, telegram_user_id, customer_id, kind, platform, created_at
+                FROM telegram_quality_reports WHERE customer_id = ?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (local_customer_id, limit),
+            ).fetchall()
+        return tuple(TelegramQualityReport(
+            report_id=int(row[0]), telegram_user_id=int(row[1]), customer_id=int(row[2]),
+            kind=str(row[3]), platform=str(row[4]), created_at=str(row[5]),
+        ) for row in rows)
+
+    def list_subscription_token_events(
+        self, customer_id: int, *, limit: int = 5
+    ) -> tuple[TelegramSubscriptionTokenEvent, ...]:
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20:
+            raise TelegramRegistryError("subscription token event limit is invalid")
+        with connect(self._db_path) as conn:
+            row = conn.execute("SELECT email_display FROM customers WHERE id = ?", (local_customer_id,)).fetchone()
+            if row is None:
+                raise TelegramRegistryError("customer was not found")
+            events = conn.execute(
+                """
+                SELECT event_type, actor_type, actor_id, reason, created_at
+                FROM subscription_token_events
+                WHERE kind = 'email' AND identifier = ?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (str(row[0]), limit),
+            ).fetchall()
+        return tuple(TelegramSubscriptionTokenEvent(
+            event_type=str(event[0]), actor_type=str(event[1]),
+            actor_id=str(event[2]) if event[2] is not None else None,
+            reason=str(event[3]) if event[3] is not None else None,
+            created_at=str(event[4]),
+        ) for event in events)
+
     def list_traffic_reminder_candidates(self) -> tuple[CustomerTrafficQuotaCandidate, ...]:
         """Return only complete, finite TG traffic plans without node I/O.
 
@@ -1775,7 +2206,8 @@ class TelegramRegistry:
                 """
                 SELECT i.telegram_user_id, c.id, c.email_display,
                        b.node_id, b.inbound_id, b.remote_client_id,
-                       a.desired_total_bytes
+                       a.desired_total_bytes,
+                       COALESCE(p.traffic_reminder_thresholds, '[80,95,100]')
                 FROM telegram_identities AS i
                 JOIN customers AS c ON c.id = i.customer_id
                 JOIN customer_node_bindings AS b ON b.customer_id = c.id
@@ -1813,13 +2245,13 @@ class TelegramRegistry:
                 """
             ).fetchall()
 
-        grouped: dict[tuple[int, int, str], list[tuple[int, int, str, int | None]]] = {}
+        grouped: dict[tuple[int, int, str, tuple[int, ...]], list[tuple[int, int, str, int | None]]] = {}
         for row in rows:
-            key = (int(row[0]), int(row[1]), str(row[2]))
+            key = (int(row[0]), int(row[1]), str(row[2]), _normalize_traffic_thresholds(row[7]))
             grouped.setdefault(key, []).append((int(row[3]), int(row[4]), str(row[5]), row[6]))
 
         candidates: list[CustomerTrafficQuotaCandidate] = []
-        for (telegram_user_id, customer_id, email_display), bindings in grouped.items():
+        for (telegram_user_id, customer_id, email_display, thresholds), bindings in grouped.items():
             if not bindings or any(item[3] is None or int(item[3]) <= 0 for item in bindings):
                 continue
             quota_bindings = tuple(
@@ -1846,6 +2278,7 @@ class TelegramRegistry:
                     quota_total_bytes=sum(int(item[3]) for item in bindings),
                     quota_plan_digest=_payload_digest(quota_plan),
                     bindings=quota_bindings,
+                    traffic_reminder_thresholds=thresholds,
                 )
             )
         return tuple(candidates)
@@ -2423,6 +2856,50 @@ class TelegramRegistry:
                 (actor, digest),
             )
         return result
+
+    def set_service_notice_draft(
+        self, *, admin_telegram_user_id: int, expected_row_version: int
+    ) -> TelegramServiceNoticeDraft:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        if isinstance(expected_row_version, bool) or not isinstance(expected_row_version, int) or expected_row_version < 0:
+            raise TelegramRegistryError("service notice version is invalid")
+        with connect(self._db_path) as conn:
+            if conn.execute(
+                "SELECT 1 FROM telegram_identities WHERE telegram_user_id = ?", (admin_id,)
+            ).fetchone() is None:
+                raise TelegramRegistryError("Telegram identity was not found")
+            current = conn.execute(
+                "SELECT row_version FROM telegram_service_notice WHERE id = 1"
+            ).fetchone()
+            current_version = int(current[0]) if current is not None else 0
+            if current_version != expected_row_version:
+                raise VersionConflictError("service notice was updated by another administrator")
+            conn.execute(
+                """
+                INSERT INTO telegram_service_notice_drafts (admin_telegram_user_id, expected_row_version)
+                VALUES (?, ?)
+                ON CONFLICT(admin_telegram_user_id) DO UPDATE SET
+                    expected_row_version = excluded.expected_row_version, updated_at = CURRENT_TIMESTAMP
+                """,
+                (admin_id, expected_row_version),
+            )
+        return TelegramServiceNoticeDraft(admin_id, expected_row_version)
+
+    def get_service_notice_draft(self, admin_telegram_user_id: int) -> TelegramServiceNoticeDraft | None:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                "SELECT expected_row_version FROM telegram_service_notice_drafts WHERE admin_telegram_user_id = ?",
+                (admin_id,),
+            ).fetchone()
+        return TelegramServiceNoticeDraft(admin_id, int(row[0])) if row is not None else None
+
+    def clear_service_notice_draft(self, admin_telegram_user_id: int) -> None:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                "DELETE FROM telegram_service_notice_drafts WHERE admin_telegram_user_id = ?", (admin_id,)
+            )
 
     def create_customer(
         self,

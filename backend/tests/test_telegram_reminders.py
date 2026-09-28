@@ -187,7 +187,7 @@ def test_traffic_reminders_use_exact_finite_plan_bands_and_dedupe(tmp_path):
         ).fetchall()
         receipts = conn.execute(
             """
-            SELECT threshold_percent FROM telegram_traffic_reminder_receipts
+            SELECT threshold_percent FROM telegram_traffic_reminder_receipts_v2
             WHERE customer_id = ? ORDER BY threshold_percent
             """,
             (customer_id,),
@@ -196,6 +196,24 @@ def test_traffic_reminders_use_exact_finite_plan_bands_and_dedupe(tmp_path):
         ("43", 80), ("43", 95), ("43", 100)
     ]
     assert receipts == [(80,), (95,), (100,)]
+
+
+def test_traffic_reminders_honor_the_user_selected_fifty_percent_threshold(tmp_path):
+    db_path = str(tmp_path / "traffic-threshold.db")
+    init_db(db_path)
+    _active_customer_with_finite_traffic_quota(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.toggle_traffic_reminder_threshold(43, 50)
+    worker = TelegramReminderService(db_path, traffic_snapshot_loader=lambda _email, _bindings: 500)
+
+    result = worker.run_once()
+
+    assert (result.traffic_scanned, result.traffic_queued) == (1, 1)
+    with connect(db_path) as conn:
+        event = conn.execute(
+            "SELECT payload_json FROM telegram_outbox WHERE event_type = 'user_traffic_reminder'"
+        ).fetchone()
+    assert json.loads(event[0])["percent"] == 50
 
 
 def test_traffic_reminders_skip_unlimited_or_incomplete_plans_and_unknown_snapshot(tmp_path):
@@ -237,7 +255,7 @@ def test_traffic_reminder_requires_completed_initial_registration_and_sends_one_
         ).fetchone()
         receipts = conn.execute(
             """
-            SELECT threshold_percent FROM telegram_traffic_reminder_receipts
+            SELECT threshold_percent FROM telegram_traffic_reminder_receipts_v2
             WHERE customer_id = ? ORDER BY threshold_percent
             """,
             (customer_id,),

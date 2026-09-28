@@ -656,6 +656,16 @@ returned. Requests are rate-limited and include no-cache headers. A legacy raw
 email URL and a previously issued HMAC URL receive a temporary `302` redirect
 to the current token URL when the matching active subscription exists.
 
+### `GET /api/v1/guest-sub/{token}`
+
+Public delivery endpoint for an expiring guest link issued by the approved
+Telegram owner. It is not available from the management token API. A guest
+link has a selected finite lifetime, is rate-limited and no-cache, can be
+revoked by its owner, and never rotates or changes the owner's permanent
+subscription token. Only one live guest link exists per Telegram customer: a
+new one revokes the previous guest link immediately. A revoked, expired,
+suspended or deleted customer's guest token returns `404`.
+
 ### `GET /api/v1/sub-grouped/{token}`
 
 Public grouped-subscription delivery endpoint. Its token is returned only by the
