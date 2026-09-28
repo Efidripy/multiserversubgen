@@ -59,6 +59,7 @@ def build_nodes_router(
     snapshot_collector,
     ws_manager,
     logger,
+    reconcile_telegram_node: Callable[[int], None] | None = None,
 ):
     router = APIRouter()
 
@@ -475,6 +476,15 @@ def build_nodes_router(
                 invalidate_session_cache(updated_node_key)
                 invalidate_node_capabilities(updated_node_key)
 
+        if updated_connection and updated_connection["panel_url"] != node_panel_url and reconcile_telegram_node:
+            # A changed endpoint can point to a freshly installed panel. Re-read
+            # its TG bindings before the bot presents local history as remote state.
+            # The reconciler does read-only XUI I/O; failure preserves local state.
+            try:
+                reconcile_telegram_node(node_id)
+            except Exception as exc:
+                logger.warning("Telegram binding scan after node endpoint update failed for %s: %s", node_id, type(exc).__name__)
+
         try:
             invalidate_subscription_cache()
         except Exception as exc:
@@ -489,9 +499,56 @@ def build_nodes_router(
 
         try:
             with connect(db_path) as conn:
+                exists = conn.execute("SELECT 1 FROM nodes WHERE id = ?", (node_id,)).fetchone()
+                if exists is None:
+                    raise HTTPException(status_code=404, detail="Node not found")
+
+                # Control-plane deletion only: never call XUI and never delete
+                # remote clients. Remove local dependent lifecycle records in
+                # FK-safe order, regardless of prior Telegram assignments.
+                conn.execute("CREATE TEMP TABLE deleted_node_provisioning_jobs (id INTEGER PRIMARY KEY)")
+                conn.execute("CREATE TEMP TABLE deleted_node_operations (id INTEGER PRIMARY KEY)")
+                conn.execute(
+                    "INSERT INTO deleted_node_provisioning_jobs "
+                    "SELECT DISTINCT job_id FROM telegram_provisioning_attempts WHERE node_id = ?",
+                    (node_id,),
+                )
+                conn.execute(
+                    "INSERT INTO deleted_node_operations "
+                    "SELECT DISTINCT operation_id FROM telegram_customer_operation_attempts WHERE node_id = ?",
+                    (node_id,),
+                )
+                conn.execute("DELETE FROM telegram_customer_operation_attempts WHERE node_id = ?", (node_id,))
+                conn.execute("DELETE FROM telegram_provisioning_attempts WHERE node_id = ?", (node_id,))
+                conn.execute("DELETE FROM customer_node_bindings WHERE node_id = ?", (node_id,))
+
+                # Preserve jobs that still target other nodes. Delete only the
+                # now-empty local jobs/operations and their bulk references.
+                conn.execute(
+                    "DELETE FROM telegram_provisioning_jobs WHERE id IN "
+                    "(SELECT id FROM deleted_node_provisioning_jobs) "
+                    "AND NOT EXISTS (SELECT 1 FROM telegram_provisioning_attempts "
+                    "WHERE telegram_provisioning_attempts.job_id = telegram_provisioning_jobs.id)"
+                )
+                conn.execute(
+                    "DELETE FROM telegram_bulk_lifecycle_items WHERE operation_id IN "
+                    "(SELECT id FROM deleted_node_operations) "
+                    "AND NOT EXISTS (SELECT 1 FROM telegram_customer_operation_attempts "
+                    "WHERE telegram_customer_operation_attempts.operation_id = telegram_bulk_lifecycle_items.operation_id)"
+                )
+                conn.execute(
+                    "DELETE FROM telegram_customer_operations WHERE id IN "
+                    "(SELECT id FROM deleted_node_operations) "
+                    "AND NOT EXISTS (SELECT 1 FROM telegram_customer_operation_attempts "
+                    "WHERE telegram_customer_operation_attempts.operation_id = telegram_customer_operations.id)"
+                )
+                conn.execute("DELETE FROM client_notes WHERE node_id = ?", (node_id,))
+                conn.execute("DELETE FROM node_history WHERE node_id = ?", (node_id,))
                 conn.execute("DELETE FROM node_snapshots WHERE node_id = ?", (node_id,))
                 conn.execute("DELETE FROM nodes WHERE id = ?", (node_id,))
                 conn.commit()
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.error(f"Error deleting node: {exc}")
             raise HTTPException(status_code=500, detail="Internal server error")

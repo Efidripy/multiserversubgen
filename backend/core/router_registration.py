@@ -13,7 +13,9 @@ from routers.server_ops import build_server_ops_router
 from routers.subscriptions import build_subscriptions_router
 from routers.telegram_admin import build_telegram_admin_router
 from routers.telegram_webhook import build_telegram_webhook_router
+from services.telegram_drift import TelegramDriftScanner
 from services.telegram_provisioning import ClientManagerLegacyDiscovery
+from services.telegram_registry import TelegramRegistry
 
 
 def register_app_routers(
@@ -140,6 +142,13 @@ def register_app_routers(
             snapshot_collector=snapshot_collector,
             ws_manager=ws_manager,
             logger=logger,
+            reconcile_telegram_node=(
+                TelegramDriftScanner(
+                    registry=TelegramRegistry(db_path), list_nodes=list_nodes, client_manager=client_mgr
+                ).scan
+                if client_mgr is not None
+                else None
+            ),
         )
     )
     app.include_router(
