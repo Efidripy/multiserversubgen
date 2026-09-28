@@ -164,8 +164,10 @@ class TelegramRegistrationService:
         return {
             "inline_keyboard": [
                 [{"text": "Заявки", "callback_data": "admin:requests:0"}],
-                [{"text": "Пользователи", "callback_data": "admin:customers:0"}],
-                [{"text": "TG-ноды", "callback_data": "admin:nodes:0"}],
+                [
+                    {"text": "Пользователи", "callback_data": "admin:customers:0"},
+                    {"text": "TG-ноды", "callback_data": "admin:nodes:0"},
+                ],
                 [{"text": "Проблемы синхронизации", "callback_data": "admin:issues"}],
                 [{"text": "Статус сервиса", "callback_data": "admin:service"}],
                 [{"text": "Рассылки", "callback_data": "admin:broadcasts"}],
