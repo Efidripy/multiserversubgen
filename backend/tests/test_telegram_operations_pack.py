@@ -145,6 +145,34 @@ def test_drift_scanner_does_not_report_intentional_subset_and_persists_only_real
     assert result.finding_count == 1
 
 
+def test_missing_remote_binding_becomes_addable_after_a_completed_drift_scan(tmp_path):
+    _db_path, registry, customer_id = _customer_with_binding(tmp_path)
+
+    class StrictManager:
+        @staticmethod
+        def get_node_clients_strict(_node):
+            return []
+
+    scanner = TelegramDriftScanner(
+        registry=registry,
+        list_nodes=lambda: [{"id": 1, "name": "edge-1", "enabled": 1, "read_only": 0}],
+        client_manager=StrictManager(),
+    )
+
+    result = scanner.scan(node_ids=[1])
+
+    assert result.scanned_node_ids == (1,)
+    assert registry.customer_node_matrix(customer_id)[0].state == "available_to_add"
+    queued = registry.queue_customer_node_add(
+        customer_id=customer_id,
+        node_id=1,
+        expected_customer_version=registry.get_customer(customer_id).row_version,
+        idempotency_key="repair-missing-binding",
+        created_by="admin",
+    )
+    assert queued.status == "queued"
+
+
 def test_panel_bot_token_is_write_only_encrypted_and_versioned(tmp_path):
     db_path = str(tmp_path / "bot-token.db")
     init_db(db_path)
