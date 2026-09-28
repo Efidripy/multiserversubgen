@@ -460,7 +460,7 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
     access_choice = service.handle_update(_callback(22, "subscription:get"))
     qr = service.handle_update(_callback(23, "subscription:qr"))
 
-    assert any(button[0]["text"] == "⊞ Подключение" for button in home[0].reply_markup["inline_keyboard"])
+    assert any(button[0]["text"] == "⊞ Приложения" for button in home[0].reply_markup["inline_keyboard"])
     assert any(button[0]["text"] == "⊙ Мои устройства" for button in home[0].reply_markup["inline_keyboard"])
     assert assistant[0].text.startswith("Выберите устройство")
     assert not assistant[0].text.startswith("Подключение")
@@ -481,6 +481,11 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
         for row in home[0].reply_markup["inline_keyboard"]
         for button in row
     }
+    home_action_order = [
+        button["callback_data"]
+        for row in home[0].reply_markup["inline_keyboard"]
+        for button in row
+    ]
     access_actions = {
         button["callback_data"]
         for row in access_choice[0].reply_markup["inline_keyboard"]
@@ -493,6 +498,8 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
         if "callback_data" in button
     }
     assert {"subscription:rotate", "setup:diagnostics"}.isdisjoint(home_actions)
+    assert {"quality:menu", "service:status"}.isdisjoint(home_actions)
+    assert home_action_order.index("devices:menu") < home_action_order.index("setup:menu")
     assert {"subscription:link", "subscription:qr", "setup:diagnostics", "subscription:rotate"}.issubset(access_actions)
     assert "setup:diagnostics" not in guide_actions
     assert all(
@@ -504,6 +511,13 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
     assert qr[0].photo_png.startswith(b"\x89PNG\r\n\x1a\n")
     assert "https://" not in qr[0].text
     assert "api/v1/sub" not in qr[0].text
+    help_message = service.handle_update(_callback(29, "help"))[0]
+    help_actions = {
+        button["callback_data"]
+        for row in help_message.reply_markup["inline_keyboard"]
+        for button in row
+    }
+    assert {"quality:menu", "service:status"}.issubset(help_actions)
 
 
 def test_approved_menu_uses_my_devices_in_english():
@@ -1007,6 +1021,44 @@ def test_subscription_device_actions_show_rename_and_soft_revoke_only_that_link(
         ).fetchone() == ("subscription_device_revoked",)
 
 
+def test_primary_device_actions_show_link_rename_and_primary_only_rotation(tmp_path):
+    db_path = str(tmp_path / "primary-device-actions.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="primary_actions")
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    devices = service.handle_update(_callback(1, "devices:menu"))[0]
+    primary_callback = next(
+        item["callback_data"]
+        for row in devices.reply_markup["inline_keyboard"]
+        for item in row
+        if item.get("callback_data") == "subscription-primary:menu"
+    )
+    actions = service.handle_update(_callback(2, primary_callback))[0]
+    action_callbacks = {
+        item.get("callback_data")
+        for row in actions.reply_markup["inline_keyboard"]
+        for item in row
+    }
+    action_texts = {
+        item.get("text")
+        for row in actions.reply_markup["inline_keyboard"]
+        for item in row
+    }
+
+    assert {"subscription:link:primary", "subscription:rotate:primary"}.issubset(action_callbacks)
+    assert any(callback.startswith("device:rename:") for callback in action_callbacks)
+    assert {"⊙ Показать ссылку", "✎ Переименовать", "↻ Сменить ссылку"}.issubset(action_texts)
+    assert not any(callback.startswith("subscription-device:revoke:") for callback in action_callbacks)
+
+
 def test_primary_admin_can_view_issue_queue_and_set_or_cancel_a_neutral_service_notice(tmp_path):
     db_path = str(tmp_path / "admin-ops.db")
     init_db(db_path)
@@ -1311,7 +1363,11 @@ def test_active_user_can_submit_one_categorized_support_request_without_affectin
     accepted = service.handle_update(_message(4, "Приложение не подключается."))
     duplicate = service.handle_update(_callback(5, "support:category:other"))
 
-    assert "поддерж" in help_message[0].reply_markup["inline_keyboard"][2][0]["text"].lower()
+    assert any(
+        "поддерж" in button["text"].lower()
+        for row in help_message[0].reply_markup["inline_keyboard"]
+        for button in row
+    )
     assert menu[0].reply_markup["inline_keyboard"][1][0] == {
         "text": "Подключение не работает", "callback_data": "support:category:connection"
     }
