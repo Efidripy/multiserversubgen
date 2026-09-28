@@ -144,6 +144,27 @@ class NodeProvisioningPolicy:
 
 
 @dataclass(frozen=True)
+class NodeBulkActionPreview:
+    """Durable, confirmation-gated action scoped to one Telegram node."""
+
+    node_id: int
+    node_name: str
+    action: str
+    target_count: int
+    target_snapshot_digest: str
+    page: int
+
+
+@dataclass(frozen=True)
+class NodeBulkActionQueueResult:
+    node_id: int
+    action: str
+    target_count: int
+    queued_count: int
+    cancelled_attempt_count: int
+
+
+@dataclass(frozen=True)
 class CustomerNodeMatrixRow:
     node_id: int
     node_name: str
@@ -4054,6 +4075,409 @@ class TelegramRegistry:
                 """
             ).fetchall()
         return [_policy_from_row(row) for row in rows]
+
+    @staticmethod
+    def _node_bulk_action(value: str) -> str:
+        if value not in {"add_all", "remove_all"}:
+            raise TelegramRegistryError("unsupported node bulk action")
+        return value
+
+    def _node_bulk_action_snapshot(
+        self, conn: sqlite3.Connection, *, node_id: int, action: str, page: int
+    ) -> tuple[NodeBulkActionPreview, tuple[dict[str, Any], ...]]:
+        """Build a local-only immutable target snapshot for one node action."""
+
+        node = conn.execute(
+            """
+            SELECT n.id, n.name, n.enabled, n.read_only, p.provisioning_enabled,
+                   p.total_bytes, p.validity_days, p.client_enabled, p.policy_version
+            FROM nodes AS n
+            LEFT JOIN telegram_node_policies AS p ON p.node_id = n.id
+            WHERE n.id = ?
+            """,
+            (node_id,),
+        ).fetchone()
+        if node is None:
+            raise TelegramRegistryError("node was not found")
+        node_name = str(node[1])
+
+        if action == "add_all":
+            if node[4] is None or not bool(node[4]) or not bool(node[2]) or bool(node[3]):
+                raise NodePolicyUnavailableError("node is not eligible for Telegram provisioning")
+            rows = conn.execute(
+                """
+                SELECT c.id, c.row_version, c.email_display
+                FROM customers AS c
+                LEFT JOIN customer_node_bindings AS b
+                  ON b.customer_id = c.id AND b.node_id = ? AND b.inbound_id = 1
+                WHERE c.status = 'active' AND c.deleted_at IS NULL
+                  AND EXISTS (
+                      SELECT 1 FROM telegram_identities AS i
+                      WHERE i.customer_id = c.id AND i.access_status = 'approved'
+                  )
+                  AND (b.id IS NULL OR b.management_state = 'missing')
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM telegram_provisioning_jobs AS j
+                      JOIN telegram_provisioning_attempts AS a ON a.job_id = j.id
+                      WHERE j.customer_id = c.id AND a.node_id = ? AND a.inbound_id = 1
+                        AND j.status IN ('queued', 'running', 'partial')
+                        AND a.status IN ('pending', 'reconciling', 'creating', 'ambiguous')
+                  )
+                ORDER BY c.id
+                """,
+                (node_id, node_id),
+            ).fetchall()
+            targets = tuple(
+                {
+                    "customer_id": int(row[0]),
+                    "customer_version": int(row[1]),
+                    "email": str(row[2]),
+                }
+                for row in rows
+            )
+        else:
+            inflight = conn.execute(
+                """
+                SELECT 1
+                FROM telegram_provisioning_attempts AS a
+                JOIN telegram_provisioning_jobs AS j ON j.id = a.job_id
+                WHERE a.node_id = ? AND j.status IN ('queued', 'running', 'partial')
+                  AND a.status IN ('reconciling', 'creating')
+                UNION ALL
+                SELECT 1
+                FROM telegram_customer_operation_attempts AS a
+                JOIN telegram_customer_operations AS o ON o.id = a.operation_id
+                WHERE a.node_id = ? AND o.status IN ('queued', 'running', 'partial')
+                  AND a.status IN ('pending', 'ambiguous', 'reconciling', 'writing')
+                LIMIT 1
+                """,
+                (node_id, node_id),
+            ).fetchone()
+            if inflight is not None:
+                raise LifecycleUnavailableError("node has an in-flight remote operation")
+            rows = conn.execute(
+                """
+                SELECT b.id, c.id, c.row_version, b.inbound_id, b.remote_client_id,
+                       b.remote_sub_id, b.remote_email
+                FROM customer_node_bindings AS b
+                JOIN customers AS c ON c.id = b.customer_id
+                WHERE b.node_id = ? AND b.inbound_id = 1
+                  AND b.management_state = 'confirmed' AND b.remote_client_id IS NOT NULL
+                  AND b.remote_client_id <> ''
+                  AND c.deleted_at IS NULL AND c.status <> 'deleted'
+                  AND EXISTS (
+                      SELECT 1 FROM telegram_identities AS i WHERE i.customer_id = c.id
+                  )
+                ORDER BY b.id
+                """,
+                (node_id,),
+            ).fetchall()
+            targets = tuple(
+                {
+                    "binding_id": int(row[0]),
+                    "customer_id": int(row[1]),
+                    "customer_version": int(row[2]),
+                    "inbound_id": int(row[3]),
+                    "remote_client_id": str(row[4]),
+                    "remote_sub_id": str(row[5] or ""),
+                    "remote_email": str(row[6]),
+                }
+                for row in rows
+            )
+
+        snapshot = {
+            "node_id": node_id,
+            "node_name": node_name,
+            "policy_version": int(node[8]) if node[8] is not None else 0,
+            "action": action,
+            "targets": targets,
+        }
+        return (
+            NodeBulkActionPreview(
+                node_id=node_id,
+                node_name=node_name,
+                action=action,
+                target_count=len(targets),
+                target_snapshot_digest=_payload_digest(snapshot),
+                page=page,
+            ),
+            targets,
+        )
+
+    def preview_node_bulk_action(
+        self, *, node_id: int, action: str, page: int = 0
+    ) -> NodeBulkActionPreview:
+        normalized_node_id = _positive_int(node_id, "node_id")
+        normalized_action = self._node_bulk_action(action)
+        if isinstance(page, bool) or not isinstance(page, int) or page < 0:
+            raise TelegramRegistryError("page is invalid")
+        with connect(self._db_path) as conn:
+            preview, _ = self._node_bulk_action_snapshot(
+                conn, node_id=normalized_node_id, action=normalized_action, page=page
+            )
+        return preview
+
+    def begin_node_bulk_action_preview(
+        self, *, admin_telegram_user_id: int, node_id: int, action: str, page: int
+    ) -> NodeBulkActionPreview:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        normalized_node_id = _positive_int(node_id, "node_id")
+        normalized_action = self._node_bulk_action(action)
+        if isinstance(page, bool) or not isinstance(page, int) or page < 0:
+            raise TelegramRegistryError("page is invalid")
+        with connect(self._db_path) as conn:
+            preview, _ = self._node_bulk_action_snapshot(
+                conn, node_id=normalized_node_id, action=normalized_action, page=page
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_node_bulk_action_previews
+                    (admin_telegram_user_id, node_id, action, target_snapshot_digest, target_count, page)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(admin_telegram_user_id) DO UPDATE SET
+                    node_id = excluded.node_id, action = excluded.action,
+                    target_snapshot_digest = excluded.target_snapshot_digest,
+                    target_count = excluded.target_count, page = excluded.page,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    admin_id, preview.node_id, preview.action, preview.target_snapshot_digest,
+                    preview.target_count, preview.page,
+                ),
+            )
+        return preview
+
+    def clear_node_bulk_action_preview(self, admin_telegram_user_id: int) -> None:
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                "DELETE FROM telegram_node_bulk_action_previews WHERE admin_telegram_user_id = ?",
+                (admin_id,),
+            )
+
+    def queue_node_bulk_action(
+        self,
+        *,
+        admin_telegram_user_id: int,
+        node_id: int,
+        action: str,
+        idempotency_key: str,
+        created_by: str,
+    ) -> NodeBulkActionQueueResult:
+        """Queue a confirmed node-wide action without doing remote I/O.
+
+        `remove_all` deliberately uses node-scoped lifecycle rows with the
+        real `delete_client` action.  Its operation type remains
+        `suspend_node` for backwards-compatible SQLite constraints; the
+        lifecycle worker keys behavior off the immutable attempt action, and
+        therefore never changes the global customer lifecycle state.
+        """
+
+        admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
+        normalized_node_id = _positive_int(node_id, "node_id")
+        normalized_action = self._node_bulk_action(action)
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(created_by, "created_by")
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                """
+                SELECT result_json FROM telegram_command_receipts
+                WHERE scope = 'node_bulk_action' AND idempotency_key = ?
+                """,
+                (key,),
+            ).fetchone()
+            if receipt is not None:
+                replay = NodeBulkActionQueueResult(**json.loads(str(receipt[0])))
+                if replay.node_id != normalized_node_id or replay.action != normalized_action:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return replay
+            stored_preview = conn.execute(
+                """
+                SELECT target_snapshot_digest, target_count, page
+                FROM telegram_node_bulk_action_previews
+                WHERE admin_telegram_user_id = ? AND node_id = ? AND action = ?
+                """,
+                (admin_id, normalized_node_id, normalized_action),
+            ).fetchone()
+            if stored_preview is None:
+                raise VersionConflictError("node bulk confirmation is missing")
+            preview, targets = self._node_bulk_action_snapshot(
+                conn, node_id=normalized_node_id, action=normalized_action, page=int(stored_preview[2])
+            )
+            if (
+                preview.target_snapshot_digest != str(stored_preview[0])
+                or preview.target_count != int(stored_preview[1])
+            ):
+                raise VersionConflictError("node bulk preview is stale")
+            payload = {
+                "node_id": normalized_node_id,
+                "action": normalized_action,
+                "target_snapshot_digest": preview.target_snapshot_digest,
+            }
+            digest = _payload_digest(payload)
+            cancelled_attempt_count = 0
+            if normalized_action == "add_all":
+                policy = conn.execute(
+                    """
+                    SELECT total_bytes, validity_days, client_enabled, policy_version
+                    FROM telegram_node_policies WHERE node_id = ? AND provisioning_enabled = 1
+                    """,
+                    (normalized_node_id,),
+                ).fetchone()
+                if policy is None:
+                    raise NodePolicyUnavailableError("node is not eligible for Telegram provisioning")
+                desired_expiry_time = (
+                    int(datetime.now(timezone.utc).timestamp() * 1000)
+                    + int(policy[1]) * 24 * 60 * 60 * 1000
+                    if int(policy[1]) > 0
+                    else 0
+                )
+                for target in targets:
+                    job = conn.execute(
+                        """
+                        INSERT INTO telegram_provisioning_jobs
+                            (customer_id, trigger, idempotency_key, policy_snapshot_digest, created_by)
+                        VALUES (?, 'node_backfill', ?, ?, ?)
+                        """,
+                        (
+                            target["customer_id"], f"node-bulk-add:{key}:{target['customer_id']}",
+                            _payload_digest({
+                                "customer_id": target["customer_id"], "node_id": normalized_node_id,
+                                "email": target["email"], "inbound_id": BOT_INBOUND_ID,
+                                "flow": BOT_CLIENT_FLOW, "policy_version": int(policy[3]),
+                            }),
+                            actor,
+                        ),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO telegram_provisioning_attempts
+                            (job_id, node_id, inbound_id, desired_client_id, desired_sub_id,
+                             desired_flow, desired_total_bytes, desired_validity_days,
+                             desired_expiry_time, desired_client_enabled, policy_version)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            int(job.lastrowid), normalized_node_id, BOT_INBOUND_ID,
+                            str(uuid.uuid4()), str(uuid.uuid4()), BOT_CLIENT_FLOW,
+                            int(policy[0]), int(policy[1]), desired_expiry_time,
+                            int(bool(policy[2])), int(policy[3]),
+                        ),
+                    )
+                queued_count = len(targets)
+            else:
+                cancelled_attempt_count = conn.execute(
+                    """
+                    UPDATE telegram_provisioning_attempts
+                    SET status = 'skipped', error_code = 'node_bulk_remove_cancelled',
+                        error_summary = NULL, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                    WHERE node_id = ? AND status IN ('pending', 'ambiguous')
+                      AND job_id IN (
+                          SELECT id FROM telegram_provisioning_jobs
+                          WHERE status IN ('queued', 'running', 'partial')
+                      )
+                    """,
+                    (normalized_node_id,),
+                ).rowcount
+                conn.execute(
+                    """
+                    UPDATE telegram_provisioning_jobs AS j
+                    SET status = 'cancelled', lease_owner = NULL, lease_until = NULL,
+                        next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP,
+                        row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE j.status IN ('queued', 'running', 'partial')
+                      AND EXISTS (
+                          SELECT 1 FROM telegram_provisioning_attempts AS a
+                          WHERE a.job_id = j.id AND a.node_id = ?
+                      )
+                      AND NOT EXISTS (
+                          SELECT 1 FROM telegram_provisioning_attempts AS a
+                          WHERE a.job_id = j.id
+                            AND a.status IN ('pending', 'ambiguous', 'reconciling', 'creating')
+                      )
+                    """,
+                    (normalized_node_id,),
+                )
+                policy = conn.execute(
+                    "SELECT node_id FROM telegram_node_policies WHERE node_id = ?", (normalized_node_id,)
+                ).fetchone()
+                if policy is None:
+                    conn.execute(
+                        """
+                        INSERT INTO telegram_node_policies
+                            (node_id, provisioning_enabled, total_bytes, validity_days,
+                             client_enabled, policy_version, updated_by)
+                        VALUES (?, 0, 0, 0, 1, 1, ?)
+                        """,
+                        (normalized_node_id, actor),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE telegram_node_policies
+                        SET provisioning_enabled = 0, policy_version = policy_version + 1,
+                            updated_by = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE node_id = ?
+                        """,
+                        (actor, normalized_node_id),
+                    )
+                for target in targets:
+                    target_snapshot = {
+                        "customer_id": target["customer_id"], "node_id": normalized_node_id,
+                        "operation_type": "remove_node_binding", "target": target,
+                    }
+                    operation = conn.execute(
+                        """
+                        INSERT INTO telegram_customer_operations
+                            (customer_id, operation_type, status, target_snapshot_digest,
+                             expected_customer_version, idempotency_key, created_by)
+                        VALUES (?, 'suspend_node', 'queued', ?, ?, ?, ?)
+                        """,
+                        (
+                            target["customer_id"], _payload_digest(target_snapshot), target["customer_version"],
+                            f"node-bulk-remove:{key}:{target['binding_id']}", actor,
+                        ),
+                    )
+                    conn.execute(
+                        """
+                        INSERT INTO telegram_customer_operation_attempts
+                            (operation_id, binding_id, node_id, inbound_id, remote_client_id,
+                             remote_sub_id, remote_email, action, previous_enabled)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, 'delete_client', NULL)
+                        """,
+                        (
+                            int(operation.lastrowid), target["binding_id"], normalized_node_id,
+                            target["inbound_id"], target["remote_client_id"],
+                            target["remote_sub_id"], target["remote_email"],
+                        ),
+                    )
+                queued_count = len(targets)
+
+            result = NodeBulkActionQueueResult(
+                node_id=normalized_node_id, action=normalized_action, target_count=len(targets),
+                queued_count=queued_count, cancelled_attempt_count=cancelled_attempt_count,
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
+                VALUES ('node_bulk_action', ?, ?, ?)
+                """,
+                (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES (?, 'admin', ?, 'node', ?, ?)
+                """,
+                (f"node_bulk_{normalized_action}_queued", actor, str(normalized_node_id), digest),
+            )
+            conn.execute(
+                "DELETE FROM telegram_node_bulk_action_previews WHERE admin_telegram_user_id = ?",
+                (admin_id,),
+            )
+        return result
 
     def customer_node_matrix(self, customer_id: int) -> list[CustomerNodeMatrixRow]:
         """Return only bindings plus genuine Telegram-enabled add targets."""

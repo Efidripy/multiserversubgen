@@ -205,7 +205,60 @@ class TelegramRegistrationService:
             navigation.append({"text": "›", "callback_data": f"admin:nodes:{current_page + 1}"})
         buttons.append(navigation)
         buttons.append([{"text": "← Меню", "callback_data": "admin:home"}])
-        return TelegramOutboundMessage(chat_id, "TG-ноды. Нажмите, чтобы включить или выключить добавление новых пользователей.", {"inline_keyboard": buttons})
+        return TelegramOutboundMessage(chat_id, "TG-ноды. Нажмите на ноду, чтобы открыть её меню.", {"inline_keyboard": buttons})
+
+    def _admin_node_message(self, chat_id: int, node_id: int, page: int) -> TelegramOutboundMessage:
+        if not self._list_nodes:
+            return TelegramOutboundMessage(chat_id, "Список нод пока недоступен.", self._admin_home_menu())
+        try:
+            nodes = self._list_nodes()
+        except Exception:
+            return TelegramOutboundMessage(chat_id, "Список нод пока недоступен.", self._admin_home_menu())
+        node = next(
+            (
+                item for item in nodes
+                if isinstance(item, dict) and item.get("id") == node_id
+                and bool(item.get("enabled", True)) and not bool(item.get("read_only", False))
+            ),
+            None,
+        )
+        if node is None:
+            return TelegramOutboundMessage(chat_id, "Нода больше недоступна для Telegram.", self._admin_nodes_message(chat_id, page).reply_markup)
+        policies = {policy.node_id: policy for policy in self._registry.list_node_provisioning_policies()}
+        policy = policies.get(node_id)
+        enabled = bool(policy and policy.provisioning_enabled)
+        node_name = str(node.get("name") or f"node-{node_id}").replace("\n", " ")[:80]
+        lines = [
+            f"TG-нода: {node_name}",
+            f"Доступность в Telegram: {'включена' if enabled else 'выключена'}",
+        ]
+        buttons: list[list[dict[str, str]]] = [[{
+            "text": "Выключить доступность в TG" if enabled else "Включить доступность в TG",
+            "callback_data": f"admin:node-toggle:{node_id}:{page}",
+        }]]
+        if enabled:
+            try:
+                add_preview = self._registry.preview_node_bulk_action(node_id=node_id, action="add_all", page=page)
+                lines.append(f"Можно добавить: {add_preview.target_count}")
+                if add_preview.target_count:
+                    buttons.append([{
+                        "text": f"＋ Добавить всех пользователей ({add_preview.target_count})",
+                        "callback_data": f"admin:node-bulk:add_all:{node_id}:{page}",
+                    }])
+            except (LifecycleUnavailableError, NodePolicyUnavailableError, TelegramRegistryError):
+                lines.append("Добавление пользователей: нода пока не готова")
+        try:
+            remove_preview = self._registry.preview_node_bulk_action(node_id=node_id, action="remove_all", page=page)
+            lines.append(f"Пользователей на ноде: {remove_preview.target_count}")
+            if remove_preview.target_count:
+                buttons.append([{
+                    "text": f"⌫ Удалить всех ({remove_preview.target_count}) и выключить TG",
+                    "callback_data": f"admin:node-bulk:remove_all:{node_id}:{page}",
+                }])
+        except LifecycleUnavailableError:
+            lines.append("Удаление пользователей: дождитесь завершения текущей операции")
+        buttons.append([{"text": "← TG-ноды", "callback_data": f"admin:nodes:{page}"}])
+        return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
 
     def _admin_requests_message(self, chat_id: int, page: int) -> TelegramOutboundMessage:
         requests = self._registry.list_pending_applications()
@@ -703,12 +756,14 @@ class TelegramRegistrationService:
             self._registry.clear_admin_message_draft(user_id)
             self._registry.clear_customer_note_draft(user_id)
             self._registry.clear_support_reply_draft(user_id)
+            self._registry.clear_node_bulk_action_preview(user_id)
             return [TelegramOutboundMessage(chat_id, "Управление доступом.", self._admin_home_menu())]
         if callback_data == "admin:home":
             self._registry.clear_admin_draft(user_id)
             self._registry.clear_admin_message_draft(user_id)
             self._registry.clear_customer_note_draft(user_id)
             self._registry.clear_support_reply_draft(user_id)
+            self._registry.clear_node_bulk_action_preview(user_id)
             return [TelegramOutboundMessage(chat_id, "Управление доступом.", self._admin_home_menu())]
         if callback_data is not None and callback_data != "admin:support-reply-confirm":
             # A navigation click deliberately cancels a pending text entry, so
@@ -848,6 +903,7 @@ class TelegramRegistrationService:
                 return [self._admin_customer_message(chat_id, customer_id, page)]
             if len(parts) == 3 and parts[:2] == ["admin", "nodes"]:
                 self._registry.clear_admin_message_draft(user_id)
+                self._registry.clear_node_bulk_action_preview(user_id)
                 return [self._admin_nodes_message(chat_id, int(parts[2]))]
             if len(parts) == 3 and parts[:2] == ["admin", "requests"]:
                 self._registry.clear_admin_message_draft(user_id)
@@ -890,6 +946,10 @@ class TelegramRegistrationService:
                 return [self._admin_request_message(chat_id, target_user_id, page)]
             if len(parts) == 4 and parts[:2] == ["admin", "node"]:
                 node_id, page = int(parts[2]), int(parts[3])
+                self._registry.clear_node_bulk_action_preview(user_id)
+                return [self._admin_node_message(chat_id, node_id, page)]
+            if len(parts) == 4 and parts[:2] == ["admin", "node-toggle"]:
+                node_id, page = int(parts[2]), int(parts[3])
                 policies = {policy.node_id: policy for policy in self._registry.list_node_provisioning_policies()}
                 current = policies.get(node_id)
                 enabled = not bool(current and current.provisioning_enabled)
@@ -908,7 +968,50 @@ class TelegramRegistrationService:
                     updated_by=f"telegram:{user_id}", node_is_compatible=compatible,
                 )
                 state = "включена" if policy.provisioning_enabled else "выключена"
-                return [TelegramOutboundMessage(chat_id, f"TG-политика ноды {state}.", self._admin_nodes_message(chat_id, page).reply_markup)]
+                detail = self._admin_node_message(chat_id, node_id, page)
+                return [TelegramOutboundMessage(chat_id, f"TG-политика ноды {state}.\n\n{detail.text}", detail.reply_markup)]
+            if len(parts) == 5 and parts[:2] == ["admin", "node-bulk"]:
+                action, node_id, page = parts[2], int(parts[3]), int(parts[4])
+                preview = self._registry.begin_node_bulk_action_preview(
+                    admin_telegram_user_id=user_id, node_id=node_id, action=action, page=page,
+                )
+                if action == "add_all":
+                    text = (
+                        f"Добавить на TG-ноду «{preview.node_name}» всех доступных пользователей: "
+                        f"{preview.target_count}?\n\nДобавление будет поставлено в очередь."
+                    )
+                    confirm_text = "✓ Добавить всех"
+                else:
+                    text = (
+                        f"Удалить с TG-ноды «{preview.node_name}» пользователей: {preview.target_count}?\n\n"
+                        "Их записи на других нодах и сами пользователи останутся без изменений. "
+                        "TG-доступность этой ноды будет выключена; удаление поставится в очередь."
+                    )
+                    confirm_text = "✓ Удалить всех и выключить TG"
+                return [TelegramOutboundMessage(chat_id, text, {"inline_keyboard": [
+                    [{"text": confirm_text, "callback_data": f"admin:node-bulk-confirm:{action}:{node_id}:{page}"}],
+                    [{"text": "Отмена", "callback_data": f"admin:node:{node_id}:{page}"}],
+                ]})]
+            if len(parts) == 5 and parts[:2] == ["admin", "node-bulk-confirm"]:
+                action, node_id, page = parts[2], int(parts[3]), int(parts[4])
+                result = self._registry.queue_node_bulk_action(
+                    admin_telegram_user_id=user_id,
+                    node_id=node_id,
+                    action=action,
+                    idempotency_key=f"telegram-admin-node-bulk:{update_id}:{action}:{node_id}",
+                    created_by=f"telegram:{user_id}",
+                )
+                detail = self._admin_node_message(chat_id, node_id, page)
+                if action == "add_all":
+                    outcome = f"Добавление пользователей поставлено в очередь: {result.queued_count}."
+                else:
+                    outcome = (
+                        f"Удаление пользователей поставлено в очередь: {result.queued_count}. "
+                        "TG-доступность ноды выключена."
+                    )
+                    if result.cancelled_attempt_count:
+                        outcome += f" Отменено ожидающих добавлений: {result.cancelled_attempt_count}."
+                return [TelegramOutboundMessage(chat_id, f"{outcome}\n\n{detail.text}", detail.reply_markup)]
             if len(parts) == 5 and parts[:2] == ["admin", "new"]:
                 target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
                 item = self._registry.get_pending_application(target_user_id)
