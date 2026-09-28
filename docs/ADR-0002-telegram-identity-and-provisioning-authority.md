@@ -28,6 +28,14 @@ node to become the authority for the customer lifecycle.
   panel `TG` control and Telegram administrator UI. A policy is independent of
   `nodes.enabled`; writes require both a valid enabled policy and a writable,
   compatible node.
+- The Telegram node card has explicit, confirmation-gated bulk actions. Adding
+  all eligible approved Telegram customers creates one local `node_backfill`
+  job per exact customer; it never performs XUI I/O in the callback. Removing
+  all removes only exact confirmed Telegram bindings on that one node through
+  reconcile-first `delete_client` attempts, disables only its Telegram policy,
+  and never changes the customer or bindings on other nodes. The destructive
+  command is restricted to the primary administrator. In-flight remote work
+  blocks the destructive preview instead of racing it.
 - A customer may intentionally be on a subset of eligible nodes. Missing
   bindings on other eligible nodes mean `available_to_add`, never failure or
   drift.
@@ -82,6 +90,9 @@ node to become the authority for the customer lifecycle.
 - Provisioning and destructive lifecycle work run through durable jobs and
   exact binding identifiers. They reconcile before retry and never perform
   blind lookup or automatic destructive rollback.
+- A completed `node_backfill` sends one localized outbox notification naming
+  the added node. Initial approval keeps its separate readiness notification;
+  node additions do not emit both messages.
 - Suspend, Resume and Delete begin with an admin-only preview. Its digest
   commits the customer row version and every exact remote identifier, so a
   stale tab cannot enqueue a broadened target set. The confirmation has its

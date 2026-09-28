@@ -177,6 +177,39 @@ def test_worker_replaces_a_confirmed_missing_binding_after_explicit_readd(tmp_pa
     assert binding == (attempt[1], attempt[2], "confirmed", 1)
 
 
+def test_node_backfill_notifies_only_that_another_named_server_was_added(tmp_path):
+    db_path = str(tmp_path / "node-backfill.db")
+    init_db(db_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-eu', 1, 0)")
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (1, 1)")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="node-backfill-user", origin="telegram",
+        email_source="telegram_username", public_code="node-backfill-user",
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=55, chat_id=55, username="node-backfill-user", first_name=None, last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 55",
+            (customer_id,),
+        )
+    queued = registry.queue_customer_node_add(
+        customer_id=customer_id, node_id=1, expected_customer_version=1,
+        idempotency_key="single-node-backfill", created_by="admin",
+    )
+
+    assert _worker(db_path, FakeProvisioningPort()).run_once().outcome == "succeeded"
+    with connect(db_path) as conn:
+        events = conn.execute(
+            "SELECT event_type, entity_id, payload_json FROM telegram_outbox ORDER BY id"
+        ).fetchall()
+    assert events == [("user_node_added", "55", '{"node_name":"edge-eu"}')]
+    assert queued.status == "queued"
+
+
 def test_worker_never_adds_when_exact_email_is_already_owned_by_another_remote_client(tmp_path):
     db_path, approval, _attempt = _queued_job(tmp_path)
     port = FakeProvisioningPort()
