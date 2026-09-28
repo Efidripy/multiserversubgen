@@ -431,7 +431,7 @@ class TelegramProvisioningWorker:
         with connect(self._db_path) as conn:
             existing = conn.execute(
                 """
-                SELECT id, remote_client_id FROM customer_node_bindings
+                SELECT id, remote_client_id, management_state FROM customer_node_bindings
                 WHERE customer_id = ? AND node_id = ? AND inbound_id = ?
                 """,
                 (claimed.customer_id, claimed.node_id, claimed.inbound_id),
@@ -453,6 +453,22 @@ class TelegramProvisioningWorker:
                     )
                 except sqlite3.IntegrityError as exc:
                     raise ProvisioningPermanentError("local binding conflict") from exc
+            elif str(existing[2]) == "missing":
+                conn.execute(
+                    """
+                    UPDATE customer_node_bindings
+                    SET remote_client_id = ?, remote_sub_id = ?, remote_email = ?,
+                        source = 'bot_provisioned', management_state = 'confirmed',
+                        desired_enabled = ?, last_enabled = ?, suspended_by_operation_id = NULL,
+                        last_confirmed_at = CURRENT_TIMESTAMP, row_version = row_version + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (
+                        claimed.desired_client_id, claimed.desired_sub_id, claimed.email,
+                        int(claimed.desired_client_enabled), int(claimed.desired_client_enabled), int(existing[0]),
+                    ),
+                )
             elif str(existing[1]) != claimed.desired_client_id:
                 raise ProvisioningPermanentError("local binding conflict")
             conn.execute(
