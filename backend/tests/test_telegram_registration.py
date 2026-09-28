@@ -460,7 +460,6 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
     access_choice = service.handle_update(_callback(22, "subscription:get"))
     qr = service.handle_update(_callback(23, "subscription:qr"))
 
-    assert any(button[0]["text"] == "⊞ Приложения" for button in home[0].reply_markup["inline_keyboard"])
     assert any(button[0]["text"] == "⊙ Мои устройства" for button in home[0].reply_markup["inline_keyboard"])
     assert assistant[0].text.startswith("Выберите устройство")
     assert not assistant[0].text.startswith("Подключение")
@@ -497,10 +496,11 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
         for button in row
         if "callback_data" in button
     }
-    assert {"subscription:rotate", "setup:diagnostics"}.isdisjoint(home_actions)
+    assert {"subscription:rotate", "setup:diagnostics", "setup:menu"}.isdisjoint(home_actions)
     assert {"quality:menu", "service:status"}.isdisjoint(home_actions)
-    assert home_action_order.index("devices:menu") < home_action_order.index("setup:menu")
-    assert {"subscription:link", "subscription:qr", "setup:diagnostics", "subscription:rotate"}.issubset(access_actions)
+    assert home_action_order[:2] == ["subscription:get", "devices:menu"]
+    assert {"subscription:link", "subscription:qr", "subscription:guest", "devices:menu", "subscription:rotate"}.issubset(access_actions)
+    assert {"setup:diagnostics", "diagnostics:menu"}.isdisjoint(access_actions)
     assert "setup:diagnostics" not in guide_actions
     assert all(
         button["callback_data"] != "setup:qr"
@@ -517,7 +517,16 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
         for row in help_message.reply_markup["inline_keyboard"]
         for button in row
     }
-    assert {"quality:menu", "service:status"}.issubset(help_actions)
+    assert {"setup:menu", "diagnostics:menu", "quality:menu", "service:status"}.issubset(help_actions)
+    assert "subscription:get" not in help_actions
+    access_button_texts = [
+        button["text"]
+        for row in access_choice[0].reply_markup["inline_keyboard"]
+        for button in row
+    ]
+    assert access_button_texts[:5] == [
+        "⊙ Получить ссылку", "⊞ Показать QR-код", "↗ Гостевая ссылка", "⊙ Мои ссылки", "↻ Сменить ссылку",
+    ]
 
 
 def test_approved_menu_uses_my_devices_in_english():
@@ -657,7 +666,7 @@ def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path)
         },
     })
 
-    assert help_screen[0].text.startswith("◎ Получить доступ")
+    assert help_screen[0].text.startswith("⊞ Приложения")
     assert not help_screen[0].text.startswith("Помощь")
     assert "Проводим краткие технические работы." in help_screen[0].text
     help_callbacks = {
@@ -665,8 +674,8 @@ def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path)
         for row in help_screen[0].reply_markup["inline_keyboard"]
         for button in row
     }
-    assert {"menu:home", "setup:menu", "subscription:get"} <= help_callbacks
-    assert "setup:diagnostics" not in help_callbacks
+    assert {"menu:home", "setup:menu", "diagnostics:menu", "quality:menu", "service:status"} <= help_callbacks
+    assert "subscription:get" not in help_callbacks
     assert "Статус доступа" in home[0].text
 
 
@@ -693,6 +702,8 @@ def test_initial_provisioning_blocks_link_and_qr_until_the_entire_snapshot_succe
         get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
     )
 
+    home_while_partial = service.handle_update(_callback(29, "menu:home"))[0]
+
     link_while_partial = service.handle_update(_message(30, "/subscription"))
     qr_while_partial = service.handle_update(_callback(31, "subscription:qr"))
 
@@ -701,13 +712,24 @@ def test_initial_provisioning_blocks_link_and_qr_until_the_entire_snapshot_succe
     assert qr_while_partial[0].photo_png is None
     assert "готовится" in qr_while_partial[0].text.lower()
     assert TelegramSubscriptionAccessGate(db_path).can_serve_email("waiting_user") is False
+    assert any(
+        button.get("callback_data") == "setup:diagnostics"
+        for row in home_while_partial.reply_markup["inline_keyboard"]
+        for button in row
+    )
 
     with connect(db_path) as conn:
         conn.execute("UPDATE telegram_provisioning_jobs SET status = 'succeeded' WHERE id = ?", (job_id,))
     link_after_success = service.handle_update(_message(32, "/subscription"))
+    home_after_success = service.handle_update(_callback(33, "menu:home"))[0]
 
     assert "https://bot.example.test/api/v1/sub/" in link_after_success[0].text
     assert TelegramSubscriptionAccessGate(db_path).can_serve_email("waiting_user") is True
+    assert not any(
+        button.get("callback_data") == "setup:diagnostics"
+        for row in home_after_success.reply_markup["inline_keyboard"]
+        for button in row
+    )
 
 
 def test_setup_application_buttons_use_official_urls_without_rendering_them_in_copy(tmp_path):
