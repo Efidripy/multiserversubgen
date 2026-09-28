@@ -369,28 +369,12 @@ class TelegramRegistrationService:
         if not customer_page.items:
             return TelegramOutboundMessage(chat_id, "Пользователей пока нет.", self._admin_home_menu())
         buttons: list[list[dict[str, str]]] = []
-        for item in customer_page.items:
-            # A configured custom emoji replaces the monochrome fallback glyph.
-            # One customer per row lets Telegram give the button the full chat width.
-            status_icon = (
-                self._customer_active_icon_custom_emoji_id
-                if item.status == "active"
-                else self._customer_inactive_icon_custom_emoji_id
-            )
-            support_badge = f"✉ {item.open_support_count}" if item.open_support_count else None
-            label_parts = (
-                (support_badge, item.email_display[:21])
-                if status_icon
-                else ("◎", support_badge, item.email_display[:21])
-            )
-            label = " ".join(part for part in label_parts if part)
-            customer_button = {
-                "text": label,
-                "callback_data": f"admin:customer:{item.customer_id}:{current_page}",
-            }
-            if status_icon:
-                customer_button["icon_custom_emoji_id"] = status_icon
-            buttons.append([customer_button])
+        customer_buttons = [
+            self._admin_customer_button(item, current_page)
+            for item in customer_page.items
+        ]
+        for offset in range(0, len(customer_buttons), 2):
+            buttons.append(customer_buttons[offset:offset + 2])
         navigation: list[dict[str, str]] = []
         if current_page > 0:
             navigation.append({"text": "‹", "callback_data": f"admin:customers:{current_page - 1}"})
@@ -405,6 +389,33 @@ class TelegramRegistrationService:
             {"inline_keyboard": buttons},
         )
 
+    def _admin_customer_button(self, item: Any, page: int) -> dict[str, str]:
+        # Telegram does not expose a button-width setting. Figure-space guards give
+        # two-column rows a stable, nearly full-width appearance without changing
+        # callback data or relying on client-specific styling.
+        status_icon = (
+            self._customer_active_icon_custom_emoji_id
+            if item.status == "active"
+            else self._customer_inactive_icon_custom_emoji_id
+        )
+        support_badge = f"✉ {item.open_support_count}" if item.open_support_count else None
+        label_parts = (
+            (support_badge, item.email_display[:21])
+            if status_icon
+            else ("◎", support_badge, item.email_display[:21])
+        )
+        visible_label = " ".join(part for part in label_parts if part)[:20]
+        figure_space = "\u2007"
+        guard = figure_space * 2
+        label = f"{guard}{visible_label.ljust(20, figure_space)}{guard}"
+        customer_button = {
+            "text": label,
+            "callback_data": f"admin:customer:{item.customer_id}:{page}",
+        }
+        if status_icon:
+            customer_button["icon_custom_emoji_id"] = status_icon
+        return customer_button
+
     def _admin_customer_message(self, chat_id: int, customer_id: int, page: int) -> TelegramOutboundMessage:
         customer = self._registry.get_customer(customer_id)
         profile = self._registry.get_customer_telegram_profile(customer.customer_id)
@@ -412,8 +423,6 @@ class TelegramRegistrationService:
         matrix = self._registry.customer_node_matrix(customer.customer_id)
         admin_note = self._registry.get_customer_admin_note(customer.customer_id)
         support_requests = self._registry.list_customer_support_requests(customer.customer_id)
-        token_events = self._registry.list_subscription_token_events(customer.customer_id, limit=3)
-        subscription_links = self._registry.list_customer_subscription_links(customer.customer_id)
         quality_reports = self._registry.list_customer_quality_reports(customer.customer_id, limit=2)
         unresolved_support_count = sum(item.status in {"open", "read"} for item in support_requests)
         registration_introduction = (
@@ -431,22 +440,6 @@ class TelegramRegistrationService:
             f"Телефон: {profile.phone_number}" if profile.phone_number else "Телефон: не указан",
             f"Трафик за всё время: {self._format_bytes(traffic.lifetime_bytes)}",
         ]
-        if token_events:
-            lines.append("Перевыпуск ссылки: " + "; ".join(
-                f"{event.created_at} ({event.reason or event.event_type})" for event in token_events
-            ))
-        if subscription_links:
-            status_labels = {"active": "активна", "revoked": "отозвана", "expired": "истекла"}
-            kind_prefixes = {"primary": "⊙", "personal": "⊙", "guest": "↗"}
-            lines.append("Ссылки:")
-            for link in subscription_links:
-                details = status_labels.get(link.status, link.status)
-                if link.expires_at is not None:
-                    expires_at = datetime.fromtimestamp(link.expires_at, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
-                    details += f" до {expires_at}" if link.status == "active" else f" (до {expires_at})"
-                lines.append(f"{kind_prefixes.get(link.kind, '•')} {link.label} — {details}; выдана {link.created_at}")
-        else:
-            lines.append("Ссылки: ещё не выдавались")
         if quality_reports:
             quality_labels = {
                 "ok": "всё хорошо", "slow": "медленно", "connection": "не подключается", "routes": "не везде",
@@ -471,6 +464,10 @@ class TelegramRegistrationService:
         buttons.append([{
             "text": f"💬 Обращения: {unresolved_support_count} новых / {len(support_requests) - unresolved_support_count} в истории",
             "callback_data": f"admin:support:{customer.customer_id}:{page}",
+        }])
+        buttons.append([{
+            "text": "Ссылки клиента",
+            "callback_data": f"admin:customer-links:{customer.customer_id}:{page}",
         }])
         for item in matrix:
             label = item.node_name.replace("\n", " ")[:30]
@@ -511,6 +508,39 @@ class TelegramRegistrationService:
             }])
         buttons.append([{"text": "← Назад", "callback_data": f"admin:customers:{page}"}])
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
+
+    def _admin_customer_links_message(self, chat_id: int, customer_id: int, page: int) -> TelegramOutboundMessage:
+        customer = self._registry.get_customer(customer_id)
+        subscription_links = self._registry.list_customer_subscription_links(customer.customer_id)
+        token_events = self._registry.list_subscription_token_events(customer.customer_id, limit=3)
+        lines = [f"Ссылки клиента: {customer.email_display}"]
+        if subscription_links:
+            status_labels = {"active": "активна", "revoked": "отозвана", "expired": "истекла"}
+            kind_prefixes = {"primary": "⊙", "personal": "⊙", "guest": "↗"}
+            lines.append("")
+            for link in subscription_links:
+                details = status_labels.get(link.status, link.status)
+                if link.expires_at is not None:
+                    expires_at = datetime.fromtimestamp(link.expires_at, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
+                    details += f" до {expires_at}" if link.status == "active" else f" (до {expires_at})"
+                lines.append(f"{kind_prefixes.get(link.kind, '•')} {link.label} — {details}; выдана {link.created_at}")
+        else:
+            lines.extend(("", "Ссылки ещё не выдавались."))
+        if token_events:
+            lines.extend((
+                "",
+                "Перевыпуски: " + "; ".join(
+                    f"{event.created_at} ({event.reason or event.event_type})" for event in token_events
+                ),
+            ))
+        return TelegramOutboundMessage(
+            chat_id,
+            "\n".join(lines),
+            {"inline_keyboard": [[{
+                "text": "← Назад",
+                "callback_data": f"admin:customer:{customer.customer_id}:{page}",
+            }]]},
+        )
 
     @staticmethod
     def _support_preview(value: str | None, maximum: int = 300) -> str:
@@ -999,6 +1029,11 @@ class TelegramRegistrationService:
                 self._registry.clear_admin_draft(user_id)
                 self._registry.clear_admin_message_draft(user_id)
                 return [self._admin_customer_support_message(chat_id, customer_id, page)]
+            if len(parts) == 4 and parts[:2] == ["admin", "customer-links"]:
+                customer_id, page = int(parts[2]), int(parts[3])
+                self._registry.clear_admin_draft(user_id)
+                self._registry.clear_admin_message_draft(user_id)
+                return [self._admin_customer_links_message(chat_id, customer_id, page)]
             if len(parts) == 6 and parts[:2] == ["admin", "support-reply"]:
                 request_id, version, customer_id, page = (int(parts[2]), int(parts[3]), int(parts[4]), int(parts[5]))
                 self._registry.clear_admin_draft(user_id)
