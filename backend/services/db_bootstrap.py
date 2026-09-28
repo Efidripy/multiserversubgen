@@ -511,6 +511,35 @@ def init_db(db_path: str) -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_logical_devices_primary "
             "ON telegram_logical_devices(customer_id) WHERE kind = 'primary'"
         )
+        # Persistent subscription devices deliberately live beside (rather than
+        # inside) telegram_logical_devices.  The latter has a historical CHECK
+        # constraint for primary/guest presentation records; rebuilding it
+        # would turn a small additive release into a risky data migration.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_subscription_devices
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      customer_id INTEGER NOT NULL,
+                      token_identifier TEXT NOT NULL UNIQUE,
+                      label TEXT NOT NULL CHECK(length(trim(label)) BETWEEN 1 AND 80),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_subscription_devices_customer "
+            "ON telegram_subscription_devices(customer_id, id DESC)"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_subscription_device_drafts
+                     (telegram_user_id INTEGER PRIMARY KEY,
+                      subscription_device_id INTEGER NOT NULL,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id)
+                        ON DELETE CASCADE,
+                      FOREIGN KEY(subscription_device_id) REFERENCES telegram_subscription_devices(id)
+                        ON DELETE CASCADE)"""
+        )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_logical_device_drafts
                      (telegram_user_id INTEGER PRIMARY KEY,
