@@ -1334,14 +1334,17 @@ class TelegramRegistrationService:
         return [TelegramOutboundMessage(chat_id, "Команда администратора не распознана.", self._admin_home_menu())]
 
     @staticmethod
-    def _approved_menu(locale: str = "ru", *, suspended: bool = False) -> dict[str, Any]:
+    def _approved_menu(
+        locale: str = "ru", *, suspended: bool = False, show_readiness: bool = False
+    ) -> dict[str, Any]:
         rows = [[{"text": button(locale, "get_access"), "callback_data": "subscription:get"}]]
         if suspended:
             rows.append([{"text": button(locale, "write_admin"), "callback_data": "support:appeal"}])
         else:
+            if show_readiness:
+                rows.append([{"text": button(locale, "check_ready"), "callback_data": "setup:diagnostics"}])
             rows.extend([
                 [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
-                [{"text": button(locale, "connection"), "callback_data": "setup:menu"}],
                 [{"text": button(locale, "notifications"), "callback_data": "preferences:menu"}],
                 [{"text": button(locale, "help"), "callback_data": "help"}],
                 [{"text": button(locale, "language"), "callback_data": "language:menu"}],
@@ -1356,11 +1359,9 @@ class TelegramRegistrationService:
             {"inline_keyboard": [
                 [{"text": button(locale, "get_link"), "callback_data": "subscription:link"}],
                 [{"text": button(locale, "show_qr"), "callback_data": "subscription:qr"}],
-                [{"text": button(locale, "check_ready"), "callback_data": "setup:diagnostics"}],
-                [{"text": button(locale, "diagnostics"), "callback_data": "diagnostics:menu"}],
-                [{"text": button(locale, "rotate"), "callback_data": "subscription:rotate"}],
                 [{"text": button(locale, "guest_link"), "callback_data": "subscription:guest"}],
-                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
+                [{"text": button(locale, "my_links"), "callback_data": "devices:menu"}],
+                [{"text": button(locale, "rotate"), "callback_data": "subscription:rotate"}],
                 [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
             ]},
         )
@@ -1582,7 +1583,11 @@ class TelegramRegistrationService:
                 else tr(locale, "status_unknown"),
                 traffic=traffic_line,
             ),
-            self._approved_menu(locale, suspended=access.customer_status in {"suspended", "suspend_partial"}),
+            self._approved_menu(
+                locale,
+                suspended=access.customer_status in {"suspended", "suspend_partial"},
+                show_readiness=access.customer_status == "active" and not access.initial_provisioning_ready,
+            ),
             parse_mode="HTML",
         )
 
@@ -1656,7 +1661,7 @@ class TelegramRegistrationService:
                 [{"text": "Не импортируется" if locale == "ru" else "Will not import", "callback_data": "diagnostics:import"}],
                 [{"text": "Не подключается" if locale == "ru" else "Will not connect", "callback_data": "diagnostics:connection"}],
                 [{"text": "Работает не везде" if locale == "ru" else "Does not work everywhere", "callback_data": "diagnostics:routes"}],
-                [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
+                [{"text": button(locale, "back_help"), "callback_data": "help"}],
             ]},
         )
 
@@ -1885,7 +1890,7 @@ class TelegramRegistrationService:
             tr(locale, "help") + notice_text,
             {"inline_keyboard": [
                 [{"text": button(locale, "connection"), "callback_data": "setup:menu"}],
-                [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+                [{"text": button(locale, "diagnostics"), "callback_data": "diagnostics:menu"}],
                 [{"text": button(locale, "quality"), "callback_data": "quality:menu"}],
                 [{"text": button(locale, "status"), "callback_data": "service:status"}],
                 [{"text": button(locale, "support"), "callback_data": "support:menu"}],
