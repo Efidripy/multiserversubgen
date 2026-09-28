@@ -1340,10 +1340,8 @@ class TelegramRegistrationService:
             rows.append([{"text": button(locale, "write_admin"), "callback_data": "support:appeal"}])
         else:
             rows.extend([
-                [{"text": button(locale, "connection"), "callback_data": "setup:menu"}],
                 [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
-                [{"text": button(locale, "quality"), "callback_data": "quality:menu"}],
-                [{"text": button(locale, "status"), "callback_data": "service:status"}],
+                [{"text": button(locale, "connection"), "callback_data": "setup:menu"}],
                 [{"text": button(locale, "notifications"), "callback_data": "preferences:menu"}],
                 [{"text": button(locale, "help"), "callback_data": "help"}],
                 [{"text": button(locale, "language"), "callback_data": "language:menu"}],
@@ -1766,10 +1764,16 @@ class TelegramRegistrationService:
                 )
                 prefix = "↗"
             lines.append(f"{prefix} {item.label} — {details}")
-            buttons.append([{
-                "text": f"{button(locale, 'rename_symbol')} {item.label[:30]}",
-                "callback_data": f"device:rename:{item.device_id}",
-            }])
+            if item.kind == "primary":
+                buttons.append([{
+                    "text": f"⊙ {item.label[:30]}",
+                    "callback_data": "subscription-primary:menu",
+                }])
+            else:
+                buttons.append([{
+                    "text": f"{button(locale, 'rename_symbol')} {item.label[:30]}",
+                    "callback_data": f"device:rename:{item.device_id}",
+                }])
             if item.kind == "guest" and item.status == "active" and item.guest_link_id is not None:
                 buttons.append([{
                     "text": f"{button(locale, 'revoke')} · {item.label[:26]}",
@@ -1786,6 +1790,26 @@ class TelegramRegistrationService:
             [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
         ))
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
+
+    def _primary_subscription_actions_message(
+        self, *, user_id: int, chat_id: int, locale: str
+    ) -> TelegramOutboundMessage:
+        primary = next(
+            (item for item in self._registry.list_logical_devices(user_id, include_inactive=False) if item.kind == "primary"),
+            None,
+        )
+        if primary is None:
+            raise TelegramRegistryError("primary logical device is missing")
+        return TelegramOutboundMessage(
+            chat_id,
+            tr(locale, "device_actions", label=primary.label),
+            {"inline_keyboard": [
+                [{"text": button(locale, "show_link"), "callback_data": "subscription:link:primary"}],
+                [{"text": button(locale, "rename"), "callback_data": f"device:rename:{primary.device_id}"}],
+                [{"text": button(locale, "rotate"), "callback_data": "subscription:rotate:primary"}],
+                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
+            ]},
+        )
 
     def _subscription_device_actions_message(
         self, *, user_id: int, chat_id: int, subscription_device_id: int, locale: str
@@ -1826,7 +1850,7 @@ class TelegramRegistrationService:
         )
         return TelegramOutboundMessage(
             chat_id, text,
-            {"inline_keyboard": [[{"text": button(locale, "menu"), "callback_data": "menu:home"}]]},
+            {"inline_keyboard": [[{"text": button(locale, "back_help"), "callback_data": "help"}]]},
         )
 
     @staticmethod
@@ -1838,7 +1862,7 @@ class TelegramRegistrationService:
             "routes": "Работает не везде" if locale == "ru" else "Does not work everywhere",
         }
         rows = [[{"text": labels[kind], "callback_data": f"quality:kind:{kind}"}] for kind in labels]
-        rows.append([{"text": button(locale, "menu"), "callback_data": "menu:home"}])
+        rows.append([{"text": button(locale, "back_help"), "callback_data": "help"}])
         return TelegramOutboundMessage(chat_id, tr(locale, "quality_menu"), {"inline_keyboard": rows})
 
     @staticmethod
@@ -1862,6 +1886,8 @@ class TelegramRegistrationService:
             {"inline_keyboard": [
                 [{"text": button(locale, "connection"), "callback_data": "setup:menu"}],
                 [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+                [{"text": button(locale, "quality"), "callback_data": "quality:menu"}],
+                [{"text": button(locale, "status"), "callback_data": "service:status"}],
                 [{"text": button(locale, "support"), "callback_data": "support:menu"}],
                 [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
             ]},
@@ -2084,6 +2110,11 @@ class TelegramRegistrationService:
                     return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
             if callback_data == "devices:menu":
                 return [self._devices_message(user_id, chat_id, locale)]
+            if callback_data == "subscription-primary:menu":
+                try:
+                    return [self._primary_subscription_actions_message(user_id=user_id, chat_id=chat_id, locale=locale)]
+                except TelegramRegistryError:
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
             if callback_data and callback_data.startswith("subscription-device:menu:"):
                 try:
                     device_id = int(callback_data.rsplit(":", 1)[-1])
@@ -2178,7 +2209,7 @@ class TelegramRegistrationService:
                     )
                 except TelegramRegistryError:
                     return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
-                return [TelegramOutboundMessage(chat_id, tr(locale, "quality_sent"), self._approved_menu(locale))]
+                return [TelegramOutboundMessage(chat_id, tr(locale, "quality_sent"), self._help_message(chat_id, locale).reply_markup)]
             if callback_data == "support:menu":
                 return [self._support_category_message(chat_id, locale)]
             if callback_data and callback_data.startswith("support:category:"):
