@@ -523,8 +523,14 @@ def init_db(db_path: str) -> None:
                       label TEXT NOT NULL CHECK(length(trim(label)) BETWEEN 1 AND 80),
                       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                       revoked_at TEXT DEFAULT NULL,
                       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
         )
+        subscription_device_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(telegram_subscription_devices)").fetchall()
+        }
+        if "revoked_at" not in subscription_device_columns:
+            conn.execute("ALTER TABLE telegram_subscription_devices ADD COLUMN revoked_at TEXT DEFAULT NULL")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_telegram_subscription_devices_customer "
             "ON telegram_subscription_devices(customer_id, id DESC)"
