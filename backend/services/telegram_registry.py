@@ -178,6 +178,17 @@ class TelegramLogicalDevice:
 
 
 @dataclass(frozen=True)
+class TelegramSubscriptionDevice:
+    """One persistent personal subscription URL owned by a Telegram customer."""
+
+    device_id: int
+    customer_id: int
+    token_identifier: str
+    label: str
+    created_at: str
+
+
+@dataclass(frozen=True)
 class TelegramQualityReport:
     report_id: int
     telegram_user_id: int
@@ -1993,7 +2004,9 @@ class TelegramRegistry:
             (customer_id,),
         )
 
-    def list_logical_devices(self, telegram_user_id: int) -> tuple[TelegramLogicalDevice, ...]:
+    def list_logical_devices(
+        self, telegram_user_id: int, *, include_inactive: bool = True
+    ) -> tuple[TelegramLogicalDevice, ...]:
         user_id = _positive_int(telegram_user_id, "telegram_user_id")
         current_epoch = int(datetime.now(timezone.utc).timestamp())
         with connect(self._db_path) as conn:
@@ -2020,12 +2033,190 @@ class TelegramRegistry:
                 status, expires_at = "expired", int(row[6]) if row[6] is not None else None
             else:
                 status, expires_at = "active", int(row[6])
-            devices.append(TelegramLogicalDevice(
+            device = TelegramLogicalDevice(
                 device_id=int(row[0]), customer_id=int(row[1]), kind=str(row[2]), label=str(row[3]),
                 guest_link_id=int(row[4]) if row[4] is not None else None, status=status,
                 created_at=str(row[5]), expires_at=expires_at,
-            ))
+            )
+            if include_inactive or device.status == "active":
+                devices.append(device)
         return tuple(devices)
+
+    def list_subscription_devices(self, telegram_user_id: int) -> tuple[TelegramSubscriptionDevice, ...]:
+        """List active customer's persistent device links without bearer tokens."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            customer_id, _email_display = self._active_telegram_customer(conn, user_id)
+            rows = conn.execute(
+                """
+                SELECT id, customer_id, token_identifier, label, created_at
+                FROM telegram_subscription_devices
+                WHERE customer_id = ?
+                ORDER BY id ASC
+                """,
+                (customer_id,),
+            ).fetchall()
+        return tuple(
+            TelegramSubscriptionDevice(
+                device_id=int(row[0]), customer_id=int(row[1]), token_identifier=str(row[2]),
+                label=str(row[3]), created_at=str(row[4]),
+            )
+            for row in rows
+        )
+
+    def get_subscription_device(
+        self, *, telegram_user_id: int, subscription_device_id: int
+    ) -> TelegramSubscriptionDevice:
+        """Return a device only when it belongs to the active calling customer."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        device_id = _positive_int(subscription_device_id, "subscription_device_id")
+        with connect(self._db_path) as conn:
+            customer_id, _email_display = self._active_telegram_customer(conn, user_id)
+            row = conn.execute(
+                """
+                SELECT id, customer_id, token_identifier, label, created_at
+                FROM telegram_subscription_devices
+                WHERE id = ? AND customer_id = ?
+                """,
+                (device_id, customer_id),
+            ).fetchone()
+        if row is None:
+            raise TelegramRegistryError("subscription device was not found")
+        return TelegramSubscriptionDevice(
+            device_id=int(row[0]), customer_id=int(row[1]), token_identifier=str(row[2]),
+            label=str(row[3]), created_at=str(row[4]),
+        )
+
+    def create_subscription_device(
+        self, *, telegram_user_id: int, label: str
+    ) -> TelegramSubscriptionDevice:
+        """Create a new independently rotatable personal device link record."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        normalized_label = label.strip() if isinstance(label, str) else ""
+        if not 1 <= len(normalized_label) <= 80:
+            raise TelegramRegistryError("subscription device label must contain 1 to 80 characters")
+        with connect(self._db_path) as conn:
+            customer_id, _email_display = self._active_telegram_customer(conn, user_id)
+            for _ in range(5):
+                token_identifier = uuid.uuid4().hex
+                try:
+                    cursor = conn.execute(
+                        """
+                        INSERT INTO telegram_subscription_devices (customer_id, token_identifier, label)
+                        VALUES (?, ?, ?)
+                        """,
+                        (customer_id, token_identifier, normalized_label),
+                    )
+                    break
+                except sqlite3.IntegrityError:
+                    continue
+            else:
+                raise TelegramRegistryError("could not allocate subscription device")
+            device_id = int(cursor.lastrowid)
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('subscription_device_created', 'telegram_user', ?, 'telegram_subscription_device', ?, ?)
+                """,
+                (str(user_id), str(device_id), _payload_digest({"label": normalized_label})),
+            )
+            row = conn.execute(
+                """
+                SELECT id, customer_id, token_identifier, label, created_at
+                FROM telegram_subscription_devices WHERE id = ?
+                """,
+                (device_id,),
+            ).fetchone()
+        assert row is not None
+        return TelegramSubscriptionDevice(
+            device_id=int(row[0]), customer_id=int(row[1]), token_identifier=str(row[2]),
+            label=str(row[3]), created_at=str(row[4]),
+        )
+
+    def set_subscription_device_label(
+        self, *, telegram_user_id: int, subscription_device_id: int, label: str
+    ) -> TelegramSubscriptionDevice:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        device_id = _positive_int(subscription_device_id, "subscription_device_id")
+        normalized_label = label.strip() if isinstance(label, str) else ""
+        if not 1 <= len(normalized_label) <= 80:
+            raise TelegramRegistryError("subscription device label must contain 1 to 80 characters")
+        with connect(self._db_path) as conn:
+            customer_id, _email_display = self._active_telegram_customer(conn, user_id)
+            cursor = conn.execute(
+                """
+                UPDATE telegram_subscription_devices
+                SET label = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND customer_id = ?
+                """,
+                (normalized_label, device_id, customer_id),
+            )
+            if cursor.rowcount != 1:
+                raise TelegramRegistryError("subscription device was not found")
+        return self.get_subscription_device(
+            telegram_user_id=user_id, subscription_device_id=device_id
+        )
+
+    def set_subscription_device_draft(
+        self, *, telegram_user_id: int, subscription_device_id: int
+    ) -> None:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        device = self.get_subscription_device(
+            telegram_user_id=user_id, subscription_device_id=subscription_device_id
+        )
+        with connect(self._db_path) as conn:
+            conn.execute(
+                """
+                INSERT INTO telegram_subscription_device_drafts (telegram_user_id, subscription_device_id)
+                VALUES (?, ?)
+                ON CONFLICT(telegram_user_id) DO UPDATE SET
+                    subscription_device_id = excluded.subscription_device_id,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, device.device_id),
+            )
+
+    def get_subscription_device_draft(self, telegram_user_id: int) -> int | None:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                "SELECT subscription_device_id FROM telegram_subscription_device_drafts "
+                "WHERE telegram_user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return int(row[0]) if row is not None else None
+
+    def clear_subscription_device_draft(self, telegram_user_id: int) -> None:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                "DELETE FROM telegram_subscription_device_drafts WHERE telegram_user_id = ?", (user_id,)
+            )
+
+    def resolve_subscription_device_email(self, token_identifier: str) -> str | None:
+        """Resolve a persistent device identifier only for active approved access."""
+
+        normalized_identifier = token_identifier.strip() if isinstance(token_identifier, str) else ""
+        if not normalized_identifier or len(normalized_identifier) > 128:
+            return None
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT c.email_display
+                FROM telegram_subscription_devices AS d
+                JOIN customers AS c ON c.id = d.customer_id
+                JOIN telegram_identities AS i ON i.customer_id = c.id
+                WHERE d.token_identifier = ? AND i.access_status = 'approved'
+                  AND c.status = 'active' AND c.deleted_at IS NULL
+                LIMIT 1
+                """,
+                (normalized_identifier,),
+            ).fetchone()
+        return str(row[0]) if row is not None else None
 
     def set_logical_device_label(
         self, *, telegram_user_id: int, device_id: int, label: str

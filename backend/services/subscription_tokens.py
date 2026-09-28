@@ -194,3 +194,67 @@ def regenerate_token(
             except sqlite3.IntegrityError:
                 continue
     raise RuntimeError("Could not rotate subscription token")
+
+
+def regenerate_tokens(
+    db_path: str,
+    targets: Iterable[tuple[str, str]],
+    *,
+    actor_type: str = "system",
+    actor_id: str | None = None,
+    reason: str | None = None,
+) -> Dict[tuple[str, str], str]:
+    """Atomically rotate several existing tokens without retaining bearer values.
+
+    Used for an explicit customer request to replace every personal device
+    link.  All target rows are checked before the first token changes, so a
+    missing row cannot leave the account with a half-applied replacement.
+    """
+
+    if actor_type not in {"telegram_user", "admin", "system"}:
+        raise ValueError("actor_type is invalid")
+    normalized = list(dict.fromkeys(
+        (str(kind).strip(), str(identifier).strip())
+        for kind, identifier in targets
+        if str(kind).strip() and str(identifier).strip()
+    ))
+    if not normalized:
+        return {}
+
+    with connect(db_path) as conn:
+        ensure_subscription_token_table(conn)
+        for kind, identifier in normalized:
+            if conn.execute(
+                "SELECT 1 FROM subscription_tokens WHERE kind = ? AND identifier = ?",
+                (kind, identifier),
+            ).fetchone() is None:
+                raise RuntimeError("Cannot rotate a missing subscription token")
+
+        result: Dict[tuple[str, str], str] = {}
+        for kind, identifier in normalized:
+            for _ in range(5):
+                token = _new_token()
+                try:
+                    conn.execute(
+                        "UPDATE subscription_tokens SET token = ?, updated_at = CURRENT_TIMESTAMP "
+                        "WHERE kind = ? AND identifier = ?",
+                        (token, kind, identifier),
+                    )
+                    _record_event(
+                        conn,
+                        kind=kind,
+                        identifier=identifier,
+                        event_type="rotated",
+                        token=token,
+                        actor_type=actor_type,
+                        actor_id=actor_id,
+                        reason=reason,
+                    )
+                    result[(kind, identifier)] = token
+                    break
+                except sqlite3.IntegrityError:
+                    continue
+            else:
+                raise RuntimeError("Could not rotate subscription token")
+        conn.commit()
+    return result

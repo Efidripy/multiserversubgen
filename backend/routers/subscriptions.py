@@ -210,6 +210,15 @@ def build_subscriptions_router(
     def get_sub(request: Request, email: str, protocol: Optional[str] = None, nodes: Optional[str] = None):
         resolved_email = resolve_token(db_path, "email", email)
         if not resolved_email:
+            device_identifier = resolve_token(db_path, "telegram_device", email)
+            if device_identifier:
+                # A persistent device token is opaque. Its identifier is only a
+                # private join key and is resolved through the active Telegram
+                # customer gate, never treated as an email or a legacy URL.
+                resolved_email = telegram_registry.resolve_subscription_device_email(device_identifier)
+                if not resolved_email:
+                    return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
+        if not resolved_email:
             legacy_email = _verify_subscription_token(email, "email")
             if not legacy_email:
                 legacy_email = _resolve_legacy_signed_email(email)
