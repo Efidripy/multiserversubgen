@@ -189,6 +189,17 @@ class TelegramSubscriptionDevice:
 
 
 @dataclass(frozen=True)
+class TelegramCustomerSubscriptionLink:
+    """Non-secret link metadata intended for an administrator's customer card."""
+
+    kind: str
+    label: str
+    status: str
+    created_at: str
+    expires_at: int | None = None
+
+
+@dataclass(frozen=True)
 class TelegramQualityReport:
     report_id: int
     telegram_user_id: int
@@ -2064,6 +2075,77 @@ class TelegramRegistry:
             )
             for row in rows
         )
+
+    def list_customer_subscription_links(
+        self, customer_id: int
+    ) -> tuple[TelegramCustomerSubscriptionLink, ...]:
+        """List issued link metadata for an admin card without exposing bearer tokens."""
+
+        local_customer_id = _positive_int(customer_id, "customer_id")
+        current_epoch = int(datetime.now(timezone.utc).timestamp())
+        with connect(self._db_path) as conn:
+            customer = conn.execute(
+                "SELECT email_display FROM customers WHERE id = ?", (local_customer_id,)
+            ).fetchone()
+            if customer is None:
+                raise TelegramRegistryError("customer was not found")
+            email_display = str(customer[0])
+            primary = conn.execute(
+                """
+                SELECT COALESCE(d.label, 'Основная ссылка'), t.created_at
+                FROM subscription_tokens AS t
+                LEFT JOIN telegram_logical_devices AS d
+                  ON d.customer_id = ? AND d.kind = 'primary'
+                WHERE t.kind = 'email' AND t.identifier = ?
+                LIMIT 1
+                """,
+                (local_customer_id, email_display),
+            ).fetchone()
+            personal_rows = conn.execute(
+                """
+                SELECT d.label, d.created_at, d.revoked_at, t.created_at
+                FROM telegram_subscription_devices AS d
+                JOIN subscription_tokens AS t
+                  ON t.kind = 'telegram_device' AND t.identifier = d.token_identifier
+                WHERE d.customer_id = ?
+                ORDER BY d.id ASC
+                """,
+                (local_customer_id,),
+            ).fetchall()
+            guest_rows = conn.execute(
+                """
+                SELECT g.created_at, g.expires_at, g.revoked_at
+                FROM telegram_guest_subscription_links AS g
+                WHERE g.customer_id = ?
+                ORDER BY g.id DESC
+                LIMIT 5
+                """,
+                (local_customer_id,),
+            ).fetchall()
+
+        links: list[TelegramCustomerSubscriptionLink] = []
+        if primary is not None:
+            links.append(TelegramCustomerSubscriptionLink(
+                kind="primary", label=str(primary[0]), status="active", created_at=str(primary[1])
+            ))
+        for row in personal_rows:
+            links.append(TelegramCustomerSubscriptionLink(
+                kind="personal",
+                label=str(row[0]),
+                status="revoked" if row[2] is not None else "active",
+                created_at=str(row[3] or row[1]),
+            ))
+        for row in guest_rows:
+            expires_at = int(row[1])
+            status = "revoked" if row[2] is not None else "active" if expires_at > current_epoch else "expired"
+            links.append(TelegramCustomerSubscriptionLink(
+                kind="guest",
+                label="Гостевая ссылка",
+                status=status,
+                created_at=str(row[0]),
+                expires_at=expires_at,
+            ))
+        return tuple(links)
 
     def get_subscription_device(
         self, *, telegram_user_id: int, subscription_device_id: int
