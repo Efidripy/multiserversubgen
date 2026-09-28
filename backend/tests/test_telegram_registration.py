@@ -1163,10 +1163,12 @@ def test_primary_admin_can_toggle_only_a_compatible_node_from_the_bot(tmp_path):
 
     home = service.handle_update(_admin_message(30, "/admin"))
     nodes = service.handle_update(_admin_callback(31, "admin:nodes:0"))
-    toggled = service.handle_update(_admin_callback(32, "admin:node:1:0"))
+    detail = service.handle_update(_admin_callback(32, "admin:node:1:0"))
+    toggled = service.handle_update(_admin_callback(33, "admin:node-toggle:1:0"))
 
     assert "управление" in home[0].text.lower()
     assert "tg-ноды" in nodes[0].text.lower()
+    assert "доступность в telegram: выключена" in detail[0].text.lower()
     assert "включена" in toggled[0].text.lower()
     with connect(db_path) as conn:
         assert conn.execute("SELECT provisioning_enabled FROM telegram_node_policies WHERE node_id = 1").fetchone()[0] == 1

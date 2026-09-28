@@ -455,6 +455,21 @@ def init_db(db_path: str) -> None:
             "CREATE INDEX IF NOT EXISTS idx_telegram_node_policies_enabled "
             "ON telegram_node_policies(provisioning_enabled, node_id)"
         )
+        # Confirmation previews for destructive/expensive node-wide Telegram
+        # actions.  The callback carries only the short node/action reference;
+        # the exact target snapshot stays durable in SQLite until confirmation.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_node_bulk_action_previews
+                     (admin_telegram_user_id INTEGER PRIMARY KEY,
+                      node_id INTEGER NOT NULL,
+                      action TEXT NOT NULL CHECK(action IN ('add_all', 'remove_all')),
+                      target_snapshot_digest TEXT NOT NULL,
+                      target_count INTEGER NOT NULL CHECK(target_count >= 0),
+                      page INTEGER NOT NULL DEFAULT 0 CHECK(page >= 0),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE CASCADE)"""
+        )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_admin_drafts
                      (admin_telegram_user_id INTEGER PRIMARY KEY,

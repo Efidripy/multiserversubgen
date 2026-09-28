@@ -382,6 +382,7 @@ class TelegramOutboxWorker:
         if event.event_type in {
             "user_provisioning_queued",
             "user_provisioning_completed",
+            "user_node_added",
             "user_existing_access_approved",
             "user_application_rejected",
             "user_lifecycle_completed",
@@ -409,6 +410,20 @@ class TelegramOutboxWorker:
                 return int(row[0]), "Decision accepted. Access is being prepared; check the status a little later." if locale == "en" else "Решение принято. Доступ готовится; проверьте статус немного позже.", None
             if event.event_type == "user_provisioning_completed":
                 return int(row[0]), "Access is ready. Open the menu and get your personal link." if locale == "en" else "Доступ готов. Откройте меню и получите персональную ссылку.", None
+            if event.event_type == "user_node_added":
+                try:
+                    payload = json.loads(event.payload_json)
+                    node_name = str(payload.get("node_name") or "").strip() if isinstance(payload, dict) else ""
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise OutboxPermanentError("invalid_node_added_notification") from exc
+                if not node_name or len(node_name) > 256:
+                    raise OutboxPermanentError("invalid_node_added_notification")
+                message = (
+                    f"Another server was added to your access: {node_name}.\n\nEnjoy using it."
+                    if locale == "en"
+                    else f"Вам добавили ещё один сервер: {node_name}.\n\nПриятного использования."
+                )
+                return int(row[0]), message, None
             if event.event_type == "user_existing_access_approved":
                 return int(row[0]), "Decision accepted. Open the menu to continue." if locale == "en" else "Решение принято. Откройте меню, чтобы продолжить.", None
             if event.event_type == "user_application_rejected":

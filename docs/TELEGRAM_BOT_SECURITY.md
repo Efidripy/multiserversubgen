@@ -76,7 +76,7 @@ state.
 | Callback replay / update duplication | Persist `update_id`, idempotency keys and optimistic row versions before mutations. |
 | Registration spam | One active application, per-user throttling, durable no-op counter and auto-block on the 51st unique no-op in ten minutes. |
 | Unsafe node write | Node policy plus `nodes.enabled`, `read_only`, inbound and flow checks; durable target snapshot and read-after-write reconcile. |
-| Accidental lifecycle loss | Preview, exact binding IDs, append-only audit, retry/reconcile; no blind delete or automatic destructive rollback. |
+| Accidental lifecycle loss | Preview, exact binding IDs, append-only audit, retry/reconcile; no blind delete or automatic destructive rollback. Node-wide removal is primary-admin-only, disables only Telegram provisioning, and never deletes customers or other-node bindings. |
 | User privacy leak | Neutral unapproved onboarding; do not reveal node inventory, subscription URLs, internal errors or technical service terms before approval. |
 
 ## Data retention
