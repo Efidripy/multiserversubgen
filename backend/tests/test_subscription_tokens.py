@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from routers.subscriptions import build_subscriptions_router
 from services.db_bootstrap import connect, init_db
-from services.subscription_tokens import ensure_tokens, regenerate_token
+from services.subscription_tokens import ensure_tokens, regenerate_token, resolve_token
 from services.telegram_access import TelegramSubscriptionAccessGate, resolve_effective_access
 from services.telegram_registry import TelegramRegistry
 
@@ -56,6 +56,36 @@ def test_token_is_stable_and_manual_rotation_is_explicit(tmp_path):
     rotated = regenerate_token(db_path, "email", "D632-IOS")
     assert rotated and rotated != first
     assert ensure_tokens(db_path, "email", ["D632-IOS"])["D632-IOS"] == rotated
+
+
+def test_persistent_telegram_device_token_serves_only_its_active_owner(tmp_path):
+    db_path = str(tmp_path / "telegram-device-token.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="device-token", first_name="Device", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="device-token", origin="telegram", email_source="telegram_username", public_code="device-token"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    device = registry.create_subscription_device(telegram_user_id=42, label="Phone")
+    token = ensure_tokens(db_path, "telegram_device", [device.token_identifier])[device.token_identifier]
+    client = TestClient(_build_app(db_path, ["device-token"]))
+
+    served = client.get(f"/api/v1/sub/{token}")
+    with connect(db_path) as conn:
+        conn.execute("UPDATE customers SET status = 'suspended' WHERE id = ?", (customer_id,))
+    denied = client.get(f"/api/v1/sub/{token}")
+
+    assert resolve_token(db_path, "telegram_device", token) == device.token_identifier
+    assert served.status_code == 200
+    assert base64.b64decode(served.text).decode() == "vless://device-token@node1"
+    assert denied.status_code == 404
 
 
 def test_legacy_named_link_redirects_to_stable_token(tmp_path):
