@@ -44,6 +44,7 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "customers",
             "telegram_identities",
             "telegram_node_policies",
+            "telegram_node_bulk_action_previews",
             "customer_node_bindings",
             "telegram_provisioning_jobs",
             "telegram_provisioning_attempts",
@@ -850,6 +851,94 @@ def test_customer_node_add_queues_only_the_selected_eligible_node(tmp_path):
         ).fetchone()[0] == 1
     matrix = registry.customer_node_matrix(customer_id)
     assert {(item.node_id, item.state) for item in matrix} == {(1, "available_to_add")}
+
+
+def test_node_bulk_actions_are_confirmation_gated_scoped_and_idempotent(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "edge-a")
+    _insert_node(db_path, 2, "edge-b")
+    registry = TelegramRegistry(db_path)
+    customers: list[int] = []
+    for telegram_user_id, email in ((41, "bulk-one"), (42, "bulk-two")):
+        customer_id = registry.create_customer(
+            email_display=email, origin="telegram", email_source="telegram_username", public_code=email
+        )
+        registry.get_or_create_identity(
+            telegram_user_id=telegram_user_id, chat_id=telegram_user_id,
+            username=email, first_name=None, last_name=None,
+        )
+        with connect(db_path) as conn:
+            conn.execute(
+                "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' "
+                "WHERE telegram_user_id = ?",
+                (customer_id, telegram_user_id),
+            )
+        customers.append(customer_id)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (1, 1)")
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'remote-one', 'sub-one', 'bulk-one',
+                    'bot_provisioned', 'confirmed', 1, 1)
+            """,
+            (customers[0],),
+        )
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 2, 1, 'remote-other', 'sub-other', 'bulk-one',
+                    'bot_provisioned', 'confirmed', 1, 1)
+            """,
+            (customers[0],),
+        )
+
+    add_preview = registry.begin_node_bulk_action_preview(
+        admin_telegram_user_id=108100140, node_id=1, action="add_all", page=0,
+    )
+    assert add_preview.target_count == 1
+    add_result = registry.queue_node_bulk_action(
+        admin_telegram_user_id=108100140, node_id=1, action="add_all",
+        idempotency_key="bulk-add-edge-a", created_by="telegram:108100140",
+    )
+    assert add_result.queued_count == 1
+    assert registry.queue_node_bulk_action(
+        admin_telegram_user_id=108100140, node_id=1, action="add_all",
+        idempotency_key="bulk-add-edge-a", created_by="telegram:108100140",
+    ) == add_result
+
+    remove_preview = registry.begin_node_bulk_action_preview(
+        admin_telegram_user_id=108100140, node_id=1, action="remove_all", page=0,
+    )
+    assert remove_preview.target_count == 1
+    remove_result = registry.queue_node_bulk_action(
+        admin_telegram_user_id=108100140, node_id=1, action="remove_all",
+        idempotency_key="bulk-remove-edge-a", created_by="telegram:108100140",
+    )
+    assert remove_result.queued_count == 1
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT provisioning_enabled FROM telegram_node_policies WHERE node_id = 1"
+        ).fetchone() == (0,)
+        operation = conn.execute(
+            "SELECT operation_type, customer_id FROM telegram_customer_operations ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        attempt = conn.execute(
+            "SELECT node_id, action FROM telegram_customer_operation_attempts ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        other_binding = conn.execute(
+            "SELECT management_state FROM customer_node_bindings WHERE customer_id = ? AND node_id = 2",
+            (customers[0],),
+        ).fetchone()
+    assert operation == ("suspend_node", customers[0])
+    assert attempt == (1, "delete_client")
+    assert other_binding == ("confirmed",)
+    assert registry.get_customer(customers[0]).status == "active"
 
 
 def test_customer_node_suspend_and_resume_use_exact_preview_and_keep_global_status(tmp_path):

@@ -274,3 +274,58 @@ def test_node_suspend_worker_changes_only_selected_binding_and_keeps_customer_ac
             "SELECT node_id, desired_enabled, suspended_by_operation_id FROM customer_node_bindings ORDER BY node_id"
         ).fetchall()
     assert rows == [(1, 0, operation.operation_id), (2, 1, None)]
+
+
+def test_node_bulk_remove_deletes_only_the_target_binding_and_keeps_customer_active(tmp_path):
+    db_path = str(tmp_path / "node-bulk-remove.db")
+    init_db(db_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (2, 'edge-b', 1, 0)")
+        conn.execute("INSERT INTO telegram_node_policies(node_id, provisioning_enabled) VALUES (1, 1)")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="node-bulk-worker", origin="telegram", email_source="telegram_username",
+        public_code="node-bulk-worker",
+    )
+    registry.get_or_create_identity(
+        telegram_user_id=77, chat_id=77, username="node_bulk_worker", first_name=None, last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 77",
+            (customer_id,),
+        )
+        for node_id, remote_id in ((1, "remote-a"), (2, "remote-b")):
+            conn.execute(
+                """
+                INSERT INTO customer_node_bindings
+                    (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                     source, management_state, desired_enabled, last_enabled)
+                VALUES (?, ?, 1, ?, ?, 'node-bulk-worker', 'bot_provisioned', 'confirmed', 1, 1)
+                """,
+                (customer_id, node_id, remote_id, f"sub-{node_id}"),
+            )
+    registry.begin_node_bulk_action_preview(
+        admin_telegram_user_id=108100140, node_id=1, action="remove_all", page=0,
+    )
+    registry.queue_node_bulk_action(
+        admin_telegram_user_id=108100140, node_id=1, action="remove_all",
+        idempotency_key="remove-all-edge-a", created_by="telegram:108100140",
+    )
+    port = FakeLifecyclePort()
+    port.clients = [RemoteClient("remote-a", "node-bulk-worker", "sub-1", "xtls-rprx-vision", True)]
+
+    result = _worker(db_path, port).run_once()
+
+    assert result.outcome == "succeeded"
+    assert port.delete_calls == ["remote-a"]
+    assert registry.get_customer(customer_id).status == "active"
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT node_id, management_state FROM customer_node_bindings ORDER BY node_id"
+        ).fetchall()
+        assert conn.execute(
+            "SELECT provisioning_enabled FROM telegram_node_policies WHERE node_id = 1"
+        ).fetchone() == (0,)
+    assert rows == [(1, "missing"), (2, "confirmed")]

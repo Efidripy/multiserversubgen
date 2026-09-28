@@ -130,6 +130,26 @@ def test_user_outbox_uses_persisted_english_locale(tmp_path):
     assert "Доступ готов" not in port.messages[0][1]
 
 
+def test_user_node_added_notification_is_localized_and_requires_a_node_name(tmp_path):
+    db_path = str(tmp_path / "node-added.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=777, username="user", first_name="User", last_name=None, locale="en"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json)
+            VALUES ('user_node_added', '42', 'node-added-en', '{"node_name":"edge-eu"}')
+            """
+        )
+    port = FakeOutboxPort()
+
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert port.messages == [(777, "Another server was added to your access: edge-eu.\n\nEnjoy using it.", None)]
+
+
 def test_user_can_suppress_background_outbox_messages_without_losing_the_event_audit(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
