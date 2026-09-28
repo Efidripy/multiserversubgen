@@ -2052,7 +2052,7 @@ class TelegramRegistry:
                 """
                 SELECT id, customer_id, token_identifier, label, created_at
                 FROM telegram_subscription_devices
-                WHERE customer_id = ?
+                WHERE customer_id = ? AND revoked_at IS NULL
                 ORDER BY id ASC
                 """,
                 (customer_id,),
@@ -2078,7 +2078,7 @@ class TelegramRegistry:
                 """
                 SELECT id, customer_id, token_identifier, label, created_at
                 FROM telegram_subscription_devices
-                WHERE id = ? AND customer_id = ?
+                WHERE id = ? AND customer_id = ? AND revoked_at IS NULL
                 """,
                 (device_id, customer_id),
             ).fetchone()
@@ -2151,7 +2151,7 @@ class TelegramRegistry:
                 """
                 UPDATE telegram_subscription_devices
                 SET label = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND customer_id = ?
+                WHERE id = ? AND customer_id = ? AND revoked_at IS NULL
                 """,
                 (normalized_label, device_id, customer_id),
             )
@@ -2197,6 +2197,32 @@ class TelegramRegistry:
                 "DELETE FROM telegram_subscription_device_drafts WHERE telegram_user_id = ?", (user_id,)
             )
 
+    def revoke_subscription_device(self, *, telegram_user_id: int, subscription_device_id: int) -> None:
+        """Soft-revoke one owned device link while preserving the audit trail."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        device_id = _positive_int(subscription_device_id, "subscription_device_id")
+        with connect(self._db_path) as conn:
+            customer_id, _email_display = self._active_telegram_customer(conn, user_id)
+            cursor = conn.execute(
+                """
+                UPDATE telegram_subscription_devices
+                SET revoked_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND customer_id = ? AND revoked_at IS NULL
+                """,
+                (device_id, customer_id),
+            )
+            if cursor.rowcount != 1:
+                raise TelegramRegistryError("subscription device was not found")
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id)
+                VALUES ('subscription_device_revoked', 'telegram_user', ?, 'telegram_subscription_device', ?)
+                """,
+                (str(user_id), str(device_id)),
+            )
+
     def resolve_subscription_device_email(self, token_identifier: str) -> str | None:
         """Resolve a persistent device identifier only for active approved access."""
 
@@ -2211,7 +2237,7 @@ class TelegramRegistry:
                 JOIN customers AS c ON c.id = d.customer_id
                 JOIN telegram_identities AS i ON i.customer_id = c.id
                 WHERE d.token_identifier = ? AND i.access_status = 'approved'
-                  AND c.status = 'active' AND c.deleted_at IS NULL
+                  AND d.revoked_at IS NULL AND c.status = 'active' AND c.deleted_at IS NULL
                 LIMIT 1
                 """,
                 (normalized_identifier,),

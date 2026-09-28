@@ -1778,14 +1778,31 @@ class TelegramRegistrationService:
         for item in subscription_devices:
             lines.append(f"⊙ {item.label} — {active_label}")
             buttons.append([{
-                "text": f"{button(locale, 'rename_symbol')} {item.label[:30]}",
-                "callback_data": f"subscription-device:rename:{item.device_id}",
+                "text": f"⊙ {item.label[:30]}",
+                "callback_data": f"subscription-device:menu:{item.device_id}",
             }])
         buttons.extend((
             [{"text": button(locale, "guest_link"), "callback_data": "subscription:guest"}],
             [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
         ))
         return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
+
+    def _subscription_device_actions_message(
+        self, *, user_id: int, chat_id: int, subscription_device_id: int, locale: str
+    ) -> TelegramOutboundMessage:
+        device = self._registry.get_subscription_device(
+            telegram_user_id=user_id, subscription_device_id=subscription_device_id
+        )
+        return TelegramOutboundMessage(
+            chat_id,
+            tr(locale, "device_actions", label=device.label),
+            {"inline_keyboard": [
+                [{"text": button(locale, "show_link"), "callback_data": f"subscription:link:device:{device.device_id}"}],
+                [{"text": button(locale, "rename"), "callback_data": f"subscription-device:rename:{device.device_id}"}],
+                [{"text": button(locale, "revoke"), "callback_data": f"subscription-device:revoke:{device.device_id}"}],
+                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
+            ]},
+        )
 
     def _traffic_thresholds_message(self, user_id: int, chat_id: int, locale: str) -> TelegramOutboundMessage:
         preferences = self._registry.get_notification_preferences(user_id)
@@ -2067,6 +2084,14 @@ class TelegramRegistrationService:
                     return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
             if callback_data == "devices:menu":
                 return [self._devices_message(user_id, chat_id, locale)]
+            if callback_data and callback_data.startswith("subscription-device:menu:"):
+                try:
+                    device_id = int(callback_data.rsplit(":", 1)[-1])
+                    return [self._subscription_device_actions_message(
+                        user_id=user_id, chat_id=chat_id, subscription_device_id=device_id, locale=locale
+                    )]
+                except (ValueError, TelegramRegistryError):
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
             if callback_data and callback_data.startswith("device:rename:"):
                 try:
                     device_id = int(callback_data.rsplit(":", 1)[-1])
@@ -2090,6 +2115,32 @@ class TelegramRegistrationService:
                     chat_id,
                     tr(locale, "device_rename_prompt"),
                     {"inline_keyboard": [[{"text": button(locale, "devices"), "callback_data": "devices:menu"}]]},
+                )]
+            if callback_data and callback_data.startswith("subscription-device:revoke:"):
+                parts = callback_data.split(":")
+                if len(parts) not in {3, 4}:
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                try:
+                    device_id = int(parts[2])
+                    if len(parts) == 3:
+                        self._registry.get_subscription_device(
+                            telegram_user_id=user_id, subscription_device_id=device_id
+                        )
+                        return [TelegramOutboundMessage(chat_id, tr(locale, "device_revoke_confirm"), {
+                            "inline_keyboard": [
+                                [{"text": button(locale, "confirm"), "callback_data": f"subscription-device:revoke:{device_id}:confirm"}],
+                                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
+                            ]
+                        })]
+                    if parts[3] != "confirm":
+                        raise ValueError("invalid subscription device revoke callback")
+                    self._registry.revoke_subscription_device(
+                        telegram_user_id=user_id, subscription_device_id=device_id
+                    )
+                except (ValueError, TelegramRegistryError):
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                return [TelegramOutboundMessage(
+                    chat_id, tr(locale, "device_revoked"), self._devices_message(user_id, chat_id, locale).reply_markup
                 )]
             if callback_data and callback_data.startswith("guest:revoke:"):
                 try:

@@ -78,6 +78,8 @@ def test_persistent_telegram_device_token_serves_only_its_active_owner(tmp_path)
     client = TestClient(_build_app(db_path, ["device-token"]))
 
     served = client.get(f"/api/v1/sub/{token}")
+    registry.revoke_subscription_device(telegram_user_id=42, subscription_device_id=device.device_id)
+    revoked = client.get(f"/api/v1/sub/{token}")
     with connect(db_path) as conn:
         conn.execute("UPDATE customers SET status = 'suspended' WHERE id = ?", (customer_id,))
     denied = client.get(f"/api/v1/sub/{token}")
@@ -85,6 +87,7 @@ def test_persistent_telegram_device_token_serves_only_its_active_owner(tmp_path)
     assert resolve_token(db_path, "telegram_device", token) == device.token_identifier
     assert served.status_code == 200
     assert base64.b64decode(served.text).decode() == "vless://device-token@node1"
+    assert revoked.status_code == 404
     assert denied.status_code == 404
 
 
