@@ -149,6 +149,34 @@ def test_worker_reads_then_creates_then_confirms_exact_binding_with_fixed_contra
     assert binding == (attempt[1], attempt[2], "worker-user", 1)
 
 
+def test_worker_replaces_a_confirmed_missing_binding_after_explicit_readd(tmp_path):
+    db_path, _approval, attempt = _queued_job(tmp_path)
+    with connect(db_path) as conn:
+        customer_id = conn.execute(
+            "SELECT customer_id FROM telegram_identities WHERE telegram_user_id = 55"
+        ).fetchone()[0]
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'obsolete-client', 'obsolete-sub', 'worker-user',
+                    'bot_provisioned', 'missing', 0, NULL)
+            """,
+            (customer_id,),
+        )
+
+    outcome = _worker(db_path, FakeProvisioningPort()).run_once()
+
+    assert outcome.outcome == "succeeded"
+    with connect(db_path) as conn:
+        binding = conn.execute(
+            "SELECT remote_client_id, remote_sub_id, management_state, desired_enabled "
+            "FROM customer_node_bindings"
+        ).fetchone()
+    assert binding == (attempt[1], attempt[2], "confirmed", 1)
+
+
 def test_worker_never_adds_when_exact_email_is_already_owned_by_another_remote_client(tmp_path):
     db_path, approval, _attempt = _queued_job(tmp_path)
     port = FakeProvisioningPort()

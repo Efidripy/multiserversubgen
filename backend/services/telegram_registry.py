@@ -4071,7 +4071,6 @@ class TelegramRegistry:
                 """,
                 (normalized_customer_id,),
             ).fetchall()
-            bound_node_ids = {int(row[1]) for row in bound_rows}
             available_rows = conn.execute(
                 """
                 SELECT n.id, n.name
@@ -4081,10 +4080,13 @@ class TelegramRegistry:
                 ORDER BY n.name COLLATE NOCASE, n.id
                 """
             ).fetchall()
+            eligible_node_ids = {int(row[0]) for row in available_rows}
 
         result: list[CustomerNodeMatrixRow] = []
         for binding_id, node_id, name, enabled, read_only, desired_enabled, management_state in bound_rows:
-            if str(management_state) != "confirmed" or not bool(enabled) or bool(read_only):
+            if str(management_state) == "missing" and int(node_id) in eligible_node_ids:
+                state = "available_to_add"
+            elif str(management_state) != "confirmed" or not bool(enabled) or bool(read_only):
                 state = "problem"
             elif bool(desired_enabled):
                 state = "active"
@@ -4101,7 +4103,7 @@ class TelegramRegistry:
                 )
             )
         for node_id, name in available_rows:
-            if int(node_id) not in bound_node_ids:
+            if not any(int(bound[1]) == int(node_id) for bound in bound_rows):
                 result.append(
                     CustomerNodeMatrixRow(
                         node_id=int(node_id),
@@ -4159,10 +4161,11 @@ class TelegramRegistry:
             if int(customer[2]) != expected_version:
                 raise VersionConflictError("customer was updated by another operation")
             existing = conn.execute(
-                "SELECT id FROM customer_node_bindings WHERE customer_id = ? AND node_id = ? AND inbound_id = 1",
+                "SELECT id, management_state FROM customer_node_bindings "
+                "WHERE customer_id = ? AND node_id = ? AND inbound_id = 1",
                 (local_customer_id, local_node_id),
             ).fetchone()
-            if existing is not None:
+            if existing is not None and str(existing[1]) != "missing":
                 raise VersionConflictError("customer is already assigned to this node")
             pending = conn.execute(
                 """
@@ -5975,7 +5978,8 @@ class TelegramRegistry:
                        b.desired_enabled, c.email_display, c.email_canonical
                 FROM customer_node_bindings AS b
                 JOIN customers AS c ON c.id = b.customer_id
-                WHERE b.management_state = 'confirmed' AND b.inbound_id = 1 AND b.node_id IN ({placeholders})
+                WHERE b.management_state IN ('confirmed', 'missing', 'conflict')
+                  AND b.inbound_id = 1 AND b.node_id IN ({placeholders})
                 """,
                 node_id_values,
             ).fetchall()
@@ -6070,6 +6074,42 @@ class TelegramRegistry:
                     """,
                     item,
                 )
+            # A completed remote scan is authoritative for just the scanned
+            # nodes. Restore bindings that are exact again, then mark only the
+            # current mismatches. Nodes that could not be read are not passed
+            # here, so a transport failure never makes a client look absent.
+            conn.execute(
+                f"""
+                UPDATE customer_node_bindings
+                SET management_state = 'confirmed', row_version = row_version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE node_id IN ({placeholders})
+                  AND management_state IN ('missing', 'conflict')
+                """,
+                node_ids,
+            )
+            conn.execute(
+                f"""
+                UPDATE customer_node_bindings
+                SET management_state = CASE finding.kind
+                        WHEN 'binding_missing' THEN 'missing'
+                        ELSE 'conflict'
+                    END,
+                    row_version = customer_node_bindings.row_version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                FROM telegram_drift_findings AS finding
+                WHERE finding.status = 'open'
+                  AND finding.kind IN ('binding_missing', 'binding_conflict')
+                  AND finding.node_id IN ({placeholders})
+                  AND customer_node_bindings.customer_id = finding.customer_id
+                  AND customer_node_bindings.node_id = finding.node_id
+                  AND customer_node_bindings.inbound_id = 1
+                  AND customer_node_bindings.remote_client_id = finding.remote_client_id
+                  AND customer_node_bindings.remote_sub_id = finding.remote_sub_id
+                  AND lower(customer_node_bindings.remote_email) = lower(finding.remote_email)
+                """,
+                node_ids,
+            )
         return self.list_drift_findings(status="open", limit=200)
 
     def list_drift_findings(self, *, status: str = "open", limit: int = 100) -> tuple[DriftFinding, ...]:

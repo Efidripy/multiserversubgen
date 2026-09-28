@@ -368,6 +368,31 @@ class TelegramLifecycleWorker:
                 """,
                 (status, error_code, error_summary, claimed.attempt_id),
             )
+            # A completed read can prove that the previous local binding no
+            # longer describes the remote node. Keep that fact immediately
+            # usable by the node matrix: a missing client can be provisioned
+            # again, while an identity collision remains fail-closed.
+            if error_code == "remote_client_missing":
+                conn.execute(
+                    """
+                    UPDATE customer_node_bindings
+                    SET management_state = 'missing', desired_enabled = 0, last_enabled = NULL,
+                        suspended_by_operation_id = NULL, row_version = row_version + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (claimed.binding_id,),
+                )
+            elif error_code == "identity_conflict":
+                conn.execute(
+                    """
+                    UPDATE customer_node_bindings
+                    SET management_state = 'conflict', row_version = row_version + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    (claimed.binding_id,),
+                )
             self._finalize_operation(conn, claimed.operation_id)
 
     def _defer_reconcile(self, claimed: ClaimedLifecycleAttempt, error_code: str) -> None:

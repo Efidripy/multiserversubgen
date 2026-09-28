@@ -49,6 +49,7 @@ def _queue(tmp_path, operation_type: str):
     init_db(db_path)
     with connect(db_path) as conn:
         conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+        conn.execute("INSERT INTO telegram_node_policies(node_id, provisioning_enabled) VALUES (1, 1)")
     registry = TelegramRegistry(db_path)
     customer_id = registry.create_customer(
         email_display="lifecycle-worker", origin="manual", email_source="admin", public_code="lifecycle-worker"
@@ -208,6 +209,22 @@ def test_conflicting_remote_email_never_triggers_lifecycle_write(tmp_path):
     operation = registry.get_customer_operation(operation_id)
     assert operation.status == "partial"
     assert operation.attempts[0].status == "conflict"
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT management_state FROM customer_node_bindings").fetchone() == ("conflict",)
+
+
+def test_missing_remote_binding_becomes_addable_after_lifecycle_reconciliation(tmp_path):
+    db_path, registry, customer_id, operation_id = _queue(tmp_path, "suspend")
+
+    outcome = _worker(db_path, FakeLifecyclePort()).run_once()
+
+    assert outcome.outcome == "missing"
+    assert registry.get_customer_operation(operation_id).status == "partial"
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT management_state, desired_enabled, last_enabled FROM customer_node_bindings"
+        ).fetchone() == ("missing", 0, None)
+    assert registry.customer_node_matrix(customer_id)[0].state == "available_to_add"
 
 
 def test_node_suspend_worker_changes_only_selected_binding_and_keeps_customer_active(tmp_path):
