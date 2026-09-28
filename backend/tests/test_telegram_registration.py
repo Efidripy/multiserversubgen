@@ -234,7 +234,7 @@ def test_approved_user_gets_opaque_subscription_link_and_rotation_invalidates_pr
     status = service.handle_update(_message(10, "/start"))
     link = service.handle_update(_message(11, "/subscription"))
     old_token = link[0].text.rsplit("/", 1)[-1]
-    confirm_prompt = service.handle_update(
+    rotate_choice = service.handle_update(
         {
             "update_id": 12,
             "callback_query": {
@@ -245,14 +245,15 @@ def test_approved_user_gets_opaque_subscription_link_and_rotation_invalidates_pr
             },
         }
     )
+    confirm_prompt = service.handle_update(_callback(13, "subscription:rotate:primary"))
     rotated = service.handle_update(
         {
-            "update_id": 13,
+                "update_id": 14,
             "callback_query": {
-                "id": "rotate-2",
+                "id": "rotate-3",
                 "from": {"id": 42, "first_name": "New"},
                 "message": {"chat": {"id": 42, "type": "private"}},
-                "data": "subscription:rotate:confirm",
+                "data": "subscription:rotate:primary:confirm",
             },
         }
     )
@@ -264,6 +265,7 @@ def test_approved_user_gets_opaque_subscription_link_and_rotation_invalidates_pr
     assert old_token != new_token
     assert resolve_token(db_path, "email", old_token) is None
     assert resolve_token(db_path, "email", new_token) == "new_user"
+    assert "Выберите ссылку" in rotate_choice[0].text
     assert "⚠️ ВНИМАНИЕ" in confirm_prompt[0].text
     assert "подтвердить" in confirm_prompt[0].text.lower()
 
@@ -291,9 +293,11 @@ def test_subscription_link_edits_its_own_callback_message_and_never_stores_raw_t
         get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
     )
 
-    first = service.handle_update(_callback_with_message_id(11, "subscription:link", 101))[0]
+    choice = service.handle_update(_callback_with_message_id(11, "subscription:link", 101))[0]
+    assert "Выберите уже созданное устройство" in choice.text
+    first = service.handle_update(_callback_with_message_id(12, "subscription:link:primary", 101))[0]
     service.record_outbound_delivery(first, 101)
-    repeated = service.handle_update(_callback_with_message_id(12, "subscription:link", 202))[0]
+    repeated = service.handle_update(_callback_with_message_id(13, "subscription:link:primary", 202))[0]
     service.record_outbound_delivery(repeated, 202)
 
     assert first.edit_message_id == 101
@@ -333,9 +337,10 @@ def test_subscription_command_sends_a_new_visible_message_instead_of_editing_a_h
         get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
     )
 
-    previous = service.handle_update(_callback_with_message_id(11, "subscription:link", 101))[0]
+    service.handle_update(_callback_with_message_id(11, "subscription:link", 101))
+    previous = service.handle_update(_callback_with_message_id(12, "subscription:link:primary", 101))[0]
     service.record_outbound_delivery(previous, 101)
-    command = service.handle_update(_message(12, "/subscription"))[0]
+    command = service.handle_update(_message(13, "/subscription"))[0]
 
     assert command.edit_message_id is None
     assert command.subscription_delivery is not None
@@ -857,6 +862,90 @@ def test_approved_user_can_create_and_revoke_a_guest_link_and_send_quality_feedb
     revoked = service.handle_update(_callback(106, f"guest:revoke:{guest_link_id}"))[0]
 
     assert "отозвана" in revoked.text
+
+
+def test_devices_hide_revoked_guest_links_and_keep_compact_rename_controls(tmp_path):
+    db_path = str(tmp_path / "devices-hide-revoked.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="hide_revoked")
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    service.handle_update(_callback(1, "subscription:guest:6"))
+    with connect(db_path) as conn:
+        guest_id = conn.execute("SELECT id FROM telegram_guest_subscription_links").fetchone()[0]
+    before = service.handle_update(_callback(2, "devices:menu"))[0]
+    revoked = service.handle_update(_callback(3, f"guest:revoke:{guest_id}"))[0]
+
+    button_texts = [
+        item["text"] for row in before.reply_markup["inline_keyboard"] for item in row
+        if item.get("callback_data", "").startswith("device:rename:")
+    ]
+    assert "Гостевая ссылка" in before.text
+    assert button_texts and all(text.startswith("✎ ") and "Переименовать" not in text for text in button_texts)
+    revoked_callbacks = [
+        item.get("callback_data", "")
+        for row in revoked.reply_markup["inline_keyboard"] for item in row
+    ]
+    assert not any(callback.startswith("guest:revoke:") for callback in revoked_callbacks)
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT revoked_at IS NOT NULL FROM telegram_guest_subscription_links WHERE id = ?", (guest_id,)
+        ).fetchone() == (1,)
+
+
+def test_customer_can_issue_rotate_one_or_rotate_all_independent_device_links(tmp_path):
+    db_path = str(tmp_path / "device-link-flow.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="device_links")
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    choice = service.handle_update(_callback(1, "subscription:link"))[0]
+    primary = service.handle_update(_callback(2, "subscription:link:primary"))[0]
+    created = service.handle_update(_callback(3, "subscription:link:new"))[0]
+    device = registry.list_subscription_devices(42)[0]
+    old_primary = primary.text.rsplit("/", 1)[-1]
+    old_device = created.text.rsplit("/", 1)[-1]
+
+    rotate_choice = service.handle_update(_callback(4, "subscription:rotate"))[0]
+    confirm_one = service.handle_update(_callback(5, f"subscription:rotate:device:{device.device_id}"))[0]
+    rotated_one = service.handle_update(_callback(6, f"subscription:rotate:device:{device.device_id}:confirm"))[0]
+    new_device = rotated_one.text.rsplit("/", 1)[-1]
+
+    assert resolve_token(db_path, "email", old_primary) == "device_links"
+    assert resolve_token(db_path, "telegram_device", old_device) is None
+    assert resolve_token(db_path, "telegram_device", new_device) == device.token_identifier
+
+    all_confirm = service.handle_update(_callback(7, "subscription:rotate:all"))[0]
+    rotated_all = service.handle_update(_callback(8, "subscription:rotate:all:confirm"))[0]
+    new_primary = rotated_all.text.rsplit("/", 1)[-1]
+
+    actions = {item.get("callback_data") for row in choice.reply_markup["inline_keyboard"] for item in row}
+    assert {"subscription:link:primary", "subscription:link:new"}.issubset(actions)
+    assert "Выберите ссылку" in rotate_choice.text
+    assert "⚠️ ВНИМАНИЕ" in confirm_one.text
+    assert "⚠️ ВНИМАНИЕ" in all_confirm.text
+    assert resolve_token(db_path, "email", old_primary) is None
+    assert resolve_token(db_path, "email", new_primary) == "device_links"
+    assert resolve_token(db_path, "telegram_device", new_device) is None
+    with connect(db_path) as conn:
+        payloads = conn.execute(
+            "SELECT token_digest FROM subscription_token_events WHERE kind = 'telegram_device'"
+        ).fetchall()
+    assert all(old_device not in digest and new_device not in digest for (digest,) in payloads)
 
 
 def test_primary_admin_can_view_issue_queue_and_set_or_cancel_a_neutral_service_notice(tmp_path):
@@ -1554,11 +1643,17 @@ def test_webhook_subscription_link_falls_back_to_a_new_message_if_the_current_ca
         headers=headers,
         json=_callback_with_message_id(31, "subscription:link", 401),
     ).status_code == 200
+    assert client.post(
+        "/telegram/webhook/private-path",
+        headers=headers,
+        json=_callback_with_message_id(32, "subscription:link:primary", 401),
+    ).status_code == 200
 
-    assert len(sender.messages) == 2
+    assert len(sender.messages) == 3
     assert sender.messages[0].edit_message_id is None
     assert sender.messages[1].edit_message_id is None
-    assert "Персональная ссылка доступа" in sender.messages[1].text
+    assert "Выберите уже созданное устройство" in sender.messages[1].text
+    assert "Персональная ссылка доступа" in sender.messages[2].text
 
 
 def test_webhook_admin_can_adopt_a_discovered_legacy_customer_without_remote_write(tmp_path):

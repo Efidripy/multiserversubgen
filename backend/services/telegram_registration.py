@@ -8,7 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from services.subscription_tokens import ensure_tokens, regenerate_token
+from services.subscription_tokens import ensure_tokens, regenerate_token, regenerate_tokens
 from services.telegram_access import resolve_effective_access
 from services.telegram_qr import TelegramQrError, build_subscription_qr_png
 from services.telegram_traffic import TelegramTrafficService
@@ -1368,7 +1368,14 @@ class TelegramRegistrationService:
         )
 
     def _subscription_url(
-        self, *, user_id: int, chat_id: int, rotate: bool = False, locale: str = "ru"
+        self,
+        *,
+        user_id: int,
+        chat_id: int,
+        subscription_device_id: int | None = None,
+        rotate: bool = False,
+        rotate_all: bool = False,
+        locale: str = "ru",
     ) -> tuple[str | None, TelegramOutboundMessage | None]:
         access = self._registry.get_customer_access(user_id)
         decision = resolve_effective_access(
@@ -1400,20 +1407,43 @@ class TelegramRegistrationService:
         if not links:
             return None, TelegramOutboundMessage(chat_id, tr(locale, "link_preparing"), self._approved_menu(locale))
         try:
-            token = (
-                regenerate_token(
+            if subscription_device_id is None:
+                token_kind, token_identifier = "email", access.email_display
+            else:
+                device = self._registry.get_subscription_device(
+                    telegram_user_id=user_id, subscription_device_id=subscription_device_id
+                )
+                token_kind, token_identifier = "telegram_device", device.token_identifier
+
+            token = None
+            if rotate_all:
+                targets = [("email", access.email_display)] + [
+                    ("telegram_device", item.token_identifier)
+                    for item in self._registry.list_subscription_devices(user_id)
+                ]
+                for kind, identifier in targets:
+                    ensure_tokens(self._registry.database_path, kind, [identifier])
+                token = regenerate_tokens(
                     self._registry.database_path,
-                    "email",
-                    access.email_display,
+                    targets,
+                    actor_type="telegram_user",
+                    actor_id=str(user_id),
+                    reason="self_service_all",
+                )[(token_kind, token_identifier)]
+            elif rotate:
+                ensure_tokens(self._registry.database_path, token_kind, [token_identifier])
+                token = regenerate_token(
+                    self._registry.database_path,
+                    token_kind,
+                    token_identifier,
                     actor_type="telegram_user",
                     actor_id=str(user_id),
                     reason="self_service",
                 )
-                if rotate
-                else None
-            )
             if not token:
-                token = ensure_tokens(self._registry.database_path, "email", [access.email_display]).get(access.email_display)
+                token = ensure_tokens(
+                    self._registry.database_path, token_kind, [token_identifier]
+                ).get(token_identifier)
         except Exception:
             token = None
         if not token or not self._public_base_url:
@@ -1425,7 +1455,9 @@ class TelegramRegistrationService:
         *,
         user_id: int,
         chat_id: int,
+        subscription_device_id: int | None = None,
         rotate: bool = False,
+        rotate_all: bool = False,
         edit_message_id: int | None = None,
         locale: str = "ru",
     ) -> TelegramOutboundMessage:
@@ -1435,7 +1467,14 @@ class TelegramRegistrationService:
         access-choice card.  A historical receipt is deliberately not used as
         an edit target: it is delivery/audit data, not navigation state.
         """
-        url, unavailable = self._subscription_url(user_id=user_id, chat_id=chat_id, rotate=rotate, locale=locale)
+        url, unavailable = self._subscription_url(
+            user_id=user_id,
+            chat_id=chat_id,
+            subscription_device_id=subscription_device_id,
+            rotate=rotate,
+            rotate_all=rotate_all,
+            locale=locale,
+        )
         if unavailable is not None:
             return unavailable
         assert url is not None
@@ -1676,11 +1715,44 @@ class TelegramRegistrationService:
             ]},
         )
 
+    def _subscription_link_choice_message(
+        self, *, user_id: int, chat_id: int, locale: str
+    ) -> TelegramOutboundMessage:
+        devices = self._registry.list_subscription_devices(user_id)
+        buttons = [[{"text": "⊙ " + ("Основное устройство" if locale == "ru" else "Primary device"), "callback_data": "subscription:link:primary"}]]
+        buttons.extend(
+            [{"text": f"⊙ {item.label[:40]}", "callback_data": f"subscription:link:device:{item.device_id}"}]
+            for item in devices
+        )
+        buttons.extend((
+            [{"text": button(locale, "new_device"), "callback_data": "subscription:link:new"}],
+            [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+        ))
+        return TelegramOutboundMessage(chat_id, tr(locale, "link_device_choice"), {"inline_keyboard": buttons})
+
+    def _subscription_rotate_choice_message(
+        self, *, user_id: int, chat_id: int, locale: str
+    ) -> TelegramOutboundMessage:
+        devices = self._registry.list_subscription_devices(user_id)
+        buttons = [[{"text": "↻ " + ("Основное устройство" if locale == "ru" else "Primary device"), "callback_data": "subscription:rotate:primary"}]]
+        buttons.extend(
+            [{"text": f"↻ {item.label[:40]}", "callback_data": f"subscription:rotate:device:{item.device_id}"}]
+            for item in devices
+        )
+        buttons.extend((
+            [{"text": button(locale, "rotate_all"), "callback_data": "subscription:rotate:all"}],
+            [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+        ))
+        return TelegramOutboundMessage(chat_id, tr(locale, "rotate_device_choice"), {"inline_keyboard": buttons})
+
+    @staticmethod
+    def _device_label(locale: str) -> str:
+        return "Новое устройство" if locale == "ru" else "New device"
+
     def _devices_message(self, user_id: int, chat_id: int, locale: str) -> TelegramOutboundMessage:
-        devices = self._registry.list_logical_devices(user_id)
+        devices = self._registry.list_logical_devices(user_id, include_inactive=False)
+        subscription_devices = self._registry.list_subscription_devices(user_id)
         active_label = "активно" if locale == "ru" else "active"
-        expired_label = "срок истёк" if locale == "ru" else "expired"
-        revoked_label = "отозвано" if locale == "ru" else "revoked"
         lines = [tr(locale, "devices")]
         buttons: list[list[dict[str, str]]] = []
         for item in devices:
@@ -1693,13 +1765,9 @@ class TelegramRegistrationService:
                     + datetime.fromtimestamp(item.expires_at, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
                 )
                 prefix = "↗"
-            elif item.status == "expired":
-                details, prefix = expired_label, "○"
-            else:
-                details, prefix = revoked_label, "○"
             lines.append(f"{prefix} {item.label} — {details}")
             buttons.append([{
-                "text": f"{button(locale, 'rename')} · {item.label[:26]}",
+                "text": f"{button(locale, 'rename_symbol')} {item.label[:30]}",
                 "callback_data": f"device:rename:{item.device_id}",
             }])
             if item.kind == "guest" and item.status == "active" and item.guest_link_id is not None:
@@ -1707,6 +1775,12 @@ class TelegramRegistrationService:
                     "text": f"{button(locale, 'revoke')} · {item.label[:26]}",
                     "callback_data": f"guest:revoke:{item.guest_link_id}",
                 }])
+        for item in subscription_devices:
+            lines.append(f"⊙ {item.label} — {active_label}")
+            buttons.append([{
+                "text": f"{button(locale, 'rename_symbol')} {item.label[:30]}",
+                "callback_data": f"subscription-device:rename:{item.device_id}",
+            }])
         buttons.extend((
             [{"text": button(locale, "guest_link"), "callback_data": "subscription:guest"}],
             [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
@@ -1878,6 +1952,18 @@ class TelegramRegistrationService:
         if identity.access_status == "approved":
             access = self._registry.get_customer_access(user_id)
             device_draft_id = self._registry.get_logical_device_draft(user_id)
+            subscription_device_draft_id = self._registry.get_subscription_device_draft(user_id)
+            if text and subscription_device_draft_id is not None and not text.strip().startswith("/"):
+                try:
+                    self._registry.set_subscription_device_label(
+                        telegram_user_id=user_id,
+                        subscription_device_id=subscription_device_draft_id,
+                        label=text,
+                    )
+                except TelegramRegistryError:
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "device_rename_invalid"))]
+                self._registry.clear_subscription_device_draft(user_id)
+                return [self._devices_message(user_id, chat_id, locale)]
             if text and device_draft_id is not None and not text.strip().startswith("/"):
                 try:
                     self._registry.set_logical_device_label(
@@ -1889,6 +1975,8 @@ class TelegramRegistrationService:
                 return [self._devices_message(user_id, chat_id, locale)]
             if callback_data is not None and callback_data != "device:rename":
                 self._registry.clear_logical_device_draft(user_id)
+            if callback_data is not None and not callback_data.startswith("subscription-device:rename:"):
+                self._registry.clear_subscription_device_draft(user_id)
             if callback_data == "subscription:get":
                 return [self._access_choice_message(chat_id, locale)]
             if callback_data == "language:menu":
@@ -1900,15 +1988,73 @@ class TelegramRegistrationService:
                 locale = self._registry.set_locale(user_id, callback_data.rsplit(":", 1)[-1])
                 return [TelegramOutboundMessage(chat_id, tr(locale, "language_saved"), self._approved_menu(locale))]
             if callback_data == "subscription:link":
-                return [
-                    self._subscription_message(
-                        user_id=user_id,
-                        chat_id=chat_id,
-                        edit_message_id=source_message_id, locale=locale,
+                return [self._subscription_link_choice_message(user_id=user_id, chat_id=chat_id, locale=locale)]
+            if callback_data == "subscription:link:primary":
+                return [self._subscription_message(
+                    user_id=user_id, chat_id=chat_id, edit_message_id=source_message_id, locale=locale,
+                )]
+            if callback_data == "subscription:link:new":
+                try:
+                    device = self._registry.create_subscription_device(
+                        telegram_user_id=user_id, label=self._device_label(locale)
                     )
-                ]
+                except TelegramRegistryError:
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                return [self._subscription_message(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    subscription_device_id=device.device_id,
+                    edit_message_id=source_message_id,
+                    locale=locale,
+                )]
+            if callback_data and callback_data.startswith("subscription:link:device:"):
+                try:
+                    device_id = int(callback_data.rsplit(":", 1)[-1])
+                except ValueError:
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                return [self._subscription_message(
+                    user_id=user_id,
+                    chat_id=chat_id,
+                    subscription_device_id=device_id,
+                    edit_message_id=source_message_id,
+                    locale=locale,
+                )]
             if callback_data == "subscription:rotate:confirm":
                 return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate=True, locale=locale)]
+            if callback_data == "subscription:rotate:primary":
+                return [TelegramOutboundMessage(chat_id, tr(locale, "rotation_device"), {"inline_keyboard": [
+                    [{"text": button(locale, "confirm"), "callback_data": "subscription:rotate:primary:confirm"}],
+                    [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+                ]})]
+            if callback_data == "subscription:rotate:primary:confirm":
+                return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate=True, locale=locale)]
+            if callback_data and callback_data.startswith("subscription:rotate:device:"):
+                parts = callback_data.split(":")
+                if len(parts) not in {4, 5}:
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                try:
+                    device_id = int(parts[3])
+                    self._registry.get_subscription_device(
+                        telegram_user_id=user_id, subscription_device_id=device_id
+                    )
+                except (ValueError, TelegramRegistryError):
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                if len(parts) == 5 and parts[4] == "confirm":
+                    return [self._subscription_message(
+                        user_id=user_id, chat_id=chat_id, subscription_device_id=device_id,
+                        rotate=True, locale=locale,
+                    )]
+                return [TelegramOutboundMessage(chat_id, tr(locale, "rotation_device"), {"inline_keyboard": [
+                    [{"text": button(locale, "confirm"), "callback_data": f"subscription:rotate:device:{device_id}:confirm"}],
+                    [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+                ]})]
+            if callback_data == "subscription:rotate:all":
+                return [TelegramOutboundMessage(chat_id, tr(locale, "rotation_all"), {"inline_keyboard": [
+                    [{"text": button(locale, "confirm"), "callback_data": "subscription:rotate:all:confirm"}],
+                    [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
+                ]})]
+            if callback_data == "subscription:rotate:all:confirm":
+                return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate_all=True, locale=locale)]
             if callback_data == "subscription:guest":
                 return [self._guest_link_menu(chat_id, locale)]
             if callback_data and callback_data.startswith("subscription:guest:"):
@@ -1925,6 +2071,19 @@ class TelegramRegistrationService:
                 try:
                     device_id = int(callback_data.rsplit(":", 1)[-1])
                     self._registry.set_logical_device_draft(telegram_user_id=user_id, device_id=device_id)
+                except (ValueError, TelegramRegistryError):
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    tr(locale, "device_rename_prompt"),
+                    {"inline_keyboard": [[{"text": button(locale, "devices"), "callback_data": "devices:menu"}]]},
+                )]
+            if callback_data and callback_data.startswith("subscription-device:rename:"):
+                try:
+                    device_id = int(callback_data.rsplit(":", 1)[-1])
+                    self._registry.set_subscription_device_draft(
+                        telegram_user_id=user_id, subscription_device_id=device_id
+                    )
                 except (ValueError, TelegramRegistryError):
                     return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
                 return [TelegramOutboundMessage(
@@ -1997,7 +2156,7 @@ class TelegramRegistrationService:
             if callback_data in {"subscription:qr", "setup:qr"}:
                 return [self._setup_qr_message(user_id=user_id, chat_id=chat_id, locale=locale)]
             if callback_data == "subscription:rotate":
-                return [TelegramOutboundMessage(chat_id, tr(locale, "rotation"), {"inline_keyboard": [[{"text": button(locale, "confirm"), "callback_data": "subscription:rotate:confirm"}], [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}]]})]
+                return [self._subscription_rotate_choice_message(user_id=user_id, chat_id=chat_id, locale=locale)]
             if callback_data == "support:appeal":
                 return [TelegramOutboundMessage(chat_id, tr(locale, "appeal_prompt"))]
             if callback_data == "preferences:menu" or text and text.strip().startswith("/settings"):
