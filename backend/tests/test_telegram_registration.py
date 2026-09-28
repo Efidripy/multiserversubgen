@@ -948,6 +948,65 @@ def test_customer_can_issue_rotate_one_or_rotate_all_independent_device_links(tm
     assert all(old_device not in digest and new_device not in digest for (digest,) in payloads)
 
 
+def test_subscription_device_actions_show_rename_and_soft_revoke_only_that_link(tmp_path):
+    db_path = str(tmp_path / "device-link-actions.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="device_actions")
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    service.handle_update(_callback(1, "subscription:link:new"))
+    device = registry.list_subscription_devices(42)[0]
+    devices = service.handle_update(_callback(2, "devices:menu"))[0]
+    device_callback = next(
+        item["callback_data"]
+        for row in devices.reply_markup["inline_keyboard"]
+        for item in row
+        if item.get("callback_data", "").startswith("subscription-device:menu:")
+    )
+    actions = service.handle_update(_callback(3, device_callback))[0]
+    action_callbacks = {
+        item.get("callback_data")
+        for row in actions.reply_markup["inline_keyboard"]
+        for item in row
+    }
+    action_texts = {
+        item.get("text")
+        for row in actions.reply_markup["inline_keyboard"]
+        for item in row
+    }
+    shown = service.handle_update(_callback(4, f"subscription:link:device:{device.device_id}"))[0]
+    confirm = service.handle_update(_callback(5, f"subscription-device:revoke:{device.device_id}"))[0]
+    revoked = service.handle_update(_callback(6, f"subscription-device:revoke:{device.device_id}:confirm"))[0]
+
+    assert f"Устройство: {device.label}" in actions.text
+    assert {
+        f"subscription:link:device:{device.device_id}",
+        f"subscription-device:rename:{device.device_id}",
+        f"subscription-device:revoke:{device.device_id}",
+    }.issubset(action_callbacks)
+    assert {"⊙ Показать ссылку", "✎ Переименовать", "⌫ Отозвать"}.issubset(action_texts)
+    assert "/api/v1/sub/" in shown.text
+    assert "ВНИМАНИЕ" in confirm.text
+    assert "отозвана" in revoked.text
+    assert registry.list_subscription_devices(42) == ()
+    assert registry.resolve_subscription_device_email(device.token_identifier) is None
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT revoked_at IS NOT NULL FROM telegram_subscription_devices WHERE id = ?", (device.device_id,)
+        ).fetchone() == (1,)
+        assert conn.execute(
+            "SELECT event_type FROM telegram_audit_log WHERE entity_id = ? ORDER BY id DESC LIMIT 1",
+            (str(device.device_id),),
+        ).fetchone() == ("subscription_device_revoked",)
+
+
 def test_primary_admin_can_view_issue_queue_and_set_or_cancel_a_neutral_service_notice(tmp_path):
     db_path = str(tmp_path / "admin-ops.db")
     init_db(db_path)

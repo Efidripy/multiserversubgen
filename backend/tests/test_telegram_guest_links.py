@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
 
 
@@ -31,6 +32,26 @@ def _approved_customer(registry: TelegramRegistry, db_path: str, *, telegram_use
             (customer_id, telegram_user_id),
         )
     return customer_id
+
+
+def test_subscription_device_revocation_column_is_added_to_an_existing_table(tmp_path):
+    db_path = str(tmp_path / "legacy-subscription-devices.db")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """CREATE TABLE telegram_subscription_devices
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      customer_id INTEGER NOT NULL,
+                      token_identifier TEXT NOT NULL UNIQUE,
+                      label TEXT NOT NULL,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""
+        )
+
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(telegram_subscription_devices)")}
+    assert "revoked_at" in columns
 
 
 def test_guest_link_is_expiring_revocable_and_keeps_the_primary_token_unchanged(tmp_path):

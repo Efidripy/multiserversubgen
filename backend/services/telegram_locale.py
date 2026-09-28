@@ -80,6 +80,9 @@ _MESSAGES: dict[str, dict[str, str]] = {
     "rotation_all": {"ru": "⚠️ ВНИМАНИЕ\n\nВсе ваши личные ссылки сразу перестанут работать. Подтвердить смену всех ссылок?", "en": "⚠️ ATTENTION\n\nAll of your personal links stop working immediately. Confirm replacing every link?"},
     "device_rename_prompt": {"ru": "Введите новое имя устройства. До 80 символов.", "en": "Send a new device name. Up to 80 characters."},
     "device_rename_invalid": {"ru": "Имя не принято. Нужно от 1 до 80 символов.", "en": "The name was not accepted. Use 1 to 80 characters."},
+    "device_actions": {"ru": "Устройство: {label}.\n\nВыберите действие.", "en": "Device: {label}.\n\nChoose an action."},
+    "device_revoke_confirm": {"ru": "⚠️ ВНИМАНИЕ\n\nСсылка этого устройства сразу перестанет работать. Отозвать её?", "en": "⚠️ ATTENTION\n\nThis device link stops working immediately. Revoke it?"},
+    "device_revoked": {"ru": "Ссылка устройства отозвана.", "en": "The device link was revoked."},
     "service_status_normal": {"ru": "Статус сервиса: работает штатно.", "en": "Service status: operating normally."},
     "service_status_notice": {"ru": "Статус сервиса: временное сообщение.\n\n{body}", "en": "Service status: temporary notice.\n\n{body}"},
     "quality_menu": {"ru": "Как сейчас работает подключение?", "en": "How is the connection working right now?"},
@@ -120,6 +123,7 @@ _MESSAGES: dict[str, dict[str, str]] = {
 _BUTTONS: dict[str, dict[str, str]] = {
     "get_access": {"ru": "◎ Получить доступ", "en": "◎ Get access"},
     "get_link": {"ru": "⊙ Получить ссылку", "en": "⊙ Get link"},
+    "show_link": {"ru": "⊙ Показать ссылку", "en": "⊙ Show link"},
     "show_qr": {"ru": "⊞ Показать QR-код", "en": "⊞ Show QR code"},
     "check_ready": {"ru": "⌁ Проверить готовность", "en": "⌁ Check readiness"},
     "rotate": {"ru": "↻ Сменить ссылку", "en": "↻ Replace link"},
