@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import secrets
 import sqlite3
+import hashlib
 from typing import Dict, Iterable, Optional
 
 from services.db_bootstrap import connect
@@ -36,10 +37,54 @@ def ensure_subscription_token_table(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_subscription_tokens_token "
         "ON subscription_tokens(token)"
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS subscription_token_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind TEXT NOT NULL,
+            identifier TEXT NOT NULL,
+            event_type TEXT NOT NULL CHECK(event_type IN ('created', 'rotated')),
+            actor_type TEXT NOT NULL CHECK(actor_type IN ('telegram_user', 'admin', 'system')),
+            actor_id TEXT DEFAULT NULL,
+            reason TEXT DEFAULT NULL,
+            token_digest TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_subscription_token_events_identifier "
+        "ON subscription_token_events(kind, identifier, id DESC)"
+    )
 
 
 def _new_token() -> str:
     return secrets.token_urlsafe(TOKEN_BYTES)
+
+
+def _token_digest(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _record_event(
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    identifier: str,
+    event_type: str,
+    token: str,
+    actor_type: str = "system",
+    actor_id: str | None = None,
+    reason: str | None = None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO subscription_token_events
+            (kind, identifier, event_type, actor_type, actor_id, reason, token_digest)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (kind, identifier, event_type, actor_type, actor_id, reason, _token_digest(token)),
+    )
 
 
 def ensure_tokens(db_path: str, kind: str, identifiers: Iterable[str]) -> Dict[str, str]:
@@ -66,6 +111,13 @@ def ensure_tokens(db_path: str, kind: str, identifiers: Iterable[str]) -> Dict[s
                     conn.execute(
                         "INSERT INTO subscription_tokens (kind, identifier, token) VALUES (?, ?, ?)",
                         (kind, identifier, token),
+                    )
+                    _record_event(
+                        conn,
+                        kind=kind,
+                        identifier=identifier,
+                        event_type="created",
+                        token=token,
                     )
                     result[identifier] = token
                     break
@@ -97,8 +149,18 @@ def resolve_token(db_path: str, kind: str, token: str) -> Optional[str]:
     return str(row[0]) if row else None
 
 
-def regenerate_token(db_path: str, kind: str, identifier: str) -> Optional[str]:
-    """Rotate a token manually; returns None when the identity is unknown."""
+def regenerate_token(
+    db_path: str,
+    kind: str,
+    identifier: str,
+    *,
+    actor_type: str = "system",
+    actor_id: str | None = None,
+    reason: str | None = None,
+) -> Optional[str]:
+    """Rotate a token manually without retaining its bearer value in history."""
+    if actor_type not in {"telegram_user", "admin", "system"}:
+        raise ValueError("actor_type is invalid")
     with connect(db_path) as conn:
         ensure_subscription_token_table(conn)
         exists = conn.execute(
@@ -116,6 +178,16 @@ def regenerate_token(db_path: str, kind: str, identifier: str) -> Optional[str]:
                     "SET token = ?, updated_at = CURRENT_TIMESTAMP "
                     "WHERE kind = ? AND identifier = ?",
                     (token, kind, identifier),
+                )
+                _record_event(
+                    conn,
+                    kind=kind,
+                    identifier=identifier,
+                    event_type="rotated",
+                    token=token,
+                    actor_type=actor_type,
+                    actor_id=actor_id,
+                    reason=reason,
                 )
                 conn.commit()
                 return token

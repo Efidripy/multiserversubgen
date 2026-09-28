@@ -200,3 +200,36 @@ def test_bot_block_after_approval_does_not_revoke_an_existing_public_subscriptio
 
     assert TelegramSubscriptionAccessGate(db_path).can_serve_email("blocked-user") is True
     assert client.get(f"/api/v1/sub/{token}").status_code == 200
+
+
+def test_guest_subscription_endpoint_expires_or_revokes_without_rotating_the_primary_token(tmp_path):
+    db_path = str(tmp_path / "guest-subscription.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="guest", first_name="Guest", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="guest-user",
+        origin="telegram",
+        email_source="telegram_username",
+        public_code="guest-user",
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    primary = ensure_tokens(db_path, "email", ["guest-user"])["guest-user"]
+    guest = registry.create_guest_subscription_link(telegram_user_id=42, duration_hours=1)
+    assert guest.token is not None
+    client = TestClient(_build_app(db_path, ["guest-user"]))
+
+    served = client.get(f"/api/v1/guest-sub/{guest.token}")
+    registry.revoke_guest_subscription_link(telegram_user_id=42, guest_link_id=guest.guest_link_id)
+    denied = client.get(f"/api/v1/guest-sub/{guest.token}")
+
+    assert served.status_code == 200
+    assert base64.b64decode(served.text).decode() == "vless://guest-user@node1"
+    assert denied.status_code == 404
+    assert ensure_tokens(db_path, "email", ["guest-user"])["guest-user"] == primary

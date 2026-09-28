@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from typing import Any, Callable
 
 from services.subscription_tokens import ensure_tokens, regenerate_token
@@ -165,6 +166,8 @@ class TelegramRegistrationService:
                 [{"text": "Заявки", "callback_data": "admin:requests:0"}],
                 [{"text": "Пользователи", "callback_data": "admin:customers:0"}],
                 [{"text": "TG-ноды", "callback_data": "admin:nodes:0"}],
+                [{"text": "Проблемы синхронизации", "callback_data": "admin:issues"}],
+                [{"text": "Статус сервиса", "callback_data": "admin:service"}],
                 [{"text": "Рассылки", "callback_data": "admin:broadcasts"}],
             ]
         }
@@ -411,6 +414,8 @@ class TelegramRegistrationService:
         matrix = self._registry.customer_node_matrix(customer.customer_id)
         admin_note = self._registry.get_customer_admin_note(customer.customer_id)
         support_requests = self._registry.list_customer_support_requests(customer.customer_id)
+        token_events = self._registry.list_subscription_token_events(customer.customer_id, limit=3)
+        quality_reports = self._registry.list_customer_quality_reports(customer.customer_id, limit=2)
         unresolved_support_count = sum(item.status in {"open", "read"} for item in support_requests)
         registration_introduction = (
             self._registry.get_customer_registration_introduction(customer.customer_id)
@@ -427,6 +432,18 @@ class TelegramRegistrationService:
             f"Телефон: {profile.phone_number}" if profile.phone_number else "Телефон: не указан",
             f"Трафик за всё время: {self._format_bytes(traffic.lifetime_bytes)}",
         ]
+        if token_events:
+            lines.append("Перевыпуск ссылки: " + "; ".join(
+                f"{event.created_at} ({event.reason or event.event_type})" for event in token_events
+            ))
+        if quality_reports:
+            quality_labels = {
+                "ok": "всё хорошо", "slow": "медленно", "connection": "не подключается", "routes": "не везде",
+            }
+            lines.append("Последний сигнал: " + "; ".join(
+                f"{quality_labels.get(item.kind, item.kind)} · {item.platform} · {item.created_at}"
+                for item in quality_reports
+            ))
         if admin_note is not None:
             lines.extend(("Заметка администратора:", admin_note.body))
         elif registration_introduction is not None:
@@ -545,6 +562,86 @@ class TelegramRegistrationService:
                 [{"text": "← Меню", "callback_data": "admin:home"}],
             ]},
         )
+
+    def _admin_issues_message(self, chat_id: int) -> TelegramOutboundMessage:
+        jobs = self._registry.list_provisioning_jobs(limit=100)
+        issues = [
+            job for job in jobs
+            if job.status in {"partial", "failed"}
+            or any(attempt.status in {"failed", "ambiguous", "skipped"} for attempt in job.attempts)
+        ]
+        if not issues:
+            return TelegramOutboundMessage(
+                chat_id,
+                "Проблем синхронизации сейчас нет.",
+                {"inline_keyboard": [[{"text": "← Меню", "callback_data": "admin:home"}]]},
+            )
+        lines = [f"Проблемы синхронизации: {len(issues)}."]
+        buttons: list[list[dict[str, str]]] = []
+        for job in issues[:10]:
+            failing = next(
+                (attempt for attempt in job.attempts if attempt.status in {"failed", "ambiguous", "skipped"}),
+                None,
+            )
+            detail = f" · {failing.node_name}" if failing is not None else ""
+            lines.append(f"#{job.job_id} · {job.customer_email} · {job.status}{detail}")
+            buttons.append([{
+                "text": f"#{job.job_id} · {job.customer_email[:28]}",
+                "callback_data": f"admin:issue:{job.job_id}:{job.row_version}",
+            }])
+        buttons.append([{"text": "← Меню", "callback_data": "admin:home"}])
+        return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
+
+    def _admin_issue_message(self, chat_id: int, job_id: int, expected_version: int) -> TelegramOutboundMessage:
+        job = self._registry.get_provisioning_job(job_id)
+        if job.row_version != expected_version:
+            raise VersionConflictError("provisioning job is stale")
+        lines = [
+            f"Синхронизация #{job.job_id}",
+            f"Пользователь: {job.customer_email}",
+            f"Статус: {job.status}",
+        ]
+        retryable = False
+        for attempt in job.attempts:
+            suffix = f" · {attempt.error_summary}" if attempt.error_summary else ""
+            lines.append(f"{attempt.node_name}: {attempt.status}{suffix}")
+            retryable = retryable or attempt.status in {"failed", "ambiguous", "skipped"}
+        buttons: list[list[dict[str, str]]] = []
+        if retryable:
+            buttons.extend((
+                [{"text": "↻ Повторить", "callback_data": f"admin:issue-action:retry:{job.job_id}:{job.row_version}"}],
+                [{"text": "⌁ Сверить и повторить", "callback_data": f"admin:issue-action:reconcile:{job.job_id}:{job.row_version}"}],
+            ))
+        buttons.append([{
+            "text": "Пользователь",
+            "callback_data": f"admin:customer:{job.customer_id}:0",
+        }])
+        for attempt in job.attempts:
+            if attempt.status in {"failed", "ambiguous", "skipped"}:
+                buttons.append([{
+                    "text": f"TG-нода · {attempt.node_name[:28]}",
+                    "callback_data": f"admin:node:{attempt.node_id}:0",
+                }])
+        buttons.append([{"text": "← К проблемам", "callback_data": "admin:issues"}])
+        return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
+
+    def _admin_service_notice_message(self, chat_id: int) -> TelegramOutboundMessage:
+        notice = self._registry.get_service_notice()
+        if notice.is_active and notice.body:
+            text = f"Статус сервиса: временное сообщение активно.\n\n{notice.body}"
+        else:
+            text = "Статус сервиса: штатная работа."
+        buttons = [[{
+            "text": "✎ Изменить сообщение" if notice.is_active else "+ Добавить сообщение",
+            "callback_data": f"admin:notice:edit:{notice.row_version}",
+        }]]
+        if notice.is_active:
+            buttons.append([{
+                "text": "⌫ Вернуть штатный статус",
+                "callback_data": f"admin:notice:disable:{notice.row_version}",
+            }])
+        buttons.append([{"text": "← Меню", "callback_data": "admin:home"}])
+        return TelegramOutboundMessage(chat_id, text, {"inline_keyboard": buttons})
 
     def _admin_blocked_message(self, chat_id: int, page: int) -> TelegramOutboundMessage:
         page_size = 6
@@ -746,6 +843,30 @@ class TelegramRegistrationService:
             ]},
         )]
 
+    def _handle_service_notice_draft(
+        self, *, user_id: int, chat_id: int, text: str | None, update_id: int
+    ) -> list[TelegramOutboundMessage] | None:
+        if not text or text.strip().startswith("/"):
+            return None
+        draft = self._registry.get_service_notice_draft(user_id)
+        if draft is None:
+            return None
+        try:
+            self._registry.set_service_notice(
+                body=text,
+                expected_row_version=draft.expected_row_version,
+                idempotency_key=f"telegram-admin-service-notice:{update_id}",
+                updated_by=f"telegram:{user_id}",
+            )
+        except (TelegramRegistryError, VersionConflictError, IdempotencyConflictError):
+            return [TelegramOutboundMessage(
+                chat_id,
+                "Сообщение не принято: допустимо от 1 до 1000 символов, либо оно уже изменилось.",
+                self._admin_home_menu(),
+            )]
+        self._registry.clear_service_notice_draft(user_id)
+        return [self._admin_service_notice_message(chat_id)]
+
     def _handle_admin(
         self, *, user_id: int, chat_id: int, update_id: int, text: str | None, callback_data: str | None
     ) -> list[TelegramOutboundMessage] | None:
@@ -756,6 +877,7 @@ class TelegramRegistrationService:
             self._registry.clear_admin_message_draft(user_id)
             self._registry.clear_customer_note_draft(user_id)
             self._registry.clear_support_reply_draft(user_id)
+            self._registry.clear_service_notice_draft(user_id)
             self._registry.clear_node_bulk_action_preview(user_id)
             return [TelegramOutboundMessage(chat_id, "Управление доступом.", self._admin_home_menu())]
         if callback_data == "admin:home":
@@ -763,6 +885,7 @@ class TelegramRegistrationService:
             self._registry.clear_admin_message_draft(user_id)
             self._registry.clear_customer_note_draft(user_id)
             self._registry.clear_support_reply_draft(user_id)
+            self._registry.clear_service_notice_draft(user_id)
             self._registry.clear_node_bulk_action_preview(user_id)
             return [TelegramOutboundMessage(chat_id, "Управление доступом.", self._admin_home_menu())]
         if callback_data is not None and callback_data != "admin:support-reply-confirm":
@@ -770,6 +893,8 @@ class TelegramRegistrationService:
             # a later unrelated message cannot overwrite an admin input.
             self._registry.clear_customer_note_draft(user_id)
             self._registry.clear_support_reply_draft(user_id)
+        if callback_data is not None and not callback_data.startswith("admin:notice:edit:"):
+            self._registry.clear_service_notice_draft(user_id)
         support_reply_draft_response = self._handle_support_reply_draft(user_id=user_id, chat_id=chat_id, text=text)
         if support_reply_draft_response is not None:
             return support_reply_draft_response
@@ -779,11 +904,55 @@ class TelegramRegistrationService:
         customer_note_draft_response = self._handle_customer_note_draft(user_id=user_id, chat_id=chat_id, text=text)
         if customer_note_draft_response is not None:
             return customer_note_draft_response
+        service_notice_draft_response = self._handle_service_notice_draft(
+            user_id=user_id, chat_id=chat_id, text=text, update_id=update_id
+        )
+        if service_notice_draft_response is not None:
+            return service_notice_draft_response
         draft_response = self._handle_admin_draft(user_id=user_id, chat_id=chat_id, text=text)
         if draft_response is not None:
             return draft_response
         parts = callback_data.split(":") if callback_data else []
         try:
+            if callback_data == "admin:issues":
+                return [self._admin_issues_message(chat_id)]
+            if len(parts) == 4 and parts[:2] == ["admin", "issue"]:
+                return [self._admin_issue_message(chat_id, int(parts[2]), int(parts[3]))]
+            if len(parts) == 5 and parts[:2] == ["admin", "issue-action"]:
+                action, job_id, version = parts[2], int(parts[3]), int(parts[4])
+                result = self._registry.reschedule_provisioning_job(
+                    job_id=job_id,
+                    expected_job_version=version,
+                    idempotency_key=f"telegram-admin-issue-{action}:{update_id}:{job_id}",
+                    requested_by=f"telegram:{user_id}",
+                    action=action,
+                )
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    f"Задача #{result.job_id} поставлена в очередь.",
+                    self._admin_issues_message(chat_id).reply_markup,
+                )]
+            if callback_data == "admin:service":
+                return [self._admin_service_notice_message(chat_id)]
+            if len(parts) == 4 and parts[:3] == ["admin", "notice", "edit"]:
+                version = int(parts[3])
+                self._registry.set_service_notice_draft(
+                    admin_telegram_user_id=user_id, expected_row_version=version
+                )
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    "Отправьте короткое нейтральное сообщение о текущем статусе. До 1000 символов.",
+                    {"inline_keyboard": [[{"text": "Отмена", "callback_data": "admin:service"}]]},
+                )]
+            if len(parts) == 4 and parts[:3] == ["admin", "notice", "disable"]:
+                version = int(parts[3])
+                self._registry.set_service_notice(
+                    body=None,
+                    expected_row_version=version,
+                    idempotency_key=f"telegram-admin-notice-disable:{update_id}",
+                    updated_by=f"telegram:{user_id}",
+                )
+                return [self._admin_service_notice_message(chat_id)]
             if callback_data == "admin:broadcasts":
                 self._registry.clear_admin_draft(user_id)
                 self._registry.clear_admin_message_draft(user_id)
@@ -1170,6 +1339,9 @@ class TelegramRegistrationService:
         else:
             rows.extend([
                 [{"text": button(locale, "connection"), "callback_data": "setup:menu"}],
+                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
+                [{"text": button(locale, "quality"), "callback_data": "quality:menu"}],
+                [{"text": button(locale, "status"), "callback_data": "service:status"}],
                 [{"text": button(locale, "notifications"), "callback_data": "preferences:menu"}],
                 [{"text": button(locale, "help"), "callback_data": "help"}],
                 [{"text": button(locale, "language"), "callback_data": "language:menu"}],
@@ -1185,7 +1357,10 @@ class TelegramRegistrationService:
                 [{"text": button(locale, "get_link"), "callback_data": "subscription:link"}],
                 [{"text": button(locale, "show_qr"), "callback_data": "subscription:qr"}],
                 [{"text": button(locale, "check_ready"), "callback_data": "setup:diagnostics"}],
+                [{"text": button(locale, "diagnostics"), "callback_data": "diagnostics:menu"}],
                 [{"text": button(locale, "rotate"), "callback_data": "subscription:rotate"}],
+                [{"text": button(locale, "guest_link"), "callback_data": "subscription:guest"}],
+                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
                 [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
             ]},
         )
@@ -1223,7 +1398,18 @@ class TelegramRegistrationService:
         if not links:
             return None, TelegramOutboundMessage(chat_id, tr(locale, "link_preparing"), self._approved_menu(locale))
         try:
-            token = regenerate_token(self._registry.database_path, "email", access.email_display) if rotate else None
+            token = (
+                regenerate_token(
+                    self._registry.database_path,
+                    "email",
+                    access.email_display,
+                    actor_type="telegram_user",
+                    actor_id=str(user_id),
+                    reason="self_service",
+                )
+                if rotate
+                else None
+            )
             if not token:
                 token = ensure_tokens(self._registry.database_path, "email", [access.email_display]).get(access.email_display)
         except Exception:
@@ -1305,7 +1491,7 @@ class TelegramRegistrationService:
         buttons.extend((
             [{"text": button(locale, "get_access"), "callback_data": "subscription:get"}],
             [{"text": button(locale, "repeat_guide"), "callback_data": f"setup:{platform}"}],
-            [{"text": button(locale, "devices"), "callback_data": "setup:menu"}],
+            [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
             [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
         ))
         return TelegramOutboundMessage(
@@ -1371,13 +1557,22 @@ class TelegramRegistrationService:
         background_action = turn_off if preferences.background_notifications_enabled else turn_on
         expiry_action = turn_off if preferences.expiry_reminders_enabled else turn_on
         traffic_action = turn_off if preferences.traffic_reminders_enabled else turn_on
+        thresholds = ", ".join(f"{value}%" for value in preferences.traffic_reminder_thresholds) or "—"
         return TelegramOutboundMessage(
             chat_id,
-            tr(locale, "preferences", background=background_state, expiry=expiry_state, traffic=traffic_state),
+            tr(
+                locale,
+                "preferences",
+                background=background_state,
+                expiry=expiry_state,
+                traffic=traffic_state,
+                traffic_thresholds=thresholds,
+            ),
             {"inline_keyboard": [
                 [{"text": tr(locale, "preference_background_action", action=background_action), "callback_data": "preferences:toggle-background"}],
                 [{"text": tr(locale, "preference_expiry_action", action=expiry_action), "callback_data": "preferences:toggle-expiry"}],
                 [{"text": tr(locale, "preference_traffic_action", action=traffic_action), "callback_data": "preferences:toggle-traffic"}],
+                [{"text": button(locale, "traffic_thresholds"), "callback_data": "preferences:traffic-thresholds"}],
                 [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
             ]},
         )
@@ -1412,6 +1607,157 @@ class TelegramRegistrationService:
             text,
             {"inline_keyboard": [[{"text": button(locale, "menu"), "callback_data": "menu:home"}]]},
         )
+
+    @staticmethod
+    def _diagnostics_menu(chat_id: int, locale: str) -> TelegramOutboundMessage:
+        return TelegramOutboundMessage(
+            chat_id,
+            tr(locale, "diagnostics_menu"),
+            {"inline_keyboard": [
+                [{"text": "Не импортируется" if locale == "ru" else "Will not import", "callback_data": "diagnostics:import"}],
+                [{"text": "Не подключается" if locale == "ru" else "Will not connect", "callback_data": "diagnostics:connection"}],
+                [{"text": "Работает не везде" if locale == "ru" else "Does not work everywhere", "callback_data": "diagnostics:routes"}],
+                [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
+            ]},
+        )
+
+    @staticmethod
+    def _diagnostics_guidance(chat_id: int, issue: str, locale: str) -> TelegramOutboundMessage:
+        key = {
+            "import": "diagnostics_import",
+            "connection": "diagnostics_connection",
+            "routes": "diagnostics_routes",
+        }.get(issue)
+        if key is None:
+            return TelegramOutboundMessage(chat_id, tr(locale, "unavailable"))
+        category = "directions" if issue == "routes" else "connection"
+        return TelegramOutboundMessage(
+            chat_id,
+            tr(locale, key),
+            {"inline_keyboard": [
+                [{"text": button(locale, "support"), "callback_data": f"support:category:{category}"}],
+                [{"text": button(locale, "diagnostics"), "callback_data": "diagnostics:menu"}],
+                [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
+            ]},
+        )
+
+    @staticmethod
+    def _guest_link_menu(chat_id: int, locale: str) -> TelegramOutboundMessage:
+        return TelegramOutboundMessage(
+            chat_id,
+            tr(locale, "guest_link_menu"),
+            {"inline_keyboard": (
+                [[{"text": f"{hours} ч." if locale == "ru" else f"{hours} h", "callback_data": f"subscription:guest:{hours}"}]
+                for hours in (1, 3, 6, 12, 24)]
+                + [[{"text": button(locale, "menu"), "callback_data": "menu:home"}]]
+            )},
+        )
+
+    def _guest_link_message(
+        self, *, user_id: int, chat_id: int, duration_hours: int, locale: str
+    ) -> TelegramOutboundMessage:
+        if not self._public_base_url:
+            return TelegramOutboundMessage(chat_id, tr(locale, "link_later"), self._approved_menu(locale))
+        guest = self._registry.create_guest_subscription_link(
+            telegram_user_id=user_id, duration_hours=duration_hours
+        )
+        assert guest.token is not None
+        expires_at = datetime.fromtimestamp(guest.expires_at, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
+        url = f"{self._public_base_url}/api/v1/guest-sub/{guest.token}"
+        return TelegramOutboundMessage(
+            chat_id,
+            tr(locale, "guest_link_ready", expires_at=expires_at, url=url),
+            {"inline_keyboard": [
+                [{"text": button(locale, "revoke"), "callback_data": f"guest:revoke:{guest.guest_link_id}"}],
+                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
+                [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
+            ]},
+        )
+
+    def _devices_message(self, user_id: int, chat_id: int, locale: str) -> TelegramOutboundMessage:
+        devices = self._registry.list_logical_devices(user_id)
+        active_label = "активно" if locale == "ru" else "active"
+        expired_label = "срок истёк" if locale == "ru" else "expired"
+        revoked_label = "отозвано" if locale == "ru" else "revoked"
+        lines = [tr(locale, "devices")]
+        buttons: list[list[dict[str, str]]] = []
+        for item in devices:
+            if item.kind == "primary":
+                details = active_label
+                prefix = "⊙"
+            elif item.status == "active" and item.expires_at is not None:
+                details = (
+                    ("активно до " if locale == "ru" else "active until ")
+                    + datetime.fromtimestamp(item.expires_at, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
+                )
+                prefix = "↗"
+            elif item.status == "expired":
+                details, prefix = expired_label, "○"
+            else:
+                details, prefix = revoked_label, "○"
+            lines.append(f"{prefix} {item.label} — {details}")
+            buttons.append([{
+                "text": f"{button(locale, 'rename')} · {item.label[:26]}",
+                "callback_data": f"device:rename:{item.device_id}",
+            }])
+            if item.kind == "guest" and item.status == "active" and item.guest_link_id is not None:
+                buttons.append([{
+                    "text": f"{button(locale, 'revoke')} · {item.label[:26]}",
+                    "callback_data": f"guest:revoke:{item.guest_link_id}",
+                }])
+        buttons.extend((
+            [{"text": button(locale, "guest_link"), "callback_data": "subscription:guest"}],
+            [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
+        ))
+        return TelegramOutboundMessage(chat_id, "\n".join(lines), {"inline_keyboard": buttons})
+
+    def _traffic_thresholds_message(self, user_id: int, chat_id: int, locale: str) -> TelegramOutboundMessage:
+        preferences = self._registry.get_notification_preferences(user_id)
+        selected = set(preferences.traffic_reminder_thresholds)
+        rows = [
+            [{
+                "text": f"{'✓' if threshold in selected else '○'} {threshold}%",
+                "callback_data": f"preferences:traffic-threshold:{threshold}",
+            }]
+            for threshold in (50, 80, 95, 100)
+        ]
+        rows.append([{"text": button(locale, "notifications"), "callback_data": "preferences:menu"}])
+        return TelegramOutboundMessage(chat_id, tr(locale, "traffic_thresholds"), {"inline_keyboard": rows})
+
+    def _service_status_message(self, chat_id: int, locale: str) -> TelegramOutboundMessage:
+        notice = self._registry.get_service_notice()
+        text = (
+            tr(locale, "service_status_notice", body=notice.body)
+            if notice.is_active and notice.body
+            else tr(locale, "service_status_normal")
+        )
+        return TelegramOutboundMessage(
+            chat_id, text,
+            {"inline_keyboard": [[{"text": button(locale, "menu"), "callback_data": "menu:home"}]]},
+        )
+
+    @staticmethod
+    def _quality_menu(chat_id: int, locale: str) -> TelegramOutboundMessage:
+        labels = {
+            "ok": "Всё хорошо" if locale == "ru" else "Everything is good",
+            "slow": "Медленно" if locale == "ru" else "Slow",
+            "connection": "Не подключается" if locale == "ru" else "Will not connect",
+            "routes": "Работает не везде" if locale == "ru" else "Does not work everywhere",
+        }
+        rows = [[{"text": labels[kind], "callback_data": f"quality:kind:{kind}"}] for kind in labels]
+        rows.append([{"text": button(locale, "menu"), "callback_data": "menu:home"}])
+        return TelegramOutboundMessage(chat_id, tr(locale, "quality_menu"), {"inline_keyboard": rows})
+
+    @staticmethod
+    def _quality_platform_menu(chat_id: int, kind: str, locale: str) -> TelegramOutboundMessage:
+        rows = [
+            [{"text": "Android", "callback_data": f"quality:platform:{kind}:android"}],
+            [{"text": "iPhone / iPad", "callback_data": f"quality:platform:{kind}:ios"}],
+            [{"text": "Компьютер" if locale == "ru" else "Computer", "callback_data": f"quality:platform:{kind}:desktop"}],
+            [{"text": "Другое" if locale == "ru" else "Other", "callback_data": f"quality:platform:{kind}:other"}],
+            [{"text": button(locale, "quality"), "callback_data": "quality:menu"}],
+        ]
+        return TelegramOutboundMessage(chat_id, tr(locale, "quality_platform"), {"inline_keyboard": rows})
 
     def _help_message(self, chat_id: int, locale: str = "ru") -> TelegramOutboundMessage:
         notice = self._registry.get_service_notice()
@@ -1529,6 +1875,18 @@ class TelegramRegistrationService:
 
         if identity.access_status == "approved":
             access = self._registry.get_customer_access(user_id)
+            device_draft_id = self._registry.get_logical_device_draft(user_id)
+            if text and device_draft_id is not None and not text.strip().startswith("/"):
+                try:
+                    self._registry.set_logical_device_label(
+                        telegram_user_id=user_id, device_id=device_draft_id, label=text
+                    )
+                except TelegramRegistryError:
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "device_rename_invalid"))]
+                self._registry.clear_logical_device_draft(user_id)
+                return [self._devices_message(user_id, chat_id, locale)]
+            if callback_data is not None and callback_data != "device:rename":
+                self._registry.clear_logical_device_draft(user_id)
             if callback_data == "subscription:get":
                 return [self._access_choice_message(chat_id, locale)]
             if callback_data == "language:menu":
@@ -1549,12 +1907,66 @@ class TelegramRegistrationService:
                 ]
             if callback_data == "subscription:rotate:confirm":
                 return [self._subscription_message(user_id=user_id, chat_id=chat_id, rotate=True, locale=locale)]
+            if callback_data == "subscription:guest":
+                return [self._guest_link_menu(chat_id, locale)]
+            if callback_data and callback_data.startswith("subscription:guest:"):
+                try:
+                    duration_hours = int(callback_data.rsplit(":", 1)[-1])
+                    return [self._guest_link_message(
+                        user_id=user_id, chat_id=chat_id, duration_hours=duration_hours, locale=locale
+                    )]
+                except (ValueError, TelegramRegistryError):
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+            if callback_data == "devices:menu":
+                return [self._devices_message(user_id, chat_id, locale)]
+            if callback_data and callback_data.startswith("device:rename:"):
+                try:
+                    device_id = int(callback_data.rsplit(":", 1)[-1])
+                    self._registry.set_logical_device_draft(telegram_user_id=user_id, device_id=device_id)
+                except (ValueError, TelegramRegistryError):
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    tr(locale, "device_rename_prompt"),
+                    {"inline_keyboard": [[{"text": button(locale, "devices"), "callback_data": "devices:menu"}]]},
+                )]
+            if callback_data and callback_data.startswith("guest:revoke:"):
+                try:
+                    guest_link_id = int(callback_data.rsplit(":", 1)[-1])
+                    self._registry.revoke_guest_subscription_link(
+                        telegram_user_id=user_id, guest_link_id=guest_link_id
+                    )
+                except (ValueError, TelegramRegistryError):
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                return [TelegramOutboundMessage(chat_id, tr(locale, "guest_link_revoked"), self._devices_message(user_id, chat_id, locale).reply_markup)]
             if callback_data == "setup:menu":
                 return [self._setup_menu(chat_id, locale)]
             if callback_data in {"setup:android", "setup:ios", "setup:desktop"}:
                 return [self._setup_guide(chat_id, callback_data.removeprefix("setup:"), locale)]
             if callback_data == "setup:diagnostics":
                 return [self._diagnostics_message(user_id, chat_id, locale)]
+            if callback_data == "diagnostics:menu":
+                return [self._diagnostics_menu(chat_id, locale)]
+            if callback_data and callback_data.startswith("diagnostics:"):
+                return [self._diagnostics_guidance(chat_id, callback_data.removeprefix("diagnostics:"), locale)]
+            if callback_data == "quality:menu":
+                return [self._quality_menu(chat_id, locale)]
+            if callback_data and callback_data.startswith("quality:kind:"):
+                kind = callback_data.removeprefix("quality:kind:")
+                if kind not in {"ok", "slow", "connection", "routes"}:
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                return [self._quality_platform_menu(chat_id, kind, locale)]
+            if callback_data and callback_data.startswith("quality:platform:"):
+                parts = callback_data.split(":")
+                if len(parts) != 4:
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                try:
+                    self._registry.submit_quality_report(
+                        telegram_user_id=user_id, kind=parts[2], platform=parts[3]
+                    )
+                except TelegramRegistryError:
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                return [TelegramOutboundMessage(chat_id, tr(locale, "quality_sent"), self._approved_menu(locale))]
             if callback_data == "support:menu":
                 return [self._support_category_message(chat_id, locale)]
             if callback_data and callback_data.startswith("support:category:"):
@@ -1597,10 +2009,21 @@ class TelegramRegistrationService:
             if callback_data == "preferences:toggle-traffic":
                 self._registry.toggle_traffic_reminders(user_id)
                 return [self._preferences_message(user_id, chat_id, locale)]
+            if callback_data == "preferences:traffic-thresholds":
+                return [self._traffic_thresholds_message(user_id, chat_id, locale)]
+            if callback_data and callback_data.startswith("preferences:traffic-threshold:"):
+                try:
+                    threshold = int(callback_data.rsplit(":", 1)[-1])
+                    self._registry.toggle_traffic_reminder_threshold(user_id, threshold)
+                except (ValueError, TelegramRegistryError):
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                return [self._traffic_thresholds_message(user_id, chat_id, locale)]
             if callback_data == "menu:home":
                 return [self._approved_status(user_id, chat_id, locale)]
             if callback_data == "help":
                 return [self._help_message(chat_id, locale)]
+            if callback_data == "service:status":
+                return [self._service_status_message(chat_id, locale)]
             if text and text.strip().startswith("/status"):
                 return [self._approved_status(user_id, chat_id, locale)]
             if text and text.strip().startswith("/subscription"):
