@@ -456,6 +456,7 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
     qr = service.handle_update(_callback(23, "subscription:qr"))
 
     assert any(button[0]["text"] == "⊞ Подключение" for button in home[0].reply_markup["inline_keyboard"])
+    assert any(button[0]["text"] == "⊙ Мои устройства" for button in home[0].reply_markup["inline_keyboard"])
     assert assistant[0].text.startswith("Выберите устройство")
     assert not assistant[0].text.startswith("Подключение")
     assert access_choice[0].text.startswith("Выберите удобное действие")
@@ -469,6 +470,7 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
         guide = service.handle_update(_callback(offset, f"setup:{platform}"))[0]
         assert guide.text.startswith("1.")
         assert not guide.text.startswith("Подключение")
+
     home_actions = {
         button["callback_data"]
         for row in home[0].reply_markup["inline_keyboard"]
@@ -497,6 +499,12 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
     assert qr[0].photo_png.startswith(b"\x89PNG\r\n\x1a\n")
     assert "https://" not in qr[0].text
     assert "api/v1/sub" not in qr[0].text
+
+
+def test_approved_menu_uses_my_devices_in_english():
+    rows = TelegramRegistrationService._approved_menu("en")["inline_keyboard"]
+
+    assert any(row[0]["text"] == "⊙ My devices" for row in rows)
 
 
 def test_suspended_user_cannot_receive_qr(tmp_path):
@@ -788,6 +796,13 @@ def test_primary_admin_has_broadcasts_and_customer_profile_details(tmp_path):
         "Статус сервиса",
         "Рассылки",
     ]
+    assert home[0].reply_markup["inline_keyboard"][0] == [
+        {"text": "Заявки", "callback_data": "admin:requests:0"},
+    ]
+    assert home[0].reply_markup["inline_keyboard"][1] == [
+        {"text": "Пользователи", "callback_data": "admin:customers:0"},
+        {"text": "TG-ноды", "callback_data": "admin:nodes:0"},
+    ]
     requests = service.handle_update(_admin_callback(43, "admin:requests:0"))
     request_labels = [button["text"] for row in requests[0].reply_markup["inline_keyboard"] for button in row]
     assert "⊘ Заблокированные" in request_labels
@@ -832,6 +847,7 @@ def test_approved_user_can_create_and_revoke_a_guest_link_and_send_quality_feedb
 
     assert "ВНИМАНИЕ" in choice.text
     assert "/api/v1/guest-sub/" in created.text
+    assert devices.text.startswith("Мои устройства")
     assert "Гостевая ссылка" in devices.text
     assert "Как сейчас работает" in quality_kind.text
     assert "устройстве" in quality_platform.text
