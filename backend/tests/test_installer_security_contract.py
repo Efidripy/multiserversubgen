@@ -372,6 +372,7 @@ def test_xui_installer_owns_only_its_dedicated_web_root_and_nginx_files():
 
 
 def test_stream_mux_conflicts_fail_closed_without_deleting_unmanaged_sites():
+    install = _read("scripts/installer/install.sh")
     xui = _read("scripts/installer/lib/xui_core.sh")
 
     assert "xui_assert_no_unmanaged_nginx_443_conflicts" in xui
@@ -379,6 +380,8 @@ def test_stream_mux_conflicts_fail_closed_without_deleting_unmanaged_sites():
     assert "Refusing to modify an unmanaged Nginx stream block" in xui
     assert "/^[[:space:]]*#/ { next }" in xui
     assert "Ubuntu's stock default site documents a" in xui
+    assert "/^[[:space:]]*#/ { next }" in install
+    assert "distro-provided default vhosts" in install
 
     for relative_path in (
         "scripts/installer/install.sh",
