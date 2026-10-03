@@ -43,6 +43,107 @@ runtime_secrets_load() {
     fi
 }
 
+runtime_telegram_public_base_url_is_valid() {
+    local value="${1:-}"
+
+    TELEGRAM_PUBLIC_BASE_URL_TO_VALIDATE="$value" python3 - <<'PYTHON'
+import os
+from urllib.parse import urlparse
+
+value = os.environ["TELEGRAM_PUBLIC_BASE_URL_TO_VALIDATE"]
+try:
+    parsed = urlparse(value)
+    hostname = parsed.hostname
+    _ = parsed.port
+except ValueError:
+    raise SystemExit(1)
+
+if (
+    parsed.scheme != "https"
+    or not hostname
+    or parsed.username is not None
+    or parsed.password is not None
+    or parsed.query
+    or parsed.fragment
+):
+    raise SystemExit(1)
+PYTHON
+}
+
+runtime_derive_telegram_public_base_url() {
+    local public_scheme="${PUBLIC_SCHEME:-}"
+    local public_domain="${PUBLIC_DOMAIN:-}"
+    local web_path="${WEB_PATH:-}"
+
+    [ "$public_scheme" = "https" ] || return 1
+    [[ "$public_domain" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$ ]] || return 1
+    [[ "$public_domain" != *..* ]] || return 1
+    web_path="${web_path#/}"
+    web_path="${web_path%/}"
+    [ -z "$web_path" ] || [[ "$web_path" =~ ^[A-Za-z0-9]{1,128}$ ]] || return 1
+
+    if [ -n "$web_path" ]; then
+        printf 'https://%s/%s\n' "$public_domain" "$web_path"
+    else
+        printf 'https://%s\n' "$public_domain"
+    fi
+}
+
+runtime_resolve_telegram_public_base_url() {
+    local configured_value="${TELEGRAM_PUBLIC_BASE_URL:-}"
+    local recorded_auto_value="${TELEGRAM_PUBLIC_BASE_URL_AUTO_VALUE:-}"
+    local derived_value=""
+
+    configured_value="${configured_value%/}"
+    recorded_auto_value="${recorded_auto_value%/}"
+
+    if [ -n "$configured_value" ] \
+        && { [ "${TELEGRAM_PUBLIC_BASE_URL_SOURCE:-}" != "auto" ] || [ -z "$recorded_auto_value" ] || [ "$configured_value" != "$recorded_auto_value" ]; }; then
+        runtime_telegram_public_base_url_is_valid "$configured_value" || {
+            printf 'TELEGRAM_PUBLIC_BASE_URL must be an HTTPS URL without credentials, query or fragment\n' >&2
+            return 1
+        }
+        TELEGRAM_PUBLIC_BASE_URL="$configured_value"
+        TELEGRAM_PUBLIC_BASE_URL_SOURCE="manual"
+        TELEGRAM_PUBLIC_BASE_URL_AUTO_VALUE=""
+        return 0
+    fi
+
+    derived_value="$(runtime_derive_telegram_public_base_url)" || {
+        if [ "${TELEGRAM_BOT_ENABLED:-false}" = "true" ]; then
+            printf 'Telegram is enabled but TELEGRAM_PUBLIC_BASE_URL is unset and the canonical panel origin is not HTTPS\n' >&2
+            return 1
+        fi
+        TELEGRAM_PUBLIC_BASE_URL=""
+        TELEGRAM_PUBLIC_BASE_URL_SOURCE=""
+        TELEGRAM_PUBLIC_BASE_URL_AUTO_VALUE=""
+        return 0
+    }
+    runtime_telegram_public_base_url_is_valid "$derived_value" || return 1
+    TELEGRAM_PUBLIC_BASE_URL="$derived_value"
+    TELEGRAM_PUBLIC_BASE_URL_SOURCE="auto"
+    TELEGRAM_PUBLIC_BASE_URL_AUTO_VALUE="$derived_value"
+}
+
+runtime_verify_telegram_public_base_url_health() {
+    local base_url="${TELEGRAM_PUBLIC_BASE_URL:-}"
+    local health_url status attempt
+
+    [ "${TELEGRAM_BOT_ENABLED:-false}" = "true" ] || return 0
+    runtime_telegram_public_base_url_is_valid "$base_url" || {
+        printf 'Telegram is enabled but TELEGRAM_PUBLIC_BASE_URL is not a valid HTTPS URL\n' >&2
+        return 1
+    }
+    health_url="${base_url%/}/health"
+    for attempt in 1 2 3 4 5; do
+        status="$(curl --fail --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' "$health_url" 2>/dev/null || true)"
+        [ "$status" = "200" ] && return 0
+        sleep 2
+    done
+    printf 'Telegram public URL health check failed (expected HTTPS /health -> 200)\n' >&2
+    return 1
+}
+
 runtime_secrets_write() {
     local secret_file temp_file runtime_key
     local -a telegram_runtime_keys=(
@@ -53,6 +154,8 @@ runtime_secrets_write() {
         TELEGRAM_WEBHOOK_SECRET
         TELEGRAM_WEBHOOK_PATH_SUFFIX
         TELEGRAM_PUBLIC_BASE_URL
+        TELEGRAM_PUBLIC_BASE_URL_SOURCE
+        TELEGRAM_PUBLIC_BASE_URL_AUTO_VALUE
         TELEGRAM_LOCAL_PROXY_URL
         TELEGRAM_POLLING_TIMEOUT_SEC
         TELEGRAM_INTRODUCTION_MAX_CHARS
@@ -75,6 +178,7 @@ runtime_secrets_write() {
 
     WS_AUTH_SECRET="${WS_AUTH_SECRET:-$(runtime_secret_generate)}"
     SUBSCRIPTION_SIGNING_SECRET="${SUBSCRIPTION_SIGNING_SECRET:-$(runtime_secret_generate)}"
+    runtime_resolve_telegram_public_base_url || return 1
 
     {
         printf 'REDIS_URL=%q\n' "${REDIS_URL:-}"
