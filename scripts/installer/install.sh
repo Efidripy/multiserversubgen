@@ -26,12 +26,29 @@ C_YELLOW='\033[1;33m'
 C_WHITE='\033[1;37m'
 C_RESET='\033[0m'
 
+apt_run_with_retry() {
+    local attempt=1
+    local max_attempts="${APT_LOCK_RETRY_ATTEMPTS:-15}"
+    local status=0
+
+    while true; do
+        DEBIAN_FRONTEND=noninteractive apt-get "${APT_DPKG_OPTS[@]}" "$@" && return 0
+        status=$?
+        if [ "$attempt" -ge "$max_attempts" ]; then
+            return "$status"
+        fi
+        echo "APT command failed (attempt ${attempt}/${max_attempts}); retrying after a short delay..." >&2
+        sleep 2
+        attempt=$((attempt + 1))
+    done
+}
+
 apt_update() {
-    DEBIAN_FRONTEND=noninteractive apt-get update "${APT_DPKG_OPTS[@]}"
+    apt_run_with_retry update
 }
 
 apt_install() {
-    DEBIAN_FRONTEND=noninteractive apt-get install -y "${APT_DPKG_OPTS[@]}" "$@"
+    apt_run_with_retry install -y "$@"
 }
 
 apt_fix_broken() {
@@ -2351,9 +2368,11 @@ fi
 
 echo "Установка системных пакетов и Python/Node.js..."
 resource_guard_require_free_mb "${INSTALL_MIN_FREE_MB:-700}" "before system package install" "/" || exit 1
-apt_update && apt_install \
+PYTHON_VENV_PACKAGE="python$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')-venv"
+if ! apt_update || ! apt_install \
     python3-pip \
     python3-venv \
+    "$PYTHON_VENV_PACKAGE" \
     python3-dev \
     libpam0g-dev \
     build-essential \
@@ -2368,7 +2387,10 @@ apt_update && apt_install \
     wget \
     git \
     certbot \
-    python3-certbot-nginx
+    python3-certbot-nginx; then
+    echo "❌ Не удалось установить обязательные системные пакеты."
+    exit 1
+fi
 
 select_or_bootstrap_nginx_cfg || { echo "❌ Не удалось подготовить nginx site config."; exit 1; }
 assert_https_reverse_proxy_compatibility || exit 1
@@ -2397,9 +2419,9 @@ sync_backend_files
 echo "Установка Python-зависимостей..."
 resource_guard_export_build_env
 resource_guard_require_free_mb "${INSTALL_PYTHON_MIN_FREE_MB:-900}" "before Python virtualenv and dependency install" "/" || exit 1
-python3 -m venv "$PROJECT_DIR/venv"
-resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt"
-resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"
+python3 -m venv "$PROJECT_DIR/venv" || { echo "❌ Не удалось создать Python virtualenv."; exit 1; }
+resource_guard_run_heavy "$PROJECT_DIR/venv/bin/pip" install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt" || exit 1
+resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR" || exit 1
 
 # Сборка React фронтенда
 echo "Сборка React фронтенда..."
