@@ -28,6 +28,16 @@ def test_install_and_update_fail_when_the_local_grafana_http_probe_never_becomes
     assert "wait_for_grafana_http || return 1" in update
 
 
+def test_sub_manager_dashboard_provider_isolated_from_other_grafana_dashboards():
+    for relative_path in ("scripts/installer/install.sh", "scripts/installer/update.sh"):
+        script = _read(relative_path)
+
+        assert "path: /var/lib/grafana/dashboards/sub-manager" in script
+        assert "install -d -o grafana -g grafana -m 0750 /var/lib/grafana/dashboards/sub-manager" in script
+        assert "/var/lib/grafana/dashboards/sub-manager/sub-manager-dashboard.json" in script
+        assert "rm -f /var/lib/grafana/dashboards/sub-manager-dashboard.json /var/lib/grafana/dashboards/adguard-overview-dashboard.json" in script
+
+
 def test_smoke_checks_the_grafana_unit_and_both_routing_hops_when_enabled():
     smoke = _read("scripts/ops/smoke-test.sh")
 
