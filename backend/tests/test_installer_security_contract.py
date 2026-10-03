@@ -145,6 +145,16 @@ def test_xui_preset_reuses_its_managed_tls_vhost_for_sub_manager():
     assert 'grep -qs \'^# managed-by: multiserversubgen-xui$\'' in workflows
 
 
+def test_fresh_installer_retries_transient_apt_locks_and_installs_matching_venv():
+    install = _read("scripts/installer/install.sh")
+
+    assert "apt_run_with_retry()" in install
+    assert 'APT_LOCK_RETRY_ATTEMPTS:-15' in install
+    assert 'PYTHON_VENV_PACKAGE="python$(python3 -c' in install
+    assert '"$PYTHON_VENV_PACKAGE"' in install
+    assert 'python3 -m venv "$PROJECT_DIR/venv" ||' in install
+
+
 def test_remove_script_defaults_to_conservative_scope():
     remove = _read("scripts/installer/remove.sh")
     workflows = _read("scripts/installer/lib/workflows.sh")
