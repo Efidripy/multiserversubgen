@@ -900,7 +900,13 @@ xui_assert_no_unmanaged_nginx_443_conflicts() {
     for config_path in /etc/nginx/nginx.conf /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf /etc/nginx/stream-enabled/*.conf; do
         [ -f "$config_path" ] || [ -L "$config_path" ] || continue
         [ "$(readlink -f "$config_path" 2>/dev/null || printf '%s' "$config_path")" = "$managed_stream" ] && continue
-        if grep -qsE 'listen[[:space:]]+([^#;[:space:]]+:)?443([[:space:];]|$)' "$config_path"; then
+        # Ignore Nginx comments. Ubuntu's stock default site documents a
+        # commented-out TLS listener, which must not block a clean install.
+        if awk '
+            /^[[:space:]]*#/ { next }
+            /listen[[:space:]]+([^#;[:space:]]+:)?443([[:space:];]|$)/ { found = 1; exit }
+            END { exit(found ? 0 : 1) }
+        ' "$config_path"; then
             conflicts+=("$config_path")
         fi
     done
