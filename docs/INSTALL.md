@@ -49,6 +49,12 @@ sudo ./install.sh
 - `PUBLIC_DOMAIN` и `PUBLIC_SCHEME`
 - параметры мониторинга
 
+Если Telegram включён, installer/update автоматически формирует
+`TELEGRAM_PUBLIC_BASE_URL` из HTTPS `PUBLIC_DOMAIN` и активного `WEB_PATH`.
+Ручное непустое значение остаётся override и не переписывается. Для
+Telegram-enabled установки публичный `https://…/health` обязан вернуть `200`
+с обычной TLS-проверкой.
+
 ## Проверка после установки
 
 ```bash

@@ -16,7 +16,7 @@ BotFather и реальные remote clients этот репозиторный �
 | `TELEGRAM_MODE` | `webhook` (default) accepts incoming Telegram requests; `polling` retrieves updates over Bot API and is useful where Telegram cannot reach the host. |
 | `TELEGRAM_WEBHOOK_SECRET` | Required only in `webhook` mode: exact value required in `X-Telegram-Bot-Api-Secret-Token`. |
 | `TELEGRAM_WEBHOOK_PATH_SUFFIX` | Required only in `webhook` mode: high-entropy path component compared exactly and never logged. |
-| `TELEGRAM_PUBLIC_BASE_URL` | Required only in `webhook` mode: public HTTPS origin used for controlled webhook registration. It is also used to issue subscription links. |
+| `TELEGRAM_PUBLIC_BASE_URL` | Required whenever Telegram is enabled: public HTTPS panel URL, including active `WEB_PATH`, used for controlled webhook registration and subscription links. Installer/update derive it from `PUBLIC_DOMAIN` + `PUBLIC_SCHEME=https` + `WEB_PATH`; a non-empty explicit value is a manual override and is preserved. |
 | `TELEGRAM_LOCAL_PROXY_URL` | Optional loopback `http://127.0.0.1:<port>` endpoint; complete HTTP proxy credentials may be embedded only in this root-owned runtime secret. It is used only after an administrator selects `Local VLESS` in the panel; otherwise Bot API stays direct. A selected local mode fails closed rather than retrying direct. |
 | `TELEGRAM_POLLING_TIMEOUT_SEC` | Long-poll duration for `polling` mode, 1–50 seconds; default `25`. The worker removes any prior webhook without dropping pending updates. |
 | `TELEGRAM_CUSTOMER_ACTIVE_ICON_CUSTOM_EMOJI_ID` | Optional positive custom emoji ID used before an active customer in the private admin list. Must be set together with the inactive ID. The bot owner needs Telegram Premium (or an additional bot username purchased through Fragment), otherwise Telegram rejects this UI field. |
@@ -31,6 +31,11 @@ BotFather и реальные remote clients этот репозиторный �
 
 The adapter validates every required setting fail-closed at startup and has no
 implicit development fallback.
+
+Installer, updater and canonical deploy verify `https://…/health` for the
+resolved URL when Telegram is enabled. The check uses normal TLS validation;
+the URL is never inferred from an IP address, NAT address, certificate subject
+or an arbitrary hostname outside the configured panel origin.
 
 ## Управление Bot API token из панели
 

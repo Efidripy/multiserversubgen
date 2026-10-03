@@ -52,6 +52,52 @@ validate_persistent_runtime_secrets() {
     || fail "systemd unit does not enforce persistent runtime secrets"
 }
 
+read_runtime_telegram_value() {
+  local key="$1"
+  sed -n -E "s/^${key}=([^[:space:]]+)$/\\1/p" "$RUNTIME_SECRETS_FILE" | tail -n 1
+}
+
+validate_telegram_public_base_url() {
+  TELEGRAM_PUBLIC_BASE_URL_TO_VALIDATE="$1" python3 - <<'PYTHON'
+import os
+from urllib.parse import urlparse
+
+value = os.environ["TELEGRAM_PUBLIC_BASE_URL_TO_VALIDATE"]
+try:
+    parsed = urlparse(value)
+    hostname = parsed.hostname
+    _ = parsed.port
+except ValueError:
+    raise SystemExit(1)
+if (
+    parsed.scheme != "https"
+    or not hostname
+    or parsed.username is not None
+    or parsed.password is not None
+    or parsed.query
+    or parsed.fragment
+):
+    raise SystemExit(1)
+PYTHON
+}
+
+wait_for_telegram_public_health() {
+  local telegram_enabled public_base_url attempt code
+  telegram_enabled="$(read_runtime_telegram_value TELEGRAM_BOT_ENABLED)"
+  [[ "$telegram_enabled" == "true" ]] || return 0
+  public_base_url="$(read_runtime_telegram_value TELEGRAM_PUBLIC_BASE_URL)"
+  validate_telegram_public_base_url "$public_base_url" \
+    || { printf 'Telegram is enabled but TELEGRAM_PUBLIC_BASE_URL is not a valid HTTPS URL\n' >&2; return 1; }
+  for attempt in {1..5}; do
+    if code="$(curl --fail --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' "${public_base_url%/}/health")"; then
+      [[ "$code" == "200" ]] && return 0
+    fi
+    sleep 2
+  done
+  printf 'Telegram public URL health check failed (expected HTTPS /health -> 200)\n' >&2
+  return 1
+}
+
 validate_persistent_runtime_secrets
 REPO_DIR="$(realpath -e -- "$REPO_DIR")"
 git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null || fail "REPO_DIR is not a Git worktree"
@@ -196,6 +242,11 @@ systemctl reload nginx
 
 if ! wait_for_health; then
   printf 'Deploy failed: health check did not become ready within 30 seconds\n' >&2
+  rollback_and_exit
+fi
+
+if ! wait_for_telegram_public_health; then
+  printf 'Deploy failed: Telegram public URL health check did not pass\n' >&2
   rollback_and_exit
 fi
 
