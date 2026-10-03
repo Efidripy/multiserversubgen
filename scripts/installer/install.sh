@@ -361,7 +361,15 @@ sanitize_nginx_sites_for_stream_443() {
     local conflicts=()
     for cfg_entry in /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*.conf; do
         [ -e "$cfg_entry" ] || continue
-        grep -qsE 'listen[[:space:]]+([^#;[:space:]]+:)?443([[:space:];]|$)' "$cfg_entry" && conflicts+=("$cfg_entry")
+        # Ignore commented examples in distro-provided default vhosts while
+        # continuing to fail closed for every active :443 listener.
+        if awk '
+            /^[[:space:]]*#/ { next }
+            /listen[[:space:]]+([^#;[:space:]]+:)?443([[:space:];]|$)/ { found = 1; exit }
+            END { exit(found ? 0 : 1) }
+        ' "$cfg_entry"; then
+            conflicts+=("$cfg_entry")
+        fi
     done
 
     shopt -u nullglob
