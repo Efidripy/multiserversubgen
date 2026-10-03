@@ -1204,6 +1204,15 @@ run_install_with_answers() {
             break
         fi
     done
+    if [ -z "$selected_cfg" ] \
+        && [ "${PROFILE_PUBLIC_DOMAIN:-}" = "${PROFILE_XUI_DOMAIN:-}" ] \
+        && [ -f /etc/nginx/sites-available/multiserversubgen-xui-main.conf ] \
+        && grep -qs '^# managed-by: multiserversubgen-xui$' /etc/nginx/sites-available/multiserversubgen-xui-main.conf; then
+        # The XUI main vhost terminates TLS behind the managed stream mux on
+        # 7443. Reusing it lets the standard installer add its snippet without
+        # creating an unreachable competing :443 vhost.
+        selected_cfg="/etc/nginx/sites-available/multiserversubgen-xui-main.conf"
+    fi
 
     local heartbeat_pid=""
     local start_ts now_ts elapsed
