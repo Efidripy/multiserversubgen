@@ -11,10 +11,13 @@ webhook, or perform real client writes outside that staging scope.
    Git, shell history, `.env` files or tickets.
 2. Create a unique high-entropy webhook path suffix and webhook secret in the
    same secret provider.
-3. Set `TELEGRAM_BOT_ENABLED=true`, `TELEGRAM_MODE=webhook`,
+3. Configure the canonical staging panel origin through installer/update
+   `PUBLIC_DOMAIN`, `PUBLIC_SCHEME=https` and `WEB_PATH`. They derive
+   `TELEGRAM_PUBLIC_BASE_URL` automatically. A non-empty explicit value remains
+   a manual override; use it only for a deliberately different public panel URL.
+   Then set `TELEGRAM_BOT_ENABLED=true`, `TELEGRAM_MODE=webhook`,
    `TELEGRAM_PRIMARY_ADMIN_ID`, `TELEGRAM_BOT_TOKEN`,
-   `TELEGRAM_WEBHOOK_SECRET`, `TELEGRAM_WEBHOOK_PATH_SUFFIX` and an HTTPS-only
-   `TELEGRAM_PUBLIC_BASE_URL` on staging.
+   `TELEGRAM_WEBHOOK_SECRET` and `TELEGRAM_WEBHOOK_PATH_SUFFIX`.
 4. Keep both workers disabled initially:
    `TELEGRAM_PROVISIONING_WORKER_ENABLED=false` and
    `TELEGRAM_OUTBOX_WORKER_ENABLED=false`.
@@ -24,7 +27,9 @@ webhook, or perform real client writes outside that staging scope.
 
 ## Smoke without remote writes
 
-1. Restart only the staging application and confirm its health endpoint.
+1. Restart only the staging application and confirm its local health endpoint
+   plus the resolved public HTTPS `<base-url>/health` endpoint. Telegram fails
+   fast in polling and webhook modes if the public URL is absent or invalid.
 2. Send a signed test update to the secret webhook path. A wrong path must
    return `404`; a wrong `X-Telegram-Bot-Api-Secret-Token` must return `403`.
 3. From a non-admin test account use `/start`, submit one optional
