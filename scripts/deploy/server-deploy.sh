@@ -170,6 +170,13 @@ Path(destination_path).write_text(template, encoding="utf-8")
 PYTHON
 }
 
+activate_runtime_ownership() {
+  [[ -d "$PROJECT_DIR" ]] || fail "runtime project directory is missing: $PROJECT_DIR"
+  id -u "$PROJECT_NAME" >/dev/null 2>&1 || fail "runtime service user is missing: $PROJECT_NAME"
+  chown -R "$PROJECT_NAME:$PROJECT_NAME" "$PROJECT_DIR"
+  find "$PROJECT_DIR" -type d -exec chmod 0755 {} +
+}
+
 restore_previous() {
   systemctl stop "$PROJECT_NAME" || true
   restore_service_unit
@@ -177,6 +184,7 @@ restore_previous() {
     printf 'Deploy failed; restoring previous release.\n' >&2
     [[ -d "$PROJECT_DIR" ]] && rm -rf -- "$PROJECT_DIR"
     mv -- "$QUARANTINE_DIR" "$PROJECT_DIR"
+    activate_runtime_ownership || true
   fi
   systemctl start "$PROJECT_NAME" || true
   systemctl reload nginx || true
@@ -289,6 +297,7 @@ if [[ "$HAD_PREVIOUS" == "1" ]]; then
 fi
 mv -- "$STAGE_DIR" "$PROJECT_DIR"
 chmod 0755 "$PROJECT_DIR"
+activate_runtime_ownership
 sed -i "1s|^#!.*$|#!${PROJECT_DIR}/venv/bin/python|" "$PROJECT_DIR/venv/bin/uvicorn"
 [[ -x "$PROJECT_DIR/venv/bin/uvicorn" ]] || fail "deployed uvicorn executable is missing"
 "$PROJECT_DIR/venv/bin/uvicorn" --version >/dev/null
