@@ -243,7 +243,7 @@ if [[ -f "$SERVICE_UNIT" ]]; then
   install -o root -g root -m 0600 "$SERVICE_UNIT" "$SERVICE_UNIT_ROLLBACK"
   SERVICE_UNIT_WAS_PRESENT=1
 fi
-STAGED_SERVICE_UNIT="$(mktemp "${BACKUP_ROOT}/${PROJECT_NAME}-service-unit.next.XXXXXX")"
+STAGED_SERVICE_UNIT="$(mktemp "/tmp/${PROJECT_NAME}-service-unit.XXXXXX")"
 render_runtime_service_unit "$SERVICE_TEMPLATE" "$SERVICE_UNIT" "$STAGED_SERVICE_UNIT"
 systemd-analyze verify "$STAGED_SERVICE_UNIT"
 if [[ -d "$PROJECT_DIR" ]]; then
