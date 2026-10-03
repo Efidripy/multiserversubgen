@@ -155,6 +155,14 @@ def test_fresh_installer_retries_transient_apt_locks_and_installs_matching_venv(
     assert 'python3 -m venv "$PROJECT_DIR/venv" ||' in install
 
 
+def test_systemd_unit_can_bind_the_default_privileged_app_port_safely():
+    unit = _read("systemd/sub-manager.service")
+
+    assert "CapabilityBoundingSet=CAP_NET_BIND_SERVICE" in unit
+    assert "AmbientCapabilities=CAP_NET_BIND_SERVICE" in unit
+    assert "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK" in unit
+
+
 def test_requirements_lock_allows_the_official_uvloop_cp314_wheel():
     requirements = _read("backend/requirements.txt")
 
