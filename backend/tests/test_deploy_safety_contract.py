@@ -28,6 +28,14 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'grep -Fq "EnvironmentFile=${RUNTIME_SECRETS_FILE}" <<< "$unit_definition"' in script
     assert "grep -Fq 'REQUIRE_PERSISTENT_SECRETS=true' <<< \"$unit_definition\"" in script
     assert 'REQUIRE_PERSISTENT_SECRETS=true' in script
+    assert 'SERVICE_TEMPLATE="$REPO_DIR/systemd/${PROJECT_NAME}.service"' in script
+    assert 'render_runtime_service_unit "$SERVICE_TEMPLATE" "$SERVICE_UNIT" "$STAGED_SERVICE_UNIT"' in script
+    assert 'systemd-analyze verify "$STAGED_SERVICE_UNIT"' in script
+    assert 'install -o root -g root -m 0644 "$STAGED_SERVICE_UNIT" "$SERVICE_UNIT"' in script
+    assert 'restore_service_unit' in script
+    assert script.index('render_runtime_service_unit "$SERVICE_TEMPLATE"') < script.index('systemctl stop "$PROJECT_NAME"\n  SERVICE_STOPPED=1')
+    unit_install = script.index('install -o root -g root -m 0644 "$STAGED_SERVICE_UNIT" "$SERVICE_UNIT"')
+    assert unit_install < script.index('systemctl daemon-reload', unit_install)
     assert 'for pkg in core modules integrations routers services shared; do' in script
     assert 'for pkg in config core modules integrations routers services shared; do' not in script
     assert '".backup \'$STAGE_DIR/admin.db\'"' in script
