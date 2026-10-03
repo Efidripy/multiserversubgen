@@ -292,8 +292,12 @@ class PendingApplication:
 @dataclass(frozen=True)
 class TelegramPreapproval:
     telegram_user_id: int
-    customer_id: int
+    profile_kind: str
+    customer_id: int | None
     customer_email: str
+    email_source: str | None
+    target_node_ids: tuple[int, ...]
+    target_snapshot_digest: str | None
     row_version: int
     created_by: str
     created_at: str
@@ -1391,20 +1395,61 @@ class TelegramRegistry:
         with connect(self._db_path) as conn:
             row = conn.execute(
                 """
-                SELECT p.telegram_user_id, p.customer_id, c.email_display,
+                SELECT p.telegram_user_id, p.profile_kind, p.customer_id,
+                       COALESCE(c.email_display, p.email_display), p.email_source,
+                       p.target_snapshot_json, p.target_snapshot_digest,
                        p.row_version, p.created_by, p.created_at
                 FROM telegram_preapprovals AS p
-                JOIN customers AS c ON c.id = p.customer_id
+                LEFT JOIN customers AS c ON c.id = p.customer_id
                 WHERE p.telegram_user_id = ?
                 """,
                 (user_id,),
             ).fetchone()
         if row is None:
             return None
-        return TelegramPreapproval(
-            telegram_user_id=int(row[0]), customer_id=int(row[1]), customer_email=str(row[2]),
-            row_version=int(row[3]), created_by=str(row[4]), created_at=str(row[5]),
+        return self._preapproval_from_row(row)
+
+    @staticmethod
+    def _preapproval_from_row(row: tuple[object, ...]) -> TelegramPreapproval:
+        raw_snapshot = row[5]
+        try:
+            targets = json.loads(str(raw_snapshot)) if raw_snapshot is not None else []
+        except json.JSONDecodeError as exc:
+            raise TelegramRegistryError("preapproval snapshot is invalid") from exc
+        if not isinstance(targets, list):
+            raise TelegramRegistryError("preapproval snapshot is invalid")
+        target_node_ids = tuple(
+            int(item["node_id"])
+            for item in targets
+            if isinstance(item, dict) and isinstance(item.get("node_id"), int)
         )
+        return TelegramPreapproval(
+            telegram_user_id=int(row[0]), profile_kind=str(row[1]),
+            customer_id=int(row[2]) if row[2] is not None else None,
+            customer_email=str(row[3]), email_source=str(row[4]) if row[4] is not None else None,
+            target_node_ids=target_node_ids,
+            target_snapshot_digest=str(row[6]) if row[6] is not None else None,
+            row_version=int(row[7]), created_by=str(row[8]), created_at=str(row[9]),
+        )
+
+    @staticmethod
+    def _preapproval_from_receipt(payload: object) -> TelegramPreapproval:
+        """Read both current and pre-profile idempotency receipts safely."""
+
+        if not isinstance(payload, dict):
+            raise TelegramRegistryError("preapproval receipt is invalid")
+        if "profile_kind" not in payload:
+            # Receipts written by the existing-customer-only release retain
+            # their original result shape. The bound customer proves the
+            # missing profile kind without inventing a new-customer snapshot.
+            payload = {**payload, "profile_kind": "existing", "email_source": None,
+                       "target_node_ids": (), "target_snapshot_digest": None}
+        normalized = dict(payload)
+        normalized["target_node_ids"] = tuple(normalized.get("target_node_ids") or ())
+        try:
+            return TelegramPreapproval(**normalized)
+        except (TypeError, ValueError) as exc:
+            raise TelegramRegistryError("preapproval receipt is invalid") from exc
 
     def create_existing_customer_preapproval(
         self,
@@ -1448,7 +1493,7 @@ class TelegramRegistry:
             if receipt:
                 if str(receipt[0]) != digest:
                     raise IdempotencyConflictError("idempotency key was already used for another command")
-                return TelegramPreapproval(**json.loads(str(receipt[1])))
+                return self._preapproval_from_receipt(json.loads(str(receipt[1])))
 
             customer = conn.execute(
                 """
@@ -1497,8 +1542,9 @@ class TelegramRegistry:
                     raise VersionConflictError("preapproval does not exist")
                 conn.execute(
                     """
-                    INSERT INTO telegram_preapprovals (telegram_user_id, customer_id, created_by)
-                    VALUES (?, ?, ?)
+                    INSERT INTO telegram_preapprovals
+                        (telegram_user_id, profile_kind, customer_id, created_by)
+                    VALUES (?, 'existing', ?, ?)
                     """,
                     (user_id, local_customer_id, actor),
                 )
@@ -1508,7 +1554,10 @@ class TelegramRegistry:
                 conn.execute(
                     """
                     UPDATE telegram_preapprovals
-                    SET customer_id = ?, created_by = ?, row_version = row_version + 1,
+                    SET profile_kind = 'existing', customer_id = ?, email_display = NULL,
+                        email_canonical = NULL, email_source = NULL,
+                        target_snapshot_json = NULL, target_snapshot_digest = NULL,
+                        created_by = ?, row_version = row_version + 1,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE telegram_user_id = ? AND row_version = ?
                     """,
@@ -1516,20 +1565,18 @@ class TelegramRegistry:
                 )
             preapproval = conn.execute(
                 """
-                SELECT p.telegram_user_id, p.customer_id, c.email_display,
+                SELECT p.telegram_user_id, p.profile_kind, p.customer_id,
+                       COALESCE(c.email_display, p.email_display), p.email_source,
+                       p.target_snapshot_json, p.target_snapshot_digest,
                        p.row_version, p.created_by, p.created_at
                 FROM telegram_preapprovals AS p
-                JOIN customers AS c ON c.id = p.customer_id
+                LEFT JOIN customers AS c ON c.id = p.customer_id
                 WHERE p.telegram_user_id = ?
                 """,
                 (user_id,),
             ).fetchone()
             assert preapproval is not None
-            result = TelegramPreapproval(
-                telegram_user_id=int(preapproval[0]), customer_id=int(preapproval[1]),
-                customer_email=str(preapproval[2]), row_version=int(preapproval[3]),
-                created_by=str(preapproval[4]), created_at=str(preapproval[5]),
-            )
+            result = self._preapproval_from_row(preapproval)
             conn.execute(
                 """
                 INSERT INTO telegram_audit_log
@@ -1547,18 +1594,166 @@ class TelegramRegistry:
             )
         return result
 
-    def activate_preapproval(self, telegram_user_id: int) -> ExistingApprovalResult | None:
-        """Consume a preapproval after the authorized user starts a private chat."""
+    def create_new_customer_preapproval(
+        self,
+        *,
+        telegram_user_id: int,
+        email_display: str,
+        expected_preapproval_version: int,
+        idempotency_key: str,
+        created_by: str,
+    ) -> TelegramPreapproval:
+        """Persist a future customer profile before its first private ``/start``.
+
+        The selected Telegram provisioning targets are copied into the profile
+        at command time. Activation later uses that immutable copy rather than
+        whichever node-policy values happen to exist at activation time.
+        """
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        selected_email = _validate_email_choice(email_display)
+        canonical = canonicalize_email(selected_email)
+        if (
+            isinstance(expected_preapproval_version, bool)
+            or not isinstance(expected_preapproval_version, int)
+            or expected_preapproval_version < 0
+        ):
+            raise TelegramRegistryError("expected_preapproval_version is invalid")
+        expected_version = expected_preapproval_version
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(created_by, "created_by")
+        payload = {
+            "telegram_user_id": user_id,
+            "email_display": selected_email,
+            "expected_preapproval_version": expected_version,
+        }
+        digest = _payload_digest(payload)
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'create_new_preapproval' AND idempotency_key = ?",
+                (key,),
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return self._preapproval_from_receipt(json.loads(str(receipt[1])))
+
+            if conn.execute(
+                "SELECT 1 FROM customers WHERE email_canonical = ? AND deleted_at IS NULL", (canonical,)
+            ).fetchone() is not None:
+                raise ApprovalUnavailableError("customer email is already in use")
+            identity = conn.execute(
+                "SELECT access_status, customer_id FROM telegram_identities WHERE telegram_user_id = ?",
+                (user_id,),
+            ).fetchone()
+            if identity is not None:
+                if str(identity[0]) == "blocked":
+                    raise ApprovalUnavailableError("blocked identity cannot receive a preapproval")
+                if identity[1] is not None:
+                    raise ApprovalUnavailableError("Telegram identity is already linked to a customer")
+                if str(identity[0]) == "pending":
+                    raise ApprovalUnavailableError("pending application must be decided before preapproval")
+
+            policies = conn.execute(
+                """
+                SELECT p.node_id, p.total_bytes, p.validity_days, p.client_enabled, p.policy_version
+                FROM telegram_node_policies AS p
+                JOIN nodes AS n ON n.id = p.node_id
+                WHERE p.provisioning_enabled = 1 AND n.enabled = 1 AND n.read_only = 0
+                ORDER BY p.node_id
+                """
+            ).fetchall()
+            if not policies:
+                raise ApprovalUnavailableError("there are no eligible Telegram provisioning nodes")
+            snapshot = [
+                {
+                    "node_id": int(item[0]), "total_bytes": int(item[1]),
+                    "validity_days": int(item[2]), "client_enabled": bool(item[3]),
+                    "policy_version": int(item[4]), "inbound_id": BOT_INBOUND_ID,
+                    "flow": BOT_CLIENT_FLOW,
+                }
+                for item in policies
+            ]
+            snapshot_json = json.dumps(snapshot, sort_keys=True, separators=(",", ":"))
+            snapshot_digest = _payload_digest({"email": canonical, "targets": snapshot})
+            existing = conn.execute(
+                "SELECT row_version FROM telegram_preapprovals WHERE telegram_user_id = ?", (user_id,)
+            ).fetchone()
+            if existing is None:
+                if expected_version != 0:
+                    raise VersionConflictError("preapproval does not exist")
+                conn.execute(
+                    """
+                    INSERT INTO telegram_preapprovals
+                        (telegram_user_id, profile_kind, email_display, email_canonical, email_source,
+                         target_snapshot_json, target_snapshot_digest, created_by)
+                    VALUES (?, 'new', ?, ?, 'admin', ?, ?, ?)
+                    """,
+                    (user_id, selected_email, canonical, snapshot_json, snapshot_digest, actor),
+                )
+            else:
+                if int(existing[0]) != expected_version:
+                    raise VersionConflictError("preapproval was updated by another administrator")
+                updated = conn.execute(
+                    """
+                    UPDATE telegram_preapprovals
+                    SET profile_kind = 'new', customer_id = NULL, email_display = ?, email_canonical = ?,
+                        email_source = 'admin', target_snapshot_json = ?, target_snapshot_digest = ?,
+                        created_by = ?, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE telegram_user_id = ? AND row_version = ?
+                    """,
+                    (selected_email, canonical, snapshot_json, snapshot_digest, actor, user_id, expected_version),
+                )
+                if updated.rowcount != 1:
+                    raise VersionConflictError("preapproval was updated by another administrator")
+            row = conn.execute(
+                """
+                SELECT telegram_user_id, profile_kind, customer_id, email_display, email_source,
+                       target_snapshot_json, target_snapshot_digest, row_version, created_by, created_at
+                FROM telegram_preapprovals WHERE telegram_user_id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+            assert row is not None
+            result = self._preapproval_from_row(row)
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('preapproval_new_saved', 'admin', ?, 'telegram_preapproval', ?, ?)
+                """,
+                (actor, str(user_id), _payload_digest({"command": digest, "snapshot": snapshot_digest})),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json)
+                VALUES ('create_new_preapproval', ?, ?, ?)
+                """,
+                (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+        return result
+
+    def activate_preapproval(self, telegram_user_id: int) -> ExistingApprovalResult | ApprovalResult | None:
+        """Consume a preapproval after the authorized user starts a private chat.
+
+        Existing-customer profiles only bind a verified local customer. New
+        profiles create a customer and queue attempts from their persisted
+        target snapshot; they never re-read mutable node policies here.
+        """
 
         user_id = _positive_int(telegram_user_id, "telegram_user_id")
         with connect(self._db_path) as conn:
             preapproval = conn.execute(
-                "SELECT customer_id FROM telegram_preapprovals WHERE telegram_user_id = ?",
+                """
+                SELECT profile_kind, customer_id, email_display, email_canonical, email_source,
+                       target_snapshot_json, target_snapshot_digest
+                FROM telegram_preapprovals WHERE telegram_user_id = ?
+                """,
                 (user_id,),
             ).fetchone()
             if preapproval is None:
                 return None
-            customer_id = int(preapproval[0])
             identity = conn.execute(
                 """
                 SELECT access_status, customer_id, application_attempt, row_version
@@ -1570,6 +1765,14 @@ class TelegramRegistry:
                 return None
             if str(identity[0]) not in {"eligible", "rejected"} or identity[1] is not None:
                 return None
+
+            if str(preapproval[0]) == "new":
+                return self._activate_new_customer_preapproval(
+                    conn=conn, telegram_user_id=user_id, identity=identity, preapproval=preapproval
+                )
+            if str(preapproval[0]) != "existing" or preapproval[1] is None:
+                return None
+            customer_id = int(preapproval[1])
             customer = conn.execute(
                 """
                 SELECT email_display, email_canonical, status
@@ -1628,6 +1831,138 @@ class TelegramRegistry:
         return ExistingApprovalResult(
             telegram_user_id=user_id, customer_id=customer_id, email_display=str(customer[0]),
             confirmed_binding_count=len(bindings), identity_row_version=next_version,
+        )
+
+    def _activate_new_customer_preapproval(
+        self,
+        *,
+        conn: sqlite3.Connection,
+        telegram_user_id: int,
+        identity: tuple[object, ...],
+        preapproval: tuple[object, ...],
+    ) -> ApprovalResult | None:
+        """Commit a new profile and its immutable provisioning attempts once."""
+
+        email_display = str(preapproval[2] or "")
+        email_canonical = str(preapproval[3] or "")
+        email_source = str(preapproval[4] or "")
+        snapshot_digest = str(preapproval[6] or "")
+        if not email_display or not email_canonical or email_source != "admin" or not snapshot_digest:
+            return None
+        try:
+            snapshot = json.loads(str(preapproval[5]))
+        except (TypeError, json.JSONDecodeError):
+            return None
+        if not isinstance(snapshot, list) or not snapshot:
+            return None
+        target_ids: set[int] = set()
+        for target in snapshot:
+            if not isinstance(target, dict):
+                return None
+            node_id = target.get("node_id")
+            total_bytes = target.get("total_bytes")
+            validity_days = target.get("validity_days")
+            policy_version = target.get("policy_version")
+            if (
+                isinstance(node_id, bool) or not isinstance(node_id, int) or node_id <= 0
+                or isinstance(total_bytes, bool) or not isinstance(total_bytes, int) or total_bytes < 0
+                or isinstance(validity_days, bool) or not isinstance(validity_days, int) or validity_days < 0
+                or isinstance(policy_version, bool) or not isinstance(policy_version, int) or policy_version <= 0
+                or not isinstance(target.get("client_enabled"), bool)
+                or target.get("inbound_id") != BOT_INBOUND_ID
+                or target.get("flow") != BOT_CLIENT_FLOW
+                or node_id in target_ids
+            ):
+                return None
+            target_ids.add(node_id)
+        if _payload_digest({"email": email_canonical, "targets": snapshot}) != snapshot_digest:
+            return None
+        if conn.execute(
+            "SELECT 1 FROM customers WHERE email_canonical = ? AND deleted_at IS NULL", (email_canonical,)
+        ).fetchone() is not None:
+            return None
+        for _ in range(20):
+            public_code = secrets.token_urlsafe(9)
+            if conn.execute("SELECT 1 FROM customers WHERE public_code = ?", (public_code,)).fetchone() is None:
+                break
+        else:
+            return None
+        try:
+            customer = conn.execute(
+                """
+                INSERT INTO customers
+                    (email_display, email_canonical, origin, public_code, email_source)
+                VALUES (?, ?, 'telegram', ?, ?)
+                """,
+                (email_display, email_canonical, public_code, email_source),
+            )
+        except sqlite3.IntegrityError:
+            return None
+        customer_id = int(customer.lastrowid)
+        job_snapshot_digest = _payload_digest(
+            {"customer_id": customer_id, "email": email_canonical, "targets": snapshot}
+        )
+        job = conn.execute(
+            """
+            INSERT INTO telegram_provisioning_jobs
+                (customer_id, trigger, idempotency_key, policy_snapshot_digest, created_by)
+            VALUES (?, 'approve_new', ?, ?, 'preapproval')
+            """,
+            (customer_id, f"preapproval-new:{telegram_user_id}:{snapshot_digest}", job_snapshot_digest),
+        )
+        job_id = int(job.lastrowid)
+        now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+        for target in snapshot:
+            validity_days = int(target["validity_days"])
+            expiry_time = now_ms + validity_days * 24 * 60 * 60 * 1000 if validity_days else 0
+            conn.execute(
+                """
+                INSERT INTO telegram_provisioning_attempts
+                    (job_id, node_id, inbound_id, desired_client_id, desired_sub_id,
+                     desired_flow, desired_total_bytes, desired_validity_days,
+                     desired_expiry_time, desired_client_enabled, policy_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job_id, int(target["node_id"]), BOT_INBOUND_ID, str(uuid.uuid4()), str(uuid.uuid4()),
+                    BOT_CLIENT_FLOW, int(target["total_bytes"]), validity_days, expiry_time,
+                    int(bool(target["client_enabled"])), int(target["policy_version"]),
+                ),
+            )
+        update = conn.execute(
+            """
+            UPDATE telegram_identities
+            SET customer_id = ?, access_status = 'approved', approved_at = CURRENT_TIMESTAMP,
+                approved_by = 'preapproval', decision_reason = NULL,
+                introduction_requested_at = NULL, updated_at = CURRENT_TIMESTAMP,
+                row_version = row_version + 1
+            WHERE telegram_user_id = ? AND access_status IN ('eligible', 'rejected') AND customer_id IS NULL
+            """,
+            (customer_id, telegram_user_id),
+        )
+        if update.rowcount != 1:
+            raise VersionConflictError("preapproval activation raced with another identity update")
+        conn.execute("DELETE FROM telegram_preapprovals WHERE telegram_user_id = ?", (telegram_user_id,))
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO telegram_outbox (event_type, entity_id, dedupe_key)
+            VALUES ('user_provisioning_queued', ?, ?)
+            """,
+            (str(telegram_user_id), f"user:preapproval-new-provisioning:{telegram_user_id}:{snapshot_digest}"),
+        )
+        conn.execute(
+            """
+            INSERT INTO telegram_audit_log
+                (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+            VALUES ('preapproval_new_activated', 'telegram_user', ?, 'telegram_identity', ?, ?)
+            """,
+            (str(telegram_user_id), str(telegram_user_id), job_snapshot_digest),
+        )
+        return ApprovalResult(
+            telegram_user_id=telegram_user_id, customer_id=customer_id, job_id=job_id,
+            email_display=email_display, email_source=email_source,
+            target_node_ids=tuple(item["node_id"] for item in snapshot),
+            identity_row_version=int(identity[3]) + 1,
         )
 
     def unlink_identity(

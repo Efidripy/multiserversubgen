@@ -278,13 +278,83 @@ def init_db(db_path: str) -> None:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_preapprovals
                      (telegram_user_id INTEGER PRIMARY KEY,
-                      customer_id INTEGER NOT NULL,
+                      profile_kind TEXT NOT NULL DEFAULT 'existing'
+                        CHECK(profile_kind IN ('existing', 'new')),
+                      customer_id INTEGER DEFAULT NULL,
+                      email_display TEXT DEFAULT NULL,
+                      email_canonical TEXT DEFAULT NULL,
+                      email_source TEXT DEFAULT NULL,
+                      target_snapshot_json TEXT DEFAULT NULL,
+                      target_snapshot_digest TEXT DEFAULT NULL,
                       row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
                       created_by TEXT NOT NULL,
                       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      CHECK(
+                        (profile_kind = 'existing' AND customer_id IS NOT NULL
+                         AND email_display IS NULL AND email_canonical IS NULL
+                         AND email_source IS NULL AND target_snapshot_json IS NULL
+                         AND target_snapshot_digest IS NULL)
+                        OR
+                        (profile_kind = 'new' AND customer_id IS NULL
+                         AND email_display IS NOT NULL AND email_canonical IS NOT NULL
+                         AND email_source IS NOT NULL AND target_snapshot_json IS NOT NULL
+                         AND target_snapshot_digest IS NOT NULL)
+                      ),
                       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT)"""
         )
+        preapproval_columns = {
+            str(row[1]): row for row in conn.execute("PRAGMA table_info(telegram_preapprovals)").fetchall()
+        }
+        # The first preapproval release made ``customer_id`` mandatory. New
+        # customer profiles do not have a customer yet, so rebuild only this
+        # small local table and copy existing profiles verbatim as ``existing``.
+        # This runs inside init_db's transaction and leaves the old table intact
+        # if any copy step fails.
+        customer_id_column = preapproval_columns.get("customer_id")
+        if (
+            "profile_kind" not in preapproval_columns
+            or customer_id_column is None
+            or int(customer_id_column[3]) != 0
+        ):
+            conn.execute(
+                """CREATE TABLE telegram_preapprovals_v2
+                         (telegram_user_id INTEGER PRIMARY KEY,
+                          profile_kind TEXT NOT NULL DEFAULT 'existing'
+                            CHECK(profile_kind IN ('existing', 'new')),
+                          customer_id INTEGER DEFAULT NULL,
+                          email_display TEXT DEFAULT NULL,
+                          email_canonical TEXT DEFAULT NULL,
+                          email_source TEXT DEFAULT NULL,
+                          target_snapshot_json TEXT DEFAULT NULL,
+                          target_snapshot_digest TEXT DEFAULT NULL,
+                          row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                          created_by TEXT NOT NULL,
+                          created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                          updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                          CHECK(
+                            (profile_kind = 'existing' AND customer_id IS NOT NULL
+                             AND email_display IS NULL AND email_canonical IS NULL
+                             AND email_source IS NULL AND target_snapshot_json IS NULL
+                             AND target_snapshot_digest IS NULL)
+                            OR
+                            (profile_kind = 'new' AND customer_id IS NULL
+                             AND email_display IS NOT NULL AND email_canonical IS NOT NULL
+                             AND email_source IS NOT NULL AND target_snapshot_json IS NOT NULL
+                             AND target_snapshot_digest IS NOT NULL)
+                          ),
+                          FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT)"""
+            )
+            conn.execute(
+                """INSERT INTO telegram_preapprovals_v2
+                        (telegram_user_id, profile_kind, customer_id, row_version,
+                         created_by, created_at, updated_at)
+                    SELECT telegram_user_id, 'existing', customer_id, row_version,
+                           created_by, created_at, updated_at
+                    FROM telegram_preapprovals"""
+            )
+            conn.execute("DROP TABLE telegram_preapprovals")
+            conn.execute("ALTER TABLE telegram_preapprovals_v2 RENAME TO telegram_preapprovals")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_telegram_preapprovals_customer "
             "ON telegram_preapprovals(customer_id)"
