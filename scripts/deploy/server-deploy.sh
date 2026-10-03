@@ -193,11 +193,13 @@ reconcile_promtail_after_health() {
 
 mkdir -p -m 0700 -- "$BACKUP_ROOT" "$PROJECT_PARENT"
 if [[ -f "$SERVICE_UNIT" ]]; then
-  SERVICE_UNIT_ROLLBACK="$(mktemp "${BACKUP_ROOT}/${PROJECT_NAME}-service-unit.XXXXXX")"
+  SERVICE_UNIT_ROLLBACK="${BACKUP_ROOT}/${PROJECT_NAME}-service-unit-${STAMP}.bak"
+  [[ ! -e "$SERVICE_UNIT_ROLLBACK" ]] || fail "service unit rollback path already exists: $SERVICE_UNIT_ROLLBACK"
   install -o root -g root -m 0600 "$SERVICE_UNIT" "$SERVICE_UNIT_ROLLBACK"
   SERVICE_UNIT_WAS_PRESENT=1
 fi
-STAGED_SERVICE_UNIT="$(mktemp "/tmp/${PROJECT_NAME}-service-unit.XXXXXX")"
+STAGED_SERVICE_UNIT="${BACKUP_ROOT}/${PROJECT_NAME}-service-unit-${STAMP}.next"
+[[ ! -e "$STAGED_SERVICE_UNIT" ]] || fail "service unit staging path already exists: $STAGED_SERVICE_UNIT"
 render_runtime_service_unit "$SERVICE_TEMPLATE" "$SERVICE_UNIT" "$STAGED_SERVICE_UNIT"
 systemd-analyze verify "$STAGED_SERVICE_UNIT"
 if [[ -d "$PROJECT_DIR" ]]; then
