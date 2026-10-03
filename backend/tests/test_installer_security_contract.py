@@ -130,11 +130,19 @@ def test_xui_seed_matches_v3_hosts_contract():
 
     assert 'ARTIFACT_XUI_VERSION="v3.6.0"' in manifest
     assert 'INSERT INTO hosts ("inbound_id","group_id"' in template
+    assert '"all_time"' not in template
     assert "__GROUP_REALITY__" in template
     assert "__GROUP_WS__" in template
     assert "__GROUP_XHTTP__" in template
     assert "__GROUP_TROJAN__" in template
     assert '"externalProxy"' not in template
+
+
+def test_xui_preset_reuses_its_managed_tls_vhost_for_sub_manager():
+    workflows = _read("scripts/installer/lib/workflows.sh")
+
+    assert 'selected_cfg="/etc/nginx/sites-available/multiserversubgen-xui-main.conf"' in workflows
+    assert 'grep -qs \'^# managed-by: multiserversubgen-xui$\'' in workflows
 
 
 def test_remove_script_defaults_to_conservative_scope():
