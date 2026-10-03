@@ -4,6 +4,22 @@ import logging
 import sqlite3
 
 
+class _ManagedConnection(sqlite3.Connection):
+    """SQLite connection that closes when its ``with`` block ends.
+
+    ``sqlite3.Connection.__exit__`` commits or rolls back, but deliberately
+    leaves the file descriptor open. This project consistently uses
+    ``with connect(...) as conn`` in request and worker paths, so retain the
+    normal transaction semantics while also releasing the descriptor.
+    """
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def connect(db_path: str) -> sqlite3.Connection:
     """Открыть соединение с SQLite с оптимальными настройками.
 
@@ -12,7 +28,7 @@ def connect(db_path: str) -> sqlite3.Connection:
 
     Используйте эту функцию везде вместо ``sqlite3.connect(db_path)`` напрямую.
     """
-    conn = sqlite3.connect(db_path, timeout=30.0)
+    conn = sqlite3.connect(db_path, timeout=30.0, factory=_ManagedConnection)
     # SQLite does not enforce declared foreign keys unless every connection
     # explicitly enables it. Telegram lifecycle records rely on these
     # constraints to prevent dangling node/customer bindings.
