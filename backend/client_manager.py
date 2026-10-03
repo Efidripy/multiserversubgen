@@ -414,8 +414,8 @@ class ClientManager:
             if res.status_code in (404, 405):
                 return None  # type: ignore  # v2 fallback needed
             return self._xui_success(res)
-        except Exception as exc:
-            logger.warning("v3 add_client failed: %s", exc)
+        except Exception:
+            logger.warning("v3 add_client request failed")
             return False
 
     @staticmethod
@@ -884,13 +884,12 @@ class ClientManager:
         """Добавить клиента в инбаунд"""
         email = client_config.get("email", "")
         logger.info(
-            "add_client START node=%r inbound_id=%s email=%r config=%s",
-            node["name"], inbound_id, email,
-            {k: v for k, v in client_config.items() if k not in ("id", "password")},
+            "add_client START node=%r inbound_id=%s",
+            node["name"], inbound_id,
         )
         s, base_url = self._get_session(node)
         if not s:
-            logger.warning("add_client: session failed for node=%r email=%r", node["name"], email)
+            logger.warning("add_client: session failed for node=%r", node["name"])
             return False
 
         try:
@@ -901,7 +900,7 @@ class ClientManager:
                 config=client_config,
             )
             if result is not None:
-                logger.info("add_client v3 END node=%r email=%r result=%s", node["name"], email, result)
+                logger.info("add_client v3 END node=%r result=%s", node["name"], result)
                 return result
             # 404/405 can be an expired session on current panels.  Re-auth
             # and retry the *same v3 request* before deciding this operation
@@ -934,14 +933,14 @@ class ClientManager:
                 logger.info("add_client: v2 /addClient %s, retrying documented v3 route for node=%r", res.status_code, node["name"])
                 result = self._add_client_v3(s, base_url, email=email, inbound_ids=[inbound_id], config=client_config)
                 if result is not None:
-                    logger.info("add_client v3 upgrade END node=%r email=%r result=%s", node["name"], email, result)
+                    logger.info("add_client v3 upgrade END node=%r result=%s", node["name"], result)
                     return result
 
             ok = self._xui_success(res)
-            logger.info("add_client v2 END node=%r email=%r result=%s http_status=%s", node["name"], email, ok, res.status_code)
+            logger.info("add_client v2 END node=%r result=%s http_status=%s", node["name"], ok, res.status_code)
             return ok
-        except Exception as exc:
-            logger.warning("add_client FAILED node=%r email=%r inbound_id=%s error=%s", node["name"], email, inbound_id, exc)
+        except Exception:
+            logger.warning("add_client FAILED node=%r inbound_id=%s", node["name"], inbound_id)
             return False
     
     def batch_add_clients(self, nodes: List[Dict], clients_configs: List[Dict]) -> Dict:
