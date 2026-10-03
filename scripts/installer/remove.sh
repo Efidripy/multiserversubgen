@@ -104,6 +104,7 @@ remove_monitoring_artifacts() {
     rm -f /etc/grafana/provisioning/dashboards/sub-manager-dashboard.yml
     rm -f /var/lib/grafana/dashboards/sub-manager-dashboard.json
     rm -f /var/lib/grafana/dashboards/adguard-overview-dashboard.json
+    rm -rf /var/lib/grafana/dashboards/sub-manager
     systemctl restart prometheus >/dev/null 2>&1 || true
     systemctl restart grafana-server >/dev/null 2>&1 || true
 }
