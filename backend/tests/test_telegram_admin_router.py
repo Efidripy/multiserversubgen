@@ -14,7 +14,9 @@ from services.db_bootstrap import connect, init_db
 from services.telegram_registry import TelegramRegistry
 
 
-def _build_client(tmp_path, *, username: str = "admin", role: str = "admin", options=None, client_mgr=None):
+def _build_client(
+    tmp_path, *, username: str = "admin", role: str = "admin", options=None, client_mgr=None, is_owner: bool = False
+):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     with connect(db_path) as conn:
@@ -28,6 +30,7 @@ def _build_client(tmp_path, *, username: str = "admin", role: str = "admin", opt
             list_nodes=lambda: [{"id": 1, "name": "edge-1", "enabled": 1, "read_only": 0}],
             get_cached_inbound_options=lambda _nodes: options or [],
             client_mgr=client_mgr,
+            is_owner=lambda _username: is_owner,
         )
     )
     return TestClient(app)
@@ -113,6 +116,36 @@ def test_policy_route_rejects_inbound_other_than_exact_bot_contract(tmp_path):
 
     assert response.status_code == 409
     assert "eligible" in response.json()["detail"]
+
+
+def test_policy_validate_route_is_read_only_and_uses_exact_inbound_contract(tmp_path):
+    client = _build_client(
+        tmp_path,
+        options=[{"node_id": 1, "id": 1, "enable": True, "protocol": "vless", "tlsFlowCapable": True}],
+    )
+
+    response = client.post("/api/v1/telegram/node-policies/1/validate")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "eligible": True,
+        "reason": None,
+        "fixed_contract": {"inbound_id": 1, "flow": "xtls-rprx-vision"},
+    }
+    with connect(str(tmp_path / "admin.db")) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM telegram_node_policies").fetchone()[0] == 0
+
+
+def test_capability_matrix_keeps_bulk_delete_owner_only(tmp_path):
+    body = {"operation_type": "delete", "target_snapshot_digest": "not-used", "items": [], "idempotency_key": "bulk-delete"}
+
+    admin = _build_client(tmp_path, is_owner=False)
+    assert admin.post("/api/v1/telegram/bulk-lifecycle", json=body).status_code == 403
+
+    owner = _build_client(tmp_path, is_owner=True)
+    # Validation now reaches the domain layer; it may reject the empty
+    # selection, but the server-side capability check no longer does.
+    assert owner.post("/api/v1/telegram/bulk-lifecycle", json=body).status_code != 403
 
 
 def test_request_queue_is_admin_only_and_approval_queues_local_work_without_remote_io(tmp_path):
@@ -213,6 +246,86 @@ def test_preapproval_and_unlink_routes_are_admin_only_and_never_start_remote_io(
     viewer = _build_client(tmp_path, username="viewer", role="viewer")
     assert viewer.post("/api/v1/telegram/preapprovals", json={}).status_code == 403
     assert viewer.post("/api/v1/telegram/identities/42/unlink", json={}).status_code == 403
+
+
+def test_new_preapproval_route_validates_profile_shape_and_snapshots_nodes(tmp_path):
+    client = _build_client(tmp_path)
+    db_path = str(tmp_path / "admin.db")
+    registry = TelegramRegistry(db_path)
+    registry.set_node_provisioning_policy(
+        node_id=1,
+        provisioning_enabled=True,
+        total_bytes=0,
+        validity_days=0,
+        client_enabled=True,
+        expected_policy_version=0,
+        idempotency_key="new-preapproval-policy",
+        updated_by="admin",
+        node_is_compatible=True,
+    )
+
+    response = client.post(
+        "/api/v1/telegram/preapprovals",
+        json={
+            "telegram_user_id": 43,
+            "profile_kind": "new",
+            "email_display": "planned-user",
+            "expected_preapproval_version": 0,
+            "idempotency_key": "http-new-preapproval-43",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["remote_io"] == "not_started"
+    assert response.json()["preapproval"] == {
+        "telegram_user_id": 43,
+        "profile_kind": "new",
+        "customer_id": None,
+        "customer_email": "planned-user",
+        "email_source": "admin",
+        "target_node_ids": [1],
+        "target_snapshot_digest": response.json()["preapproval"]["target_snapshot_digest"],
+        "row_version": 1,
+        "created_by": "admin",
+        "created_at": response.json()["preapproval"]["created_at"],
+    }
+    malformed = client.post(
+        "/api/v1/telegram/preapprovals",
+        json={
+            "telegram_user_id": 44,
+            "profile_kind": "new",
+            "customer_id": 1,
+            "expected_preapproval_version": 0,
+            "idempotency_key": "bad-new-preapproval",
+        },
+    )
+    assert malformed.status_code == 422
+    invalid_version = client.post(
+        "/api/v1/telegram/preapprovals",
+        json={
+            "telegram_user_id": 45,
+            "profile_kind": "new",
+            "email_display": "strict-user",
+            "expected_preapproval_version": True,
+            "idempotency_key": "bad-version-preapproval",
+        },
+    )
+    assert invalid_version.status_code == 422
+
+
+def test_high_risk_telegram_routes_publish_typed_openapi_contracts(tmp_path):
+    client = _build_client(tmp_path)
+
+    schema = client.app.openapi()
+    preapproval = schema["paths"]["/api/v1/telegram/preapprovals"]["post"]
+    node_policy = schema["paths"]["/api/v1/telegram/node-policies/{node_id}"]["put"]
+    validation = schema["paths"]["/api/v1/telegram/node-policies/{node_id}/validate"]["post"]
+
+    assert preapproval["requestBody"]["content"]["application/json"]["schema"]["$ref"].endswith("TelegramPreapprovalRequest")
+    assert preapproval["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("TelegramPreapprovalResponse")
+    assert node_policy["requestBody"]["content"]["application/json"]["schema"]["$ref"].endswith("NodePolicyMutationRequest")
+    assert node_policy["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("NodePolicyMutationResponse")
+    assert validation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].endswith("NodePolicyValidationResponse")
 
 
 def test_existing_remote_customer_can_be_discovered_then_adopted_without_node_write(tmp_path):

@@ -66,6 +66,23 @@ node to become the authority for the customer lifecycle.
   creates or refreshes `customers(origin=existing)` and exact bindings before
   linking the pending identity; neither path creates a provisioning job or
   mutates a remote node.
+- A Telegram preapproval is explicitly one of two non-interchangeable
+  profiles. An `existing` profile points only to one already verified local
+  customer and activates only if its exact confirmed bindings still prove
+  safe. A `new` profile has no `customer_id`: it freezes the administrator's
+  selected canonical email and every eligible node's policy, inbound and flow
+  into an immutable snapshot before the first private `/start`. Activation of
+  that new profile atomically creates the customer, the `approve_new` job and
+  all attempts from that snapshot; it never re-reads mutable node policy to
+  broaden, replace or silently remove a selected target. Current node safety
+  still gates each later remote attempt.
+- High-risk Telegram HTTP mutations have typed Pydantic request/response
+  contracts. The capability decision is server-side: `admin` receives the
+  Telegram management capability, a future Administrator role receives no
+  implicit capability, and bulk Delete remains permanently Owner-only. Domain
+  commands retain expected row versions plus idempotency keys; policy
+  validation is a read-only preview and all browser cache invalidation occurs
+  only after an HTTP mutation commits successfully.
 - Telegram update deduplication happens before abuse accounting. Only the 51st
   unique no-op action in a rolling ten-minute window auto-blocks an unapproved
   identity; the first 50 do not. Manual unblock resets the active window but
