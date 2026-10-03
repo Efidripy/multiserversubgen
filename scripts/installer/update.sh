@@ -589,15 +589,17 @@ providers:
     editable: true
     updateIntervalSeconds: 180
     options:
-      path: /var/lib/grafana/dashboards
+      path: /var/lib/grafana/dashboards/sub-manager
 EOF
 
-    cp "$MSSG_GRAFANA_DASHBOARD" /var/lib/grafana/dashboards/sub-manager-dashboard.json
+    install -d -o grafana -g grafana -m 0750 /var/lib/grafana/dashboards/sub-manager
+    cp "$MSSG_GRAFANA_DASHBOARD" /var/lib/grafana/dashboards/sub-manager/sub-manager-dashboard.json
     if [ "$has_adguard_targets" = "true" ] || [ "$loki_ready" = "true" ]; then
-        cp "$MSSG_GRAFANA_ADGUARD_DASHBOARD" /var/lib/grafana/dashboards/adguard-overview-dashboard.json
+        cp "$MSSG_GRAFANA_ADGUARD_DASHBOARD" /var/lib/grafana/dashboards/sub-manager/adguard-overview-dashboard.json
     else
-        rm -f /var/lib/grafana/dashboards/adguard-overview-dashboard.json
+        rm -f /var/lib/grafana/dashboards/sub-manager/adguard-overview-dashboard.json
     fi
+    rm -f /var/lib/grafana/dashboards/sub-manager-dashboard.json /var/lib/grafana/dashboards/adguard-overview-dashboard.json
     chown -R grafana:grafana /var/lib/grafana/dashboards
 
     python3 <<PYTHON
