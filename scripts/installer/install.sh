@@ -1673,6 +1673,15 @@ run_post_install_checks() {
         failures=$((failures + 1))
     fi
 
+    if runtime_verify_telegram_public_base_url_health; then
+        if [ "${TELEGRAM_BOT_ENABLED:-false}" = "true" ]; then
+            echo "✅ Telegram public URL: HTTPS /health -> 200"
+        fi
+    else
+        echo "❌ Telegram public URL не прошёл HTTPS health-проверку"
+        failures=$((failures + 1))
+    fi
+
     if [ "${MONITORING_ENABLED:-false}" = "true" ]; then
         local g_status=""
         for i in 1 2 3 4 5; do

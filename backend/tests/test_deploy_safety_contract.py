@@ -38,6 +38,11 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'wait_for_health()' in script
     assert 'for attempt in {1..30}; do' in script
     assert 'health check did not become ready within 30 seconds' in script
+    assert 'wait_for_telegram_public_health()' in script
+    assert 'validate_telegram_public_base_url()' in script
+    assert 'Telegram public URL health check failed' in script
+    assert script.rindex('wait_for_telegram_public_health') > script.rindex('wait_for_health')
+    assert script.rindex('rollback_and_exit') > script.rindex('wait_for_telegram_public_health')
     assert '[[ -x "$STAGE_DIR/venv/bin/uvicorn" ]]' in script
     assert '"$STAGE_DIR/venv/bin/uvicorn" --version >/dev/null' in script
     assert 'sed -i "1s|^#!.*$|#!${PROJECT_DIR}/venv/bin/python|" "$PROJECT_DIR/venv/bin/uvicorn"' in script
@@ -95,6 +100,23 @@ def test_runtime_secret_rewrites_preserve_configured_telegram_settings():
     ):
         assert key in script
     assert 'printf \'%s=%q\\n\' "$runtime_key" "${!runtime_key}"' in script
+
+
+def test_telegram_public_url_derives_from_panel_configuration_and_keeps_manual_override():
+    runtime_secrets = (REPO / "scripts/installer/lib/runtime_secrets.sh").read_text(encoding="utf-8")
+    install = (REPO / "scripts/installer/install.sh").read_text(encoding="utf-8")
+    update = (REPO / "scripts/installer/update.sh").read_text(encoding="utf-8")
+
+    assert "runtime_derive_telegram_public_base_url()" in runtime_secrets
+    assert 'PUBLIC_SCHEME:-' in runtime_secrets
+    assert 'PUBLIC_DOMAIN:-' in runtime_secrets
+    assert 'WEB_PATH:-' in runtime_secrets
+    assert 'TELEGRAM_PUBLIC_BASE_URL_SOURCE="manual"' in runtime_secrets
+    assert 'TELEGRAM_PUBLIC_BASE_URL_SOURCE="auto"' in runtime_secrets
+    assert "runtime_verify_telegram_public_base_url_health" in runtime_secrets
+    for script in (install, update):
+        assert "runtime_secrets_write" in script
+        assert "runtime_verify_telegram_public_base_url_health" in script
 
 
 def test_linux_only_uvloop_extra_is_pinned_and_hashed_for_require_hashes_deploys():

@@ -178,6 +178,25 @@ def _optional_custom_emoji_id(name: str) -> str:
     return value
 
 
+def _validate_telegram_public_base_url(value: str) -> str:
+    try:
+        parsed = urlparse(value)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except ValueError as exc:
+        raise RuntimeError("TELEGRAM_PUBLIC_BASE_URL must be an HTTPS origin") from exc
+    if (
+        parsed.scheme != "https"
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError("TELEGRAM_PUBLIC_BASE_URL must be an HTTPS origin")
+    return value
+
+
 def _load_telegram_settings() -> TelegramSettings:
     enabled = _env_bool("TELEGRAM_BOT_ENABLED", "false")
     worker_requested = _env_bool("TELEGRAM_PROVISIONING_WORKER_ENABLED", "false")
@@ -227,12 +246,10 @@ def _load_telegram_settings() -> TelegramSettings:
     webhook_secret = os.getenv("TELEGRAM_WEBHOOK_SECRET", "").strip()
     webhook_path_suffix = os.getenv("TELEGRAM_WEBHOOK_PATH_SUFFIX", "").strip()
     public_base_url = os.getenv("TELEGRAM_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    _validate_telegram_public_base_url(public_base_url)
     if mode == "webhook":
         if not webhook_secret or not webhook_path_suffix:
             raise RuntimeError("TELEGRAM_WEBHOOK_SECRET and TELEGRAM_WEBHOOK_PATH_SUFFIX are required")
-        parsed_public_url = urlparse(public_base_url)
-        if parsed_public_url.scheme != "https" or not parsed_public_url.netloc:
-            raise RuntimeError("TELEGRAM_PUBLIC_BASE_URL must be an HTTPS origin")
     introduction_max_chars = _bounded_env_int(
         "TELEGRAM_INTRODUCTION_MAX_CHARS", default=700, minimum=1, maximum=700
     )
