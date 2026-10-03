@@ -35,6 +35,51 @@ def test_v3_list_timeout_or_http_failure_does_not_downgrade_node_to_v2():
     assert request.call_args.args[2].endswith("/panel/api/clients/list")
 
 
+def test_add_client_logs_no_client_identifiers_or_config(caplog):
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    client = {
+        "id": "client-id-must-not-appear",
+        "email": "private-user@example.test",
+        "subId": "subscription-id-must-not-appear",
+        "password": "password-must-not-appear",
+        "flow": "xtls-rprx-vision",
+    }
+
+    with caplog.at_level("INFO", logger="sub_manager"), patch.object(
+        manager, "_get_session", return_value=(MagicMock(), base_url)
+    ), patch("client_manager.xui_request", return_value=_response(200, {"success": True})):
+        assert manager.add_client(_node(), 1, client) is True
+
+    log_output = caplog.text
+    assert "add_client START node=" in log_output
+    for secret_or_identifier in client.values():
+        assert secret_or_identifier not in log_output
+
+
+def test_add_client_failure_logs_no_client_identifiers_or_error_detail(caplog):
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    client = {
+        "id": "client-id-must-not-appear",
+        "email": "private-user@example.test",
+        "subId": "subscription-id-must-not-appear",
+    }
+    raw_error = "panel rejected private-user@example.test and subscription-id-must-not-appear"
+
+    with caplog.at_level("INFO", logger="sub_manager"), patch.object(
+        manager, "_get_session", return_value=(MagicMock(), "https://198.51.100.8:443")
+    ), patch.object(manager, "_add_client_v3", side_effect=RuntimeError(raw_error)):
+        assert manager.add_client(_node(), 1, client) is False
+
+    assert "add_client FAILED" in caplog.text
+    for value in (*client.values(), raw_error):
+        assert value not in caplog.text
+
+
 def test_v3_list_404_selects_legacy_projection():
     from client_manager import ClientManager
 
