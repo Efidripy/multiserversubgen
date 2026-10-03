@@ -72,6 +72,16 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
         assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
+def test_connect_closes_descriptor_after_context_exit(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+
+    with connect(db_path) as conn:
+        conn.execute("CREATE TABLE example (value TEXT)")
+
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        conn.execute("SELECT 1")
+
+
 def test_notification_preferences_migrate_traffic_reminders_as_opt_in(tmp_path):
     db_path = str(tmp_path / "legacy-admin.db")
     with sqlite3.connect(db_path) as conn:
@@ -156,7 +166,7 @@ def test_subscription_message_receipt_contains_only_a_token_digest_and_message_c
     with connect(db_path) as conn:
         conn.execute("INSERT INTO telegram_node_policies (node_id) VALUES (1)")
         conn.execute("DELETE FROM nodes WHERE id = 1")
-    assert conn.execute("SELECT COUNT(*) FROM telegram_node_policies").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM telegram_node_policies").fetchone()[0] == 0
 
 
 def test_telegram_lifecycle_schema_migrates_legacy_operation_table_before_creating_schedule_index(tmp_path):
