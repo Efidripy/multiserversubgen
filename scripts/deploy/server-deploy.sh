@@ -13,6 +13,10 @@ GRAFANA_WEB_PATH="${GRAFANA_WEB_PATH:-grafana}"
 DEPLOY_REF="${DEPLOY_REF:-HEAD}"
 RUNTIME_SECRETS_FILE="/etc/${PROJECT_NAME}/runtime-secrets.env"
 SERVICE_UNIT="/etc/systemd/system/${PROJECT_NAME}.service"
+SERVICE_TEMPLATE=""
+STAGED_SERVICE_UNIT=""
+SERVICE_UNIT_ROLLBACK=""
+SERVICE_UNIT_WAS_PRESENT=0
 PROMTAIL_CONFIG="/etc/promtail/config.yml"
 PROMTAIL_CONFIG_ROLLBACK=""
 PROMTAIL_CONFIG_WAS_PRESENT=0
@@ -59,6 +63,8 @@ DEPLOY_COMMIT="$(git -C "$REPO_DIR" rev-parse --verify "${DEPLOY_REF}^{commit}")
 CURRENT_COMMIT="$(git -C "$REPO_DIR" rev-parse HEAD)"
 [[ "$DEPLOY_COMMIT" == "$CURRENT_COMMIT" ]] || fail "checkout must already be at immutable DEPLOY_REF"
 [[ -z "$(git -C "$REPO_DIR" status --porcelain)" ]] || fail "refuse dirty source worktree"
+SERVICE_TEMPLATE="$REPO_DIR/systemd/${PROJECT_NAME}.service"
+[[ -f "$SERVICE_TEMPLATE" ]] || fail "immutable systemd service template is missing: $SERVICE_TEMPLATE"
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)-${DEPLOY_COMMIT:0:12}"
 BACKUP_ROOT="/var/backups/${PROJECT_NAME}_deploy"
@@ -73,12 +79,55 @@ STATE_DB="${PROJECT_DIR}/admin.db"
 
 cleanup_stage() {
   [[ -d "$STAGE_DIR" ]] && rm -rf -- "$STAGE_DIR"
+  [[ -n "$STAGED_SERVICE_UNIT" && -f "$STAGED_SERVICE_UNIT" ]] && rm -f -- "$STAGED_SERVICE_UNIT"
+}
+
+restore_service_unit() {
+  if [[ "$SERVICE_UNIT_WAS_PRESENT" == "1" && -n "$SERVICE_UNIT_ROLLBACK" && -f "$SERVICE_UNIT_ROLLBACK" ]]; then
+    install -o root -g root -m 0644 "$SERVICE_UNIT_ROLLBACK" "$SERVICE_UNIT" || true
+  elif [[ "$SERVICE_UNIT_WAS_PRESENT" == "0" ]]; then
+    rm -f -- "$SERVICE_UNIT" || true
+  fi
+  systemctl daemon-reload || true
+}
+
+render_runtime_service_unit() {
+  local template="$1"
+  local current="$2"
+  local destination="$3"
+
+  python3 - "$template" "$current" "$destination" "$PROJECT_NAME" "$PROJECT_DIR" <<'PYTHON'
+from pathlib import Path
+import re
+import sys
+
+template_path, current_path, destination_path, project_name, project_dir = sys.argv[1:]
+template = Path(template_path).read_text(encoding="utf-8")
+current = Path(current_path).read_text(encoding="utf-8")
+environment_pattern = re.compile(r'^Environment="([^=]+)=(.*)"$', re.MULTILINE)
+current_values = dict(environment_pattern.findall(current))
+
+template = template.replace("__PROJECT_NAME__", project_name)
+template = template.replace("/opt/sub-manager", project_dir)
+for key, value in current_values.items():
+    pattern = re.compile(rf'^Environment="{re.escape(key)}=.*"$', re.MULTILINE)
+    template, count = pattern.subn(f'Environment="{key}={value}"', template)
+    if count > 1:
+        raise SystemExit(f"ambiguous Environment line for {key}")
+
+app_port = current_values.get("APP_PORT", "666")
+if not app_port.isdecimal() or not 1 <= int(app_port) <= 65535:
+    raise SystemExit("current systemd APP_PORT is invalid")
+template = template.replace('sport = :666', f'sport = :{app_port}')
+template = template.replace('--port 666', f'--port {app_port}')
+Path(destination_path).write_text(template, encoding="utf-8")
+PYTHON
 }
 
 restore_previous() {
-  [[ "$HAD_PREVIOUS" == "1" ]] || return 0
   systemctl stop "$PROJECT_NAME" || true
-  if [[ -d "$QUARANTINE_DIR" ]]; then
+  restore_service_unit
+  if [[ "$HAD_PREVIOUS" == "1" && -d "$QUARANTINE_DIR" ]]; then
     printf 'Deploy failed; restoring previous release.\n' >&2
     [[ -d "$PROJECT_DIR" ]] && rm -rf -- "$PROJECT_DIR"
     mv -- "$QUARANTINE_DIR" "$PROJECT_DIR"
@@ -143,6 +192,14 @@ reconcile_promtail_after_health() {
 }
 
 mkdir -p -m 0700 -- "$BACKUP_ROOT" "$PROJECT_PARENT"
+if [[ -f "$SERVICE_UNIT" ]]; then
+  SERVICE_UNIT_ROLLBACK="$(mktemp "${BACKUP_ROOT}/${PROJECT_NAME}-service-unit.XXXXXX")"
+  install -o root -g root -m 0600 "$SERVICE_UNIT" "$SERVICE_UNIT_ROLLBACK"
+  SERVICE_UNIT_WAS_PRESENT=1
+fi
+STAGED_SERVICE_UNIT="$(mktemp "${BACKUP_ROOT}/${PROJECT_NAME}-service-unit.next.XXXXXX")"
+render_runtime_service_unit "$SERVICE_TEMPLATE" "$SERVICE_UNIT" "$STAGED_SERVICE_UNIT"
+systemd-analyze verify "$STAGED_SERVICE_UNIT"
 if [[ -d "$PROJECT_DIR" ]]; then
   HAD_PREVIOUS=1
   [[ -f "$STATE_DB" ]] || fail "required runtime database is missing: $STATE_DB"
@@ -188,6 +245,9 @@ sed -i "1s|^#!.*$|#!${PROJECT_DIR}/venv/bin/python|" "$PROJECT_DIR/venv/bin/uvic
 [[ -x "$PROJECT_DIR/venv/bin/uvicorn" ]] || fail "deployed uvicorn executable is missing"
 "$PROJECT_DIR/venv/bin/uvicorn" --version >/dev/null
 
+install -o root -g root -m 0644 "$STAGED_SERVICE_UNIT" "$SERVICE_UNIT"
+rm -f -- "$STAGED_SERVICE_UNIT"
+STAGED_SERVICE_UNIT=""
 systemctl daemon-reload
 systemctl restart "$PROJECT_NAME"
 SERVICE_STOPPED=0
