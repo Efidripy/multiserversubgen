@@ -187,6 +187,48 @@ def test_first_start_activates_existing_customer_preapproval_without_creating_an
         assert conn.execute("SELECT COUNT(*) FROM telegram_preapprovals").fetchone()[0] == 0
 
 
+def test_first_start_activates_new_customer_preapproval_into_a_queued_snapshot_job(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+    registry.set_node_provisioning_policy(
+        node_id=1,
+        provisioning_enabled=True,
+        total_bytes=0,
+        validity_days=0,
+        client_enabled=True,
+        expected_policy_version=0,
+        idempotency_key="preapproved-new-policy",
+        updated_by="admin",
+        node_is_compatible=True,
+    )
+    registry.create_new_customer_preapproval(
+        telegram_user_id=42,
+        email_display="invited-new-user",
+        expected_preapproval_version=0,
+        idempotency_key="preapproved-new-user",
+        created_by="admin",
+    )
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    activated = service.handle_update(_message(10, "/start"))
+
+    assert activated
+    with connect(db_path) as conn:
+        identity = conn.execute(
+            "SELECT customer_id, access_status FROM telegram_identities WHERE telegram_user_id = 42"
+        ).fetchone()
+        assert identity is not None
+        assert identity[1] == "approved"
+        assert conn.execute("SELECT COUNT(*) FROM telegram_applications").fetchone()[0] == 0
+        assert conn.execute("SELECT status FROM telegram_provisioning_jobs WHERE customer_id = ?", (identity[0],)).fetchone() == (
+            "queued",
+        )
+        assert conn.execute("SELECT COUNT(*) FROM telegram_preapprovals").fetchone()[0] == 0
+
+
 def test_bot_persists_only_a_contact_voluntarily_shared_by_the_sender(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)

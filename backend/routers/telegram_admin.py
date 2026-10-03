@@ -5,7 +5,19 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Callable, Dict
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
+
+from routers.telegram_contracts import (
+    ApproveExistingRequest,
+    ApproveNewRequest,
+    IdentityDecisionRequest,
+    NodePolicyMutationRequest,
+    NodePolicyMutationResponse,
+    NodePolicyValidationResponse,
+    TelegramPreapprovalRequest,
+    TelegramPreapprovalResponse,
+    UnlinkIdentityRequest,
+)
 
 from services.telegram_registry import (
     ApprovalUnavailableError,
@@ -70,19 +82,33 @@ def build_telegram_admin_router(
         if client_mgr is not None else None
     )
 
-    def require_admin(request: Request) -> str:
+    # Keep the capability decision server-side. A future Administrator role
+    # can receive a deliberately smaller set without trusting a Telegram
+    # callback, frontend flag, or route name as an authorization boundary.
+    capability_matrix = {
+        "admin": frozenset({"telegram_manage"}),
+        "owner": frozenset({"telegram_manage", "bulk_delete"}),
+    }
+
+    def require_capability(request: Request, capability: str) -> str:
         username = check_auth(request)
         if not username:
             raise HTTPException(status_code=401, detail="Unauthorized")
-        if get_user_role(username) != "admin":
+        role = "owner" if is_owner is not None and is_owner(username) else get_user_role(username)
+        if capability not in capability_matrix.get(role, frozenset()):
             raise HTTPException(status_code=403, detail="Telegram administration requires admin role")
         return username
 
+    def require_admin(request: Request) -> str:
+        return require_capability(request, "telegram_manage")
+
     def require_owner(request: Request) -> str:
-        username = require_admin(request)
-        if is_owner is None or not is_owner(username):
+        try:
+            return require_capability(request, "bulk_delete")
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
             raise HTTPException(status_code=403, detail="Bulk delete requires the Owner role")
-        return username
 
     def translate_registry_error(exc: TelegramRegistryError) -> HTTPException:
         if isinstance(
@@ -185,17 +211,27 @@ def build_telegram_admin_router(
             raise HTTPException(status_code=404, detail="preapproval was not found")
         return {"item": asdict(item)}
 
-    @router.post("/api/v1/telegram/preapprovals")
-    def create_telegram_preapproval(request: Request, data: Dict):
-        username = require_admin(request)
+    @router.post("/api/v1/telegram/preapprovals", response_model=TelegramPreapprovalResponse)
+    def create_telegram_preapproval(
+        data: TelegramPreapprovalRequest, username: str = Depends(require_admin)
+    ):
         try:
-            result = registry.create_existing_customer_preapproval(
-                telegram_user_id=data.get("telegram_user_id"),
-                customer_id=data.get("customer_id"),
-                expected_preapproval_version=data.get("expected_preapproval_version"),
-                idempotency_key=data.get("idempotency_key"),
-                created_by=username,
-            )
+            if data.profile_kind == "new":
+                result = registry.create_new_customer_preapproval(
+                    telegram_user_id=data.telegram_user_id,
+                    email_display=data.email_display or "",
+                    expected_preapproval_version=data.expected_preapproval_version,
+                    idempotency_key=data.idempotency_key,
+                    created_by=username,
+                )
+            else:
+                result = registry.create_existing_customer_preapproval(
+                    telegram_user_id=data.telegram_user_id,
+                    customer_id=data.customer_id or 0,
+                    expected_preapproval_version=data.expected_preapproval_version,
+                    idempotency_key=data.idempotency_key,
+                    created_by=username,
+                )
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
         return {"preapproval": asdict(result), "remote_io": "not_started"}
@@ -282,14 +318,15 @@ def build_telegram_admin_router(
             raise translate_registry_error(exc) from exc
 
     @router.post("/api/v1/telegram/requests/{telegram_user_id}/approve-new")
-    def approve_new_request(telegram_user_id: int, request: Request, data: Dict):
-        username = require_admin(request)
+    def approve_new_request(
+        telegram_user_id: int, data: ApproveNewRequest, username: str = Depends(require_admin)
+    ):
         try:
             result = registry.approve_new_application(
                 telegram_user_id=telegram_user_id,
-                expected_identity_version=data.get("expected_identity_version"),
-                email_display=data.get("email_display"),
-                idempotency_key=data.get("idempotency_key"),
+                expected_identity_version=data.expected_identity_version,
+                email_display=data.email_display,
+                idempotency_key=data.idempotency_key,
                 approved_by=username,
             )
         except TelegramRegistryError as exc:
@@ -297,14 +334,15 @@ def build_telegram_admin_router(
         return {"approval": asdict(result), "remote_io": "not_started"}
 
     @router.post("/api/v1/telegram/requests/{telegram_user_id}/approve-existing")
-    def approve_existing_request(telegram_user_id: int, request: Request, data: Dict):
-        username = require_admin(request)
+    def approve_existing_request(
+        telegram_user_id: int, data: ApproveExistingRequest, username: str = Depends(require_admin)
+    ):
         try:
             result = registry.approve_existing_application(
                 telegram_user_id=telegram_user_id,
-                customer_id=data.get("customer_id"),
-                expected_identity_version=data.get("expected_identity_version"),
-                idempotency_key=data.get("idempotency_key"),
+                customer_id=data.customer_id,
+                expected_identity_version=data.expected_identity_version,
+                idempotency_key=data.idempotency_key,
                 approved_by=username,
             )
         except TelegramRegistryError as exc:
@@ -359,43 +397,46 @@ def build_telegram_admin_router(
         return {"approval": asdict(result), "remote_io": "read_only"}
 
     @router.post("/api/v1/telegram/requests/{telegram_user_id}/reject")
-    def reject_request(telegram_user_id: int, request: Request, data: Dict):
-        username = require_admin(request)
+    def reject_request(
+        telegram_user_id: int, data: IdentityDecisionRequest, username: str = Depends(require_admin)
+    ):
         try:
             result = registry.reject_application(
                 telegram_user_id=telegram_user_id,
-                expected_identity_version=data.get("expected_identity_version"),
-                idempotency_key=data.get("idempotency_key"),
+                expected_identity_version=data.expected_identity_version,
+                idempotency_key=data.idempotency_key,
                 rejected_by=username,
-                reason=data.get("reason"),
+                reason=data.reason,
             )
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
         return {"identity": asdict(result)}
 
     @router.post("/api/v1/telegram/identities/{telegram_user_id}/block")
-    def block_identity(telegram_user_id: int, request: Request, data: Dict):
-        username = require_admin(request)
+    def block_identity(
+        telegram_user_id: int, data: IdentityDecisionRequest, username: str = Depends(require_admin)
+    ):
         try:
             result = registry.block_identity(
                 telegram_user_id=telegram_user_id,
-                expected_identity_version=data.get("expected_identity_version"),
-                idempotency_key=data.get("idempotency_key"),
+                expected_identity_version=data.expected_identity_version,
+                idempotency_key=data.idempotency_key,
                 blocked_by=username,
-                reason=data.get("reason"),
+                reason=data.reason,
             )
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
         return {"identity": asdict(result)}
 
     @router.post("/api/v1/telegram/identities/{telegram_user_id}/unblock")
-    def unblock_identity(telegram_user_id: int, request: Request, data: Dict):
-        username = require_admin(request)
+    def unblock_identity(
+        telegram_user_id: int, data: IdentityDecisionRequest, username: str = Depends(require_admin)
+    ):
         try:
             result = registry.unblock_identity(
                 telegram_user_id=telegram_user_id,
-                expected_identity_version=data.get("expected_identity_version"),
-                idempotency_key=data.get("idempotency_key"),
+                expected_identity_version=data.expected_identity_version,
+                idempotency_key=data.idempotency_key,
                 unblocked_by=username,
             )
         except TelegramRegistryError as exc:
@@ -403,14 +444,15 @@ def build_telegram_admin_router(
         return {"identity": asdict(result)}
 
     @router.post("/api/v1/telegram/identities/{telegram_user_id}/unlink")
-    def unlink_identity(telegram_user_id: int, request: Request, data: Dict):
-        username = require_admin(request)
+    def unlink_identity(
+        telegram_user_id: int, data: UnlinkIdentityRequest, username: str = Depends(require_admin)
+    ):
         try:
             result = registry.unlink_identity(
                 telegram_user_id=telegram_user_id,
-                customer_id=data.get("customer_id"),
-                expected_identity_version=data.get("expected_identity_version"),
-                idempotency_key=data.get("idempotency_key"),
+                customer_id=data.customer_id,
+                expected_identity_version=data.expected_identity_version,
+                idempotency_key=data.idempotency_key,
                 unlinked_by=username,
             )
         except TelegramRegistryError as exc:
@@ -826,12 +868,11 @@ def build_telegram_admin_router(
             "fixed_contract": {"inbound_id": 1, "flow": "xtls-rprx-vision"},
         }
 
-    @router.put("/api/v1/telegram/node-policies/{node_id}")
-    def set_node_policy(node_id: int, request: Request, data: Dict):
-        username = require_admin(request)
-        provisioning_enabled = data.get("provisioning_enabled")
-        if not isinstance(provisioning_enabled, bool):
-            raise HTTPException(status_code=400, detail="provisioning_enabled must be a boolean")
+    @router.put("/api/v1/telegram/node-policies/{node_id}", response_model=NodePolicyMutationResponse)
+    def set_node_policy(
+        node_id: int, data: NodePolicyMutationRequest, username: str = Depends(require_admin)
+    ):
+        provisioning_enabled = data.provisioning_enabled
 
         compatible = False
         if provisioning_enabled:
@@ -850,11 +891,11 @@ def build_telegram_admin_router(
             policy = registry.set_node_provisioning_policy(
                 node_id=node_id,
                 provisioning_enabled=provisioning_enabled,
-                total_bytes=data.get("total_bytes"),
-                validity_days=data.get("validity_days"),
-                client_enabled=data.get("client_enabled"),
-                expected_policy_version=data.get("expected_policy_version"),
-                idempotency_key=data.get("idempotency_key"),
+                total_bytes=data.total_bytes,
+                validity_days=data.validity_days,
+                client_enabled=data.client_enabled,
+                expected_policy_version=data.expected_policy_version,
+                idempotency_key=data.idempotency_key,
                 updated_by=username,
                 node_is_compatible=compatible,
             )
@@ -864,6 +905,36 @@ def build_telegram_admin_router(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {
             "policy": asdict(policy),
+            "fixed_contract": {"inbound_id": 1, "flow": "xtls-rprx-vision"},
+        }
+
+    @router.post(
+        "/api/v1/telegram/node-policies/{node_id}/validate", response_model=NodePolicyValidationResponse
+    )
+    def validate_node_policy(node_id: int, _username: str = Depends(require_admin)):
+        """Read-only preview for the exact Telegram node contract.
+
+        The response contains no panel credentials and does not mutate policy,
+        remote clients, or caches. A write is still revalidated on commit.
+        """
+
+        try:
+            nodes = list_nodes()
+            node = next((item for item in nodes if item.get("id") == node_id), None)
+            if node is None:
+                raise HTTPException(status_code=404, detail="node was not found")
+            if not bool(node.get("enabled")):
+                return {"eligible": False, "reason": "node is disabled", "fixed_contract": {"inbound_id": 1, "flow": "xtls-rprx-vision"}}
+            if bool(node.get("read_only")):
+                return {"eligible": False, "reason": "node is read-only", "fixed_contract": {"inbound_id": 1, "flow": "xtls-rprx-vision"}}
+            compatible = _inbound_one_supports_bot_contract(node_id, get_cached_inbound_options(nodes))
+        except HTTPException:
+            raise
+        except Exception:
+            compatible = False
+        return {
+            "eligible": compatible,
+            "reason": None if compatible else "inbound 1 VLESS vision contract is unavailable",
             "fixed_contract": {"inbound_id": 1, "flow": "xtls-rprx-vision"},
         }
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import sys
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -385,6 +386,160 @@ def test_existing_customer_preapproval_activates_only_on_first_private_start_and
         assert conn.execute(
             "SELECT COUNT(*) FROM customer_node_bindings WHERE customer_id = ?", (customer_id,)
         ).fetchone()[0] == 1
+
+
+def test_new_customer_preapproval_uses_immutable_snapshot_at_first_start(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "edge-a")
+    _insert_node(db_path, 2, "edge-b")
+    registry = TelegramRegistry(db_path)
+    for node_id, total_bytes, validity_days, client_enabled in ((1, 1024, 14, True), (2, 2048, 0, False)):
+        registry.set_node_provisioning_policy(
+            node_id=node_id,
+            provisioning_enabled=True,
+            total_bytes=total_bytes,
+            validity_days=validity_days,
+            client_enabled=client_enabled,
+            expected_policy_version=0,
+            idempotency_key=f"policy-{node_id}",
+            updated_by="admin",
+            node_is_compatible=True,
+        )
+
+    profile = registry.create_new_customer_preapproval(
+        telegram_user_id=43,
+        email_display="planned-user",
+        expected_preapproval_version=0,
+        idempotency_key="new-preapproval-43",
+        created_by="admin",
+    )
+    assert profile.profile_kind == "new"
+    assert profile.customer_id is None
+    assert profile.target_node_ids == (1, 2)
+    assert profile.target_snapshot_digest is not None
+    assert registry.create_new_customer_preapproval(
+        telegram_user_id=43,
+        email_display="planned-user",
+        expected_preapproval_version=0,
+        idempotency_key="new-preapproval-43",
+        created_by="other-admin",
+    ) == profile
+
+    # Changed policy and disabled node do not rewrite a previously accepted
+    # profile. The worker will safely reconcile the now-disabled node later.
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_node_policies SET total_bytes = 999999 WHERE node_id = 1")
+        conn.execute("UPDATE nodes SET enabled = 0 WHERE id = 2")
+    registry.get_or_create_identity(
+        telegram_user_id=43, chat_id=43, username="planned", first_name="Planned", last_name=None
+    )
+    activated = registry.activate_preapproval(43)
+
+    assert activated is not None
+    assert activated.email_display == "planned-user"
+    assert activated.target_node_ids == (1, 2)
+    assert registry.get_preapproval(43) is None
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT access_status, customer_id FROM telegram_identities WHERE telegram_user_id = 43"
+        ).fetchone() == ("approved", activated.customer_id)
+        attempts = conn.execute(
+            """
+            SELECT node_id, desired_total_bytes, desired_validity_days, desired_client_enabled,
+                   desired_flow, inbound_id
+            FROM telegram_provisioning_attempts WHERE job_id = ? ORDER BY node_id
+            """,
+            (activated.job_id,),
+        ).fetchall()
+        outbox_events = conn.execute(
+            "SELECT event_type FROM telegram_outbox ORDER BY id"
+        ).fetchall()
+    assert attempts == [
+        (1, 1024, 14, 1, "xtls-rprx-vision", 1),
+        (2, 2048, 0, 0, "xtls-rprx-vision", 1),
+    ]
+    assert outbox_events == [("user_provisioning_queued",)]
+
+
+def test_legacy_preapproval_table_migrates_without_losing_existing_profile(tmp_path):
+    db_path = str(tmp_path / "legacy-preapproval.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="legacy-preapproved", origin="existing", email_source="existing", public_code="legacy"
+    )
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'legacy-edge', 1, 0)")
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'legacy-client', 'legacy-sub', 'legacy-preapproved',
+                    'existing_bound', 'confirmed', 1, 1)
+            """,
+            (customer_id,),
+        )
+        conn.execute("DROP TABLE telegram_preapprovals")
+        conn.execute(
+            """
+            CREATE TABLE telegram_preapprovals
+                (telegram_user_id INTEGER PRIMARY KEY,
+                 customer_id INTEGER NOT NULL,
+                 row_version INTEGER NOT NULL DEFAULT 1,
+                 created_by TEXT NOT NULL,
+                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                 FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT)
+            """
+        )
+        conn.execute(
+            "INSERT INTO telegram_preapprovals (telegram_user_id, customer_id, created_by) VALUES (44, ?, 'admin')",
+            (customer_id,),
+        )
+    init_db(db_path)
+
+    migrated = TelegramRegistry(db_path).get_preapproval(44)
+    assert migrated is not None
+    assert (migrated.profile_kind, migrated.customer_id, migrated.customer_email) == (
+        "existing", customer_id, "legacy-preapproved"
+    )
+    with connect(db_path) as conn:
+        columns = {str(row[1]): row for row in conn.execute("PRAGMA table_info(telegram_preapprovals)").fetchall()}
+    assert int(columns["customer_id"][3]) == 0
+    assert {"profile_kind", "target_snapshot_json", "target_snapshot_digest"} <= set(columns)
+
+    first = TelegramRegistry(db_path).create_existing_customer_preapproval(
+        telegram_user_id=45,
+        customer_id=customer_id,
+        expected_preapproval_version=0,
+        idempotency_key="legacy-receipt",
+        created_by="admin",
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            UPDATE telegram_command_receipts SET result_json = ?
+            WHERE scope = 'create_preapproval' AND idempotency_key = 'legacy-receipt'
+            """,
+            (json.dumps({
+                "telegram_user_id": first.telegram_user_id,
+                "customer_id": first.customer_id,
+                "customer_email": first.customer_email,
+                "row_version": first.row_version,
+                "created_by": first.created_by,
+                "created_at": first.created_at,
+            }),),
+        )
+    replay = TelegramRegistry(db_path).create_existing_customer_preapproval(
+        telegram_user_id=45,
+        customer_id=customer_id,
+        expected_preapproval_version=0,
+        idempotency_key="legacy-receipt",
+        created_by="another-admin",
+    )
+    assert replay == first
 
 
 def test_introduction_is_one_time_plain_text_for_the_current_pending_attempt(tmp_path):
