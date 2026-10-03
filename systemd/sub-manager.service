@@ -49,13 +49,15 @@ Environment="MFA_TOTP_WS_STRICT=false"
 Environment="LOG_LEVEL=INFO"
 Environment="LOG_FILE=/opt/sub-manager/logs/app.log"
 NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 PrivateTmp=yes
 ProtectHome=true
 ProtectSystem=full
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 ReadWritePaths=/opt/sub-manager
 ExecStartPre=/bin/sh -ec 'if /usr/bin/ss -ltnH "sport = :666" | /usr/bin/grep -q .; then echo "Refusing to start: APP_PORT 666 is already in use" >&2; exit 1; fi'
 ExecStart=/opt/sub-manager/venv/bin/uvicorn main:app --host 127.0.0.1 --port 666 --log-level warning
