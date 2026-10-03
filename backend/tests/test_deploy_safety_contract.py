@@ -33,6 +33,10 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'systemd-analyze verify "$STAGED_SERVICE_UNIT"' in script
     assert 'install -o root -g root -m 0644 "$STAGED_SERVICE_UNIT" "$SERVICE_UNIT"' in script
     assert 'restore_service_unit' in script
+    assert 'SERVICE_UNIT_ROLLBACK="${BACKUP_ROOT}/${PROJECT_NAME}-service-unit-${STAMP}.bak"' in script
+    assert 'STAGED_SERVICE_UNIT="${BACKUP_ROOT}/${PROJECT_NAME}-service-unit-${STAMP}.next"' in script
+    assert 'service unit staging path already exists' in script
+    assert 'mktemp "${BACKUP_ROOT}/${PROJECT_NAME}-service-unit' not in script
     assert script.index('render_runtime_service_unit "$SERVICE_TEMPLATE"') < script.index('systemctl stop "$PROJECT_NAME"\n  SERVICE_STOPPED=1')
     unit_install = script.index('install -o root -g root -m 0644 "$STAGED_SERVICE_UNIT" "$SERVICE_UNIT"')
     assert unit_install < script.index('systemctl daemon-reload', unit_install)
