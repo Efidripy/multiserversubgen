@@ -360,6 +360,8 @@ def test_stream_mux_conflicts_fail_closed_without_deleting_unmanaged_sites():
     assert "xui_assert_no_unmanaged_nginx_443_conflicts" in xui
     assert "Refusing to replace unmanaged Nginx listener(s) on port 443" in xui
     assert "Refusing to modify an unmanaged Nginx stream block" in xui
+    assert "/^[[:space:]]*#/ { next }" in xui
+    assert "Ubuntu's stock default site documents a" in xui
 
     for relative_path in (
         "scripts/installer/install.sh",
