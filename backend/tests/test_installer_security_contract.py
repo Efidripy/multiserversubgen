@@ -155,6 +155,13 @@ def test_fresh_installer_retries_transient_apt_locks_and_installs_matching_venv(
     assert 'python3 -m venv "$PROJECT_DIR/venv" ||' in install
 
 
+def test_requirements_lock_allows_the_official_uvloop_cp314_wheel():
+    requirements = _read("backend/requirements.txt")
+
+    assert "uvloop==0.22.1" in requirements
+    assert "c1955d5a1dd43198244d47664a5858082a3239766a839b2102a269aaff7a4e25" in requirements
+
+
 def test_remove_script_defaults_to_conservative_scope():
     remove = _read("scripts/installer/remove.sh")
     workflows = _read("scripts/installer/lib/workflows.sh")
