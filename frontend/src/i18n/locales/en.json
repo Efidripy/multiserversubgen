@@ -126,6 +126,13 @@
     "actionFailed": "Operation failed",
     "jobsTitle": "Provisioning jobs",
     "noJobs": "No active jobs.",
+      "jobsHistory": "Full history",
+      "jobsHistoryTitle": "Provisioning job history",
+      "jobsHistoryHint": "All local jobs are shown. Active and partial jobs are never deleted.",
+      "clearJobsHistory": "Clear history",
+      "clearJobsHistoryTitle": "Clear completed history?",
+      "clearJobsHistoryHint": "Only succeeded, failed, and cancelled jobs will be deleted. Queued, running, and partial jobs remain. Audit records are retained.",
+      "clearJobsHistoryDone": "Deleted records: {{count}}",
     "nodesReady": "Nodes ready: {{ready}}/{{total}}",
     "appealsTitle": "User appeals",
     "noAppeals": "No open appeals.",
@@ -169,11 +176,11 @@
     ,"bulkPreviewText": "Preview: {{operation}}, customers: {{count}}."
     ,"bulkConfirm": "Queue separate operations for {{count}} customers?"
     ,"driftTitle": "Record reconciliation"
-    ,"driftHint": "Read-only only. A customer intentionally present on only some TG nodes is not drift."
+      ,"driftHint": "Read-only only. A customer intentionally present on only some TG nodes is not drift. Ignore hides this finding but never changes the node."
     ,"driftScan": "Scan"
     ,"driftScanDone": "Reconciliation complete"
     ,"noDrift": "No open findings"
-    ,"driftResolve": "Resolve"
+      ,"driftIgnore": "Ignore"
     ,"driftAdopt": "Adopt record"
     ,"driftAdoptConfirm": "Adopt this remote record as a locally confirmed binding? The remote node will not be changed."
     ,"supportTitle": "Support requests"

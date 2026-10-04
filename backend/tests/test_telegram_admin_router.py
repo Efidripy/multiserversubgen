@@ -149,6 +149,52 @@ def test_capability_matrix_keeps_bulk_delete_owner_only(tmp_path):
     assert owner.post("/api/v1/telegram/bulk-lifecycle", json=body).status_code != 403
 
 
+def test_provisioning_history_is_paged_and_only_owner_can_clear_terminal_records(tmp_path):
+    client = _build_client(tmp_path, is_owner=False)
+    db_path = str(tmp_path / "admin.db")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="history-user", origin="existing", email_source="existing", public_code="history-user"
+    )
+    with connect(db_path) as conn:
+        for index, status in enumerate(("succeeded", "failed", "queued", "partial"), start=1):
+            conn.execute(
+                """
+                INSERT INTO telegram_provisioning_jobs
+                    (customer_id, trigger, idempotency_key, status, policy_snapshot_digest, created_by)
+                VALUES (?, 'manual_sync', ?, ?, ?, 'test')
+                """,
+                (customer_id, f"history-job-{index}", status, f"snapshot-{index}"),
+            )
+
+    first_page = client.get("/api/v1/telegram/jobs", params={"limit": 2, "offset": 0})
+    second_page = client.get("/api/v1/telegram/jobs", params={"limit": 2, "offset": 2})
+    assert first_page.status_code == 200
+    assert first_page.json()["total"] == 4
+    assert len(first_page.json()["items"]) == 2
+    assert {item["job_id"] for item in first_page.json()["items"]}.isdisjoint(
+        {item["job_id"] for item in second_page.json()["items"]}
+    )
+    assert first_page.json()["can_clear_history"] is False
+    assert client.post("/api/v1/telegram/jobs/history/clear", json={"idempotency_key": "clear-history"}).status_code == 403
+
+    owner = _build_client(tmp_path, is_owner=True)
+    owner_page = owner.get("/api/v1/telegram/jobs", params={"limit": 15, "offset": 0})
+    assert owner_page.json()["can_clear_history"] is True
+    cleared = owner.post("/api/v1/telegram/jobs/history/clear", json={"idempotency_key": "clear-history"})
+    replay = owner.post("/api/v1/telegram/jobs/history/clear", json={"idempotency_key": "clear-history"})
+    assert cleared.status_code == 200
+    assert cleared.json()["deleted_count"] == 2
+    assert replay.json()["deleted_count"] == 2
+    with connect(db_path) as conn:
+        assert {
+            row[0] for row in conn.execute("SELECT status FROM telegram_provisioning_jobs").fetchall()
+        } == {"queued", "partial"}
+        assert conn.execute(
+            "SELECT COUNT(*) FROM telegram_audit_log WHERE event_type = 'provisioning_history_cleared'"
+        ).fetchone()[0] == 1
+
+
 def test_request_queue_is_admin_only_and_approval_queues_local_work_without_remote_io(tmp_path):
     client = _build_client(tmp_path)
     db_path = str(tmp_path / "admin.db")

@@ -57,6 +57,12 @@ export type ProvisioningJob = {
   attempts: Array<{ node_id: number; node_name: string; status: string; error_code: string | null; error_summary: string | null; attempt_count: number; next_attempt_at: string | null }>;
 };
 
+export type ProvisioningJobPage = {
+  items: ProvisioningJob[];
+  total: number;
+  can_clear_history: boolean;
+};
+
 export type BlockedIdentity = { telegram_user_id: number; username: string | null; first_name: string | null; row_version: number; blocked_at: string | null; decision_reason: string | null; };
 
 export type TelegramCustomer = {
@@ -345,9 +351,9 @@ export async function scanDrift(): Promise<void> {
   await api.post('/v1/telegram/drift/scan', {}, { auth: getAuth() });
 }
 
-export async function resolveDriftFinding(finding: DriftFinding): Promise<DriftFinding> {
+export async function ignoreDriftFinding(finding: DriftFinding): Promise<DriftFinding> {
   const response = await api.post(`/v1/telegram/drift/${finding.finding_id}/resolve`, {
-    expected_row_version: finding.row_version, status: 'resolved',
+    expected_row_version: finding.row_version, status: 'ignored',
   }, { auth: getAuth() });
   return response.data?.item as DriftFinding;
 }
@@ -423,9 +429,26 @@ export async function retryCustomerOperation(operation: CustomerOperation): Prom
   );
 }
 
+export async function listTelegramJobsPage(limit = 100, offset = 0): Promise<ProvisioningJobPage> {
+  const response = await api.get('/v1/telegram/jobs', { auth: getAuth(), params: { limit, offset } });
+  return {
+    items: Array.isArray(response.data?.items) ? response.data.items : [],
+    total: Number.isInteger(response.data?.total) && response.data.total >= 0 ? response.data.total : 0,
+    can_clear_history: response.data?.can_clear_history === true,
+  };
+}
+
 export async function listTelegramJobs(): Promise<ProvisioningJob[]> {
-  const response = await api.get('/v1/telegram/jobs', { auth: getAuth() });
-  return Array.isArray(response.data?.items) ? response.data.items : [];
+  return (await listTelegramJobsPage()).items;
+}
+
+export async function clearTelegramJobHistory(): Promise<number> {
+  const response = await api.post(
+    '/v1/telegram/jobs/history/clear',
+    { idempotency_key: newIdempotencyKey() },
+    { auth: getAuth() },
+  );
+  return Number(response.data?.deleted_count) || 0;
 }
 
 export async function reconcileTelegramJob(job: ProvisioningJob): Promise<void> {
