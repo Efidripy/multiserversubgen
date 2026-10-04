@@ -105,6 +105,7 @@ export const TelegramAdmin: React.FC = () => {
   const [timeline, setTimeline] = useState<CustomerTimelineEvent[]>([]);
   const [preview, setPreview] = useState<CustomerOperationPreview | null>(null);
   const [previewNodeId, setPreviewNodeId] = useState<number | null>(null);
+  const [nodeAddConfirmation, setNodeAddConfirmation] = useState<CustomerNode | null>(null);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
@@ -182,11 +183,13 @@ export const TelegramAdmin: React.FC = () => {
   useEffect(() => {
     if (!isCustomerDialogOpen) return undefined;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !preview) setIsCustomerDialogOpen(false);
+      if (event.key !== 'Escape' || preview) return;
+      if (nodeAddConfirmation) setNodeAddConfirmation(null);
+      else setIsCustomerDialogOpen(false);
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [isCustomerDialogOpen, preview]);
+  }, [isCustomerDialogOpen, nodeAddConfirmation, preview]);
 
   const selectCustomer = useCallback(async (customer: TelegramCustomer) => {
     setSelectedCustomerId(customer.customer_id);
@@ -293,11 +296,12 @@ export const TelegramAdmin: React.FC = () => {
     }
   };
 
-  const addNode = async (node: CustomerNode) => {
-    if (!selectedCustomer || !window.confirm(t('telegram.addNodeConfirm', { node: node.node_name }))) return;
+  const addNode = async () => {
+    if (!selectedCustomer || !nodeAddConfirmation) return;
     setMutating(true);
     try {
-      await addCustomerNode(selectedCustomer, node.node_id);
+      await addCustomerNode(selectedCustomer, nodeAddConfirmation.node_id);
+      setNodeAddConfirmation(null);
       toast(t('telegram.nodeOperationQueued'), 'success');
       await load();
       await selectCustomer(selectedCustomer);
@@ -506,6 +510,13 @@ export const TelegramAdmin: React.FC = () => {
   };
 
   const selectedTitle = useMemo(() => selectedCustomer?.email_display ?? t('telegram.selectCustomer'), [selectedCustomer, t]);
+  const pendingNodeIds = useMemo(() => new Set(
+    jobs
+      .filter((job) => job.customer_id === selectedCustomer?.customer_id && ['queued', 'running', 'partial'].includes(job.status))
+      .flatMap((job) => job.attempts)
+      .filter((attempt) => ['pending', 'reconciling', 'creating', 'ambiguous'].includes(attempt.status))
+      .map((attempt) => attempt.node_id),
+  ), [jobs, selectedCustomer?.customer_id]);
   const usersAttention = requests.length + appeals.length + openSupportRequests.length;
   const operationsAttention = jobs.filter((job) => ['partial', 'failed', 'ambiguous', 'blocked'].includes(job.status)).length + driftFindings.length;
   const tabs: Array<{ id: TelegramAdminTab; icon: React.ComponentProps<typeof UIIcon>['name']; label: string; attention?: number }> = [
@@ -703,11 +714,11 @@ export const TelegramAdmin: React.FC = () => {
         </section>}
       </div>}
 
-      {isCustomerDialogOpen && selectedCustomer && <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#02050bcc] p-3 sm:p-5" onMouseDown={() => { if (!preview) setIsCustomerDialogOpen(false); }}>
+      {isCustomerDialogOpen && selectedCustomer && <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#02050bcc] p-3 sm:p-5" onMouseDown={() => { if (!preview && !nodeAddConfirmation) setIsCustomerDialogOpen(false); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="telegram-customer-dialog-title" className="max-h-[calc(100vh-1.5rem)] w-full max-w-5xl overflow-hidden rounded-[8px] border border-cyan-400/20 bg-[#0d131f] shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
           <div className="flex items-start justify-between gap-4 border-b border-cyan-400/12 px-4 py-3">
             <div className="min-w-0"><p className="text-[9px] uppercase tracking-[0.14em] text-slate-500">{t('telegram.customerDetails')}</p><h3 id="telegram-customer-dialog-title" className="mt-1 flex items-center gap-2 truncate text-sm font-medium text-[#e9f1f8]"><span className={`size-[7px] shrink-0 rounded-full ${customerStatusDotClass(selectedCustomer.status)}`} />{selectedTitle}</h3><p className="mt-1 text-[10px] text-slate-500">{selectedCustomer.telegram_username ? `@${selectedCustomer.telegram_username}` : '—'} · {selectedCustomer.telegram_user_id ?? '—'}</p></div>
-            <button type="button" className={`${buttonClass} h-8 px-2`} onClick={() => setIsCustomerDialogOpen(false)} disabled={Boolean(preview)} aria-label={t('telegram.closeCustomer')}><UIIcon name="x" size={15} /></button>
+            <button type="button" className={`${buttonClass} h-8 px-2`} onClick={() => setIsCustomerDialogOpen(false)} disabled={Boolean(preview || nodeAddConfirmation)} aria-label={t('telegram.closeCustomer')}><UIIcon name="x" size={15} /></button>
           </div>
           <div className="max-h-[calc(100vh-7rem)] overflow-y-auto p-4">
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-[7px] border border-cyan-400/12 bg-[#0a0f19] p-3"><div><p className="text-[9px] uppercase tracking-[0.12em] text-slate-500">{t('telegram.lifetimeTraffic')}</p><p className="mt-1 font-mono text-sm text-cyan-200">{formatBytes(traffic?.lifetime_bytes ?? selectedCustomer.lifetime_bytes)}</p></div><div className="flex flex-wrap gap-2">{(['suspend', 'resume', 'delete'] as const).map((operationType) => <button key={operationType} type="button" className={operationType === 'delete' ? `${buttonClass} border-rose-400/25 text-rose-200 hover:text-rose-100` : buttonClass} onClick={() => void makePreview(operationType)} disabled={mutating}>{t(`telegram.${operationType}`)}</button>)}</div></div>
@@ -717,11 +728,26 @@ export const TelegramAdmin: React.FC = () => {
               <div className="rounded border border-cyan-500/10 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.tagsTitle')}</h4><button type="button" className={buttonClass} disabled={mutating} onClick={() => void saveTags()}>{t('common.save')}</button></div><input className={`${inputClass} mt-2`} value={tagInput} onChange={(event) => setTagInput(event.target.value)} placeholder={t('telegram.tagsPlaceholder')} />{tags.length > 0 && <p className="mt-1 text-[11px] text-slate-500">{tags.map((tag) => tag.tag).join(' · ')}</p>}</div>
               {selectedCustomer.application_introduction && <div className="rounded border border-amber-400/15 bg-amber-400/[0.03] p-3"><h4 className="text-[10px] font-medium uppercase tracking-[0.14em] text-amber-200">{t('telegram.applicationNote')}</h4><p className="mt-2 whitespace-pre-wrap text-xs leading-5 text-slate-300">{selectedCustomer.application_introduction}</p></div>}
             </div>
-            <h4 className="mt-5 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.nodes')}</h4><div className="mt-2 space-y-1">{nodes.map((node) => <div key={node.node_id} className="flex items-center justify-between gap-2 rounded border border-cyan-500/10 px-2 py-1.5 text-xs"><span className="truncate text-slate-300">{node.node_name}</span><div className="flex shrink-0 items-center gap-2"><span className="font-mono text-[10px] text-slate-500">{node.state}</span>{node.state === 'available_to_add' && <button type="button" className={buttonClass} disabled={mutating || selectedCustomer.status !== 'active'} onClick={() => void addNode(node)}>{t('telegram.addNode')}</button>}{node.state === 'active' && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void makeNodePreview(node, 'suspend_node')}>{t('telegram.suspendNode')}</button>}{node.state === 'suspended' && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void makeNodePreview(node, 'resume_node')}>{t('telegram.resumeNode')}</button>}</div></div>)}</div>
+            <h4 className="mt-5 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.nodes')}</h4><div className="mt-2 space-y-1">{nodes.map((node) => {
+              const isPending = pendingNodeIds.has(node.node_id);
+              const isActive = node.state === 'active';
+              const isSuspended = node.state === 'suspended';
+              const canAdd = node.state === 'available_to_add' && !isPending;
+              return <div key={node.node_id} className="flex items-center justify-between gap-2 rounded border border-cyan-500/10 px-2 py-1.5 text-xs"><span className="flex min-w-0 items-center gap-2 truncate text-slate-300"><span className={`size-[7px] shrink-0 rounded-full ${isActive ? 'bg-emerald-400' : 'bg-rose-400'}`} aria-label={isActive ? t('telegram.nodeReady') : t('telegram.nodeNotReady')} />{node.node_name}</span><div className="flex shrink-0 items-center gap-2">{isPending && <span className="text-[10px] text-amber-200">{t('telegram.nodeQueued')}</span>}{canAdd && <button type="button" className={buttonClass} disabled={mutating || selectedCustomer.status !== 'active'} onClick={() => setNodeAddConfirmation(node)}>{t('telegram.addNode')}</button>}{isActive && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void makeNodePreview(node, 'suspend_node')}>{t('telegram.suspendNode')}</button>}{isSuspended && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void makeNodePreview(node, 'resume_node')}>{t('telegram.resumeNode')}</button>}</div></div>;
+            })}</div>
             <h4 className="mt-5 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.operations')}</h4><div className="mt-2 space-y-2">{operations.map((operation) => <div key={operation.operation_id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-cyan-500/15 px-2 py-2 text-xs"><span className="text-slate-300">{operation.operation_type} · {operation.status}</span>{operation.status === 'partial' && <button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await retryCustomerOperation(operation); toast(t('telegram.operationQueued'), 'success'); await selectCustomer(selectedCustomer); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reconcile')}</button>}</div>)}</div>
             <h4 className="mt-5 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.timelineTitle')}</h4><div className="mt-2 max-h-44 space-y-1 overflow-auto">{timeline.length === 0 ? <p className="text-xs text-slate-500">{t('telegram.timelineEmpty')}</p> : timeline.map((event, index) => <div key={`${event.entity_type}-${event.entity_id}-${event.created_at}-${index}`} className="flex flex-wrap justify-between gap-2 text-[11px] text-slate-400"><span>{event.event_type} · {event.status ?? '—'}</span><span className="font-mono text-slate-500">{formatDate(event.created_at)}</span></div>)}</div>
           </div>
         </section>
+        {nodeAddConfirmation && <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#02050bd9] p-4">
+          <section role="dialog" aria-modal="true" aria-labelledby="telegram-add-node-dialog-title" className="w-full max-w-sm rounded-[8px] border border-cyan-400/25 bg-[#0d131f] p-4 shadow-2xl">
+            <p className="text-[9px] uppercase tracking-[0.14em] text-slate-500">{t('telegram.nodes')}</p>
+            <h4 id="telegram-add-node-dialog-title" className="mt-1 text-sm font-medium text-slate-100">{t('telegram.addNodeDialogTitle')}</h4>
+            <div className="mt-3 flex items-center gap-2 rounded border border-cyan-400/12 bg-[#0a0f19] px-3 py-2 text-xs text-slate-200"><span className="size-[7px] shrink-0 rounded-full bg-rose-400" />{nodeAddConfirmation.node_name}</div>
+            <p className="mt-3 text-xs leading-5 text-slate-400">{t('telegram.addNodeConfirm', { node: nodeAddConfirmation.node_name })}</p>
+            <div className="mt-4 flex justify-end gap-2"><button type="button" className={buttonClass} disabled={mutating} onClick={() => setNodeAddConfirmation(null)}>{t('common.cancel')}</button><button type="button" className={primaryButtonClass} disabled={mutating} onClick={() => void addNode()}>{t('common.confirm')}</button></div>
+          </section>
+        </div>}
       </div>}
 
       {activeTab === 'operations' && <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
