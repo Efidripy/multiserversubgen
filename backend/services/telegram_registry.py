@@ -5013,18 +5013,27 @@ class TelegramRegistry:
     def list_provisioning_jobs(self, *, limit: int = 100) -> list[ProvisioningJobStatus]:
         """Admin projection for job state; deliberately excludes remote UUIDs/sub IDs."""
 
+        items, _total = self.list_provisioning_jobs_page(limit=limit, offset=0)
+        return items
+
+    def list_provisioning_jobs_page(self, *, limit: int = 100, offset: int = 0) -> tuple[list[ProvisioningJobStatus], int]:
+        """Return a bounded page plus the exact local history size for the admin UI."""
+
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
             raise TelegramRegistryError("limit must be an integer from 1 to 200")
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise TelegramRegistryError("offset must be a non-negative integer")
         with connect(self._db_path) as conn:
+            total = int(conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0])
             jobs = conn.execute(
                 """
                 SELECT j.id, j.customer_id, c.email_display, j.trigger, j.status, j.attempt_count,
                        j.row_version, j.created_at, j.finished_at
                 FROM telegram_provisioning_jobs AS j
                 JOIN customers AS c ON c.id = j.customer_id
-                ORDER BY j.created_at DESC, j.id DESC LIMIT ?
+                ORDER BY j.created_at DESC, j.id DESC LIMIT ? OFFSET ?
                 """,
-                (limit,),
+                (limit, offset),
             ).fetchall()
             attempts = conn.execute(
                 """
@@ -5054,7 +5063,49 @@ class TelegramRegistry:
                 attempts=tuple(grouped.get(int(job[0]), [])),
             )
             for job in jobs
-        ]
+        ], total
+
+    def clear_terminal_provisioning_history(self, *, idempotency_key: object, cleared_by: object) -> int:
+        """Delete only completed local job history; active/recoverable work is never a target."""
+
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(cleared_by, "cleared_by")
+        terminal_statuses = ("succeeded", "failed", "cancelled")
+        payload = {"terminal_statuses": terminal_statuses}
+        digest = _payload_digest(payload)
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'provisioning_history_clear' AND idempotency_key = ?",
+                (key,),
+            ).fetchone()
+            if receipt is not None:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                try:
+                    return int(json.loads(str(receipt[1]))["deleted_count"])
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise TelegramRegistryError("stored history-clear receipt is invalid") from exc
+            placeholders = ",".join("?" for _ in terminal_statuses)
+            deleted_count = conn.execute(
+                f"DELETE FROM telegram_provisioning_jobs WHERE status IN ({placeholders})",
+                terminal_statuses,
+            ).rowcount
+            result_json = json.dumps({"deleted_count": deleted_count}, separators=(",", ":"))
+            conn.execute(
+                "INSERT INTO telegram_command_receipts(scope, idempotency_key, payload_digest, result_json) "
+                "VALUES ('provisioning_history_clear', ?, ?, ?)",
+                (key, digest, result_json),
+            )
+            conn.execute(
+                """
+                INSERT INTO telegram_audit_log
+                    (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
+                VALUES ('provisioning_history_cleared', 'admin', ?, 'provisioning_history', 'terminal', ?)
+                """,
+                (actor, _payload_digest({"deleted_count": deleted_count})),
+            )
+        return deleted_count
 
     def get_provisioning_job(self, job_id: int) -> ProvisioningJobStatus:
         normalized_job_id = _positive_int(job_id, "job_id")
@@ -7696,7 +7747,7 @@ class TelegramRegistry:
                     row_version = customer_node_bindings.row_version + 1,
                     updated_at = CURRENT_TIMESTAMP
                 FROM telegram_drift_findings AS finding
-                WHERE finding.status = 'open'
+                WHERE finding.status IN ('open', 'ignored')
                   AND finding.kind IN ('binding_missing', 'binding_conflict')
                   AND finding.node_id IN ({placeholders})
                   AND customer_node_bindings.customer_id = finding.customer_id
@@ -7758,13 +7809,14 @@ class TelegramRegistry:
             )
             if updated.rowcount != 1:
                 raise VersionConflictError("drift finding is stale")
+            event_type = "drift_finding_ignored" if status == "ignored" else "drift_finding_resolved"
             conn.execute(
                 """
                 INSERT INTO telegram_audit_log
                     (event_type, actor_type, actor_id, entity_type, entity_id)
-                VALUES ('drift_finding_resolved', 'admin', ?, 'drift_finding', ?)
+                VALUES (?, 'admin', ?, 'drift_finding', ?)
                 """,
-                (actor, str(local_finding_id)),
+                (event_type, actor, str(local_finding_id)),
             )
         return next(item for item in self.list_drift_findings(status="all", limit=200) if item.finding_id == local_finding_id)
 

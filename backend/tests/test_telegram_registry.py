@@ -31,6 +31,81 @@ def _insert_node(db_path: str, node_id: int, name: str, *, enabled: int = 1, rea
         )
 
 
+def test_ignored_drift_finding_stays_ignored_when_the_same_read_only_scan_repeats(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "edge-1")
+    registry = TelegramRegistry(db_path)
+    finding_payload = {
+        "kind": "orphan_remote",
+        "customer_id": None,
+        "node_id": 1,
+        "remote_email": "orphan-user",
+        "remote_client_id": "remote-client",
+        "remote_sub_id": "remote-sub",
+    }
+
+    initial = registry.record_drift_findings(scanned_node_ids=[1], findings=[finding_payload])
+    ignored = registry.resolve_drift_finding(
+        finding_id=initial[0].finding_id,
+        expected_row_version=initial[0].row_version,
+        status="ignored",
+        resolved_by="admin",
+    )
+    repeated = registry.record_drift_findings(scanned_node_ids=[1], findings=[finding_payload])
+
+    assert repeated == ()
+    assert ignored.status == "ignored"
+    assert registry.list_drift_findings(status="ignored")[0].finding_id == ignored.finding_id
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM telegram_audit_log WHERE event_type = 'drift_finding_ignored'"
+        ).fetchone()[0] == 1
+
+
+def test_ignored_binding_drift_remains_unconfirmed_for_lifecycle_safety(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "edge-1")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="missing-user", origin="existing", email_source="existing", public_code="missing-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'missing-client', 'missing-sub', 'missing-user',
+                    'existing_bound', 'confirmed', 1, 1)
+            """,
+            (customer_id,),
+        )
+    finding_payload = {
+        "kind": "binding_missing",
+        "customer_id": customer_id,
+        "node_id": 1,
+        "remote_email": "missing-user",
+        "remote_client_id": "missing-client",
+        "remote_sub_id": "missing-sub",
+    }
+
+    initial = registry.record_drift_findings(scanned_node_ids=[1], findings=[finding_payload])
+    registry.resolve_drift_finding(
+        finding_id=initial[0].finding_id,
+        expected_row_version=initial[0].row_version,
+        status="ignored",
+        resolved_by="admin",
+    )
+    registry.record_drift_findings(scanned_node_ids=[1], findings=[finding_payload])
+
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT management_state FROM customer_node_bindings WHERE customer_id = ?", (customer_id,)
+        ).fetchone()[0] == "missing"
+
+
 def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
