@@ -252,23 +252,23 @@ export async function unblockTelegramIdentity(identity: BlockedIdentity): Promis
   }, { auth: getAuth() });
 }
 
-export async function listTelegramCustomers(query = ''): Promise<TelegramCustomer[]> {
-  const response = await api.get('/v1/telegram/customers', { auth: getAuth(), params: { query, page_size: 100 } });
+export async function listTelegramCustomers(query = '', refreshToken?: number): Promise<TelegramCustomer[]> {
+  const response = await api.get('/v1/telegram/customers', { auth: getAuth(), params: { query, page_size: 100, ...(refreshToken ? { _refresh: refreshToken } : {}) } });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
-export async function getCustomerNodes(customerId: number): Promise<CustomerNode[]> {
-  const response = await api.get(`/v1/telegram/customers/${customerId}/nodes`, { auth: getAuth() });
+export async function getCustomerNodes(customerId: number, refreshToken?: number): Promise<CustomerNode[]> {
+  const response = await api.get(`/v1/telegram/customers/${customerId}/nodes`, { auth: getAuth(), params: refreshToken ? { _refresh: refreshToken } : undefined });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
-export async function getCustomerTraffic(customerId: number): Promise<CustomerTraffic> {
-  const response = await api.get(`/v1/telegram/customers/${customerId}/traffic`, { auth: getAuth() });
+export async function getCustomerTraffic(customerId: number, refreshToken?: number): Promise<CustomerTraffic> {
+  const response = await api.get(`/v1/telegram/customers/${customerId}/traffic`, { auth: getAuth(), params: refreshToken ? { _refresh: refreshToken } : undefined });
   return response.data?.traffic as CustomerTraffic;
 }
 
-export async function getCustomerOperations(customerId: number): Promise<CustomerOperation[]> {
-  const response = await api.get(`/v1/telegram/customers/${customerId}/operations`, { auth: getAuth() });
+export async function getCustomerOperations(customerId: number, refreshToken?: number): Promise<CustomerOperation[]> {
+  const response = await api.get(`/v1/telegram/customers/${customerId}/operations`, { auth: getAuth(), params: refreshToken ? { _refresh: refreshToken } : undefined });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
@@ -277,8 +277,8 @@ export async function getTelegramDashboard(): Promise<TelegramAdminDashboard> {
   return response.data?.dashboard as TelegramAdminDashboard;
 }
 
-export async function getCustomerTags(customerId: number): Promise<CustomerTag[]> {
-  const response = await api.get(`/v1/telegram/customers/${customerId}/tags`, { auth: getAuth() });
+export async function getCustomerTags(customerId: number, refreshToken?: number): Promise<CustomerTag[]> {
+  const response = await api.get(`/v1/telegram/customers/${customerId}/tags`, { auth: getAuth(), params: refreshToken ? { _refresh: refreshToken } : undefined });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
@@ -287,8 +287,8 @@ export async function setCustomerTags(customerId: number, tags: string[]): Promi
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
-export async function getCustomerTimeline(customerId: number): Promise<CustomerTimelineEvent[]> {
-  const response = await api.get(`/v1/telegram/customers/${customerId}/timeline`, { auth: getAuth() });
+export async function getCustomerTimeline(customerId: number, refreshToken?: number): Promise<CustomerTimelineEvent[]> {
+  const response = await api.get(`/v1/telegram/customers/${customerId}/timeline`, { auth: getAuth(), params: refreshToken ? { _refresh: refreshToken } : undefined });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
