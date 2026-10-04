@@ -658,9 +658,7 @@ export const TelegramAdmin: React.FC = () => {
       <div className="mb-5 border-b border-cyan-400/13 pb-5">
         <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-            <p className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-300"><UIIcon name="bell" size={14} />{t('telegram.title')}</p>
-            <h2 className="mt-2 text-xl font-medium tracking-[-0.02em] text-[#eef4fa]">{tabs.find((tab) => tab.id === activeTab)?.label}</h2>
-            <p className="mt-1 max-w-2xl text-xs font-light text-slate-500">{t('telegram.hint')}</p>
+            <h2 className="text-xl font-medium tracking-[-0.02em] text-[#eef4fa]">{tabs.find((tab) => tab.id === activeTab)?.label}</h2>
         </div>
           <button type="button" className={buttonClass} onClick={() => void load()} disabled={loading || mutating} aria-live="polite"><UIIcon name="refresh" size={14} />{t('common.refresh')}</button>
         </div>
@@ -758,8 +756,8 @@ export const TelegramAdmin: React.FC = () => {
       {activeTab === 'users' && <>
         <section className="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4" aria-label={t('telegram.dashboardTitle')}>
           {[
-            { id: 'requests' as const, value: requests.length, label: t('telegram.requests'), icon: 'bell' as const, tone: 'amber' },
             { id: 'customers' as const, value: customers.length, label: t('telegram.customers'), icon: 'clients' as const, tone: 'cyan' },
+            { id: 'requests' as const, value: requests.length, label: t('telegram.requests'), icon: 'bell' as const, tone: 'amber' },
             { id: 'support' as const, value: openSupportRequests.length, label: t('telegram.supportOpenTitle'), icon: 'note' as const, tone: 'violet' },
             { id: 'blocked' as const, value: blocked.length, label: t('telegram.blocked'), icon: 'statusOff' as const, tone: 'slate' },
           ].map((metric) => {
