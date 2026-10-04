@@ -117,8 +117,8 @@ export const TelegramAdmin: React.FC = () => {
   const [botToken, setBotToken] = useState('');
   const [jobs, setJobs] = useState<ProvisioningJob[]>([]);
   const [appeals, setAppeals] = useState<TelegramAppeal[]>([]);
-  const [openSupportRequests, setOpenSupportRequests] = useState<TelegramSupportRequest[]>([]);
-  const [supportHistory, setSupportHistory] = useState<TelegramSupportRequest[]>([]);
+  const [supportRequests, setSupportRequests] = useState<TelegramSupportRequest[]>([]);
+  const [selectedSupportCustomerId, setSelectedSupportCustomerId] = useState<number | null>(null);
   const [supportReply, setSupportReply] = useState<{ request: TelegramSupportRequest; body: string } | null>(null);
   const [dashboard, setDashboard] = useState<Record<string, number> | null>(null);
   const [schedules, setSchedules] = useState<LifecycleSchedule[]>([]);
@@ -154,12 +154,43 @@ export const TelegramAdmin: React.FC = () => {
     () => filteredCustomers.slice((Math.min(customerPage, customerPageCount) - 1) * customerPageSize, Math.min(customerPage, customerPageCount) * customerPageSize),
     [customerPage, customerPageCount, filteredCustomers],
   );
+  const supportCustomers = useMemo(() => {
+    const grouped = new Map<number, { customerId: number; emailDisplay: string; telegramUserId: number; requests: TelegramSupportRequest[]; openCount: number; latestAt: string }>();
+    for (const request of supportRequests) {
+      const existing = grouped.get(request.customer_id);
+      if (existing) {
+        existing.requests.push(request);
+        if (request.status !== 'resolved') existing.openCount += 1;
+        if (request.created_at > existing.latestAt) existing.latestAt = request.created_at;
+      } else {
+        grouped.set(request.customer_id, {
+          customerId: request.customer_id,
+          emailDisplay: request.email_display,
+          telegramUserId: request.telegram_user_id,
+          requests: [request],
+          openCount: request.status === 'resolved' ? 0 : 1,
+          latestAt: request.created_at,
+        });
+      }
+    }
+    return [...grouped.values()]
+      .map((customer) => ({ ...customer, requests: [...customer.requests].sort((a, b) => a.created_at.localeCompare(b.created_at) || a.support_request_id - b.support_request_id) }))
+      .sort((a, b) => (b.openCount - a.openCount) || b.latestAt.localeCompare(a.latestAt));
+  }, [supportRequests]);
+  const selectedSupportCustomer = useMemo(
+    () => supportCustomers.find((customer) => customer.customerId === selectedSupportCustomerId) ?? supportCustomers[0] ?? null,
+    [selectedSupportCustomerId, supportCustomers],
+  );
+  const openSupportRequests = useMemo(
+    () => supportRequests.filter((request) => request.status !== 'resolved'),
+    [supportRequests],
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextRequests, nextCustomers, nextBlocked, nextTransport, nextBotConfiguration, nextJobs, nextAppeals, nextOpenSupport, nextSupportHistory, nextDashboard, nextSchedules, nextDrift] = await Promise.all([
-        listTelegramRequests(), listTelegramCustomers(search), listBlockedTelegramIdentities(), getTelegramTransport(), getTelegramBotConfiguration(), listTelegramJobs(), listTelegramAppeals(), listTelegramSupportRequests('open'), listTelegramSupportRequests('resolved'), getTelegramDashboard(), listLifecycleSchedules(), listDriftFindings(),
+      const [nextRequests, nextCustomers, nextBlocked, nextTransport, nextBotConfiguration, nextJobs, nextAppeals, nextSupportRequests, nextDashboard, nextSchedules, nextDrift] = await Promise.all([
+        listTelegramRequests(), listTelegramCustomers(search), listBlockedTelegramIdentities(), getTelegramTransport(), getTelegramBotConfiguration(), listTelegramJobs(), listTelegramAppeals(), listTelegramSupportRequests('all'), getTelegramDashboard(), listLifecycleSchedules(), listDriftFindings(),
       ]);
       setRequests(nextRequests);
       setCustomers(nextCustomers);
@@ -168,8 +199,8 @@ export const TelegramAdmin: React.FC = () => {
       setBotConfiguration(nextBotConfiguration);
       setJobs(nextJobs);
       setAppeals(nextAppeals);
-      setOpenSupportRequests(nextOpenSupport);
-      setSupportHistory(nextSupportHistory);
+      setSupportRequests(nextSupportRequests);
+      setSelectedSupportCustomerId((current) => current && nextSupportRequests.some((item) => item.customer_id === current) ? current : nextSupportRequests[0]?.customer_id ?? null);
       setDashboard(nextDashboard);
       setSchedules(nextSchedules);
       setDriftFindings(nextDrift);
@@ -841,35 +872,28 @@ export const TelegramAdmin: React.FC = () => {
           </div>
           <span className="font-mono text-xs text-amber-200">{t('telegram.supportOpenCount', { count: openSupportRequests.length })}</span>
         </div>
-        <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
-          <div className="min-w-0">
-            <h4 className="text-[10px] font-medium uppercase tracking-[0.14em] text-amber-200">{t('telegram.supportOpenTitle')}</h4>
-            <div className="mt-2 space-y-2">
-              {openSupportRequests.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noOpenSupport')}</p>}
-              {openSupportRequests.map((request) => <article key={request.support_request_id} className="rounded border border-amber-400/20 bg-[#0a0e1a] p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2"><span className="truncate text-xs text-slate-200">{request.email_display}</span><span className="font-mono text-[10px] text-slate-500">#{request.telegram_user_id}</span></div>
-                <p className="mt-1 text-[11px] text-amber-100">{t(`telegram.supportCategory.${request.category}`)}</p>
-                <p className="mt-2 whitespace-pre-wrap text-xs text-slate-400">{request.body}</p>
-                <p className="mt-2 text-[10px] text-slate-600">{formatDate(request.created_at)}</p>
-                {supportReply?.request.support_request_id === request.support_request_id ? <div className="mt-3 rounded border border-cyan-500/20 p-2">
-                  <label className="text-[10px] uppercase tracking-[0.12em] text-slate-500">{t('telegram.supportReplyLabel')}<textarea className={`${inputClass} mt-1 min-h-20 resize-y`} maxLength={1000} value={supportReply.body} onChange={(event) => setSupportReply((current) => current ? { ...current, body: event.target.value } : current)} /></label>
-                  <div className="mt-2 flex gap-2"><button type="button" className={primaryButtonClass} disabled={mutating || !supportReply.body.trim()} onClick={() => void submitSupportReply()}>{t('telegram.supportSendReply')}</button><button type="button" className={buttonClass} disabled={mutating} onClick={() => setSupportReply(null)}>{t('common.cancel')}</button></div>
-                </div> : <button type="button" className={`${buttonClass} mt-3`} disabled={mutating} onClick={() => setSupportReply({ request, body: '' })}>{t('telegram.supportReply')}</button>}
-              </article>)}
+        <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-[minmax(260px,0.72fr)_minmax(0,1.28fr)]">
+          <div className="min-w-0 border-b border-cyan-500/15 pb-4 xl:max-h-[560px] xl:overflow-auto xl:border-b-0 xl:border-r xl:pb-0 xl:pr-4">
+            <h4 className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.supportCustomersTitle')}</h4>
+            <div className="mt-2 space-y-1.5">
+              {supportCustomers.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noSupportCustomers')}</p>}
+              {supportCustomers.map((customer) => <button key={customer.customerId} type="button" onClick={() => { setSelectedSupportCustomerId(customer.customerId); setSupportReply(null); }} className={`block w-full rounded-[6px] border p-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 ${selectedSupportCustomer?.customerId === customer.customerId ? 'border-cyan-300/60 bg-cyan-300/8' : 'border-cyan-500/15 bg-[#0a0e1a] hover:border-cyan-300/35'}`}>
+                <div className="flex min-w-0 items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-2"><span className={`h-2 w-2 shrink-0 rounded-full ${customer.openCount > 0 ? 'bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.8)]' : 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.65)]'}`} aria-label={customer.openCount > 0 ? t('telegram.supportStatusOpen') : t('telegram.supportStatusAnswered')} /><span className="truncate text-xs text-slate-200">{customer.emailDisplay}</span></span><span className="shrink-0 font-mono text-[10px] text-slate-500">{t('telegram.supportRequestCount', { count: customer.requests.length })}</span></div>
+                <p className="mt-1 truncate font-mono text-[10px] text-slate-500">#{customer.telegramUserId} · {formatDate(customer.latestAt)}</p>
+              </button>)}
             </div>
           </div>
-          <div className="min-w-0 border-t border-cyan-500/15 pt-4 xl:border-l xl:border-t-0 xl:pl-4 xl:pt-0">
-            <h4 className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.supportHistoryTitle')}</h4>
-            <div className="mt-2 max-h-[430px] space-y-2 overflow-auto pr-1">
-              {supportHistory.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noSupportHistory')}</p>}
-              {supportHistory.map((request) => <article key={request.support_request_id} className="rounded border border-cyan-500/15 bg-[#0a0e1a] p-3">
-                <div className="flex flex-wrap items-center justify-between gap-2"><span className="truncate text-xs text-slate-300">{request.email_display}</span><span className="font-mono text-[10px] text-slate-500">{formatDate(request.updated_at)}</span></div>
-                <p className="mt-1 text-[11px] text-slate-500">{t(`telegram.supportCategory.${request.category}`)}</p>
-                <p className="mt-2 whitespace-pre-wrap text-xs text-slate-400">{request.body}</p>
-                <p className="mt-3 text-[10px] font-medium uppercase tracking-[0.12em] text-cyan-200">{t('telegram.supportReplyLabel')}</p>
-                <p className="mt-1 whitespace-pre-wrap text-xs text-slate-300">{request.admin_response || t('telegram.supportNoReply')}</p>
-              </article>)}
-            </div>
+          <div className="min-w-0">
+            {!selectedSupportCustomer ? <p className="text-sm font-light text-slate-500">{t('telegram.noSupportCustomers')}</p> : <>
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-cyan-500/15 pb-3"><div><h4 className="flex items-center gap-2 text-xs font-medium text-slate-200"><span className={`h-2 w-2 rounded-full ${selectedSupportCustomer.openCount > 0 ? 'bg-red-400' : 'bg-emerald-400'}`} />{selectedSupportCustomer.emailDisplay}</h4><p className="mt-1 font-mono text-[10px] text-slate-500">#{selectedSupportCustomer.telegramUserId} · {t('telegram.supportRequestCount', { count: selectedSupportCustomer.requests.length })}</p></div><span className="text-[10px] text-slate-500">{selectedSupportCustomer.openCount > 0 ? t('telegram.supportStatusOpen') : t('telegram.supportStatusAnswered')}</span></div>
+              <div className="mt-3 max-h-[410px] space-y-2 overflow-auto pr-1">
+                {selectedSupportCustomer.requests.map((request) => <article key={request.support_request_id} className={`rounded border bg-[#0a0e1a] p-3 ${request.status === 'resolved' ? 'border-cyan-500/15' : 'border-red-400/25'}`}>
+                  <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-[11px] text-slate-300">{t(`telegram.supportCategory.${request.category}`)}</span><span className="font-mono text-[10px] text-slate-600">{formatDate(request.created_at)}</span></div>
+                  <p className="mt-2 whitespace-pre-wrap text-xs text-slate-400">{request.body}</p>
+                  {request.status === 'resolved' ? <><p className="mt-3 text-[10px] font-medium uppercase tracking-[0.12em] text-cyan-200">{t('telegram.supportReplyLabel')}</p><p className="mt-1 whitespace-pre-wrap text-xs text-slate-300">{request.admin_response || t('telegram.supportNoReply')}</p></> : supportReply?.request.support_request_id === request.support_request_id ? <div className="mt-3 rounded border border-cyan-500/20 p-2"><label className="text-[10px] uppercase tracking-[0.12em] text-slate-500">{t('telegram.supportReplyLabel')}<textarea className={`${inputClass} mt-1 min-h-20 resize-y`} maxLength={1000} value={supportReply.body} onChange={(event) => setSupportReply((current) => current ? { ...current, body: event.target.value } : current)} /></label><div className="mt-2 flex gap-2"><button type="button" className={primaryButtonClass} disabled={mutating || !supportReply.body.trim()} onClick={() => void submitSupportReply()}>{t('telegram.supportSendReply')}</button><button type="button" className={buttonClass} disabled={mutating} onClick={() => setSupportReply(null)}>{t('common.cancel')}</button></div></div> : <button type="button" className={`${buttonClass} mt-3`} disabled={mutating} onClick={() => setSupportReply({ request, body: '' })}>{t('telegram.supportReply')}</button>}
+                </article>)}
+              </div>
+            </>}
           </div>
         </div>
       </section>}
