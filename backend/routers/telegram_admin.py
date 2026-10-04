@@ -87,7 +87,7 @@ def build_telegram_admin_router(
     # callback, frontend flag, or route name as an authorization boundary.
     capability_matrix = {
         "admin": frozenset({"telegram_manage"}),
-        "owner": frozenset({"telegram_manage", "bulk_delete"}),
+        "owner": frozenset({"telegram_manage", "bulk_delete", "provisioning_history_clear"}),
     }
 
     def require_capability(request: Request, capability: str) -> str:
@@ -474,12 +474,29 @@ def build_telegram_admin_router(
         return {"unlink": asdict(result), "remote_io": "not_started"}
 
     @router.get("/api/v1/telegram/jobs")
-    def list_provisioning_jobs(request: Request, limit: int = 100):
-        require_admin(request)
+    def list_provisioning_jobs(request: Request, limit: int = 100, offset: int = 0):
+        username = require_admin(request)
         try:
-            return {"items": [asdict(item) for item in registry.list_provisioning_jobs(limit=limit)]}
+            items, total = registry.list_provisioning_jobs_page(limit=limit, offset=offset)
+            role = "owner" if is_owner is not None and is_owner(username) else get_user_role(username)
+            return {
+                "items": [asdict(item) for item in items],
+                "total": total,
+                "can_clear_history": "provisioning_history_clear" in capability_matrix.get(role, frozenset()),
+            }
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
+
+    @router.post("/api/v1/telegram/jobs/history/clear")
+    def clear_provisioning_job_history(request: Request, data: Dict):
+        username = require_capability(request, "provisioning_history_clear")
+        try:
+            deleted_count = registry.clear_terminal_provisioning_history(
+                idempotency_key=data.get("idempotency_key"), cleared_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"deleted_count": deleted_count, "remote_io": "not_started"}
 
     @router.get("/api/v1/telegram/jobs/{job_id}")
     def get_provisioning_job(job_id: int, request: Request):
