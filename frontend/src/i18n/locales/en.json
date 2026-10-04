@@ -129,7 +129,12 @@
     "existingFound": "Nodes found: {{count}} — {{nodes}}",
     "existingDiscoveryHint": "All enabled nodes are checked; this lookup does not change them.",
     "createNew": "Create new",
-    "bindExisting": "Bind existing"
+    "bindExisting": "Bind existing",
+    "requestTelegram": "Telegram",
+    "requestName": "Name",
+    "requestTelegramId": "Telegram ID",
+    "requestSuggestedName": "Suggested name",
+    "requestIntroduction": "Introduction"
     ,"dashboardTitle": "Operational status"
     ,"dashboardPending": "requests"
     ,"dashboardActive": "active"
