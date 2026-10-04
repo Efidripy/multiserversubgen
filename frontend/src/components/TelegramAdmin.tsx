@@ -65,11 +65,14 @@ import {
   unblockTelegramIdentity,
 } from '../api/telegram';
 
-const shellClass = 'min-h-screen min-w-0 bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6';
-const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]';
-const inputClass = 'w-full rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-sm text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-300/60';
-const buttonClass = 'inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-3 text-xs font-medium uppercase tracking-[0.12em] text-slate-300 transition hover:border-cyan-300/50 hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-45';
-const primaryButtonClass = 'inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-cyan-300/25 bg-cyan-300 px-3 text-xs font-medium uppercase tracking-[0.12em] text-[#06111f] transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-45';
+const shellClass = 'min-h-screen min-w-0 bg-[#080c15] p-4 text-slate-100 sm:p-5 lg:p-6';
+const panelClass = 'min-w-0 overflow-hidden rounded-[7px] border border-cyan-400/15 bg-[#0d131f] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.025),0_18px_50px_rgba(0,0,0,0.18)]';
+const inputClass = 'w-full rounded-[6px] border border-cyan-400/18 bg-[#0a0f19] px-2.5 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-300/70 focus:ring-2 focus:ring-cyan-300/15';
+const buttonClass = 'inline-flex h-9 items-center justify-center gap-2 rounded-[6px] border border-cyan-400/18 bg-[#0a0f19] px-3 text-[11px] font-medium uppercase tracking-[0.1em] text-slate-300 transition hover:border-cyan-300/55 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 disabled:cursor-not-allowed disabled:opacity-45';
+const primaryButtonClass = 'inline-flex h-9 items-center justify-center gap-2 rounded-[6px] border border-cyan-200/35 bg-cyan-300 px-3 text-[11px] font-medium uppercase tracking-[0.1em] text-[#06111f] transition hover:bg-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-100 focus-visible:ring-offset-2 focus-visible:ring-offset-[#080c15] disabled:cursor-not-allowed disabled:opacity-45';
+
+type TelegramAdminTab = 'users' | 'operations' | 'settings';
+type TelegramUsersSection = 'requests' | 'customers' | 'support' | 'blocked';
 
 const formatDate = (value: string | null) => value ? new Date(value.replace(' ', 'T')).toLocaleString() : '—';
 const formatBytes = (value: number) => {
@@ -114,9 +117,32 @@ export const TelegramAdmin: React.FC = () => {
   const [bulkPreview, setBulkPreview] = useState<BulkLifecyclePreview | null>(null);
   const [scheduleAt, setScheduleAt] = useState('');
   const [approval, setApproval] = useState<{ request: TelegramRequest; mode: 'new' | 'existing'; email: string; candidate?: ExistingDiscoveryCandidate } | null>(null);
+  const [activeTab, setActiveTab] = useState<TelegramAdminTab>('users');
+  const [activeUsersSection, setActiveUsersSection] = useState<TelegramUsersSection>('requests');
+  const [selectedRequestId, setSelectedRequestId] = useState<number | null>(null);
+  const [customerStatusFilter, setCustomerStatusFilter] = useState('');
+  const [customerPage, setCustomerPage] = useState(1);
   const selectedCustomer = useMemo(
     () => customers.find((item) => item.customer_id === selectedCustomerId) ?? null,
     [customers, selectedCustomerId],
+  );
+  const selectedRequest = useMemo(
+    () => requests.find((item) => item.telegram_user_id === selectedRequestId) ?? requests[0] ?? null,
+    [requests, selectedRequestId],
+  );
+  const filteredCustomers = useMemo(
+    () => customers.filter((customer) => !customerStatusFilter || customer.status === customerStatusFilter),
+    [customers, customerStatusFilter],
+  );
+  const customerStatusOptions = useMemo(
+    () => [...new Set(customers.map((customer) => customer.status))].sort(),
+    [customers],
+  );
+  const customerPageSize = 15;
+  const customerPageCount = Math.max(1, Math.ceil(filteredCustomers.length / customerPageSize));
+  const visibleCustomers = useMemo(
+    () => filteredCustomers.slice((Math.min(customerPage, customerPageCount) - 1) * customerPageSize, Math.min(customerPage, customerPageCount) * customerPageSize),
+    [customerPage, customerPageCount, filteredCustomers],
   );
 
   const load = useCallback(async () => {
@@ -455,28 +481,66 @@ export const TelegramAdmin: React.FC = () => {
   };
 
   const selectedTitle = useMemo(() => selectedCustomer?.email_display ?? t('telegram.selectCustomer'), [selectedCustomer, t]);
-
+  const usersAttention = requests.length + appeals.length + openSupportRequests.length;
+  const operationsAttention = jobs.filter((job) => ['partial', 'failed', 'ambiguous', 'blocked'].includes(job.status)).length + driftFindings.length;
+  const tabs: Array<{ id: TelegramAdminTab; icon: React.ComponentProps<typeof UIIcon>['name']; label: string; attention?: number }> = [
+    { id: 'users', icon: 'clients', label: t('telegram.tabs.users'), attention: usersAttention },
+    { id: 'operations', icon: 'monitoring', label: t('telegram.tabs.operations'), attention: operationsAttention },
+    { id: 'settings', icon: 'servers', label: t('telegram.tabs.settings') },
+  ];
   return (
     <div className={shellClass}>
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+      <div className="mb-5 border-b border-cyan-400/13 pb-5">
+        <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h2 className="flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-cyan-300"><UIIcon name="bell" size={16} />{t('telegram.title')}</h2>
-          <p className="mt-1 text-xs font-light text-slate-500">{t('telegram.hint')}</p>
+            <p className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-cyan-300"><UIIcon name="bell" size={14} />{t('telegram.title')}</p>
+            <h2 className="mt-2 text-xl font-medium tracking-[-0.02em] text-[#eef4fa]">{tabs.find((tab) => tab.id === activeTab)?.label}</h2>
+            <p className="mt-1 max-w-2xl text-xs font-light text-slate-500">{t('telegram.hint')}</p>
         </div>
-        <button type="button" className={buttonClass} onClick={() => void load()} disabled={loading || mutating}><UIIcon name="refresh" size={14} />{t('common.refresh')}</button>
+          <button type="button" className={buttonClass} onClick={() => void load()} disabled={loading || mutating} aria-live="polite"><UIIcon name="refresh" size={14} />{t('common.refresh')}</button>
+        </div>
       </div>
 
-      {dashboard && <section className={`${panelClass} mb-4`} aria-label={t('telegram.dashboardTitle')}>
-        <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.dashboardTitle')}</h3>
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
-          {[
-            ['pending_requests', 'telegram.dashboardPending'], ['active_customers', 'telegram.dashboardActive'], ['suspended_customers', 'telegram.dashboardSuspended'],
-            ['provisioning_attention', 'telegram.dashboardProvisioning'], ['lifecycle_attention', 'telegram.dashboardLifecycle'], ['open_drift_findings', 'telegram.dashboardDrift'],
-          ].map(([key, label]) => <div key={key} className="rounded border border-cyan-500/15 bg-[#0a0e1a] px-3 py-2"><span className="block font-mono text-lg text-cyan-200">{dashboard[key] ?? 0}</span><span className="text-[10px] uppercase tracking-[0.12em] text-slate-500">{t(label)}</span></div>)}
+      <nav className="mb-4 overflow-x-auto border-b border-cyan-400/14" aria-label={t('telegram.tabs.label')}>
+        <div className="flex min-w-max gap-6">
+          {tabs.map((tab) => {
+            const selected = activeTab === tab.id;
+            return <button
+              key={tab.id}
+              id={`telegram-tab-${tab.id}`}
+              type="button"
+              aria-pressed={selected}
+              className={`inline-flex items-center gap-2 border-b-2 px-0 pb-3 text-xs font-medium tracking-[0.03em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#080c15] ${selected ? 'border-cyan-300 text-cyan-100 shadow-[0_8px_12px_-9px_rgba(34,211,238,0.9)]' : 'border-transparent text-slate-500 hover:border-cyan-400/35 hover:text-slate-300'}`}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              <UIIcon name={tab.icon} size={15} />
+              {tab.label}
+              {tab.attention !== undefined && tab.attention > 0 && <span className={`rounded-full px-1.5 py-0.5 font-mono text-[10px] ${selected ? 'bg-cyan-300 text-[#07111c]' : 'bg-[#151d2a] text-slate-400'}`}>{tab.attention}</span>}
+            </button>;
+          })}
+        </div>
+      </nav>
+
+      {activeTab === 'operations' && dashboard && <div className="mb-4 grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
+        <section className={panelClass} aria-label={t('telegram.jobsTitle')}>
+          <div className="flex items-center justify-between gap-3 border-b border-cyan-400/12 pb-3"><div><h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">{t('telegram.jobsTitle')}</h3><p className="mt-1 text-[11px] text-slate-500">{t('telegram.operations')}</p></div><span className="rounded-full bg-[#151d2a] px-2 py-1 font-mono text-[10px] text-cyan-100">{jobs.length}</span></div>
+          <div className="mt-3 space-y-2">{jobs.slice(0, 4).map((job) => <div key={job.job_id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-cyan-400/12 bg-[#0a0f19] px-3 py-2"><span className="min-w-0 truncate text-xs text-slate-200">{job.customer_email}</span><span className={['succeeded'].includes(job.status) ? 'font-mono text-[10px] text-emerald-200' : 'font-mono text-[10px] text-amber-200'}>{job.status}</span></div>)}{jobs.length === 0 && <p className="py-7 text-center text-sm font-light text-slate-500">{t('telegram.noJobs')}</p>}</div>
+        </section>
+        <aside className={panelClass} aria-label={t('telegram.attentionTitle')}>
+          <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">{t('telegram.attentionTitle')}</h3>
+          <div className={`mt-3 rounded border p-3 ${operationsAttention > 0 ? 'border-amber-400/25 bg-amber-400/[0.055]' : 'border-emerald-400/20 bg-emerald-400/[0.04]'}`}><span className="block font-mono text-2xl text-[#e9f1f8]">{operationsAttention}</span><span className="mt-1 block text-[10px] uppercase tracking-[0.12em] text-slate-500">{operationsAttention > 0 ? t('telegram.attentionItems') : t('telegram.attentionEmpty')}</span></div>
+          <div className="mt-3 grid grid-cols-3 gap-2">{[['provisioning_attention', 'telegram.dashboardProvisioning'], ['lifecycle_attention', 'telegram.dashboardLifecycle'], ['open_drift_findings', 'telegram.dashboardDrift']].map(([key, label]) => <div key={key} className="rounded border border-cyan-400/10 bg-[#0a0f19] px-2 py-2"><span className="block font-mono text-sm text-cyan-100">{dashboard[key] ?? 0}</span><span className="mt-1 block text-[9px] uppercase tracking-[0.08em] text-slate-500">{t(label)}</span></div>)}</div>
+        </aside>
+      </div>}
+
+      {activeTab === 'settings' && <section className={`${panelClass} mb-4`} aria-label={t('telegram.tabs.settings')}>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-[7px] border border-cyan-400/18 bg-cyan-400/[0.06] text-cyan-200"><UIIcon name="servers" size={19} /></span><div><h3 className="text-sm font-medium text-[#e9f1f8]">{t('telegram.tabs.settings')}</h3><p className="mt-1 text-xs text-slate-500">{t('telegram.hint')}</p></div></div>
+          <div className="flex flex-wrap gap-2"><span className={`rounded border px-2 py-1 font-mono text-[10px] ${botConfiguration?.configured ? 'border-emerald-400/25 text-emerald-200' : 'border-amber-400/25 text-amber-200'}`}>{botConfiguration?.configured ? t('telegram.botTokenConfigured', { suffix: botConfiguration.token_suffix ?? '••••' }) : t('telegram.botTokenNotConfigured')}</span><span className={`rounded border px-2 py-1 font-mono text-[10px] ${transport?.reachable ? 'border-emerald-400/25 text-emerald-200' : 'border-slate-500/25 text-slate-500'}`}>{transport?.reachable ? t('telegram.transportReady') : t('telegram.transportUnavailable')}</span></div>
         </div>
       </section>}
 
-      <section className={`${panelClass} mb-4`} aria-label={t('telegram.botTokenTitle')}>
+      {activeTab === 'settings' && <section className={`${panelClass} mb-4`} aria-label={t('telegram.botTokenTitle')}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.botTokenTitle')}</h3>
@@ -503,9 +567,9 @@ export const TelegramAdmin: React.FC = () => {
           <button type="button" className={buttonClass} disabled={mutating || botConfiguration?.source !== 'panel'} onClick={() => void clearBotToken()}>{t('telegram.botTokenUseEnvironment')}</button>
         </div>
         <p className="mt-2 text-[11px] text-slate-500">{botConfiguration?.source === 'panel' ? t('telegram.botTokenPanelSource') : t('telegram.botTokenEnvironmentSource')}</p>
-      </section>
+      </section>}
 
-      <section className={`${panelClass} mb-4`} aria-label={t('telegram.transportTitle')}>
+      {activeTab === 'settings' && <section className={`${panelClass} mb-4`} aria-label={t('telegram.transportTitle')}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.transportTitle')}</h3>
@@ -524,54 +588,80 @@ export const TelegramAdmin: React.FC = () => {
           </button>
         </div>
         {transport && !transport.configured && <p className="mt-2 text-xs text-slate-500">{t('telegram.transportNotConfigured')}</p>}
-      </section>
+      </section>}
 
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(290px,0.9fr)_minmax(0,1.3fr)]">
-        <section className={panelClass} aria-label={t('telegram.requests')}>
-          <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.requests')}</h3>
-          <div className="mt-3 space-y-3">
-            {requests.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noRequests')}</p>}
-            {requests.map((request) => (
-              <article key={request.telegram_user_id} className="rounded-lg border border-cyan-500/15 bg-[#0a0e1a] p-3">
-                <div className="flex items-center justify-between gap-2"><span className="truncate text-sm text-slate-200">{request.username ? `@${request.username}` : request.first_name || t('telegram.unknownUser')}</span><span className="font-mono text-[10px] text-slate-500">#{request.telegram_user_id}</span></div>
-                <p className="mt-1 text-[11px] text-slate-500">{formatDate(request.requested_at)}</p>
-                {request.introduction_text && <p className="mt-2 whitespace-pre-wrap text-xs font-light text-slate-400">{request.introduction_text}</p>}
-                {approval?.request.telegram_user_id === request.telegram_user_id ? (
-                  <div className="mt-3 rounded border border-amber-400/25 bg-amber-400/5 p-3">
-                    <p className="text-xs text-amber-100">{approval.mode === 'new' ? t('telegram.approvalNewTitle') : t('telegram.approvalExistingTitle')}</p>
-                    <input className={`${inputClass} mt-2`} value={approval.email} onChange={(event) => setApproval((current) => current ? { ...current, email: event.target.value, candidate: undefined } : current)} aria-label={t('telegram.emailForRequest')} />
-                    {approval.mode === 'new' ? (
-                      <div className="mt-2 flex gap-2"><button type="button" className={primaryButtonClass} onClick={() => void confirmNew()} disabled={mutating}>{t('common.confirm')}</button><button type="button" className={buttonClass} onClick={() => setApproval(null)}>{t('common.cancel')}</button></div>
-                    ) : (
-                      <>
-                        <p className="mt-2 text-xs font-light text-slate-500">{t('telegram.existingDiscoveryHint')}</p>
-                        {approval.candidate && <p className="mt-2 text-xs text-emerald-200">{t('telegram.existingFound', { count: approval.candidate.binding_count, nodes: approval.candidate.node_names.join(', ') })}</p>}
-                        <div className="mt-2 flex flex-wrap gap-2"><button type="button" className={buttonClass} onClick={() => void discoverExisting()} disabled={mutating}>{t('telegram.existingCheck')}</button>{approval.candidate && <button type="button" className={primaryButtonClass} onClick={() => void confirmExisting()} disabled={mutating}>✓ {t('telegram.existingBind')}</button>}<button type="button" className={buttonClass} onClick={() => setApproval(null)}>{t('common.cancel')}</button></div>
-                      </>
-                    )}
-                  </div>
-                ) : <div className="mt-3 grid grid-cols-2 gap-2"><button type="button" className={primaryButtonClass} onClick={() => setApproval({ request, mode: 'new', email: request.suggested_email })} disabled={mutating}>{t('telegram.createNew')}</button><button type="button" className={buttonClass} onClick={() => setApproval({ request, mode: 'existing', email: '' })} disabled={mutating}>{t('telegram.bindExisting')}</button></div>}
-                <div className="mt-2 grid grid-cols-2 gap-2"><button type="button" className={buttonClass} onClick={() => void decideRequest(request, 'reject')} disabled={mutating}>{t('telegram.reject')}</button><button type="button" className={`${buttonClass} border-rose-400/25 text-rose-200`} onClick={() => void decideRequest(request, 'block')} disabled={mutating}>{t('telegram.block')}</button></div>
-              </article>
-            ))}
-          </div>
+      {activeTab === 'users' && <>
+        <section className="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4" aria-label={t('telegram.dashboardTitle')}>
+          {[
+            { id: 'requests' as const, value: requests.length, label: t('telegram.requests'), icon: 'bell' as const, tone: 'amber' },
+            { id: 'customers' as const, value: customers.length, label: t('telegram.customers'), icon: 'clients' as const, tone: 'cyan' },
+            { id: 'support' as const, value: openSupportRequests.length, label: t('telegram.supportOpenTitle'), icon: 'note' as const, tone: 'violet' },
+            { id: 'blocked' as const, value: blocked.length, label: t('telegram.blocked'), icon: 'statusOff' as const, tone: 'slate' },
+          ].map((metric) => {
+            const selected = activeUsersSection === metric.id;
+            return <button key={metric.id} type="button" aria-pressed={selected} onClick={() => setActiveUsersSection(metric.id)} className={`relative flex h-[58px] min-w-0 items-center gap-2.5 rounded-[7px] border px-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 ${selected ? 'border-cyan-300/50 bg-cyan-400/[0.08] shadow-[inset_0_-2px_0_#22d3ee]' : metric.tone === 'amber' ? 'border-amber-400/22 bg-[#0d131f] hover:border-amber-300/45' : 'border-cyan-400/12 bg-[#0d131f] hover:border-cyan-300/35'}`}>
+              <span className={`grid size-8 shrink-0 place-items-center rounded-[6px] ${metric.tone === 'amber' ? 'bg-amber-400/10 text-amber-200' : metric.tone === 'violet' ? 'bg-violet-400/10 text-violet-200' : 'bg-cyan-400/10 text-cyan-200'}`}><UIIcon name={metric.icon} size={16} /></span><span><span className="block font-mono text-[15px] font-semibold leading-5 text-[#e9f1f8]">{metric.value}</span><span className="block pt-0.5 text-[9px] uppercase tracking-[0.08em] text-slate-500">{metric.label}</span></span><span className="ml-auto shrink-0 text-sm text-slate-600" aria-hidden>›</span>
+            </button>;
+          })}
         </section>
 
-        <section className={panelClass} aria-label={t('telegram.blocked')}>
-          <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.blocked')}</h3><div className="mt-3 space-y-2">{blocked.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noBlocked')}</p>}{blocked.map((identity) => <div key={identity.telegram_user_id} className="flex items-center justify-between gap-3 rounded border border-rose-400/15 bg-[#0a0e1a] p-3"><span className="truncate text-sm text-slate-300">{identity.username ? `@${identity.username}` : identity.first_name || `#${identity.telegram_user_id}`}</span><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await unblockTelegramIdentity(identity); toast(t('telegram.requestUpdated'), 'success'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.unblock')}</button></div>)}</div>
-        </section>
-
-        <section className={panelClass} aria-label={t('telegram.customers')}>
-          <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.customers')}</h3><input className={`${inputClass} max-w-xs`} value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('common.search')} /></div>
-          <div className="mt-3 grid min-w-0 gap-4 lg:grid-cols-[minmax(200px,0.8fr)_minmax(0,1.2fr)]">
-            <div className="max-h-[520px] space-y-2 overflow-auto pr-1">
-              {customers.map((customer) => <article key={customer.customer_id} className={`flex w-full items-stretch rounded-lg border transition ${selectedCustomer?.customer_id === customer.customer_id ? 'border-cyan-300/55 bg-cyan-400/10' : 'border-cyan-500/15 bg-[#0a0e1a] hover:border-cyan-300/35'}`}>
-                <label className="flex shrink-0 cursor-pointer items-center px-3" title={t('telegram.bulkSelectCustomer', { email: customer.email_display })}><input type="checkbox" checked={selectedCustomerIds.includes(customer.customer_id)} onChange={(event) => setSelectedCustomerIds((current) => event.target.checked ? [...current, customer.customer_id] : current.filter((customerId) => customerId !== customer.customer_id))} /></label>
-                <button type="button" className="min-w-0 flex-1 p-3 text-left" onClick={() => void selectCustomer(customer)}><span className="block truncate text-sm text-slate-200">{customer.email_display}</span><span className="mt-1 block text-[10px] uppercase tracking-[0.12em] text-slate-500">{customer.status}</span></button>
-              </article>)}
-              {customers.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noCustomers')}</p>}
+        {activeUsersSection === 'customers' && <section className={`${panelClass} mb-4`} aria-label={t('telegram.customers')}>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyan-400/12 pb-3">
+            <div><h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">{t('telegram.customers')}</h3><p className="mt-1 text-[11px] text-slate-500">{t('telegram.shownOf', { shown: visibleCustomers.length, total: filteredCustomers.length })}</p></div>
+            <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+              <label className="min-w-[190px] flex-1 sm:flex-none"><span className="sr-only">{t('common.search')}</span><input className={inputClass} value={search} onChange={(event) => { setSearch(event.target.value); setCustomerPage(1); }} placeholder={t('common.search')} /></label>
+              <label className="min-w-[150px] flex-1 sm:flex-none"><span className="sr-only">{t('telegram.status')}</span><select className={inputClass} value={customerStatusFilter} onChange={(event) => { setCustomerStatusFilter(event.target.value); setCustomerPage(1); }} aria-label={t('telegram.status')}><option value="">{t('telegram.allStatuses')}</option>{customerStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
             </div>
-            <div className="min-w-0 rounded-lg border border-cyan-500/15 bg-[#0a0e1a] p-3">
+          </div>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[680px] text-left text-xs">
+              <thead className="border-b border-cyan-400/12 text-[10px] uppercase tracking-[0.12em] text-slate-500"><tr><th className="w-10 px-2 py-2" scope="col"><span className="sr-only">{t('telegram.bulkTitle')}</span></th><th className="px-2 py-2" scope="col">{t('telegram.customers')}</th><th className="px-2 py-2" scope="col">{t('telegram.telegramIdentity')}</th><th className="px-2 py-2" scope="col">{t('telegram.status')}</th><th className="px-2 py-2" scope="col">{t('telegram.source')}</th></tr></thead>
+              <tbody>{visibleCustomers.map((customer) => <tr key={customer.customer_id} className={`border-b border-cyan-400/[0.08] transition hover:bg-cyan-400/[0.035] ${selectedCustomer?.customer_id === customer.customer_id ? 'bg-cyan-400/[0.08]' : ''}`}>
+                <td className="px-2 py-2.5"><input type="checkbox" aria-label={t('telegram.bulkSelectCustomer', { email: customer.email_display })} checked={selectedCustomerIds.includes(customer.customer_id)} onChange={(event) => setSelectedCustomerIds((current) => event.target.checked ? [...current, customer.customer_id] : current.filter((customerId) => customerId !== customer.customer_id))} /></td>
+                <td className="px-2 py-2.5"><button type="button" className="block max-w-[260px] truncate text-left text-slate-200 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70" onClick={() => void selectCustomer(customer)}>{customer.email_display}</button></td>
+                <td className="px-2 py-2.5 font-mono text-[11px] text-slate-500">{customer.telegram_user_id ? `tg_••••${String(customer.telegram_user_id).slice(-4)}` : '—'}</td>
+                <td className="px-2 py-2.5"><span className={customer.status === 'active' ? 'text-emerald-200' : 'text-amber-200'}>{customer.status}</span></td>
+                <td className="px-2 py-2.5 text-slate-500">{customer.origin}</td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+          {filteredCustomers.length === 0 && <p className="py-6 text-center text-sm font-light text-slate-500">{t('telegram.noCustomers')}</p>}
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-cyan-400/12 pt-3"><button type="button" className={buttonClass} disabled={customerPage <= 1} onClick={() => setCustomerPage((page) => Math.max(1, page - 1))}>{t('telegram.previousPage')}</button><span className="font-mono text-[11px] text-slate-500">{customerPage} / {customerPageCount}</span><button type="button" className={buttonClass} disabled={customerPage >= customerPageCount} onClick={() => setCustomerPage((page) => Math.min(customerPageCount, page + 1))}>{t('telegram.nextPage')}</button></div>
+        </section>}
+      </>}
+
+      {activeTab === 'users' && <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(290px,0.9fr)_minmax(0,1.3fr)]">
+        {activeUsersSection === 'requests' && <section className={`${panelClass} xl:col-span-2 p-0`} aria-label={t('telegram.requests')}>
+          <div className="grid min-w-0 xl:grid-cols-[minmax(280px,0.48fr)_minmax(0,1fr)]">
+            <div className="min-w-0 border-b border-cyan-400/12 xl:border-b-0 xl:border-r">
+              <div className="flex h-[45px] items-center justify-between border-b border-cyan-400/12 px-3"><h3 className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-200">{t('telegram.requests')}</h3><span className="rounded-full bg-cyan-400/10 px-1.5 py-0.5 font-mono text-[10px] text-cyan-100">{requests.length}</span></div>
+              <div className="max-h-[560px] overflow-auto">{requests.length === 0 && <p className="p-4 text-xs text-slate-500">{t('telegram.noRequests')}</p>}{requests.map((request) => {
+                const selected = selectedRequest?.telegram_user_id === request.telegram_user_id;
+                const name = request.username ? `@${request.username}` : request.first_name || t('telegram.unknownUser');
+                return <button key={request.telegram_user_id} type="button" onClick={() => { setSelectedRequestId(request.telegram_user_id); setApproval(null); }} aria-pressed={selected} className={`flex min-h-[55px] w-full items-center gap-2 border-b border-cyan-400/[0.08] px-3 py-2 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70 ${selected ? 'bg-cyan-400/[0.08] shadow-[inset_2px_0_0_#22d3ee]' : 'hover:bg-cyan-400/[0.035]'}`}><span className="grid size-7 shrink-0 place-items-center rounded-[6px] bg-cyan-400/10 font-mono text-[9px] text-cyan-100">{name.replace('@', '').slice(0, 2).toUpperCase()}</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium text-slate-200">{name}</span><span className="mt-0.5 block truncate text-[10px] text-slate-500">{formatDate(request.requested_at)}</span></span></button>;
+              })}</div>
+            </div>
+            <div className="min-w-0">
+              {!selectedRequest && <p className="p-5 text-sm text-slate-500">{t('telegram.noRequests')}</p>}
+              {selectedRequest && <div className="p-4">
+                <div className="flex items-start justify-between gap-3 border-b border-cyan-400/12 pb-3"><div><p className="text-[10px] uppercase tracking-[0.12em] text-slate-500">{t('telegram.requests')}</p><h3 className="mt-1 text-lg font-medium text-[#e9f1f8]">{selectedRequest.username ? `@${selectedRequest.username}` : selectedRequest.first_name || t('telegram.unknownUser')}</h3><p className="mt-1 font-mono text-[10px] text-slate-500">tg_••••{String(selectedRequest.telegram_user_id).slice(-4)} · {formatDate(selectedRequest.requested_at)}</p></div></div>
+                {selectedRequest.introduction_text && <p className="mt-4 whitespace-pre-wrap rounded-[6px] border border-cyan-400/10 bg-[#0a0f19] p-3 text-xs leading-5 text-slate-300">{selectedRequest.introduction_text}</p>}
+                {approval?.request.telegram_user_id === selectedRequest.telegram_user_id ? (
+                  <div className="mt-4 rounded-[6px] border border-amber-400/25 bg-amber-400/5 p-3"><p className="text-xs text-amber-100">{approval.mode === 'new' ? t('telegram.approvalNewTitle') : t('telegram.approvalExistingTitle')}</p><input className={`${inputClass} mt-2`} value={approval.email} onChange={(event) => setApproval((current) => current ? { ...current, email: event.target.value, candidate: undefined } : current)} aria-label={t('telegram.emailForRequest')} />{approval.mode === 'new' ? <div className="mt-2 flex gap-2"><button type="button" className={primaryButtonClass} onClick={() => void confirmNew()} disabled={mutating}>{t('common.confirm')}</button><button type="button" className={buttonClass} onClick={() => setApproval(null)}>{t('common.cancel')}</button></div> : <><p className="mt-2 text-xs text-slate-500">{t('telegram.existingDiscoveryHint')}</p>{approval.candidate && <p className="mt-2 text-xs text-emerald-200">{t('telegram.existingFound', { count: approval.candidate.binding_count, nodes: approval.candidate.node_names.join(', ') })}</p>}<div className="mt-2 flex flex-wrap gap-2"><button type="button" className={buttonClass} onClick={() => void discoverExisting()} disabled={mutating}>{t('telegram.existingCheck')}</button>{approval.candidate && <button type="button" className={primaryButtonClass} onClick={() => void confirmExisting()} disabled={mutating}>✓ {t('telegram.existingBind')}</button>}<button type="button" className={buttonClass} onClick={() => setApproval(null)}>{t('common.cancel')}</button></div></>}</div>
+                ) : <div className="mt-4 flex flex-wrap gap-2"><button type="button" className={primaryButtonClass} onClick={() => setApproval({ request: selectedRequest, mode: 'new', email: selectedRequest.suggested_email })} disabled={mutating}>{t('telegram.createNew')}</button><button type="button" className={buttonClass} onClick={() => setApproval({ request: selectedRequest, mode: 'existing', email: '' })} disabled={mutating}>{t('telegram.bindExisting')}</button></div>}
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-cyan-400/12 pt-3"><span className="text-[10px] uppercase tracking-[0.1em] text-slate-500">{t('telegram.reject')}</span><div className="flex gap-2"><button type="button" className={buttonClass} onClick={() => void decideRequest(selectedRequest, 'reject')} disabled={mutating}>{t('telegram.reject')}</button><button type="button" className={`${buttonClass} border-rose-400/25 text-rose-200`} onClick={() => void decideRequest(selectedRequest, 'block')} disabled={mutating}>{t('telegram.block')}</button></div></div>
+              </div>}
+            </div>
+          </div>
+        </section>}
+
+        {activeUsersSection === 'blocked' && <section className={panelClass} aria-label={t('telegram.blocked')}>
+          <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.blocked')}</h3><div className="mt-3 space-y-2">{blocked.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noBlocked')}</p>}{blocked.map((identity) => <div key={identity.telegram_user_id} className="flex items-center justify-between gap-3 rounded border border-rose-400/15 bg-[#0a0e1a] p-3"><span className="truncate text-sm text-slate-300">{identity.username ? `@${identity.username}` : identity.first_name || `#${identity.telegram_user_id}`}</span><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await unblockTelegramIdentity(identity); toast(t('telegram.requestUpdated'), 'success'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.unblock')}</button></div>)}</div>
+        </section>}
+
+        {activeUsersSection === 'customers' && <section className={panelClass} aria-label={selectedTitle}>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyan-400/12 pb-3"><h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">{selectedCustomer ? selectedTitle : t('telegram.selectCustomer')}</h3><span className="font-mono text-[10px] text-slate-500">{selectedCustomer?.status ?? '—'}</span></div>
+          <div className="mt-3 min-w-0 rounded-[7px] border border-cyan-400/12 bg-[#0a0f19] p-3">
               <h4 className="truncate text-sm text-slate-200">{selectedTitle}</h4>
               {!selectedCustomer && <p className="mt-2 text-sm font-light text-slate-500">{t('telegram.selectCustomer')}</p>}
               {selectedCustomer && <>
@@ -593,28 +683,30 @@ export const TelegramAdmin: React.FC = () => {
                 <h5 className="mt-5 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.timelineTitle')}</h5>
                 <div className="mt-2 max-h-44 space-y-1 overflow-auto">{timeline.length === 0 ? <p className="text-xs text-slate-500">{t('telegram.timelineEmpty')}</p> : timeline.map((event, index) => <div key={`${event.entity_type}-${event.entity_id}-${event.created_at}-${index}`} className="flex flex-wrap justify-between gap-2 text-[11px] text-slate-400"><span>{event.event_type} · {event.status ?? '—'}</span><span className="font-mono text-slate-500">{formatDate(event.created_at)}</span></div>)}</div>
               </>}
-            </div>
           </div>
           <div className="mt-4 rounded-lg border border-cyan-500/15 bg-[#0a0e1a] p-3">
             <div className="flex flex-wrap items-center justify-between gap-3"><div><h4 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.bulkTitle')}</h4><p className="mt-1 text-xs text-slate-500">{t('telegram.bulkHint')}</p></div><span className="font-mono text-xs text-cyan-200">{t('telegram.bulkSelected', { count: selectedCustomerIds.length })}</span></div>
             <div className="mt-3 flex flex-wrap gap-2"><button type="button" className={buttonClass} disabled={mutating || selectedCustomerIds.length === 0} onClick={() => void makeBulkPreview('suspend')}>{t('telegram.suspend')}</button><button type="button" className={buttonClass} disabled={mutating || selectedCustomerIds.length === 0} onClick={() => void makeBulkPreview('resume')}>{t('telegram.resume')}</button></div>
             {bulkPreview && <div className="mt-3 rounded border border-amber-400/25 bg-amber-400/5 p-3"><p className="text-xs text-amber-100">{t('telegram.bulkPreviewText', { operation: t(`telegram.${bulkPreview.operation_type}`), count: bulkPreview.items.length })}</p>{bulkPreview.items.some((item) => item.blocked_binding_ids.length > 0) && <p className="mt-1 text-xs text-rose-200">{t('telegram.previewBlocked')}</p>}<div className="mt-2 flex gap-2"><button type="button" className={primaryButtonClass} disabled={mutating || bulkPreview.items.some((item) => item.blocked_binding_ids.length > 0)} onClick={() => void confirmBulkPreview()}>{t('common.confirm')}</button><button type="button" className={buttonClass} onClick={() => setBulkPreview(null)}>{t('common.cancel')}</button></div></div>}
           </div>
-        </section>
-      </div>
+        </section>}
+      </div>}
 
-      <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
+      {activeTab === 'operations' && <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
         <section className={panelClass} aria-label={t('telegram.jobsTitle')}>
           <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.jobsTitle')}</h3>
           <div className="mt-3 space-y-2">{jobs.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noJobs')}</p>}{jobs.map((job) => <article key={job.job_id} className="rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="truncate text-xs text-slate-200">{job.customer_email}</span><span className="font-mono text-[10px] text-slate-500">{job.status}</span></div><p className="mt-1 text-[11px] text-slate-500">{t('telegram.nodesReady', { ready: job.attempts.filter((attempt) => attempt.status === 'succeeded').length, total: job.attempts.length })}</p>{job.attempts.some((attempt) => ['partial', 'failed', 'ambiguous', 'blocked'].includes(attempt.status)) && <button type="button" className={`${buttonClass} mt-2`} disabled={mutating} onClick={async () => { setMutating(true); try { await reconcileTelegramJob(job); toast(t('telegram.operationQueued'), 'success'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reconcile')}</button>}</article>)}</div>
         </section>
+      </div>}
+
+      {activeTab === 'users' && activeUsersSection === 'support' && <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
         <section className={panelClass} aria-label={t('telegram.appealsTitle')}>
           <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.appealsTitle')}</h3>
           <div className="mt-3 space-y-2">{appeals.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noAppeals')}</p>}{appeals.map((appeal) => <article key={appeal.appeal_id} className="rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><span className="block truncate text-xs text-slate-200">{appeal.email_display}</span><p className="mt-2 whitespace-pre-wrap text-xs text-slate-400">{appeal.body}</p><div className="mt-2 flex gap-2"><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await resolveTelegramAppeal(appeal, 'handled'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.closeAppeal')}</button><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await resolveTelegramAppeal(appeal, 'rejected'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reject')}</button></div></article>)}</div>
         </section>
-      </div>
+      </div>}
 
-      <section className={`${panelClass} mt-4`} aria-label={t('telegram.supportTitle')}>
+      {activeTab === 'users' && activeUsersSection === 'support' && <section className={`${panelClass} mt-4`} aria-label={t('telegram.supportTitle')}>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
             <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.supportTitle')}</h3>
@@ -653,9 +745,9 @@ export const TelegramAdmin: React.FC = () => {
             </div>
           </div>
         </div>
-      </section>
+      </section>}
 
-      <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
+      {activeTab === 'operations' && <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
         <section className={panelClass} aria-label={t('telegram.schedulesTitle')}>
           <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.schedulesTitle')}</h3>
           <div className="mt-3 space-y-2">{schedules.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noSchedules')}</p>}{schedules.map((schedule) => <article key={schedule.schedule_id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><div><p className="text-xs text-slate-300">{schedule.customer_email} · {schedule.operation_type}</p><p className="mt-1 font-mono text-[10px] text-slate-500">{formatDate(schedule.execute_not_before)} · {schedule.status}</p></div>{schedule.status === 'scheduled' && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void cancelSchedule(schedule)}>{t('common.cancel')}</button>}</article>)}</div>
@@ -664,7 +756,7 @@ export const TelegramAdmin: React.FC = () => {
           <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.driftTitle')}</h3><p className="mt-1 text-xs text-slate-500">{t('telegram.driftHint')}</p></div><button type="button" className={buttonClass} disabled={mutating} onClick={() => void runDriftScan()}>{t('telegram.driftScan')}</button></div>
           <div className="mt-3 space-y-2">{driftFindings.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noDrift')}</p>}{driftFindings.map((finding) => <article key={finding.finding_id} className="rounded border border-amber-400/20 bg-[#0a0e1a] p-3"><p className="text-xs text-slate-300">{finding.kind} · {finding.node_name}</p><p className="mt-1 font-mono text-[10px] text-slate-500">{finding.customer_email ?? finding.remote_email}</p><div className="mt-2 flex flex-wrap gap-2">{finding.kind === 'orphan_remote' && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void resolveDrift(finding, true)}>{t('telegram.driftAdopt')}</button>}<button type="button" className={buttonClass} disabled={mutating} onClick={() => void resolveDrift(finding)}>{t('telegram.driftResolve')}</button></div></article>)}</div>
         </section>
-      </div>
+      </div>}
     </div>
   );
 };
