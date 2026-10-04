@@ -466,6 +466,12 @@ class CustomerListItem:
     status: str
     row_version: int
     telegram_user_id: int | None
+    telegram_username: str | None
+    telegram_first_name: str | None
+    telegram_last_name: str | None
+    node_count: int
+    lifetime_bytes: int
+    application_introduction: str | None
     created_at: str
     updated_at: str
     open_support_count: int = 0
@@ -5842,7 +5848,27 @@ class TelegramRegistry:
                 """
                 SELECT c.id, c.email_display, c.origin, c.status, c.row_version,
                        (SELECT telegram_user_id FROM telegram_identities AS ti
-                        WHERE ti.customer_id = c.id ORDER BY ti.created_at LIMIT 1),
+                        WHERE ti.customer_id = c.id
+                        ORDER BY ti.access_status = 'approved' DESC, ti.created_at ASC, ti.telegram_user_id ASC LIMIT 1),
+                       (SELECT username FROM telegram_identities AS ti
+                        WHERE ti.customer_id = c.id
+                        ORDER BY ti.access_status = 'approved' DESC, ti.created_at ASC, ti.telegram_user_id ASC LIMIT 1),
+                       (SELECT first_name FROM telegram_identities AS ti
+                        WHERE ti.customer_id = c.id
+                        ORDER BY ti.access_status = 'approved' DESC, ti.created_at ASC, ti.telegram_user_id ASC LIMIT 1),
+                       (SELECT last_name FROM telegram_identities AS ti
+                        WHERE ti.customer_id = c.id
+                        ORDER BY ti.access_status = 'approved' DESC, ti.created_at ASC, ti.telegram_user_id ASC LIMIT 1),
+                       (SELECT COUNT(*) FROM customer_node_bindings AS b WHERE b.customer_id = c.id),
+                       COALESCE((SELECT lifetime_bytes FROM customer_traffic_ledger AS ctl WHERE ctl.customer_id = c.id), 0),
+                       (SELECT a.introduction_text
+                        FROM telegram_identities AS i
+                        JOIN telegram_applications AS a
+                          ON a.telegram_user_id = i.telegram_user_id
+                         AND a.application_attempt = i.application_attempt
+                        WHERE i.customer_id = c.id AND a.status = 'approved'
+                          AND a.introduction_text IS NOT NULL
+                        ORDER BY a.introduction_submitted_at DESC, a.id DESC LIMIT 1),
                        c.created_at, c.updated_at,
                        (SELECT COUNT(*) FROM telegram_support_requests AS tsr
                         WHERE tsr.customer_id = c.id AND tsr.status IN ('open', 'read'))
@@ -5857,7 +5883,12 @@ class TelegramRegistry:
                     customer_id=int(row[0]), email_display=str(row[1]), origin=str(row[2]),
                     status=str(row[3]), row_version=int(row[4]),
                     telegram_user_id=int(row[5]) if row[5] is not None else None,
-                    created_at=str(row[6]), updated_at=str(row[7]), open_support_count=int(row[8]),
+                    telegram_username=str(row[6]) if row[6] is not None else None,
+                    telegram_first_name=str(row[7]) if row[7] is not None else None,
+                    telegram_last_name=str(row[8]) if row[8] is not None else None,
+                    node_count=int(row[9]), lifetime_bytes=int(row[10]),
+                    application_introduction=str(row[11]) if row[11] is not None else None,
+                    created_at=str(row[12]), updated_at=str(row[13]), open_support_count=int(row[14]),
                 )
                 for row in rows
             ),
@@ -5873,7 +5904,27 @@ class TelegramRegistry:
                 """
                 SELECT c.id, c.email_display, c.origin, c.status, c.row_version,
                        (SELECT telegram_user_id FROM telegram_identities AS ti
-                        WHERE ti.customer_id = c.id ORDER BY ti.created_at LIMIT 1),
+                        WHERE ti.customer_id = c.id
+                        ORDER BY ti.access_status = 'approved' DESC, ti.created_at ASC, ti.telegram_user_id ASC LIMIT 1),
+                       (SELECT username FROM telegram_identities AS ti
+                        WHERE ti.customer_id = c.id
+                        ORDER BY ti.access_status = 'approved' DESC, ti.created_at ASC, ti.telegram_user_id ASC LIMIT 1),
+                       (SELECT first_name FROM telegram_identities AS ti
+                        WHERE ti.customer_id = c.id
+                        ORDER BY ti.access_status = 'approved' DESC, ti.created_at ASC, ti.telegram_user_id ASC LIMIT 1),
+                       (SELECT last_name FROM telegram_identities AS ti
+                        WHERE ti.customer_id = c.id
+                        ORDER BY ti.access_status = 'approved' DESC, ti.created_at ASC, ti.telegram_user_id ASC LIMIT 1),
+                       (SELECT COUNT(*) FROM customer_node_bindings AS b WHERE b.customer_id = c.id),
+                       COALESCE((SELECT lifetime_bytes FROM customer_traffic_ledger AS ctl WHERE ctl.customer_id = c.id), 0),
+                       (SELECT a.introduction_text
+                        FROM telegram_identities AS i
+                        JOIN telegram_applications AS a
+                          ON a.telegram_user_id = i.telegram_user_id
+                         AND a.application_attempt = i.application_attempt
+                        WHERE i.customer_id = c.id AND a.status = 'approved'
+                          AND a.introduction_text IS NOT NULL
+                        ORDER BY a.introduction_submitted_at DESC, a.id DESC LIMIT 1),
                        c.created_at, c.updated_at,
                        (SELECT COUNT(*) FROM telegram_support_requests AS tsr
                         WHERE tsr.customer_id = c.id AND tsr.status IN ('open', 'read'))
@@ -5887,7 +5938,12 @@ class TelegramRegistry:
         return CustomerListItem(
             customer_id=int(row[0]), email_display=str(row[1]), origin=str(row[2]), status=str(row[3]),
             row_version=int(row[4]), telegram_user_id=int(row[5]) if row[5] is not None else None,
-            created_at=str(row[6]), updated_at=str(row[7]), open_support_count=int(row[8]),
+            telegram_username=str(row[6]) if row[6] is not None else None,
+            telegram_first_name=str(row[7]) if row[7] is not None else None,
+            telegram_last_name=str(row[8]) if row[8] is not None else None,
+            node_count=int(row[9]), lifetime_bytes=int(row[10]),
+            application_introduction=str(row[11]) if row[11] is not None else None,
+            created_at=str(row[12]), updated_at=str(row[13]), open_support_count=int(row[14]),
         )
 
     def get_customer_telegram_profile(self, customer_id: int) -> CustomerTelegramProfile:
