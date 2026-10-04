@@ -129,7 +129,12 @@
     "existingFound": "Найдено нод: {{count}} — {{nodes}}",
     "existingDiscoveryHint": "Проверяются все включённые ноды; поиск ничего на них не изменяет.",
     "createNew": "Создать нового",
-    "bindExisting": "Привязать существующего"
+    "bindExisting": "Привязать существующего",
+    "requestTelegram": "Telegram",
+    "requestName": "Имя",
+    "requestTelegramId": "Telegram ID",
+    "requestSuggestedName": "Предложенное имя",
+    "requestIntroduction": "Представление"
     ,"dashboardTitle": "Оперативный статус"
     ,"dashboardPending": "заявки"
     ,"dashboardActive": "активные"
