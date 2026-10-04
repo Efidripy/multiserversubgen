@@ -104,6 +104,10 @@ node to become the authority for the customer lifecycle.
   only with the latest job version and an idempotency key. The HTTP command
   does not perform remote I/O; it resets only non-succeeded attempts and the
   worker still begins its next execution with the same strict remote read.
+- Provisioning history is paged. Only the Owner can clear its terminal local
+  records (`succeeded`, `failed`, `cancelled`) with an idempotency receipt and
+  audit event; `queued`, `running` and `partial` jobs, their recovery state,
+  and all audit records are retained.
 - Provisioning and destructive lifecycle work run through durable jobs and
   exact binding identifiers. They reconcile before retry and never perform
   blind lookup or automatic destructive rollback.
@@ -133,6 +137,9 @@ node to become the authority for the customer lifecycle.
   Telegram drift scan for that node. A completed scan, or a completed
   lifecycle read, may mark a binding `missing` (explicitly addable again) or
   `conflict` (fail-closed); a remote read failure changes neither state.
+- Ignoring a repeated drift finding only suppresses that specific finding in
+  the admin queue. It never mutates the remote node and does not reclassify a
+  still missing or conflicting binding as confirmed.
 - `customer_traffic_ledger` belongs to the local `customer_id`, never a
   subscription token. It accumulates deltas from the existing read-only client
   projection; a lower source counter begins a new epoch and cannot subtract

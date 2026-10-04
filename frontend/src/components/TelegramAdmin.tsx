@@ -28,9 +28,10 @@ import {
   getTelegramDashboard,
   getTelegramBotConfiguration,
   getTelegramTransport,
+  clearTelegramJobHistory,
   listTelegramCustomers,
   listTelegramAppeals,
-  listTelegramJobs,
+  listTelegramJobsPage,
   listBlockedTelegramIdentities,
   listTelegramRequests,
   listLifecycleSchedules,
@@ -57,7 +58,7 @@ import {
   scheduleCustomerOperation,
   cancelLifecycleSchedule,
   scanDrift,
-  resolveDriftFinding,
+  ignoreDriftFinding,
   adoptDriftFinding,
   resolveTelegramAppeal,
   resolveTelegramSupportRequest,
@@ -117,6 +118,14 @@ export const TelegramAdmin: React.FC = () => {
   const [botConfiguration, setBotConfiguration] = useState<TelegramBotConfigurationStatus | null>(null);
   const [botToken, setBotToken] = useState('');
   const [jobs, setJobs] = useState<ProvisioningJob[]>([]);
+  const [jobsTotal, setJobsTotal] = useState(0);
+  const [isJobHistoryOpen, setIsJobHistoryOpen] = useState(false);
+  const [jobHistoryPage, setJobHistoryPage] = useState(1);
+  const [jobHistory, setJobHistory] = useState<ProvisioningJob[]>([]);
+  const [jobHistoryTotal, setJobHistoryTotal] = useState(0);
+  const [canClearJobHistory, setCanClearJobHistory] = useState(false);
+  const [jobHistoryLoading, setJobHistoryLoading] = useState(false);
+  const [isJobHistoryClearConfirmOpen, setIsJobHistoryClearConfirmOpen] = useState(false);
   const [appeals, setAppeals] = useState<TelegramAppeal[]>([]);
   const [supportRequests, setSupportRequests] = useState<TelegramSupportRequest[]>([]);
   const [selectedSupportCustomerId, setSelectedSupportCustomerId] = useState<number | null>(null);
@@ -209,19 +218,21 @@ export const TelegramAdmin: React.FC = () => {
     () => supportRequests.filter((request) => request.status !== 'resolved'),
     [supportRequests],
   );
+  const jobHistoryPageCount = Math.max(1, Math.ceil(jobHistoryTotal / 15));
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [nextRequests, nextCustomers, nextBlocked, nextTransport, nextBotConfiguration, nextJobs, nextAppeals, nextSupportRequests, nextDashboard, nextSchedules, nextDrift] = await Promise.all([
-        listTelegramRequests(), listTelegramCustomers(search), listBlockedTelegramIdentities(), getTelegramTransport(), getTelegramBotConfiguration(), listTelegramJobs(), listTelegramAppeals(), listTelegramSupportRequests('all'), getTelegramDashboard(), listLifecycleSchedules(), listDriftFindings(),
+      const [nextRequests, nextCustomers, nextBlocked, nextTransport, nextBotConfiguration, nextJobsPage, nextAppeals, nextSupportRequests, nextDashboard, nextSchedules, nextDrift] = await Promise.all([
+        listTelegramRequests(), listTelegramCustomers(search), listBlockedTelegramIdentities(), getTelegramTransport(), getTelegramBotConfiguration(), listTelegramJobsPage(5), listTelegramAppeals(), listTelegramSupportRequests('all'), getTelegramDashboard(), listLifecycleSchedules(), listDriftFindings(),
       ]);
       setRequests(nextRequests);
       setCustomers(nextCustomers);
       setBlocked(nextBlocked);
       setTransport(nextTransport);
       setBotConfiguration(nextBotConfiguration);
-      setJobs(nextJobs);
+      setJobs(nextJobsPage.items);
+      setJobsTotal(nextJobsPage.total);
       setAppeals(nextAppeals);
       setSupportRequests(nextSupportRequests);
       setSelectedSupportCustomerId((current) => current && nextSupportRequests.some((item) => item.customer_id === current) ? current : nextSupportRequests[0]?.customer_id ?? null);
@@ -274,13 +285,13 @@ export const TelegramAdmin: React.FC = () => {
 
   const refreshCustomerDetails = useCallback(async (customerId: number, syncTagInput = false) => {
     const refreshToken = Date.now();
-    const [nextNodes, nextOperations, nextTraffic, nextTags, nextTimeline, nextJobs, nextCustomers] = await Promise.all([
+    const [nextNodes, nextOperations, nextTraffic, nextTags, nextTimeline, nextJobsPage, nextCustomers] = await Promise.all([
       getCustomerNodes(customerId, refreshToken),
       getCustomerOperations(customerId, refreshToken),
       getCustomerTraffic(customerId, refreshToken),
       getCustomerTags(customerId, refreshToken),
       getCustomerTimeline(customerId, refreshToken),
-      listTelegramJobs(),
+      listTelegramJobsPage(200),
       listTelegramCustomers(search, refreshToken),
     ]);
     setNodes(nextNodes);
@@ -289,7 +300,8 @@ export const TelegramAdmin: React.FC = () => {
     setTags(nextTags);
     if (syncTagInput) setTagInput(nextTags.map((tag) => tag.tag).join(', '));
     setTimeline(nextTimeline);
-    setJobs(nextJobs);
+    setJobs(nextJobsPage.items);
+    setJobsTotal(nextJobsPage.total);
     setCustomers(nextCustomers);
   }, [search]);
 
@@ -527,9 +539,44 @@ export const TelegramAdmin: React.FC = () => {
     setMutating(true);
     try {
       if (adopt) await adoptDriftFinding(finding);
-      else await resolveDriftFinding(finding);
+      else await ignoreDriftFinding(finding);
       setDriftFindings(await listDriftFindings());
       toast(t('telegram.requestUpdated'), 'success');
+    } catch {
+      toast(t('telegram.actionFailed'), 'error');
+    } finally {
+      setMutating(false);
+    }
+  };
+
+  const loadJobHistory = useCallback(async (page: number) => {
+    setJobHistoryLoading(true);
+    try {
+      const next = await listTelegramJobsPage(15, (page - 1) * 15);
+      setJobHistory(next.items);
+      setJobHistoryTotal(next.total);
+      setCanClearJobHistory(next.can_clear_history);
+      setJobHistoryPage(page);
+    } catch {
+      toast(t('telegram.loadFailed'), 'error');
+    } finally {
+      setJobHistoryLoading(false);
+    }
+  }, [t, toast]);
+
+  const openJobHistory = useCallback(() => {
+    setIsJobHistoryOpen(true);
+    setIsJobHistoryClearConfirmOpen(false);
+    void loadJobHistory(1);
+  }, [loadJobHistory]);
+
+  const clearJobHistory = async () => {
+    setMutating(true);
+    try {
+      const deletedCount = await clearTelegramJobHistory();
+      setIsJobHistoryClearConfirmOpen(false);
+      await Promise.all([load(), loadJobHistory(1)]);
+      toast(t('telegram.clearJobsHistoryDone', { count: deletedCount }), 'success');
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -686,8 +733,8 @@ export const TelegramAdmin: React.FC = () => {
 
       {activeTab === 'operations' && dashboard && <div className="mb-4 grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
         <section className={panelClass} aria-label={t('telegram.jobsTitle')}>
-          <div className="flex items-center justify-between gap-3 border-b border-cyan-400/12 pb-3"><div><h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">{t('telegram.jobsTitle')}</h3><p className="mt-1 text-[11px] text-slate-500">{t('telegram.operations')}</p></div><span className="rounded-full bg-[#151d2a] px-2 py-1 font-mono text-[10px] text-cyan-100">{jobs.length}</span></div>
-          <div className="mt-3 space-y-2">{jobs.slice(0, 4).map((job) => <div key={job.job_id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-cyan-400/12 bg-[#0a0f19] px-3 py-2"><span className="min-w-0 truncate text-xs text-slate-200">{job.customer_email}</span><span className={['succeeded'].includes(job.status) ? 'font-mono text-[10px] text-emerald-200' : 'font-mono text-[10px] text-amber-200'}>{job.status}</span></div>)}{jobs.length === 0 && <p className="py-7 text-center text-sm font-light text-slate-500">{t('telegram.noJobs')}</p>}</div>
+          <div className="flex items-center justify-between gap-3 border-b border-cyan-400/12 pb-3"><div><h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">{t('telegram.jobsTitle')}</h3><p className="mt-1 text-[11px] text-slate-500">{t('telegram.operations')}</p></div><div className="flex items-center gap-2"><span className="rounded-full bg-[#151d2a] px-2 py-1 font-mono text-[10px] text-cyan-100">{jobsTotal}</span><button type="button" className={buttonClass} disabled={loading || mutating} onClick={openJobHistory}>{t('telegram.jobsHistory')}</button></div></div>
+          <div className="mt-3 space-y-2">{jobs.slice(0, 5).map((job) => <div key={job.job_id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-cyan-400/12 bg-[#0a0f19] px-3 py-2"><span className="min-w-0 truncate text-xs text-slate-200">{job.customer_email}</span><span className={['succeeded'].includes(job.status) ? 'font-mono text-[10px] text-emerald-200' : 'font-mono text-[10px] text-amber-200'}>{job.status}</span></div>)}{jobs.length === 0 && <p className="py-7 text-center text-sm font-light text-slate-500">{t('telegram.noJobs')}</p>}</div>
         </section>
         <aside className={panelClass} aria-label={t('telegram.attentionTitle')}>
           <h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-200">{t('telegram.attentionTitle')}</h3>
@@ -894,11 +941,16 @@ export const TelegramAdmin: React.FC = () => {
         </section>
       </div>}
 
-      {activeTab === 'operations' && <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
-        <section className={panelClass} aria-label={t('telegram.jobsTitle')}>
-          <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.jobsTitle')}</h3>
-          <div className="mt-3 space-y-2">{jobs.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noJobs')}</p>}{jobs.map((job) => <article key={job.job_id} className="rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="truncate text-xs text-slate-200">{job.customer_email}</span><span className="font-mono text-[10px] text-slate-500">{job.status}</span></div><p className="mt-1 text-[11px] text-slate-500">{t('telegram.nodesReady', { ready: job.attempts.filter((attempt) => attempt.status === 'succeeded').length, total: job.attempts.length })}</p>{job.attempts.some((attempt) => ['partial', 'failed', 'ambiguous', 'blocked'].includes(attempt.status)) && <button type="button" className={`${buttonClass} mt-2`} disabled={mutating} onClick={async () => { setMutating(true); try { await reconcileTelegramJob(job); toast(t('telegram.operationQueued'), 'success'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reconcile')}</button>}</article>)}</div>
+      {isJobHistoryOpen && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#02050bd9] p-3 sm:p-5" onMouseDown={() => { if (!isJobHistoryClearConfirmOpen && !mutating) setIsJobHistoryOpen(false); }}>
+        <section role="dialog" aria-modal="true" aria-labelledby="telegram-job-history-dialog-title" className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-4xl flex-col overflow-hidden rounded-[8px] border border-cyan-400/20 bg-[#0d131f] shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+          <div className="flex items-start justify-between gap-4 border-b border-cyan-400/12 px-4 py-3"><div><p className="text-[9px] uppercase tracking-[0.14em] text-slate-500">{t('telegram.jobsTitle')}</p><h3 id="telegram-job-history-dialog-title" className="mt-1 text-sm font-medium text-[#e9f1f8]">{t('telegram.jobsHistoryTitle')}</h3><p className="mt-1 text-[11px] text-slate-500">{t('telegram.jobsHistoryHint')}</p></div><button type="button" className={`${buttonClass} h-8 px-2`} disabled={mutating} onClick={() => setIsJobHistoryOpen(false)} aria-label={t('telegram.closeCustomer')}><UIIcon name="x" size={15} /></button></div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4"><div className="space-y-2">{jobHistoryLoading && <p className="py-7 text-center text-sm font-light text-slate-500">{t('common.loading')}</p>}{!jobHistoryLoading && jobHistory.length === 0 && <p className="py-7 text-center text-sm font-light text-slate-500">{t('telegram.noJobs')}</p>}{jobHistory.map((job) => <article key={job.job_id} className="rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="truncate text-xs text-slate-200">{job.customer_email}</span><span className="font-mono text-[10px] text-slate-500">{job.status}</span></div><p className="mt-1 text-[11px] text-slate-500">{t('telegram.nodesReady', { ready: job.attempts.filter((attempt) => attempt.status === 'succeeded').length, total: job.attempts.length })} · {formatDate(job.created_at)}</p>{job.attempts.some((attempt) => ['partial', 'failed', 'ambiguous', 'blocked'].includes(attempt.status)) && <button type="button" className={`${buttonClass} mt-2`} disabled={mutating} onClick={async () => { setMutating(true); try { await reconcileTelegramJob(job); toast(t('telegram.operationQueued'), 'success'); await Promise.all([load(), loadJobHistory(jobHistoryPage)]); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reconcile')}</button>}</article>)}</div></div>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-cyan-400/12 px-4 py-3"><div>{canClearJobHistory && <button type="button" className={`${buttonClass} border-rose-400/25 text-rose-200 hover:text-rose-100`} disabled={mutating || jobHistoryTotal === 0} onClick={() => setIsJobHistoryClearConfirmOpen(true)}>{t('telegram.clearJobsHistory')}</button>}</div><div className="flex items-center gap-2"><button type="button" className={buttonClass} disabled={jobHistoryLoading || jobHistoryPage <= 1} onClick={() => void loadJobHistory(jobHistoryPage - 1)}>{t('telegram.previousPage')}</button><span className="font-mono text-[11px] text-slate-500">{jobHistoryPage} / {jobHistoryPageCount}</span><button type="button" className={buttonClass} disabled={jobHistoryLoading || jobHistoryPage >= jobHistoryPageCount} onClick={() => void loadJobHistory(jobHistoryPage + 1)}>{t('telegram.nextPage')}</button></div></div>
         </section>
+      </div>}
+
+      {isJobHistoryClearConfirmOpen && isJobHistoryOpen && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-[#02050be8] p-4" onMouseDown={() => { if (!mutating) setIsJobHistoryClearConfirmOpen(false); }}>
+        <section role="dialog" aria-modal="true" aria-labelledby="telegram-job-history-clear-dialog-title" className="w-full max-w-md rounded-[8px] border border-rose-400/30 bg-[#0d131f] p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><p className="text-[9px] uppercase tracking-[0.14em] text-rose-200">{t('telegram.jobsHistory')}</p><h4 id="telegram-job-history-clear-dialog-title" className="mt-1 text-sm font-medium text-slate-100">{t('telegram.clearJobsHistoryTitle')}</h4><p className="mt-3 rounded border border-rose-400/20 bg-rose-400/[0.04] p-3 text-xs leading-5 text-rose-100">{t('telegram.clearJobsHistoryHint')}</p><div className="mt-4 flex justify-end gap-2"><button type="button" className={buttonClass} disabled={mutating} onClick={() => setIsJobHistoryClearConfirmOpen(false)}>{t('common.cancel')}</button><button type="button" className={`${primaryButtonClass} bg-rose-300 hover:bg-rose-200`} disabled={mutating} onClick={() => void clearJobHistory()}>{t('common.confirm')}</button></div></section>
       </div>}
 
       {activeTab === 'users' && activeUsersSection === 'support' && <section className={`${panelClass} mt-4`} aria-label={t('telegram.supportTitle')}>
@@ -921,7 +973,7 @@ export const TelegramAdmin: React.FC = () => {
         </section>
         <section className={panelClass} aria-label={t('telegram.driftTitle')}>
           <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.driftTitle')}</h3><p className="mt-1 text-xs text-slate-500">{t('telegram.driftHint')}</p></div><button type="button" className={buttonClass} disabled={mutating} onClick={() => void runDriftScan()}>{t('telegram.driftScan')}</button></div>
-          <div className="mt-3 space-y-2">{driftFindings.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noDrift')}</p>}{driftFindings.map((finding) => <article key={finding.finding_id} className="rounded border border-amber-400/20 bg-[#0a0e1a] p-3"><p className="text-xs text-slate-300">{finding.kind} · {finding.node_name}</p><p className="mt-1 font-mono text-[10px] text-slate-500">{finding.customer_email ?? finding.remote_email}</p><div className="mt-2 flex flex-wrap gap-2">{finding.kind === 'orphan_remote' && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void resolveDrift(finding, true)}>{t('telegram.driftAdopt')}</button>}<button type="button" className={buttonClass} disabled={mutating} onClick={() => void resolveDrift(finding)}>{t('telegram.driftResolve')}</button></div></article>)}</div>
+          <div className="mt-3 space-y-2">{driftFindings.length === 0 && <p className="text-sm font-light text-slate-500">{t('telegram.noDrift')}</p>}{driftFindings.map((finding) => <article key={finding.finding_id} className="rounded border border-amber-400/20 bg-[#0a0e1a] p-3"><p className="text-xs text-slate-300">{finding.kind} · {finding.node_name}</p><p className="mt-1 font-mono text-[10px] text-slate-500">{finding.customer_email ?? finding.remote_email}</p><div className="mt-2 flex flex-wrap gap-2">{finding.kind === 'orphan_remote' && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void resolveDrift(finding, true)}>{t('telegram.driftAdopt')}</button>}<button type="button" className={buttonClass} disabled={mutating} onClick={() => void resolveDrift(finding)}>{t('telegram.driftIgnore')}</button></div></article>)}</div>
         </section>
       </div>}
     </div>
