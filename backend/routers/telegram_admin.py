@@ -290,6 +290,20 @@ def build_telegram_admin_router(
             raise translate_registry_error(exc) from exc
         return {"support_request": asdict(result), "remote_io": "not_started"}
 
+    @router.post("/api/v1/telegram/customers/{customer_id}/message")
+    def queue_telegram_customer_message(customer_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            outbox_id = registry.queue_admin_direct_message(
+                customer_id=customer_id,
+                body=data.get("body"),
+                created_by=username,
+                idempotency_key=data.get("idempotency_key"),
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"outbox_id": outbox_id, "remote_io": "not_started"}
+
     @router.get("/api/v1/telegram/service-notice")
     def get_telegram_service_notice(request: Request):
         require_admin(request)

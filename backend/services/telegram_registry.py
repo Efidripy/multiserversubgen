@@ -6116,13 +6116,20 @@ class TelegramRegistry:
         *,
         customer_id: int,
         body: str,
-        created_by: int,
+        created_by: int | str,
         idempotency_key: str,
     ) -> int:
         """Queue one admin message to an already approved, live Telegram user."""
 
         local_customer_id = _positive_int(customer_id, "customer_id")
-        admin_id = _positive_int(created_by, "created_by")
+        if isinstance(created_by, bool):
+            raise TelegramRegistryError("created_by is invalid")
+        if isinstance(created_by, int):
+            admin_id = str(_positive_int(created_by, "created_by"))
+        elif isinstance(created_by, str):
+            admin_id = _nonempty(created_by, "created_by")
+        else:
+            raise TelegramRegistryError("created_by is invalid")
         normalized_body = _normalize_admin_message_body(body)
         key = str(idempotency_key or "").strip()
         if not key or len(key) > 180:
@@ -6165,7 +6172,7 @@ class TelegramRegistry:
                     (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
                 VALUES ('admin_direct_message_queued', 'admin', ?, 'customer', ?, ?)
                 """,
-                (str(admin_id), str(local_customer_id), digest),
+                (admin_id, str(local_customer_id), digest),
             )
         return outbox_id
 
