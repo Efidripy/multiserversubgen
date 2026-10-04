@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useToast } from './Toast';
 import { UIIcon } from './UIIcon';
@@ -106,6 +107,7 @@ export const TelegramAdmin: React.FC = () => {
   const [preview, setPreview] = useState<CustomerOperationPreview | null>(null);
   const [previewNodeId, setPreviewNodeId] = useState<number | null>(null);
   const [nodeAddConfirmation, setNodeAddConfirmation] = useState<CustomerNode | null>(null);
+  const [applicationNoteTooltip, setApplicationNoteTooltip] = useState<{ note: string; left: number; top: number } | null>(null);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
@@ -183,13 +185,56 @@ export const TelegramAdmin: React.FC = () => {
   useEffect(() => {
     if (!isCustomerDialogOpen) return undefined;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || preview) return;
-      if (nodeAddConfirmation) setNodeAddConfirmation(null);
+      if (event.key !== 'Escape') return;
+      if (applicationNoteTooltip) setApplicationNoteTooltip(null);
+      else if (preview) return;
+      else if (nodeAddConfirmation) setNodeAddConfirmation(null);
       else setIsCustomerDialogOpen(false);
     };
     window.addEventListener('keydown', closeOnEscape);
     return () => window.removeEventListener('keydown', closeOnEscape);
-  }, [isCustomerDialogOpen, nodeAddConfirmation, preview]);
+  }, [applicationNoteTooltip, isCustomerDialogOpen, nodeAddConfirmation, preview]);
+
+  useEffect(() => {
+    if (!applicationNoteTooltip) return undefined;
+    const closeTooltip = () => setApplicationNoteTooltip(null);
+    window.addEventListener('scroll', closeTooltip, true);
+    window.addEventListener('resize', closeTooltip);
+    return () => {
+      window.removeEventListener('scroll', closeTooltip, true);
+      window.removeEventListener('resize', closeTooltip);
+    };
+  }, [applicationNoteTooltip]);
+
+  const showApplicationNoteTooltip = useCallback((anchor: HTMLElement, note: string) => {
+    const rect = anchor.getBoundingClientRect();
+    const width = Math.min(288, window.innerWidth - 24);
+    setApplicationNoteTooltip({
+      note,
+      left: Math.max(12, Math.min(rect.right - width, window.innerWidth - width - 12)),
+      top: Math.min(rect.bottom + 8, window.innerHeight - 80),
+    });
+  }, []);
+
+  const refreshCustomerDetails = useCallback(async (customerId: number, syncTagInput = false) => {
+    const [nextNodes, nextOperations, nextTraffic, nextTags, nextTimeline, nextJobs, nextCustomers] = await Promise.all([
+      getCustomerNodes(customerId),
+      getCustomerOperations(customerId),
+      getCustomerTraffic(customerId),
+      getCustomerTags(customerId),
+      getCustomerTimeline(customerId),
+      listTelegramJobs(),
+      listTelegramCustomers(search),
+    ]);
+    setNodes(nextNodes);
+    setOperations(nextOperations);
+    setTraffic(nextTraffic);
+    setTags(nextTags);
+    if (syncTagInput) setTagInput(nextTags.map((tag) => tag.tag).join(', '));
+    setTimeline(nextTimeline);
+    setJobs(nextJobs);
+    setCustomers(nextCustomers);
+  }, [search]);
 
   const selectCustomer = useCallback(async (customer: TelegramCustomer) => {
     setSelectedCustomerId(customer.customer_id);
@@ -201,23 +246,11 @@ export const TelegramAdmin: React.FC = () => {
     setTags([]);
     setTimeline([]);
     try {
-      const [nextNodes, nextOperations, nextTraffic, nextTags, nextTimeline] = await Promise.all([
-        getCustomerNodes(customer.customer_id),
-        getCustomerOperations(customer.customer_id),
-        getCustomerTraffic(customer.customer_id),
-        getCustomerTags(customer.customer_id),
-        getCustomerTimeline(customer.customer_id),
-      ]);
-      setNodes(nextNodes);
-      setOperations(nextOperations);
-      setTraffic(nextTraffic);
-      setTags(nextTags);
-      setTagInput(nextTags.map((tag) => tag.tag).join(', '));
-      setTimeline(nextTimeline);
+      await refreshCustomerDetails(customer.customer_id, true);
     } catch {
       toast(t('telegram.detailsFailed'), 'error');
     }
-  }, [t, toast]);
+  }, [refreshCustomerDetails, t, toast]);
 
   const openCustomerDialog = useCallback((customer: TelegramCustomer) => {
     setIsCustomerDialogOpen(true);
@@ -303,8 +336,7 @@ export const TelegramAdmin: React.FC = () => {
       await addCustomerNode(selectedCustomer, nodeAddConfirmation.node_id);
       setNodeAddConfirmation(null);
       toast(t('telegram.nodeOperationQueued'), 'success');
-      await load();
-      await selectCustomer(selectedCustomer);
+      await refreshCustomerDetails(selectedCustomer.customer_id);
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -334,8 +366,7 @@ export const TelegramAdmin: React.FC = () => {
       else await queueCustomerNodeOperation(preview, previewNodeId);
       toast(t('telegram.operationQueued'), 'success');
       setPreview(null);
-      await load();
-      if (selectedCustomer) await selectCustomer(selectedCustomer);
+      if (selectedCustomer) await refreshCustomerDetails(selectedCustomer.customer_id);
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -517,6 +548,22 @@ export const TelegramAdmin: React.FC = () => {
       .filter((attempt) => ['pending', 'reconciling', 'creating', 'ambiguous'].includes(attempt.status))
       .map((attempt) => attempt.node_id),
   ), [jobs, selectedCustomer?.customer_id]);
+  const hasPendingCustomerWork = useMemo(
+    () => pendingNodeIds.size > 0 || operations.some((operation) => (
+      ['queued', 'running'].includes(operation.status)
+      || operation.attempts.some((attempt) => ['pending', 'reconciling', 'creating', 'ambiguous'].includes(attempt.status))
+    )),
+    [operations, pendingNodeIds],
+  );
+
+  useEffect(() => {
+    if (!isCustomerDialogOpen || !selectedCustomer || !hasPendingCustomerWork) return undefined;
+    const customerId = selectedCustomer.customer_id;
+    const refresh = () => { void refreshCustomerDetails(customerId).catch(() => undefined); };
+    const intervalId = window.setInterval(refresh, 2500);
+    return () => window.clearInterval(intervalId);
+  }, [hasPendingCustomerWork, isCustomerDialogOpen, refreshCustomerDetails, selectedCustomer]);
+
   const usersAttention = requests.length + appeals.length + openSupportRequests.length;
   const operationsAttention = jobs.filter((job) => ['partial', 'failed', 'ambiguous', 'blocked'].includes(job.status)).length + driftFindings.length;
   const tabs: Array<{ id: TelegramAdminTab; icon: React.ComponentProps<typeof UIIcon>['name']; label: string; attention?: number }> = [
@@ -525,6 +572,7 @@ export const TelegramAdmin: React.FC = () => {
     { id: 'settings', icon: 'servers', label: t('telegram.tabs.settings') },
   ];
   return (
+    <>
     <div className={shellClass}>
       <div className="mb-5 border-b border-cyan-400/13 pb-5">
         <div className="flex flex-wrap items-end justify-between gap-4">
@@ -661,7 +709,7 @@ export const TelegramAdmin: React.FC = () => {
                   <td className="p-0"><button type="button" className="flex h-[49px] w-full flex-col justify-center px-2 text-left leading-[13px] hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={open} aria-label={t('telegram.openCustomer', { email: customer.email_display })}><span className="truncate text-[10px] text-slate-300">{customer.telegram_username ? `@${customer.telegram_username}` : telegramName || '—'}</span><span className="truncate font-mono text-[9px] text-slate-500">{[telegramName, customer.telegram_user_id ? String(customer.telegram_user_id) : null].filter(Boolean).join(' · ') || '—'}</span></button></td>
                   <td className="p-0"><button type="button" className="h-[49px] w-full px-2 text-left font-mono text-[10px] text-slate-400 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={open} aria-label={t('telegram.openCustomer', { email: customer.email_display })}>{customer.node_count}</button></td>
                   <td className="p-0"><button type="button" className="h-[49px] w-full px-2 text-left font-mono text-[10px] text-slate-400 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={open} aria-label={t('telegram.openCustomer', { email: customer.email_display })}>{formatBytes(customer.lifetime_bytes)}</button></td>
-                  <td className="px-2 py-1.5">{customer.application_introduction && <span className="group relative inline-flex size-5 cursor-help items-center justify-center rounded-full border border-amber-300/45 text-[11px] font-semibold text-amber-200" tabIndex={0} aria-label={t('telegram.applicationNote', { note: customer.application_introduction })}>!<span role="tooltip" className="pointer-events-none absolute right-0 top-7 z-20 hidden w-64 whitespace-pre-wrap rounded-[6px] border border-amber-300/25 bg-[#101827] p-2 text-[11px] font-normal leading-4 text-slate-200 shadow-xl group-hover:block group-focus:block">{customer.application_introduction}</span></span>}</td>
+                  <td className="px-2 py-1.5">{customer.application_introduction && <span className="inline-flex size-5 cursor-help items-center justify-center rounded-full border border-amber-300/45 text-[11px] font-semibold text-amber-200" tabIndex={0} aria-label={t('telegram.applicationNote', { note: customer.application_introduction })} onMouseEnter={(event) => showApplicationNoteTooltip(event.currentTarget, customer.application_introduction!)} onMouseLeave={() => setApplicationNoteTooltip(null)} onFocus={(event) => showApplicationNoteTooltip(event.currentTarget, customer.application_introduction!)} onBlur={() => setApplicationNoteTooltip(null)}>!</span>}</td>
                 </tr>;
               })}</tbody>
             </table>
@@ -739,15 +787,16 @@ export const TelegramAdmin: React.FC = () => {
             <h4 className="mt-5 text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.timelineTitle')}</h4><div className="mt-2 max-h-44 space-y-1 overflow-auto">{timeline.length === 0 ? <p className="text-xs text-slate-500">{t('telegram.timelineEmpty')}</p> : timeline.map((event, index) => <div key={`${event.entity_type}-${event.entity_id}-${event.created_at}-${index}`} className="flex flex-wrap justify-between gap-2 text-[11px] text-slate-400"><span>{event.event_type} · {event.status ?? '—'}</span><span className="font-mono text-slate-500">{formatDate(event.created_at)}</span></div>)}</div>
           </div>
         </section>
-        {nodeAddConfirmation && <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#02050bd9] p-4">
-          <section role="dialog" aria-modal="true" aria-labelledby="telegram-add-node-dialog-title" className="w-full max-w-sm rounded-[8px] border border-cyan-400/25 bg-[#0d131f] p-4 shadow-2xl">
-            <p className="text-[9px] uppercase tracking-[0.14em] text-slate-500">{t('telegram.nodes')}</p>
-            <h4 id="telegram-add-node-dialog-title" className="mt-1 text-sm font-medium text-slate-100">{t('telegram.addNodeDialogTitle')}</h4>
-            <div className="mt-3 flex items-center gap-2 rounded border border-cyan-400/12 bg-[#0a0f19] px-3 py-2 text-xs text-slate-200"><span className="size-[7px] shrink-0 rounded-full bg-rose-400" />{nodeAddConfirmation.node_name}</div>
-            <p className="mt-3 text-xs leading-5 text-slate-400">{t('telegram.addNodeConfirm', { node: nodeAddConfirmation.node_name })}</p>
-            <div className="mt-4 flex justify-end gap-2"><button type="button" className={buttonClass} disabled={mutating} onClick={() => setNodeAddConfirmation(null)}>{t('common.cancel')}</button><button type="button" className={primaryButtonClass} disabled={mutating} onClick={() => void addNode()}>{t('common.confirm')}</button></div>
-          </section>
-        </div>}
+      </div>}
+
+      {nodeAddConfirmation && selectedCustomer && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#02050bd9] p-4" onMouseDown={() => { if (!mutating) setNodeAddConfirmation(null); }}>
+        <section role="dialog" aria-modal="true" aria-labelledby="telegram-add-node-dialog-title" className="w-full max-w-sm rounded-[8px] border border-cyan-400/25 bg-[#0d131f] p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+          <p className="text-[9px] uppercase tracking-[0.14em] text-slate-500">{t('telegram.nodes')}</p>
+          <h4 id="telegram-add-node-dialog-title" className="mt-1 text-sm font-medium text-slate-100">{t('telegram.addNodeDialogTitle')}</h4>
+          <div className="mt-3 flex items-center gap-2 rounded border border-cyan-400/12 bg-[#0a0f19] px-3 py-2 text-xs text-slate-200"><span className="size-[7px] shrink-0 rounded-full bg-rose-400" />{nodeAddConfirmation.node_name}</div>
+          <p className="mt-3 text-xs leading-5 text-slate-400">{t('telegram.addNodeConfirm', { node: nodeAddConfirmation.node_name })}</p>
+          <div className="mt-4 flex justify-end gap-2"><button type="button" className={buttonClass} disabled={mutating} onClick={() => setNodeAddConfirmation(null)}>{t('common.cancel')}</button><button type="button" className={primaryButtonClass} disabled={mutating} onClick={() => void addNode()}>{t('common.confirm')}</button></div>
+        </section>
       </div>}
 
       {activeTab === 'operations' && <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
@@ -816,5 +865,12 @@ export const TelegramAdmin: React.FC = () => {
         </section>
       </div>}
     </div>
+    {applicationNoteTooltip && createPortal(
+      <div role="tooltip" className="pointer-events-none fixed z-[70] w-72 whitespace-pre-wrap rounded-[6px] border border-amber-300/25 bg-[#101827] p-2 text-[11px] font-normal leading-4 text-slate-200 shadow-xl" style={{ left: applicationNoteTooltip.left, top: applicationNoteTooltip.top }}>
+        {applicationNoteTooltip.note}
+      </div>,
+      document.body,
+    )}
+    </>
   );
 };
