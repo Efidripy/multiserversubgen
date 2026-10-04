@@ -461,3 +461,10 @@ export async function resolveTelegramSupportRequest(request: TelegramSupportRequ
     idempotency_key: newIdempotencyKey(),
   }, { auth: getAuth() });
 }
+
+export async function queueTelegramCustomerMessage(customerId: number, body: string): Promise<void> {
+  await api.post(`/v1/telegram/customers/${customerId}/message`, {
+    body,
+    idempotency_key: newIdempotencyKey(),
+  }, { auth: getAuth() });
+}

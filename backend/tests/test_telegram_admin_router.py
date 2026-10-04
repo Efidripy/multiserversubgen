@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -520,9 +521,24 @@ def test_support_routes_are_admin_only_and_resolution_remains_local(tmp_path):
     assert resolved.json()["remote_io"] == "not_started"
     assert resolved.json()["support_request"]["status"] == "resolved"
 
+    direct_message = client.post(
+        f"/api/v1/telegram/customers/{customer_id}/message",
+        json={"body": "Проверьте Telegram.", "idempotency_key": "direct-message-api"},
+    )
+    assert direct_message.status_code == 200
+    assert direct_message.json()["remote_io"] == "not_started"
+    with connect(db_path) as conn:
+        event_type, entity_id, payload_json = conn.execute(
+            "SELECT event_type, entity_id, payload_json FROM telegram_outbox WHERE id = ?",
+            (direct_message.json()["outbox_id"],),
+        ).fetchone()
+        assert (event_type, entity_id) == ("admin_direct_message", "42")
+        assert json.loads(payload_json) == {"body": "Проверьте Telegram."}
+
     viewer = _build_client(tmp_path, username="viewer", role="viewer")
     assert viewer.get("/api/v1/telegram/support").status_code == 403
     assert viewer.post(f"/api/v1/telegram/support/{request.support_request_id}/resolve", json={}).status_code == 403
+    assert viewer.post(f"/api/v1/telegram/customers/{customer_id}/message", json={}).status_code == 403
 
 
 def test_service_notice_routes_are_admin_only_and_do_not_start_remote_io(tmp_path):
