@@ -66,6 +66,12 @@ export type TelegramCustomer = {
   status: string;
   row_version: number;
   telegram_user_id: number | null;
+  telegram_username: string | null;
+  telegram_first_name: string | null;
+  telegram_last_name: string | null;
+  node_count: number;
+  lifetime_bytes: number;
+  application_introduction: string | null;
   created_at: string;
   updated_at: string;
 };

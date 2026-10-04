@@ -694,8 +694,24 @@ def test_customer_page_searches_only_local_authority_and_matrix_remains_filtered
     with connect(db_path) as conn:
         conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (2, 1)")
         conn.execute(
-            "INSERT INTO telegram_identities (telegram_user_id, chat_id, username, customer_id, access_status) "
-            "VALUES (777, 777, 'pager', ?, 'approved')",
+            "INSERT INTO telegram_identities "
+            "(telegram_user_id, chat_id, username, first_name, last_name, application_attempt, customer_id, access_status) "
+            "VALUES (777, 777, 'pager', 'Page', 'User', 1, ?, 'approved')",
+            (customer_id,),
+        )
+        conn.execute(
+            "INSERT INTO telegram_applications "
+            "(telegram_user_id, application_attempt, status, introduction_text, introduction_submitted_at) "
+            "VALUES (777, 1, 'approved', 'Нужен доступ для команды.', CURRENT_TIMESTAMP)"
+        )
+        conn.execute(
+            "INSERT INTO customer_node_bindings "
+            "(customer_id, node_id, remote_email, source, management_state) "
+            "VALUES (?, 2, 'paged-user', 'admin_confirmed', 'confirmed')",
+            (customer_id,),
+        )
+        conn.execute(
+            "INSERT INTO customer_traffic_ledger (customer_id, lifetime_bytes, last_observed_bytes) VALUES (?, 4096, 4096)",
             (customer_id,),
         )
 
@@ -703,6 +719,12 @@ def test_customer_page_searches_only_local_authority_and_matrix_remains_filtered
     assert page.total == 1
     assert page.items[0].customer_id == customer_id
     assert page.items[0].telegram_user_id == 777
+    assert page.items[0].telegram_username == "pager"
+    assert page.items[0].telegram_first_name == "Page"
+    assert page.items[0].telegram_last_name == "User"
+    assert page.items[0].node_count == 1
+    assert page.items[0].lifetime_bytes == 4096
+    assert page.items[0].application_introduction == "Нужен доступ для команды."
     assert page.items[0].open_support_count == 0
     assert [row.node_id for row in registry.customer_node_matrix(customer_id)] == [2]
 
