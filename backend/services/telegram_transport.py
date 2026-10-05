@@ -45,12 +45,29 @@ def validate_local_proxy_url(value: str) -> str:
     return raw_value.rstrip("/")
 
 
+def build_local_proxy_url(host: str, port: int) -> str:
+    """Build a validated loopback HTTP CONNECT URL from panel-safe fields."""
+
+    normalized_host = str(host or "").strip()
+    try:
+        parsed_host = ip_address(normalized_host)
+        normalized_port = int(port)
+    except ValueError as exc:
+        raise ValueError("Telegram proxy must contain a valid loopback IP address and port") from exc
+    if not parsed_host.is_loopback or not 1 <= normalized_port <= 65535:
+        raise ValueError("Telegram proxy must contain a loopback IP address and port")
+    host_for_url = f"[{parsed_host.compressed}]" if parsed_host.version == 6 else parsed_host.compressed
+    return validate_local_proxy_url(f"http://{host_for_url}:{normalized_port}")
+
+
 @dataclass(frozen=True)
 class TelegramTransportStatus:
     mode: str
     row_version: int
     configured: bool
     reachable: bool
+    proxy_host: str | None
+    proxy_port: int | None
     updated_by: str
     updated_at: str
 
@@ -64,11 +81,15 @@ class TelegramApiTransport:
 
     def status(self) -> TelegramTransportStatus:
         preference = self._registry.get_transport_preference()
+        proxy_url = self._effective_proxy_url(preference)
+        parsed_proxy = urlparse(proxy_url) if proxy_url else None
         return TelegramTransportStatus(
             mode=preference.mode,
             row_version=preference.row_version,
-            configured=bool(self._local_proxy_url),
-            reachable=self._is_local_proxy_reachable(),
+            configured=bool(proxy_url),
+            reachable=self._is_local_proxy_reachable(proxy_url),
+            proxy_host=str(parsed_proxy.hostname) if parsed_proxy and parsed_proxy.hostname else None,
+            proxy_port=int(parsed_proxy.port) if parsed_proxy and parsed_proxy.port else None,
             updated_by=preference.updated_by,
             updated_at=preference.updated_at,
         )
@@ -77,15 +98,22 @@ class TelegramApiTransport:
         preference = self._registry.get_transport_preference()
         if preference.mode == "direct":
             return self._opener(proxy_url=None).open(request, timeout=timeout)
-        if preference.mode != "local_proxy" or not self._local_proxy_url:
+        proxy_url = self._effective_proxy_url(preference)
+        if preference.mode != "local_proxy" or not proxy_url or not self._is_local_proxy_reachable(proxy_url):
             raise TelegramTransportError("Telegram local proxy mode is unavailable")
         # There is intentionally no direct retry: a selected local proxy must
         # fail closed if the sidecar is stopped or its EU route is unavailable.
-        return self._opener(proxy_url=self._local_proxy_url).open(request, timeout=timeout)
+        return self._opener(proxy_url=proxy_url).open(request, timeout=timeout)
 
-    def require_local_proxy_ready(self) -> None:
-        if not self._local_proxy_url or not self._is_local_proxy_reachable():
+    def require_local_proxy_ready(self, proxy_url: str | None = None) -> None:
+        candidate = proxy_url or self._effective_proxy_url(self._registry.get_transport_preference())
+        if not candidate or not self._is_local_proxy_reachable(candidate):
             raise TelegramTransportError("Telegram local proxy is not configured or not reachable")
+
+    def _effective_proxy_url(self, preference) -> str:
+        if preference.proxy_host is not None and preference.proxy_port is not None:
+            return build_local_proxy_url(preference.proxy_host, preference.proxy_port)
+        return self._local_proxy_url
 
     @staticmethod
     def _opener(*, proxy_url: str | None) -> OpenerDirector:
@@ -94,10 +122,10 @@ class TelegramApiTransport:
         proxies = {"https": proxy_url} if proxy_url else {}
         return build_opener(ProxyHandler(proxies))
 
-    def _is_local_proxy_reachable(self) -> bool:
-        if not self._local_proxy_url:
+    def _is_local_proxy_reachable(self, proxy_url: str) -> bool:
+        if not proxy_url:
             return False
-        parsed = urlparse(self._local_proxy_url)
+        parsed = urlparse(proxy_url)
         try:
             with socket.create_connection((str(parsed.hostname), int(parsed.port or 0)), timeout=0.25):
                 return True
