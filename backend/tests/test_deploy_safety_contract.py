@@ -42,6 +42,11 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'find "$PROJECT_DIR" -type d -exec chmod 0755 {} +' in script
     assert 'find "$PROJECT_DIR/venv" -type f -exec chmod 0644 {} +' in script
     assert 'find "$PROJECT_DIR/venv/bin" -type f -exec chmod 0755 {} +' in script
+    assert 'find "$PROJECT_DIR" -maxdepth 1 -type f -name \'*.py\' -exec chmod 0644 {} +' in script
+    assert 'for runtime_package in core modules integrations routers services shared; do' in script
+    assert 'find "$PROJECT_DIR/$runtime_package" -type f -exec chmod 0644 {} +' in script
+    assert 'validate_runtime_readability_as_service_user()' in script
+    assert 'runtime code is not readable by the service user' in script
     assert script.index('activate_runtime_ownership') < script.index('sed -i "1s|^#!.*$|#!${PROJECT_DIR}/venv/bin/python|"')
     assert script.index('render_runtime_service_unit "$SERVICE_TEMPLATE"') < script.index('systemctl stop "$PROJECT_NAME"\n  SERVICE_STOPPED=1')
     unit_install = script.index('install -o root -g root -m 0644 "$STAGED_SERVICE_UNIT" "$SERVICE_UNIT"')
