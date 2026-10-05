@@ -40,6 +40,7 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'activate_runtime_ownership()' in script
     assert 'chown -R "$PROJECT_NAME:$PROJECT_NAME" "$PROJECT_DIR"' in script
     assert 'find "$PROJECT_DIR" -type d -exec chmod 0755 {} +' in script
+    assert 'chmod 0644 "$PROJECT_DIR/venv/pyvenv.cfg"' in script
     assert script.index('activate_runtime_ownership') < script.index('sed -i "1s|^#!.*$|#!${PROJECT_DIR}/venv/bin/python|"')
     assert script.index('render_runtime_service_unit "$SERVICE_TEMPLATE"') < script.index('systemctl stop "$PROJECT_NAME"\n  SERVICE_STOPPED=1')
     unit_install = script.index('install -o root -g root -m 0644 "$STAGED_SERVICE_UNIT" "$SERVICE_UNIT"')

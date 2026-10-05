@@ -175,6 +175,10 @@ activate_runtime_ownership() {
   id -u "$PROJECT_NAME" >/dev/null 2>&1 || fail "runtime service user is missing: $PROJECT_NAME"
   chown -R "$PROJECT_NAME:$PROJECT_NAME" "$PROJECT_DIR"
   find "$PROJECT_DIR" -type d -exec chmod 0755 {} +
+  # `python -m venv` inherits the deployer's umask and can leave pyvenv.cfg
+  # mode 0600. The service user must be able to read this non-secret runtime
+  # metadata after the atomic swap; secrets remain outside the release tree.
+  [[ -f "$PROJECT_DIR/venv/pyvenv.cfg" ]] && chmod 0644 "$PROJECT_DIR/venv/pyvenv.cfg"
 }
 
 restore_previous() {
