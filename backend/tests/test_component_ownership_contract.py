@@ -10,6 +10,8 @@ LIBRARY = "scripts/installer/lib/component_ownership.sh"
 
 def _bash_path(path: Path) -> str:
     """Translate a Windows pytest tmp path for the WSL Bash test runner."""
+    if not path.drive:
+        return path.as_posix()
     drive = path.drive.rstrip(":").lower()
     return f"/mnt/{drive}{path.as_posix()[2:]}"
 
