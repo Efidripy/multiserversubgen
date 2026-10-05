@@ -103,6 +103,8 @@ export type TelegramTransportStatus = {
   row_version: number;
   configured: boolean;
   reachable: boolean;
+  proxy_host: string | null;
+  proxy_port: number | null;
   updated_by: string;
   updated_at: string;
 };
@@ -206,10 +208,15 @@ export async function clearTelegramBotConfiguration(configuration: TelegramBotCo
 export async function setTelegramTransport(
   transport: TelegramTransportStatus,
   mode: TelegramTransportStatus['mode'],
+  proxy?: { host: string; port: number },
 ): Promise<TelegramTransportStatus> {
   const response = await api.put(
     '/v1/telegram/transport',
-    { mode, expected_row_version: transport.row_version },
+    {
+      mode,
+      expected_row_version: transport.row_version,
+      ...(mode === 'local_proxy' && proxy ? { proxy_host: proxy.host, proxy_port: proxy.port } : {}),
+    },
     { auth: getAuth() },
   );
   return response.data?.transport as TelegramTransportStatus;

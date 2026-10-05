@@ -189,13 +189,17 @@ def init_db(db_path: str) -> None:
         # are the authority for identity, lifecycle intent and retry state;
         # they do not replace or mutate remote 3x-ui clients by themselves.
         # Direct Bot API access remains the portable default. A deployment may
-        # separately opt into a loopback-only proxy without exposing its URL
-        # through the panel or persisting it in SQLite.
+        # separately opt into a loopback-only HTTP CONNECT proxy. The endpoint
+        # is non-secret but intentionally constrained to loopback; it never
+        # becomes a generic outbound relay configuration.
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_transport_preferences
                      (singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),
                       mode TEXT NOT NULL DEFAULT 'direct'
                         CHECK(mode IN ('direct', 'local_proxy')),
+                      proxy_host TEXT DEFAULT NULL,
+                      proxy_port INTEGER DEFAULT NULL
+                        CHECK(proxy_port IS NULL OR (proxy_port BETWEEN 1 AND 65535)),
                       row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
                       updated_by TEXT NOT NULL DEFAULT 'system',
                       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""
@@ -203,6 +207,13 @@ def init_db(db_path: str) -> None:
         conn.execute(
             "INSERT OR IGNORE INTO telegram_transport_preferences(singleton_id, mode) VALUES (1, 'direct')"
         )
+        transport_columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(telegram_transport_preferences)").fetchall()
+        }
+        if "proxy_host" not in transport_columns:
+            conn.execute("ALTER TABLE telegram_transport_preferences ADD COLUMN proxy_host TEXT DEFAULT NULL")
+        if "proxy_port" not in transport_columns:
+            conn.execute("ALTER TABLE telegram_transport_preferences ADD COLUMN proxy_port INTEGER DEFAULT NULL")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_bot_configuration
                      (singleton_id INTEGER PRIMARY KEY CHECK(singleton_id = 1),

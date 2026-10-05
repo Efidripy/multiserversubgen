@@ -118,6 +118,8 @@ class TelegramTransportPreference:
     """Non-secret delivery mode selected by a panel administrator."""
 
     mode: str
+    proxy_host: str | None
+    proxy_port: int | None
     row_version: int
     updated_by: str
     updated_at: str
@@ -1268,7 +1270,7 @@ class TelegramRegistry:
         with connect(self._db_path) as conn:
             row = conn.execute(
                 """
-                SELECT mode, row_version, updated_by, updated_at
+                SELECT mode, proxy_host, proxy_port, row_version, updated_by, updated_at
                 FROM telegram_transport_preferences
                 WHERE singleton_id = 1
                 """
@@ -1276,11 +1278,22 @@ class TelegramRegistry:
         if row is None:
             raise TelegramRegistryError("Telegram transport preference is unavailable")
         return TelegramTransportPreference(
-            mode=str(row[0]), row_version=int(row[1]), updated_by=str(row[2]), updated_at=str(row[3])
+            mode=str(row[0]),
+            proxy_host=str(row[1]) if row[1] is not None else None,
+            proxy_port=int(row[2]) if row[2] is not None else None,
+            row_version=int(row[3]),
+            updated_by=str(row[4]),
+            updated_at=str(row[5]),
         )
 
     def set_transport_preference(
-        self, *, mode: str, expected_row_version: int, updated_by: str
+        self,
+        *,
+        mode: str,
+        expected_row_version: int,
+        updated_by: str,
+        proxy_host: str | None = None,
+        proxy_port: int | None = None,
     ) -> TelegramTransportPreference:
         normalized_mode = str(mode or "").strip().lower()
         if normalized_mode not in {"direct", "local_proxy"}:
@@ -1290,15 +1303,35 @@ class TelegramRegistry:
         actor = str(updated_by or "").strip()
         if not actor:
             raise TelegramRegistryError("updated_by is required")
+        normalized_host = str(proxy_host or "").strip() or None
+        try:
+            normalized_port = int(proxy_port) if proxy_port is not None else None
+        except (TypeError, ValueError) as exc:
+            raise TelegramRegistryError("Telegram proxy port is invalid") from exc
+        if normalized_port is not None and not 1 <= normalized_port <= 65535:
+            raise TelegramRegistryError("Telegram proxy port is invalid")
+        if normalized_mode == "local_proxy" and (normalized_host is None or normalized_port is None):
+            raise TelegramRegistryError("Telegram proxy host and port are required")
         with connect(self._db_path) as conn:
             update = conn.execute(
                 """
                 UPDATE telegram_transport_preferences
-                SET mode = ?, row_version = row_version + 1,
+                SET mode = ?,
+                    proxy_host = CASE WHEN ? = 'local_proxy' THEN ? ELSE proxy_host END,
+                    proxy_port = CASE WHEN ? = 'local_proxy' THEN ? ELSE proxy_port END,
+                    row_version = row_version + 1,
                     updated_by = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE singleton_id = 1 AND row_version = ?
                 """,
-                (normalized_mode, actor[:120], expected_row_version),
+                (
+                    normalized_mode,
+                    normalized_mode,
+                    normalized_host,
+                    normalized_mode,
+                    normalized_port,
+                    actor[:120],
+                    expected_row_version,
+                ),
             )
             if update.rowcount != 1:
                 raise VersionConflictError("Telegram transport preference was changed by another administrator")
