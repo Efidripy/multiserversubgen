@@ -175,6 +175,16 @@ activate_runtime_ownership() {
   id -u "$PROJECT_NAME" >/dev/null 2>&1 || fail "runtime service user is missing: $PROJECT_NAME"
   chown -R "$PROJECT_NAME:$PROJECT_NAME" "$PROJECT_DIR"
   find "$PROJECT_DIR" -type d -exec chmod 0755 {} +
+  # The deploy script keeps umask 077 for backups and temporary work. Normalise
+  # only executable release code: main.py, runtime packages and the venv. Do
+  # not relax admin.db or .encryption_key; those are persistent runtime data.
+  find "$PROJECT_DIR" -maxdepth 1 -type f -name '*.py' -exec chmod 0644 {} +
+  local runtime_package
+  for runtime_package in core modules integrations routers services shared; do
+    [[ -d "$PROJECT_DIR/$runtime_package" ]] && \
+      find "$PROJECT_DIR/$runtime_package" -type f -exec chmod 0644 {} +
+  done
+
   # `python -m venv` and pip inherit the deployer's umask. The service user
   # must read the whole non-secret virtualenv after the atomic swap; runtime
   # secrets remain outside the release tree in the root-owned EnvironmentFile.
@@ -182,6 +192,13 @@ activate_runtime_ownership() {
     find "$PROJECT_DIR/venv" -type f -exec chmod 0644 {} +
     find "$PROJECT_DIR/venv/bin" -type f -exec chmod 0755 {} +
   fi
+}
+
+validate_runtime_readability_as_service_user() {
+  runuser -u "$PROJECT_NAME" -- env PROJECT_RUNTIME_DIR="$PROJECT_DIR" \
+    "$PROJECT_DIR/venv/bin/python" -c \
+    'import os; from pathlib import Path; import uvicorn; Path(os.environ["PROJECT_RUNTIME_DIR"], "main.py").read_bytes()' \
+    >/dev/null || fail "runtime code is not readable by the service user"
 }
 
 restore_previous() {
@@ -308,6 +325,7 @@ activate_runtime_ownership
 sed -i "1s|^#!.*$|#!${PROJECT_DIR}/venv/bin/python|" "$PROJECT_DIR/venv/bin/uvicorn"
 [[ -x "$PROJECT_DIR/venv/bin/uvicorn" ]] || fail "deployed uvicorn executable is missing"
 "$PROJECT_DIR/venv/bin/uvicorn" --version >/dev/null
+validate_runtime_readability_as_service_user
 
 install -o root -g root -m 0644 "$STAGED_SERVICE_UNIT" "$SERVICE_UNIT"
 rm -f -- "$STAGED_SERVICE_UNIT"
