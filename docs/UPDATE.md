@@ -20,6 +20,37 @@ ops, deploy, monitoring и systemd файлы. Неполный или прои�
 3. Только frontend
 4. Только nginx-конфиг
 
+## Внешние компоненты на том же сервере
+
+Обычный updater обновляет только Sub-Manager. Он не обновляет вручную
+установленные Grafana, Prometheus, 3x-ui и другие уже существующие пакеты.
+Для legacy-хоста без ownership registry обнаруженные Grafana/Prometheus
+считаются `external`: updater не трогает их APT source, сервис или глобальные
+конфиги.
+
+Перед обновлением можно безопасно вывести отчёт:
+
+```bash
+sudo bash scripts/installer/component-ownership.sh report
+```
+
+Если оператор хочет передать существующие Grafana и Prometheus под управление
+MSSG, это отдельное подтверждаемое действие. Оно меняет только registry, без
+перезапуска и изменения конфигурации:
+
+```bash
+sudo bash scripts/installer/component-ownership.sh adopt grafana prometheus
+```
+
+Перед ручным обновлением компонента, установленного MSSG, снимите с него
+управление MSSG:
+
+```bash
+sudo bash scripts/installer/component-ownership.sh release grafana prometheus
+```
+
+Полные правила и границы: [ADR-0003](./ADR-0003-component-ownership.md).
+
 ## Рекомендация перед обновлением
 
 Сделайте backup перед применением обновления:

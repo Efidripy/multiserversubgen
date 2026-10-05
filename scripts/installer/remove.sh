@@ -8,6 +8,7 @@ source "${SCRIPT_DIR}/lib/locale.sh"
 source "${REPO_ROOT}/scripts/ops/lib/install_log.sh"
 # shellcheck source=lib/runtime_secrets.sh
 source "${SCRIPT_DIR}/lib/runtime_secrets.sh"
+source "${SCRIPT_DIR}/lib/component_ownership.sh"
 LOG_FILE="/opt/.sub_manager_install.log"
 
 REMOVE_MODE="${REMOVE_MODE:-keep-db}"
@@ -99,109 +100,31 @@ backup_databases_if_requested() {
 }
 
 remove_monitoring_artifacts() {
-    rm -f /etc/prometheus/rules/sub-manager-rules.yml
-    rm -f /etc/grafana/provisioning/datasources/sub-manager-prometheus.yml
-    rm -f /etc/grafana/provisioning/dashboards/sub-manager-dashboard.yml
-    rm -f /var/lib/grafana/dashboards/sub-manager-dashboard.json
-    rm -f /var/lib/grafana/dashboards/adguard-overview-dashboard.json
-    rm -rf /var/lib/grafana/dashboards/sub-manager
-    systemctl restart prometheus >/dev/null 2>&1 || true
-    systemctl restart grafana-server >/dev/null 2>&1 || true
+    # No registry means no proof that a host-wide service belongs to MSSG.
+    # Preserve external monitoring intact, including its running service.
+    if mssg_ownership_is_managed prometheus; then
+        rm -f /etc/prometheus/rules/sub-manager-rules.yml
+        systemctl restart prometheus >/dev/null 2>&1 || true
+    fi
+    if mssg_ownership_is_managed grafana; then
+        rm -f /etc/grafana/provisioning/datasources/sub-manager-prometheus.yml
+        rm -f /etc/grafana/provisioning/dashboards/sub-manager-dashboard.yml
+        rm -f /etc/systemd/system/grafana-server.service.d/40-sub-manager.conf
+        rmdir /etc/systemd/system/grafana-server.service.d 2>/dev/null || true
+        rm -rf /var/lib/grafana/dashboards/sub-manager
+        systemctl daemon-reload
+        systemctl restart grafana-server >/dev/null 2>&1 || true
+    fi
 }
 
 hard_cleanup_stack() {
-    local services=(
-        "$PROJECT_NAME"
-        nginx
-        x-ui
-        AdGuardHome
-        prometheus
-        grafana-server
-        loki
-        promtail
-        sub2sing-box
-        fail2ban
-    )
-
-    local units=(
-        "/etc/systemd/system/${PROJECT_NAME}.service"
-        "/etc/systemd/system/x-ui.service"
-        "/etc/systemd/system/AdGuardHome.service"
-        "/etc/systemd/system/loki.service"
-        "/etc/systemd/system/promtail.service"
-        "/etc/systemd/system/sub2sing-box.service"
-    )
-
-    local purge_candidates=(
-        nginx
-        nginx-common
-        nginx-core
-        nginx-full
-        libnginx-mod-stream
-        prometheus
-        prometheus-node-exporter
-        prometheus-node-exporter-collectors
-        grafana
-        grafana-enterprise
-        loki
-        promtail
-        certbot
-        python3-certbot-nginx
-        fail2ban
-    )
-
-    local cleanup_paths=(
-        "$PROJECT_DIR"
-        /usr/local/x-ui
-        /usr/local/bin/x-ui
-        /usr/bin/x-ui
-        /etc/x-ui
-        /opt/AdGuardHome
-        /etc/AdGuardHome
-        /var/lib/AdGuardHome
-        /var/log/AdGuardHome
-        /etc/nginx
-        /var/log/nginx
-        /etc/grafana
-        /etc/prometheus
-        /etc/loki
-        /etc/promtail
-        /etc/letsencrypt
-        /etc/ssl/sub-manager
-        /var/lib/grafana
-        /var/lib/loki
-        /var/lib/promtail
-        /var/log/prometheus
-        /var/log/grafana
-        /var/log/loki
-        /var/log/promtail
-        /var/www/html
-        /etc/fail2ban
-        /usr/local/bin/loki
-        /usr/local/bin/promtail
-        /usr/local/bin/sub2sing-box
-    )
-
-    local service
-    for service in "${services[@]}"; do
-        systemctl stop "$service" >/dev/null 2>&1 || true
-        systemctl disable "$service" >/dev/null 2>&1 || true
-    done
-
-    local unit
-    for unit in "${units[@]}"; do
-        rm -f "$unit"
-    done
-    systemctl daemon-reload
-
-    apt-get purge -y "${purge_candidates[@]}" >/dev/null 2>&1 || true
-    apt-get autoremove -y >/dev/null 2>&1 || true
-    apt-get clean >/dev/null 2>&1 || true
-
-    local path
-    for path in "${cleanup_paths[@]}"; do
-        rm -rf "$path"
-    done
+    # `hard` historically removed arbitrary host-wide packages and paths.
+    # That made a reinstall capable of deleting an independently maintained
+    # Grafana, 3x-ui or nginx. Keep the explicit acknowledgement, but retire
+    # the destructive behaviour: shared components must be removed by their
+    # owner with that component's own runbook.
+    echo "Host-wide package/path purge is disabled by ownership policy."
+    echo "Only Sub-Manager and registry-proven monitoring fragments were removed."
 }
 
 main() {
