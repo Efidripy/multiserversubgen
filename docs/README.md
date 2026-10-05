@@ -14,6 +14,7 @@
 - [API: полный справочник](API_DOCUMENTATION.md)
 - [Подписки](SUBSCRIPTION_GUIDE.md)
 - [Telegram: identity и provisioning authority](ADR-0002-telegram-identity-and-provisioning-authority.md)
+- [Installer/updater: ownership внешних компонентов](ADR-0003-component-ownership.md)
 - [Telegram: безопасность и staging rollout](TELEGRAM_BOT_SECURITY.md)
 - [Telegram: staging runbook](TELEGRAM_STAGING_RUNBOOK.md)
 - [Telegram: опциональный локальный VLESS transport](TELEGRAM_LOCAL_VLESS_TRANSPORT.md)

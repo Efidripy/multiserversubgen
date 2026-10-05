@@ -27,6 +27,10 @@ sudo ./install.sh
 - применяет базовые security-настройки (включая fail2ban, если включено в профиле)
 - опционально настраивает мониторинг (Prometheus/Grafana, AdGuard-интеграция)
 
+Уже существующие Grafana и Prometheus installer считает внешними и не
+обновляет/не перенастраивает их автоматически. Детали и явный adoption-flow:
+[ADR-0003](./ADR-0003-component-ownership.md).
+
 ## XUI / 3x-ui: безопасное владение web и Nginx-конфигурацией
 
 Внутренний XUI-профиль размещает landing-page только в

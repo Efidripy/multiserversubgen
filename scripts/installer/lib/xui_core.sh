@@ -4,6 +4,18 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/locale.sh"
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/artifact_manifest.sh"
 
+xui_apt_install_missing() {
+    local package
+    local -a missing=()
+    for package in "$@"; do
+        if ! sudo dpkg -s "$package" >/dev/null 2>&1; then
+            missing+=("$package")
+        fi
+    done
+    [ "${#missing[@]}" -eq 0 ] || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
+        -o Dpkg::Options::="--force-confold" "${missing[@]}"
+}
+
 xui_arch() {
     case "$(uname -m)" in
         x86_64|x64|amd64) printf 'amd64' ;;
@@ -89,8 +101,7 @@ EOF
 xui_ensure_system_prerequisites() {
     sudo apt-get update -y >/dev/null
     xui_seed_nginx_bootstrap_files
-    if ! sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
-        -o Dpkg::Options::="--force-confold" \
+    if ! xui_apt_install_missing \
         wget \
         curl \
         tar \
@@ -104,8 +115,7 @@ xui_ensure_system_prerequisites() {
         python3-certbot-nginx >/dev/null; then
         sudo DEBIAN_FRONTEND=noninteractive dpkg --force-confold --configure -a >/dev/null 2>&1 || true
         sudo DEBIAN_FRONTEND=noninteractive apt-get install -f -y -o Dpkg::Options::="--force-confold" >/dev/null 2>&1 || true
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q \
-            -o Dpkg::Options::="--force-confold" \
+        xui_apt_install_missing \
             wget \
             curl \
             tar \
@@ -123,9 +133,7 @@ xui_ensure_system_prerequisites() {
 
     if [ ! -f /etc/nginx/nginx.conf ]; then
         xui_seed_nginx_bootstrap_files
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install --reinstall -y -q \
-            -o Dpkg::Options::="--force-confold" \
-            nginx nginx-common libnginx-mod-stream >/dev/null
+        xui_apt_install_missing nginx nginx-common libnginx-mod-stream >/dev/null
     fi
 
     xui_ensure_nginx_base_config
@@ -472,7 +480,7 @@ xui_install_sub2sing_box() {
     archive="${workdir}/${asset_name}"
     asset_url="https://github.com/legiz-ru/sub2sing-box/releases/download/v${version}/${asset_name}"
 
-    sudo apt-get install -y -q tar >/dev/null
+    xui_apt_install_missing tar >/dev/null
     curl -fsSL "$asset_url" -o "$archive"
     artifact_verify_file SUB2SING "$arch" "$archive" || {
         echo "sub2sing-box archive digest verification failed." >&2
