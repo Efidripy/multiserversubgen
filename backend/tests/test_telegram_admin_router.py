@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 
 from fastapi import FastAPI
@@ -67,6 +68,8 @@ def test_transport_routes_keep_direct_default_and_reject_unconfigured_local_mode
         "row_version": 1,
         "configured": False,
         "reachable": False,
+        "proxy_host": None,
+        "proxy_port": None,
         "updated_by": "system",
         "updated_at": current.json()["transport"]["updated_at"],
     }
@@ -75,10 +78,32 @@ def test_transport_routes_keep_direct_default_and_reject_unconfigured_local_mode
         json={"mode": "local_proxy", "expected_row_version": 1},
     )
     assert rejected.status_code == 409
-    assert "not configured" in rejected.json()["detail"]
+    assert "loopback" in rejected.json()["detail"]
 
     viewer = _build_client(tmp_path, username="viewer", role="viewer")
     assert viewer.get("/api/v1/telegram/transport").status_code == 403
+
+
+def test_transport_route_persists_only_a_reachable_loopback_proxy_endpoint(tmp_path):
+    client = _build_client(tmp_path)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(4)
+        port = listener.getsockname()[1]
+        response = client.put(
+            "/api/v1/telegram/transport",
+            json={
+                "mode": "local_proxy",
+                "expected_row_version": 1,
+                "proxy_host": "127.0.0.1",
+                "proxy_port": port,
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["transport"].get("mode") == "local_proxy"
+    assert response.json()["transport"].get("proxy_host") == "127.0.0.1"
+    assert response.json()["transport"].get("proxy_port") == port
 
 
 def test_policy_route_uses_backend_inbound_proof_and_normalizes_defaults(tmp_path):

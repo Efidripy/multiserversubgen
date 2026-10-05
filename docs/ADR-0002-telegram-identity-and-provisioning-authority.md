@@ -18,6 +18,11 @@ node to become the authority for the customer lifecycle.
   four characters; no token is exposed through HTTP, audit or browser storage.
   Polling/outbox resolve it at call time. Changing a webhook bot still requires
   a separately controlled webhook registration for that bot.
+- Bot API transport remains direct by default. An administrator may select
+  `PROXY` only after entering a reachable loopback (`127.0.0.1` or `::1`)
+  HTTP CONNECT endpoint and port. The non-secret endpoint is versioned in the
+  local transport preference, no credentials are accepted through the panel,
+  and selected proxy delivery fails closed instead of falling back to direct.
 - `customers` is the local authority for approved service identity and lifecycle
   intent. Remote 3x-ui records are reconciled projections, not the source of
   access decisions.
