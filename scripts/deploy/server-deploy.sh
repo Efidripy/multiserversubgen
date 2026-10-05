@@ -8,8 +8,12 @@ ROLLBACK_ON_FAIL="${ROLLBACK_ON_FAIL:-1}"
 PROJECT_NAME="${PROJECT_NAME:-sub-manager}"
 PROJECT_DIR="${PROJECT_DIR:-/opt/${PROJECT_NAME}}"
 APP_PORT="${APP_PORT:-666}"
-WEB_PATH="${WEB_PATH:-my-panel}"
-GRAFANA_WEB_PATH="${GRAFANA_WEB_PATH:-grafana}"
+# A caller may deliberately override these for a controlled path migration.
+# In the normal update path they are recovered from the currently effective
+# service unit below.  Falling back to a sample value here would build a
+# frontend whose absolute Vite asset URLs do not match the live nginx route.
+WEB_PATH="${WEB_PATH:-}"
+GRAFANA_WEB_PATH="${GRAFANA_WEB_PATH:-}"
 DEPLOY_REF="${DEPLOY_REF:-HEAD}"
 RUNTIME_SECRETS_FILE="/etc/${PROJECT_NAME}/runtime-secrets.env"
 SERVICE_UNIT="/etc/systemd/system/${PROJECT_NAME}.service"
@@ -56,6 +60,34 @@ validate_persistent_runtime_secrets() {
     || fail "systemd unit does not load persistent runtime secrets"
   grep -Fq 'REQUIRE_PERSISTENT_SECRETS=true' <<< "$unit_definition" \
     || fail "systemd unit does not enforce persistent runtime secrets"
+}
+
+read_effective_service_route() {
+  local variable_name="$1"
+  local unit_definition
+  local value
+
+  unit_definition="$(systemctl cat "$PROJECT_NAME" 2>/dev/null)" \
+    || fail "systemd unit could not be read: $PROJECT_NAME"
+  value="$(printf '%s\n' "$unit_definition" \
+    | sed -nE "s/^[[:space:]]*Environment=\"${variable_name}=([^\"]+)\"[[:space:]]*$/\1/p" \
+    | tail -n 1)"
+  [[ "$value" =~ ^[A-Za-z0-9]{1,128}$ ]] \
+    || fail "effective ${variable_name} is missing or invalid; pass it explicitly for a controlled path migration"
+  printf '%s\n' "$value"
+}
+
+resolve_frontend_routes() {
+  if [[ -z "$WEB_PATH" ]]; then
+    WEB_PATH="$(read_effective_service_route WEB_PATH)"
+  fi
+  if [[ -z "$GRAFANA_WEB_PATH" ]]; then
+    GRAFANA_WEB_PATH="$(read_effective_service_route GRAFANA_WEB_PATH)"
+  fi
+  [[ "$WEB_PATH" =~ ^[A-Za-z0-9]{1,128}$ ]] \
+    || fail "WEB_PATH must contain only letters and digits"
+  [[ "$GRAFANA_WEB_PATH" =~ ^[A-Za-z0-9]{1,128}$ ]] \
+    || fail "GRAFANA_WEB_PATH must contain only letters and digits"
 }
 
 read_runtime_telegram_value() {
@@ -105,6 +137,7 @@ wait_for_telegram_public_health() {
 }
 
 validate_persistent_runtime_secrets
+resolve_frontend_routes
 REPO_DIR="$(realpath -e -- "$REPO_DIR")"
 git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null || fail "REPO_DIR is not a Git worktree"
 DEPLOY_COMMIT="$(git -C "$REPO_DIR" rev-parse --verify "${DEPLOY_REF}^{commit}")" || fail "DEPLOY_REF is not a commit"

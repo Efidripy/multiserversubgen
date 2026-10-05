@@ -65,6 +65,12 @@ tail -f /var/log/nginx/error.log
 
 Для subpath-деплоя frontend должен быть собран с корректным base:
 
+`scripts/deploy/server-deploy.sh` по умолчанию читает действующие `WEB_PATH` и
+`GRAFANA_WEB_PATH` из systemd unit до сборки. Поэтому обычный update сохраняет
+установленные приватные пути; передавать эти переменные вручную допустимо только
+для контролируемой миграции путей. Если effective unit не содержит корректный
+путь, deploy прекращается до замены release.
+
 ```bash
 cd frontend
 VITE_BASE="/<web-path>/" npm run build

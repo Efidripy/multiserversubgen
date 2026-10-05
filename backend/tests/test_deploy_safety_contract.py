@@ -28,6 +28,13 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'grep -Fq "EnvironmentFile=${RUNTIME_SECRETS_FILE}" <<< "$unit_definition"' in script
     assert "grep -Fq 'REQUIRE_PERSISTENT_SECRETS=true' <<< \"$unit_definition\"" in script
     assert 'REQUIRE_PERSISTENT_SECRETS=true' in script
+    assert 'WEB_PATH="${WEB_PATH:-}"' in script
+    assert 'GRAFANA_WEB_PATH="${GRAFANA_WEB_PATH:-}"' in script
+    assert 'read_effective_service_route()' in script
+    assert 'resolve_frontend_routes()' in script
+    assert 'WEB_PATH="$(read_effective_service_route WEB_PATH)"' in script
+    assert 'GRAFANA_WEB_PATH="$(read_effective_service_route GRAFANA_WEB_PATH)"' in script
+    assert 'validate_persistent_runtime_secrets\nresolve_frontend_routes\nREPO_DIR="$(realpath -e -- "$REPO_DIR")"' in script
     assert 'SERVICE_TEMPLATE="$REPO_DIR/systemd/${PROJECT_NAME}.service"' in script
     assert 'render_runtime_service_unit "$SERVICE_TEMPLATE" "$SERVICE_UNIT" "$STAGED_SERVICE_UNIT"' in script
     assert 'systemd-analyze verify "$STAGED_SERVICE_UNIT"' in script
