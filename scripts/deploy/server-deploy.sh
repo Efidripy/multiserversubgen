@@ -20,6 +20,8 @@ SERVICE_UNIT_WAS_PRESENT=0
 PROMTAIL_CONFIG="/etc/promtail/config.yml"
 PROMTAIL_CONFIG_ROLLBACK=""
 PROMTAIL_CONFIG_WAS_PRESENT=0
+RUNTIME_SERVICE_USER=""
+RUNTIME_SERVICE_GROUP=""
 
 fail() {
   printf 'Deploy refused: %s\n' "$*" >&2
@@ -172,8 +174,9 @@ PYTHON
 
 activate_runtime_ownership() {
   [[ -d "$PROJECT_DIR" ]] || fail "runtime project directory is missing: $PROJECT_DIR"
-  id -u "$PROJECT_NAME" >/dev/null 2>&1 || fail "runtime service user is missing: $PROJECT_NAME"
-  chown -R "$PROJECT_NAME:$PROJECT_NAME" "$PROJECT_DIR"
+  [[ -n "$RUNTIME_SERVICE_USER" && -n "$RUNTIME_SERVICE_GROUP" ]] \
+    || fail "runtime service identity is unresolved"
+  chown -R "$RUNTIME_SERVICE_USER:$RUNTIME_SERVICE_GROUP" "$PROJECT_DIR"
   find "$PROJECT_DIR" -type d -exec chmod 0755 {} +
   # The deploy script keeps umask 077 for backups and temporary work. Normalise
   # only executable release code: main.py, runtime packages and the venv. Do
@@ -195,10 +198,24 @@ activate_runtime_ownership() {
 }
 
 validate_runtime_readability_as_service_user() {
-  runuser -u "$PROJECT_NAME" -- env PROJECT_RUNTIME_DIR="$PROJECT_DIR" \
+  runuser -u "$RUNTIME_SERVICE_USER" -- env PROJECT_RUNTIME_DIR="$PROJECT_DIR" \
     "$PROJECT_DIR/venv/bin/python" -c \
     'import os; from pathlib import Path; import uvicorn; Path(os.environ["PROJECT_RUNTIME_DIR"], "main.py").read_bytes()' \
     >/dev/null || fail "runtime code is not readable by the service user"
+  local write_probe
+  write_probe="$(runuser -u "$RUNTIME_SERVICE_USER" -- mktemp "$PROJECT_DIR/.deploy-write-probe.XXXXXX")" \
+    || fail "runtime directory is not writable by the service user"
+  rm -f -- "$write_probe"
+}
+
+resolve_runtime_service_identity() {
+  RUNTIME_SERVICE_USER="$(systemctl show "$PROJECT_NAME" -p User --value 2>/dev/null || true)"
+  RUNTIME_SERVICE_GROUP="$(systemctl show "$PROJECT_NAME" -p Group --value 2>/dev/null || true)"
+  RUNTIME_SERVICE_USER="${RUNTIME_SERVICE_USER:-$PROJECT_NAME}"
+  RUNTIME_SERVICE_GROUP="${RUNTIME_SERVICE_GROUP:-$(id -gn "$RUNTIME_SERVICE_USER" 2>/dev/null || true)}"
+  [[ -n "$RUNTIME_SERVICE_GROUP" ]] || fail "runtime service group is unresolved"
+  id -u "$RUNTIME_SERVICE_USER" >/dev/null 2>&1 \
+    || fail "runtime service user is missing: $RUNTIME_SERVICE_USER"
 }
 
 restore_previous() {
@@ -270,6 +287,7 @@ reconcile_promtail_after_health() {
 }
 
 mkdir -p -m 0700 -- "$BACKUP_ROOT" "$PROJECT_PARENT"
+resolve_runtime_service_identity
 if [[ -f "$SERVICE_UNIT" ]]; then
   SERVICE_UNIT_ROLLBACK="${BACKUP_ROOT}/${PROJECT_NAME}-service-unit-${STAMP}.bak"
   [[ ! -e "$SERVICE_UNIT_ROLLBACK" ]] || fail "service unit rollback path already exists: $SERVICE_UNIT_ROLLBACK"
