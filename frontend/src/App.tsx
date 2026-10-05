@@ -319,10 +319,11 @@ export const App: React.FC = () => {
   }, [t]);
 
   useEffect(() => {
+    if (!authBootstrapDone) return;
     if (role !== 'admin' && (activeTab === 'backup' || activeTab === 'subscriptions' || activeTab === 'telegram')) {
       setActiveTab('dashboard');
     }
-  }, [activeTab, role]);
+  }, [activeTab, authBootstrapDone, role]);
 
   useEffect(() => {
     if (notificationPanelOpen) {
