@@ -205,6 +205,28 @@ def test_panel_bot_token_is_write_only_encrypted_and_versioned(tmp_path):
     assert cleared.source == "none"
 
 
+def test_clearing_panel_bot_token_restores_environment_token(tmp_path):
+    db_path = str(tmp_path / "bot-token-env.db")
+    init_db(db_path)
+    environment_token = "1234567890:abcdefghijklmnopqrstuvwxABCDE"
+    provider = TelegramBotTokenProvider(
+        db_path=db_path,
+        encrypt=lambda plain: f"encrypted::{plain[::-1]}",
+        decrypt=lambda encrypted: encrypted.removeprefix("encrypted::")[::-1],
+        fallback_token=environment_token,
+    )
+    panel_token = "1234567891:abcdefghijklmnopqrstuvwxABCDE"
+    saved = provider.set_token(token=panel_token, expected_row_version=1, updated_by="admin")
+
+    restored = provider.clear_token(expected_row_version=saved.row_version, updated_by="admin")
+
+    assert restored == provider.status()
+    assert restored.configured is True
+    assert restored.source == "environment"
+    assert restored.token_suffix == environment_token[-4:]
+    assert provider.get_token() == environment_token
+
+
 def test_panel_bot_token_http_contract_is_admin_only_and_never_returns_plaintext(tmp_path):
     db_path = str(tmp_path / "bot-token-http.db")
     init_db(db_path)

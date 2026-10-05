@@ -77,6 +77,24 @@ const primaryButtonClass = 'inline-flex h-9 items-center justify-center gap-2 ro
 type TelegramAdminTab = 'users' | 'operations' | 'settings';
 type TelegramUsersSection = 'requests' | 'customers' | 'support' | 'blocked';
 
+const TELEGRAM_NAVIGATION_CACHE_KEY = 'sub_manager_telegram_admin_navigation_v1';
+const telegramTabs: TelegramAdminTab[] = ['users', 'operations', 'settings'];
+const telegramUsersSections: TelegramUsersSection[] = ['requests', 'customers', 'support', 'blocked'];
+
+const readTelegramNavigation = (): { activeTab: TelegramAdminTab; activeUsersSection: TelegramUsersSection } => {
+  try {
+    const raw = localStorage.getItem(TELEGRAM_NAVIGATION_CACHE_KEY);
+    if (!raw) return { activeTab: 'users', activeUsersSection: 'requests' };
+    const parsed = JSON.parse(raw) as Partial<{ activeTab: TelegramAdminTab; activeUsersSection: TelegramUsersSection }>;
+    return {
+      activeTab: telegramTabs.includes(parsed.activeTab as TelegramAdminTab) ? parsed.activeTab as TelegramAdminTab : 'users',
+      activeUsersSection: telegramUsersSections.includes(parsed.activeUsersSection as TelegramUsersSection) ? parsed.activeUsersSection as TelegramUsersSection : 'requests',
+    };
+  } catch {
+    return { activeTab: 'users', activeUsersSection: 'requests' };
+  }
+};
+
 const formatDate = (value: string | null) => value ? new Date(value.replace(' ', 'T')).toLocaleString() : '—';
 const formatBytes = (value: number) => {
   if (!Number.isFinite(value) || value <= 0) return '0 Б';
@@ -145,11 +163,20 @@ export const TelegramAdmin: React.FC = () => {
   const [bulkPreview, setBulkPreview] = useState<BulkLifecyclePreview | null>(null);
   const [scheduleAt, setScheduleAt] = useState('');
   const [approval, setApproval] = useState<{ request: TelegramRequest; mode: 'new' | 'existing'; email: string; candidate?: ExistingDiscoveryCandidate } | null>(null);
-  const [activeTab, setActiveTab] = useState<TelegramAdminTab>('users');
-  const [activeUsersSection, setActiveUsersSection] = useState<TelegramUsersSection>('requests');
+  const [activeTab, setActiveTab] = useState<TelegramAdminTab>(() => readTelegramNavigation().activeTab);
+  const [activeUsersSection, setActiveUsersSection] = useState<TelegramUsersSection>(() => readTelegramNavigation().activeUsersSection);
   const [selectedRequestId, setSelectedRequestId] = useState<number | null>(null);
   const [customerStatusFilter, setCustomerStatusFilter] = useState('');
   const [customerPage, setCustomerPage] = useState(1);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(TELEGRAM_NAVIGATION_CACHE_KEY, JSON.stringify({ activeTab, activeUsersSection }));
+    } catch {
+      // Navigation persistence is optional when browser storage is unavailable.
+    }
+  }, [activeTab, activeUsersSection]);
+
   const selectedCustomer = useMemo(
     () => customers.find((item) => item.customer_id === selectedCustomerId) ?? null,
     [customers, selectedCustomerId],
@@ -785,7 +812,7 @@ export const TelegramAdmin: React.FC = () => {
             aria-label={t('telegram.botTokenInputLabel')}
           />
           <button type="button" className={primaryButtonClass} disabled={mutating || !botConfiguration || !botToken.trim()} onClick={() => void saveBotToken()}>{t('common.save')}</button>
-          <button type="button" className={buttonClass} disabled={mutating || botConfiguration?.source !== 'panel'} onClick={() => void clearBotToken()}>{t('telegram.botTokenUseEnvironment')}</button>
+          {botConfiguration?.source === 'panel' && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void clearBotToken()}>{t('telegram.botTokenUseEnvironment')}</button>}
         </div>
         <p className="mt-2 text-[11px] text-slate-500">{botConfiguration?.source === 'panel' ? t('telegram.botTokenPanelSource') : t('telegram.botTokenEnvironmentSource')}</p>
       </section>}
@@ -796,9 +823,9 @@ export const TelegramAdmin: React.FC = () => {
             <h3 className="text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.transportTitle')}</h3>
             <p className="mt-1 text-xs font-light text-slate-500">{t('telegram.transportHint')}</p>
           </div>
-          <span className={`rounded border px-2 py-1 font-mono text-[10px] ${transport?.reachable ? 'border-emerald-400/25 text-emerald-200' : 'border-slate-500/25 text-slate-500'}`}>
-            {transport?.reachable ? t('telegram.transportReady') : t('telegram.transportUnavailable')}
-          </span>
+          {transport?.mode === 'local_proxy' && <span className={`rounded border px-2 py-1 font-mono text-[10px] ${transport.reachable ? 'border-emerald-400/25 text-emerald-200' : 'border-rose-400/30 bg-rose-400/[0.07] text-rose-200'}`}>
+            {transport.reachable ? t('telegram.transportReady') : t('telegram.transportUnavailable')}
+          </span>}
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
           <button type="button" className={transportModeDraft === 'direct' ? primaryButtonClass : buttonClass} disabled={mutating || !transport} onClick={() => setTransportModeDraft('direct')}>
