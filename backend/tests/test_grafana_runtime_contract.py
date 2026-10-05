@@ -8,14 +8,17 @@ def _read(relative_path: str) -> str:
     return (REPO / relative_path).read_text(encoding="utf-8")
 
 
-def test_install_and_update_use_a_persistent_grafana_pid_directory():
+def test_install_and_update_keep_mssg_grafana_settings_in_a_dedicated_drop_in():
     for relative_path in ("scripts/installer/install.sh", "scripts/installer/update.sh"):
         script = _read(relative_path)
 
         assert "configure_grafana_pid_directory()" in script
         assert "install -d -o grafana -g grafana -m 0750 /var/lib/grafana" in script
-        assert "PID_FILE_DIR=/var/lib/grafana" in script
-        assert "rm -f /etc/tmpfiles.d/grafana-runtime.conf" in script
+        assert "/etc/systemd/system/grafana-server.service.d/40-sub-manager.conf" in script
+        assert 'Environment="PID_FILE_DIR=/var/lib/grafana"' in script
+        assert 'Environment="GF_SERVER_ROOT_URL=${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${GRAFANA_WEB_PATH}/"' in script
+        assert "cfg.read('/etc/grafana/grafana.ini')" not in script
+        assert "with open('/etc/grafana/grafana.ini', 'w')" not in script
         assert "configure_grafana_pid_directory || return 1" in script
         assert "wait_for_grafana_http()" in script
 
@@ -35,7 +38,8 @@ def test_sub_manager_dashboard_provider_isolated_from_other_grafana_dashboards()
         assert "path: /var/lib/grafana/dashboards/sub-manager" in script
         assert "install -d -o grafana -g grafana -m 0750 /var/lib/grafana/dashboards/sub-manager" in script
         assert "/var/lib/grafana/dashboards/sub-manager/sub-manager-dashboard.json" in script
-        assert "rm -f /var/lib/grafana/dashboards/sub-manager-dashboard.json /var/lib/grafana/dashboards/adguard-overview-dashboard.json" in script
+        assert "chown -R grafana:grafana /var/lib/grafana/dashboards/sub-manager" in script
+        assert "chown -R grafana:grafana /var/lib/grafana/dashboards\n" not in script
 
 
 def test_smoke_checks_the_grafana_unit_and_both_routing_hops_when_enabled():

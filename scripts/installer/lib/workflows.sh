@@ -1389,6 +1389,11 @@ run_xui_preset() {
     report_capture_xui_runtime
 
     if [ "$profile" = "minimal" ]; then
+        if [ "$xui_existing" = "true" ]; then
+            installer_message "3x-ui Preserved" "An existing 3x-ui is externally maintained until an explicit dedicated upgrade workflow is available. Minimal preset will not reinstall it."
+            report_add_note "3x-ui preserved: minimal preset refuses to replace an existing panel."
+            return 1
+        fi
         run_internal_xui_install || return $?
         report_prepare_xui_preset "$profile"
         report_capture_xui_runtime
@@ -1397,17 +1402,8 @@ run_xui_preset() {
     fi
 
     if [ "$xui_existing" = "true" ]; then
-        local reinstall_choice
-        reinstall_choice="$(installer_prompt_yes_no "3x-ui Detected" "3x-ui already exists. Reinstall it before Sub-Manager?" "n")"
-        case "$reinstall_choice" in
-            __QUIT__|__BACK__) return 0 ;;
-            y)
-                run_internal_xui_install || return $?
-                ;;
-            n)
-                report_add_note "3x-ui reuse mode: existing panel password is not recoverable from x-ui.db; report will include password only if generated in this run."
-                ;;
-        esac
+        installer_message "3x-ui Preserved" "Existing 3x-ui is not reinstalled or upgraded by the MSSG installer. Continue in reuse mode; upgrade it only through its dedicated maintenance flow."
+        report_add_note "3x-ui reuse mode: installer preserved existing panel; its password is not recoverable from x-ui.db."
     else
         local install_choice
         install_choice="$(installer_prompt_yes_no "Install 3x-ui" "Run the 3x-ui compatibility installer before Sub-Manager?" "y")"

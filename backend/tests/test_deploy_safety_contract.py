@@ -223,6 +223,8 @@ def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_
     assert '"$leaf/backend/main.py"' in script
     assert '"$leaf/backend/requirements.txt"' in script
     assert '"$leaf/scripts/installer/update.sh"' in script
+    assert '"$leaf/scripts/installer/component-ownership.sh"' in script
+    assert '"$leaf/scripts/installer/lib/component_ownership.sh"' in script
     assert '"$leaf/scripts/installer/lib/entrypoint_layout.sh"' in script
     assert '"$leaf/scripts/installer/lib/source_layout.sh"' in script
     assert '"$leaf/scripts/ops/lib/install_log.sh"' in script

@@ -16,6 +16,7 @@ source "${MSSG_OPS_DIR}/lib/install_log.sh"
 source "${INSTALLER_DIR}/lib/runtime_secrets.sh"
 source "${INSTALLER_DIR}/lib/config_activation.sh"
 source "${INSTALLER_DIR}/lib/artifact_manifest.sh"
+source "${INSTALLER_DIR}/lib/component_ownership.sh"
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
@@ -51,6 +52,19 @@ apt_install() {
     apt_run_with_retry install -y "$@"
 }
 
+# A reinstall must not silently upgrade packages that already belong to the
+# host. Install only missing prerequisites; component upgrades have their own
+# explicit ownership-aware flows.
+apt_install_missing() {
+    local package
+    local -a missing=()
+    for package in "$@"; do
+        if ! dpkg -s "$package" >/dev/null 2>&1; then
+            missing+=("$package")
+        fi
+    done
+    [ "${#missing[@]}" -eq 0 ] || apt_install "${missing[@]}"
+}
 apt_fix_broken() {
     DEBIAN_FRONTEND=noninteractive apt-get install -f -y "${APT_DPKG_OPTS[@]}"
 }
@@ -149,7 +163,7 @@ install_loki_promtail_with_fallback_binaries() {
     local loki_url="https://github.com/grafana/loki/releases/download/v${version}/loki-linux-amd64.zip"
     local promtail_url="https://github.com/grafana/loki/releases/download/v${version}/promtail-linux-amd64.zip"
 
-    apt_install unzip >/dev/null 2>&1 || { rm -rf "$tmp_dir"; return 1; }
+    apt_install_missing unzip >/dev/null 2>&1 || { rm -rf "$tmp_dir"; return 1; }
     if ! curl -fL --retry 3 --retry-all-errors -A "Mozilla/5.0" "$loki_url" -o "$loki_zip"; then
         rm -rf "$tmp_dir"
         return 1
@@ -226,7 +240,7 @@ install_loki_promtail_stack() {
         return 0
     fi
 
-    if apt-cache show promtail >/dev/null 2>&1 && apt_install loki promtail >/dev/null 2>&1; then
+    if apt-cache show promtail >/dev/null 2>&1 && apt_install_missing loki promtail >/dev/null 2>&1; then
         return 0
     fi
 
@@ -236,7 +250,7 @@ install_loki_promtail_stack() {
 ensure_grafana_repo() {
     if ! apt-cache show grafana >/dev/null 2>&1; then
         echo "Grafana package not found in current APT sources. Adding official Grafana repo..."
-        apt_install ca-certificates gnupg apt-transport-https curl || return 1
+        apt_install_missing ca-certificates gnupg apt-transport-https curl || return 1
         install -d -m 0755 /etc/apt/keyrings
         local key_fetched="false"
         local tmp_key_file
@@ -946,7 +960,7 @@ install_adguard_home_binary() {
             ;;
     esac
 
-    apt_install curl tar wget >/dev/null 2>&1 || true
+    apt_install_missing curl tar wget >/dev/null 2>&1 || true
 
     local tmp_dir
     local archive_path
@@ -1044,7 +1058,7 @@ EOF
 
     # Ensure bcrypt is available so we can enforce generated credentials in YAML.
     if ! python3 -c 'import bcrypt' >/dev/null 2>&1; then
-        apt_install python3-bcrypt >/dev/null 2>&1 || true
+        apt_install_missing python3-bcrypt >/dev/null 2>&1 || true
     fi
     if ! python3 -c 'import bcrypt' >/dev/null 2>&1; then
         echo "❌ Не удалось загрузить модуль bcrypt (python3-bcrypt)."
@@ -1104,24 +1118,27 @@ configure_grafana_pid_directory() {
         return 1
     fi
 
-    # Some packaged systemd units remove /run/grafana during a restart but do
-    # not recreate it before Grafana starts. Keep the PID in Grafana's own
-    # persistent, service-owned data directory instead of relying on that
-    # broken RuntimeDirectory lifecycle.
+    # Keep all Grafana settings owned by MSSG in an isolated systemd drop-in.
+    # Do not rewrite /etc/grafana/grafana.ini: it may contain an operator's
+    # own settings and some Grafana upgrades preserve it verbatim.
     install -d -o grafana -g grafana -m 0750 /var/lib/grafana
-    local defaults_file="/etc/default/grafana-server"
-    if [[ ! -f "$defaults_file" ]]; then
-        echo "❌ Grafana defaults file is unavailable: $defaults_file"
-        return 1
-    fi
-    if grep -q '^PID_FILE_DIR=' "$defaults_file"; then
-        sed -i 's|^PID_FILE_DIR=.*|PID_FILE_DIR=/var/lib/grafana|' "$defaults_file"
-    else
-        printf '\nPID_FILE_DIR=/var/lib/grafana\n' >> "$defaults_file"
-    fi
-    # This was created by older Multi-Server Manager releases. It is no
-    # longer needed once the PID directory is outside /run.
-    rm -f /etc/tmpfiles.d/grafana-runtime.conf
+    install -d -m 0755 /etc/systemd/system/grafana-server.service.d
+    cat > /etc/systemd/system/grafana-server.service.d/40-sub-manager.conf <<EOF
+# Managed by Multi-Server Manager. Safe to remove when MSSG monitoring is removed.
+[Service]
+Environment="PID_FILE_DIR=/var/lib/grafana"
+Environment="GF_SERVER_PROTOCOL=http"
+Environment="GF_SERVER_DOMAIN=${PUBLIC_DOMAIN}"
+Environment="GF_SERVER_ROOT_URL=${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${GRAFANA_WEB_PATH}/"
+Environment="GF_SERVER_SERVE_FROM_SUB_PATH=true"
+Environment="GF_SERVER_HTTP_ADDR=127.0.0.1"
+Environment="GF_SERVER_HTTP_PORT=${GRAFANA_HTTP_PORT}"
+Environment="GF_SECURITY_ALLOW_EMBEDDING=true"
+Environment="GF_SECURITY_COOKIE_SAMESITE=lax"
+Environment="GF_AUTH_ANONYMOUS_ENABLED=false"
+Environment="GF_USERS_ALLOW_SIGN_UP=false"
+Environment="GF_LOG_LEVEL=warn"
+EOF
 }
 
 wait_for_grafana_http() {
@@ -1145,20 +1162,31 @@ configure_monitoring_stack() {
         return 0
     fi
 
-    echo "Настройка Prometheus + Grafana..."
-    if ! ensure_grafana_repo; then
-        echo "❌ Репозиторий Grafana недоступен; неподписанные fallback-пакеты запрещены."
-        return 1
+    if ! mssg_ownership_allow_monitoring_mutation; then
+        MONITORING_ENABLED="false"
+        echo "⚠️ Monitoring skipped. The compatibility report is available via scripts/installer/component-ownership.sh report."
+        return 0
     fi
 
-    apt_install prometheus >/dev/null 2>&1 || {
-        echo "❌ Не удалось установить prometheus."
-        return 1
-    }
+    echo "Настройка Prometheus + Grafana..."
+    if ! mssg_ownership_component_present prometheus; then
+        apt_install_missing prometheus >/dev/null 2>&1 || {
+            echo "❌ Не удалось установить prometheus."
+            return 1
+        }
+        mssg_ownership_claim_managed prometheus || return 1
+    fi
 
-    if ! apt_install grafana >/dev/null 2>&1; then
-        echo "❌ Не удалось установить Grafana из подписанного APT-репозитория."
-        return 1
+    if ! mssg_ownership_component_present grafana; then
+        if ! ensure_grafana_repo; then
+            echo "❌ Репозиторий Grafana недоступен; неподписанные fallback-пакеты запрещены."
+            return 1
+        fi
+        if ! apt_install_missing grafana >/dev/null 2>&1; then
+            echo "❌ Не удалось установить Grafana из подписанного APT-репозитория."
+            return 1
+        fi
+        mssg_ownership_claim_managed grafana || return 1
     fi
 
     local adguard_scrape_block=""
@@ -1220,7 +1248,6 @@ EOF
 
     mkdir -p /etc/grafana/provisioning/datasources
     mkdir -p /etc/grafana/provisioning/dashboards
-    mkdir -p /var/lib/grafana/dashboards
 
     cat > /etc/grafana/provisioning/datasources/sub-manager-prometheus.yml <<'EOF'
 apiVersion: 1
@@ -1301,37 +1328,9 @@ EOF
     else
         rm -f /var/lib/grafana/dashboards/sub-manager/adguard-overview-dashboard.json
     fi
-    rm -f /var/lib/grafana/dashboards/sub-manager-dashboard.json /var/lib/grafana/dashboards/adguard-overview-dashboard.json
-    chown -R grafana:grafana /var/lib/grafana/dashboards
-
-    python3 <<PYTHON
-import configparser
-cfg = configparser.RawConfigParser()
-cfg.read('/etc/grafana/grafana.ini')
-if 'server' not in cfg:
-    cfg['server'] = {}
-cfg['server']['protocol'] = 'http'
-cfg['server']['domain'] = '${PUBLIC_DOMAIN}'
-cfg['server']['root_url'] = '${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${GRAFANA_WEB_PATH}/'
-cfg['server']['serve_from_sub_path'] = 'true'
-cfg['server']['http_addr'] = '127.0.0.1'
-cfg['server']['http_port'] = '${GRAFANA_HTTP_PORT}'
-if 'security' not in cfg:
-    cfg['security'] = {}
-cfg['security']['allow_embedding'] = 'true'
-cfg['security']['cookie_samesite'] = 'lax'
-if 'auth.anonymous' not in cfg:
-    cfg['auth.anonymous'] = {}
-cfg['auth.anonymous']['enabled'] = 'false'
-if 'users' not in cfg:
-    cfg['users'] = {}
-cfg['users']['allow_sign_up'] = 'false'
-if 'log' not in cfg:
-    cfg['log'] = {}
-cfg['log']['level'] = 'warn'
-with open('/etc/grafana/grafana.ini', 'w') as f:
-    cfg.write(f)
-PYTHON
+    # Only our namespace is owned by MSSG.  Do not touch arbitrary dashboards
+    # stored beside it by an administrator or another application.
+    chown -R grafana:grafana /var/lib/grafana/dashboards/sub-manager
 
     configure_grafana_pid_directory || return 1
     systemctl daemon-reload
@@ -1344,7 +1343,21 @@ PYTHON
     fi
 
     echo "✓ Grafana upstream ready on 127.0.0.1:${GRAFANA_HTTP_PORT}"
+    # Persist the post-reconcile hashes only after services accepted the owned
+    # configuration. A failed reconcile must not claim a clean state.
+    mssg_ownership_claim_managed prometheus || return 1
+    mssg_ownership_claim_managed grafana || return 1
     echo "✓ Prometheus и Grafana настроены."
+}
+
+prepare_monitoring_ownership() {
+    [ "${MONITORING_ENABLED:-true}" = "true" ] || return 0
+    if ! mssg_ownership_allow_monitoring_mutation; then
+        MONITORING_ENABLED="false"
+        echo "⚠️ Monitoring is external or unknown and will remain untouched."
+        echo "   Inspect: scripts/installer/component-ownership.sh report"
+        echo "   Explicit adoption: scripts/installer/component-ownership.sh adopt grafana prometheus"
+    fi
 }
 
 generate_nginx_snippet() {
@@ -1818,7 +1831,7 @@ configure_ufw_firewall() {
     ssh_port_safe="$(normalize_tcp_port "${SSH_PORT:-22}" "22")"
     SSH_PORT="$ssh_port_safe"
 
-    apt_install ufw >/dev/null 2>&1 || true
+    apt_install_missing ufw >/dev/null 2>&1 || true
     if ! command -v ufw >/dev/null 2>&1; then
         echo "⚠️ ufw не найден, пропускаем настройку firewall."
         return 0
@@ -1925,37 +1938,25 @@ uninstall_nuke() {
     rm -f "/etc/fail2ban/filter.d/multi-panels-auth.conf"
     systemctl restart fail2ban >/dev/null 2>&1 || true
 
-    rm -f /etc/prometheus/rules/sub-manager-rules.yml
-    rm -f /etc/grafana/provisioning/datasources/sub-manager-prometheus.yml
-    rm -f /etc/grafana/provisioning/dashboards/sub-manager-dashboard.yml
-    rm -f /var/lib/grafana/dashboards/sub-manager-dashboard.json
-    rm -f /var/lib/grafana/dashboards/adguard-overview-dashboard.json
-    rm -rf /var/lib/grafana/dashboards/sub-manager
-    systemctl restart prometheus >/dev/null 2>&1 || true
-    systemctl restart grafana-server >/dev/null 2>&1 || true
+    if mssg_ownership_is_managed prometheus; then
+        rm -f /etc/prometheus/rules/sub-manager-rules.yml
+        systemctl restart prometheus >/dev/null 2>&1 || true
+    fi
+    if mssg_ownership_is_managed grafana; then
+        rm -f /etc/grafana/provisioning/datasources/sub-manager-prometheus.yml
+        rm -f /etc/grafana/provisioning/dashboards/sub-manager-dashboard.yml
+        rm -f /etc/systemd/system/grafana-server.service.d/40-sub-manager.conf
+        rmdir /etc/systemd/system/grafana-server.service.d 2>/dev/null || true
+        rm -rf /var/lib/grafana/dashboards/sub-manager
+        systemctl daemon-reload
+        systemctl restart grafana-server >/dev/null 2>&1 || true
+    fi
 
     rm -rf "$project_dir"
     rm -f "$LOG_FILE"
 
-    local purge_candidates=()
-    if [ "${PREEXISTING_PROMETHEUS_INSTALLED:-false}" != "true" ]; then purge_candidates+=("prometheus"); fi
-    if [ "${PREEXISTING_GRAFANA_INSTALLED:-false}" != "true" ]; then purge_candidates+=("grafana"); fi
-    if [ "${PREEXISTING_LOKI_INSTALLED:-false}" != "true" ]; then purge_candidates+=("loki"); fi
-    if [ "${PREEXISTING_PROMTAIL_INSTALLED:-false}" != "true" ]; then purge_candidates+=("promtail"); fi
-
-    if [ "${#purge_candidates[@]}" -eq 0 ]; then
-        echo "Сторонние пакеты мониторинга были установлены до нас. apt purge пропущен."
-        echo "✅ Полная очистка завершена."
-        return 0
-    fi
-
-    echo "Кандидаты для apt purge (только то, что не было предустановлено): ${purge_candidates[*]}"
-    read -r -p "Пробовать apt purge этих пакетов? (y/n, default: n): " purge_input
-    purge_input=${purge_input:-n}
-    if [[ "$purge_input" =~ ^[yYдД]$ ]]; then
-        apt-get remove -y --purge "${purge_candidates[@]}" >/dev/null 2>&1 || true
-        apt-get autoremove -y >/dev/null 2>&1 || true
-    fi
+    echo "Host-wide package purge is disabled by ownership policy."
+    echo "Grafana, 3x-ui, nginx and other shared components are preserved."
 
     echo "✅ Полная очистка завершена."
 }
@@ -2371,6 +2372,7 @@ PROJECT_DIR="/opt/$PROJECT_NAME"
 
 # Snapshot what was installed before this installer touched the system.
 detect_preexisting_stack
+prepare_monitoring_ownership
 
 if [[ "$INSTALL_MODE_INPUT" =~ ^[aAфФ]$ ]]; then
     read -p "Использовать proxy_pass для API в Nginx? (y/n, по умолчанию y): " USE_PROXY
@@ -2380,7 +2382,7 @@ fi
 echo "Установка системных пакетов и Python/Node.js..."
 resource_guard_require_free_mb "${INSTALL_MIN_FREE_MB:-700}" "before system package install" "/" || exit 1
 PYTHON_VENV_PACKAGE="python$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')-venv"
-if ! apt_update || ! apt_install \
+if ! apt_update || ! apt_install_missing \
     python3-pip \
     python3-venv \
     "$PYTHON_VENV_PACKAGE" \
@@ -2411,15 +2413,8 @@ write_install_log
 
 cp "$SELECTED_CFG" "${SELECTED_CFG}.bak"
 
-if [ "$MONITORING_ENABLED" = "true" ]; then
-    if ! apt_install prometheus; then
-        echo "⚠️ Не удалось установить prometheus. Продолжаем без мониторинга."
-        MONITORING_ENABLED="false"
-    fi
-fi
-
 echo "Установка Node.js из подписанного APT-репозитория дистрибутива..."
-apt_install nodejs npm || { echo "❌ Не удалось установить Node.js. Прерывание."; exit 1; }
+apt_install_missing nodejs npm || { echo "❌ Не удалось установить Node.js. Прерывание."; exit 1; }
 echo "  → Node.js $(node --version), npm $(npm --version)"
 
 mkdir -p "$PROJECT_DIR"
