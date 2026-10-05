@@ -71,7 +71,7 @@
     "botTokenNotConfigured": "not configured",
     "botTokenSaved": "Bot API token saved",
     "botTokenSaveFailed": "Could not save Bot API token",
-    "botTokenUseEnvironment": "Use ENV",
+    "botTokenUseEnvironment": "Reset to ENV",
     "botTokenClearConfirm": "Remove the panel token and return to the environment value?",
     "botTokenCleared": "Panel token removed; the environment value is used when configured.",
     "botTokenPanelSource": "Source: panel. Only the final 4 characters are shown.",

@@ -71,7 +71,7 @@
     "botTokenNotConfigured": "не настроен",
     "botTokenSaved": "Bot API token сохранён",
     "botTokenSaveFailed": "Не удалось сохранить Bot API token",
-    "botTokenUseEnvironment": "Вернуть ENV",
+    "botTokenUseEnvironment": "Вернуть к ENV",
     "botTokenClearConfirm": "Удалить панельный token и вернуться к значению из окружения?",
     "botTokenCleared": "Панельный token удалён; используется значение из окружения, если оно задано.",
     "botTokenPanelSource": "Источник: панель. Показаны только последние 4 символа.",
