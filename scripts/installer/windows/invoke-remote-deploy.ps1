@@ -97,6 +97,8 @@ function New-Archive {
         "$leaf/frontend/package.json",
         "$leaf/scripts/installer/install.sh",
         "$leaf/scripts/installer/update.sh",
+        "$leaf/scripts/installer/component-ownership.sh",
+        "$leaf/scripts/installer/lib/component_ownership.sh",
         "$leaf/scripts/installer/lib/entrypoint_layout.sh",
         "$leaf/scripts/installer/lib/source_layout.sh",
         "$leaf/scripts/ops/lib/install_log.sh",
