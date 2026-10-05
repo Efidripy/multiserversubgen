@@ -115,6 +115,9 @@ export const TelegramAdmin: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [transport, setTransport] = useState<TelegramTransportStatus | null>(null);
+  const [transportModeDraft, setTransportModeDraft] = useState<TelegramTransportStatus['mode']>('direct');
+  const [proxyHost, setProxyHost] = useState('127.0.0.1');
+  const [proxyPort, setProxyPort] = useState('');
   const [botConfiguration, setBotConfiguration] = useState<TelegramBotConfigurationStatus | null>(null);
   const [botToken, setBotToken] = useState('');
   const [jobs, setJobs] = useState<ProvisioningJob[]>([]);
@@ -230,6 +233,9 @@ export const TelegramAdmin: React.FC = () => {
       setCustomers(nextCustomers);
       setBlocked(nextBlocked);
       setTransport(nextTransport);
+      setTransportModeDraft(nextTransport.mode);
+      setProxyHost(nextTransport.proxy_host ?? '127.0.0.1');
+      setProxyPort(nextTransport.proxy_port ? String(nextTransport.proxy_port) : '');
       setBotConfiguration(nextBotConfiguration);
       setJobs(nextJobsPage.items);
       setJobsTotal(nextJobsPage.total);
@@ -584,12 +590,24 @@ export const TelegramAdmin: React.FC = () => {
     }
   };
 
-  const selectTransport = async (mode: TelegramTransportStatus['mode']) => {
-    if (!transport || transport.mode === mode) return;
+  const saveTransport = async () => {
+    if (!transport) return;
+    const parsedPort = Number(proxyPort);
+    if (transportModeDraft === 'local_proxy' && (!/^\d{1,5}$/.test(proxyPort) || parsedPort < 1 || parsedPort > 65535)) {
+      toast(t('telegram.transportProxyPortInvalid'), 'error');
+      return;
+    }
     setMutating(true);
     try {
-      const nextTransport = await setTelegramTransport(transport, mode);
+      const nextTransport = await setTelegramTransport(
+        transport,
+        transportModeDraft,
+        transportModeDraft === 'local_proxy' ? { host: proxyHost, port: parsedPort } : undefined,
+      );
       setTransport(nextTransport);
+      setTransportModeDraft(nextTransport.mode);
+      setProxyHost(nextTransport.proxy_host ?? '127.0.0.1');
+      setProxyPort(nextTransport.proxy_port ? String(nextTransport.proxy_port) : '');
       toast(t('telegram.transportUpdated'), 'success');
     } catch {
       toast(t('telegram.transportUpdateFailed'), 'error');
@@ -743,13 +761,6 @@ export const TelegramAdmin: React.FC = () => {
         </aside>
       </div>}
 
-      {activeTab === 'settings' && <section className={`${panelClass} mb-4`} aria-label={t('telegram.tabs.settings')}>
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3"><span className="grid size-10 place-items-center rounded-[7px] border border-cyan-400/18 bg-cyan-400/[0.06] text-cyan-200"><UIIcon name="servers" size={19} /></span><div><h3 className="text-sm font-medium text-[#e9f1f8]">{t('telegram.tabs.settings')}</h3><p className="mt-1 text-xs text-slate-500">{t('telegram.hint')}</p></div></div>
-          <div className="flex flex-wrap gap-2"><span className={`rounded border px-2 py-1 font-mono text-[10px] ${botConfiguration?.configured ? 'border-emerald-400/25 text-emerald-200' : 'border-amber-400/25 text-amber-200'}`}>{botConfiguration?.configured ? t('telegram.botTokenConfigured', { suffix: botConfiguration.token_suffix ?? '••••' }) : t('telegram.botTokenNotConfigured')}</span><span className={`rounded border px-2 py-1 font-mono text-[10px] ${transport?.reachable ? 'border-emerald-400/25 text-emerald-200' : 'border-slate-500/25 text-slate-500'}`}>{transport?.reachable ? t('telegram.transportReady') : t('telegram.transportUnavailable')}</span></div>
-        </div>
-      </section>}
-
       {activeTab === 'settings' && <section className={`${panelClass} mb-4`} aria-label={t('telegram.botTokenTitle')}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -790,14 +801,20 @@ export const TelegramAdmin: React.FC = () => {
           </span>
         </div>
         <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" className={transport?.mode === 'direct' ? primaryButtonClass : buttonClass} disabled={mutating || !transport || transport.mode === 'direct'} onClick={() => void selectTransport('direct')}>
+          <button type="button" className={transportModeDraft === 'direct' ? primaryButtonClass : buttonClass} disabled={mutating || !transport} onClick={() => setTransportModeDraft('direct')}>
             {t('telegram.transportDirect')}
           </button>
-          <button type="button" className={transport?.mode === 'local_proxy' ? primaryButtonClass : buttonClass} disabled={mutating || !transport?.configured || !transport?.reachable || transport.mode === 'local_proxy'} onClick={() => void selectTransport('local_proxy')}>
+          <button type="button" className={transportModeDraft === 'local_proxy' ? primaryButtonClass : buttonClass} disabled={mutating || !transport} onClick={() => setTransportModeDraft('local_proxy')}>
             {t('telegram.transportLocalProxy')}
           </button>
         </div>
-        {transport && !transport.configured && <p className="mt-2 text-xs text-slate-500">{t('telegram.transportNotConfigured')}</p>}
+        {transportModeDraft === 'local_proxy' && <div className="mt-3 grid gap-2 md:grid-cols-[minmax(0,1fr)_140px_auto]">
+          <input value={proxyHost} onChange={(event) => setProxyHost(event.target.value)} className={inputClass} placeholder={t('telegram.transportProxyHostPlaceholder')} aria-label={t('telegram.transportProxyHost')} />
+          <input value={proxyPort} onChange={(event) => setProxyPort(event.target.value.replace(/\D/g, ''))} inputMode="numeric" className={inputClass} placeholder={t('telegram.transportProxyPort')} aria-label={t('telegram.transportProxyPort')} />
+          <button type="button" className={primaryButtonClass} disabled={mutating || !transport} onClick={() => void saveTransport()}>{t('telegram.transportSave')}</button>
+        </div>}
+        {transportModeDraft === 'direct' && <div className="mt-3"><button type="button" className={primaryButtonClass} disabled={mutating || !transport || transport.mode === 'direct'} onClick={() => void saveTransport()}>{t('telegram.transportSave')}</button></div>}
+        {transportModeDraft === 'local_proxy' && <p className="mt-2 text-xs text-slate-500">{t('telegram.transportProxyHint')}</p>}
       </section>}
 
       {activeTab === 'users' && <>

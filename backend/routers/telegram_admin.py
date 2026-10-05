@@ -34,7 +34,7 @@ from services.telegram_provisioning import (
     ProvisioningPermanentError,
     ProvisioningRemoteError,
 )
-from services.telegram_transport import TelegramApiTransport, TelegramTransportError
+from services.telegram_transport import TelegramApiTransport, TelegramTransportError, build_local_proxy_url
 from services.telegram_drift import TelegramDriftScanner
 from services.telegram_bot_config import TelegramBotConfigurationError
 
@@ -174,14 +174,21 @@ def build_telegram_admin_router(
         username = require_admin(request)
         mode = data.get("mode")
         expected_row_version = data.get("expected_row_version")
+        proxy_host = data.get("proxy_host")
+        proxy_port = data.get("proxy_port")
         if mode == "local_proxy":
             try:
-                transport.require_local_proxy_ready()
-            except TelegramTransportError as exc:
+                proxy_url = build_local_proxy_url(proxy_host, proxy_port)
+                transport.require_local_proxy_ready(proxy_url)
+            except (TelegramTransportError, ValueError) as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
         try:
             preference = registry.set_transport_preference(
-                mode=mode, expected_row_version=expected_row_version, updated_by=username
+                mode=mode,
+                expected_row_version=expected_row_version,
+                updated_by=username,
+                proxy_host=proxy_host,
+                proxy_port=proxy_port,
             )
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
