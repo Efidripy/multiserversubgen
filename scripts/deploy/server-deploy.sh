@@ -159,8 +159,16 @@ SERVICE_STOPPED=0
 STATE_DB="${PROJECT_DIR}/admin.db"
 
 cleanup_stage() {
-  [[ -d "$STAGE_DIR" ]] && rm -rf -- "$STAGE_DIR"
-  [[ -n "$STAGED_SERVICE_UNIT" && -f "$STAGED_SERVICE_UNIT" ]] && rm -f -- "$STAGED_SERVICE_UNIT"
+  local status=0
+  # After swap these paths are normally absent. Absence is successful cleanup,
+  # and failure to remove one temporary artifact must not skip the other.
+  if [[ -d "$STAGE_DIR" ]]; then
+    rm -rf -- "$STAGE_DIR" || status=$?
+  fi
+  if [[ -n "$STAGED_SERVICE_UNIT" && -f "$STAGED_SERVICE_UNIT" ]]; then
+    rm -f -- "$STAGED_SERVICE_UNIT" || status=$?
+  fi
+  return "$status"
 }
 
 restore_service_unit() {
@@ -271,15 +279,16 @@ restore_previous() {
 }
 
 rollback_and_exit() {
-  cleanup_stage
-  [[ "$ROLLBACK_ON_FAIL" == "1" ]] && restore_previous
   trap - ERR
+  cleanup_stage || printf 'Deploy cleanup failed; continuing failure recovery.\n' >&2
+  [[ "$ROLLBACK_ON_FAIL" == "1" ]] && restore_previous
   exit 1
 }
 
 on_error() {
   local status=$?
-  cleanup_stage
+  trap - ERR
+  cleanup_stage || printf 'Deploy cleanup failed; continuing failure recovery.\n' >&2
   [[ "$ROLLBACK_ON_FAIL" == "1" ]] && restore_previous
   exit "$status"
 }
