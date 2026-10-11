@@ -1704,24 +1704,6 @@ run_post_install_checks() {
         failures=$((failures + 1))
     fi
 
-    local panel_status=""
-    panel_status=$(curl -fsSL -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${WEB_PATH}/" 2>/dev/null || true)
-    if [[ "$panel_status" =~ ^(200|301|302)$ ]]; then
-        echo "✅ Публичная панель доступна (HTTP $panel_status)"
-    else
-        echo "❌ Публичная панель недоступна: HTTP ${panel_status:-000}"
-        failures=$((failures + 1))
-    fi
-
-    if runtime_verify_telegram_public_base_url_health; then
-        if [ "${TELEGRAM_BOT_ENABLED:-false}" = "true" ]; then
-            echo "✅ Telegram public URL: HTTPS /health -> 200"
-        fi
-    else
-        echo "❌ Telegram public URL не прошёл HTTPS health-проверку"
-        failures=$((failures + 1))
-    fi
-
     if [ "${MONITORING_ENABLED:-false}" = "true" ]; then
         local g_status=""
         for i in 1 2 3 4 5; do
@@ -1741,25 +1723,7 @@ run_post_install_checks() {
         fi
     fi
 
-    if [ "${ADGUARD_INSTALL_ENABLED:-false}" = "true" ]; then
-        local adg_panel_status=""
-        local adg_doh_status=""
-        adg_panel_status=$(curl -fsSL -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${ADGUARD_WEB_PATH}/" 2>/dev/null || true)
-        if [[ "$adg_panel_status" =~ ^(200|301|302)$ ]]; then
-            echo "✅ AdGuard панель доступна (HTTP $adg_panel_status)"
-        else
-            echo "❌ AdGuard панель недоступна: HTTP ${adg_panel_status:-000}"
-            failures=$((failures + 1))
-        fi
-
-        adg_doh_status=$(curl -fsSL -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${ADGUARD_DOH_PATH}/" 2>/dev/null || true)
-        if [[ "$adg_doh_status" =~ ^(200|302|307|308|400|401|403|404|405)$ ]]; then
-            echo "✅ AdGuard DoH endpoint отвечает (HTTP $adg_doh_status)"
-        else
-            echo "⚠️ AdGuard DoH endpoint вернул неожиданный код: HTTP ${adg_doh_status:-000}"
-            failures=$((failures + 1))
-        fi
-    fi
+    echo "ℹ️ Canonical FQDN/TLS health выполняйте с внешнего observer: scripts/ops/external-health-check.sh"
 
     return "$failures"
 }
