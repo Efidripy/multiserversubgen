@@ -1015,23 +1015,7 @@ run_post_update_checks() {
         fi
     fi
 
-    local panel_status=""
-    panel_status=$(curl -fsSL -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${WEB_PATH}/" 2>/dev/null || true)
-    if [[ "$panel_status" =~ ^(200|301|302)$ ]]; then
-        echo "  ✅ public panel -> HTTP $panel_status"
-    else
-        echo "  ❌ public panel -> HTTP ${panel_status:-000}"
-        failures=$((failures + 1))
-    fi
-
-    if runtime_verify_telegram_public_base_url_health; then
-        if [ "${TELEGRAM_BOT_ENABLED:-false}" = "true" ]; then
-            echo "  ✅ Telegram public URL: HTTPS /health -> 200"
-        fi
-    else
-        echo "  ❌ Telegram public URL did not pass the HTTPS health check"
-        failures=$((failures + 1))
-    fi
+    echo "  ℹ️ Canonical FQDN/TLS health запускается с внешнего observer: scripts/ops/external-health-check.sh"
 
     if [ "${MONITORING_ENABLED:-false}" = "true" ]; then
         local g_status=""

@@ -50,8 +50,20 @@ project-scoped режим (`REMOVE_SCOPE=soft`) и обязательно зап
 ```bash
 APP_PORT="${APP_PORT:-666}"
 curl -s -o /dev/null -w 'health=%{http_code}\n' "http://127.0.0.1:${APP_PORT}/health"
-curl -fsSL -o /dev/null -w 'panel=%{http_code}\n' https://<your-domain>/<web-path>/
 ```
+
+Loopback подтверждает только внутреннюю готовность приложения. Canonical FQDN,
+DNS и TLS проверяются после deploy с внешнего observer (Windows host или
+разрешённый CI runner), а не из той же VM:
+
+```bash
+PUBLIC_BASE_URL="https://<your-domain>/<web-path>" bash scripts/ops/external-health-check.sh
+```
+
+Проверка завершается ошибкой при DNS, TLS или HTTP ошибке и не использует
+`--resolve`, `/etc/hosts`, literal IP либо отключение certificate validation.
+Она доказывает только canonical HTTPS health приложения; browser hydration,
+assets и внешние AdGuard journeys требуют отдельных acceptance scopes.
 
 ### Nginx
 

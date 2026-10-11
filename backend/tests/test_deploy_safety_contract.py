@@ -72,11 +72,16 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'wait_for_health()' in script
     assert 'for attempt in {1..30}; do' in script
     assert 'health check did not become ready within 30 seconds' in script
-    assert 'wait_for_telegram_public_health()' in script
-    assert 'validate_telegram_public_base_url()' in script
-    assert 'Telegram public URL health check failed' in script
-    assert script.rindex('wait_for_telegram_public_health') > script.rindex('wait_for_health')
-    assert script.rindex('rollback_and_exit') > script.rindex('wait_for_telegram_public_health')
+    assert 'wait_for_telegram_public_health()' not in script
+    assert 'validate_telegram_public_base_url()' not in script
+    assert 'Telegram public URL health check failed' not in script
+    external_health = (REPO / "scripts/ops/external-health-check.sh").read_text(encoding="utf-8")
+    assert 'curl --fail --silent --show-error --max-time 5' in external_health
+    assert 'PUBLIC_BASE_URL' in external_health
+    assert 'parsed.scheme != "https"' in external_health
+    assert 'ipaddress.ip_address(hostname)' in external_health
+    assert '--insecure' not in external_health
+    assert '--resolve' not in external_health
     assert '[[ -x "$STAGE_DIR/venv/bin/uvicorn" ]]' in script
     assert '"$STAGE_DIR/venv/bin/uvicorn" --version >/dev/null' in script
     assert 'sed -i "1s|^#!.*$|#!${PROJECT_DIR}/venv/bin/python|" "$PROJECT_DIR/venv/bin/uvicorn"' in script
@@ -147,10 +152,20 @@ def test_telegram_public_url_derives_from_panel_configuration_and_keeps_manual_o
     assert 'WEB_PATH:-' in runtime_secrets
     assert 'TELEGRAM_PUBLIC_BASE_URL_SOURCE="manual"' in runtime_secrets
     assert 'TELEGRAM_PUBLIC_BASE_URL_SOURCE="auto"' in runtime_secrets
-    assert "runtime_verify_telegram_public_base_url_health" in runtime_secrets
+    assert "runtime_verify_telegram_public_base_url_health" not in runtime_secrets
     for script in (install, update):
         assert "runtime_secrets_write" in script
-        assert "runtime_verify_telegram_public_base_url_health" in script
+        assert "runtime_verify_telegram_public_base_url_health" not in script
+
+
+def test_post_install_and_update_keep_public_fqdn_acceptance_external():
+    public_panel_probe = 'curl -fsSL -o /dev/null -w "%{http_code}" "${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}'
+
+    for relative_path in ("scripts/installer/install.sh", "scripts/installer/update.sh"):
+        script = (REPO / relative_path).read_text(encoding="utf-8")
+        assert public_panel_probe not in script
+        assert "external-health-check.sh" in script
+        assert '"http://127.0.0.1:${APP_PORT}/health"' in script
 
 
 def test_linux_only_uvloop_extra_is_pinned_and_hashed_for_require_hashes_deploys():
