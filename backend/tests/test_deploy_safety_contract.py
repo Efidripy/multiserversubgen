@@ -82,6 +82,25 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'ipaddress.ip_address(hostname)' in external_health
     assert '--insecure' not in external_health
     assert '--resolve' not in external_health
+    windows_external_health = (REPO / "scripts/ops/external-health-check.ps1").read_text(encoding="utf-8")
+    assert '[Environment]::GetEnvironmentVariable("PUBLIC_BASE_URL")' in windows_external_health
+    assert 'ConvertTo-CanonicalPublicBaseUri' in windows_external_health
+    assert '$uri.Scheme -ne "https"' in windows_external_health
+    assert '[System.Net.IPAddress]::TryParse($fqdn, [ref]$ipAddress)' in windows_external_health
+    assert 'Resolve-DnsName -Name $uri.DnsSafeHost -ErrorAction Stop' in windows_external_health
+    assert 'Resolve-DnsName -Name $uri.DnsSafeHost -DnsOnly' not in windows_external_health
+    assert 'Invoke-WebRequest -Uri $healthUrl' in windows_external_health
+    assert '$response.StatusCode -eq 200' in windows_external_health
+    assert 'MAX_ATTEMPTS' in windows_external_health
+    assert 'RETRY_SECONDS' in windows_external_health
+    for unsafe_bypass in (
+        'SkipCertificateCheck',
+        'ServerCertificateValidationCallback',
+        'CertificatePolicy',
+        '--insecure',
+        '--resolve',
+    ):
+        assert unsafe_bypass not in windows_external_health
     assert '[[ -x "$STAGE_DIR/venv/bin/uvicorn" ]]' in script
     assert '"$STAGE_DIR/venv/bin/uvicorn" --version >/dev/null' in script
     assert 'sed -i "1s|^#!.*$|#!${PROJECT_DIR}/venv/bin/python|" "$PROJECT_DIR/venv/bin/uvicorn"' in script
