@@ -4,6 +4,8 @@ import time
 from threading import Lock
 from typing import Dict, List, Optional
 
+from shared.observability import record_cache
+
 
 class ClientsRuntime:
     def __init__(
@@ -60,9 +62,11 @@ class ClientsRuntime:
             return [c for c in items if needle in str(c.get("email", "")).lower()]
 
         if full_list and now - cached_at < self.clients_cache_ttl:
+            record_cache("memory_fresh")
             return _apply_filter(full_list)
 
         if full_list and now - cached_at < self.clients_cache_stale_ttl:
+            record_cache("memory_stale")
             def _refresh() -> None:
                 fresh = self.client_mgr.get_all_clients(nodes, email_filter=None)
                 self._store_cache(fresh, generation)
@@ -77,7 +81,9 @@ class ClientsRuntime:
             now = time.time()
             cached_at, full_list, generation = self._snapshot_cache()
             if full_list and now - cached_at < self.clients_cache_ttl:
+                record_cache("memory_fresh")
                 return _apply_filter(full_list)
+            record_cache("memory_miss")
             fresh = self.client_mgr.get_all_clients(nodes, email_filter=None)
             self._store_cache(fresh, generation)
             return _apply_filter(fresh)
