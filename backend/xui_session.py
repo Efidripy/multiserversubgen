@@ -17,6 +17,7 @@ from typing import Any, Dict
 from urllib3 import connection as urllib3_connection
 from urllib3.connectionpool import HTTPConnectionPool, HTTPSConnectionPool
 from shared.security import redact_url, validate_and_resolve_outbound_url, validate_outbound_url
+from shared.observability import record_node_rpc
 
 logger = logging.getLogger("sub_manager")
 
@@ -633,6 +634,7 @@ def xui_request(
     last_exc: Exception | None = None
 
     for attempt in range(attempts):
+        started_at = time.perf_counter()
         try:
             valid_url, url_error, pinned_address = validate_and_resolve_outbound_url(url)
             if not valid_url or not pinned_address:
@@ -647,6 +649,8 @@ def xui_request(
                 **kwargs,
             )
             logger.debug("XUI %s %s -> HTTP %d", normalized_method, redact_url(url), response.status_code)
+            status_outcome = "ok" if response.status_code < 400 else "http_4xx" if response.status_code < 500 else "http_5xx"
+            record_node_rpc(url, method=normalized_method, started_at=started_at, outcome=status_outcome)
             if (
                 response.status_code in XUI_HTTP_RETRY_STATUSES
                 and attempt < attempts - 1
@@ -661,6 +665,7 @@ def xui_request(
                 continue
             return response
         except requests.RequestException as exc:
+            record_node_rpc(url, method=normalized_method, started_at=started_at, outcome="error")
             last_exc = exc
             logger.warning("XUI %s %s request error (attempt %d/%d): %s", normalized_method, redact_url(url), attempt + 1, attempts, type(exc).__name__)
             if attempt >= attempts - 1:

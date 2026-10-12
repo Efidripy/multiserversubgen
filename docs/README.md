@@ -10,6 +10,7 @@
 - [Установка](INSTALL.md)
 - [Обновление](UPDATE.md)
 - [Эксплуатация](OPS.md)
+- [OBS-001: bounded request attribution](OPS.md#obs-001-bounded-request-attribution)
 - [API: короткая точка входа](API.md)
 - [API: полный справочник](API_DOCUMENTATION.md)
 - [Подписки](SUBSCRIPTION_GUIDE.md)

@@ -6,6 +6,7 @@ from threading import Lock, Thread
 from typing import Callable, Dict, List, Optional
 
 from services.db_bootstrap import connect
+from shared.observability import record_cache
 
 
 class LiveStatsRuntime:
@@ -462,6 +463,7 @@ class LiveStatsRuntime:
         redis_key = f"traffic_stats:{group_by}"
         redis_data = self.redis_get_json(redis_key)
         if redis_data is not None:
+            record_cache("redis")
             if isinstance(redis_data, dict):
                 self._save_period_snapshots(group_by, redis_data.get("stats", {}), time.time(), redis_data.get("identity_stats"))
             return redis_data
@@ -469,10 +471,12 @@ class LiveStatsRuntime:
         now = time.time()
         cached = self.traffic_stats_cache.get(group_by)
         if cached and now - cached[0] < self.traffic_stats_cache_ttl:
+            record_cache("memory_fresh")
             self._save_period_snapshots(group_by, cached[1].get("stats", {}), now, cached[1].get("identity_stats"))
             return cached[1]
 
         if cached and now - cached[0] < self.traffic_stats_stale_ttl:
+            record_cache("memory_stale")
             generation = self._cache_generation_snapshot()
             def _refresh():
                 fresh = self.client_mgr.get_traffic_stats(nodes, group_by)
@@ -487,16 +491,19 @@ class LiveStatsRuntime:
         with self._get_traffic_cold_load_lock(group_by):
             redis_data = self.redis_get_json(redis_key)
             if isinstance(redis_data, dict):
+                record_cache("redis")
                 self._save_period_snapshots(group_by, redis_data.get("stats", {}), time.time(), redis_data.get("identity_stats"))
                 return redis_data
 
             now = time.time()
             cached = self.traffic_stats_cache.get(group_by)
             if cached and now - cached[0] < self.traffic_stats_cache_ttl:
+                record_cache("memory_fresh")
                 self._save_period_snapshots(group_by, cached[1].get("stats", {}), now, cached[1].get("identity_stats"))
                 return cached[1]
 
             if cached and now - cached[0] < self.traffic_stats_stale_ttl:
+                record_cache("memory_stale")
                 generation = self._cache_generation_snapshot()
                 def _refresh():
                     fresh = self.client_mgr.get_traffic_stats(nodes, group_by)
@@ -507,6 +514,7 @@ class LiveStatsRuntime:
                 return cached[1]
 
             generation = self._cache_generation_snapshot()
+            record_cache("memory_miss")
             data = self.client_mgr.get_traffic_stats(nodes, group_by)
             self._store_traffic_cache(group_by, data, generation)
             return data

@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from shared.observability import begin_request, endpoint_label, finish_request, record_admission, server_timing
 from shared.security import safe_request_id
 
 
@@ -63,80 +64,91 @@ def build_request_controls_and_audit_middleware(
         request_id = safe_request_id(request.headers.get("X-Request-ID")) or uuid.uuid4().hex
         start = time.perf_counter()
         path = request.url.path
+        attribution_token = begin_request(request_id, path)
+        try:
+            request.state.auth_user = None
+            request.state.auth_role = None
+            request.state.auth_mfa_ok = False
+            request.state.auth_via = None
+            request.state.request_id = request_id
+            request.state.metrics_loopback_allowed = is_trusted_loopback_metrics_scrape(request)
 
-        request.state.auth_user = None
-        request.state.auth_role = None
-        request.state.auth_mfa_ok = False
-        request.state.auth_via = None
-        request.state.metrics_loopback_allowed = is_trusted_loopback_metrics_scrape(request)
+            response = None
 
-        response = None
-
-        protected_path = path.startswith("/api/v1/") or path == "/metrics"
-        if protected_path and not request.state.metrics_loopback_allowed and not is_public_endpoint(path):
-            auth_user = check_basic_auth_header(request.headers.get("Authorization"))
-            auth_via = "basic" if auth_user else None
-            if not auth_user:
-                auth_user = check_web_session(request)
-                auth_via = "session" if auth_user else None
-            if not auth_user:
-                response = JSONResponse(status_code=401, content={"detail": "Unauthorized"})
-            else:
-                auth_role = get_user_role(auth_user)
-                request.state.auth_user = auth_user
-                request.state.auth_role = auth_role
-                request.state.auth_via = auth_via
-                mfa_ok = auth_via == "session" or verify_totp_code(auth_user, request.headers.get("X-TOTP-Code"))
-                if not mfa_ok:
-                    response = JSONResponse(status_code=401, content={"detail": "MFA required"})
-                    request.state.auth_mfa_ok = False
+            protected_path = path.startswith("/api/v1/") or path == "/metrics"
+            if protected_path and not request.state.metrics_loopback_allowed and not is_public_endpoint(path):
+                auth_user = check_basic_auth_header(request.headers.get("Authorization"))
+                auth_via = "basic" if auth_user else None
+                if not auth_user:
+                    auth_user = check_web_session(request)
+                    auth_via = "session" if auth_user else None
+                if not auth_user:
+                    response = JSONResponse(status_code=401, content={"detail": "Unauthorized"})
                 else:
-                    request.state.auth_mfa_ok = True
+                    auth_role = get_user_role(auth_user)
+                    request.state.auth_user = auth_user
+                    request.state.auth_role = auth_role
+                    request.state.auth_via = auth_via
+                    mfa_ok = auth_via == "session" or verify_totp_code(auth_user, request.headers.get("X-TOTP-Code"))
+                    if not mfa_ok:
+                        response = JSONResponse(status_code=401, content={"detail": "MFA required"})
+                        request.state.auth_mfa_ok = False
+                    else:
+                        request.state.auth_mfa_ok = True
 
-                required_role = required_role_for_request(request.method, path)
-                if response is None and not has_min_role(auth_role, required_role):
-                    response = JSONResponse(
-                        status_code=403,
-                        content={"detail": f"Forbidden for role '{auth_role}', requires '{required_role}'"},
-                    )
-                if response is None and not _csrf_origin_ok(request):
-                    response = JSONResponse(status_code=403, content={"detail": "CSRF origin check failed"})
+                    required_role = required_role_for_request(request.method, path)
+                    if response is None and not has_min_role(auth_role, required_role):
+                        response = JSONResponse(
+                            status_code=403,
+                            content={"detail": f"Forbidden for role '{auth_role}', requires '{required_role}'"},
+                        )
+                    if response is None and not _csrf_origin_ok(request):
+                        response = JSONResponse(status_code=403, content={"detail": "CSRF origin check failed"})
 
-        if response is None and read_only_mode and request.method in {"POST", "PUT", "DELETE", "PATCH"} and path.startswith("/api/v1/"):
-            response = JSONResponse(
-                status_code=403,
-                content={"detail": "Read-only mode is enabled"},
-            )
-        elif response is None:
-            response = await call_next(request)
+            if response is None and read_only_mode and request.method in {"POST", "PUT", "DELETE", "PATCH"} and path.startswith("/api/v1/"):
+                response = JSONResponse(
+                    status_code=403,
+                    content={"detail": "Read-only mode is enabled"},
+                )
 
-        if (
-            response.status_code < 400
-            and request.method in {"POST", "PUT", "DELETE", "PATCH"}
-            and path.startswith("/api/v1/")
-            and not getattr(request.state, "skip_read_projection_invalidation", False)
-        ):
-            invalidate_read_projections()
+            admission_outcome = "ok" if response is None else "http_4xx" if response.status_code < 500 else "http_5xx"
+            record_admission(start, outcome=admission_outcome)
 
-        response.headers["X-Request-ID"] = request_id
-        duration_ms = round((time.perf_counter() - start) * 1000, 2)
-        route = request.scope.get("route")
-        path_label = getattr(route, "path", None) or path
-        response.headers["Server-Timing"] = f"app;dur={duration_ms}"
-        http_request_count.labels(request.method, path_label, str(response.status_code)).inc()
-        http_request_latency.labels(request.method, path_label).observe(duration_ms / 1000.0)
-        audit_payload = {
-            "event": "http_access",
-            "request_id": request_id,
-            "method": request.method,
-            "path": path,
-            "status_code": response.status_code,
-            "duration_ms": duration_ms,
-            "client_ip": get_client_ip(request),
-            "user_hint": request.state.auth_user or extract_basic_auth_username(request.headers.get("Authorization")) or "anonymous",
-            "user_role": request.state.auth_role,
-        }
-        enqueue_audit_event(audit_payload)
-        return response
+            if response is None:
+                response = await call_next(request)
+
+            if (
+                response.status_code < 400
+                and request.method in {"POST", "PUT", "DELETE", "PATCH"}
+                and path.startswith("/api/v1/")
+                and not getattr(request.state, "skip_read_projection_invalidation", False)
+            ):
+                invalidate_read_projections()
+
+            response.headers["X-Request-ID"] = request_id
+            duration_ms = round((time.perf_counter() - start) * 1000, 2)
+            attribution = finish_request(attribution_token)
+            attribution_token = None
+            route = request.scope.get("route")
+            path_label = getattr(route, "path", None) or endpoint_label(path)
+            response.headers["Server-Timing"] = server_timing(duration_ms, attribution)
+            http_request_count.labels(request.method, path_label, str(response.status_code)).inc()
+            http_request_latency.labels(request.method, path_label).observe(duration_ms / 1000.0)
+            audit_payload = {
+                "event": "http_access",
+                "request_id": request_id,
+                "method": request.method,
+                "path": path,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+                "client_ip": get_client_ip(request),
+                "user_hint": request.state.auth_user or extract_basic_auth_username(request.headers.get("Authorization")) or "anonymous",
+                "user_role": request.state.auth_role,
+            }
+            enqueue_audit_event(audit_payload)
+            return response
+        finally:
+            if attribution_token is not None:
+                finish_request(attribution_token)
 
     return request_controls_and_audit_middleware
