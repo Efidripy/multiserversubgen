@@ -65,8 +65,32 @@ curl -u admin:password https://<your-domain>/<web-path>/api/v1/backup/all -o bac
 systemctl is-active sub-manager
 APP_PORT="${APP_PORT:-666}"
 curl -s -o /dev/null -w 'health=%{http_code}\n' "http://127.0.0.1:${APP_PORT}/health"
-curl -fsSL -o /dev/null -w 'panel=%{http_code}\n' https://<your-domain>/<web-path>/
 ```
+
+После внутреннего readiness запускайте canonical FQDN/TLS gate с внешнего
+observer, например с Windows host или отдельного CI runner:
+
+```bash
+PUBLIC_BASE_URL="https://<your-domain>/<web-path>" bash scripts/ops/external-health-check.sh
+```
+
+Для Windows host используйте нативный observer с default Windows certificate
+validation:
+
+```powershell
+$env:PUBLIC_BASE_URL = "https://<your-domain>/<web-path>"
+powershell -NoProfile -File scripts/ops/external-health-check.ps1
+```
+
+Скрипт использует обычный resolver Windows, не меняет hosts/DNS и не принимает
+параметры, отключающие проверку сертификата. Если Windows не доверяет
+сертификату, это failure внешнего observer, а не разрешение на обход
+TLS-проверки.
+
+Для local VM loopback и внешний canonical health — разные уровни acceptance;
+self-check VM через собственный публичный адрес не используется.
+External observer подтверждает только HTTPS health приложения. Browser/assets и
+AdGuard external journeys проверяются отдельными scope и evidence.
 
 ## Частый кейс: 404 на assets после обновления
 

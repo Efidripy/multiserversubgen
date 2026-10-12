@@ -50,8 +50,32 @@ project-scoped режим (`REMOVE_SCOPE=soft`) и обязательно зап
 ```bash
 APP_PORT="${APP_PORT:-666}"
 curl -s -o /dev/null -w 'health=%{http_code}\n' "http://127.0.0.1:${APP_PORT}/health"
-curl -fsSL -o /dev/null -w 'panel=%{http_code}\n' https://<your-domain>/<web-path>/
 ```
+
+Loopback подтверждает только внутреннюю готовность приложения. Canonical FQDN,
+DNS и TLS проверяются после deploy с внешнего observer (Windows host или
+разрешённый CI runner), а не из той же VM:
+
+```bash
+PUBLIC_BASE_URL="https://<your-domain>/<web-path>" bash scripts/ops/external-health-check.sh
+```
+
+На Windows host используйте observer с обычной системной DNS- и TLS-политикой:
+
+```powershell
+$env:PUBLIC_BASE_URL = "https://<your-domain>/<web-path>"
+powershell -NoProfile -File scripts/ops/external-health-check.ps1
+```
+
+Оба observer принимают только HTTPS FQDN и требуют HTTP `200` у `/health`.
+Windows-скрипт использует обычный resolver Windows и не изменяет hosts или DNS
+настройки. Он не устанавливает certificate callback и не меняет trust store;
+если сертификату не доверяет Windows, проверка остаётся неуспешной.
+
+Проверка завершается ошибкой при DNS, TLS или HTTP ошибке и не использует
+`--resolve`, `/etc/hosts`, literal IP либо отключение certificate validation.
+Она доказывает только canonical HTTPS health приложения; browser hydration,
+assets и внешние AdGuard journeys требуют отдельных acceptance scopes.
 
 ### Nginx
 
@@ -151,6 +175,8 @@ fallback, `/run/log/journal`; отсутствие обоих каталогов
 ## Полезные скрипты
 
 - `scripts/ops/smoke-test.sh`
+- `scripts/ops/external-health-check.sh` — внешний Bash/CI observer
+- `scripts/ops/external-health-check.ps1` — внешний Windows observer с системной TLS-политикой
 - `scripts/ops/backup-restore-check.sh` — проверяет online SQLite backup/restore. Его verification-артефакты (`/var/backups/<project>_verify_<timestamp>/`) сохраняются по умолчанию. Проверить их объём: `sudo bash scripts/ops/backup-restore-check.sh list`. Для безопасного preview cleanup: `sudo bash scripts/ops/backup-restore-check.sh prune-verify-artifacts --older-than 30`; фактическое удаление требует отдельного `--apply`. Команда намеренно не выбирает обычные `<project>_backup_*` или deploy backups.
 - `scripts/ops/hardening-profile.sh`
 - `scripts/deploy/server-deploy.sh`

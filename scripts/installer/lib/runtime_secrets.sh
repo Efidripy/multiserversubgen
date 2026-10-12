@@ -125,25 +125,6 @@ runtime_resolve_telegram_public_base_url() {
     TELEGRAM_PUBLIC_BASE_URL_AUTO_VALUE="$derived_value"
 }
 
-runtime_verify_telegram_public_base_url_health() {
-    local base_url="${TELEGRAM_PUBLIC_BASE_URL:-}"
-    local health_url status attempt
-
-    [ "${TELEGRAM_BOT_ENABLED:-false}" = "true" ] || return 0
-    runtime_telegram_public_base_url_is_valid "$base_url" || {
-        printf 'Telegram is enabled but TELEGRAM_PUBLIC_BASE_URL is not a valid HTTPS URL\n' >&2
-        return 1
-    }
-    health_url="${base_url%/}/health"
-    for attempt in 1 2 3 4 5; do
-        status="$(curl --fail --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' "$health_url" 2>/dev/null || true)"
-        [ "$status" = "200" ] && return 0
-        sleep 2
-    done
-    printf 'Telegram public URL health check failed (expected HTTPS /health -> 200)\n' >&2
-    return 1
-}
-
 runtime_secrets_write() {
     local secret_file temp_file runtime_key
     local -a telegram_runtime_keys=(
