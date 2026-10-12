@@ -15,7 +15,6 @@ import { clearAuthCredentials, setAuthCredentials, setWsTicket } from './auth';
 import { clearBrowserSession, createBrowserSession, getMfaStatus, verifyCurrentAuth } from './api/authService';
 import {
   getBackupHeaderSource,
-  getMonitoringHeaderSource,
   getSubscriptionsHeaderSource,
 } from './api/dashboard';
 import { IconName, UIIcon } from './components/UIIcon';
@@ -24,6 +23,7 @@ import { clearManagerSnapshotCaches, readStaleCache, writeStaleCache } from './s
 import { DashboardDataProvider } from './services/DashboardDataContext';
 import { AUTH_REQUIRED_EVENT, resetAuthRequiredEventGuard } from './api/client';
 import type { NodeRecord } from './api/nodes';
+import type { MonitoringHeaderProjection } from './components/MonitoringDashboard';
 
 const LazySubscriptionManager = React.lazy(() => import('./components/SubscriptionManager').then((module) => ({ default: module.SubscriptionManager })));
 const LazyInboundManager = React.lazy(() => import('./components/InboundManager').then((module) => ({ default: module.InboundManager })));
@@ -367,20 +367,10 @@ export const App: React.FC = () => {
             }
             break;
           case 'monitoring': {
-            const { deps, overview, stack } = await getMonitoringHeaderSource({ signal: controller.signal });
-            const services = stack?.services ? Object.values(stack.services) as any[] : [];
-            const servicesUp = services.filter((service: any) => service.ok).length;
-            const sourcesTotal = overview?.summary?.sources_total || 0;
-            const sourcesOnline = overview?.summary?.sources_online || 0;
             if (!cancelled) {
               updateHeaderSummary({
                 description: t('header.monitoring.description'),
-                stats: [
-                  { label: t('header.monitoring.stackProbes'), value: `${servicesUp}/${services.length || 0}`, tone: servicesUp === services.length && services.length > 0 ? 'success' : 'warning' },
-                  { label: t('header.monitoring.adguardSources'), value: `${sourcesOnline}/${sourcesTotal}`, tone: sourcesOnline > 0 ? 'success' : 'warning' },
-                  { label: t('header.monitoring.blockedRate'), value: formatPercent(overview?.summary?.blocked_rate || 0), tone: 'accent' },
-                  { label: t('header.monitoring.collector'), value: deps?.collector_running ? t('header.monitoring.collectorRunning') : t('header.monitoring.collectorIdle'), tone: deps?.collector_running ? 'success' : 'warning' },
-                ],
+                stats: [],
               });
             }
             break;
@@ -818,7 +808,17 @@ export const App: React.FC = () => {
           setActiveTab('clients');
         }} />;
       case 'monitoring':
-        return <LazyMonitoringDashboard />;
+        return <LazyMonitoringDashboard onHeaderProjectionChange={(projection: MonitoringHeaderProjection) => {
+          updateHeaderSummary({
+            description: t('header.monitoring.description'),
+            stats: [
+              { label: t('header.monitoring.stackProbes'), value: `${projection.servicesUp}/${projection.servicesTotal}`, tone: projection.servicesUp === projection.servicesTotal && projection.servicesTotal > 0 ? 'success' : 'warning' },
+              { label: t('header.monitoring.adguardSources'), value: `${projection.sourcesOnline}/${projection.sourcesTotal}`, tone: projection.sourcesOnline > 0 ? 'success' : 'warning' },
+              { label: t('header.monitoring.blockedRate'), value: formatPercent(projection.blockedRate), tone: 'accent' },
+              { label: t('header.monitoring.collector'), value: projection.collectorRunning ? t('header.monitoring.collectorRunning') : t('header.monitoring.collectorIdle'), tone: projection.collectorRunning ? 'success' : 'warning' },
+            ],
+          });
+        }} />;
       case 'backup':
         return <LazyBackupManager />;
       case 'subscriptions':

@@ -459,7 +459,20 @@ function formatTickLabel(tsSec: number, rangeSec: number): string {
   return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-export const MonitoringDashboard: React.FC = () => {
+export interface MonitoringHeaderProjection {
+  servicesUp: number;
+  servicesTotal: number;
+  sourcesOnline: number;
+  sourcesTotal: number;
+  blockedRate: number;
+  collectorRunning: boolean;
+}
+
+interface MonitoringDashboardProps {
+  onHeaderProjectionChange?: (projection: MonitoringHeaderProjection) => void;
+}
+
+export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHeaderProjectionChange }) => {
   const { stylePreset } = useTheme();
   const { t } = useTranslation();
 
@@ -493,6 +506,7 @@ export const MonitoringDashboard: React.FC = () => {
   const [blockedSourceFilter, setBlockedSourceFilter] = useState<string>('all');
   const [blockedSearch, setBlockedSearch] = useState('');
   const [blockedShowCount, setBlockedShowCount] = useState<number>(25);
+  const lastHeaderProjectionRef = useRef('');
   const realtimeRefreshRef = useRef(0);
   const historyLoadIdRef = useRef(0);
   const historyAbortRef = useRef<AbortController | null>(null);
@@ -924,6 +938,23 @@ export const MonitoringDashboard: React.FC = () => {
       window.clearTimeout(detailTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!onHeaderProjectionChange) return;
+    const services = stackStatus?.services ? Object.values(stackStatus.services) as Array<{ ok?: boolean }> : [];
+    const projection = {
+      servicesUp: services.filter((service) => service.ok).length,
+      servicesTotal: services.length,
+      sourcesOnline: adguardOverview?.summary?.sources_online || 0,
+      sourcesTotal: adguardOverview?.summary?.sources_total || 0,
+      blockedRate: adguardOverview?.summary?.blocked_rate || 0,
+      collectorRunning: Boolean(depsHealth?.collector_running),
+    };
+    const serialized = JSON.stringify(projection);
+    if (serialized === lastHeaderProjectionRef.current) return;
+    lastHeaderProjectionRef.current = serialized;
+    onHeaderProjectionChange(projection);
+  }, [adguardOverview, depsHealth, onHeaderProjectionChange, stackStatus]);
 
   useEffect(() => {
     loadHistory(selectedScope, rangeSec);
