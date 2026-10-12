@@ -4,6 +4,8 @@ import time
 from threading import Lock
 from typing import Dict, List
 
+from shared.observability import record_cache
+
 
 class InboundsRuntime:
     """Stale-while-revalidate cache for inbounds data.
@@ -91,9 +93,11 @@ class InboundsRuntime:
         now = time.time()
         cached_at, cached, generation = self._snapshot_cache(cache, cache_key)
         if cached and now - cached_at < self.fresh_ttl:
+            record_cache("memory_fresh")
             return cached
 
         if cached and now - cached_at < self.stale_ttl:
+            record_cache("memory_stale")
             def _refresh() -> None:
                 fresh = loader(nodes, cached_full=self._cached_full_by_node())
                 self._store_cache(cache=cache, cache_key=cache_key, data=fresh, generation=generation)
@@ -105,7 +109,9 @@ class InboundsRuntime:
             now = time.time()
             cached_at, cached, generation = self._snapshot_cache(cache, cache_key)
             if cached and now - cached_at < self.fresh_ttl:
+                record_cache("memory_fresh")
                 return cached
+            record_cache("memory_miss")
             fresh = loader(nodes, cached_full=self._cached_full_by_node())
             self._store_cache(cache=cache, cache_key=cache_key, data=fresh, generation=generation)
             return fresh
@@ -115,9 +121,11 @@ class InboundsRuntime:
         cached_at, cached, generation = self._snapshot_cache(self.inbounds_cache, "inbounds")
 
         if cached and now - cached_at < self.fresh_ttl:
+            record_cache("memory_fresh")
             return cached
 
         if cached and now - cached_at < self.stale_ttl:
+            record_cache("memory_stale")
             def _refresh() -> None:
                 fresh = self.inbound_mgr.get_all_inbounds(nodes)
                 self._store_cache(
@@ -136,7 +144,9 @@ class InboundsRuntime:
             now = time.time()
             cached_at, cached, generation = self._snapshot_cache(self.inbounds_cache, "inbounds")
             if cached and now - cached_at < self.fresh_ttl:
+                record_cache("memory_fresh")
                 return cached
+            record_cache("memory_miss")
             fresh = self.inbound_mgr.get_all_inbounds(nodes)
             self._store_cache(
                 cache=self.inbounds_cache,
