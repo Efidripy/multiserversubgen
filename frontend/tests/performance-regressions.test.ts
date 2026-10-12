@@ -91,6 +91,15 @@ describe('navigation performance regressions', () => {
     expect(fleetPanel).toContain('refreshFleetLive()');
   });
 
+  it('keeps Telegram policy reads out of initial Dashboard navigation by default', () => {
+    const fleetPanel = read('src/components/RegisteredFleetPanel.tsx');
+
+    expect(fleetPanel).toContain("VITE_DASHBOARD_EAGER_TELEGRAM_POLICIES === 'true'");
+    expect(fleetPanel).toContain('if (eagerTelegramPolicyLoad) void refreshTelegramPolicies();');
+    expect(fleetPanel).toContain('const refreshedPolicies = await refreshTelegramPolicies();');
+    expect(fleetPanel).toContain('telegramPolicyLoadTitle');
+  });
+
   it('keeps the node intake/editor isolated from the retired per-node fleet fan-out', () => {
     const app = read('src/App.tsx');
     const manager = read('src/components/NodeManager.tsx');

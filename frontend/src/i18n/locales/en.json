@@ -964,6 +964,7 @@
     "tagsSaveFailed": "Failed to save tags",
     "telegramPolicyOnTitle": "TG: new users can be added to this node",
     "telegramPolicyOffTitle": "TG: enable this node for new users",
+    "telegramPolicyLoadTitle": "TG: load the current node policy",
     "telegramPolicyEnabled": "TG policy enabled for {{node}}",
     "telegramPolicyDisabled": "TG policy disabled for {{node}}",
     "telegramPolicyLoadFailed": "Failed to load TG node policy",

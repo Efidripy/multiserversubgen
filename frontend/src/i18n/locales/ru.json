@@ -964,6 +964,7 @@
     "tagsSaveFailed": "Не удалось сохранить теги",
     "telegramPolicyOnTitle": "TG: новые пользователи могут добавляться на этот узел",
     "telegramPolicyOffTitle": "TG: включить этот узел для новых пользователей",
+    "telegramPolicyLoadTitle": "TG: загрузить текущую политику узла",
     "telegramPolicyEnabled": "TG-политика включена для {{node}}",
     "telegramPolicyDisabled": "TG-политика выключена для {{node}}",
     "telegramPolicyLoadFailed": "Не удалось загрузить TG-политику узлов",

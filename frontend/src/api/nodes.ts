@@ -235,8 +235,11 @@ export async function updateNode(nodeId: number, payload: unknown): Promise<any>
   return res.data;
 }
 
-export async function listTelegramNodePolicies(): Promise<TelegramNodePolicy[]> {
-  const res = await api.get<{ items?: TelegramNodePolicy[] }>('/v1/telegram/node-policies', { auth: getAuth() });
+export async function listTelegramNodePolicies(options: { signal?: AbortSignal } = {}): Promise<TelegramNodePolicy[]> {
+  const res = await api.get<{ items?: TelegramNodePolicy[] }>('/v1/telegram/node-policies', {
+    auth: getAuth(),
+    signal: options.signal,
+  });
   return Array.isArray(res.data?.items) ? res.data.items : [];
 }
 
