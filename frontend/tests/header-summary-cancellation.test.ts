@@ -37,7 +37,8 @@ describe('header summary request lifecycle', () => {
     const source = read('src/App.tsx');
 
     expect(source).toContain('const controller = new AbortController();');
-    expect(source).toContain('getMonitoringHeaderSource({ signal: controller.signal })');
+    expect(source).not.toContain('getMonitoringHeaderSource({ signal: controller.signal })');
+    expect(source).toContain('onHeaderProjectionChange');
     expect(source).toContain('getBackupHeaderSource({ signal: controller.signal })');
     expect(source).toContain('getSubscriptionsHeaderSource({ signal: controller.signal })');
     expect(source).toContain('controller.abort();');
