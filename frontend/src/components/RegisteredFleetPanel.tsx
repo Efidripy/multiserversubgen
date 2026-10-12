@@ -50,6 +50,10 @@ const fleetActionButtonClass =
 const fleetDeleteButtonClass =
   'flex h-5 w-5 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0a0e1a] text-slate-500 transition-colors hover:border-red-400/30 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50';
 
+// Keep the former eager read available as an explicit build-time rollback,
+// while the default Dashboard path stays demand-loaded.
+const eagerTelegramPolicyLoad = import.meta.env.VITE_DASHBOARD_EAGER_TELEGRAM_POLICIES === 'true';
+
 const isReadOnly = (value: unknown) => value === true || Number(value) === 1;
 
 const cleanPanelUrl = (rawAddress: string) => {
@@ -105,9 +109,11 @@ export function RegisteredFleetPanel({
   const [deletingNodeId, setDeletingNodeId] = useState<number | null>(null);
   const [actionNodeKey, setActionNodeKey] = useState<string | null>(null);
   const [telegramPolicies, setTelegramPolicies] = useState<Record<number, TelegramNodePolicy>>({});
+  const [telegramPoliciesLoaded, setTelegramPoliciesLoaded] = useState(false);
   const [telegramPolicyNodeId, setTelegramPolicyNodeId] = useState<number | null>(null);
   const editAbortRef = useRef<AbortController | null>(null);
   const fleetRefreshAbortRef = useRef<AbortController | null>(null);
+  const telegramPoliciesAbortRef = useRef<AbortController | null>(null);
 
   const refreshFleetLive = useCallback(async () => {
     fleetRefreshAbortRef.current?.abort();
@@ -210,22 +216,42 @@ export function RegisteredFleetPanel({
   const refreshTelegramPolicies = useCallback(async () => {
     if (!canManageTelegram) {
       setTelegramPolicies({});
-      return;
+      setTelegramPoliciesLoaded(false);
+      return null;
     }
+    // A new read invalidates the previous snapshot immediately. Until it
+    // succeeds, the control must remain explicitly unknown rather than
+    // presenting stale policy state as current.
+    setTelegramPoliciesLoaded(false);
+    telegramPoliciesAbortRef.current?.abort();
+    const controller = new AbortController();
+    telegramPoliciesAbortRef.current = controller;
     try {
-      const policies = await listTelegramNodePolicies();
-      setTelegramPolicies(Object.fromEntries(policies.map((policy) => [policy.node_id, policy])));
+      const policies = await listTelegramNodePolicies({ signal: controller.signal });
+      const next = Object.fromEntries(policies.map((policy) => [policy.node_id, policy]));
+      if (controller.signal.aborted || telegramPoliciesAbortRef.current !== controller) return null;
+      setTelegramPolicies(next);
+      setTelegramPoliciesLoaded(true);
+      return next;
     } catch (err: any) {
+      if (controller.signal.aborted || telegramPoliciesAbortRef.current !== controller) return null;
       const message = err?.response?.data?.detail || err?.message || t('nodes.telegramPolicyLoadFailed');
       setError(message);
+      return null;
+    } finally {
+      if (telegramPoliciesAbortRef.current === controller) telegramPoliciesAbortRef.current = null;
     }
   }, [canManageTelegram, t]);
 
   const toggleTelegramPolicy = async (node: UiFleetNode) => {
     if (telegramPolicyNodeId !== null) return;
-    const current = telegramPolicies[node.id];
     setTelegramPolicyNodeId(node.id);
     try {
+      // Always read the persisted version immediately before mutation. This
+      // prevents a stale or unknown Dashboard state from driving the update.
+      const refreshedPolicies = await refreshTelegramPolicies();
+      if (refreshedPolicies === null) return;
+      const current = refreshedPolicies[node.id];
       const policy = await updateTelegramNodePolicy(node.id, {
         provisioning_enabled: !(current?.provisioning_enabled ?? false),
         total_bytes: current?.total_bytes ?? 0,
@@ -253,11 +279,20 @@ export function RegisteredFleetPanel({
     editAbortRef.current = null;
     fleetRefreshAbortRef.current?.abort();
     fleetRefreshAbortRef.current = null;
+    telegramPoliciesAbortRef.current?.abort();
+    telegramPoliciesAbortRef.current = null;
   }, []);
 
   useEffect(() => {
-    void refreshTelegramPolicies();
-  }, [refreshTelegramPolicies]);
+    if (!canManageTelegram) {
+      telegramPoliciesAbortRef.current?.abort();
+      telegramPoliciesAbortRef.current = null;
+      setTelegramPolicies({});
+      setTelegramPoliciesLoaded(false);
+      return;
+    }
+    if (eagerTelegramPolicyLoad) void refreshTelegramPolicies();
+  }, [canManageTelegram, refreshTelegramPolicies]);
 
   useEffect(() => {
     if (!dashboardData) return;
@@ -398,7 +433,8 @@ export function RegisteredFleetPanel({
                   const isRestarting = actionNodeKey === `${node.id}:restart`;
                   const isStopping = actionNodeKey === `${node.id}:stop`;
                   const telegramPolicy = telegramPolicies[node.id];
-                  const telegramPolicyEnabled = telegramPolicy?.provisioning_enabled ?? false;
+                  const telegramPolicyKnown = telegramPoliciesLoaded;
+                  const telegramPolicyEnabled = telegramPolicyKnown && (telegramPolicy?.provisioning_enabled ?? false);
                   const isSavingTelegramPolicy = telegramPolicyNodeId === node.id;
                   return (
                     <article key={node.id} className={`rounded-lg border border-cyan-500/15 bg-[#0a0e1a] px-2.5 py-1.5 transition-all duration-200 hover:border-cyan-300/30 hover:bg-[#0b101b] ${isDeleting ? 'opacity-50' : ''}`}>
@@ -483,14 +519,14 @@ export function RegisteredFleetPanel({
                       <div className="mt-1 flex justify-end border-t border-cyan-500/10 pt-1">
                         <button
                           className={`min-w-8 rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-semibold tracking-wide transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                            telegramPolicyEnabled
+                            telegramPolicyKnown && telegramPolicyEnabled
                               ? 'border-emerald-400/45 bg-emerald-400/15 text-emerald-300 hover:bg-emerald-400/25'
                               : 'border-cyan-500/20 bg-[#0a0e1a] text-slate-500 hover:border-cyan-300/35 hover:text-cyan-200'
                           }`}
                           type="button"
-                          title={t(telegramPolicyEnabled ? 'nodes.telegramPolicyOnTitle' : 'nodes.telegramPolicyOffTitle')}
-                          aria-label={t(telegramPolicyEnabled ? 'nodes.telegramPolicyOnTitle' : 'nodes.telegramPolicyOffTitle')}
-                          aria-pressed={telegramPolicyEnabled}
+                          title={t(telegramPolicyKnown ? (telegramPolicyEnabled ? 'nodes.telegramPolicyOnTitle' : 'nodes.telegramPolicyOffTitle') : 'nodes.telegramPolicyLoadTitle')}
+                          aria-label={t(telegramPolicyKnown ? (telegramPolicyEnabled ? 'nodes.telegramPolicyOnTitle' : 'nodes.telegramPolicyOffTitle') : 'nodes.telegramPolicyLoadTitle')}
+                          aria-pressed={telegramPolicyKnown ? telegramPolicyEnabled : undefined}
                           disabled={telegramPolicyNodeId !== null}
                           onClick={() => void toggleTelegramPolicy(node)}
                         >
