@@ -98,6 +98,42 @@ curl -fsSL -o /dev/null -w '%{http_code}\n' https://<your-domain>/<web-path>/ass
 
 ## Monitoring
 
+### OBS-001: bounded request attribution
+
+`OBSERVABILITY_ATTRIBUTION_ENABLED` выключен по умолчанию. При явном включении
+в разрешённой среде он добавляет passive Prometheus counters и histograms для
+разложения запроса на admission, cache source, SQLite и node RPC. Он не меняет
+response, cache value, SQLite query или node request.
+
+`admission` измеряет путь до передачи управления route handler: authentication,
+RBAC, CSRF и read-only gate. SQLite — длительность каждого вызова
+`Connection.execute`, включая результат `locked`/`busy`; это не полное время
+query/fetch/commit и не отдельное измерение lock wait. Node RPC — длительность
+проверки destination и одной HTTP attempt; retry фиксируется как отдельная
+attempt, а не как wire-time удалённого узла.
+
+Единственные metric labels — bounded enum: endpoint class, component,
+operation, outcome и cache source. Raw URLs, SQL, database paths, node
+names/IDs, emails, tokens, cookies, credentials и request IDs никогда не
+становятся labels. Correlation остаётся в `X-Request-ID`; `Server-Timing`
+показывает aggregate component durations, bounded cache source и `unaccounted` — только консервативный остаток после суммы компонентов. Компоненты могут перекрываться; `unaccounted` не является lock/thread wait или полной классификацией очереди.
+
+Для воспроизводимого cold/warm browser waterfall без MSSG runtime, node или
+external network access запустите local fixture из checkout worktree:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\windows\run-obs001-browser-baseline.ps1
+```
+
+Fixture принимает только loopback, отдаёт CSP `connect-src 'self'`, использует
+временную SQLite БД и проверяет `memory_miss` для cold и `memory_fresh` для warm
+policy read. Он завершается ошибкой при ненулевом fake-node counter,
+неожиданных fixture routes или ненулевом exit code каждого Playwright step.
+Все временные browser artifacts удаляются runner-ом после прогона. Это fixture
+acceptance, а не доказательство production p95, browser UX реальных операторов
+или отсутствия egress у сторонних расширений браузера. Для rollback выключите
+feature flag или удалите collectors: request behavior не меняется.
+
 См. директории:
 
 - `monitoring/prometheus/`

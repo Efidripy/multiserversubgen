@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import time
+
+from shared.observability import record_sqlite
 
 
 class _ManagedConnection(sqlite3.Connection):
@@ -18,6 +21,17 @@ class _ManagedConnection(sqlite3.Connection):
             return super().__exit__(exc_type, exc_value, traceback)
         finally:
             self.close()
+
+    def execute(self, sql, parameters=(), /):
+        started_at = time.perf_counter()
+        try:
+            result = super().execute(sql, parameters)
+        except sqlite3.Error as exc:
+            message = str(exc).lower()
+            record_sqlite(sql, started_at=started_at, outcome="locked" if "locked" in message or "busy" in message else "error")
+            raise
+        record_sqlite(sql, started_at=started_at, outcome="ok")
+        return result
 
 
 def connect(db_path: str) -> sqlite3.Connection:
