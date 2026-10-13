@@ -201,6 +201,7 @@ interface ResourceMetric {
 
 interface ServerResourceStatus {
   node: string;
+  node_id?: number;
   available: boolean;
   timestamp?: string;
   error?: string;
@@ -472,12 +473,26 @@ interface MonitoringDashboardProps {
   onHeaderProjectionChange?: (projection: MonitoringHeaderProjection) => void;
 }
 
+/**
+ * A Monitoring deep link may select one known server before any effect runs.
+ * Invalid input deliberately retains the explicit fleet (`all`) default.
+ */
+export function monitoringScopeFromSearch(search: string): string {
+  const candidate = new URLSearchParams(search).get('server');
+  if (!candidate || !/^[1-9]\d*$/.test(candidate)) return 'all';
+
+  const nodeId = Number(candidate);
+  return Number.isSafeInteger(nodeId) ? String(nodeId) : 'all';
+}
+
 export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHeaderProjectionChange }) => {
   const { stylePreset } = useTheme();
   const { t } = useTranslation();
 
   const [nodes, setNodes] = useState<NodeItem[]>([]);
-  const [selectedScope, setSelectedScope] = useState<string>('all'); // "all" | node id as string
+  const [selectedScope, setSelectedScope] = useState<string>(() =>
+    monitoringScopeFromSearch(typeof window === 'undefined' ? '' : window.location.search)
+  ); // "all" | node id as string
   const [rangeSec, setRangeSec] = useState<number>(24 * 3600);
   const [trafficUnit, setTrafficUnit] = useState<'MB' | 'GB'>('MB');
   const [trafficMode, setTrafficMode] = useState<TrafficMode>('history');
@@ -547,8 +562,14 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
   const isAllScope = selectedScope === 'all';
   const selectedNodeId = isAllScope ? null : Number(selectedScope);
   const selectedNodeName = useMemo(
-    () => (isAllScope ? 'All servers' : nodes.find((n) => n.id === selectedNodeId)?.name || 'Unknown'),
-    [isAllScope, nodes, selectedNodeId]
+    () => (
+      isAllScope
+        ? 'All servers'
+        : nodes.find((n) => n.id === selectedNodeId)?.name
+          || serverStatuses.find((status) => status.node_id === selectedNodeId)?.node
+          || `Node #${selectedNodeId}`
+    ),
+    [isAllScope, nodes, selectedNodeId, serverStatuses]
   );
 
   const loadNodes = async () => {
@@ -561,9 +582,6 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
       if (controller.signal.aborted || requestId !== nodesRequestIdRef.current) return;
       const list: NodeItem[] = (res.data || []).map((n: any) => ({ id: n.id, name: n.name }));
       setNodes(list);
-      if (!selectedScope && list.length > 0) {
-        setSelectedScope('all');
-      }
     } finally {
       if (nodesAbortRef.current === controller) {
         nodesAbortRef.current = null;
@@ -821,6 +839,35 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     }
   };
 
+  const loadSelectedServerStatus = async (nodeId: number) => {
+    const requestId = ++serverStatusRequestIdRef.current;
+    serverStatusAbortRef.current?.abort();
+    const controller = new AbortController();
+    serverStatusAbortRef.current = controller;
+    try {
+      setResourceLoading(true);
+      const res = await api.get(`/v1/servers/${nodeId}/status`, { auth: getAuth(), signal: controller.signal });
+      if (controller.signal.aborted || requestId !== serverStatusRequestIdRef.current) return [];
+      const status = res.data as ServerResourceStatus;
+      setServerStatuses(status ? [status] : []);
+      setResourceError('');
+      return status ? [status] : [];
+    } catch (err: any) {
+      if (controller.signal.aborted || requestId !== serverStatusRequestIdRef.current
+        || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.message === 'canceled') return [];
+      setServerStatuses([]);
+      setResourceError(err?.response?.data?.detail || t('serverStatus.loadFailed'));
+      return [];
+    } finally {
+      if (requestId === serverStatusRequestIdRef.current) {
+        setResourceLoading(false);
+      }
+      if (serverStatusAbortRef.current === controller) {
+        serverStatusAbortRef.current = null;
+      }
+    }
+  };
+
   const loadCollectorStatus = async () => {
     const requestId = ++collectorStatusRequestIdRef.current;
     collectorStatusAbortRef.current?.abort();
@@ -918,6 +965,15 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
 
   useEffect(() => {
     let cancelled = false;
+    if (!isAllScope && selectedNodeId !== null) {
+      // A deep-linked server view must stay scoped before the user explicitly
+      // falls back to All: do not initialize picker, snapshot, or fleet cards.
+      loadSelectedServerStatus(selectedNodeId).catch(() => undefined);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     loadNodes().catch((err: any) => {
       if (!cancelled) setError(err?.response?.data?.detail || 'Failed to load nodes');
     });
@@ -925,8 +981,8 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     loadDepsHealth();
     loadServerStatuses().catch(() => undefined);
     loadCollectorStatus().catch(() => undefined);
-    // AdGuard history and stack probes are auxiliary panels.  Let the core
-    // status cards render first instead of competing with their initial burst.
+    // AdGuard history and stack probes are auxiliary panels. Let the core
+    // fleet status cards render first instead of competing with their burst.
     const detailTimer = window.setTimeout(() => {
       if (cancelled) return;
       loadAdguardSources().catch(() => undefined);
@@ -937,7 +993,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
       cancelled = true;
       window.clearTimeout(detailTimer);
     };
-  }, []);
+  }, [isAllScope, selectedNodeId]);
 
   useEffect(() => {
     if (!onHeaderProjectionChange) return;
@@ -961,13 +1017,14 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
   }, [selectedScope, rangeSec, nodes.length]);
 
   useEffect(() => {
+    if (!isAllScope) return;
     loadAdguardHistory(rangeSec);
     return () => {
       ++adguardHistoryRequestIdRef.current;
       adguardHistoryAbortRef.current?.abort();
       adguardHistoryAbortRef.current = null;
     };
-  }, [rangeSec]);
+  }, [isAllScope, rangeSec]);
 
   const effectiveTrafficSource: TrafficSource = !isAllScope && trafficSource !== 'nodes' ? 'nodes' : trafficSource;
   const effectiveTrafficMode: TrafficMode = effectiveTrafficSource === 'nodes' ? trafficMode : 'live';
@@ -1097,13 +1154,17 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
       realtimeRefreshRef.current = now;
 
       loadHistory(selectedScope, rangeSec);
+      if (!isAllScope && selectedNodeId !== null) {
+        loadSelectedServerStatus(selectedNodeId);
+        return;
+      }
       loadLatestSnapshot();
       loadDepsHealth();
       loadStackStatus();
       loadServerStatuses();
       loadCollectorStatus();
     },
-    [selectedScope, rangeSec],
+    [isAllScope, selectedNodeId, selectedScope, rangeSec],
   );
 
   useTrafficStatsSubscription({
@@ -1113,6 +1174,10 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     fallbackPollIntervalMs: 60_000,
     fallbackRun: () => {
       loadHistory(selectedScope, rangeSec);
+      if (!isAllScope && selectedNodeId !== null) {
+        loadSelectedServerStatus(selectedNodeId);
+        return;
+      }
       loadLatestSnapshot();
       loadDepsHealth();
       loadStackStatus();
@@ -1139,8 +1204,8 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     () =>
       isAllScope
         ? null
-        : serverStatuses.find((status) => status.node === selectedNodeName) || null,
-    [isAllScope, serverStatuses, selectedNodeName],
+        : serverStatuses.find((status) => status.node_id === selectedNodeId || status.node === selectedNodeName) || null,
+    [isAllScope, selectedNodeId, serverStatuses, selectedNodeName],
   );
 
   const activeServerStatuses = useMemo(
@@ -1877,6 +1942,9 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
               className="min-w-0"
               options={[
                 { value: 'all', label: t('common.all') },
+                ...(!isAllScope && selectedNodeId !== null && !nodes.some((node) => node.id === selectedNodeId)
+                  ? [{ value: selectedScope, label: selectedNodeName }]
+                  : []),
                 ...nodes.map((n) => ({ value: String(n.id), label: n.name })),
               ]}
               value={selectedScope}
@@ -1915,6 +1983,10 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
               className={secondaryButtonClass}
               onClick={() => {
                 loadHistory(selectedScope, rangeSec);
+                if (!isAllScope && selectedNodeId !== null) {
+                  loadSelectedServerStatus(selectedNodeId);
+                  return;
+                }
                 loadLatestSnapshot();
                 loadDepsHealth();
                 loadAdguardOverview();
