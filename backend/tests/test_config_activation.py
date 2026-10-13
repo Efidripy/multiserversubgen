@@ -36,6 +36,8 @@ export CONFIG_ACTIVATION_RUNTIME_ROOT="$work/run"
 export CONFIG_ACTIVATION_BACKUP_ROOT="$work/backups"
 export CONFIG_ACTIVATION_SYSTEMD_DIR="$work/systemd"
 export CONFIG_ACTIVATION_NGINX_ROOT="$work/nginx"
+export SYSTEMCTL_LOG="$work/systemctl.log"
+export SYSTEMCTL_START_ATTEMPT_FILE="$work/systemctl-start-attempted"
 
 cat > "$work/bin/systemd-analyze" <<'MOCK'
 #!/bin/bash
@@ -43,6 +45,21 @@ cat > "$work/bin/systemd-analyze" <<'MOCK'
 MOCK
 cat > "$work/bin/systemctl" <<'MOCK'
 #!/bin/bash
+printf '%s\n' "$*" >> "$SYSTEMCTL_LOG"
+if [ "${1:-}" = "is-active" ] && [ "${2:-}" = "--quiet" ] && [ "${3:-}" = "nginx" ]; then
+    [ "${NGINX_ACTIVE:-1}" = "1" ]
+    exit $?
+fi
+if [ "${FAIL_NGINX_START:-0}" = "1" ] && [ "${1:-}" = "start" ] && [ "${2:-}" = "nginx" ]; then
+    exit 1
+fi
+if [ "${FAIL_NGINX_START_ONCE:-0}" = "1" ] && [ "${1:-}" = "start" ] && [ "${2:-}" = "nginx" ] && [ ! -e "$SYSTEMCTL_START_ATTEMPT_FILE" ]; then
+    : > "$SYSTEMCTL_START_ATTEMPT_FILE"
+    exit 1
+fi
+if [ "${FAIL_NGINX_RELOAD:-0}" = "1" ] && [ "${1:-}" = "reload" ] && [ "${2:-}" = "nginx" ]; then
+    exit 1
+fi
 exit 0
 MOCK
 cat > "$work/bin/nginx" <<'MOCK'
@@ -143,6 +160,36 @@ case "$1" in
         grep -q 'include /etc/nginx/snippets/sub-manager.conf' "$selected"
         [ "$(wc -l < "$CONFIG_ACTIVATION_BACKUP_DIR/manifest")" -eq 4 ]
         ;;
+    inactive-nginx)
+        export NGINX_ACTIVE=0
+        config_activation_activate "$stage_unit" "$stage_snippet" "$stage_shield" "$stage_site" "$selected" true
+        grep -Fxq 'is-active --quiet nginx' "$SYSTEMCTL_LOG"
+        grep -Fxq 'start nginx' "$SYSTEMCTL_LOG"
+        ! grep -Fxq 'reload nginx' "$SYSTEMCTL_LOG"
+        grep -qx 'new-unit' "$unit"
+        grep -qx 'new-snippet' "$snippet"
+        grep -qx 'new-shield' "$shield"
+        grep -q 'include /etc/nginx/snippets/sub-manager.conf' "$selected"
+        ;;
+    inactive-nginx-start-failure)
+        export NGINX_ACTIVE=0
+        export FAIL_NGINX_START_ONCE=1
+        if config_activation_activate "$stage_unit" "$stage_snippet" "$stage_shield" "$stage_site" "$selected" true; then exit 1; fi
+        [ "$(grep -Fxc 'start nginx' "$SYSTEMCTL_LOG")" -eq 2 ]
+        grep -qx 'old-unit' "$unit"
+        grep -qx 'old-snippet' "$snippet"
+        grep -qx 'old-shield' "$shield"
+        grep -qx 'server { }' "$selected"
+        ;;
+    active-nginx-reload-failure)
+        export FAIL_NGINX_RELOAD=1
+        if config_activation_activate "$stage_unit" "$stage_snippet" "$stage_shield" "$stage_site" "$selected" true; then exit 1; fi
+        grep -Fxq 'reload nginx' "$SYSTEMCTL_LOG"
+        grep -qx 'old-unit' "$unit"
+        grep -qx 'old-snippet' "$snippet"
+        grep -qx 'old-shield' "$shield"
+        grep -qx 'server { }' "$selected"
+        ;;
     verify-failure)
         export FAIL_SYSTEMD_VERIFY=1
         if config_activation_activate "$stage_unit" "$stage_snippet" "$stage_shield" "$stage_site" "$selected" true; then exit 1; fi
@@ -201,6 +248,21 @@ config_activation_cleanup
 
 def test_config_activation_happy_path_promotes_all_managed_targets():
     result = _run_case("happy")
+    assert result.returncode == 0, result.stderr
+
+
+def test_config_activation_starts_nginx_after_validation_when_it_is_inactive():
+    result = _run_case("inactive-nginx")
+    assert result.returncode == 0, result.stderr
+
+
+def test_config_activation_restores_snapshot_when_starting_inactive_nginx_fails():
+    result = _run_case("inactive-nginx-start-failure")
+    assert result.returncode == 0, result.stderr
+
+
+def test_config_activation_restores_snapshot_when_reloading_active_nginx_fails():
+    result = _run_case("active-nginx-reload-failure")
     assert result.returncode == 0, result.stderr
 
 
