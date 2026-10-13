@@ -1,11 +1,39 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { monitoringScopeFromSearch } from '../src/components/MonitoringDashboard';
 
 const read = (relativePath: string) => fs.readFileSync(path.resolve(__dirname, '..', relativePath), 'utf8');
 const count = (source: string, needle: string) => source.split(needle).length - 1;
 
 describe('Monitoring request ownership contract', () => {
+  it('accepts only a positive numeric server deep link before initial effects run', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain("export function monitoringScopeFromSearch(search: string): string");
+    expect(source).toContain("new URLSearchParams(search).get('server')");
+    expect(source).toContain("/^[1-9]\\d*$/.test(candidate)");
+    expect(source).toContain("monitoringScopeFromSearch(typeof window === 'undefined' ? '' : window.location.search)");
+  });
+
+  it('normalizes the deep-link server id without accepting a fleet or malformed scope', () => {
+    expect(monitoringScopeFromSearch('?server=17')).toBe('17');
+    expect(monitoringScopeFromSearch('?server=00017')).toBe('all');
+    expect(monitoringScopeFromSearch('?server=all')).toBe('all');
+    expect(monitoringScopeFromSearch('?server=-1')).toBe('all');
+    expect(monitoringScopeFromSearch('?scope=17')).toBe('all');
+  });
+
+  it('keeps a valid server deep link scoped until the operator explicitly selects All', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+
+    expect(source).toContain('loadSelectedServerStatus(selectedNodeId)');
+    expect(source).toContain('api.get(`/v1/servers/${nodeId}/status`');
+    expect(source).toContain('do not initialize picker, snapshot, or fleet cards');
+    expect(source).toContain("...(!isAllScope && selectedNodeId !== null && !nodes.some((node) => node.id === selectedNodeId)");
+    expect(source).toContain("{ value: selectedScope, label: selectedNodeName }");
+  });
+
   it('keeps Monitoring reads in the dashboard owner and consumes a projection in App', () => {
     const app = read('src/App.tsx');
     const dashboard = read('src/components/MonitoringDashboard.tsx');
