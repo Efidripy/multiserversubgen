@@ -206,6 +206,14 @@ config_activation_promote() {
     mv -fT -- "$temp_target" "$target"
 }
 
+config_activation_apply_nginx_config() {
+    if systemctl is-active --quiet nginx; then
+        systemctl reload nginx
+    else
+        systemctl start nginx
+    fi
+}
+
 config_activation_restore() {
     local label target state temp_target
     while IFS='|' read -r label state target; do
@@ -227,7 +235,7 @@ config_activation_restore() {
 
     systemctl daemon-reload >/dev/null 2>&1 || true
     if nginx -t >/dev/null 2>&1; then
-        systemctl reload nginx >/dev/null 2>&1 || true
+        config_activation_apply_nginx_config >/dev/null 2>&1 || true
     fi
 }
 
@@ -297,7 +305,7 @@ config_activation_activate() {
         || ! config_activation_promote "$staged_site" "$selected_cfg" 0644 \
         || ! systemctl daemon-reload \
         || ! nginx -t \
-        || ! systemctl reload nginx \
+        || ! config_activation_apply_nginx_config \
         || ! "$@"; then
         echo "Config activation failed; restoring the exact prior config snapshot." >&2
         config_activation_restore || true
