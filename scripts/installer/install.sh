@@ -65,6 +65,187 @@ apt_install_missing() {
     done
     [ "${#missing[@]}" -eq 0 ] || apt_install "${missing[@]}"
 }
+
+# frontend-runtime-contract:start
+# Фронтенд требует Node.js >=20 <25 и npm >=10 <12. Поддерживаемые
+# репозитории Node.js могут поставлять npm вместе с nodejs без отдельного
+# distro-пакета `npm`, поэтому проверяется работоспособность бинарников.
+NODESOURCE_NODE_MAJOR="22"
+NODESOURCE_KEY_FINGERPRINT="6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
+NODESOURCE_KEYRING="${NODESOURCE_KEYRING:-/etc/apt/keyrings/multiserversubgen-nodesource.gpg}"
+NODESOURCE_SOURCE_FILE="${NODESOURCE_SOURCE_FILE:-/etc/apt/sources.list.d/multiserversubgen-nodesource.sources}"
+NODESOURCE_PREFERENCES_FILE="${NODESOURCE_PREFERENCES_FILE:-/etc/apt/preferences.d/multiserversubgen-nodesource-nodejs}"
+
+frontend_runtime_major_is_in_range() {
+    local version="$1"
+    local minimum="$2"
+    local maximum_exclusive="$3"
+    local normalized major
+
+    normalized="${version#v}"
+    if [[ ! "$normalized" =~ ^[0-9]+(\.[0-9]+){1,2}([-.+][0-9A-Za-z.-]+)?$ ]]; then
+        return 1
+    fi
+    major="${normalized%%.*}"
+    (( 10#$major >= minimum && 10#$major < maximum_exclusive ))
+}
+
+nodesource_restore_file() {
+    local target="$1"
+    local backup="$2"
+
+    if [ -n "$backup" ]; then
+        install -m 0644 "$backup" "$target"
+    else
+        rm -f -- "$target"
+    fi
+}
+
+nodesource_restore_configuration() {
+    local key_backup="$1"
+    local source_backup="$2"
+    local preferences_backup="$3"
+
+    nodesource_restore_file "$NODESOURCE_KEYRING" "$key_backup"
+    nodesource_restore_file "$NODESOURCE_SOURCE_FILE" "$source_backup"
+    nodesource_restore_file "$NODESOURCE_PREFERENCES_FILE" "$preferences_backup"
+}
+
+configure_nodesource_node_22_repository() {
+    local architecture temp_dir tmp_key tmp_keyring tmp_source tmp_preferences
+    local key_fingerprint key_backup="" source_backup="" preferences_backup=""
+
+    architecture="$(dpkg --print-architecture 2>/dev/null || true)"
+    case "$architecture" in
+        amd64|arm64) ;;
+        *)
+            echo "❌ NodeSource Node.js ${NODESOURCE_NODE_MAJOR} не поддерживает архитектуру '${architecture:-unknown}' в этом installer." >&2
+            return 1
+            ;;
+    esac
+
+    if ! apt_install_missing ca-certificates curl gnupg; then
+        echo "❌ Не удалось установить пакеты для проверки подписанного NodeSource APT-источника." >&2
+        return 1
+    fi
+    if ! install -d -m 0755 "$(dirname "$NODESOURCE_KEYRING")" "$(dirname "$NODESOURCE_SOURCE_FILE")" "$(dirname "$NODESOURCE_PREFERENCES_FILE")"; then
+        echo "❌ Не удалось подготовить каталоги NodeSource APT-источника." >&2
+        return 1
+    fi
+
+    temp_dir="$(mktemp -d)" || return 1
+    tmp_key="${temp_dir}/nodesource.key"
+    tmp_keyring="${temp_dir}/nodesource.gpg"
+    tmp_source="${temp_dir}/nodesource.sources"
+    tmp_preferences="${temp_dir}/nodejs"
+
+    if [ -e "$NODESOURCE_KEYRING" ]; then
+        key_backup="${temp_dir}/keyring.previous"
+        cp -p -- "$NODESOURCE_KEYRING" "$key_backup" || { rm -rf -- "$temp_dir"; echo "❌ Не удалось сохранить прежний NodeSource keyring." >&2; return 1; }
+    fi
+    if [ -e "$NODESOURCE_SOURCE_FILE" ]; then
+        source_backup="${temp_dir}/source.previous"
+        cp -p -- "$NODESOURCE_SOURCE_FILE" "$source_backup" || { rm -rf -- "$temp_dir"; echo "❌ Не удалось сохранить прежний NodeSource APT-источник." >&2; return 1; }
+    fi
+    if [ -e "$NODESOURCE_PREFERENCES_FILE" ]; then
+        preferences_backup="${temp_dir}/preferences.previous"
+        cp -p -- "$NODESOURCE_PREFERENCES_FILE" "$preferences_backup" || { rm -rf -- "$temp_dir"; echo "❌ Не удалось сохранить прежнее NodeSource APT preference." >&2; return 1; }
+    fi
+
+    if ! curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 --retry 3 --retry-all-errors \
+        "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key" -o "$tmp_key" \
+        || ! gpg --batch --yes --dearmor --output "$tmp_keyring" "$tmp_key"; then
+        echo "❌ Не удалось получить или преобразовать ключ подписи NodeSource." >&2
+        rm -rf -- "$temp_dir"
+        return 1
+    fi
+    key_fingerprint="$(gpg --batch --show-keys --with-colons "$tmp_keyring" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')"
+    if [ "$key_fingerprint" != "$NODESOURCE_KEY_FINGERPRINT" ]; then
+        echo "❌ Ключ NodeSource не прошёл проверку fingerprint; APT-источник не изменён." >&2
+        rm -rf -- "$temp_dir"
+        return 1
+    fi
+
+    cat > "$tmp_source" <<EOF
+Types: deb
+URIs: https://deb.nodesource.com/node_${NODESOURCE_NODE_MAJOR}.x
+Suites: nodistro
+Components: main
+Architectures: ${architecture}
+Signed-By: ${NODESOURCE_KEYRING}
+EOF
+    cat > "$tmp_preferences" <<'EOF'
+Package: nodejs
+Pin: origin deb.nodesource.com
+Pin-Priority: 600
+EOF
+
+    if ! install -m 0644 "$tmp_keyring" "$NODESOURCE_KEYRING" \
+        || ! install -m 0644 "$tmp_source" "$NODESOURCE_SOURCE_FILE" \
+        || ! install -m 0644 "$tmp_preferences" "$NODESOURCE_PREFERENCES_FILE"; then
+        nodesource_restore_configuration "$key_backup" "$source_backup" "$preferences_backup"
+        rm -rf -- "$temp_dir"
+        echo "❌ Не удалось активировать NodeSource APT-источник; прежняя конфигурация восстановлена." >&2
+        return 1
+    fi
+    if ! apt_update; then
+        nodesource_restore_configuration "$key_backup" "$source_backup" "$preferences_backup"
+        rm -rf -- "$temp_dir"
+        echo "❌ NodeSource APT-источник не прошёл apt update; прежняя конфигурация восстановлена." >&2
+        return 1
+    fi
+    if ! apt-cache policy nodejs | grep -Fq "deb.nodesource.com/node_${NODESOURCE_NODE_MAJOR}.x"; then
+        nodesource_restore_configuration "$key_backup" "$source_backup" "$preferences_backup"
+        rm -rf -- "$temp_dir"
+        echo "❌ После apt update пакет NodeSource Node.js ${NODESOURCE_NODE_MAJOR} недоступен; прежняя конфигурация восстановлена." >&2
+        return 1
+    fi
+
+    rm -rf -- "$temp_dir"
+}
+
+frontend_runtime_is_supported() {
+    local node_version npm_version
+
+    if ! node_version="$(node --version 2>/dev/null)"; then
+        echo "❌ Node.js не запускается. Фронтенд требует Node.js >=20 <25 и npm >=10 <12." >&2
+        return 1
+    fi
+    if ! npm_version="$(npm --version 2>/dev/null)"; then
+        echo "❌ npm не запускается. Установите поддерживаемый Node.js, поставляющий npm вместе с nodejs." >&2
+        return 1
+    fi
+    if ! frontend_runtime_major_is_in_range "$node_version" 20 25; then
+        echo "❌ Найден Node.js ${node_version}; фронтенд требует Node.js >=20 <25." >&2
+        return 1
+    fi
+    if ! frontend_runtime_major_is_in_range "$npm_version" 10 12; then
+        echo "❌ Найден npm ${npm_version}; фронтенд требует npm >=10 <12." >&2
+        return 1
+    fi
+}
+
+ensure_supported_frontend_runtime() {
+    if frontend_runtime_is_supported >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo "Подготовка подписанного NodeSource Node.js ${NODESOURCE_NODE_MAJOR} с bundled npm..."
+    if ! configure_nodesource_node_22_repository; then
+        return 1
+    fi
+    if ! apt_install nodejs; then
+        echo "❌ Не удалось установить NodeSource Node.js ${NODESOURCE_NODE_MAJOR}; конфигурация источника сохранена для диагностики." >&2
+        return 1
+    fi
+
+    if ! frontend_runtime_is_supported; then
+        echo "❌ Отдельный APT-пакет npm не устанавливается: используйте поддерживаемый Node.js, который поставляет npm вместе с nodejs, затем повторите запуск." >&2
+        return 1
+    fi
+}
+# frontend-runtime-contract:end
+
 apt_fix_broken() {
     DEBIAN_FRONTEND=noninteractive apt-get install -f -y "${APT_DPKG_OPTS[@]}"
 }
@@ -2413,8 +2594,8 @@ write_install_log
 
 cp "$SELECTED_CFG" "${SELECTED_CFG}.bak"
 
-echo "Установка Node.js из подписанного APT-репозитория дистрибутива..."
-apt_install_missing nodejs npm || { echo "❌ Не удалось установить Node.js. Прерывание."; exit 1; }
+echo "Проверка совместимого Node.js и bundled npm..."
+ensure_supported_frontend_runtime || exit 1
 echo "  → Node.js $(node --version), npm $(npm --version)"
 
 mkdir -p "$PROJECT_DIR"
