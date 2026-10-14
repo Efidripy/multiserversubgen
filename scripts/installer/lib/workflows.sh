@@ -1196,6 +1196,16 @@ run_install_with_answers() {
 
     clear_stale_install_markers
     cleanup_malformed_nginx_site_entries
+    if [ -z "$selected_cfg" ] \
+        && [ "${PROFILE_PUBLIC_DOMAIN:-}" = "${PROFILE_XUI_DOMAIN:-}" ] \
+        && [ -f /etc/nginx/sites-available/multiserversubgen-xui-main.conf ] \
+        && grep -qs '^# managed-by: multiserversubgen-xui$' /etc/nginx/sites-available/multiserversubgen-xui-main.conf \
+        && grep -qsE 'listen[[:space:]].*(7443|9443|10443).*ssl|proxy_protocol' /etc/nginx/sites-available/multiserversubgen-xui-main.conf; then
+        # Prefer the managed XUI vhost when reusing 3x-ui. Its stream-compatible
+        # listener is reached through the existing TLS mux; a stale exact-domain
+        # vhost would otherwise create a competing :443 route and yield 404s.
+        selected_cfg="/etc/nginx/sites-available/multiserversubgen-xui-main.conf"
+    fi
     for exact_cfg in \
         "/etc/nginx/sites-available/${PROFILE_PUBLIC_DOMAIN}" \
         "/etc/nginx/sites-available/${PROFILE_PUBLIC_DOMAIN}.conf"; do
@@ -1204,16 +1214,6 @@ run_install_with_answers() {
             break
         fi
     done
-    if [ -z "$selected_cfg" ] \
-        && [ "${PROFILE_PUBLIC_DOMAIN:-}" = "${PROFILE_XUI_DOMAIN:-}" ] \
-        && [ -f /etc/nginx/sites-available/multiserversubgen-xui-main.conf ] \
-        && grep -qs '^# managed-by: multiserversubgen-xui$' /etc/nginx/sites-available/multiserversubgen-xui-main.conf; then
-        # The XUI main vhost terminates TLS behind the managed stream mux on
-        # 7443. Reusing it lets the standard installer add its snippet without
-        # creating an unreachable competing :443 vhost.
-        selected_cfg="/etc/nginx/sites-available/multiserversubgen-xui-main.conf"
-    fi
-
     local heartbeat_pid=""
     local start_ts now_ts elapsed
 
