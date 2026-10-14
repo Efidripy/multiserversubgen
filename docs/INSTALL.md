@@ -27,6 +27,14 @@ sudo ./install.sh
 - применяет базовые security-настройки (включая fail2ban, если включено в профиле)
 - опционально настраивает мониторинг (Prometheus/Grafana, AdGuard-интеграция)
 
+Для сборки frontend installer проверяет реальный runtime-контракт: Node.js
+`>=20 <25` и bundled npm `>=10 <12`. Если совместимая пара уже установлена,
+он её не изменяет. Иначе installer подключает только подписанный NodeSource
+APT-источник Node.js 22: ключ сверяется по pinned fingerprint, source использует
+`signed-by`, а APT preference относится только к `nodejs`. Отдельный distro-пакет
+`npm` installer не устанавливает, поскольку NodeSource поставляет npm вместе с
+`nodejs`.
+
 Уже существующие Grafana и Prometheus installer считает внешними и не
 обновляет/не перенастраивает их автоматически. Детали и явный adoption-flow:
 [ADR-0003](./ADR-0003-component-ownership.md).
