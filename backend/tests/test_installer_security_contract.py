@@ -143,6 +143,19 @@ def test_xui_preset_reuses_its_managed_tls_vhost_for_sub_manager():
 
     assert 'selected_cfg="/etc/nginx/sites-available/multiserversubgen-xui-main.conf"' in workflows
     assert 'grep -qs \'^# managed-by: multiserversubgen-xui$\'' in workflows
+    assert "grep -qsE 'listen[[:space:]].*(7443|9443|10443).*ssl|proxy_protocol'" in workflows
+    managed_choice = workflows.index('selected_cfg="/etc/nginx/sites-available/multiserversubgen-xui-main.conf"')
+    exact_choice = workflows.index('selected_cfg="$exact_cfg"')
+    assert managed_choice < exact_choice
+
+
+def test_xui_managed_vhost_preference_is_scoped_to_xui_domain_reuse():
+    workflows = _read("scripts/installer/lib/workflows.sh")
+
+    managed_block = workflows.split(
+        'selected_cfg="/etc/nginx/sites-available/multiserversubgen-xui-main.conf"', 1
+    )[0]
+    assert '[ "${PROFILE_PUBLIC_DOMAIN:-}" = "${PROFILE_XUI_DOMAIN:-}" ]' in managed_block
 
 
 def test_fresh_installer_retries_transient_apt_locks_and_installs_matching_venv():
