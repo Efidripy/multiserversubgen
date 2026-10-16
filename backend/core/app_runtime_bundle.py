@@ -102,7 +102,7 @@ def build_app_runtime_bundle(
     adguard_latest: Dict,
     adguard_latest_lock: Lock,
     ws_manager,
-    on_snapshot: Callable,
+    on_snapshots: Callable,
 ) -> AppRuntimeBundle:
     inbound_mgr = InboundManager(decrypt_func=decrypt, encrypt_func=encrypt)
     client_mgr = ClientManager(decrypt_func=decrypt, encrypt_func=encrypt)
@@ -120,7 +120,7 @@ def build_app_runtime_bundle(
         xui_monitor=xui_monitor,
         ws_manager=ws_manager,
         db_path=db_path,
-        on_snapshot=on_snapshot,
+        on_snapshots=on_snapshots,
         base_interval_sec=collector_base_interval_sec,
         max_interval_sec=collector_max_interval_sec,
         max_parallel_polls=collector_max_parallel,

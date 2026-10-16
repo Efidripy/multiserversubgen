@@ -2,6 +2,8 @@ import axios, { AxiosError } from 'axios';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import api, { AUTH_REQUIRED_EVENT, resetAuthRequiredEventGuard } from '../src/api/client';
 import { verifyCurrentAuth } from '../src/api/authService';
+import { setAuthCredentials, clearAuthCredentials } from '../src/auth';
+import { getDashboardOverview } from '../src/api/dashboard';
 
 const unauthorizedAdapter = async (config: any) => {
   throw new AxiosError('Unauthorized', 'ERR_BAD_REQUEST', config, undefined, {
@@ -46,6 +48,26 @@ describe('API authentication lifecycle', () => {
     expect(events).toHaveLength(0);
   });
 
+  it('uses the HttpOnly browser session for Dashboard polling without an empty Basic header', async () => {
+    let captured: any;
+    setAuthCredentials('admin', 'legacy-basic-must-not-be-replayed', '', 'ticket', 'admin');
+    api.defaults.adapter = async (config: any) => {
+      captured = config;
+      return {
+        data: { summary: {}, fleet: [] },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+    };
+
+    await expect(getDashboardOverview()).resolves.toMatchObject({ projection: 'dashboard-v1' });
+    expect(captured.auth).toBeUndefined();
+    expect(captured.headers?.get?.('Authorization')).toBeUndefined();
+    expect(captured.withCredentials).toBe(true);
+    clearAuthCredentials();
+  });
   it('uses the HttpOnly browser session on refresh instead of sending empty Basic credentials', async () => {
     let captured: any;
     api.defaults.adapter = async (config: any) => {

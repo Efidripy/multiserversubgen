@@ -63,6 +63,9 @@ ExecStartPre=/bin/sh -ec 'if /usr/bin/ss -ltnH "sport = :666" | /usr/bin/grep -q
 ExecStart=/opt/sub-manager/venv/bin/uvicorn main:app --host 127.0.0.1 --port 666 --log-level warning
 Restart=always
 RestartSec=5
+# Lifespan drains registered executor work before it exits. Preserve enough
+# time for a clean drain to finish or fail visibly instead of using SIGKILL.
+TimeoutStopSec=120
 
 [Install]
 WantedBy=multi-user.target
