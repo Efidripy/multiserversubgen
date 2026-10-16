@@ -50,10 +50,6 @@ const fleetActionButtonClass =
 const fleetDeleteButtonClass =
   'flex h-5 w-5 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0a0e1a] text-slate-500 transition-colors hover:border-red-400/30 hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-50';
 
-// Keep the former eager read available as an explicit build-time rollback,
-// while the default Dashboard path stays demand-loaded.
-const eagerTelegramPolicyLoad = import.meta.env.VITE_DASHBOARD_EAGER_TELEGRAM_POLICIES === 'true';
-
 const isReadOnly = (value: unknown) => value === true || Number(value) === 1;
 
 const cleanPanelUrl = (rawAddress: string) => {
@@ -114,6 +110,9 @@ export function RegisteredFleetPanel({
   const editAbortRef = useRef<AbortController | null>(null);
   const fleetRefreshAbortRef = useRef<AbortController | null>(null);
   const telegramPoliciesAbortRef = useRef<AbortController | null>(null);
+  const telegramPoliciesAutoLoadStartedRef = useRef(false);
+  const telegramPoliciesLifecycleRef = useRef(0);
+  const telegramPoliciesMountedRef = useRef(false);
 
   const refreshFleetLive = useCallback(async () => {
     fleetRefreshAbortRef.current?.abort();
@@ -229,12 +228,12 @@ export function RegisteredFleetPanel({
     try {
       const policies = await listTelegramNodePolicies({ signal: controller.signal });
       const next = Object.fromEntries(policies.map((policy) => [policy.node_id, policy]));
-      if (controller.signal.aborted || telegramPoliciesAbortRef.current !== controller) return null;
+      if (controller.signal.aborted || telegramPoliciesAbortRef.current !== controller || !telegramPoliciesMountedRef.current) return null;
       setTelegramPolicies(next);
       setTelegramPoliciesLoaded(true);
       return next;
     } catch (err: any) {
-      if (controller.signal.aborted || telegramPoliciesAbortRef.current !== controller) return null;
+      if (controller.signal.aborted || telegramPoliciesAbortRef.current !== controller || !telegramPoliciesMountedRef.current) return null;
       const message = err?.response?.data?.detail || err?.message || t('nodes.telegramPolicyLoadFailed');
       setError(message);
       return null;
@@ -274,24 +273,40 @@ export function RegisteredFleetPanel({
     }
   };
 
-  useEffect(() => () => {
-    editAbortRef.current?.abort();
-    editAbortRef.current = null;
-    fleetRefreshAbortRef.current?.abort();
-    fleetRefreshAbortRef.current = null;
-    telegramPoliciesAbortRef.current?.abort();
-    telegramPoliciesAbortRef.current = null;
+  useEffect(() => {
+    const lifecycle = ++telegramPoliciesLifecycleRef.current;
+    telegramPoliciesMountedRef.current = true;
+    return () => {
+      telegramPoliciesMountedRef.current = false;
+      editAbortRef.current?.abort();
+      editAbortRef.current = null;
+      fleetRefreshAbortRef.current?.abort();
+      fleetRefreshAbortRef.current = null;
+      // React StrictMode replays effects without discarding component state.
+      // Delay only this cancellation one microtask so the retained automatic
+      // persisted-policy read can finish; a real unmount still aborts it.
+      queueMicrotask(() => {
+        if (telegramPoliciesLifecycleRef.current !== lifecycle) return;
+        telegramPoliciesAbortRef.current?.abort();
+        telegramPoliciesAbortRef.current = null;
+      });
+    };
   }, []);
 
   useEffect(() => {
     if (!canManageTelegram) {
+      telegramPoliciesAutoLoadStartedRef.current = false;
       telegramPoliciesAbortRef.current?.abort();
       telegramPoliciesAbortRef.current = null;
       setTelegramPolicies({});
       setTelegramPoliciesLoaded(false);
       return;
     }
-    if (eagerTelegramPolicyLoad) void refreshTelegramPolicies();
+    if (telegramPoliciesAutoLoadStartedRef.current) return;
+    // This is one local persisted-policy read for the eligible panel instance.
+    // It neither probes XUI nodes nor changes a Telegram policy.
+    telegramPoliciesAutoLoadStartedRef.current = true;
+    void refreshTelegramPolicies();
   }, [canManageTelegram, refreshTelegramPolicies]);
 
   useEffect(() => {

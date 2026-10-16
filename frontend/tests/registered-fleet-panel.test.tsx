@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -148,9 +149,68 @@ describe('RegisteredFleetPanel edit action', () => {
     await waitFor(() => expect(mocks.getRegisteredFleetOverview).toHaveBeenCalledTimes(1));
   });
 
-  it('demand-loads a fresh Telegram policy only after the explicit TG action', async () => {
+  it('automatically loads one persisted Telegram policy snapshot for an eligible panel without a mutation', async () => {
     mocks.dashboardData.fleet = [node];
     mocks.listTelegramNodePolicies.mockResolvedValue([{
+      node_id: node.id,
+      provisioning_enabled: true,
+      total_bytes: 0,
+      validity_days: 0,
+      client_enabled: true,
+      policy_version: 3,
+      updated_by: 'admin',
+    }]);
+
+    render(
+      <StrictMode>
+        <RegisteredFleetPanel collapsed={false} setCollapsed={vi.fn()} canManageTelegram />
+      </StrictMode>,
+    );
+
+    await waitFor(() => expect(mocks.listTelegramNodePolicies).toHaveBeenCalledTimes(1));
+    expect(mocks.listTelegramNodePolicies).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'nodes.telegramPolicyOnTitle' })).toBeTruthy());
+    expect(mocks.updateTelegramNodePolicy).not.toHaveBeenCalled();
+    expect(mocks.getRegisteredFleetOverview).not.toHaveBeenCalled();
+  });
+
+  it('does not repeat the automatic policy read when the eligible panel rerenders or collapses', async () => {
+    mocks.dashboardData.fleet = [node];
+    mocks.listTelegramNodePolicies.mockResolvedValue([]);
+    const { rerender } = render(<RegisteredFleetPanel collapsed={false} setCollapsed={vi.fn()} canManageTelegram />);
+
+    await waitFor(() => expect(mocks.listTelegramNodePolicies).toHaveBeenCalledTimes(1));
+    rerender(<RegisteredFleetPanel collapsed setCollapsed={vi.fn()} canManageTelegram />);
+    rerender(<RegisteredFleetPanel collapsed={false} setCollapsed={vi.fn()} canManageTelegram />);
+
+    expect(mocks.listTelegramNodePolicies).toHaveBeenCalledTimes(1);
+    expect(mocks.updateTelegramNodePolicy).not.toHaveBeenCalled();
+  });
+
+  it('shows a known off state when the automatic policy response has no row for the node', async () => {
+    mocks.dashboardData.fleet = [node];
+    mocks.listTelegramNodePolicies.mockResolvedValue([]);
+
+    render(<RegisteredFleetPanel collapsed={false} setCollapsed={vi.fn()} canManageTelegram />);
+
+    await waitFor(() => expect(mocks.listTelegramNodePolicies).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'nodes.telegramPolicyOffTitle' })).toBeTruthy());
+    expect(mocks.updateTelegramNodePolicy).not.toHaveBeenCalled();
+  });
+
+  it('does not read Telegram policies for an ineligible panel', async () => {
+    mocks.dashboardData.fleet = [node];
+
+    render(<RegisteredFleetPanel collapsed={false} setCollapsed={vi.fn()} />);
+
+    await waitFor(() => expect(screen.getByText('edge-42')).toBeTruthy());
+    expect(mocks.listTelegramNodePolicies).not.toHaveBeenCalled();
+    expect(mocks.updateTelegramNodePolicy).not.toHaveBeenCalled();
+  });
+
+  it('performs a fresh second read immediately before the explicit Telegram policy mutation', async () => {
+    mocks.dashboardData.fleet = [node];
+    const policy = {
       node_id: node.id,
       provisioning_enabled: false,
       total_bytes: 0,
@@ -158,81 +218,39 @@ describe('RegisteredFleetPanel edit action', () => {
       client_enabled: true,
       policy_version: 3,
       updated_by: 'admin',
-    }]);
+    };
+    mocks.listTelegramNodePolicies.mockResolvedValue([policy]);
     mocks.updateTelegramNodePolicy.mockResolvedValue({
-      node_id: node.id,
+      ...policy,
       provisioning_enabled: true,
-      total_bytes: 0,
-      validity_days: 0,
-      client_enabled: true,
       policy_version: 4,
-      updated_by: 'admin',
     });
 
     render(<RegisteredFleetPanel collapsed={false} setCollapsed={vi.fn()} canManageTelegram />);
 
-    await waitFor(() => expect(screen.getByText('edge-42')).toBeTruthy());
-    expect(mocks.listTelegramNodePolicies).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'nodes.telegramPolicyLoadTitle' })).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('button', { name: 'nodes.telegramPolicyLoadTitle' }));
-
     await waitFor(() => expect(mocks.listTelegramNodePolicies).toHaveBeenCalledTimes(1));
-    expect(mocks.listTelegramNodePolicies).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'nodes.telegramPolicyOffTitle' })).toBeTruthy());
+    fireEvent.click(screen.getByRole('button', { name: 'nodes.telegramPolicyOffTitle' }));
+
+    await waitFor(() => expect(mocks.listTelegramNodePolicies).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(mocks.updateTelegramNodePolicy).toHaveBeenCalledWith(node.id, expect.objectContaining({
       provisioning_enabled: true,
       expected_policy_version: 3,
     })));
   });
 
-  it('keeps the mutation disabled when the demand policy read fails', async () => {
+  it('keeps Telegram status unknown and performs no mutation after the automatic read fails', async () => {
     mocks.dashboardData.fleet = [node];
     mocks.listTelegramNodePolicies.mockRejectedValue(new Error('policy read unavailable'));
 
     render(<RegisteredFleetPanel collapsed={false} setCollapsed={vi.fn()} canManageTelegram />);
-    await waitFor(() => expect(screen.getByText('edge-42')).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: 'nodes.telegramPolicyLoadTitle' }));
 
     await waitFor(() => expect(mocks.listTelegramNodePolicies).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'nodes.telegramPolicyLoadTitle' })).toBeTruthy());
     expect(mocks.updateTelegramNodePolicy).not.toHaveBeenCalled();
   });
 
-  it('returns a previously loaded policy to unknown state after a failed refresh', async () => {
-    mocks.dashboardData.fleet = [node];
-    mocks.listTelegramNodePolicies
-      .mockResolvedValueOnce([{
-        node_id: node.id,
-        provisioning_enabled: false,
-        total_bytes: 0,
-        validity_days: 0,
-        client_enabled: true,
-        policy_version: 3,
-        updated_by: 'admin',
-      }])
-      .mockRejectedValueOnce(new Error('policy refresh unavailable'));
-    mocks.updateTelegramNodePolicy.mockResolvedValue({
-      node_id: node.id,
-      provisioning_enabled: true,
-      total_bytes: 0,
-      validity_days: 0,
-      client_enabled: true,
-      policy_version: 4,
-      updated_by: 'admin',
-    });
-
-    render(<RegisteredFleetPanel collapsed={false} setCollapsed={vi.fn()} canManageTelegram />);
-    await waitFor(() => expect(screen.getByText('edge-42')).toBeTruthy());
-    const unknown = screen.getByRole('button', { name: 'nodes.telegramPolicyLoadTitle' });
-    fireEvent.click(unknown);
-    await waitFor(() => expect(mocks.updateTelegramNodePolicy).toHaveBeenCalledTimes(1));
-    const loadedButton = screen.getByRole('button', { name: 'nodes.telegramPolicyOnTitle' });
-    fireEvent.click(loadedButton);
-    await waitFor(() => expect(mocks.listTelegramNodePolicies).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'nodes.telegramPolicyLoadTitle' })).toBeTruthy());
-    expect(mocks.updateTelegramNodePolicy).toHaveBeenCalledTimes(1);
-  });
-
-  it('aborts an in-flight policy read on unmount without issuing a mutation', async () => {
+  it('aborts an automatic in-flight policy read on unmount without issuing a mutation', async () => {
     let signal: AbortSignal | undefined;
     mocks.dashboardData.fleet = [node];
     mocks.listTelegramNodePolicies.mockImplementation(({ signal: requestSignal }: { signal?: AbortSignal }) => {
@@ -243,12 +261,10 @@ describe('RegisteredFleetPanel edit action', () => {
     });
 
     const view = render(<RegisteredFleetPanel collapsed={false} setCollapsed={vi.fn()} canManageTelegram />);
-    await waitFor(() => expect(screen.getByText('edge-42')).toBeTruthy());
-    fireEvent.click(screen.getByRole('button', { name: 'nodes.telegramPolicyLoadTitle' }));
     await waitFor(() => expect(signal).toBeInstanceOf(AbortSignal));
     view.unmount();
 
-    expect(signal?.aborted).toBe(true);
+    await waitFor(() => expect(signal?.aborted).toBe(true));
     expect(mocks.updateTelegramNodePolicy).not.toHaveBeenCalled();
   });
 
