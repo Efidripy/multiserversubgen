@@ -71,7 +71,7 @@ describe('reload generation guards', () => {
     expect(source).toContain('const nodesAbortRef = useRef<AbortController | null>(null);');
     expect(source).toContain('const requestId = ++nodesRequestIdRef.current;');
     expect(source).toContain('nodesAbortRef.current?.abort();');
-    expect(source).toContain("api.get('/v1/nodes', { auth: getAuth(), signal: controller.signal })");
+    expect(source).toContain("api.get('/v1/nodes', { sessionOnlyAuth: true, signal: controller.signal })");
     expect(source).toContain('if (controller.signal.aborted || requestId !== nodesRequestIdRef.current) return;');
     expect(source).toContain('nodesRequestIdRef.current += 1;');
     expect(source).toContain('if (nodesAbortRef.current === controller) {');
@@ -95,7 +95,7 @@ describe('reload generation guards', () => {
     expect(source).toContain('const serverStatusAbortRef = useRef<AbortController | null>(null);');
     expect(source).toContain('const requestId = ++serverStatusRequestIdRef.current;');
     expect(source).toContain('serverStatusAbortRef.current?.abort();');
-    expect(source).toContain("api.get('/v1/servers/status', { auth: getAuth(), signal: controller.signal })");
+    expect(source).toContain("api.get('/v1/servers/status', { sessionOnlyAuth: true, signal: controller.signal })");
     expect(source).toContain('if (controller.signal.aborted || requestId !== serverStatusRequestIdRef.current) return [];');
     expect(source).toContain('if (requestId === serverStatusRequestIdRef.current) {');
     expect(source).toContain('if (serverStatusAbortRef.current === controller) {');
@@ -109,7 +109,7 @@ describe('reload generation guards', () => {
     expect(source).toContain('const collectorStatusAbortRef = useRef<AbortController | null>(null);');
     expect(source).toContain('const requestId = ++collectorStatusRequestIdRef.current;');
     expect(source).toContain('collectorStatusAbortRef.current?.abort();');
-    expect(source).toContain("api.get('/v1/collector/status', { auth: getAuth(), signal: controller.signal })");
+    expect(source).toContain("api.get('/v1/collector/status', { sessionOnlyAuth: true, signal: controller.signal })");
     expect(source).toContain('if (controller.signal.aborted || requestId !== collectorStatusRequestIdRef.current) return;');
     expect(source).toContain('if (collectorStatusAbortRef.current === controller) {');
     expect(source).toContain('collectorStatusRequestIdRef.current += 1;');
@@ -122,7 +122,7 @@ describe('reload generation guards', () => {
     expect(source).toContain('const depsHealthAbortRef = useRef<AbortController | null>(null);');
     expect(source).toContain('const requestId = ++depsHealthRequestIdRef.current;');
     expect(source).toContain('depsHealthAbortRef.current?.abort();');
-    expect(source).toContain("api.get('/v1/health/deps', { auth: getAuth(), signal: controller.signal })");
+    expect(source).toContain("api.get('/v1/health/deps', { sessionOnlyAuth: true, signal: controller.signal })");
     expect(source).toContain('if (controller.signal.aborted || requestId !== depsHealthRequestIdRef.current) return;');
     expect(source).toContain('if (depsHealthAbortRef.current === controller) {');
     expect(source).toContain('depsHealthRequestIdRef.current += 1;');
@@ -135,7 +135,7 @@ describe('reload generation guards', () => {
     expect(source).toContain('const stackStatusAbortRef = useRef<AbortController | null>(null);');
     expect(source).toContain('const requestId = ++stackStatusRequestIdRef.current;');
     expect(source).toContain('stackStatusAbortRef.current?.abort();');
-    expect(source).toContain("api.get('/v1/monitoring/stack', { auth: getAuth(), signal: controller.signal })");
+    expect(source).toContain("api.get('/v1/monitoring/stack', { sessionOnlyAuth: true, signal: controller.signal })");
     expect(source).toContain('if (controller.signal.aborted || requestId !== stackStatusRequestIdRef.current) return;');
     expect(source).toContain('if (stackStatusAbortRef.current === controller) {');
     expect(source).toContain('stackStatusRequestIdRef.current += 1;');
@@ -148,8 +148,8 @@ describe('reload generation guards', () => {
     expect(source).not.toContain('const [adguardLoading, setAdguardLoading] = useState(false);');
     expect(source).toContain('const adguardSourcesAbortRef = useRef<AbortController | null>(null);');
     expect(source).toContain('const adguardOverviewAbortRef = useRef<AbortController | null>(null);');
-    expect(source).toContain("api.get('/v1/adguard/sources', { auth: getAuth(), signal: controller.signal })");
-    expect(source).toContain("api.get('/v1/adguard/overview', { auth: getAuth(), signal: controller.signal })");
+    expect(source).toContain("api.get('/v1/adguard/sources', { sessionOnlyAuth: true, signal: controller.signal })");
+    expect(source).toContain("api.get('/v1/adguard/overview', { sessionOnlyAuth: true, signal: controller.signal })");
     expect(source).toContain('const invalidateAdguardReads = () => {');
     expect(source).toContain('setAdguardMutationLoading(true);');
     expect(source).toContain('setAdguardMutationLoading(false);');

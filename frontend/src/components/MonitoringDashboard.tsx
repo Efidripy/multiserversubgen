@@ -578,7 +578,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     const controller = new AbortController();
     nodesAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/nodes', { auth: getAuth(), signal: controller.signal });
+      const res = await api.get('/v1/nodes', { sessionOnlyAuth: true, signal: controller.signal });
       if (controller.signal.aborted || requestId !== nodesRequestIdRef.current) return;
       const list: NodeItem[] = (res.data || []).map((n: any) => ({ id: n.id, name: n.name }));
       setNodes(list);
@@ -596,7 +596,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     signal: AbortSignal,
   ): Promise<HistoryPoint[]> => {
     const res = await api.get(`/v1/history/nodes/${nodeId}`, {
-      auth: getAuth(),
+      sessionOnlyAuth: true,
       params: { since_sec: sinceSec, limit },
       signal,
     });
@@ -609,7 +609,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     signal: AbortSignal,
   ): Promise<HistoryPoint[]> => {
     const res = await api.get('/v1/history/nodes', {
-      auth: getAuth(),
+      sessionOnlyAuth: true,
       params: { since_sec: sinceSec, limit_per_node: limitPerNode },
       signal,
     });
@@ -660,7 +660,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     const controller = new AbortController();
     latestSnapshotAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/snapshots/latest', { auth: getAuth(), signal: controller.signal });
+      const res = await api.get('/v1/snapshots/latest', { sessionOnlyAuth: true, signal: controller.signal });
       if (controller.signal.aborted || requestId !== latestSnapshotRequestIdRef.current) return null;
       const parsed = (res.data?.nodes || []) as SnapshotNode[];
       setLatestSnapshotNodes(parsed);
@@ -683,7 +683,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     signal?: AbortSignal,
   ): Promise<TrafficStatsResponse> => {
     const res = await api.get('/v1/traffic/stats', {
-      auth: getAuth(),
+      sessionOnlyAuth: true,
       params: { group_by: groupBy, limit },
       signal,
     });
@@ -699,7 +699,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     const controller = new AbortController();
     depsHealthAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/health/deps', { auth: getAuth(), signal: controller.signal });
+      const res = await api.get('/v1/health/deps', { sessionOnlyAuth: true, signal: controller.signal });
       if (controller.signal.aborted || requestId !== depsHealthRequestIdRef.current) return;
       setDepsHealth(res.data as DepsHealth);
     } catch {
@@ -718,7 +718,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     const controller = new AbortController();
     adguardSourcesAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/adguard/sources', { auth: getAuth(), signal: controller.signal });
+      const res = await api.get('/v1/adguard/sources', { sessionOnlyAuth: true, signal: controller.signal });
       if (controller.signal.aborted || requestId !== adguardSourcesRequestIdRef.current) return;
       setAdguardSources((res.data || []) as AdGuardSource[]);
     } catch (err: any) {
@@ -738,7 +738,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     const controller = new AbortController();
     adguardOverviewAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/adguard/overview', { auth: getAuth(), signal: controller.signal });
+      const res = await api.get('/v1/adguard/overview', { sessionOnlyAuth: true, signal: controller.signal });
       if (controller.signal.aborted || requestId !== adguardOverviewRequestIdRef.current) return;
       setAdguardOverview(res.data as AdGuardOverview);
       setAdguardError('');
@@ -762,7 +762,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     try {
       const bucketSec = requestedRangeSec <= 3600 ? 60 : requestedRangeSec <= 6 * 3600 ? 120 : requestedRangeSec <= 24 * 3600 ? 300 : 900;
       const res = await api.get('/v1/adguard/history', {
-        auth: getAuth(),
+        sessionOnlyAuth: true,
         params: { range_sec: requestedRangeSec, bucket_sec: bucketSec },
         signal: controller.signal,
       });
@@ -796,7 +796,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     const controller = new AbortController();
     stackStatusAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/monitoring/stack', { auth: getAuth(), signal: controller.signal });
+      const res = await api.get('/v1/monitoring/stack', { sessionOnlyAuth: true, signal: controller.signal });
       if (controller.signal.aborted || requestId !== stackStatusRequestIdRef.current) return;
       setStackStatus(res.data as StackStatusResponse);
     } catch {
@@ -816,7 +816,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     serverStatusAbortRef.current = controller;
     try {
       setResourceLoading(true);
-      const res = await api.get('/v1/servers/status', { auth: getAuth(), signal: controller.signal });
+      const res = await api.get('/v1/servers/status', { sessionOnlyAuth: true, signal: controller.signal });
       if (controller.signal.aborted || requestId !== serverStatusRequestIdRef.current) return [];
       const payload = res.data as ServerStatusResponse;
       const parsed = Array.isArray(payload?.servers) ? payload.servers : [];
@@ -846,7 +846,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     serverStatusAbortRef.current = controller;
     try {
       setResourceLoading(true);
-      const res = await api.get(`/v1/servers/${nodeId}/status`, { auth: getAuth(), signal: controller.signal });
+      const res = await api.get(`/v1/servers/${nodeId}/status`, { sessionOnlyAuth: true, signal: controller.signal });
       if (controller.signal.aborted || requestId !== serverStatusRequestIdRef.current) return [];
       const status = res.data as ServerResourceStatus;
       setServerStatuses(status ? [status] : []);
@@ -874,7 +874,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     const controller = new AbortController();
     collectorStatusAbortRef.current = controller;
     try {
-      const res = await api.get('/v1/collector/status', { auth: getAuth(), signal: controller.signal });
+      const res = await api.get('/v1/collector/status', { sessionOnlyAuth: true, signal: controller.signal });
       if (controller.signal.aborted || requestId !== collectorStatusRequestIdRef.current) return;
       setCollectorStatus(res.data as CollectorStatus);
     } catch {
