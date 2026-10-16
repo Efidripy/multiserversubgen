@@ -1496,7 +1496,11 @@ class TelegramRegistrationService:
         if not self._list_nodes or not self._get_links_filtered:
             return None, TelegramOutboundMessage(chat_id, tr(locale, "link_preparing"), self._approved_menu(locale))
         try:
-            links = self._get_links_filtered(self._list_nodes(), access.email_display, None)
+            nodes = self._list_nodes()
+            safe_node_ids = self._registry.safe_subscription_node_ids(access.email_display)
+            if safe_node_ids is not None:
+                nodes = [node for node in nodes if int(node.get("id", 0)) in safe_node_ids]
+            links = self._get_links_filtered(nodes, access.email_display, None)
         except Exception:
             links = []
         if not links:

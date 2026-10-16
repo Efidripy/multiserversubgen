@@ -1051,6 +1051,29 @@ def init_db(db_path: str) -> None:
             "CREATE INDEX IF NOT EXISTS idx_telegram_existing_discovery_targets_schedule "
             "ON telegram_existing_discovery_targets(status, next_attempt_at)"
         )
+        # Existing-adoption targets freeze the Telegram policy at approval time.
+        # The durable write worker receives only this immutable copy after a
+        # strict read has proved the target absent.
+        existing_target_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(telegram_existing_discovery_targets)").fetchall()
+        }
+        existing_target_migrations = [
+            ("desired_total_bytes", "ALTER TABLE telegram_existing_discovery_targets ADD COLUMN desired_total_bytes INTEGER NOT NULL DEFAULT 0"),
+            ("desired_validity_days", "ALTER TABLE telegram_existing_discovery_targets ADD COLUMN desired_validity_days INTEGER NOT NULL DEFAULT 0"),
+            ("desired_client_enabled", "ALTER TABLE telegram_existing_discovery_targets ADD COLUMN desired_client_enabled INTEGER NOT NULL DEFAULT 1"),
+            ("policy_version", "ALTER TABLE telegram_existing_discovery_targets ADD COLUMN policy_version INTEGER NOT NULL DEFAULT 1"),
+            ("provisioning_job_id", "ALTER TABLE telegram_existing_discovery_targets ADD COLUMN provisioning_job_id INTEGER DEFAULT NULL"),
+        ]
+        for column_name, statement in existing_target_migrations:
+            if column_name not in existing_target_columns:
+                conn.execute(statement)
+        provisioning_job_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(telegram_provisioning_jobs)").fetchall()
+        }
+        if "source_existing_discovery_target_id" not in provisioning_job_columns:
+            conn.execute(
+                "ALTER TABLE telegram_provisioning_jobs ADD COLUMN source_existing_discovery_target_id INTEGER DEFAULT NULL"
+            )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_customer_operations
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,

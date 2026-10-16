@@ -245,6 +245,9 @@ def build_subscriptions_router(
             conn.row_factory = sqlite3.Row
             _ensure_stats_table(conn)
             all_nodes = node_service.list_nodes()
+            safe_node_ids = telegram_registry.safe_subscription_node_ids(resolved_email)
+            if safe_node_ids is not None:
+                all_nodes = [node for node in all_nodes if int(node.get("id", 0)) in safe_node_ids]
             if nodes:
                 node_names = [n.strip() for n in nodes.split(",")]
                 all_nodes = [n for n in all_nodes if n["name"] in node_names]
@@ -285,7 +288,11 @@ def build_subscriptions_router(
         with connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             _ensure_stats_table(conn)
-            links = get_links_filtered(node_service.list_nodes(), guest_link.email_display, protocol)
+            all_nodes = node_service.list_nodes()
+            safe_node_ids = telegram_registry.safe_subscription_node_ids(guest_link.email_display)
+            if safe_node_ids is not None:
+                all_nodes = [node for node in all_nodes if int(node.get("id", 0)) in safe_node_ids]
+            links = get_links_filtered(all_nodes, guest_link.email_display, protocol)
             if links:
                 now = datetime.datetime.now().strftime("%d.%m %H:%M")
                 with connect(db_path) as db:

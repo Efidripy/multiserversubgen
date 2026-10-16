@@ -7,9 +7,11 @@ Every retry begins with a read; an uncertain add result is never replayed.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
@@ -189,8 +191,8 @@ class TelegramExistingDiscoveryWorker:
             self._defer_or_block(claimed, "remote_read_unavailable")
             return ExistingDiscoveryRunResult(True, claimed.job_id, claimed.target_id, "deferred")
         if binding is None:
-            self._finish_target(claimed, status="confirmed_absent", error_code=None)
-            return ExistingDiscoveryRunResult(True, claimed.job_id, claimed.target_id, "confirmed_absent")
+            self._queue_absent_provisioning(claimed)
+            return ExistingDiscoveryRunResult(True, claimed.job_id, claimed.target_id, "provisioning_queued")
         try:
             self._confirm_match(claimed, binding)
         except ProvisioningPermanentError:
@@ -285,6 +287,74 @@ class TelegramExistingDiscoveryWorker:
                 "next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (binding.remote_client_id, binding.remote_sub_id, binding.remote_email, int(binding.enabled), claimed.target_id),
             )
+            self._grant_partial_access(conn, claimed)
+            self._finalize_job(conn, claimed.job_id)
+
+    def _grant_partial_access(self, conn: sqlite3.Connection, claimed: ClaimedExistingDiscoveryTarget) -> None:
+        """Release access only after one exact confirmed binding exists.
+
+        Outstanding snapshot targets remain durable degraded state; they never
+        become lifecycle targets until the full snapshot resolves.
+        """
+        conn.execute(
+            "UPDATE telegram_identities SET remote_snapshot_ready = 1, updated_at = CURRENT_TIMESTAMP "
+            "WHERE telegram_user_id = ? AND customer_id = ? AND access_status = 'approved'",
+            (claimed.telegram_user_id, claimed.customer_id),
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES "
+            "('user_existing_access_approved', ?, ?)",
+            (str(claimed.telegram_user_id), f"user:existing-access-approved:partial:{claimed.job_id}:{claimed.telegram_user_id}"),
+        )
+
+    def _queue_absent_provisioning(self, claimed: ClaimedExistingDiscoveryTarget) -> None:
+        """Create one immutable, durable write attempt after a strict empty read."""
+        with connect(self._db_path) as conn:
+            target = conn.execute(
+                """SELECT desired_total_bytes, desired_validity_days, desired_client_enabled, policy_version,
+                          provisioning_job_id
+                   FROM telegram_existing_discovery_targets WHERE id = ?""",
+                (claimed.target_id,),
+            ).fetchone()
+            if target is None:
+                raise ProvisioningPermanentError("existing discovery target disappeared")
+            if target[4] is None:
+                validity_days = int(target[1])
+                expiry_time = (
+                    int(self._now().timestamp() * 1000) + validity_days * 24 * 60 * 60 * 1000
+                    if validity_days else 0
+                )
+                snapshot = json.dumps({
+                    "existing_discovery_target_id": claimed.target_id,
+                    "customer_id": claimed.customer_id,
+                    "node_id": claimed.node_id,
+                    "inbound_id": BOT_INBOUND_ID,
+                    "policy_version": int(target[3]),
+                }, sort_keys=True, separators=(",", ":"))
+                job = conn.execute(
+                    """INSERT INTO telegram_provisioning_jobs
+                         (customer_id, trigger, idempotency_key, policy_snapshot_digest, created_by,
+                          source_existing_discovery_target_id)
+                       VALUES (?, 'node_backfill', ?, ?, 'existing_discovery', ?)""",
+                    (claimed.customer_id, f"existing-discovery:{claimed.job_id}:{claimed.target_id}",
+                     hashlib.sha256(snapshot.encode('utf-8')).hexdigest(), claimed.target_id),
+                )
+                job_id = int(job.lastrowid)
+                conn.execute(
+                    """INSERT INTO telegram_provisioning_attempts
+                         (job_id, node_id, inbound_id, desired_client_id, desired_sub_id, desired_flow,
+                          desired_total_bytes, desired_validity_days, desired_expiry_time,
+                          desired_client_enabled, policy_version)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (job_id, claimed.node_id, BOT_INBOUND_ID, str(uuid.uuid4()), str(uuid.uuid4()),
+                     BOT_CLIENT_FLOW, int(target[0]), validity_days, expiry_time, int(bool(target[2])), int(target[3])),
+                )
+                conn.execute(
+                    "UPDATE telegram_existing_discovery_targets SET provisioning_job_id = ?, status = 'confirmed_absent', "
+                    "error_code = NULL, error_summary = NULL, next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (job_id, claimed.target_id),
+                )
             self._finalize_job(conn, claimed.job_id)
 
     def _finish_target(self, claimed: ClaimedExistingDiscoveryTarget, *, status: str, error_code: str | None) -> None:
@@ -320,8 +390,14 @@ class TelegramExistingDiscoveryWorker:
             "SELECT status, COUNT(*) FROM telegram_existing_discovery_targets WHERE job_id = ? GROUP BY status", (job_id,)
         ).fetchall()}
         active = sum(counts.get(status, 0) for status in ("pending", "reconciling", "deferred"))
+        provisioning_active = conn.execute(
+            """SELECT 1 FROM telegram_existing_discovery_targets AS t
+                JOIN telegram_provisioning_jobs AS p ON p.id = t.provisioning_job_id
+                WHERE t.job_id = ? AND p.status IN ('queued', 'running', 'partial') LIMIT 1""",
+            (job_id,),
+        ).fetchone() is not None
         terminal_failure = counts.get("blocked_after_retry_limit", 0) + counts.get("conflict", 0)
-        if active:
+        if active or provisioning_active:
             next_due = conn.execute(
                 "SELECT MIN(next_attempt_at) FROM telegram_existing_discovery_targets "
                 "WHERE job_id = ? AND status = 'deferred'", (job_id,)
@@ -750,12 +826,43 @@ class TelegramProvisioningWorker:
                 """,
                 (status, error_code, error_summary, claimed.attempt_id),
             )
+            if status == "failed":
+                source = conn.execute(
+                    "SELECT source_existing_discovery_target_id FROM telegram_provisioning_jobs WHERE id = ?",
+                    (claimed.job_id,),
+                ).fetchone()
+                if source is not None and source[0] is not None:
+                    conn.execute(
+                        "UPDATE telegram_existing_discovery_targets SET status = 'conflict', error_code = ?, "
+                        "error_summary = NULL, next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (error_code, int(source[0])),
+                    )
             self._finalize_job(conn, claimed.job_id)
 
     def _defer_reconcile(self, claimed: ClaimedAttempt, error_code: str) -> None:
         delay_seconds = min(300, 2 ** min(claimed.attempt_count, 8)) + secrets.randbelow(1000) / 1000
         next_attempt = _timestamp(self._now() + timedelta(seconds=delay_seconds))
         with connect(self._db_path) as conn:
+            source = conn.execute(
+                "SELECT source_existing_discovery_target_id FROM telegram_provisioning_jobs WHERE id = ?",
+                (claimed.job_id,),
+            ).fetchone()
+            source_target_id = int(source[0]) if source is not None and source[0] is not None else None
+            if source_target_id is not None and claimed.attempt_count >= TelegramExistingDiscoveryWorker.MAX_RETRYABLE_ATTEMPTS:
+                conn.execute(
+                    "UPDATE telegram_provisioning_attempts SET status = 'failed', error_code = ?, error_summary = NULL, "
+                    "next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (error_code, claimed.attempt_id),
+                )
+                conn.execute(
+                    "UPDATE telegram_existing_discovery_targets SET status = 'blocked_after_retry_limit', attempt_count = ?, "
+                    "error_code = ?, error_summary = NULL, next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (claimed.attempt_count, error_code, source_target_id),
+                )
+                self._finalize_job(conn, claimed.job_id)
+                return
             conn.execute(
                 """
                 UPDATE telegram_provisioning_attempts
@@ -774,6 +881,47 @@ class TelegramProvisioningWorker:
                 """,
                 (next_attempt, claimed.job_id),
             )
+
+    def _finalize_source_existing_discovery(
+        self, conn: sqlite3.Connection, source_target_id: int, customer_id: int
+    ) -> None:
+        """Reflect durable source-target completion in its read-only job status."""
+        row = conn.execute(
+            "SELECT job_id FROM telegram_existing_discovery_targets WHERE id = ?", (source_target_id,)
+        ).fetchone()
+        if row is None:
+            return
+        discovery_job_id = int(row[0])
+        target_rows = conn.execute(
+            """SELECT t.status, p.status
+                FROM telegram_existing_discovery_targets AS t
+                LEFT JOIN telegram_provisioning_jobs AS p ON p.id = t.provisioning_job_id
+                WHERE t.job_id = ?""",
+            (discovery_job_id,),
+        ).fetchall()
+        active = False
+        terminal_failure = False
+        for target_status, provisioning_status in target_rows:
+            if str(target_status) in {"pending", "reconciling", "deferred"}:
+                active = True
+            elif str(target_status) in {"blocked_after_retry_limit", "conflict"}:
+                terminal_failure = True
+            elif str(target_status) == "confirmed_absent":
+                if provisioning_status in {"queued", "running", "partial"}:
+                    active = True
+                elif provisioning_status != "succeeded":
+                    terminal_failure = True
+        confirmed = conn.execute(
+            "SELECT COUNT(*) FROM customer_node_bindings WHERE customer_id = ? AND management_state = 'confirmed'",
+            (customer_id,),
+        ).fetchone()[0]
+        status = "partial" if active else ("succeeded" if not terminal_failure and confirmed else "failed")
+        conn.execute(
+            "UPDATE telegram_existing_discovery_jobs SET status = ?, lease_owner = NULL, lease_until = NULL, "
+            "next_attempt_at = NULL, finished_at = CASE WHEN ? = 'partial' THEN NULL ELSE CURRENT_TIMESTAMP END, "
+            "row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (status, status, discovery_job_id),
+        )
 
     def _finalize_job(self, conn, job_id: int) -> None:
         counts = {
@@ -808,7 +956,8 @@ class TelegramProvisioningWorker:
             )
             if status == "succeeded":
                 job = conn.execute(
-                    "SELECT trigger, customer_id FROM telegram_provisioning_jobs WHERE id = ?", (job_id,)
+                    "SELECT trigger, customer_id, source_existing_discovery_target_id "
+                    "FROM telegram_provisioning_jobs WHERE id = ?", (job_id,)
                 ).fetchone()
                 trigger = str(job[0]) if job is not None else ""
                 if trigger == "approve_new" and job is not None:
@@ -817,6 +966,28 @@ class TelegramProvisioningWorker:
                         "WHERE customer_id = ? AND access_status = 'approved'",
                         (int(job[1]),),
                     )
+                if job is not None and job[2] is not None:
+                    # `_confirm_attempt` has just inserted/reconciled the exact
+                    # binding after its post-write strict read. Only now can a
+                    # fully-absent initial snapshot release partial access.
+                    conn.execute(
+                        "UPDATE telegram_identities SET remote_snapshot_ready = 1, updated_at = CURRENT_TIMESTAMP "
+                        "WHERE customer_id = ? AND access_status = 'approved'",
+                        (int(job[1]),),
+                    )
+                    recipients = conn.execute(
+                        "SELECT telegram_user_id FROM telegram_identities "
+                        "WHERE customer_id = ? AND access_status = 'approved'", (int(job[1]),)
+                    ).fetchall()
+                    conn.executemany(
+                        "INSERT OR IGNORE INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES "
+                        "('user_existing_access_approved', ?, ?)",
+                        [
+                            (str(int(row[0])), f"user:existing-access-approved:provisioned:{job_id}:{int(row[0])}")
+                            for row in recipients
+                        ],
+                    )
+                    self._finalize_source_existing_discovery(conn, int(job[2]), int(job[1]))
                 recipients = conn.execute(
                     """
                     SELECT i.telegram_user_id, n.name
