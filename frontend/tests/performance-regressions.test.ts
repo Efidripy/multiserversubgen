@@ -222,6 +222,18 @@ describe('navigation performance regressions', () => {
     expect(traffic).toContain('window.clearTimeout(realtimeTrafficRefreshTimerRef.current)');
   });
 
+  it('uses the browser session for periodic traffic reads while keeping online-details mutation explicit', () => {
+    const traffic = read('src/components/TrafficStats.tsx');
+    const periodRead = traffic.slice(
+      traffic.indexOf("api.get('/v1/traffic/stats-by-period'"),
+      traffic.indexOf('const statsObj'),
+    );
+
+    expect(periodRead).toContain('sessionOnlyAuth: true,');
+    expect(periodRead).not.toContain('auth: getAuth()');
+    expect(traffic).toContain("api.post('/v1/traffic/client-totals'");
+    expect(traffic).toContain('auth: getAuth(),');
+  });
   it('keeps a per-period stale projection visible while Statistics refreshes', () => {
     const traffic = read('src/components/TrafficStats.tsx');
 
