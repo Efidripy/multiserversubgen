@@ -115,25 +115,143 @@ def test_strict_node_read_rejects_v3_failure_instead_of_treating_it_as_empty():
             raise AssertionError("strict provisioning read must reject an uncertain empty result")
 
 
-def test_strict_node_read_accepts_verified_legacy_empty_or_client_projection():
+def test_strict_node_read_reauthenticates_before_verified_legacy_projection():
     from client_manager import ClientManager
 
     manager = ClientManager(decrypt_func=lambda value: value)
     base_url = "https://198.51.100.8:443"
     legacy = {
         "success": True,
-        "obj": [{"id": 1, "settings": '{"clients":[{"id":"id-1","email":"legacy@example.test","subId":"s-1","flow":"xtls-rprx-vision"}]}' }],
+        "obj": [
+            {
+                "id": 1,
+                "settings": (
+                    '{"clients":[{"id":"id-1","email":"legacy@example.test",'
+                    '"subId":"s-1","flow":"xtls-rprx-vision"}]}'
+                ),
+            }
+        ],
     }
-    with patch.object(manager, "_get_session", return_value=(MagicMock(), base_url)), patch(
-        "client_manager.xui_request", side_effect=[_response(404), _response(200, legacy)]
+    initial_session = MagicMock()
+    fresh_session = MagicMock()
+    with (
+        patch.object(
+            manager,
+            "_get_session",
+            side_effect=[(initial_session, base_url), (fresh_session, base_url)],
+        ) as sessions,
+        patch(
+            "client_manager.xui_request",
+            side_effect=[_response(404), _response(405), _response(200, legacy)],
+        ) as request,
     ):
         clients = manager.get_node_clients_strict(_node())
 
-    assert clients == [{
-        "id": "id-1", "email": "legacy@example.test", "enable": True,
-        "expiryTime": 0, "totalGB": 0, "subId": "s-1", "flow": "xtls-rprx-vision",
-        "inbound_id": 1, "inbound_ids": [1],
-    }]
+    assert [call.args[2].split("/panel/api/")[-1] for call in request.call_args_list] == [
+        "clients/list",
+        "clients/list",
+        "inbounds/list",
+    ]
+    assert sessions.call_args_list[1].kwargs == {"force_reauth": True}
+    assert request.call_args_list[-1].args[0] is fresh_session
+    assert clients == [
+        {
+            "id": "id-1",
+            "email": "legacy@example.test",
+            "enable": True,
+            "expiryTime": 0,
+            "totalGB": 0,
+            "subId": "s-1",
+            "flow": "xtls-rprx-vision",
+            "inbound_id": 1,
+            "inbound_ids": [1],
+        }
+    ]
+
+
+def test_strict_node_read_uses_reauthenticated_v3_projection_after_first_404():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    modern = {
+        "success": True,
+        "obj": [{"uuid": "id-1", "email": "modern@example.test", "inboundIds": [1]}],
+    }
+    with (
+        patch.object(
+            manager,
+            "_get_session",
+            side_effect=[(MagicMock(), base_url), (MagicMock(), base_url)],
+        ) as sessions,
+        patch(
+            "client_manager.xui_request",
+            side_effect=[_response(404), _response(200, modern)],
+        ) as request,
+    ):
+        clients = manager.get_node_clients_strict(_node())
+
+    assert [call.args[2].split("/panel/api/")[-1] for call in request.call_args_list] == [
+        "clients/list",
+        "clients/list",
+    ]
+    assert sessions.call_args_list[1].kwargs == {"force_reauth": True}
+    assert clients[0]["id"] == "id-1"
+    assert clients[0]["email"] == "modern@example.test"
+
+
+def test_strict_node_read_fails_closed_when_reauthenticated_v3_read_is_reachable_failure():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    with (
+        patch.object(
+            manager,
+            "_get_session",
+            side_effect=[(MagicMock(), base_url), (MagicMock(), base_url)],
+        ) as sessions,
+        patch(
+            "client_manager.xui_request",
+            side_effect=[_response(404), _response(503)],
+        ) as request,
+    ):
+        try:
+            manager.get_node_clients_strict(_node())
+        except RuntimeError as exc:
+            assert "unavailable" in str(exc)
+        else:
+            raise AssertionError("strict provisioning read must reject a failed reauthenticated v3 response")
+
+    assert [call.args[2].split("/panel/api/")[-1] for call in request.call_args_list] == [
+        "clients/list",
+        "clients/list",
+    ]
+    assert sessions.call_args_list[1].kwargs == {"force_reauth": True}
+
+
+def test_strict_node_read_fails_closed_when_reauthentication_fails():
+    from client_manager import ClientManager
+
+    manager = ClientManager(decrypt_func=lambda value: value)
+    base_url = "https://198.51.100.8:443"
+    with (
+        patch.object(
+            manager,
+            "_get_session",
+            side_effect=[(MagicMock(), base_url), (None, None)],
+        ) as sessions,
+        patch("client_manager.xui_request", return_value=_response(404)) as request,
+    ):
+        try:
+            manager.get_node_clients_strict(_node())
+        except RuntimeError as exc:
+            assert "unavailable" in str(exc)
+        else:
+            raise AssertionError("strict provisioning read must reject a failed reauthentication")
+
+    request.assert_called_once()
+    assert sessions.call_args_list[1].kwargs == {"force_reauth": True}
 
 
 def test_strict_inbound_contract_requires_enabled_vless_tls_or_reality():
