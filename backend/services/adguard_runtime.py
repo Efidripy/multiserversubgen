@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import requests
+from core.lifecycle_work import LifecycleWorkAdmissionClosed
 from shared.security import validate_outbound_url
 
 
@@ -72,6 +73,11 @@ class AdGuardRuntime:
         self.dns_upstream_errors_metric = dns_upstream_errors_metric
         self.logger = logger
 
+    async def _run_blocking(self, worker_tracker, label: str, function, *args):
+        if worker_tracker is not None:
+            return await worker_tracker.run(label, function, *args)
+        return await asyncio.to_thread(function, *args)
+
     @staticmethod
     def _row_to_public(row: sqlite3.Row) -> Dict:
         return {
@@ -126,13 +132,27 @@ class AdGuardRuntime:
         source_name = str(snapshot.get("source_name") or f"adguard-{source_id}")
         available = bool(snapshot.get("available"))
 
-        self.source_available_metric.labels(source_name=source_name, source_id=source_id).set(1 if available else 0)
-        self.dns_queries_total_metric.labels(source_name=source_name, source_id=source_id).set(float(snapshot.get("queries_total", 0) or 0))
-        self.dns_blocked_total_metric.labels(source_name=source_name, source_id=source_id).set(float(snapshot.get("blocked_total", 0) or 0))
-        self.dns_block_rate_metric.labels(source_name=source_name, source_id=source_id).set(float(snapshot.get("blocked_rate", 0) or 0))
-        self.dns_latency_ms_metric.labels(source_name=source_name, source_id=source_id).set(float(snapshot.get("avg_latency_ms", 0) or 0))
-        self.dns_cache_hit_ratio_metric.labels(source_name=source_name, source_id=source_id).set(float(snapshot.get("cache_hit_ratio", 0) or 0))
-        self.dns_upstream_errors_metric.labels(source_name=source_name, source_id=source_id).set(float(snapshot.get("upstream_errors", 0) or 0))
+        self.source_available_metric.labels(
+            source_name=source_name, source_id=source_id
+        ).set(1 if available else 0)
+        self.dns_queries_total_metric.labels(
+            source_name=source_name, source_id=source_id
+        ).set(float(snapshot.get("queries_total", 0) or 0))
+        self.dns_blocked_total_metric.labels(
+            source_name=source_name, source_id=source_id
+        ).set(float(snapshot.get("blocked_total", 0) or 0))
+        self.dns_block_rate_metric.labels(
+            source_name=source_name, source_id=source_id
+        ).set(float(snapshot.get("blocked_rate", 0) or 0))
+        self.dns_latency_ms_metric.labels(
+            source_name=source_name, source_id=source_id
+        ).set(float(snapshot.get("avg_latency_ms", 0) or 0))
+        self.dns_cache_hit_ratio_metric.labels(
+            source_name=source_name, source_id=source_id
+        ).set(float(snapshot.get("cache_hit_ratio", 0) or 0))
+        self.dns_upstream_errors_metric.labels(
+            source_name=source_name, source_id=source_id
+        ).set(float(snapshot.get("upstream_errors", 0) or 0))
 
         now_ts = int(time.time())
         extra = {
@@ -194,13 +214,19 @@ class AdGuardRuntime:
         live = [s for s in snapshots if s.get("available")]
         total_queries = sum(float(s.get("queries_total", 0) or 0) for s in live)
         total_blocked = sum(float(s.get("blocked_total", 0) or 0) for s in live)
-        blocked_rate = (total_blocked / total_queries * 100.0) if total_queries > 0 else 0.0
+        blocked_rate = (
+            (total_blocked / total_queries * 100.0) if total_queries > 0 else 0.0
+        )
         avg_latency = 0.0
         if live:
-            avg_latency = sum(float(s.get("avg_latency_ms", 0) or 0) for s in live) / len(live)
+            avg_latency = sum(
+                float(s.get("avg_latency_ms", 0) or 0) for s in live
+            ) / len(live)
         cache_hit = 0.0
         if live:
-            cache_hit = sum(float(s.get("cache_hit_ratio", 0) or 0) for s in live) / len(live)
+            cache_hit = sum(
+                float(s.get("cache_hit_ratio", 0) or 0) for s in live
+            ) / len(live)
         upstream_errors = sum(float(s.get("upstream_errors", 0) or 0) for s in live)
         return {
             "sources_total": len(snapshots),
@@ -233,25 +259,59 @@ class AdGuardRuntime:
         allow_trusted_loopback: bool = False,
     ) -> Dict:
         if not url:
-            return {"enabled": False, "url": "", "ok": False, "status_code": None, "error": "disabled"}
+            return {
+                "enabled": False,
+                "url": "",
+                "ok": False,
+                "status_code": None,
+                "error": "disabled",
+            }
         full = f"{url.rstrip('/')}{path}"
         try:
-            trusted_loopback = allow_trusted_loopback and _is_trusted_loopback_monitoring_url(url)
-            valid, error = (True, "") if trusted_loopback else validate_outbound_url(
-                url, allow_private=False, require_https=urlparse(url).scheme == "https"
+            trusted_loopback = (
+                allow_trusted_loopback and _is_trusted_loopback_monitoring_url(url)
+            )
+            valid, error = (
+                (True, "")
+                if trusted_loopback
+                else validate_outbound_url(
+                    url,
+                    allow_private=False,
+                    require_https=urlparse(url).scheme == "https",
+                )
             )
             if not valid:
-                return {"enabled": True, "url": url, "ok": False, "status_code": None, "error": error}
-            resp = requests.get(full, timeout=timeout, verify=self.requests_verify, auth=basic_auth, allow_redirects=False)
+                return {
+                    "enabled": True,
+                    "url": url,
+                    "ok": False,
+                    "status_code": None,
+                    "error": error,
+                }
+            resp = requests.get(
+                full,
+                timeout=timeout,
+                verify=self.requests_verify,
+                auth=basic_auth,
+                allow_redirects=False,
+            )
             return {
                 "enabled": True,
                 "url": url,
                 "ok": 200 <= resp.status_code < 300,
                 "status_code": int(resp.status_code),
-                "error": "" if 200 <= resp.status_code < 300 else (resp.text[:120] if resp.text else f"HTTP {resp.status_code}"),
+                "error": ""
+                if 200 <= resp.status_code < 300
+                else (resp.text[:120] if resp.text else f"HTTP {resp.status_code}"),
             }
         except Exception as exc:
-            return {"enabled": True, "url": url, "ok": False, "status_code": None, "error": str(exc)}
+            return {
+                "enabled": True,
+                "url": url,
+                "ok": False,
+                "status_code": None,
+                "error": str(exc),
+            }
 
     def prom_query(
         self,
@@ -264,9 +324,17 @@ class AdGuardRuntime:
         if not prom_url:
             return None
         try:
-            trusted_loopback = allow_trusted_loopback and _is_trusted_loopback_monitoring_url(prom_url)
-            valid, _ = (True, "") if trusted_loopback else validate_outbound_url(
-                prom_url, allow_private=False, require_https=urlparse(prom_url).scheme == "https"
+            trusted_loopback = (
+                allow_trusted_loopback and _is_trusted_loopback_monitoring_url(prom_url)
+            )
+            valid, _ = (
+                (True, "")
+                if trusted_loopback
+                else validate_outbound_url(
+                    prom_url,
+                    allow_private=False,
+                    require_https=urlparse(prom_url).scheme == "https",
+                )
             )
             if not valid:
                 return None
@@ -292,7 +360,9 @@ class AdGuardRuntime:
         except Exception:
             return None
 
-    def build_history(self, range_sec: int, bucket_sec: int, source_id: Optional[int] = None) -> Dict:
+    def build_history(
+        self, range_sec: int, bucket_sec: int, source_id: Optional[int] = None
+    ) -> Dict:
         safe_range = max(300, min(range_sec, 30 * 24 * 3600))
         safe_bucket = max(30, min(bucket_sec, 6 * 3600))
         since_ts = int(time.time()) - safe_range
@@ -353,11 +423,23 @@ class AdGuardRuntime:
         for src in series:
             src_points = [p for p in src["points"] if p]
             if len(src_points) >= 2:
-                total_queries_delta += max(0.0, float(src_points[-1]["queries_total"]) - float(src_points[0]["queries_total"]))
-                total_blocked_delta += max(0.0, float(src_points[-1]["blocked_total"]) - float(src_points[0]["blocked_total"]))
+                total_queries_delta += max(
+                    0.0,
+                    float(src_points[-1]["queries_total"])
+                    - float(src_points[0]["queries_total"]),
+                )
+                total_blocked_delta += max(
+                    0.0,
+                    float(src_points[-1]["blocked_total"])
+                    - float(src_points[0]["blocked_total"]),
+                )
 
-        queries_rate = total_queries_delta / float(safe_range) if safe_range > 0 else 0.0
-        blocked_rate_per_sec = total_blocked_delta / float(safe_range) if safe_range > 0 else 0.0
+        queries_rate = (
+            total_queries_delta / float(safe_range) if safe_range > 0 else 0.0
+        )
+        blocked_rate_per_sec = (
+            total_blocked_delta / float(safe_range) if safe_range > 0 else 0.0
+        )
 
         return {
             "ts": int(time.time()),
@@ -373,8 +455,12 @@ class AdGuardRuntime:
             },
         }
 
-    async def collect_once(self) -> List[Dict]:
-        sources = await asyncio.to_thread(self.list_enabled_sources_raw)
+    async def collect_once(self, worker_tracker=None) -> List[Dict]:
+        sources = await self._run_blocking(
+            worker_tracker,
+            "adguard.list_enabled_sources",
+            self.list_enabled_sources_raw,
+        )
         if not sources:
             with self.latest_lock:
                 self.latest_state["ts"] = time.time()
@@ -384,8 +470,15 @@ class AdGuardRuntime:
 
         snapshots: List[Dict] = []
         for source in sources:
-            snap = await asyncio.to_thread(self.adguard_monitor.collect_source, source)
-            await asyncio.to_thread(self.record_snapshot, snap)
+            snap = await self._run_blocking(
+                worker_tracker,
+                "adguard.collect_source",
+                self.adguard_monitor.collect_source,
+                source,
+            )
+            await self._run_blocking(
+                worker_tracker, "adguard.record_snapshot", self.record_snapshot, snap
+            )
             snapshots.append(snap)
 
         with self.latest_lock:
@@ -394,13 +487,17 @@ class AdGuardRuntime:
             self.latest_state["summary"] = self.build_summary(snapshots)
         return snapshots
 
-    async def collector_loop(self) -> None:
+    async def collector_loop(self, worker_tracker=None) -> None:
         interval = max(20, self.collect_interval_sec)
-        while True:
+        while worker_tracker is None or worker_tracker.accepting:
             try:
-                await self.collect_once()
-            except asyncio.CancelledError:
-                raise
+                await self.collect_once(worker_tracker)
+            except LifecycleWorkAdmissionClosed:
+                return
             except Exception as exc:
                 self.logger.warning(f"AdGuard collector loop failed: {exc}")
-            await asyncio.sleep(interval)
+            if worker_tracker is not None:
+                if not await worker_tracker.wait_or_stop(interval):
+                    return
+            else:
+                await asyncio.sleep(interval)

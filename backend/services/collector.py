@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional
 from enum import Enum
 
 from services.db_bootstrap import connect
+from core.lifecycle_work import LifecycleWorkAdmissionClosed
 from services.snapshot_push import build_snapshot_push_payload
 from services.system_clients import normalize_email, system_client_emails_from_inbounds
 from services.xray_compatibility import summarize_node_inbounds
@@ -54,7 +55,13 @@ def _online_client_emails(payload: Any) -> List[str]:
     values = payload.get("online_clients")
     if not isinstance(values, list):
         return []
-    return sorted({value.strip().casefold() for value in values if isinstance(value, str) and value.strip()})
+    return sorted(
+        {
+            value.strip().casefold()
+            for value in values
+            if isinstance(value, str) and value.strip()
+        }
+    )
 
 
 def _detect_api_version(panel_version: str) -> str:
@@ -75,10 +82,11 @@ def _detect_api_version(panel_version: str) -> str:
 
 class CollectorMode(Enum):
     """Collector operating modes."""
-    ULTRA_IDLE = "ultra_idle"     # No activity for 24h → poll once a day
-    IDLE = "idle"                 # No activity for 10min → poll once an hour
-    WARMING = "warming"           # First 10min after connect → poll every 5-20s
-    ACTIVE = "active"             # Long active session → poll every 30s
+
+    ULTRA_IDLE = "ultra_idle"  # No activity for 24h → poll once a day
+    IDLE = "idle"  # No activity for 10min → poll once an hour
+    WARMING = "warming"  # First 10min after connect → poll every 5-20s
+    ACTIVE = "active"  # Long active session → poll every 30s
 
 
 class SnapshotCollector:
@@ -120,11 +128,17 @@ class SnapshotCollector:
         self.max_parallel_polls = self.configured_max_parallel_polls
         self.semaphore = asyncio.Semaphore(self.max_parallel_polls)
         self.warming_interval_1_sec = max(3, warming_interval_1_sec)
-        self.warming_interval_2_sec = max(self.warming_interval_1_sec, warming_interval_2_sec)
-        self.warming_interval_3_sec = max(self.warming_interval_2_sec, warming_interval_3_sec)
+        self.warming_interval_2_sec = max(
+            self.warming_interval_1_sec, warming_interval_2_sec
+        )
+        self.warming_interval_3_sec = max(
+            self.warming_interval_2_sec, warming_interval_3_sec
+        )
         self.active_interval_sec = max(3, active_interval_sec)
         self.idle_interval_sec = max(self.active_interval_sec, idle_interval_sec)
-        self.ultra_idle_interval_sec = max(self.idle_interval_sec, ultra_idle_interval_sec)
+        self.ultra_idle_interval_sec = max(
+            self.idle_interval_sec, ultra_idle_interval_sec
+        )
         self.idle_after_sec = max(60, idle_after_sec)
         self.ultra_idle_after_sec = max(self.idle_after_sec, ultra_idle_after_sec)
         self.poll_interval_ceiling_sec = max(30, min(60, poll_interval_ceiling_sec))
@@ -134,6 +148,7 @@ class SnapshotCollector:
 
         self._task: Optional[asyncio.Task] = None
         self._running = False
+        self._worker_tracker = None
         self._lock = asyncio.Lock()
         self._snapshot_write_lock = asyncio.Lock()
         self._node_state: Dict[str, Dict] = {}
@@ -201,7 +216,11 @@ class SnapshotCollector:
         into O(nodes * inbounds * clients) network and JSON work.
         """
         nodes = [
-            {field: snapshot[field] for field in _DASHBOARD_SNAPSHOT_FIELDS if field in snapshot}
+            {
+                field: snapshot[field]
+                for field in _DASHBOARD_SNAPSHOT_FIELDS
+                if field in snapshot
+            }
             for snapshot in self._latest["nodes"].values()
             if isinstance(snapshot, dict)
         ]
@@ -243,11 +262,15 @@ class SnapshotCollector:
             if isinstance(email, str) and email
         }
         online_by_node = {
-            str(snapshot["node_id"]): tuple(sorted({
-                email
-                for email in snapshot.get("online_client_emails") or []
-                if isinstance(email, str) and email
-            }))
+            str(snapshot["node_id"]): tuple(
+                sorted(
+                    {
+                        email
+                        for email in snapshot.get("online_client_emails") or []
+                        if isinstance(email, str) and email
+                    }
+                )
+            )
             for snapshot in self._latest["nodes"].values()
             if isinstance(snapshot, dict) and snapshot.get("node_id") is not None
         }
@@ -282,7 +305,9 @@ class SnapshotCollector:
     async def load_persisted_snapshots(self) -> int:
         if not self.db_path:
             return 0
-        rows = await asyncio.to_thread(self._load_persisted_snapshot_rows)
+        rows = await self._run_blocking(
+            "collector.load_persisted_snapshots", self._load_persisted_snapshot_rows
+        )
         if not rows:
             return 0
 
@@ -294,7 +319,9 @@ class SnapshotCollector:
             latest_nodes[key] = snapshot
             circuit_until = self._coerce_float(snapshot.get("circuit_open_until"), 0.0)
             if circuit_until > now:
-                interval = float(min(self.max_interval_sec, max(1.0, circuit_until - now)))
+                interval = float(
+                    min(self.max_interval_sec, max(1.0, circuit_until - now))
+                )
                 next_poll = circuit_until
                 failures = 1
             else:
@@ -306,7 +333,9 @@ class SnapshotCollector:
                 "interval": interval,
                 "failures": failures,
                 "stable_cycles": 0,
-                "last_hash": json.dumps(snapshot, sort_keys=True, ensure_ascii=False) if snapshot.get("available") else "",
+                "last_hash": json.dumps(snapshot, sort_keys=True, ensure_ascii=False)
+                if snapshot.get("available")
+                else "",
                 "circuit_until": circuit_until if circuit_until > now else 0.0,
             }
             latest_ts = max(latest_ts, ts)
@@ -340,7 +369,9 @@ class SnapshotCollector:
             try:
                 snapshot = json.loads(row["status_data"] or "{}")
             except Exception as exc:
-                logger.warning("Ignoring invalid node snapshot row %s: %s", row["node_id"], exc)
+                logger.warning(
+                    "Ignoring invalid node snapshot row %s: %s", row["node_id"], exc
+                )
                 continue
             if not isinstance(snapshot, dict):
                 continue
@@ -356,9 +387,13 @@ class SnapshotCollector:
             snapshot.setdefault("reason", "loaded_from_snapshot")
             snapshot["cached_from_db"] = True
             snapshot["snapshot_updated_at"] = row["updated_at"]
-            ts = self._coerce_snapshot_timestamp(snapshot.get("timestamp"), row["updated_at"])
+            ts = self._coerce_snapshot_timestamp(
+                snapshot.get("timestamp"), row["updated_at"]
+            )
             snapshot["timestamp"] = ts
-            loaded.append((self._node_key({"id": node_id, "name": node_name}), snapshot, ts))
+            loaded.append(
+                (self._node_key({"id": node_id, "name": node_name}), snapshot, ts)
+            )
         return loaded
 
     async def _persist_snapshot(self, snapshot: Dict) -> None:
@@ -366,9 +401,13 @@ class SnapshotCollector:
             return
         try:
             async with self._snapshot_write_lock:
-                await asyncio.to_thread(self._upsert_snapshot_row, snapshot)
+                await self._run_blocking(
+                    "collector.persist_snapshot", self._upsert_snapshot_row, snapshot
+                )
         except Exception as exc:
-            logger.warning("Failed to persist node snapshot %s: %s", snapshot.get("node_id"), exc)
+            logger.warning(
+                "Failed to persist node snapshot %s: %s", snapshot.get("node_id"), exc
+            )
 
     def _upsert_snapshot_row(self, snapshot: Dict) -> None:
         if not self.db_path:
@@ -495,22 +534,40 @@ class SnapshotCollector:
     def _update_mode_based_on_activity(self):
         """Automatically switch modes based on WebSocket connection activity."""
         now = time.time()
-        ws_connections = len(self.ws_manager.active_connections) if hasattr(self.ws_manager, 'active_connections') else 0
-        time_since_last_activity = now - self._last_ws_activity if self._last_ws_activity > 0 else float('inf')
+        ws_connections = (
+            len(self.ws_manager.active_connections)
+            if hasattr(self.ws_manager, "active_connections")
+            else 0
+        )
+        time_since_last_activity = (
+            now - self._last_ws_activity if self._last_ws_activity > 0 else float("inf")
+        )
 
         if ws_connections > 0:
             self._last_ws_activity = now
             if self._mode in (CollectorMode.IDLE, CollectorMode.ULTRA_IDLE):
                 self._switch_mode(CollectorMode.WARMING)
         else:
-            if time_since_last_activity > self.ultra_idle_after_sec and self._mode != CollectorMode.ULTRA_IDLE:
+            if (
+                time_since_last_activity > self.ultra_idle_after_sec
+                and self._mode != CollectorMode.ULTRA_IDLE
+            ):
                 self._switch_mode(CollectorMode.ULTRA_IDLE)
-            elif time_since_last_activity > self.idle_after_sec and self._mode not in (CollectorMode.IDLE, CollectorMode.ULTRA_IDLE):
+            elif time_since_last_activity > self.idle_after_sec and self._mode not in (
+                CollectorMode.IDLE,
+                CollectorMode.ULTRA_IDLE,
+            ):
                 self._switch_mode(CollectorMode.IDLE)
 
-    async def start(self):
+    async def _run_blocking(self, label: str, function, *args):
+        if self._worker_tracker is not None:
+            return await self._worker_tracker.run(label, function, *args)
+        return await asyncio.to_thread(function, *args)
+
+    async def start(self, worker_tracker=None):
         if self._running:
             return
+        self._worker_tracker = worker_tracker
         await self.load_persisted_snapshots()
         self._running = True
         self._last_ws_activity = time.time()
@@ -518,22 +575,30 @@ class SnapshotCollector:
 
     async def stop(self):
         self._running = False
+        self._force_poll_event.set()
         if self._task:
-            self._task.cancel()
-            try:
+            if self._worker_tracker is None:
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
+            else:
                 await self._task
-            except asyncio.CancelledError:
-                pass
             self._task = None
 
     async def _run(self):
-        while self._running:
+        while self._running and (
+            self._worker_tracker is None or self._worker_tracker.accepting
+        ):
             cycle_started = time.time()
             try:
                 self._update_mode_based_on_activity()
                 current_interval = self._get_current_interval()
 
-                nodes = await asyncio.to_thread(self.fetch_nodes)
+                nodes = await self._run_blocking(
+                    "collector.fetch_nodes", self.fetch_nodes
+                )
                 now = time.time()
                 active_node_keys = {self._node_key(node) for node in nodes}
 
@@ -580,22 +645,34 @@ class SnapshotCollector:
                     self._force_poll_event.clear()
                     logger.info(f"Force poll completed: {len(tasks)} nodes polled")
 
+            except LifecycleWorkAdmissionClosed:
+                break
             except Exception as exc:
                 logger.error(f"Collector loop error: {exc}")
 
             # Adaptive sleep: longer in idle modes; force_poll_event provides early wake-up.
-            sleep_time = min(10.0, self.poll_interval_ceiling_sec / 10, self._get_current_interval() / 10)
+            sleep_time = min(
+                10.0,
+                self.poll_interval_ceiling_sec / 10,
+                self._get_current_interval() / 10,
+            )
             try:
-                await asyncio.wait_for(self._force_poll_event.wait(), timeout=sleep_time)
+                await asyncio.wait_for(
+                    self._force_poll_event.wait(), timeout=sleep_time
+                )
             except asyncio.TimeoutError:
                 pass
 
-    async def _poll_node(self, node: Dict, key: str, sem: Optional[asyncio.Semaphore] = None):
+    async def _poll_node(
+        self, node: Dict, key: str, sem: Optional[asyncio.Semaphore] = None
+    ):
         self._inflight_polls += 1
         try:
             async with self.semaphore:
                 started = time.time()
-                snapshot = await asyncio.to_thread(self._collect_node_snapshot, node)
+                snapshot = await self._run_blocking(
+                    "collector.poll_node", self._collect_node_snapshot, node
+                )
         finally:
             self._inflight_polls = max(0, self._inflight_polls - 1)
         elapsed = time.time() - started
@@ -645,7 +722,9 @@ class SnapshotCollector:
                 snapshot["reason"] = "timeout"
                 snapshot["status"] = "offline"
             else:
-                current_interval = min(self._get_current_interval(), self.poll_interval_ceiling_sec)
+                current_interval = min(
+                    self._get_current_interval(), self.poll_interval_ceiling_sec
+                )
                 backoff = current_interval * (2 ** min(state["failures"], 4))
                 state["interval"] = float(min(self.max_interval_sec, backoff))
             state["stable_cycles"] = 0
@@ -665,15 +744,25 @@ class SnapshotCollector:
                 self._client_last_seen[email] = observed_at
             node_id = snapshot.get("node_id")
             if node_id is not None:
-                node_last_seen = self._client_last_seen_by_node.setdefault(str(node_id), {})
+                node_last_seen = self._client_last_seen_by_node.setdefault(
+                    str(node_id), {}
+                )
                 for email in online_client_emails:
                     node_last_seen[email] = observed_at
             cutoff = observed_at - _CLIENT_PRESENCE_RETENTION_SEC
-            stale_emails = [email for email, seen_at in self._client_last_seen.items() if seen_at < cutoff]
+            stale_emails = [
+                email
+                for email, seen_at in self._client_last_seen.items()
+                if seen_at < cutoff
+            ]
             for email in stale_emails:
                 del self._client_last_seen[email]
             for node_id, node_last_seen in list(self._client_last_seen_by_node.items()):
-                stale_node_emails = [email for email, seen_at in node_last_seen.items() if seen_at < cutoff]
+                stale_node_emails = [
+                    email
+                    for email, seen_at in node_last_seen.items()
+                    if seen_at < cutoff
+                ]
                 for email in stale_node_emails:
                     del node_last_seen[email]
                 if not node_last_seen:
@@ -683,14 +772,20 @@ class SnapshotCollector:
             try:
                 # Callbacks may derive a fleet projection from latest_snapshot;
                 # publish this node first so they never observe a stale fleet.
-                await asyncio.to_thread(self.on_snapshot, snapshot)
+                await self._run_blocking(
+                    "collector.on_snapshot", self.on_snapshot, snapshot
+                )
             except Exception as exc:
-                logger.warning(f"Collector on_snapshot callback failed for {key}: {exc}")
+                logger.warning(
+                    f"Collector on_snapshot callback failed for {key}: {exc}"
+                )
         await self._persist_snapshot(snapshot)
         if should_broadcast:
             # WebSocket consumers display the operator-facing name; the
             # database ID below remains the unambiguous machine identity.
-            await self._broadcast_delta(str(snapshot.get("name") or key), snapshot, previous=previous)
+            await self._broadcast_delta(
+                str(snapshot.get("name") or key), snapshot, previous=previous
+            )
 
     def _collect_node_snapshot(self, node: Dict) -> Dict:
         name = node.get("name", "unknown")
@@ -711,7 +806,9 @@ class SnapshotCollector:
                     "system": system_status,
                     "xray": xray_status,
                     "network": network_status,
-                    "panel_version": status.get("panel_version", "") if isinstance(status, dict) else "",
+                    "panel_version": status.get("panel_version", "")
+                    if isinstance(status, dict)
+                    else "",
                     "xray_running": False,
                     "cpu": 0,
                     "online_clients": 0,
@@ -723,7 +820,8 @@ class SnapshotCollector:
             available = bool(status.get("available"))
             inbounds = (
                 inbounds_result.get("inbounds", [])
-                if isinstance(inbounds_result, dict) and inbounds_result.get("available")
+                if isinstance(inbounds_result, dict)
+                and inbounds_result.get("available")
                 else []
             )
             system_client_emails = system_client_emails_from_inbounds(inbounds)
@@ -740,7 +838,9 @@ class SnapshotCollector:
             )
             xray_compatibility = summarize_node_inbounds(inbounds)
 
-            panel_version = status.get("panel_version", "") if isinstance(status, dict) else ""
+            panel_version = (
+                status.get("panel_version", "") if isinstance(status, dict) else ""
+            )
             api_version = _detect_api_version(panel_version)
 
             return {
@@ -753,7 +853,11 @@ class SnapshotCollector:
                 "system": system_status,
                 "xray": xray_status,
                 "network": network_status,
-                "xray_running": (xray_status.get("running", False) if isinstance(status, dict) else False),
+                "xray_running": (
+                    xray_status.get("running", False)
+                    if isinstance(status, dict)
+                    else False
+                ),
                 "cpu": (system_status.get("cpu", 0) if isinstance(status, dict) else 0),
                 "online_clients": len(online_emails),
                 "online_client_emails": online_emails,
@@ -800,7 +904,9 @@ class SnapshotCollector:
         error = str(snapshot.get("error") or "").lower()
         return "timeout" in reason or "timed out" in error or "read timed out" in error
 
-    async def _broadcast_delta(self, key: str, snapshot: Dict, *, previous: Optional[Dict] = None):
+    async def _broadcast_delta(
+        self, key: str, snapshot: Dict, *, previous: Optional[Dict] = None
+    ):
         if not getattr(self.ws_manager, "active_connections", None):
             return
         if not hasattr(self.ws_manager, "broadcast"):
@@ -838,7 +944,9 @@ class SnapshotCollector:
             delta_fields = delta["changes"]
 
         try:
-            push_payload = build_snapshot_push_payload(key=key, snapshot=snapshot, changes=delta_fields)
+            push_payload = build_snapshot_push_payload(
+                key=key, snapshot=snapshot, changes=delta_fields
+            )
             await self.ws_manager.broadcast(
                 {"type": "snapshot_delta", "data": delta, "timestamp": time.time()},
                 channel="snapshot_delta",

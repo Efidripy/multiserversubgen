@@ -7,12 +7,14 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 import urllib3
+
 try:
     import redis
 except Exception:
     redis = None
 
 from core.lifespan import build_lifespan
+from core.lifecycle_work import LifecycleWorkAdmissionClosed
 from core.app_settings import load_app_settings
 from core.main_facades import (
     build_auth_request_facade,
@@ -21,7 +23,12 @@ from core.main_facades import (
     build_subscription_links_facade,
 )
 from core.request_middleware import build_request_controls_and_audit_middleware
-from modules.auth.service import AuthService, WEB_SESSION_COOKIE_NAME, WEB_SESSION_TTL_SEC, parse_mfa_users
+from modules.auth.service import (
+    AuthService,
+    WEB_SESSION_COOKIE_NAME,
+    WEB_SESSION_TTL_SEC,
+    parse_mfa_users,
+)
 from services.db_bootstrap import (
     init_db as bootstrap_db,
     sync_node_history_names_with_nodes as sync_node_history_names_with_nodes_db,
@@ -50,6 +57,7 @@ from services.telegram_bot_config import TelegramBotTokenProvider
 from shared.http_config import get_requests_verify_value
 
 import sys
+
 sys.path.insert(0, str(Path(__file__).parent))
 from crypto import encrypt, decrypt
 from xui_session import login_panel, xui_request
@@ -57,6 +65,7 @@ from websocket_manager import manager as ws_manager, handle_websocket_message
 import services.subscription_links as subscription_links_service
 
 from shared.logging import configure_logging
+
 configure_logging()
 
 SETTINGS = load_app_settings(parse_mfa_users=parse_mfa_users)
@@ -115,7 +124,9 @@ PROMETHEUS_BASIC_AUTH = SETTINGS.prometheus_basic_auth
 LOKI_BASIC_AUTH = SETTINGS.loki_basic_auth
 GRAFANA_BASIC_AUTH = SETTINGS.grafana_basic_auth
 
-REQUESTS_VERIFY = get_requests_verify_value(verify_tls=VERIFY_TLS, ca_bundle_path=CA_BUNDLE_PATH)
+REQUESTS_VERIFY = get_requests_verify_value(
+    verify_tls=VERIFY_TLS, ca_bundle_path=CA_BUNDLE_PATH
+)
 if REQUESTS_VERIFY is False:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -285,7 +296,10 @@ HTTP_REQUEST_LATENCY = metrics.http_request_latency
 
 bootstrap_db(DB_PATH)
 telegram_token_provider = TelegramBotTokenProvider(
-    db_path=DB_PATH, encrypt=encrypt, decrypt=decrypt, fallback_token=SETTINGS.telegram.bot_token
+    db_path=DB_PATH,
+    encrypt=encrypt,
+    decrypt=decrypt,
+    fallback_token=SETTINGS.telegram.bot_token,
 )
 
 
@@ -296,9 +310,19 @@ def _persist_node_version(snapshot: dict) -> None:
     if not node_id or not api_version or not snapshot.get("available"):
         return
     node = node_service.get_node(node_id)
-    if node and (node.get("api_version") != api_version or node.get("panel_version") != panel_version):
-        node_service.update_node(node_id, {"api_version": api_version, "panel_version": panel_version})
-        logger.info("Node %s version updated: api=%s panel=%s", node.get("name"), api_version, panel_version)
+    if node and (
+        node.get("api_version") != api_version
+        or node.get("panel_version") != panel_version
+    ):
+        node_service.update_node(
+            node_id, {"api_version": api_version, "panel_version": panel_version}
+        )
+        logger.info(
+            "Node %s version updated: api=%s panel=%s",
+            node.get("name"),
+            api_version,
+            panel_version,
+        )
 
 
 collect_adguard_once = adguard_runtime.collect_once
@@ -343,6 +367,7 @@ def has_min_role(user_role: str, min_role: str) -> bool:
 def check_web_session(request: Request):
     return auth_service.verify_web_session(request.cookies.get(WEB_SESSION_COOKIE_NAME))
 
+
 (
     invalidate_live_stats_cache,
     invalidate_read_projections,
@@ -365,7 +390,9 @@ def check_web_session(request: Request):
     get_emails,
     get_links_filtered,
     register_subscription_response_cache_invalidator,
-) = build_subscription_links_facade(subscription_links_service=subscription_links_service, db_path=DB_PATH)
+) = build_subscription_links_facade(
+    subscription_links_service=subscription_links_service, db_path=DB_PATH
+)
 
 
 app.middleware("http")(
@@ -464,7 +491,7 @@ register_app_routers(
 )
 
 
-async def _telegram_provisioning_worker_loop() -> None:
+async def _telegram_provisioning_worker_loop(worker_tracker) -> None:
     """Run approved remote mutations only after both fail-closed switches pass."""
 
     port = ClientManagerProvisioningPort(client_mgr)
@@ -483,20 +510,32 @@ async def _telegram_provisioning_worker_loop() -> None:
     schedule_worker = TelegramScheduleWorker(
         registry=TelegramRegistry(DB_PATH), worker_id=f"telegram-schedule:{os.getpid()}"
     )
-    while True:
-        schedule_result = await asyncio.to_thread(schedule_worker.run_once)
-        provisioning_result = await asyncio.to_thread(provisioning_worker.run_once)
-        lifecycle_result = await asyncio.to_thread(lifecycle_worker.run_once)
+    while worker_tracker.accepting:
+        try:
+            schedule_result = await worker_tracker.run(
+                "telegram.schedule.run_once", schedule_worker.run_once
+            )
+            provisioning_result = await worker_tracker.run(
+                "telegram.provisioning.run_once", provisioning_worker.run_once
+            )
+            lifecycle_result = await worker_tracker.run(
+                "telegram.lifecycle.run_once", lifecycle_worker.run_once
+            )
+        except LifecycleWorkAdmissionClosed:
+            return
         # A finite sleep also gives cancellation a predictable safe point and
         # prevents a busy loop when a fleet contains many fast local attempts.
-        await asyncio.sleep(
+        if not await worker_tracker.wait_or_stop(
             0.1
-            if schedule_result.processed or provisioning_result.processed or lifecycle_result.processed
+            if schedule_result.processed
+            or provisioning_result.processed
+            or lifecycle_result.processed
             else SETTINGS.telegram.provisioning_worker_interval_sec
-        )
+        ):
+            return
 
 
-async def _telegram_existing_discovery_worker_loop() -> None:
+async def _telegram_existing_discovery_worker_loop(worker_tracker) -> None:
     """Reconcile deferred existing-email snapshots without remote writes."""
 
     worker = TelegramExistingDiscoveryWorker(
@@ -507,12 +546,22 @@ async def _telegram_existing_discovery_worker_loop() -> None:
         ),
         worker_id=f"telegram-existing-discovery:{os.getpid()}",
     )
-    while True:
-        result = await asyncio.to_thread(worker.run_once)
-        await asyncio.sleep(0.1 if result.processed else SETTINGS.telegram.provisioning_worker_interval_sec)
+    while worker_tracker.accepting:
+        try:
+            result = await worker_tracker.run(
+                "telegram.existing_discovery.run_once", worker.run_once
+            )
+        except LifecycleWorkAdmissionClosed:
+            return
+        if not await worker_tracker.wait_or_stop(
+            0.1
+            if result.processed
+            else SETTINGS.telegram.provisioning_worker_interval_sec
+        ):
+            return
 
 
-async def _telegram_outbox_worker_loop() -> None:
+async def _telegram_outbox_worker_loop(worker_tracker) -> None:
     """Deliver local notification events only after its independent opt-in."""
 
     worker = TelegramOutboxWorker(
@@ -526,41 +575,67 @@ async def _telegram_outbox_worker_loop() -> None:
         ),
         worker_id=f"telegram-outbox:{os.getpid()}",
     )
-    while True:
-        result = await asyncio.to_thread(worker.run_once)
-        await asyncio.sleep(0.1 if result.processed else SETTINGS.telegram.outbox_worker_interval_sec)
+    while worker_tracker.accepting:
+        try:
+            result = await worker_tracker.run(
+                "telegram.outbox.run_once", worker.run_once
+            )
+        except LifecycleWorkAdmissionClosed:
+            return
+        if not await worker_tracker.wait_or_stop(
+            0.1 if result.processed else SETTINGS.telegram.outbox_worker_interval_sec
+        ):
+            return
 
 
-async def _telegram_retention_worker_loop() -> None:
+async def _telegram_retention_worker_loop(worker_tracker) -> None:
     """Run local-only Telegram data retention on its own opt-in schedule."""
 
     worker = TelegramRetentionService(DB_PATH)
-    while True:
-        await asyncio.to_thread(worker.run_once)
-        await asyncio.sleep(SETTINGS.telegram.retention_worker_interval_sec)
+    while worker_tracker.accepting:
+        try:
+            await worker_tracker.run("telegram.retention.run_once", worker.run_once)
+        except LifecycleWorkAdmissionClosed:
+            return
+        if not await worker_tracker.wait_or_stop(
+            SETTINGS.telegram.retention_worker_interval_sec
+        ):
+            return
 
 
-async def _telegram_reminder_worker_loop() -> None:
+async def _telegram_reminder_worker_loop(worker_tracker) -> None:
     """Queue local expiry and exact-snapshot traffic notices; never calls a node."""
 
-    max_snapshot_age_seconds = max(300, SETTINGS.telegram.reminder_worker_interval_sec * 2)
+    max_snapshot_age_seconds = max(
+        300, SETTINGS.telegram.reminder_worker_interval_sec * 2
+    )
     worker = TelegramReminderService(
         DB_PATH,
-        traffic_snapshot_loader=lambda email, bindings: live_stats_runtime.get_cached_telegram_quota_usage(
-            email=email,
-            bindings=bindings,
-            max_age_seconds=max_snapshot_age_seconds,
+        traffic_snapshot_loader=lambda email, bindings: (
+            live_stats_runtime.get_cached_telegram_quota_usage(
+                email=email,
+                bindings=bindings,
+                max_age_seconds=max_snapshot_age_seconds,
+            )
         ),
     )
-    while True:
-        await asyncio.to_thread(worker.run_once)
-        await asyncio.sleep(SETTINGS.telegram.reminder_worker_interval_sec)
+    while worker_tracker.accepting:
+        try:
+            await worker_tracker.run("telegram.reminder.run_once", worker.run_once)
+        except LifecycleWorkAdmissionClosed:
+            return
+        if not await worker_tracker.wait_or_stop(
+            SETTINGS.telegram.reminder_worker_interval_sec
+        ):
+            return
 
 
-async def _telegram_polling_worker_loop() -> None:
+async def _telegram_polling_worker_loop(worker_tracker) -> None:
     """Use outbound long polling where Telegram cannot reach this host's webhook."""
 
-    transport = TelegramApiTransport(db_path=DB_PATH, local_proxy_url=SETTINGS.telegram.local_proxy_url)
+    transport = TelegramApiTransport(
+        db_path=DB_PATH, local_proxy_url=SETTINGS.telegram.local_proxy_url
+    )
     service = TelegramRegistrationService(
         TelegramRegistry(DB_PATH),
         introduction_max_chars=SETTINGS.telegram.introduction_max_chars,
@@ -577,24 +652,34 @@ async def _telegram_polling_worker_loop() -> None:
         customer_inactive_icon_custom_emoji_id=SETTINGS.telegram.customer_inactive_icon_custom_emoji_id,
     )
     worker = TelegramPollingWorker(
-        api=TelegramBotApiClient(telegram_token_provider.get_token, transport=transport),
+        api=TelegramBotApiClient(
+            telegram_token_provider.get_token, transport=transport
+        ),
         handle_update=service.handle_update,
-        sender=TelegramApiSender(telegram_token_provider.get_token, transport=transport),
+        sender=TelegramApiSender(
+            telegram_token_provider.get_token, transport=transport
+        ),
         timeout_sec=SETTINGS.telegram.polling_timeout_sec,
         fallback_subscription_message=service.fallback_subscription_message,
         record_outbound_delivery=service.record_outbound_delivery,
     )
-    while True:
+    while worker_tracker.accepting:
         try:
-            await asyncio.to_thread(worker.run_once)
+            await worker_tracker.run("telegram.polling.run_once", worker.run_once)
+        except LifecycleWorkAdmissionClosed:
+            return
         except Exception:
             # Keep the application healthy if the selected Bot API route is
             # temporarily unavailable. The next run retries through the same
             # fail-closed transport without changing global proxy settings.
-            logger.warning("Telegram polling request failed; retrying through configured transport")
-            await asyncio.sleep(5)
+            logger.warning(
+                "Telegram polling request failed; retrying through configured transport"
+            )
+            if not await worker_tracker.wait_or_stop(5):
+                return
             continue
-        await asyncio.sleep(0.1)
+        if not await worker_tracker.wait_or_stop(0.1):
+            return
 
 
 app.router.lifespan_context = build_lifespan(
@@ -602,28 +687,43 @@ app.router.lifespan_context = build_lifespan(
     backfill_traffic_history_snapshots=live_stats_runtime.backfill_node_history_snapshots,
     audit_worker_loop=audit_worker_loop,
     audit_flush=audit_runtime.flush,
+    audit_close_admission=audit_runtime.close_admission,
     snapshot_collector=snapshot_collector,
-    adguard_collector_loop=adguard_collector_loop,
+    adguard_collector_loop=lambda worker_tracker: adguard_collector_loop(
+        worker_tracker
+    ),
     asyncio_module=asyncio,
     telegram_existing_discovery_worker_loop=(
-        (lambda: _telegram_existing_discovery_worker_loop()) if SETTINGS.telegram.enabled else None
+        (
+            lambda worker_tracker: _telegram_existing_discovery_worker_loop(
+                worker_tracker
+            )
+        )
+        if SETTINGS.telegram.enabled
+        else None
     ),
     telegram_provisioning_worker_loop=(
-        (lambda: _telegram_provisioning_worker_loop())
+        (lambda worker_tracker: _telegram_provisioning_worker_loop(worker_tracker))
         if SETTINGS.telegram.provisioning_worker_enabled
         else None
     ),
     telegram_outbox_worker_loop=(
-        (lambda: _telegram_outbox_worker_loop()) if SETTINGS.telegram.outbox_worker_enabled else None
+        (lambda worker_tracker: _telegram_outbox_worker_loop(worker_tracker))
+        if SETTINGS.telegram.outbox_worker_enabled
+        else None
     ),
     telegram_retention_worker_loop=(
-        (lambda: _telegram_retention_worker_loop()) if SETTINGS.telegram.retention_worker_enabled else None
+        (lambda worker_tracker: _telegram_retention_worker_loop(worker_tracker))
+        if SETTINGS.telegram.retention_worker_enabled
+        else None
     ),
     telegram_reminder_worker_loop=(
-        (lambda: _telegram_reminder_worker_loop()) if SETTINGS.telegram.reminder_worker_enabled else None
+        (lambda worker_tracker: _telegram_reminder_worker_loop(worker_tracker))
+        if SETTINGS.telegram.reminder_worker_enabled
+        else None
     ),
     telegram_polling_worker_loop=(
-        (lambda: _telegram_polling_worker_loop())
+        (lambda worker_tracker: _telegram_polling_worker_loop(worker_tracker))
         if SETTINGS.telegram.enabled and SETTINGS.telegram.mode == "polling"
         else None
     ),

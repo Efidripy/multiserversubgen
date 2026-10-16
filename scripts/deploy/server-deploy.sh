@@ -156,6 +156,7 @@ STAGE_DIR="${PROJECT_PARENT}/.${PROJECT_BASENAME}.next-${STAMP}"
 QUARANTINE_DIR="${PROJECT_PARENT}/.${PROJECT_BASENAME}.previous-${STAMP}"
 HAD_PREVIOUS=0
 SERVICE_STOPPED=0
+SWAP_STARTED=0
 STATE_DB="${PROJECT_DIR}/admin.db"
 
 cleanup_stage() {
@@ -252,6 +253,7 @@ resolve_runtime_service_identity() {
 }
 
 restore_previous() {
+  [[ "$SWAP_STARTED" == "1" ]] || return 0
   systemctl stop "$PROJECT_NAME" || true
   restore_service_unit
   if [[ "$HAD_PREVIOUS" == "1" && -d "$QUARANTINE_DIR" ]]; then
@@ -272,7 +274,7 @@ restore_previous() {
 
 rollback_and_exit() {
   cleanup_stage
-  [[ "$ROLLBACK_ON_FAIL" == "1" ]] && restore_previous
+  [[ "$ROLLBACK_ON_FAIL" == "1" && "$SWAP_STARTED" == "1" ]] && restore_previous
   trap - ERR
   exit 1
 }
@@ -280,10 +282,29 @@ rollback_and_exit() {
 on_error() {
   local status=$?
   cleanup_stage
-  [[ "$ROLLBACK_ON_FAIL" == "1" ]] && restore_previous
+  [[ "$ROLLBACK_ON_FAIL" == "1" && "$SWAP_STARTED" == "1" ]] && restore_previous
   exit "$status"
 }
 trap on_error ERR
+
+stop_for_consistent_runtime_backup() {
+  if ! systemctl stop "$PROJECT_NAME"; then
+    printf 'Deploy refused: graceful service stop failed; no checkpoint, backup, swap or restore-start was attempted\n' >&2
+    trap - ERR
+    exit 1
+  fi
+  if systemctl is-active --quiet "$PROJECT_NAME"; then
+    printf 'Deploy refused: service remains active after graceful stop; no checkpoint, backup, swap or restore-start was attempted\n' >&2
+    trap - ERR
+    exit 1
+  fi
+  if [[ "$(systemctl show "$PROJECT_NAME" -p Result --value)" != "success" ]]; then
+    printf 'Deploy refused: service did not report a graceful stop; no checkpoint, backup, swap or restore-start was attempted\n' >&2
+    trap - ERR
+    exit 1
+  fi
+  SERVICE_STOPPED=1
+}
 
 wait_for_health() {
   local attempt code
@@ -354,8 +375,7 @@ FRONTEND_NODE_OPTIONS="${FRONTEND_NODE_OPTIONS:---max-old-space-size=512}" \
   SKIP_LIVE_VERIFY=1 bash "$REPO_DIR/scripts/deploy/build-and-publish-frontend.sh"
 
 if [[ "$HAD_PREVIOUS" == "1" ]]; then
-  systemctl stop "$PROJECT_NAME"
-  SERVICE_STOPPED=1
+  stop_for_consistent_runtime_backup
   sqlite3 "$STATE_DB" 'PRAGMA wal_checkpoint(TRUNCATE);' >/dev/null
   [[ "$(sqlite3 "$STATE_DB" 'PRAGMA integrity_check;' | tr -d '\r')" == "ok" ]] || fail "runtime database integrity check failed"
   tar -C "$PROJECT_PARENT" -czf "$BACKUP_TAR" -- "$PROJECT_BASENAME"
@@ -368,6 +388,7 @@ if [[ "$HAD_PREVIOUS" == "1" ]]; then
   if [[ -f "$PROJECT_DIR/.encryption_key" ]]; then
     install -m 0600 "$PROJECT_DIR/.encryption_key" "$STAGE_DIR/.encryption_key"
   fi
+  SWAP_STARTED=1
   mv -- "$PROJECT_DIR" "$QUARANTINE_DIR"
 fi
 mv -- "$STAGE_DIR" "$PROJECT_DIR"
