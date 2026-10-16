@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 
+from core.lifecycle_work import LifecycleWorkTracker
+
 
 def build_lifespan(
     *,
@@ -7,6 +9,7 @@ def build_lifespan(
     backfill_traffic_history_snapshots=None,
     audit_worker_loop,
     audit_flush=None,
+    audit_close_admission=None,
     snapshot_collector,
     adguard_collector_loop,
     asyncio_module,
@@ -17,102 +20,51 @@ def build_lifespan(
     telegram_reminder_worker_loop=None,
     telegram_polling_worker_loop=None,
 ):
-    state = {
-        "audit_worker_task": None,
-        "adguard_collector_task": None,
-        "telegram_existing_discovery_worker_task": None,
-        "telegram_provisioning_worker_task": None,
-        "telegram_outbox_worker_task": None,
-        "telegram_retention_worker_task": None,
-        "telegram_reminder_worker_task": None,
-        "telegram_polling_worker_task": None,
-    }
+    """Build the one production lifespan with explicit blocking-work ownership."""
 
     @asynccontextmanager
     async def lifespan(app):
-        await asyncio_module.to_thread(sync_node_history_names_with_nodes)
+        del app
+        worker_tracker = LifecycleWorkTracker(asyncio_module=asyncio_module)
+        await worker_tracker.run(
+            "startup.sync_node_history", sync_node_history_names_with_nodes
+        )
         if backfill_traffic_history_snapshots is not None:
-            await asyncio_module.to_thread(backfill_traffic_history_snapshots)
-        state["audit_worker_task"] = asyncio_module.create_task(audit_worker_loop())
-        await snapshot_collector.start()
-        state["adguard_collector_task"] = asyncio_module.create_task(adguard_collector_loop())
-        if telegram_existing_discovery_worker_loop is not None:
-            state["telegram_existing_discovery_worker_task"] = asyncio_module.create_task(
-                telegram_existing_discovery_worker_loop()
+            await worker_tracker.run(
+                "startup.backfill_traffic_history", backfill_traffic_history_snapshots
             )
-        if telegram_provisioning_worker_loop is not None:
-            state["telegram_provisioning_worker_task"] = asyncio_module.create_task(
-                telegram_provisioning_worker_loop()
-            )
-        if telegram_outbox_worker_loop is not None:
-            state["telegram_outbox_worker_task"] = asyncio_module.create_task(telegram_outbox_worker_loop())
-        if telegram_retention_worker_loop is not None:
-            state["telegram_retention_worker_task"] = asyncio_module.create_task(telegram_retention_worker_loop())
-        if telegram_reminder_worker_loop is not None:
-            state["telegram_reminder_worker_task"] = asyncio_module.create_task(telegram_reminder_worker_loop())
-        if telegram_polling_worker_loop is not None:
-            state["telegram_polling_worker_task"] = asyncio_module.create_task(telegram_polling_worker_loop())
+
+        await snapshot_collector.start(worker_tracker)
+        worker_loops = [
+            audit_worker_loop,
+            adguard_collector_loop,
+            telegram_existing_discovery_worker_loop,
+            telegram_provisioning_worker_loop,
+            telegram_outbox_worker_loop,
+            telegram_retention_worker_loop,
+            telegram_reminder_worker_loop,
+            telegram_polling_worker_loop,
+        ]
+        tasks = [
+            asyncio_module.create_task(loop(worker_tracker))
+            for loop in worker_loops
+            if loop is not None
+        ]
         try:
             yield
         finally:
-            if state["telegram_polling_worker_task"]:
-                state["telegram_polling_worker_task"].cancel()
-                try:
-                    await state["telegram_polling_worker_task"]
-                except asyncio_module.CancelledError:
-                    pass
-                state["telegram_polling_worker_task"] = None
-            if state["telegram_retention_worker_task"]:
-                state["telegram_retention_worker_task"].cancel()
-                try:
-                    await state["telegram_retention_worker_task"]
-                except asyncio_module.CancelledError:
-                    pass
-                state["telegram_retention_worker_task"] = None
-            if state["telegram_reminder_worker_task"]:
-                state["telegram_reminder_worker_task"].cancel()
-                try:
-                    await state["telegram_reminder_worker_task"]
-                except asyncio_module.CancelledError:
-                    pass
-                state["telegram_reminder_worker_task"] = None
-            if state["telegram_outbox_worker_task"]:
-                state["telegram_outbox_worker_task"].cancel()
-                try:
-                    await state["telegram_outbox_worker_task"]
-                except asyncio_module.CancelledError:
-                    pass
-                state["telegram_outbox_worker_task"] = None
-            if state["telegram_provisioning_worker_task"]:
-                state["telegram_provisioning_worker_task"].cancel()
-                try:
-                    await state["telegram_provisioning_worker_task"]
-                except asyncio_module.CancelledError:
-                    pass
-                state["telegram_provisioning_worker_task"] = None
-            if state["telegram_existing_discovery_worker_task"]:
-                state["telegram_existing_discovery_worker_task"].cancel()
-                try:
-                    await state["telegram_existing_discovery_worker_task"]
-                except asyncio_module.CancelledError:
-                    pass
-                state["telegram_existing_discovery_worker_task"] = None
-            if state["audit_worker_task"]:
-                state["audit_worker_task"].cancel()
-                try:
-                    await state["audit_worker_task"]
-                except asyncio_module.CancelledError:
-                    pass
-                state["audit_worker_task"] = None
-            if audit_flush is not None:
-                await asyncio_module.to_thread(audit_flush)
-            if state["adguard_collector_task"]:
-                state["adguard_collector_task"].cancel()
-                try:
-                    await state["adguard_collector_task"]
-                except asyncio_module.CancelledError:
-                    pass
-                state["adguard_collector_task"] = None
+            if audit_close_admission is not None:
+                audit_close_admission()
+            worker_tracker.close_admission()
+
+            # Do not cancel tasks: cancelling an asyncio.to_thread awaiter
+            # leaves its blocking call alive. Every loop exits through the
+            # tracker, and terminal shutdown waits for its actual completion.
+            if tasks:
+                await asyncio_module.gather(*tasks, return_exceptions=True)
             await snapshot_collector.stop()
+            if audit_flush is not None:
+                await worker_tracker.run_shutdown("shutdown.audit_flush", audit_flush)
+            await worker_tracker.drain()
 
     return lifespan

@@ -8,6 +8,8 @@ declare module 'axios' {
   interface AxiosRequestConfig<D = any> {
     /** Explicit opt-out for a POST that is a read projection, not a mutation. */
     skipCacheInvalidation?: boolean;
+    /** Use the same-origin HttpOnly browser session without a Basic fallback. */
+    sessionOnlyAuth?: boolean;
   }
 }
 
@@ -202,7 +204,7 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
     config.headers = config.headers ?? {};
     config.headers['X-TOTP-Code'] = auth.totpCode;
   }
-  if (!config.auth && auth.username && auth.password) {
+  if (!config.sessionOnlyAuth && !config.auth && auth.username && auth.password) {
     config.auth = { username: auth.username, password: auth.password };
   }
 

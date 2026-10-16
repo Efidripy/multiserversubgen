@@ -27,6 +27,18 @@ def is_trusted_loopback_metrics_scrape(request: Request) -> bool:
     )
 
 
+def should_audit_http_access(request: Request) -> bool:
+    """Keep the durable audit trail for control-plane access, not local scrapes.
+
+    A direct loopback ``/metrics`` scrape is a trusted, read-only Prometheus
+    collection path. It still emits the usual HTTP metrics below, but writing
+    every scrape through the SQLite audit queue only creates avoidable churn.
+    The narrow trust predicate is shared with the authentication exception, so
+    proxied or external ``/metrics`` requests remain durably audited.
+    """
+    return not getattr(request.state, "metrics_loopback_allowed", False)
+
+
 def build_request_controls_and_audit_middleware(
     *,
     is_public_endpoint,
@@ -134,18 +146,19 @@ def build_request_controls_and_audit_middleware(
             response.headers["Server-Timing"] = server_timing(duration_ms, attribution)
             http_request_count.labels(request.method, path_label, str(response.status_code)).inc()
             http_request_latency.labels(request.method, path_label).observe(duration_ms / 1000.0)
-            audit_payload = {
-                "event": "http_access",
-                "request_id": request_id,
-                "method": request.method,
-                "path": path,
-                "status_code": response.status_code,
-                "duration_ms": duration_ms,
-                "client_ip": get_client_ip(request),
-                "user_hint": request.state.auth_user or extract_basic_auth_username(request.headers.get("Authorization")) or "anonymous",
-                "user_role": request.state.auth_role,
-            }
-            enqueue_audit_event(audit_payload)
+            if should_audit_http_access(request):
+                audit_payload = {
+                    "event": "http_access",
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": path,
+                    "status_code": response.status_code,
+                    "duration_ms": duration_ms,
+                    "client_ip": get_client_ip(request),
+                    "user_hint": request.state.auth_user or extract_basic_auth_username(request.headers.get("Authorization")) or "anonymous",
+                    "user_role": request.state.auth_role,
+                }
+                enqueue_audit_event(audit_payload)
             return response
         finally:
             if attribution_token is not None:

@@ -13,6 +13,15 @@ bundle. Скрипт до остановки сервиса проверяет �
 ops, deploy, monitoring и systemd файлы. Неполный или произвольный архив он
 отклоняет до изменения runtime-state.
 
+## Безопасная остановка перед заменой release
+
+Штатный `scripts/deploy/server-deploy.sh` сначала останавливает `sub-manager` и
+требует подтверждённые `inactive` и успешный результат systemd. Только затем он
+выполняет SQLite checkpoint, создаёт backup и начинает swap каталогов. Если
+graceful stop не подтвердился, deploy завершается в состоянии **no-swap**:
+checkpoint, backup, замена runtime и автоматический restore/start не запускаются.
+Это сигнал для отдельного incident recovery, а не причина повторять deploy или
+восстанавливать SQLite вручную.
 ## Режимы `update.sh`
 
 1. Полное обновление (backend + frontend)
