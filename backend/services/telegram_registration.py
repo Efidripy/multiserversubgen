@@ -21,7 +21,7 @@ from services.telegram_registry import (
     TelegramRegistryError,
     VersionConflictError,
 )
-from services.telegram_provisioning import ExistingRemoteBinding
+from services.telegram_provisioning import ExistingRemoteBinding, ProvisioningRemoteError
 from services.telegram_locale import button, normalize_telegram_locale, support_category, tr
 
 
@@ -740,7 +740,13 @@ class TelegramRegistrationService:
                 except TelegramRegistryError:
                     if self._discover_existing is None:
                         raise
-                    remote_bindings = self._discover_existing(text)
+                    try:
+                        remote_bindings = self._discover_existing(text)
+                    except ProvisioningRemoteError:
+                        return [TelegramOutboundMessage(
+                            chat_id,
+                            "Проверить существующего пользователя сейчас не удалось. Попробуйте позже.",
+                        )]
                     if not remote_bindings:
                         raise TelegramRegistryError("existing service username was not found")
                     email_display = remote_bindings[0].remote_email
@@ -1294,7 +1300,13 @@ class TelegramRegistrationService:
                     or not draft.value or self._discover_existing is None
                 ):
                     raise VersionConflictError("existing customer draft is missing")
-                discovered = self._discover_existing(draft.value)
+                try:
+                    discovered = self._discover_existing(draft.value)
+                except ProvisioningRemoteError:
+                    return [TelegramOutboundMessage(
+                        chat_id,
+                        "Проверить существующего пользователя сейчас не удалось. Попробуйте позже.",
+                    )]
                 result = self._registry.adopt_discovered_existing_application(
                     telegram_user_id=target_user_id,
                     email_display=draft.value,

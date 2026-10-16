@@ -17,7 +17,7 @@ from services.telegram_delivery import TelegramMessageEditUnavailableError
 from services.subscription_tokens import resolve_token
 from services.telegram_registration import TelegramOutboundMessage, TelegramRegistrationService
 from services.telegram_registry import TelegramRegistry
-from services.telegram_provisioning import ExistingRemoteBinding
+from services.telegram_provisioning import ExistingRemoteBinding, ProvisioningRemoteError
 
 
 def _message(update_id: int, text: str) -> dict:
@@ -1687,6 +1687,74 @@ def test_existing_remote_customer_is_adopted_only_after_exact_discovery_confirma
     with connect(db_path) as conn:
         assert conn.execute("SELECT email_display, origin FROM customers").fetchone() == ("legacy-user", "existing")
         assert conn.execute("SELECT remote_client_id, remote_email FROM customer_node_bindings").fetchone() == ("legacy-id", "legacy-user")
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
+
+
+def test_existing_remote_discovery_failure_replies_without_changing_the_draft_or_registry(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=76, chat_id=76, username="legacy-target", first_name=None, last_name=None
+    )
+    pending = registry.create_pending_application(76)
+
+    def unavailable(_value: str):
+        raise ProvisioningRemoteError("remote client read is unavailable")
+
+    service = TelegramRegistrationService(
+        registry, introduction_max_chars=700, primary_admin_id=108100140, discover_existing=unavailable
+    )
+    service.handle_update(_admin_callback(76, f"admin:existing:76:{pending.identity.row_version}:0"))
+    reply = service.handle_update(_admin_message(77, "existing-user"))
+
+    assert reply[0].text == "Проверить существующего пользователя сейчас не удалось. Попробуйте позже."
+    assert "existing-user" not in reply[0].text
+    assert registry.get_admin_draft(108100140).value is None
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
+
+
+def test_existing_remote_confirmation_failure_replies_without_adopting(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+    registry.get_or_create_identity(
+        telegram_user_id=77, chat_id=77, username="legacy-target", first_name=None, last_name=None
+    )
+    pending = registry.create_pending_application(77)
+    calls = 0
+
+    def discover(_value: str):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ProvisioningRemoteError("remote client read is unavailable")
+        return (
+            ExistingRemoteBinding(
+                node_id=1, node_name="edge-a", inbound_id=1, remote_client_id="legacy-id",
+                remote_sub_id="legacy-sub", remote_email="existing-user", enabled=True,
+            ),
+        )
+
+    service = TelegramRegistrationService(
+        registry, introduction_max_chars=700, primary_admin_id=108100140, discover_existing=discover
+    )
+    service.handle_update(_admin_callback(78, f"admin:existing:77:{pending.identity.row_version}:0"))
+    service.handle_update(_admin_message(79, "existing-user"))
+    reply = service.handle_update(
+        _admin_callback(80, f"admin:existing-discovered-confirm:77:{pending.identity.row_version}:0")
+    )
+
+    assert reply[0].text == "Проверить существующего пользователя сейчас не удалось. Попробуйте позже."
+    assert registry.get_admin_draft(108100140).value == "existing-user"
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
 
 
