@@ -316,6 +316,16 @@ def init_db(db_path: str) -> None:
                 "ALTER TABLE telegram_identities "
                 "ADD COLUMN introduction_requested_at TEXT DEFAULT NULL"
             )
+        # A Telegram identity can be locally linked before a complete remote
+        # snapshot is known.  Keep that state explicit and fail closed on both
+        # Telegram and bearer-subscription surfaces until the snapshot worker
+        # has resolved every immutable target.
+        if "remote_snapshot_ready" not in identity_columns:
+            conn.execute(
+                "ALTER TABLE telegram_identities "
+                "ADD COLUMN remote_snapshot_ready INTEGER NOT NULL DEFAULT 1 "
+                "CHECK(remote_snapshot_ready IN (0, 1))"
+            )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_preapprovals
                      (telegram_user_id INTEGER PRIMARY KEY,
@@ -979,6 +989,68 @@ def init_db(db_path: str) -> None:
         for column_name, statement in provisioning_attempt_migrations:
             if column_name not in provisioning_attempt_columns:
                 conn.execute(statement)
+        # Existing-email discovery is read-only reconciliation.  It must not
+        # share provisioning jobs because it may never create a remote client.
+        # Targets preserve the approval-time enabled-node snapshot even when a
+        # node is offline later, so an absence is never inferred from a failed
+        # read.
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_existing_discovery_jobs
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      customer_id INTEGER NOT NULL,
+                      telegram_user_id INTEGER NOT NULL,
+                      application_attempt INTEGER NOT NULL,
+                      idempotency_key TEXT NOT NULL UNIQUE,
+                      target_snapshot_digest TEXT NOT NULL,
+                      status TEXT NOT NULL DEFAULT 'queued'
+                        CHECK(status IN ('queued', 'running', 'partial', 'succeeded', 'failed')),
+                      lease_owner TEXT DEFAULT NULL,
+                      lease_until TEXT DEFAULT NULL,
+                      attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+                      next_attempt_at TEXT DEFAULT NULL,
+                      row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
+                      created_by TEXT NOT NULL,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      finished_at TEXT DEFAULT NULL,
+                      UNIQUE(telegram_user_id, application_attempt),
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT,
+                      FOREIGN KEY(telegram_user_id) REFERENCES telegram_identities(telegram_user_id) ON DELETE RESTRICT)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_existing_discovery_jobs_schedule "
+            "ON telegram_existing_discovery_jobs(status, next_attempt_at, lease_until)"
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_existing_discovery_targets
+                     (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      job_id INTEGER NOT NULL,
+                      node_id INTEGER NOT NULL,
+                      inbound_id INTEGER NOT NULL DEFAULT 1 CHECK(inbound_id = 1),
+                      status TEXT NOT NULL DEFAULT 'pending'
+                        CHECK(status IN ('pending', 'reconciling', 'confirmed_match', 'confirmed_absent',
+                                       'deferred', 'blocked_after_retry_limit', 'conflict')),
+                      remote_client_id TEXT DEFAULT NULL,
+                      remote_sub_id TEXT DEFAULT NULL,
+                      remote_email TEXT DEFAULT NULL,
+                      remote_enabled INTEGER DEFAULT NULL CHECK(remote_enabled IN (0, 1)),
+                      attempt_count INTEGER NOT NULL DEFAULT 0 CHECK(attempt_count >= 0),
+                      error_code TEXT DEFAULT NULL,
+                      error_summary TEXT DEFAULT NULL,
+                      next_attempt_at TEXT DEFAULT NULL,
+                      last_checked_at TEXT DEFAULT NULL,
+                      recovered_at TEXT DEFAULT NULL,
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      finished_at TEXT DEFAULT NULL,
+                      UNIQUE(job_id, node_id, inbound_id),
+                      FOREIGN KEY(job_id) REFERENCES telegram_existing_discovery_jobs(id) ON DELETE CASCADE,
+                      FOREIGN KEY(node_id) REFERENCES nodes(id) ON DELETE RESTRICT)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_existing_discovery_targets_schedule "
+            "ON telegram_existing_discovery_targets(status, next_attempt_at)"
+        )
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_customer_operations
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,

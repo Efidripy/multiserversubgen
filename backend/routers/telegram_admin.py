@@ -10,10 +10,12 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from routers.telegram_contracts import (
     ApproveExistingRequest,
     ApproveNewRequest,
+    DeferExistingDiscoveryRequest,
     IdentityDecisionRequest,
     NodePolicyMutationRequest,
     NodePolicyMutationResponse,
     NodePolicyValidationResponse,
+    RecoverExistingDiscoveryTargetRequest,
     TelegramPreapprovalRequest,
     TelegramPreapprovalResponse,
     UnlinkIdentityRequest,
@@ -416,6 +418,53 @@ def build_telegram_admin_router(
         except TelegramRegistryError as exc:
             raise translate_registry_error(exc) from exc
         return {"approval": asdict(result), "remote_io": "read_only"}
+
+    @router.post("/api/v1/telegram/requests/{telegram_user_id}/defer-existing")
+    def defer_existing_request(
+        telegram_user_id: int, data: DeferExistingDiscoveryRequest, request: Request
+    ):
+        """Create local immutable discovery work when a node is offline.
+
+        This route deliberately performs no discovery itself.  The background
+        worker later runs one read-only target at a time with a bounded retry
+        count, so an unavailable node cannot block the approval queue.
+        """
+
+        username = require_admin(request)
+        try:
+            result = registry.queue_deferred_existing_discovery(
+                telegram_user_id=telegram_user_id,
+                email_display=data.email_display,
+                expected_identity_version=data.expected_identity_version,
+                idempotency_key=data.idempotency_key,
+                approved_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"approval": asdict(result), "remote_io": "not_started"}
+
+    @router.get("/api/v1/telegram/existing-discovery/jobs/{job_id}")
+    def get_existing_discovery_job(job_id: int, request: Request):
+        require_admin(request)
+        try:
+            return {"job": asdict(registry.get_existing_discovery_job(job_id))}
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+
+    @router.post("/api/v1/telegram/existing-discovery/jobs/{job_id}/targets/{node_id}/recover")
+    def recover_existing_discovery_target(
+        job_id: int, node_id: int, data: RecoverExistingDiscoveryTargetRequest, request: Request
+    ):
+        username = require_admin(request)
+        try:
+            job = registry.recover_existing_discovery_target(
+                job_id=job_id, node_id=node_id,
+                expected_job_version=data.expected_job_version,
+                idempotency_key=data.idempotency_key, requested_by=username,
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"job": asdict(job), "remote_io": "not_started"}
 
     @router.post("/api/v1/telegram/requests/{telegram_user_id}/reject")
     def reject_request(
