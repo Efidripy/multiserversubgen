@@ -186,9 +186,13 @@ metrics_runtime = None
 live_stats_runtime = None
 
 
-def _on_snapshot(snapshot: dict) -> None:
-    _record_node_snapshot(snapshot)
-    _persist_node_version(snapshot)
+def _on_snapshots(snapshots: list[dict]) -> None:
+    if not snapshots:
+        return
+    # Coalesce completed-cycle history writes without omitting offline states.
+    metrics_runtime.record_node_snapshots(snapshots)
+    for snapshot in snapshots:
+        _persist_node_version(snapshot)
     if live_stats_runtime is None:
         return
     try:
@@ -256,7 +260,7 @@ bundle = build_app_runtime_bundle(
     adguard_latest=adguard_latest,
     adguard_latest_lock=adguard_latest_lock,
     ws_manager=ws_manager,
-    on_snapshot=_on_snapshot,
+    on_snapshots=_on_snapshots,
 )
 inbound_mgr = bundle.inbound_mgr
 client_mgr = bundle.client_mgr
