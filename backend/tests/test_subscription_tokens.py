@@ -23,17 +23,22 @@ class _Nodes:
         return [{"id": 1, "name": "node1"}]
 
 
-def _build_app(db_path, emails):
+def _build_app(db_path, emails, nodes=None):
     app = FastAPI()
+    nodes = nodes or [{"id": 1, "name": "node1"}]
 
-    def get_links(_nodes, email, _protocol=None):
-        return [f"vless://{email}@node1"]
+    class NodeService:
+        def list_nodes(self):
+            return list(nodes)
+
+    def get_links(selected_nodes, email, _protocol=None):
+        return [f"vless://{email}@{node['name']}" for node in selected_nodes]
 
     app.include_router(
         build_subscriptions_router(
             check_auth=lambda _request: "admin",
             db_path=db_path,
-            node_service=_Nodes(),
+            node_service=NodeService(),
             check_subscription_rate_limit=lambda _request, _key: (True, 0),
             get_emails=lambda _nodes: list(emails),
             get_links_filtered=get_links,
@@ -89,6 +94,46 @@ def test_persistent_telegram_device_token_serves_only_its_active_owner(tmp_path)
     assert base64.b64decode(served.text).decode() == "vless://device-token@node1"
     assert revoked.status_code == 404
     assert denied.status_code == 404
+
+
+def test_partial_telegram_subscription_excludes_unconfirmed_targets(tmp_path):
+    db_path = str(tmp_path / "partial-telegram-subscription.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(telegram_user_id=61, chat_id=61, username="partial", first_name=None, last_name=None)
+    customer_id = registry.create_customer(
+        email_display="partial", origin="existing", email_source="existing", public_code="partial-code"
+    )
+    with connect(db_path) as conn:
+        conn.executemany("INSERT INTO nodes (id, name, enabled, read_only) VALUES (?, ?, 1, 0)", [(1, "safe"), (2, "offline")])
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved', remote_snapshot_ready = 1 WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+        discovery_job_id = conn.execute(
+            """INSERT INTO telegram_existing_discovery_jobs
+               (customer_id, telegram_user_id, application_attempt, idempotency_key, target_snapshot_digest, created_by)
+               VALUES (?, ?, 1, 'partial-subscription', 'digest', 'test')""",
+            (customer_id, identity.telegram_user_id),
+        ).lastrowid
+        conn.execute(
+            """INSERT INTO telegram_existing_discovery_targets
+               (job_id, node_id, status, desired_total_bytes, desired_validity_days, desired_client_enabled, policy_version)
+               VALUES (?, 2, 'blocked_after_retry_limit', 0, 0, 1, 1)""",
+            (discovery_job_id,),
+        )
+        conn.execute(
+            """INSERT INTO customer_node_bindings
+               (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                source, management_state, desired_enabled, last_enabled)
+               VALUES (?, 1, 1, 'safe-client', 'safe-sub', 'partial', 'existing_bound', 'confirmed', 1, 1)""",
+            (customer_id,),
+        )
+    token = ensure_tokens(db_path, "email", ["partial"])["partial"]
+    client = TestClient(_build_app(db_path, ["partial"], [{"id": 1, "name": "safe"}, {"id": 2, "name": "offline"}]))
+    response = client.get(f"/api/v1/sub/{token}")
+    assert response.status_code == 200
+    assert base64.b64decode(response.text).decode() == "vless://partial@safe"
 
 
 def test_legacy_named_link_redirects_to_stable_token(tmp_path):

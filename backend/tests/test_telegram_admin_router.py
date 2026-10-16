@@ -449,6 +449,8 @@ def test_existing_customer_can_be_deferred_without_inline_remote_io(tmp_path):
     client = _build_client(tmp_path, client_mgr=UnavailableManager())
     db_path = str(tmp_path / "admin.db")
     registry = TelegramRegistry(db_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (1, 1)")
     registry.get_or_create_identity(
         telegram_user_id=46, chat_id=46, username="legacy-applicant", first_name=None, last_name=None
     )
