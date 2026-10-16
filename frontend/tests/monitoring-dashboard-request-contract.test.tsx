@@ -74,6 +74,17 @@ describe('Monitoring request ownership contract', () => {
     }
   });
 
+  it('uses the HttpOnly browser session for every Monitoring read without weakening mutations', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+    const reads = source.slice(0, source.indexOf('const collectAdguardNow'));
+    const mutations = source.slice(source.indexOf('const collectAdguardNow'));
+
+    expect(count(reads, 'sessionOnlyAuth: true,')).toBe(13);
+    expect(reads).not.toContain('auth: getAuth()');
+    expect(mutations).toContain("api.post('/v1/adguard/collect-now', {}, { auth: getAuth() })");
+    expect(mutations).toContain('await api.put(`');
+    expect(mutations).toContain('await api.delete(`');
+  });
   it('does not introduce mutable AdGuard calls into the refresh fallback', () => {
     const source = read('src/components/MonitoringDashboard.tsx');
     const fallback = source.slice(source.indexOf('fallbackRun:'), source.indexOf('});', source.indexOf('fallbackRun:')));
