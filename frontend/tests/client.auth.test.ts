@@ -1,7 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import api, { AUTH_REQUIRED_EVENT, resetAuthRequiredEventGuard } from '../src/api/client';
-import { verifyCurrentAuth } from '../src/api/authService';
+import { createBrowserSession, verifyCurrentAuth } from '../src/api/authService';
 import { setAuthCredentials, clearAuthCredentials } from '../src/auth';
 import { getDashboardOverview } from '../src/api/dashboard';
 
@@ -83,6 +83,24 @@ describe('API authentication lifecycle', () => {
 
     await expect(verifyCurrentAuth()).resolves.toMatchObject({ user: 'admin' });
     expect(captured.auth).toBeUndefined();
+    expect(captured.withCredentials).toBe(true);
+  });
+
+  it('keeps explicit Basic authentication for browser-session bootstrap', async () => {
+    let captured: any;
+    api.defaults.adapter = async (config: any) => {
+      captured = config;
+      return {
+        data: { user: 'admin', role: 'admin', ws_ticket: 'ticket' },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      };
+    };
+
+    await expect(createBrowserSession('admin', 'bootstrap-basic-password')).resolves.toMatchObject({ user: 'admin' });
+    expect(captured.auth).toEqual({ username: 'admin', password: 'bootstrap-basic-password' });
     expect(captured.withCredentials).toBe(true);
   });
 });
