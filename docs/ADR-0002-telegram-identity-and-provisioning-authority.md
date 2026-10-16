@@ -161,6 +161,10 @@ node to become the authority for the customer lifecycle.
   previously observed traffic. It never triggers a remote fleet read from a
   Telegram webhook.
 
+## Частичная готовность существующего клиента
+
+Для deferred existing-email adoption immutable snapshot включает только enabled ноды с `telegram_node_policies.provisioning_enabled=1` на момент подтверждения. Строго найденная точная binding остаётся подтверждённой. Строго подтверждённое отсутствие клиента создаёт отдельную durable reconcile-first provisioning attempt с замороженными policy parameters; discovery worker сам ничего удалённо не пишет. Недоступная нода не останавливает остальные targets: после пяти retryable failures блокируется только этот target. Доступ возможен лишь при хотя бы одной exact confirmed/provisioned binding и остаётся явно degraded; незавершённые, blocked или conflict targets запрещают lifecycle-команды до полного безопасного разрешения snapshot.
+
 ## Consequences
 
 The integration can be introduced behind a disabled feature flag while old
