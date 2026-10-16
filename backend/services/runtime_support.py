@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import queue
 import sqlite3
@@ -8,6 +7,7 @@ import time
 from typing import Dict
 
 from services.db_bootstrap import connect
+from core.lifecycle_work import LifecycleWorkAdmissionClosed
 from shared.sql import delete_by_ids_query
 
 
@@ -121,22 +121,34 @@ class AuditQueueRuntime:
         self.idle_sleep_sec = idle_sleep_sec
         self.active_sleep_sec = active_sleep_sec
         self.logger = logger
-        self._memory_queue: queue.Queue[Dict] = queue.Queue(maxsize=max(1, int(memory_queue_max_size)))
+        self._memory_queue: queue.Queue[Dict] = queue.Queue(
+            maxsize=max(1, int(memory_queue_max_size))
+        )
+        self._accepting_events = True
         self.accepted_events = 0
         self.dropped_events = 0
 
     def enqueue_event(self, payload: Dict) -> bool:
+        if not self._accepting_events:
+            self.dropped_events += 1
+            return False
         try:
             self._memory_queue.put_nowait(dict(payload))
             self.accepted_events += 1
             return True
         except queue.Full:
             self.dropped_events += 1
-            self.logger.warning("Audit memory queue is full; dropping event (dropped=%s)", self.dropped_events)
+            self.logger.warning(
+                "Audit memory queue is full; dropping event (dropped=%s)",
+                self.dropped_events,
+            )
             return False
 
     def pending_count(self) -> int:
         return self._memory_queue.qsize()
+
+    def close_admission(self) -> None:
+        self._accepting_events = False
 
     def persist_memory_batch(self, limit: int) -> int:
         payloads = []
@@ -152,7 +164,10 @@ class AuditQueueRuntime:
             with connect(self.db_path) as conn:
                 conn.executemany(
                     "INSERT INTO audit_events (payload) VALUES (?)",
-                    [(json.dumps(payload, ensure_ascii=False),) for payload in payloads],
+                    [
+                        (json.dumps(payload, ensure_ascii=False),)
+                        for payload in payloads
+                    ],
                 )
                 conn.commit()
             return len(payloads)
@@ -160,7 +175,9 @@ class AuditQueueRuntime:
             # The queue is deliberately bounded: requeuing a failed batch would
             # allow an unavailable SQLite file to grow process memory forever.
             self.dropped_events += len(payloads)
-            self.logger.error("Failed to persist %s audit events: %s", len(payloads), exc)
+            self.logger.error(
+                "Failed to persist %s audit events: %s", len(payloads), exc
+            )
             return 0
 
     def drain_batch(self, limit: int) -> int:
@@ -179,7 +196,11 @@ class AuditQueueRuntime:
                     payload = json.loads(row["payload"])
                 except Exception:
                     payload = {"event": "audit", "raw": row["payload"]}
-                self.logger.info(json.dumps({"event": "audit_log", "payload": payload}, ensure_ascii=False))
+                self.logger.info(
+                    json.dumps(
+                        {"event": "audit_log", "payload": payload}, ensure_ascii=False
+                    )
+                )
             conn.execute(
                 delete_by_ids_query("audit_events", "id", ids),
                 ids,
@@ -205,14 +226,26 @@ class AuditQueueRuntime:
             "dropped": self.dropped_events,
         }
 
-    async def worker_loop(self) -> None:
-        while True:
+    async def worker_loop(self, worker_tracker) -> None:
+        while worker_tracker.accepting:
             try:
-                persisted = await asyncio.to_thread(self.persist_memory_batch, self.batch_size)
-                drained = await asyncio.to_thread(self.drain_batch, self.batch_size)
-                await asyncio.sleep(self.active_sleep_sec if persisted > 0 or drained > 0 else self.idle_sleep_sec)
-            except asyncio.CancelledError:
-                raise
+                persisted = await worker_tracker.run(
+                    "audit.persist_memory_batch",
+                    self.persist_memory_batch,
+                    self.batch_size,
+                )
+                drained = await worker_tracker.run(
+                    "audit.drain_batch", self.drain_batch, self.batch_size
+                )
+                if not await worker_tracker.wait_or_stop(
+                    self.active_sleep_sec
+                    if persisted > 0 or drained > 0
+                    else self.idle_sleep_sec
+                ):
+                    return
+            except LifecycleWorkAdmissionClosed:
+                return
             except Exception as exc:
                 self.logger.error(f"audit worker error: {exc}")
-                await asyncio.sleep(self.idle_sleep_sec)
+                if not await worker_tracker.wait_or_stop(self.idle_sleep_sec):
+                    return

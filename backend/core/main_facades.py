@@ -6,7 +6,9 @@ from typing import Callable, Dict, List, Optional, Tuple
 from fastapi import Request
 
 
-def build_metrics_facade(*, get_metrics_runtime, sync_node_history_names_with_nodes_db, db_path: str, logger):
+def build_metrics_facade(
+    *, get_metrics_runtime, sync_node_history_names_with_nodes_db, db_path: str, logger
+):
     def remove_node_metric_labels(node_name: str, node_id: str):
         return get_metrics_runtime().remove_node_metric_labels(node_name, node_id)
 
@@ -60,7 +62,9 @@ def build_auth_request_facade(
     def get_client_ip(request: Request) -> str:
         return request_runtime.get_client_ip(request)
 
-    def check_subscription_rate_limit(request: Request, resource_key: str) -> Tuple[bool, int]:
+    def check_subscription_rate_limit(
+        request: Request, resource_key: str
+    ) -> Tuple[bool, int]:
         request_runtime.sub_rate_limit_count = get_sub_rate_limit_count()
         request_runtime.sub_rate_limit_window_sec = get_sub_rate_limit_window_sec()
         return request_runtime.check_subscription_rate_limit(request, resource_key)
@@ -88,7 +92,9 @@ def build_auth_request_facade(
     )
 
 
-def build_cache_facade(*, live_stats_runtime, clients_runtime, inbounds_runtime, audit_runtime):
+def build_cache_facade(
+    *, live_stats_runtime, clients_runtime, inbounds_runtime, audit_runtime
+):
     def invalidate_live_stats_cache():
         return live_stats_runtime.invalidate()
 
@@ -104,17 +110,23 @@ def build_cache_facade(*, live_stats_runtime, clients_runtime, inbounds_runtime,
     def get_cached_traffic_stats_projection(group_by: str) -> Dict:
         return live_stats_runtime.get_cached_traffic_stats_projection(group_by)
 
-    def get_cached_traffic_stats_projection_by_period(group_by: str, period: str) -> Dict:
-        return live_stats_runtime.get_cached_traffic_stats_projection_by_period(group_by, period)
+    def get_cached_traffic_stats_projection_by_period(
+        group_by: str, period: str
+    ) -> Dict:
+        return live_stats_runtime.get_cached_traffic_stats_projection_by_period(
+            group_by, period
+        )
 
-    def get_cached_clients(nodes: List[Dict], email_filter: Optional[str] = None) -> List[Dict]:
+    def get_cached_clients(
+        nodes: List[Dict], email_filter: Optional[str] = None
+    ) -> List[Dict]:
         return clients_runtime.get_cached_clients(nodes, email_filter=email_filter)
 
     def enqueue_audit_event(payload: Dict) -> None:
         return audit_runtime.enqueue_event(payload)
 
-    async def audit_worker_loop() -> None:
-        await audit_runtime.worker_loop()
+    async def audit_worker_loop(worker_tracker) -> None:
+        await audit_runtime.worker_loop(worker_tracker)
 
     return (
         invalidate_live_stats_cache,
@@ -133,7 +145,9 @@ def build_subscription_links_facade(*, subscription_links_service, db_path: str)
     response_cache_invalidators: List[Callable[[], None]] = []
     response_cache_invalidators_lock = Lock()
 
-    def register_subscription_response_cache_invalidator(invalidator: Callable[[], None]) -> None:
+    def register_subscription_response_cache_invalidator(
+        invalidator: Callable[[], None],
+    ) -> None:
         with response_cache_invalidators_lock:
             response_cache_invalidators.append(invalidator)
 
@@ -150,8 +164,12 @@ def build_subscription_links_facade(*, subscription_links_service, db_path: str)
     def get_emails(nodes: List[Dict]) -> List[str]:
         return subscription_links_service.get_emails(nodes)
 
-    def get_links_filtered(nodes: List[Dict], email: str, protocol_filter: Optional[str] = None) -> List[str]:
-        return subscription_links_service.get_links_filtered(nodes, email, protocol_filter)
+    def get_links_filtered(
+        nodes: List[Dict], email: str, protocol_filter: Optional[str] = None
+    ) -> List[str]:
+        return subscription_links_service.get_links_filtered(
+            nodes, email, protocol_filter
+        )
 
     return (
         invalidate_subscription_cache,

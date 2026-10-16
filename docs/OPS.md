@@ -19,6 +19,20 @@ journalctl -u sub-manager -f
 проверяет этот контракт до staging/перезапуска. Если контракт нарушен, deploy
 останавливается без изменения рабочей директории и базы данных.
 
+После успешного browser bootstrap Dashboard использует ту же защищённую
+HttpOnly session cookie для периодического refresh. Basic Auth остаётся нужен
+для исходного API bootstrap и внешних API-клиентов, но не должен повторяться
+в minute-poll Dashboard.
+
+### Graceful shutdown и deploy
+
+`sub-manager` перед остановкой закрывает admission новых фоновых операций и
+ждёт terminal result уже начатых SQLite, Telegram, XUI, collector, audit и
+AdGuard операций. `TimeoutStopSec=120` ограничивает ожидание systemd. Если
+остановка не стала успешной и inactive, canonical deploy завершится до SQLite
+checkpoint, backup, swap или restore/start. Не пытайтесь обходить это ручным
+checkpoint, restart или восстановлением БД: сначала требуется отдельный
+incident recovery с проверенным rollback anchor.
 ### Безопасное удаление установки
 
 `scripts/installer/remove.sh`, legacy-ветки удаления в `install.sh` и

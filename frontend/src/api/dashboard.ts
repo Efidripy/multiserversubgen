@@ -176,7 +176,15 @@ export async function getDashboardOverview(
   period: DashboardTrafficPeriod = 'all_time',
   options: { signal?: AbortSignal } = {},
 ): Promise<DashboardOverviewData> {
-  const res = await api.get('/v1/dashboard/overview', { auth: getAuth(), params: { period }, signal: options.signal });
+  // A successful browser login issues an HttpOnly same-origin session cookie. Do
+  // not explicitly pass the memory-only Basic credentials through the minute
+  // polling path: an empty password still serializes as a Basic request in Axios
+  // and needlessly re-enters the server's Basic/PAM authentication path.
+  const res = await api.get('/v1/dashboard/overview', {
+    params: { period },
+    signal: options.signal,
+    sessionOnlyAuth: true,
+  });
   return {
     summary: normalizeDashboardSummary(res.data?.summary),
     fleet: normalizeDashboardFleet(res.data?.fleet),
