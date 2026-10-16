@@ -15,6 +15,7 @@ from services.telegram_provisioning import (
     ClientManagerProvisioningPort,
     ProvisioningRemoteError,
     RemoteClient,
+    TelegramExistingDiscoveryWorker,
     TelegramProvisioningWorker,
 )
 from services.telegram_registry import TelegramRegistry
@@ -118,6 +119,111 @@ def _worker(db_path, port, *, now=None, node=None):
         worker_id="test-worker",
         now=now or (lambda: datetime(2026, 1, 1, tzinfo=timezone.utc)),
     )
+
+
+def _deferred_discovery_worker(db_path, manager, nodes, *, now):
+    discovery = ClientManagerLegacyDiscovery(client_manager=manager, list_nodes=lambda: nodes)
+    return TelegramExistingDiscoveryWorker(
+        db_path=db_path,
+        node_loader=lambda node_id: next((node for node in nodes if node["id"] == node_id), None),
+        discovery=discovery,
+        worker_id="test-existing-discovery",
+        now=now,
+    )
+
+
+def test_deferred_existing_discovery_retries_only_offline_target_then_blocks_after_five(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    nodes = [
+        {"id": 1, "name": "edge-online", "enabled": 1, "read_only": 0},
+        {"id": 2, "name": "edge-offline", "enabled": 1, "read_only": 0},
+    ]
+    with connect(db_path) as conn:
+        conn.executemany("INSERT INTO nodes (id, name, enabled, read_only) VALUES (?, ?, ?, ?)",
+                         [(node["id"], node["name"], node["enabled"], node["read_only"]) for node in nodes])
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(telegram_user_id=91, chat_id=91, username="legacy-user", first_name=None, last_name=None)
+    pending = registry.create_pending_application(91)
+    queued = registry.queue_deferred_existing_discovery(
+        telegram_user_id=91, email_display="legacy-user", expected_identity_version=pending.identity.row_version,
+        idempotency_key="defer-legacy-91", approved_by="admin",
+    )
+
+    class Manager:
+        calls: list[int] = []
+        offline = True
+
+        def get_node_clients_strict(self, node):
+            self.calls.append(node["id"])
+            if node["id"] == 2 and self.offline:
+                raise RuntimeError("offline")
+            return [{"id": "legacy-id", "subId": "legacy-sub", "email": "legacy-user", "inbound_id": 1, "enable": True}]
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    manager = Manager()
+    worker = _deferred_discovery_worker(db_path, manager, nodes, now=lambda: now)
+    assert worker.run_once().outcome == "confirmed_match"
+    assert worker.run_once().outcome == "deferred"
+    # The first node never re-enters the queue while the second follows its own retry schedule.
+    assert manager.calls == [1, 2]
+    for _ in range(4):
+        now += timedelta(hours=1)
+        assert worker.run_once().outcome == "deferred"
+    status = registry.get_existing_discovery_job(queued.discovery_job_id)
+    assert status.status == "failed"
+    assert [(target.node_id, target.status, target.attempt_count) for target in status.targets] == [
+        (1, "confirmed_match", 1), (2, "blocked_after_retry_limit", 5),
+    ]
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities WHERE telegram_user_id = 91").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings WHERE node_id = 1").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings WHERE node_id = 2").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
+    # A terminal target does not retry itself.  Only an operator can reset the
+    # selected target, leaving the already confirmed target untouched.
+    manager.offline = False
+    recovered = registry.recover_existing_discovery_target(
+        job_id=queued.discovery_job_id, node_id=2, expected_job_version=status.row_version,
+        idempotency_key="recover-legacy-91-node-2", requested_by="admin",
+    )
+    assert recovered.targets[0].status == "confirmed_match"
+    assert recovered.targets[1].status == "pending"
+    now += timedelta(hours=1)
+    assert worker.run_once().outcome == "confirmed_match"
+    assert registry.get_existing_discovery_job(queued.discovery_job_id).status == "succeeded"
+    assert registry.get_customer_access(91).initial_provisioning_ready is True
+
+
+def test_deferred_existing_discovery_enables_access_only_after_complete_snapshot(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    nodes = [{"id": 1, "name": "edge-a", "enabled": 1, "read_only": 0}, {"id": 2, "name": "edge-b", "enabled": 1, "read_only": 0}]
+    with connect(db_path) as conn:
+        conn.executemany("INSERT INTO nodes (id, name, enabled, read_only) VALUES (?, ?, ?, ?)",
+                         [(node["id"], node["name"], node["enabled"], node["read_only"]) for node in nodes])
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(telegram_user_id=92, chat_id=92, username="legacy-user", first_name=None, last_name=None)
+    pending = registry.create_pending_application(92)
+    queued = registry.queue_deferred_existing_discovery(
+        telegram_user_id=92, email_display="legacy-user", expected_identity_version=pending.identity.row_version,
+        idempotency_key="defer-legacy-92", approved_by="admin",
+    )
+
+    class Manager:
+        def get_node_clients_strict(self, node):
+            if node["id"] == 1:
+                return [{"id": "legacy-id", "subId": "legacy-sub", "email": "legacy-user", "inbound_id": 1, "enable": True}]
+            return []
+
+    worker = _deferred_discovery_worker(db_path, Manager(), nodes, now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc))
+    assert worker.run_once().outcome == "confirmed_match"
+    assert worker.run_once().outcome == "confirmed_absent"
+    status = registry.get_existing_discovery_job(queued.discovery_job_id)
+    assert status.status == "succeeded"
+    assert registry.get_customer_access(92).initial_provisioning_ready is True
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM telegram_outbox WHERE event_type = 'user_existing_access_approved'").fetchone()[0] == 1
 
 
 def test_worker_reads_then_creates_then_confirms_exact_binding_with_fixed_contract(tmp_path):

@@ -1690,7 +1690,7 @@ def test_existing_remote_customer_is_adopted_only_after_exact_discovery_confirma
         assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
 
 
-def test_existing_remote_discovery_failure_replies_without_changing_the_draft_or_registry(tmp_path):
+def test_existing_remote_discovery_failure_offers_deferred_confirmation_without_registry_mutation(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -1708,16 +1708,15 @@ def test_existing_remote_discovery_failure_replies_without_changing_the_draft_or
     service.handle_update(_admin_callback(76, f"admin:existing:76:{pending.identity.row_version}:0"))
     reply = service.handle_update(_admin_message(77, "existing-user"))
 
-    assert reply[0].text == "Проверить существующего пользователя сейчас не удалось. Попробуйте позже."
-    assert "existing-user" not in reply[0].text
-    assert registry.get_admin_draft(100000001).value is None
+    assert "полного snapshot" in reply[0].text
+    assert registry.get_admin_draft(100000001).value == "existing-user"
     with connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
 
 
-def test_existing_remote_confirmation_failure_replies_without_adopting(tmp_path):
+def test_existing_remote_confirmation_failure_offers_deferred_confirmation_without_adopting(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -1750,7 +1749,7 @@ def test_existing_remote_confirmation_failure_replies_without_adopting(tmp_path)
         _admin_callback(80, f"admin:existing-discovered-confirm:77:{pending.identity.row_version}:0")
     )
 
-    assert reply[0].text == "Проверить существующего пользователя сейчас не удалось. Попробуйте позже."
+    assert "полного snapshot" in reply[0].text
     assert registry.get_admin_draft(100000001).value == "existing-user"
     with connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM customers").fetchone()[0] == 0

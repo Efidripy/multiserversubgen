@@ -62,6 +62,24 @@ Enabling the worker is a staging operation, not a deployment instruction. It
 requires a separately approved staging target, fresh node compatibility proof,
 and a smoke receipt before the same interlocks may be considered for production.
 
+## Отложенная проверка existing-email
+
+Если одна из включённых XUI-нод недоступна, администратор может отдельным
+подтверждением создать локальную привязку existing-email и immutable snapshot
+всех включённых нод. Это создаёт только read-only discovery job: worker не
+добавляет клиента и не считает ошибку чтения отсутствием binding. Для каждой
+ноды сохраняется независимый target; retryable failure повторяется не более
+пяти раз, затем получает terminal `blocked_after_retry_limit` и больше не
+запускается автоматически. Возобновить можно только выбранный target через
+версионированную admin-команду с idempotency key.
+
+До `confirmed_match`/`confirmed_absent` для каждого target и хотя бы одного
+exact match `remote_snapshot_ready=false`: бот не выдаёт ссылку или QR,
+public/guest subscription и lifecycle preview/queue отклоняются, а completion
+outbox не создаётся. `blocked_after_retry_limit`, conflict или отсутствие
+match оставляют этот gate закрытым. Эта очередь не использует provisioning job
+и не имеет права выполнять remote writes.
+
 Notification delivery is separately opt-in. The outbox leases one event at a
 time, records transient delivery failures with bounded retry/backoff and moves
 malformed or exhausted events to `dead_letter`. Delivery is at-least-once:

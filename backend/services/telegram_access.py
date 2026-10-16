@@ -98,7 +98,7 @@ class TelegramSubscriptionAccessGate:
             rows = conn.execute(
                 """
                 SELECT c.id, c.email_display, c.origin, c.status, c.deleted_at,
-                       i.access_status, i.blocked_from_status
+                       i.access_status, i.blocked_from_status, i.remote_snapshot_ready
                 FROM customers AS c
                 LEFT JOIN telegram_identities AS i ON i.customer_id = c.id
                 WHERE c.email_canonical = ?
@@ -118,24 +118,17 @@ class TelegramSubscriptionAccessGate:
         if len(live_rows) != 1:
             return False
 
-        customer_id, display, origin, status, _deleted_at, identity_status, blocked_from = live_rows[0]
+        customer_id, display, origin, status, _deleted_at, identity_status, blocked_from, remote_snapshot_ready = live_rows[0]
         if identity_status is None:
             return str(origin) != "telegram"
-        initial_provisioning_ready = True
-        if str(origin) == "telegram":
+        initial_provisioning_ready = bool(remote_snapshot_ready)
+        if initial_provisioning_ready:
             with connect(self._db_path) as conn:
-                job = conn.execute(
-                    """
-                    SELECT status FROM telegram_provisioning_jobs
-                    WHERE customer_id = ? AND trigger = 'approve_new'
-                    ORDER BY id ASC LIMIT 1
-                    """,
-                    (int(customer_id),),
+                pending_snapshot = conn.execute(
+                    "SELECT 1 FROM telegram_provisioning_jobs WHERE customer_id = ? "
+                    "AND trigger = 'approve_new' AND status != 'succeeded' LIMIT 1", (int(customer_id),)
                 ).fetchone()
-            # No initial job means this is a legacy/migrated Telegram
-            # customer. New approvals always create one and therefore remain
-            # fail-closed until its immutable node snapshot has succeeded.
-            initial_provisioning_ready = job is None or str(job[0]) == "succeeded"
+            initial_provisioning_ready = pending_snapshot is None
         decision = resolve_effective_access(
             access_status=str(identity_status),
             customer_id=int(customer_id),

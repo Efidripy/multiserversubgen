@@ -50,6 +50,17 @@ class ApproveExistingRequest(TelegramContract):
     idempotency_key: str = Field(min_length=1, max_length=200)
 
 
+class DeferExistingDiscoveryRequest(TelegramContract):
+    expected_identity_version: PositiveInt
+    email_display: str = Field(min_length=1, max_length=256)
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
+class RecoverExistingDiscoveryTargetRequest(TelegramContract):
+    expected_job_version: PositiveInt
+    idempotency_key: str = Field(min_length=1, max_length=200)
+
+
 class IdentityDecisionRequest(TelegramContract):
     expected_identity_version: PositiveInt
     idempotency_key: str = Field(min_length=1, max_length=200)
