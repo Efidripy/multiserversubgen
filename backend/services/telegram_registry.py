@@ -2119,6 +2119,44 @@ class TelegramRegistry:
             )
         return result
 
+    def safe_subscription_node_ids(self, email: str) -> frozenset[int] | None:
+        """Return exact confirmed Telegram targets, or ``None`` for legacy users.
+
+        This is local metadata only. A partial existing-adoption customer may
+        receive artifacts only for bindings that the durable workers confirmed.
+        """
+        canonical = canonicalize_email(email)
+        with connect(self._db_path) as conn:
+            identities = conn.execute(
+                """SELECT i.customer_id FROM telegram_identities AS i
+                    JOIN customers AS c ON c.id = i.customer_id
+                    WHERE c.email_canonical = ? AND c.deleted_at IS NULL
+                      AND i.access_status = 'approved'""",
+                (canonical,),
+            ).fetchall()
+            if not identities:
+                return None
+            customer_ids = {int(row[0]) for row in identities if row[0] is not None}
+            if len(customer_ids) != 1:
+                return frozenset()
+            customer_id = next(iter(customer_ids))
+            # Existing Telegram customers predating immutable discovery retain
+            # their legacy link contract. Filtering begins only for the new
+            # deferred existing-email snapshot that explicitly carries targets.
+            has_snapshot = conn.execute(
+                "SELECT 1 FROM telegram_existing_discovery_jobs WHERE customer_id = ? LIMIT 1",
+                (customer_id,),
+            ).fetchone()
+            if has_snapshot is None:
+                return None
+            rows = conn.execute(
+                """SELECT node_id FROM customer_node_bindings
+                    WHERE customer_id = ? AND inbound_id = 1
+                      AND management_state = 'confirmed' AND remote_client_id IS NOT NULL""",
+                (customer_id,),
+            ).fetchall()
+        return frozenset(int(row[0]) for row in rows)
+
     def get_customer_access(self, telegram_user_id: int) -> TelegramCustomerAccess:
         """Resolve approved access strictly from the numeric Telegram identity."""
 
@@ -4551,13 +4589,24 @@ class TelegramRegistry:
             if application is None or str(application[0]) != "pending":
                 raise VersionConflictError("application attempt is no longer pending")
             targets = conn.execute(
-                "SELECT id FROM nodes WHERE enabled = 1 ORDER BY id"
+                """
+                SELECT p.node_id, p.total_bytes, p.validity_days, p.client_enabled, p.policy_version
+                FROM telegram_node_policies AS p
+                JOIN nodes AS n ON n.id = p.node_id
+                WHERE p.provisioning_enabled = 1 AND n.enabled = 1 AND n.read_only = 0
+                ORDER BY p.node_id
+                """
             ).fetchall()
             if not targets:
-                raise ApprovalUnavailableError("there are no enabled nodes for existing customer discovery")
+                raise ApprovalUnavailableError("there are no eligible Telegram nodes for existing customer discovery")
             target_node_ids = tuple(int(row[0]) for row in targets)
+            target_snapshot = tuple({
+                "node_id": int(row[0]), "total_bytes": int(row[1]),
+                "validity_days": int(row[2]), "client_enabled": bool(row[3]),
+                "policy_version": int(row[4]), "inbound_id": BOT_INBOUND_ID, "flow": BOT_CLIENT_FLOW,
+            } for row in targets)
             snapshot_digest = _payload_digest({
-                "telegram_user_id": user_id, "email": canonical, "node_ids": target_node_ids,
+                "telegram_user_id": user_id, "email": canonical, "targets": target_snapshot,
             })
             customer = conn.execute(
                 "SELECT id, email_display, status FROM customers WHERE email_canonical = ? AND deleted_at IS NULL",
@@ -4586,8 +4635,16 @@ class TelegramRegistry:
                 (customer_id, user_id, application_attempt, key, snapshot_digest, actor),
             ).lastrowid)
             conn.executemany(
-                "INSERT INTO telegram_existing_discovery_targets (job_id, node_id) VALUES (?, ?)",
-                [(job_id, node_id) for node_id in target_node_ids],
+                """
+                INSERT INTO telegram_existing_discovery_targets
+                    (job_id, node_id, desired_total_bytes, desired_validity_days,
+                     desired_client_enabled, policy_version)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (job_id, int(row[0]), int(row[1]), int(row[2]), int(bool(row[3])), int(row[4]))
+                    for row in targets
+                ],
             )
             update = conn.execute(
                 "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved', approved_at = CURRENT_TIMESTAMP, "
@@ -4632,8 +4689,9 @@ class TelegramRegistry:
             if job is None:
                 raise TelegramRegistryError("existing discovery job was not found")
             targets = conn.execute(
-                "SELECT t.node_id, n.name, t.status, t.attempt_count, t.error_code, t.next_attempt_at "
+                "SELECT t.node_id, n.name, t.status, t.attempt_count, t.error_code, t.next_attempt_at, p.status "
                 "FROM telegram_existing_discovery_targets AS t JOIN nodes AS n ON n.id = t.node_id "
+                "LEFT JOIN telegram_provisioning_jobs AS p ON p.id = t.provisioning_job_id "
                 "WHERE t.job_id = ? ORDER BY t.node_id", (normalized_job_id,),
             ).fetchall()
         return ExistingDiscoveryJobStatus(
@@ -4642,7 +4700,8 @@ class TelegramRegistry:
             target_snapshot_digest=str(job[6]), created_at=str(job[7]),
             finished_at=str(job[8]) if job[8] is not None else None,
             targets=tuple(ExistingDiscoveryTargetStatus(
-                node_id=int(row[0]), node_name=str(row[1]), status=str(row[2]),
+                node_id=int(row[0]), node_name=str(row[1]),
+                status=("provisioned" if str(row[2]) == "confirmed_absent" and row[6] == "succeeded" else str(row[2])),
                 attempt_count=int(row[3]), error_code=str(row[4]) if row[4] is not None else None,
                 next_attempt_at=str(row[5]) if row[5] is not None else None,
             ) for row in targets),
@@ -6577,6 +6636,20 @@ class TelegramRegistry:
         ).fetchone()
         if remote_snapshot is not None and not bool(remote_snapshot[0]):
             raise LifecycleUnavailableError("customer remote snapshot is incomplete")
+        unresolved = conn.execute(
+            """SELECT 1 FROM telegram_existing_discovery_jobs AS j
+                JOIN telegram_existing_discovery_targets AS t ON t.job_id = j.id
+                WHERE j.customer_id = ? AND (
+                    t.status IN ('pending', 'reconciling', 'deferred', 'blocked_after_retry_limit', 'conflict')
+                    OR (t.status = 'confirmed_absent' AND EXISTS (
+                        SELECT 1 FROM telegram_provisioning_jobs AS p
+                        WHERE p.id = t.provisioning_job_id AND p.status != 'succeeded'
+                    ))
+                ) LIMIT 1""",
+            (customer_id,),
+        ).fetchone()
+        if unresolved is not None:
+            raise LifecycleUnavailableError("customer remote snapshot remains degraded")
         if deleted_at is not None or current_status == "deleted":
             raise LifecycleUnavailableError("deleted customer cannot be changed")
         allowed_states = {
@@ -6721,6 +6794,20 @@ class TelegramRegistry:
         ).fetchone()
         if remote_snapshot is not None and not bool(remote_snapshot[0]):
             raise LifecycleUnavailableError("customer remote snapshot is incomplete")
+        unresolved = conn.execute(
+            """SELECT 1 FROM telegram_existing_discovery_jobs AS j
+                JOIN telegram_existing_discovery_targets AS t ON t.job_id = j.id
+                WHERE j.customer_id = ? AND (
+                    t.status IN ('pending', 'reconciling', 'deferred', 'blocked_after_retry_limit', 'conflict')
+                    OR (t.status = 'confirmed_absent' AND EXISTS (
+                        SELECT 1 FROM telegram_provisioning_jobs AS p
+                        WHERE p.id = t.provisioning_job_id AND p.status != 'succeeded'
+                    ))
+                ) LIMIT 1""",
+            (customer_id,),
+        ).fetchone()
+        if unresolved is not None:
+            raise LifecycleUnavailableError("customer remote snapshot remains degraded")
         binding = conn.execute(
             """
             SELECT b.id, b.node_id, n.name, b.inbound_id, b.remote_client_id,

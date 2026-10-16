@@ -142,6 +142,10 @@ def test_deferred_existing_discovery_retries_only_offline_target_then_blocks_aft
     with connect(db_path) as conn:
         conn.executemany("INSERT INTO nodes (id, name, enabled, read_only) VALUES (?, ?, ?, ?)",
                          [(node["id"], node["name"], node["enabled"], node["read_only"]) for node in nodes])
+        conn.executemany(
+            "INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (?, 1)",
+            [(node["id"],) for node in nodes],
+        )
     registry = TelegramRegistry(db_path)
     registry.get_or_create_identity(telegram_user_id=91, chat_id=91, username="legacy-user", first_name=None, last_name=None)
     pending = registry.create_pending_application(91)
@@ -176,7 +180,7 @@ def test_deferred_existing_discovery_retries_only_offline_target_then_blocks_aft
         (1, "confirmed_match", 1), (2, "blocked_after_retry_limit", 5),
     ]
     with connect(db_path) as conn:
-        assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities WHERE telegram_user_id = 91").fetchone()[0] == 0
+        assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities WHERE telegram_user_id = 91").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings WHERE node_id = 1").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings WHERE node_id = 2").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
@@ -202,6 +206,10 @@ def test_deferred_existing_discovery_enables_access_only_after_complete_snapshot
     with connect(db_path) as conn:
         conn.executemany("INSERT INTO nodes (id, name, enabled, read_only) VALUES (?, ?, ?, ?)",
                          [(node["id"], node["name"], node["enabled"], node["read_only"]) for node in nodes])
+        conn.executemany(
+            "INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (?, 1)",
+            [(node["id"],) for node in nodes],
+        )
     registry = TelegramRegistry(db_path)
     registry.get_or_create_identity(telegram_user_id=92, chat_id=92, username="legacy-user", first_name=None, last_name=None)
     pending = registry.create_pending_application(92)
@@ -218,12 +226,61 @@ def test_deferred_existing_discovery_enables_access_only_after_complete_snapshot
 
     worker = _deferred_discovery_worker(db_path, Manager(), nodes, now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc))
     assert worker.run_once().outcome == "confirmed_match"
-    assert worker.run_once().outcome == "confirmed_absent"
+    assert worker.run_once().outcome == "provisioning_queued"
+    # The exact binding on the reachable target releases partial access, while
+    # the absent target is handed to the durable write worker instead of being
+    # inferred or written inline by discovery.
+    assert registry.get_customer_access(92).initial_provisioning_ready is True
+    port = FakeProvisioningPort()
+    assert registry.get_customer_access(92).initial_provisioning_ready is True
+    assert _worker(db_path, port, node={"id": 2, "enabled": 1, "read_only": 0}).run_once().outcome == "succeeded"
+    assert len(port.add_calls) == 1
     status = registry.get_existing_discovery_job(queued.discovery_job_id)
     assert status.status == "succeeded"
-    assert registry.get_customer_access(92).initial_provisioning_ready is True
+    assert status.targets[1].status == "provisioned"
     with connect(db_path) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM telegram_outbox WHERE event_type = 'user_existing_access_approved'").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings WHERE node_id = 2").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM telegram_outbox WHERE event_type = 'user_existing_access_approved'").fetchone()[0] >= 1
+
+
+def test_existing_absent_target_stops_durable_provisioning_after_five_failures(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    node = {"id": 1, "name": "edge-a", "enabled": 1, "read_only": 0}
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+        conn.execute("INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (1, 1)")
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(telegram_user_id=93, chat_id=93, username="legacy-user", first_name=None, last_name=None)
+    pending = registry.create_pending_application(93)
+    queued = registry.queue_deferred_existing_discovery(
+        telegram_user_id=93, email_display="legacy-user", expected_identity_version=pending.identity.row_version,
+        idempotency_key="defer-legacy-93", approved_by="admin",
+    )
+
+    class EmptyManager:
+        @staticmethod
+        def get_node_clients_strict(_node):
+            return []
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    discovery = _deferred_discovery_worker(db_path, EmptyManager(), [node], now=lambda: now)
+    assert discovery.run_once().outcome == "provisioning_queued"
+    assert registry.get_existing_discovery_job(queued.discovery_job_id).status == "partial"
+    assert registry.get_customer_access(93).initial_provisioning_ready is False
+    port = FakeProvisioningPort(add_error=ProvisioningRemoteError("offline"))
+    worker = _worker(db_path, port, now=lambda: now, node=node)
+    for _ in range(5):
+        assert worker.run_once().outcome == "ambiguous"
+        now += timedelta(hours=1)
+    status = registry.get_existing_discovery_job(queued.discovery_job_id)
+    assert status.targets[0].status == "blocked_after_retry_limit"
+    assert status.targets[0].attempt_count == 5
+    assert registry.get_customer_access(93).initial_provisioning_ready is False
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT status FROM telegram_provisioning_attempts").fetchone()[0] == "failed"
+        assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings").fetchone()[0] == 0
 
 
 def test_worker_reads_then_creates_then_confirms_exact_binding_with_fixed_contract(tmp_path):
