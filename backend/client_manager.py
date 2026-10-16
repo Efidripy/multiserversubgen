@@ -787,11 +787,28 @@ class ClientManager:
             return [self._map_v3_client(client, node) for client in clients if isinstance(client, dict)]
         if state != "unsupported":
             raise RuntimeError("node client read is unavailable")
+
+        # Current 3x-ui builds can return panel-API 404/405 for an expired
+        # cookie. Re-authenticate and repeat this exact read before treating
+        # the route as legacy-only; a partial discovery must never convert an
+        # auth failure into an apparently verified empty projection.
+        retry_state, retry_result, fresh_session, fresh_base_url = self._retry_v3_after_reauth(
+            node,
+            lambda retry_session, retry_base_url: self._probe_v3(retry_session, retry_base_url),
+        )
+        if retry_state != "response" or not isinstance(retry_result, tuple):
+            raise RuntimeError("node client read is unavailable")
+        state, clients = retry_result
+        if state == "supported":
+            return [self._map_v3_client(client, node) for client in clients if isinstance(client, dict)]
+        if state != "unsupported" or fresh_session is None or fresh_base_url is None:
+            raise RuntimeError("node client read is unavailable")
+
         try:
             response = xui_request(
-                session,
+                fresh_session,
                 "GET",
-                f"{base_url}/panel/api/inbounds/list",
+                f"{fresh_base_url}/panel/api/inbounds/list",
                 timeout=XUI_FAST_TIMEOUT_SEC,
                 retries=XUI_FAST_RETRIES,
             )
