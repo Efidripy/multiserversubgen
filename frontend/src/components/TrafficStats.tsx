@@ -287,7 +287,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
 
     try {
       const res = await api.get('/v1/traffic/stats-by-period', {
-        auth: getAuth(),
+        sessionOnlyAuth: true,
         params: { group_by: nextGroupBy, period: nextPeriod, limit },
         signal: controller.signal,
       });
