@@ -563,9 +563,9 @@ export const ClientManager: React.FC = () => {
     try {
       // Fetch page projections in parallel; each route is independently cached.
       const [nodeList, clientsPayload, inboundOptions] = await Promise.all([
-        listNodes({ signal: controller.signal }),
-        listClientsBySource(sourceFilter, controller.signal),
-        getInboundOptions({ signal: controller.signal }),
+        listNodes({ signal: controller.signal, sessionOnlyAuth: true }),
+        listClientsBySource(sourceFilter, { signal: controller.signal, sessionOnlyAuth: true }),
+        getInboundOptions({ signal: controller.signal, sessionOnlyAuth: true }),
       ]);
 
       if (requestIdRef.current !== requestId) return;
@@ -616,7 +616,7 @@ export const ClientManager: React.FC = () => {
 
   const loadClientPresence = async (signal?: AbortSignal) => {
     try {
-      const projection = await getClientPresence(signal);
+      const projection = await getClientPresence(signal, { sessionOnlyAuth: true });
       if (signal?.aborted) return;
 
       const nextOnline = new Set(

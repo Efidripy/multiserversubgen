@@ -23,7 +23,7 @@ describe('navigation performance regressions', () => {
     const source = read('src/components/ClientManager.tsx');
     const api = read('src/api/clients.ts');
 
-    expect(source).toContain('getClientPresence(signal)');
+    expect(source).toContain('getClientPresence(signal, { sessionOnlyAuth: true })');
     expect(source).toContain('CLIENT_PRESENCE_REFRESH_MS = 30 * 1000');
     expect(source).toContain('onlineClientKeys');
     expect(source).toContain('projection.online_by_node');
@@ -70,8 +70,8 @@ describe('navigation performance regressions', () => {
     expect(app).not.toContain('getInboundsHeaderSource');
     expect(app).not.toContain('getTrafficHeaderSource');
     expect(app).toContain("case 'inbounds':\n          case 'clients':\n          case 'traffic':");
-    expect(clients).toContain('listNodes({ signal: controller.signal })');
-    expect(clients).toContain('getInboundOptions({ signal: controller.signal })');
+    expect(clients).toContain('listNodes({ signal: controller.signal, sessionOnlyAuth: true })');
+    expect(clients).toContain('getInboundOptions({ signal: controller.signal, sessionOnlyAuth: true })');
     expect(clients).not.toContain('getInboundsHeaderSource({ signal: controller.signal })');
     expect(clients).toContain('const nodeOptions = inboundOptions.filter(option => option.node_id === client.node_id)');
     expect(clients).not.toContain("api.get('/v1/inbounds', { auth: getAuth() })");
