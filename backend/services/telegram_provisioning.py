@@ -62,50 +62,299 @@ class ClientManagerLegacyDiscovery:
         self._list_nodes = list_nodes
 
     def discover(self, email: str) -> tuple[ExistingRemoteBinding, ...]:
-        wanted = canonicalize_email(email)
         matches: list[ExistingRemoteBinding] = []
         unreadable: list[str] = []
         for node in self._list_nodes():
             if not isinstance(node, dict) or not bool(node.get("enabled", True)):
                 continue
             try:
-                rows = self._client_manager.get_node_clients_strict(node)
-            except Exception:
+                discovered = self.discover_target(email, node)
+            except ProvisioningRemoteError:
                 unreadable.append(str(node.get("name") or node.get("id") or "node"))
                 continue
-            node_matches: list[ExistingRemoteBinding] = []
-            for row in rows:
-                if not isinstance(row, dict):
-                    continue
-                inbound_ids = row.get("inbound_ids") if isinstance(row.get("inbound_ids"), list) else []
-                if row.get("inbound_id") != BOT_INBOUND_ID and BOT_INBOUND_ID not in inbound_ids:
-                    continue
-                try:
-                    same_email = canonicalize_email(str(row.get("email") or "")) == wanted
-                except Exception:
-                    continue
-                if not same_email:
-                    continue
-                client_id = str(row.get("id") or "")
-                if not client_id:
-                    raise ProvisioningPermanentError("legacy client has no stable identifier")
-                node_matches.append(
-                    ExistingRemoteBinding(
-                        node_id=int(node["id"]),
-                        node_name=str(node.get("name") or node["id"]),
-                        inbound_id=BOT_INBOUND_ID,
-                        remote_client_id=client_id,
-                        remote_sub_id=str(row.get("subId") or ""),
-                        remote_email=str(row.get("email") or ""),
-                        enabled=bool(row.get("enable", True)),
-                    )
-                )
-            if len(node_matches) > 1:
-                raise ProvisioningPermanentError("legacy email is ambiguous on a node")
-            matches.extend(node_matches)
+            if discovered is not None:
+                matches.append(discovered)
         if unreadable:
             raise ProvisioningRemoteError("legacy discovery is incomplete")
         return tuple(matches)
+
+    def discover_target(self, email: str, node: dict[str, Any]) -> ExistingRemoteBinding | None:
+        """Read one target only; callers decide bounded durable retry policy."""
+
+        wanted = canonicalize_email(email)
+        try:
+            rows = self._client_manager.get_node_clients_strict(node)
+        except Exception as exc:
+            raise ProvisioningRemoteError("remote client read is unavailable") from exc
+        node_matches: list[ExistingRemoteBinding] = []
+        try:
+            node_id = int(node["id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProvisioningPermanentError("discovery target has no stable node identifier") from exc
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            inbound_ids = row.get("inbound_ids") if isinstance(row.get("inbound_ids"), list) else []
+            if row.get("inbound_id") != BOT_INBOUND_ID and BOT_INBOUND_ID not in inbound_ids:
+                continue
+            try:
+                same_email = canonicalize_email(str(row.get("email") or "")) == wanted
+            except Exception:
+                continue
+            if not same_email:
+                continue
+            client_id = str(row.get("id") or "")
+            if not client_id:
+                raise ProvisioningPermanentError("legacy client has no stable identifier")
+            node_matches.append(
+                ExistingRemoteBinding(
+                    node_id=node_id,
+                    node_name=str(node.get("name") or node_id),
+                    inbound_id=BOT_INBOUND_ID,
+                    remote_client_id=client_id,
+                    remote_sub_id=str(row.get("subId") or ""),
+                    remote_email=str(row.get("email") or ""),
+                    enabled=bool(row.get("enable", True)),
+                )
+            )
+        if len(node_matches) > 1:
+            raise ProvisioningPermanentError("legacy email is ambiguous on a node")
+        return node_matches[0] if node_matches else None
+
+
+@dataclass(frozen=True)
+class ClaimedExistingDiscoveryTarget:
+    job_id: int
+    target_id: int
+    customer_id: int
+    telegram_user_id: int
+    application_attempt: int
+    node_id: int
+    email: str
+    attempt_count: int
+
+
+@dataclass(frozen=True)
+class ExistingDiscoveryRunResult:
+    processed: bool
+    job_id: int | None = None
+    target_id: int | None = None
+    outcome: str | None = None
+
+
+class TelegramExistingDiscoveryWorker:
+    """Bounded, read-only reconciliation for an existing-email snapshot.
+
+    Every node gets its own durable target.  A failed target releases the job
+    lease immediately, so neither an offline server nor a retry delay stalls
+    discovery on another target or an unrelated customer.  This worker has no
+    provisioning port and therefore cannot add or alter a remote client.
+    """
+
+    MAX_RETRYABLE_ATTEMPTS = 5
+
+    def __init__(
+        self,
+        *,
+        db_path: str,
+        node_loader: Callable[[int], dict[str, Any] | None],
+        discovery: ClientManagerLegacyDiscovery,
+        worker_id: str,
+        now: Callable[[], datetime] = lambda: datetime.now(timezone.utc).replace(microsecond=0),
+        lease_seconds: int = 60,
+    ):
+        if not worker_id.strip() or lease_seconds <= 0:
+            raise ValueError("worker_id and lease_seconds must be valid")
+        self._db_path = db_path
+        self._node_loader = node_loader
+        self._discovery = discovery
+        self._worker_id = worker_id.strip()
+        self._now = now
+        self._lease_seconds = lease_seconds
+
+    def run_once(self) -> ExistingDiscoveryRunResult:
+        claimed = self._claim_next_target()
+        if claimed is None:
+            return ExistingDiscoveryRunResult(processed=False)
+        node = self._node_loader(claimed.node_id)
+        if not node or not bool(node.get("enabled", True)):
+            self._defer_or_block(claimed, "node_unavailable")
+            return ExistingDiscoveryRunResult(True, claimed.job_id, claimed.target_id, "deferred")
+        try:
+            binding = self._discovery.discover_target(claimed.email, node)
+        except ProvisioningPermanentError:
+            self._finish_target(claimed, status="conflict", error_code="remote_read_conflict")
+            return ExistingDiscoveryRunResult(True, claimed.job_id, claimed.target_id, "conflict")
+        except Exception:
+            self._defer_or_block(claimed, "remote_read_unavailable")
+            return ExistingDiscoveryRunResult(True, claimed.job_id, claimed.target_id, "deferred")
+        if binding is None:
+            self._finish_target(claimed, status="confirmed_absent", error_code=None)
+            return ExistingDiscoveryRunResult(True, claimed.job_id, claimed.target_id, "confirmed_absent")
+        try:
+            self._confirm_match(claimed, binding)
+        except ProvisioningPermanentError:
+            self._finish_target(claimed, status="conflict", error_code="local_binding_conflict")
+            return ExistingDiscoveryRunResult(True, claimed.job_id, claimed.target_id, "conflict")
+        return ExistingDiscoveryRunResult(True, claimed.job_id, claimed.target_id, "confirmed_match")
+
+    def _claim_next_target(self) -> ClaimedExistingDiscoveryTarget | None:
+        current = self._now()
+        current_stamp = _timestamp(current)
+        lease_until = _timestamp(current + timedelta(seconds=self._lease_seconds))
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT j.id, t.id, j.customer_id, j.telegram_user_id, j.application_attempt,
+                       t.node_id, c.email_display, t.attempt_count
+                FROM telegram_existing_discovery_jobs AS j
+                JOIN telegram_existing_discovery_targets AS t ON t.job_id = j.id
+                JOIN customers AS c ON c.id = j.customer_id
+                WHERE j.status IN ('queued', 'running', 'partial')
+                  AND (j.lease_until IS NULL OR j.lease_until < ?)
+                  AND t.status IN ('pending', 'deferred')
+                  AND (t.next_attempt_at IS NULL OR t.next_attempt_at <= ?)
+                ORDER BY j.created_at, j.id, t.node_id
+                LIMIT 1
+                """, (current_stamp, current_stamp),
+            ).fetchone()
+            if row is None:
+                return None
+            job_id, target_id = int(row[0]), int(row[1])
+            leased = conn.execute(
+                "UPDATE telegram_existing_discovery_jobs SET status = 'running', lease_owner = ?, lease_until = ?, "
+                "attempt_count = attempt_count + 1, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status IN ('queued', 'running', 'partial') AND (lease_until IS NULL OR lease_until < ?)",
+                (self._worker_id, lease_until, job_id, current_stamp),
+            )
+            if leased.rowcount != 1:
+                return None
+            claimed = conn.execute(
+                "UPDATE telegram_existing_discovery_targets SET status = 'reconciling', attempt_count = attempt_count + 1, "
+                "error_code = NULL, error_summary = NULL, last_checked_at = ?, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ? AND status IN ('pending', 'deferred')",
+                (current_stamp, target_id),
+            )
+            if claimed.rowcount != 1:
+                conn.execute(
+                    "UPDATE telegram_existing_discovery_jobs SET status = 'partial', lease_owner = NULL, lease_until = NULL, "
+                    "row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (job_id,)
+                )
+                return None
+        return ClaimedExistingDiscoveryTarget(
+            job_id=job_id, target_id=target_id, customer_id=int(row[2]), telegram_user_id=int(row[3]),
+            application_attempt=int(row[4]), node_id=int(row[5]), email=str(row[6]),
+            attempt_count=int(row[7]) + 1,
+        )
+
+    def _confirm_match(self, claimed: ClaimedExistingDiscoveryTarget, binding: ExistingRemoteBinding) -> None:
+        if binding.node_id != claimed.node_id or binding.inbound_id != BOT_INBOUND_ID:
+            raise ProvisioningPermanentError("discovery target identity changed")
+        if canonicalize_email(binding.remote_email) != canonicalize_email(claimed.email):
+            raise ProvisioningPermanentError("discovery did not return the requested email")
+        with connect(self._db_path) as conn:
+            existing = conn.execute(
+                "SELECT id, remote_client_id, remote_sub_id, remote_email FROM customer_node_bindings "
+                "WHERE customer_id = ? AND node_id = ? AND inbound_id = ?",
+                (claimed.customer_id, claimed.node_id, BOT_INBOUND_ID),
+            ).fetchone()
+            if existing is not None:
+                if (str(existing[1] or "") != binding.remote_client_id or str(existing[2] or "") != binding.remote_sub_id
+                        or canonicalize_email(str(existing[3])) != canonicalize_email(binding.remote_email)):
+                    raise ProvisioningPermanentError("local binding conflict")
+                conn.execute(
+                    "UPDATE customer_node_bindings SET management_state = 'confirmed', desired_enabled = ?, last_enabled = ?, "
+                    "last_confirmed_at = CURRENT_TIMESTAMP, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (int(binding.enabled), int(binding.enabled), int(existing[0])),
+                )
+            else:
+                try:
+                    conn.execute(
+                        "INSERT INTO customer_node_bindings "
+                        "(customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email, source, "
+                        "management_state, desired_enabled, last_enabled, last_confirmed_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, 'existing_bound', 'confirmed', ?, ?, CURRENT_TIMESTAMP)",
+                        (claimed.customer_id, claimed.node_id, BOT_INBOUND_ID, binding.remote_client_id,
+                         binding.remote_sub_id, binding.remote_email, int(binding.enabled), int(binding.enabled)),
+                    )
+                except sqlite3.IntegrityError as exc:
+                    raise ProvisioningPermanentError("local binding conflict") from exc
+            conn.execute(
+                "UPDATE telegram_existing_discovery_targets SET status = 'confirmed_match', remote_client_id = ?, "
+                "remote_sub_id = ?, remote_email = ?, remote_enabled = ?, error_code = NULL, error_summary = NULL, "
+                "next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (binding.remote_client_id, binding.remote_sub_id, binding.remote_email, int(binding.enabled), claimed.target_id),
+            )
+            self._finalize_job(conn, claimed.job_id)
+
+    def _finish_target(self, claimed: ClaimedExistingDiscoveryTarget, *, status: str, error_code: str | None) -> None:
+        with connect(self._db_path) as conn:
+            conn.execute(
+                "UPDATE telegram_existing_discovery_targets SET status = ?, error_code = ?, error_summary = NULL, "
+                "next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (status, error_code, claimed.target_id),
+            )
+            self._finalize_job(conn, claimed.job_id)
+
+    def _defer_or_block(self, claimed: ClaimedExistingDiscoveryTarget, error_code: str) -> None:
+        terminal = claimed.attempt_count >= self.MAX_RETRYABLE_ATTEMPTS
+        with connect(self._db_path) as conn:
+            if terminal:
+                conn.execute(
+                    "UPDATE telegram_existing_discovery_targets SET status = 'blocked_after_retry_limit', error_code = ?, "
+                    "error_summary = NULL, next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (error_code, claimed.target_id),
+                )
+            else:
+                delay_seconds = min(300, 2 ** min(claimed.attempt_count, 8))
+                next_attempt = _timestamp(self._now() + timedelta(seconds=delay_seconds))
+                conn.execute(
+                    "UPDATE telegram_existing_discovery_targets SET status = 'deferred', error_code = ?, error_summary = NULL, "
+                    "next_attempt_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (error_code, next_attempt, claimed.target_id),
+                )
+            self._finalize_job(conn, claimed.job_id)
+
+    def _finalize_job(self, conn: sqlite3.Connection, job_id: int) -> None:
+        counts = {str(row[0]): int(row[1]) for row in conn.execute(
+            "SELECT status, COUNT(*) FROM telegram_existing_discovery_targets WHERE job_id = ? GROUP BY status", (job_id,)
+        ).fetchall()}
+        active = sum(counts.get(status, 0) for status in ("pending", "reconciling", "deferred"))
+        terminal_failure = counts.get("blocked_after_retry_limit", 0) + counts.get("conflict", 0)
+        if active:
+            next_due = conn.execute(
+                "SELECT MIN(next_attempt_at) FROM telegram_existing_discovery_targets "
+                "WHERE job_id = ? AND status = 'deferred'", (job_id,)
+            ).fetchone()[0]
+            conn.execute(
+                "UPDATE telegram_existing_discovery_jobs SET status = 'partial', lease_owner = NULL, lease_until = NULL, "
+                "next_attempt_at = ?, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (next_due, job_id),
+            )
+            return
+        job = conn.execute(
+            "SELECT customer_id, telegram_user_id, application_attempt FROM telegram_existing_discovery_jobs WHERE id = ?", (job_id,)
+        ).fetchone()
+        assert job is not None
+        matched = counts.get("confirmed_match", 0)
+        succeeded = not terminal_failure and matched > 0
+        status = "succeeded" if succeeded else "failed"
+        conn.execute(
+            "UPDATE telegram_existing_discovery_jobs SET status = ?, lease_owner = NULL, lease_until = NULL, next_attempt_at = NULL, "
+            "finished_at = CURRENT_TIMESTAMP, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (status, job_id),
+        )
+        if succeeded:
+            conn.execute(
+                "UPDATE telegram_identities SET remote_snapshot_ready = 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE telegram_user_id = ? AND customer_id = ? AND access_status = 'approved'",
+                (int(job[1]), int(job[0])),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES "
+                "('user_existing_access_approved', ?, ?)",
+                (str(int(job[1])), f"user:existing-access-approved:discovery:{job_id}:{int(job[1])}"),
+            )
 
 
 class ProvisioningPort(Protocol):
@@ -559,9 +808,15 @@ class TelegramProvisioningWorker:
             )
             if status == "succeeded":
                 job = conn.execute(
-                    "SELECT trigger FROM telegram_provisioning_jobs WHERE id = ?", (job_id,)
+                    "SELECT trigger, customer_id FROM telegram_provisioning_jobs WHERE id = ?", (job_id,)
                 ).fetchone()
                 trigger = str(job[0]) if job is not None else ""
+                if trigger == "approve_new" and job is not None:
+                    conn.execute(
+                        "UPDATE telegram_identities SET remote_snapshot_ready = 1, updated_at = CURRENT_TIMESTAMP "
+                        "WHERE customer_id = ? AND access_status = 'approved'",
+                        (int(job[1]),),
+                    )
                 recipients = conn.execute(
                     """
                     SELECT i.telegram_user_id, n.name

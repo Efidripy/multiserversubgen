@@ -42,6 +42,7 @@ from services.telegram_schedules import TelegramScheduleWorker
 from services.telegram_provisioning import (
     ClientManagerLegacyDiscovery,
     ClientManagerProvisioningPort,
+    TelegramExistingDiscoveryWorker,
     TelegramProvisioningWorker,
 )
 from services.telegram_transport import TelegramApiTransport
@@ -495,6 +496,22 @@ async def _telegram_provisioning_worker_loop() -> None:
         )
 
 
+async def _telegram_existing_discovery_worker_loop() -> None:
+    """Reconcile deferred existing-email snapshots without remote writes."""
+
+    worker = TelegramExistingDiscoveryWorker(
+        db_path=DB_PATH,
+        node_loader=node_service.get_node,
+        discovery=ClientManagerLegacyDiscovery(
+            client_manager=client_mgr, list_nodes=node_service.list_nodes
+        ),
+        worker_id=f"telegram-existing-discovery:{os.getpid()}",
+    )
+    while True:
+        result = await asyncio.to_thread(worker.run_once)
+        await asyncio.sleep(0.1 if result.processed else SETTINGS.telegram.provisioning_worker_interval_sec)
+
+
 async def _telegram_outbox_worker_loop() -> None:
     """Deliver local notification events only after its independent opt-in."""
 
@@ -588,6 +605,9 @@ app.router.lifespan_context = build_lifespan(
     snapshot_collector=snapshot_collector,
     adguard_collector_loop=adguard_collector_loop,
     asyncio_module=asyncio,
+    telegram_existing_discovery_worker_loop=(
+        (lambda: _telegram_existing_discovery_worker_loop()) if SETTINGS.telegram.enabled else None
+    ),
     telegram_provisioning_worker_loop=(
         (lambda: _telegram_provisioning_worker_loop())
         if SETTINGS.telegram.provisioning_worker_enabled

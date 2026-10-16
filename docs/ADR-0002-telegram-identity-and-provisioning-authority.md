@@ -64,13 +64,23 @@ node to become the authority for the customer lifecycle.
 - Linking an existing customer uses one of two explicit admin-confirmed paths.
   A locally known customer is linked by its local `customer_id` and must
   already have an exact confirmed binding. A pre-Telegram remote-only customer
-  may be adopted only after the administrator enters an exact service
-  username/email and a strict read-only adapter finds one unambiguous canonical
-  match in `inbound_id=1` on every readable enabled node. Any unavailable node,
-  duplicate match or final re-read mismatch fails closed. Adoption atomically
-  creates or refreshes `customers(origin=existing)` and exact bindings before
-  linking the pending identity; neither path creates a provisioning job or
-  mutates a remote node.
+  may be adopted immediately only after the administrator enters an exact
+  service username/email and a strict read-only adapter finds one unambiguous
+  canonical match in `inbound_id=1` on every enabled node. Duplicate matches
+  and final re-read mismatches fail closed. If one enabled node is unreadable,
+  an administrator may explicitly choose deferred discovery instead: one
+  SQLite transaction freezes all enabled node IDs, links the local identity
+  with `remote_snapshot_ready=false`, and creates a separate read-only
+  discovery job with one target per frozen node. Targets are `confirmed_match`,
+  `confirmed_absent`, `deferred`, `blocked_after_retry_limit`, or `conflict`.
+  Each retryable failure is bounded to five attempts; a terminal target needs
+  an explicit, selected-target recovery command. The worker never adds a
+  client, never infers absence from an error, and releases its lease after each
+  target so one offline node cannot block another job. Links, QR/guest/public
+  subscriptions and lifecycle commands remain denied until every target is
+  resolved and at least one exact binding is confirmed. Only then does the
+  worker set `remote_snapshot_ready=true` and enqueue the existing-access
+  completion notification. Neither path mutates a remote node.
 - A Telegram preapproval is explicitly one of two non-interchangeable
   profiles. An `existing` profile points only to one already verified local
   customer and activates only if its exact confirmed bindings still prove
