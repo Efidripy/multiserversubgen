@@ -10,6 +10,56 @@ from shared.observability import begin_request, endpoint_label, finish_request, 
 from shared.security import safe_request_id
 
 
+_SESSION_FIRST_BROWSER_READ_PATHS = frozenset(
+    {
+        "/api/v1/dashboard/overview",
+        "/api/v1/nodes",
+        "/api/v1/history/nodes",
+        "/api/v1/snapshots/latest",
+        "/api/v1/traffic/stats",
+        "/api/v1/traffic/stats-by-period",
+        "/api/v1/health/deps",
+        "/api/v1/adguard/sources",
+        "/api/v1/adguard/overview",
+        "/api/v1/adguard/history",
+        "/api/v1/monitoring/stack",
+        "/api/v1/servers/status",
+        "/api/v1/collector/status",
+        "/api/v1/clients",
+        "/api/v1/clients/expired",
+        "/api/v1/clients/depleted",
+        "/api/v1/clients/presence",
+        "/api/v1/inbounds/options",
+    }
+)
+
+
+def is_session_first_browser_read(request: Request) -> bool:
+    """Identify narrowly classified, same-origin browser read projections.
+
+    A stale browser bundle can retain a Basic header after the current bundle
+    has already established the signed HttpOnly web session. For this small
+    allowlist a valid session is sufficient and must be tried before parsing
+    Basic, which avoids needless PAM work. All other routes keep their
+    established Basic-first ordering.
+    """
+    if request.method != "GET":
+        return False
+
+    path = request.url.path
+    if path in _SESSION_FIRST_BROWSER_READ_PATHS:
+        return True
+
+    for prefix, suffix in (
+        ("/api/v1/history/nodes/", ""),
+        ("/api/v1/servers/", "/status"),
+    ):
+        if path.startswith(prefix) and path.endswith(suffix):
+            node_id = path[len(prefix) : len(path) - len(suffix) if suffix else None]
+            return node_id.isdecimal()
+    return False
+
+
 def is_trusted_loopback_metrics_scrape(request: Request) -> bool:
     """Allow the local Prometheus process to scrape metrics without panel auth.
 
@@ -89,9 +139,17 @@ def build_request_controls_and_audit_middleware(
 
             protected_path = path.startswith("/api/v1/") or path == "/metrics"
             if protected_path and not request.state.metrics_loopback_allowed and not is_public_endpoint(path):
-                auth_user = check_basic_auth_header(request.headers.get("Authorization"))
-                auth_via = "basic" if auth_user else None
-                if not auth_user:
+                session_first_read = is_session_first_browser_read(request)
+                if session_first_read:
+                    auth_user = check_web_session(request)
+                    auth_via = "session" if auth_user else None
+                else:
+                    auth_user = check_basic_auth_header(request.headers.get("Authorization"))
+                    auth_via = "basic" if auth_user else None
+                if not auth_user and session_first_read:
+                    auth_user = check_basic_auth_header(request.headers.get("Authorization"))
+                    auth_via = "basic" if auth_user else None
+                if not auth_user and not session_first_read:
                     auth_user = check_web_session(request)
                     auth_via = "session" if auth_user else None
                 if not auth_user:
