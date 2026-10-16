@@ -39,8 +39,13 @@ const normalizeInboundOption = (value: unknown): InboundOption | null => {
   };
 };
 
-export async function getInboundOptions(options: { signal?: AbortSignal } = {}): Promise<InboundOption[]> {
-  const res = await api.get('/v1/inbounds/options', { auth: getAuth(), signal: options.signal });
+export async function getInboundOptions(
+  options: { signal?: AbortSignal; sessionOnlyAuth?: boolean } = {},
+): Promise<InboundOption[]> {
+  const res = await api.get('/v1/inbounds/options', {
+    ...(options.sessionOnlyAuth ? { sessionOnlyAuth: true } : { auth: getAuth() }),
+    signal: options.signal,
+  });
   const items = Array.isArray(res.data?.inbounds) ? res.data.inbounds : [];
   return items.flatMap((item: unknown) => {
     const normalized = normalizeInboundOption(item);

@@ -130,8 +130,13 @@ const normalizeNodeRecord = (raw: unknown): NodeRecord | null => {
   };
 };
 
-export async function listNodes(options: { signal?: AbortSignal } = {}): Promise<NodeRecord[]> {
-  const res = await api.get('/v1/nodes', { auth: getAuth(), signal: options.signal });
+export async function listNodes(
+  options: { signal?: AbortSignal; sessionOnlyAuth?: boolean } = {},
+): Promise<NodeRecord[]> {
+  const res = await api.get('/v1/nodes', {
+    ...(options.sessionOnlyAuth ? { sessionOnlyAuth: true } : { auth: getAuth() }),
+    signal: options.signal,
+  });
   return extractNodeArray(res.data)
     .map(normalizeNodeRecord)
     .filter((node): node is NodeRecord => node !== null);
