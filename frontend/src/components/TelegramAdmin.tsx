@@ -19,6 +19,7 @@ import {
   LifecycleSchedule,
   BulkLifecyclePreview,
   discoverExistingTelegramCustomer,
+  deferExistingTelegramCustomer,
   ExistingDiscoveryCandidate,
   getCustomerNodes,
   getCustomerOperations,
@@ -162,7 +163,7 @@ export const TelegramAdmin: React.FC = () => {
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<number[]>([]);
   const [bulkPreview, setBulkPreview] = useState<BulkLifecyclePreview | null>(null);
   const [scheduleAt, setScheduleAt] = useState('');
-  const [approval, setApproval] = useState<{ request: TelegramRequest; mode: 'new' | 'existing'; email: string; candidate?: ExistingDiscoveryCandidate } | null>(null);
+  const [approval, setApproval] = useState<{ request: TelegramRequest; mode: 'new' | 'existing'; email: string; candidate?: ExistingDiscoveryCandidate; deferredAvailable?: boolean } | null>(null);
   const [activeTab, setActiveTab] = useState<TelegramAdminTab>(() => readTelegramNavigation().activeTab);
   const [activeUsersSection, setActiveUsersSection] = useState<TelegramUsersSection>(() => readTelegramNavigation().activeUsersSection);
   const [selectedRequestId, setSelectedRequestId] = useState<number | null>(null);
@@ -379,7 +380,23 @@ export const TelegramAdmin: React.FC = () => {
     setMutating(true);
     try {
       const candidate = await discoverExistingTelegramCustomer(approval.request, approval.email);
-      setApproval((current) => current ? { ...current, email: candidate.email_display, candidate } : current);
+      setApproval((current) => current ? { ...current, email: candidate.email_display, candidate, deferredAvailable: false } : current);
+    } catch {
+      setApproval((current) => current ? { ...current, candidate: undefined, deferredAvailable: true } : current);
+      toast(t('telegram.existingDeferredAvailable'), 'error');
+    } finally {
+      setMutating(false);
+    }
+  };
+
+  const deferExisting = async () => {
+    if (!approval || approval.mode !== 'existing' || !approval.deferredAvailable) return;
+    setMutating(true);
+    try {
+      await deferExistingTelegramCustomer(approval.request, approval.email);
+      toast(t('telegram.existingDeferredQueued'), 'success');
+      setApproval(null);
+      await load();
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -912,7 +929,7 @@ export const TelegramAdmin: React.FC = () => {
                   <div className="sm:col-span-2"><dt className="text-[10px] uppercase tracking-[0.1em] text-slate-500">{t('telegram.requestIntroduction')}</dt><dd className="mt-1 whitespace-pre-wrap rounded-[6px] border border-cyan-400/10 bg-[#0a0f19] p-3 text-xs leading-5 text-slate-300">{selectedRequest.introduction_text || '—'}</dd></div>
                 </dl>
                 {approval?.request.telegram_user_id === selectedRequest.telegram_user_id ? (
-                  <div className="mt-4 rounded-[6px] border border-amber-400/25 bg-amber-400/5 p-3"><p className="text-xs text-amber-100">{approval.mode === 'new' ? t('telegram.approvalNewTitle') : t('telegram.approvalExistingTitle')}</p><input className={`${inputClass} mt-2`} value={approval.email} onChange={(event) => setApproval((current) => current ? { ...current, email: event.target.value, candidate: undefined } : current)} aria-label={t('telegram.emailForRequest')} />{approval.mode === 'new' ? <div className="mt-2 flex gap-2"><button type="button" className={primaryButtonClass} onClick={() => void confirmNew()} disabled={mutating}>{t('common.confirm')}</button><button type="button" className={buttonClass} onClick={() => setApproval(null)}>{t('common.cancel')}</button></div> : <><p className="mt-2 text-xs text-slate-500">{t('telegram.existingDiscoveryHint')}</p>{approval.candidate && <p className="mt-2 text-xs text-emerald-200">{t('telegram.existingFound', { count: approval.candidate.binding_count, nodes: approval.candidate.node_names.join(', ') })}</p>}<div className="mt-2 flex flex-wrap gap-2"><button type="button" className={buttonClass} onClick={() => void discoverExisting()} disabled={mutating}>{t('telegram.existingCheck')}</button>{approval.candidate && <button type="button" className={primaryButtonClass} onClick={() => void confirmExisting()} disabled={mutating}>✓ {t('telegram.existingBind')}</button>}<button type="button" className={buttonClass} onClick={() => setApproval(null)}>{t('common.cancel')}</button></div></>}</div>
+                  <div className="mt-4 rounded-[6px] border border-amber-400/25 bg-amber-400/5 p-3"><p className="text-xs text-amber-100">{approval.mode === 'new' ? t('telegram.approvalNewTitle') : t('telegram.approvalExistingTitle')}</p><input className={`${inputClass} mt-2`} value={approval.email} onChange={(event) => setApproval((current) => current ? { ...current, email: event.target.value, candidate: undefined, deferredAvailable: false } : current)} aria-label={t('telegram.emailForRequest')} />{approval.mode === 'new' ? <div className="mt-2 flex gap-2"><button type="button" className={primaryButtonClass} onClick={() => void confirmNew()} disabled={mutating}>{t('common.confirm')}</button><button type="button" className={buttonClass} onClick={() => setApproval(null)}>{t('common.cancel')}</button></div> : <><p className="mt-2 text-xs text-slate-500">{t('telegram.existingDiscoveryHint')}</p>{approval.candidate && <p className="mt-2 text-xs text-emerald-200">{t('telegram.existingFound', { count: approval.candidate.binding_count, nodes: approval.candidate.node_names.join(', ') })}</p>}{approval.deferredAvailable && <p className="mt-2 text-xs text-amber-200">{t('telegram.existingDeferredHint')}</p>}<div className="mt-2 flex flex-wrap gap-2"><button type="button" className={buttonClass} onClick={() => void discoverExisting()} disabled={mutating}>{t('telegram.existingCheck')}</button>{approval.candidate && <button type="button" className={primaryButtonClass} onClick={() => void confirmExisting()} disabled={mutating}>✓ {t('telegram.existingBind')}</button>}{approval.deferredAvailable && <button type="button" className={primaryButtonClass} onClick={() => void deferExisting()} disabled={mutating}>✓ {t('telegram.existingDefer')}</button>}<button type="button" className={buttonClass} onClick={() => setApproval(null)}>{t('common.cancel')}</button></div></>}</div>
                 ) : <div className="mt-4 flex flex-wrap gap-2 border-t border-cyan-400/12 pt-3"><button type="button" className={primaryButtonClass} onClick={() => setApproval({ request: selectedRequest, mode: 'new', email: selectedRequest.suggested_email })} disabled={mutating}>{t('telegram.createNew')}</button><button type="button" className={buttonClass} onClick={() => setApproval({ request: selectedRequest, mode: 'existing', email: '' })} disabled={mutating}>{t('telegram.bindExisting')}</button><button type="button" className={buttonClass} onClick={() => void decideRequest(selectedRequest, 'reject')} disabled={mutating}>{t('telegram.reject')}</button><button type="button" className={`${buttonClass} border-rose-400/25 text-rose-200`} onClick={() => void decideRequest(selectedRequest, 'block')} disabled={mutating}>{t('telegram.block')}</button></div>}
               </div>}
             </div>

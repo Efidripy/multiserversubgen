@@ -247,6 +247,14 @@ export async function adoptExistingTelegramCustomer(request: TelegramRequest, em
   );
 }
 
+export async function deferExistingTelegramCustomer(request: TelegramRequest, emailDisplay: string): Promise<void> {
+  await api.post(
+    `/v1/telegram/requests/${request.telegram_user_id}/defer-existing`,
+    { expected_identity_version: request.row_version, email_display: emailDisplay, idempotency_key: newIdempotencyKey() },
+    { auth: getAuth() },
+  );
+}
+
 export async function rejectTelegramRequest(request: TelegramRequest): Promise<void> {
   await api.post(`/v1/telegram/requests/${request.telegram_user_id}/reject`, {
     expected_identity_version: request.row_version, idempotency_key: newIdempotencyKey(),

@@ -743,9 +743,21 @@ class TelegramRegistrationService:
                     try:
                         remote_bindings = self._discover_existing(text)
                     except ProvisioningRemoteError:
+                        self._registry.set_admin_draft(
+                            admin_telegram_user_id=user_id, action=draft.action,
+                            telegram_user_id=draft.telegram_user_id,
+                            expected_row_version=draft.expected_row_version,
+                            page=draft.page, value=text,
+                        )
                         return [TelegramOutboundMessage(
                             chat_id,
-                            "Проверить существующего пользователя сейчас не удалось. Попробуйте позже.",
+                            "Не все ноды доступны для проверки. Можно привязать заявку локально и "
+                            "поставить безопасную повторную проверку в очередь; ссылка и доступ появятся "
+                            "только после полного snapshot.",
+                            {"inline_keyboard": [
+                                [{"text": "Поставить проверку в очередь", "callback_data": f"admin:existing-deferred-confirm:{draft.telegram_user_id}:{draft.expected_row_version}:{draft.page}"}],
+                                [{"text": "← Назад", "callback_data": f"admin:request:{draft.telegram_user_id}:{draft.expected_row_version}:{draft.page}"}],
+                            ]},
                         )]
                     if not remote_bindings:
                         raise TelegramRegistryError("existing service username was not found")
@@ -1305,7 +1317,13 @@ class TelegramRegistrationService:
                 except ProvisioningRemoteError:
                     return [TelegramOutboundMessage(
                         chat_id,
-                        "Проверить существующего пользователя сейчас не удалось. Попробуйте позже.",
+                        "Не все ноды доступны для проверки. Можно привязать заявку локально и "
+                        "поставить безопасную повторную проверку в очередь; ссылка и доступ появятся "
+                        "только после полного snapshot.",
+                        {"inline_keyboard": [
+                            [{"text": "Поставить проверку в очередь", "callback_data": f"admin:existing-deferred-confirm:{target_user_id}:{version}:{page}"}],
+                            [{"text": "← Назад", "callback_data": f"admin:request:{target_user_id}:{version}:{page}"}],
+                        ]},
                     )]
                 result = self._registry.adopt_discovered_existing_application(
                     telegram_user_id=target_user_id,
@@ -1324,6 +1342,28 @@ class TelegramRegistrationService:
                 )
                 self._registry.clear_admin_draft(user_id)
                 return [TelegramOutboundMessage(chat_id, f"Заявка привязана к {result.email_display}. Найдено нод: {result.confirmed_binding_count}.", self._admin_requests_message(chat_id, page).reply_markup)]
+            if len(parts) == 5 and parts[:2] == ["admin", "existing-deferred-confirm"]:
+                target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
+                draft = self._registry.get_admin_draft(user_id)
+                if (
+                    not draft or draft.action != "existing_customer_email"
+                    or draft.telegram_user_id != target_user_id or draft.expected_row_version != version
+                    or not draft.value
+                ):
+                    raise VersionConflictError("existing customer draft is missing")
+                result = self._registry.queue_deferred_existing_discovery(
+                    telegram_user_id=target_user_id, email_display=draft.value,
+                    expected_identity_version=version,
+                    idempotency_key=f"telegram-admin-defer-existing:{update_id}:{target_user_id}",
+                    approved_by=f"telegram:{user_id}",
+                )
+                self._registry.clear_admin_draft(user_id)
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    f"Заявка локально привязана к {result.email_display}. Проверка {len(result.target_node_ids)} нод поставлена в очередь; "
+                    "доступ появится после полного snapshot.",
+                    self._admin_requests_message(chat_id, page).reply_markup,
+                )]
             if len(parts) == 5 and parts[:2] == ["admin", "reject"]:
                 target_user_id, version, page = int(parts[2]), int(parts[3]), int(parts[4])
                 self._registry.reject_application(telegram_user_id=target_user_id, expected_identity_version=version, idempotency_key=f"telegram-admin-reject:{update_id}:{target_user_id}", rejected_by=f"telegram:{user_id}")

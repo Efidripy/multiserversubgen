@@ -343,6 +343,42 @@ class ExistingApprovalResult:
 
 
 @dataclass(frozen=True)
+class DeferredExistingApprovalResult:
+    """Local existing-email association that is deliberately access-gated."""
+
+    telegram_user_id: int
+    customer_id: int
+    discovery_job_id: int
+    email_display: str
+    target_node_ids: tuple[int, ...]
+    identity_row_version: int
+
+
+@dataclass(frozen=True)
+class ExistingDiscoveryTargetStatus:
+    node_id: int
+    node_name: str
+    status: str
+    attempt_count: int
+    error_code: str | None
+    next_attempt_at: str | None
+
+
+@dataclass(frozen=True)
+class ExistingDiscoveryJobStatus:
+    job_id: int
+    customer_id: int
+    telegram_user_id: int
+    customer_email: str
+    status: str
+    row_version: int
+    target_snapshot_digest: str
+    created_at: str
+    finished_at: str | None
+    targets: tuple[ExistingDiscoveryTargetStatus, ...]
+
+
+@dataclass(frozen=True)
 class DiscoveredExistingBinding:
     """Trusted remote identity captured by the read-only legacy discovery adapter."""
 
@@ -2091,7 +2127,8 @@ class TelegramRegistry:
             row = conn.execute(
                 """
                 SELECT i.telegram_user_id, i.chat_id, i.access_status, i.customer_id,
-                       c.email_display, c.status, c.row_version, i.blocked_from_status, c.origin
+                       c.email_display, c.status, c.row_version, i.blocked_from_status,
+                       i.remote_snapshot_ready
                 FROM telegram_identities AS i
                 LEFT JOIN customers AS c ON c.id = i.customer_id
                 WHERE i.telegram_user_id = ?
@@ -2100,23 +2137,19 @@ class TelegramRegistry:
             ).fetchone()
         if row is None:
             raise TelegramRegistryError("Telegram identity was not found")
-        initial_provisioning_ready = True
+        initial_provisioning_ready = bool(row[8])
         customer_id = int(row[3]) if row[3] is not None else None
-        if customer_id is not None and str(row[8] or "") == "telegram":
+        if customer_id is not None and initial_provisioning_ready:
+            # Compatibility for records created before remote_snapshot_ready
+            # existed.  The gate is source-agnostic: any unfinished initial
+            # snapshot job denies access even if its identity column carries
+            # the migration default.
             with connect(self._db_path) as conn:
-                job = conn.execute(
-                    """
-                    SELECT status FROM telegram_provisioning_jobs
-                    WHERE customer_id = ? AND trigger = 'approve_new'
-                    ORDER BY id ASC LIMIT 1
-                    """,
-                    (customer_id,),
+                pending_snapshot = conn.execute(
+                    "SELECT 1 FROM telegram_provisioning_jobs WHERE customer_id = ? "
+                    "AND trigger = 'approve_new' AND status != 'succeeded' LIMIT 1", (customer_id,)
                 ).fetchone()
-            # A new Telegram customer may receive a URL only after every
-            # target from the immutable approval snapshot has succeeded.
-            # Absence of this job denotes a customer created before the
-            # snapshot workflow and must remain usable after migration.
-            initial_provisioning_ready = job is None or str(job[0]) == "succeeded"
+            initial_provisioning_ready = pending_snapshot is None
         return TelegramCustomerAccess(
             telegram_user_id=int(row[0]),
             chat_id=int(row[1]),
@@ -4112,7 +4145,7 @@ class TelegramRegistry:
                 """
                 UPDATE telegram_identities
                 SET customer_id = ?, access_status = 'approved', approved_at = CURRENT_TIMESTAMP,
-                    approved_by = ?, decision_reason = NULL, updated_at = CURRENT_TIMESTAMP,
+                    approved_by = ?, decision_reason = NULL, remote_snapshot_ready = 0, updated_at = CURRENT_TIMESTAMP,
                     row_version = row_version + 1
                 WHERE telegram_user_id = ? AND access_status = 'pending' AND row_version = ?
                 """,
@@ -4463,6 +4496,212 @@ class TelegramRegistry:
                 (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
             )
         return result
+
+    def queue_deferred_existing_discovery(
+        self,
+        *,
+        telegram_user_id: int,
+        email_display: str,
+        expected_identity_version: int,
+        idempotency_key: str,
+        approved_by: str,
+    ) -> DeferredExistingApprovalResult:
+        """Associate locally, then reconcile every enabled node without writes.
+
+        A failed remote read is represented by its immutable target instead of
+        being treated as an absent customer.  No access or completion outbox is
+        created here; only the discovery worker may release that gate.
+        """
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        expected_version = _positive_int(expected_identity_version, "expected_identity_version")
+        display = _nonempty(email_display, "email_display")
+        canonical = canonicalize_email(display)
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(approved_by, "approved_by")
+        digest = _payload_digest({
+            "telegram_user_id": user_id, "email": canonical,
+            "expected_identity_version": expected_version,
+        })
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'defer_existing_discovery' AND idempotency_key = ?", (key,)
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                result = json.loads(str(receipt[1]))
+                result["target_node_ids"] = tuple(result["target_node_ids"])
+                return DeferredExistingApprovalResult(**result)
+
+            identity = conn.execute(
+                "SELECT access_status, row_version, customer_id, application_attempt "
+                "FROM telegram_identities WHERE telegram_user_id = ?", (user_id,)
+            ).fetchone()
+            if identity is None or str(identity[0]) != "pending" or identity[2] is not None:
+                raise VersionConflictError("application is no longer eligible for an existing customer link")
+            if int(identity[1]) != expected_version:
+                raise VersionConflictError("application was updated by another administrator")
+            application_attempt = int(identity[3])
+            application = conn.execute(
+                "SELECT status FROM telegram_applications WHERE telegram_user_id = ? AND application_attempt = ?",
+                (user_id, application_attempt),
+            ).fetchone()
+            if application is None or str(application[0]) != "pending":
+                raise VersionConflictError("application attempt is no longer pending")
+            targets = conn.execute(
+                "SELECT id FROM nodes WHERE enabled = 1 ORDER BY id"
+            ).fetchall()
+            if not targets:
+                raise ApprovalUnavailableError("there are no enabled nodes for existing customer discovery")
+            target_node_ids = tuple(int(row[0]) for row in targets)
+            snapshot_digest = _payload_digest({
+                "telegram_user_id": user_id, "email": canonical, "node_ids": target_node_ids,
+            })
+            customer = conn.execute(
+                "SELECT id, email_display, status FROM customers WHERE email_canonical = ? AND deleted_at IS NULL",
+                (canonical,),
+            ).fetchone()
+            if customer is None:
+                customer_id = int(conn.execute(
+                    "INSERT INTO customers (email_display, email_canonical, origin, public_code, email_source) "
+                    "VALUES (?, ?, 'existing', ?, 'existing')",
+                    (display, canonical, secrets.token_urlsafe(9)),
+                ).lastrowid)
+                customer_display = display
+            else:
+                customer_id, customer_display, customer_status = int(customer[0]), str(customer[1]), str(customer[2])
+                if customer_status not in {"active", "suspended", "suspend_partial", "resume_partial"}:
+                    raise ApprovalUnavailableError("customer is not available for Telegram linking")
+                if conn.execute(
+                    "SELECT 1 FROM telegram_identities WHERE customer_id = ?", (customer_id,)
+                ).fetchone() is not None:
+                    raise ApprovalUnavailableError("customer is already linked to another Telegram identity")
+
+            job_id = int(conn.execute(
+                "INSERT INTO telegram_existing_discovery_jobs "
+                "(customer_id, telegram_user_id, application_attempt, idempotency_key, target_snapshot_digest, created_by) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (customer_id, user_id, application_attempt, key, snapshot_digest, actor),
+            ).lastrowid)
+            conn.executemany(
+                "INSERT INTO telegram_existing_discovery_targets (job_id, node_id) VALUES (?, ?)",
+                [(job_id, node_id) for node_id in target_node_ids],
+            )
+            update = conn.execute(
+                "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved', approved_at = CURRENT_TIMESTAMP, "
+                "approved_by = ?, decision_reason = NULL, remote_snapshot_ready = 0, updated_at = CURRENT_TIMESTAMP, "
+                "row_version = row_version + 1 WHERE telegram_user_id = ? AND access_status = 'pending' AND row_version = ?",
+                (customer_id, actor, user_id, expected_version),
+            )
+            if update.rowcount != 1:
+                raise VersionConflictError("application was updated by another administrator")
+            conn.execute(
+                "UPDATE telegram_applications SET status = 'approved', updated_at = CURRENT_TIMESTAMP "
+                "WHERE telegram_user_id = ? AND application_attempt = ? AND status = 'pending'",
+                (user_id, application_attempt),
+            )
+            result = DeferredExistingApprovalResult(
+                telegram_user_id=user_id, customer_id=customer_id, discovery_job_id=job_id,
+                email_display=customer_display, target_node_ids=target_node_ids,
+                identity_row_version=expected_version + 1,
+            )
+            conn.execute(
+                "INSERT INTO telegram_audit_log "
+                "(event_type, actor_type, actor_id, entity_type, entity_id, payload_digest) "
+                "VALUES ('request_existing_discovery_deferred', 'admin', ?, 'telegram_existing_discovery_job', ?, ?)",
+                (actor, str(job_id), _payload_digest({"customer_id": customer_id, "target_count": len(target_node_ids)})),
+            )
+            conn.execute(
+                "INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json) "
+                "VALUES ('defer_existing_discovery', ?, ?, ?)",
+                (key, digest, json.dumps(asdict(result), separators=(",", ":"))),
+            )
+        return result
+
+    def get_existing_discovery_job(self, job_id: int) -> ExistingDiscoveryJobStatus:
+        normalized_job_id = _positive_int(job_id, "job_id")
+        with connect(self._db_path) as conn:
+            job = conn.execute(
+                "SELECT j.id, j.customer_id, j.telegram_user_id, c.email_display, j.status, j.row_version, "
+                "j.target_snapshot_digest, j.created_at, j.finished_at "
+                "FROM telegram_existing_discovery_jobs AS j JOIN customers AS c ON c.id = j.customer_id WHERE j.id = ?",
+                (normalized_job_id,),
+            ).fetchone()
+            if job is None:
+                raise TelegramRegistryError("existing discovery job was not found")
+            targets = conn.execute(
+                "SELECT t.node_id, n.name, t.status, t.attempt_count, t.error_code, t.next_attempt_at "
+                "FROM telegram_existing_discovery_targets AS t JOIN nodes AS n ON n.id = t.node_id "
+                "WHERE t.job_id = ? ORDER BY t.node_id", (normalized_job_id,),
+            ).fetchall()
+        return ExistingDiscoveryJobStatus(
+            job_id=int(job[0]), customer_id=int(job[1]), telegram_user_id=int(job[2]),
+            customer_email=str(job[3]), status=str(job[4]), row_version=int(job[5]),
+            target_snapshot_digest=str(job[6]), created_at=str(job[7]),
+            finished_at=str(job[8]) if job[8] is not None else None,
+            targets=tuple(ExistingDiscoveryTargetStatus(
+                node_id=int(row[0]), node_name=str(row[1]), status=str(row[2]),
+                attempt_count=int(row[3]), error_code=str(row[4]) if row[4] is not None else None,
+                next_attempt_at=str(row[5]) if row[5] is not None else None,
+            ) for row in targets),
+        )
+
+    def recover_existing_discovery_target(
+        self, *, job_id: int, node_id: int, expected_job_version: int,
+        idempotency_key: str, requested_by: str,
+    ) -> ExistingDiscoveryJobStatus:
+        """Reset one terminal target only after an explicit operator command."""
+
+        normalized_job_id = _positive_int(job_id, "job_id")
+        normalized_node_id = _positive_int(node_id, "node_id")
+        expected_version = _positive_int(expected_job_version, "expected_job_version")
+        key = _nonempty(idempotency_key, "idempotency_key")
+        actor = _nonempty(requested_by, "requested_by")
+        digest = _payload_digest({"job_id": normalized_job_id, "node_id": normalized_node_id,
+                                  "expected_job_version": expected_version})
+        with connect(self._db_path) as conn:
+            receipt = conn.execute(
+                "SELECT payload_digest, result_json FROM telegram_command_receipts "
+                "WHERE scope = 'recover_existing_discovery_target' AND idempotency_key = ?", (key,)
+            ).fetchone()
+            if receipt:
+                if str(receipt[0]) != digest:
+                    raise IdempotencyConflictError("idempotency key was already used for another command")
+                return self.get_existing_discovery_job(int(json.loads(str(receipt[1]))["job_id"]))
+            job = conn.execute("SELECT row_version FROM telegram_existing_discovery_jobs WHERE id = ?", (normalized_job_id,)).fetchone()
+            if job is None:
+                raise TelegramRegistryError("existing discovery job was not found")
+            if int(job[0]) != expected_version:
+                raise VersionConflictError("existing discovery job was updated by another administrator")
+            target = conn.execute(
+                "SELECT id FROM telegram_existing_discovery_targets WHERE job_id = ? AND node_id = ? "
+                "AND status = 'blocked_after_retry_limit'", (normalized_job_id, normalized_node_id),
+            ).fetchone()
+            if target is None:
+                raise ApprovalUnavailableError("only a retry-limit target can be recovered")
+            conn.execute(
+                "UPDATE telegram_existing_discovery_targets SET status = 'pending', attempt_count = 0, error_code = NULL, "
+                "error_summary = NULL, next_attempt_at = NULL, recovered_at = CURRENT_TIMESTAMP, finished_at = NULL, "
+                "updated_at = CURRENT_TIMESTAMP WHERE id = ?", (int(target[0]),),
+            )
+            conn.execute(
+                "UPDATE telegram_existing_discovery_jobs SET status = 'queued', lease_owner = NULL, lease_until = NULL, "
+                "next_attempt_at = NULL, finished_at = NULL, row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (normalized_job_id,),
+            )
+            conn.execute(
+                "INSERT INTO telegram_audit_log (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest) "
+                "VALUES ('existing_discovery_target_recovered', 'admin', ?, 'telegram_existing_discovery_target', ?, ?)",
+                (actor, f"{normalized_job_id}:{normalized_node_id}", digest),
+            )
+            conn.execute(
+                "INSERT INTO telegram_command_receipts (scope, idempotency_key, payload_digest, result_json) "
+                "VALUES ('recover_existing_discovery_target', ?, ?, ?)",
+                (key, digest, json.dumps({"job_id": normalized_job_id}, separators=(",", ":"))),
+            )
+        return self.get_existing_discovery_job(normalized_job_id)
 
     def reject_application(
         self,
@@ -6331,6 +6570,13 @@ class TelegramRegistry:
         if customer is None:
             raise TelegramRegistryError("customer was not found")
         current_status, deleted_at, row_version = str(customer[0]), customer[1], int(customer[2])
+        remote_snapshot = conn.execute(
+            "SELECT remote_snapshot_ready FROM telegram_identities "
+            "WHERE customer_id = ? AND access_status = 'approved' ORDER BY telegram_user_id LIMIT 1",
+            (customer_id,),
+        ).fetchone()
+        if remote_snapshot is not None and not bool(remote_snapshot[0]):
+            raise LifecycleUnavailableError("customer remote snapshot is incomplete")
         if deleted_at is not None or current_status == "deleted":
             raise LifecycleUnavailableError("deleted customer cannot be changed")
         allowed_states = {
@@ -6468,6 +6714,13 @@ class TelegramRegistry:
             raise TelegramRegistryError("customer was not found")
         if str(customer[0]) != "active":
             raise LifecycleUnavailableError("node operation requires an active customer")
+        remote_snapshot = conn.execute(
+            "SELECT remote_snapshot_ready FROM telegram_identities "
+            "WHERE customer_id = ? AND access_status = 'approved' ORDER BY telegram_user_id LIMIT 1",
+            (customer_id,),
+        ).fetchone()
+        if remote_snapshot is not None and not bool(remote_snapshot[0]):
+            raise LifecycleUnavailableError("customer remote snapshot is incomplete")
         binding = conn.execute(
             """
             SELECT b.id, b.node_id, n.name, b.inbound_id, b.remote_client_id,

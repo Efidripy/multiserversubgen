@@ -440,6 +440,40 @@ def test_existing_remote_customer_can_be_discovered_then_adopted_without_node_wr
         assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
 
 
+def test_existing_customer_can_be_deferred_without_inline_remote_io(tmp_path):
+    class UnavailableManager:
+        @staticmethod
+        def get_node_clients_strict(_node):
+            raise RuntimeError("offline node")
+
+    client = _build_client(tmp_path, client_mgr=UnavailableManager())
+    db_path = str(tmp_path / "admin.db")
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=46, chat_id=46, username="legacy-applicant", first_name=None, last_name=None
+    )
+    pending = registry.create_pending_application(46)
+    queued = client.post(
+        "/api/v1/telegram/requests/46/defer-existing",
+        json={
+            "expected_identity_version": pending.identity.row_version,
+            "email_display": "legacy-user",
+            "idempotency_key": "defer-legacy-46",
+        },
+    )
+    assert queued.status_code == 200
+    assert queued.json()["remote_io"] == "not_started"
+    job_id = queued.json()["approval"]["discovery_job_id"]
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM telegram_existing_discovery_jobs").fetchone()[0] == 1
+        assert conn.execute("SELECT COUNT(*) FROM telegram_existing_discovery_targets").fetchone()[0] == 1
+        assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities WHERE telegram_user_id = 46").fetchone()[0] == 0
+        assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings").fetchone()[0] == 0
+    job = client.get(f"/api/v1/telegram/existing-discovery/jobs/{job_id}")
+    assert job.status_code == 200
+    assert job.json()["job"]["targets"][0]["status"] == "pending"
+
+
 def test_job_reconcile_is_admin_only_and_queues_no_remote_work_inline(tmp_path):
     client = _build_client(tmp_path)
     db_path = str(tmp_path / "admin.db")
