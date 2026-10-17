@@ -29,6 +29,7 @@ _SESSION_FIRST_BROWSER_READ_PATHS = frozenset(
         "/api/v1/clients/expired",
         "/api/v1/clients/depleted",
         "/api/v1/clients/presence",
+        "/api/v1/telegram/node-policies",
         "/api/v1/inbounds/options",
         "/api/v1/inbounds",
         "/api/v1/inbounds/stats",

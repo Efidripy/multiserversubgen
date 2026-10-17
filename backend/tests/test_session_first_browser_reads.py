@@ -101,6 +101,7 @@ _SESSION_FIRST_PATHS = (
     "/api/v1/clients/expired",
     "/api/v1/clients/depleted",
     "/api/v1/clients/presence",
+    "/api/v1/telegram/node-policies",
     "/api/v1/inbounds/options",
     "/api/v1/inbounds",
     "/api/v1/inbounds/stats",
@@ -121,11 +122,15 @@ def test_session_first_read_skips_basic_when_a_valid_session_already_exists(path
     assert calls == {"basic": [], "session": 1, "mfa": 0}
 
 
-def test_session_first_read_keeps_basic_for_clients_without_a_session():
+@pytest.mark.parametrize(
+    "path",
+    ("/api/v1/dashboard/overview", "/api/v1/telegram/node-policies"),
+)
+def test_session_first_read_keeps_basic_for_clients_without_a_session(path):
     client, calls = _app()
 
     response = client.get(
-        "/api/v1/dashboard/overview", headers={"Authorization": "Basic stale"}
+        path, headers={"Authorization": "Basic stale"}
     )
 
     assert response.status_code == 200
@@ -133,11 +138,15 @@ def test_session_first_read_keeps_basic_for_clients_without_a_session():
     assert calls == {"basic": ["Basic stale"], "session": 1, "mfa": 1}
 
 
-def test_invalid_session_falls_back_to_basic_for_a_session_first_read():
+@pytest.mark.parametrize(
+    "path",
+    ("/api/v1/traffic/stats", "/api/v1/telegram/node-policies"),
+)
+def test_invalid_session_falls_back_to_basic_for_a_session_first_read(path):
     client, calls = _app()
 
     response = client.get(
-        "/api/v1/traffic/stats",
+        path,
         headers={"Authorization": "Basic stale", "Cookie": "web-session=invalid"},
     )
 

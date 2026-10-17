@@ -345,7 +345,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
       setOnlineLoading(true);
     }
     try {
-      const items = groupOnlinePresence(await getClientPresence(controller.signal));
+      const items = groupOnlinePresence(await getClientPresence(controller.signal, { sessionOnlyAuth: true }));
       if (!isCurrentTrafficRequest(requestId, onlineClientsRequestIdRef.current)) return undefined;
       setOnlineClients(items);
       mergeStaleCacheRecord<TrafficStatsCache>(TRAFFIC_STATS_CACHE_KEY, {
