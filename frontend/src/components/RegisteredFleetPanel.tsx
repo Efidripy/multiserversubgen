@@ -226,7 +226,10 @@ export function RegisteredFleetPanel({
     const controller = new AbortController();
     telegramPoliciesAbortRef.current = controller;
     try {
-      const policies = await listTelegramNodePolicies({ signal: controller.signal });
+      const policies = await listTelegramNodePolicies({
+        signal: controller.signal,
+        sessionOnlyAuth: true,
+      });
       const next = Object.fromEntries(policies.map((policy) => [policy.node_id, policy]));
       if (controller.signal.aborted || telegramPoliciesAbortRef.current !== controller || !telegramPoliciesMountedRef.current) return null;
       setTelegramPolicies(next);

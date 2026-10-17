@@ -53,7 +53,7 @@ describe('navigation performance regressions', () => {
     );
     expect(traffic).toContain('Full online details remain opt-in.');
     expect(traffic).toContain('const loadOnlineDetails = async () =>');
-    expect(traffic).toContain('getClientPresence(controller.signal)');
+    expect(traffic).toContain('getClientPresence(controller.signal, { sessionOnlyAuth: true })');
     expect(onlineTotals).toContain("api.post('/v1/traffic/client-totals'");
     expect(traffic).toContain('await loadOnlineTrafficTotals(period, clients);');
     expect(onlineTotals).not.toContain("api.get('/v1/traffic/stats-by-period'");
