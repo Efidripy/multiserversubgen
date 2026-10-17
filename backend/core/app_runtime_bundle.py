@@ -132,6 +132,8 @@ def build_app_runtime_bundle(
         ultra_idle_interval_sec=collector_ultra_idle_interval_sec,
         idle_after_sec=collector_idle_after_sec,
         ultra_idle_after_sec=collector_ultra_idle_after_sec,
+        collector_cycle_duration_metric=metrics.collector_poll_cycle_duration_seconds,
+        sqlite_batch_rows_metric=metrics.sqlite_batch_rows,
     )
     ws_manager.set_activity_callback(snapshot_collector.on_websocket_activity)
 
@@ -145,6 +147,9 @@ def build_app_runtime_bundle(
         idle_sleep_sec=audit_idle_sleep_sec,
         active_sleep_sec=audit_active_sleep_sec,
         logger=logger,
+        memory_queue_depth_metric=metrics.audit_memory_queue_depth,
+        audit_events_dropped_metric=metrics.audit_events_dropped_total,
+        sqlite_batch_rows_metric=metrics.sqlite_batch_rows,
     )
 
     adguard_runtime = AdGuardRuntime(
@@ -239,6 +244,7 @@ def build_app_runtime_bundle(
         node_online_clients_metric=metrics.node_online_clients,
         node_traffic_total_bytes_metric=metrics.node_traffic_total_bytes,
         node_poll_duration_ms_metric=metrics.node_poll_duration_ms,
+        sqlite_batch_rows_metric=metrics.sqlite_batch_rows,
     )
     metrics_runtime.set_metrics_cache_lock(metrics_cache_lock)
 

@@ -23,6 +23,13 @@ def test_systemd_template_uses_external_secret_file():
     assert "already in use" in unit
 
 
+def test_systemd_template_uses_the_documented_collector_cadence_defaults():
+    unit = _read("systemd/sub-manager.service")
+
+    assert 'Environment="COLLECTOR_ACTIVE_INTERVAL_SEC=90"' in unit
+    assert 'Environment="COLLECTOR_IDLE_INTERVAL_SEC=300"' in unit
+
+
 def test_installers_do_not_render_or_log_secret_values():
     install = _read("scripts/installer/install.sh")
     update = _read("scripts/installer/update.sh")

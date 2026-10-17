@@ -30,6 +30,7 @@ class MetricsRuntime:
         node_online_clients_metric,
         node_traffic_total_bytes_metric,
         node_poll_duration_ms_metric,
+        sqlite_batch_rows_metric=None,
     ) -> None:
         self.db_path = db_path
         self.node_history_enabled = node_history_enabled
@@ -48,11 +49,21 @@ class MetricsRuntime:
         self.node_online_clients_metric = node_online_clients_metric
         self.node_traffic_total_bytes_metric = node_traffic_total_bytes_metric
         self.node_poll_duration_ms_metric = node_poll_duration_ms_metric
+        self.sqlite_batch_rows_metric = sqlite_batch_rows_metric
         self._metrics_cache: Dict = {"payload": None, "ts": 0.0}
         self._metrics_cache_lock = None
 
     def set_metrics_cache_lock(self, lock) -> None:
         self._metrics_cache_lock = lock
+
+    def _observe_sqlite_batch_rows(self, operation: str, count: int) -> None:
+        """Metrics are passive; an exporter failure cannot affect persistence."""
+        if self.sqlite_batch_rows_metric is None:
+            return
+        try:
+            self.sqlite_batch_rows_metric.labels(operation=operation).observe(count)
+        except Exception:
+            pass
 
     def remove_node_metric_labels(self, node_name: str, node_id: str) -> None:
         for metric in (
@@ -115,6 +126,8 @@ class MetricsRuntime:
                     cutoff = int(now_ts - max(1, self.node_history_retention_days) * 86400)
                     conn.execute("DELETE FROM node_history WHERE ts < ?", (cutoff,))
                 conn.commit()
+
+            self._observe_sqlite_batch_rows("node_history_insert", len(rows))
 
             for row in rows:
                 self.history_write_state["last_by_node"][str(row[1])] = now_ts
