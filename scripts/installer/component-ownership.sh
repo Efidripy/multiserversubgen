@@ -8,8 +8,8 @@ usage() {
     cat <<'EOF'
 Usage:
   component-ownership.sh report
-  component-ownership.sh adopt grafana|prometheus [grafana|prometheus ...]
-  component-ownership.sh release grafana|prometheus [grafana|prometheus ...]
+  component-ownership.sh adopt grafana|prometheus|loki|promtail [component ...]
+  component-ownership.sh release grafana|prometheus|loki|promtail [component ...]
 
 `report` is read-only. `adopt` and `release` change only the local ownership
 registry; they do not update packages, services, or configuration. A later
@@ -29,7 +29,7 @@ case "$command" in
         [ "$EUID" -eq 0 ] || { echo "Run adoption as root." >&2; exit 1; }
         for component in "$@"; do
             mssg_ownership_validate_component "$component" || { echo "Unsupported component: $component" >&2; exit 2; }
-            case "$component" in grafana|prometheus) ;; *) echo "Only Grafana and Prometheus can be adopted by this command." >&2; exit 2 ;; esac
+            case "$component" in grafana|prometheus|loki|promtail) ;; *) echo "Only Grafana, Prometheus, Loki and Promtail can be adopted by this command." >&2; exit 2 ;; esac
             mssg_ownership_component_present "$component" || { echo "$component is not present; nothing to adopt." >&2; exit 1; }
         done
         read -r -p "Type ADOPT_MSSG_MONITORING to transfer ownership: " acknowledgement
@@ -44,7 +44,7 @@ case "$command" in
         [ "$EUID" -eq 0 ] || { echo "Run release as root." >&2; exit 1; }
         for component in "$@"; do
             mssg_ownership_validate_component "$component" || { echo "Unsupported component: $component" >&2; exit 2; }
-            case "$component" in grafana|prometheus) ;; *) echo "Only Grafana and Prometheus can be released by this command." >&2; exit 2 ;; esac
+            case "$component" in grafana|prometheus|loki|promtail) ;; *) echo "Only Grafana, Prometheus, Loki and Promtail can be released by this command." >&2; exit 2 ;; esac
             mssg_ownership_component_present "$component" || { echo "$component is not present; nothing to release." >&2; exit 1; }
         done
         read -r -p "Type RELEASE_MSSG_MONITORING to stop MSSG management: " acknowledgement
