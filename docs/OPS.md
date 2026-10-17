@@ -148,6 +148,31 @@ acceptance, а не доказательство production p95, browser UX ре
 или отсутствия egress у сторонних расширений браузера. Для rollback выключите
 feature flag или удалите collectors: request behavior не меняется.
 
+### Фоновые collector/audit metrics
+
+Эти метрики включены всегда и passive: они не делают новых SQLite-запросов, не
+меняют bounded fan-out collector-а и не изменяют поведение audit worker. Ошибка
+экспортёра метрик не должна менять outcome polling, SQLite batch или audit queue.
+
+- `sub_manager_collector_poll_cycle_duration_seconds` — длительность только
+  успешно завершённого poll cycle, в котором был хотя бы один due node. Использует
+  monotonic `perf_counter` и включает bounded polling, snapshot persistence и
+  completed-snapshot callback. Idle/no-due и оборванные error cycles не наблюдаются.
+- `sub_manager_sqlite_batch_rows{operation}` — количество строк в semantic SQLite
+  batch после commit. Единственные фиксированные `operation`:
+  `collector_snapshot_upsert`, `node_history_insert`, `audit_memory_persist`,
+  `audit_event_drain`. Это не измерение SQL duration, fetch/commit latency, lock
+  wait или физических disk bytes.
+- `sub_manager_audit_memory_queue_depth` — приблизительный `qsize` process-local
+  bounded audit queue после изменения состояния. Это не durable backlog таблицы
+  `audit_events` и не повод делать дополнительный `COUNT(*)`.
+- `sub_manager_audit_events_dropped_total{reason}` — отброшенные события с
+  фиксированными `reason`: `full`, `closed`, `persist_error`.
+
+В labels не попадают SQL, database path, URL, node/user/request ID, email, token
+или другая приватная runtime data. Эти signals помогают разделить collector/audit
+pulse; они не доказывают production p95, distributed trace или alert delivery.
+
 См. директории:
 
 - `monitoring/prometheus/`

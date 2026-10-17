@@ -22,6 +22,10 @@ class MetricsRegistry:
     adguard_dns_latency_ms: Gauge
     adguard_dns_cache_hit_ratio: Gauge
     adguard_dns_upstream_errors: Gauge
+    collector_poll_cycle_duration_seconds: Histogram
+    sqlite_batch_rows: Histogram
+    audit_memory_queue_depth: Gauge
+    audit_events_dropped_total: Counter
 
 
 def build_metrics_registry() -> MetricsRegistry:
@@ -100,5 +104,23 @@ def build_metrics_registry() -> MetricsRegistry:
             "sub_manager_adguard_dns_upstream_errors_total",
             "AdGuard upstream DNS errors",
             ["source_name", "source_id"],
+        ),
+        collector_poll_cycle_duration_seconds=Histogram(
+            "sub_manager_collector_poll_cycle_duration_seconds",
+            "Completed collector poll cycle duration for cycles with due nodes",
+        ),
+        sqlite_batch_rows=Histogram(
+            "sub_manager_sqlite_batch_rows",
+            "Rows committed by semantic SQLite batch operations",
+            ["operation"],
+        ),
+        audit_memory_queue_depth=Gauge(
+            "sub_manager_audit_memory_queue_depth",
+            "Approximate process-local audit memory queue depth",
+        ),
+        audit_events_dropped_total=Counter(
+            "sub_manager_audit_events_dropped_total",
+            "Audit events dropped from the bounded process-local queue",
+            ["reason"],
         ),
     )

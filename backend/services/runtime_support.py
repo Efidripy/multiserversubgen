@@ -115,6 +115,9 @@ class AuditQueueRuntime:
         active_sleep_sec: float,
         logger,
         memory_queue_max_size: int = 2000,
+        memory_queue_depth_metric=None,
+        audit_events_dropped_metric=None,
+        sqlite_batch_rows_metric=None,
     ) -> None:
         self.db_path = db_path
         self.batch_size = max(1, int(batch_size))
@@ -127,17 +130,49 @@ class AuditQueueRuntime:
         self._accepting_events = True
         self.accepted_events = 0
         self.dropped_events = 0
+        self._memory_queue_depth_metric = memory_queue_depth_metric
+        self._audit_events_dropped_metric = audit_events_dropped_metric
+        self._sqlite_batch_rows_metric = sqlite_batch_rows_metric
+        self._record_queue_depth()
+
+    def _record_queue_depth(self) -> None:
+        """Export the approximate local queue size without affecting audit flow."""
+        if self._memory_queue_depth_metric is None:
+            return
+        try:
+            self._memory_queue_depth_metric.set(self.pending_count())
+        except Exception:
+            pass
+
+    def _record_drop(self, reason: str, count: int = 1) -> None:
+        if self._audit_events_dropped_metric is None:
+            return
+        try:
+            self._audit_events_dropped_metric.labels(reason=reason).inc(count)
+        except Exception:
+            pass
+
+    def _observe_sqlite_batch_rows(self, operation: str, count: int) -> None:
+        if self._sqlite_batch_rows_metric is None:
+            return
+        try:
+            self._sqlite_batch_rows_metric.labels(operation=operation).observe(count)
+        except Exception:
+            pass
 
     def enqueue_event(self, payload: Dict) -> bool:
         if not self._accepting_events:
             self.dropped_events += 1
+            self._record_drop("closed")
             return False
         try:
             self._memory_queue.put_nowait(dict(payload))
             self.accepted_events += 1
+            self._record_queue_depth()
             return True
         except queue.Full:
             self.dropped_events += 1
+            self._record_drop("full")
             self.logger.warning(
                 "Audit memory queue is full; dropping event (dropped=%s)",
                 self.dropped_events,
@@ -159,6 +194,7 @@ class AuditQueueRuntime:
                 break
         if not payloads:
             return 0
+        self._record_queue_depth()
 
         try:
             with connect(self.db_path) as conn:
@@ -170,11 +206,13 @@ class AuditQueueRuntime:
                     ],
                 )
                 conn.commit()
+            self._observe_sqlite_batch_rows("audit_memory_persist", len(payloads))
             return len(payloads)
         except Exception as exc:
             # The queue is deliberately bounded: requeuing a failed batch would
             # allow an unavailable SQLite file to grow process memory forever.
             self.dropped_events += len(payloads)
+            self._record_drop("persist_error", len(payloads))
             self.logger.error(
                 "Failed to persist %s audit events: %s", len(payloads), exc
             )
@@ -206,6 +244,7 @@ class AuditQueueRuntime:
                 ids,
             )
             conn.commit()
+            self._observe_sqlite_batch_rows("audit_event_drain", len(ids))
             return len(ids)
 
     def flush(self, max_batches: int = 1) -> Dict[str, int]:

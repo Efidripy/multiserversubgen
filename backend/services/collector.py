@@ -109,6 +109,9 @@ class SnapshotCollector:
         poll_interval_ceiling_sec: int = 60,
         degraded_backoff_sec: int = 300,
         poll_jitter_sec: float = 3.0,
+        collector_cycle_duration_metric=None,
+        sqlite_batch_rows_metric=None,
+        cycle_clock: Callable[[], float] = time.perf_counter,
     ):
         self.fetch_nodes = fetch_nodes
         self.xui_monitor = xui_monitor
@@ -133,6 +136,9 @@ class SnapshotCollector:
         self.poll_interval_ceiling_sec = max(30, min(60, poll_interval_ceiling_sec))
         self.degraded_backoff_sec = max(180, min(300, degraded_backoff_sec))
         self.db_path = db_path
+        self._collector_cycle_duration_metric = collector_cycle_duration_metric
+        self._sqlite_batch_rows_metric = sqlite_batch_rows_metric
+        self._cycle_clock = cycle_clock
         if on_snapshots is not None:
             self.on_snapshots = on_snapshots
         elif on_snapshot is not None:
@@ -180,6 +186,17 @@ class SnapshotCollector:
         self._last_ws_activity = 0.0
         self._mode_started_at = time.time()
         self._force_poll_event = asyncio.Event()
+
+    @staticmethod
+    def _observe_metric(metric, value: float, **labels) -> None:
+        """Best-effort metrics must never alter collector behavior."""
+        if metric is None:
+            return
+        try:
+            target = metric.labels(**labels) if labels else metric
+            target.observe(value)
+        except Exception:
+            pass
 
     @staticmethod
     def _node_key(node: Dict) -> str:
@@ -428,6 +445,11 @@ class SnapshotCollector:
                 rows,
             )
             conn.commit()
+        self._observe_metric(
+            self._sqlite_batch_rows_metric,
+            len(rows),
+            operation="collector_snapshot_upsert",
+        )
 
     @staticmethod
     def _ensure_snapshot_table(conn) -> None:
@@ -570,6 +592,7 @@ class SnapshotCollector:
             self._worker_tracker is None or self._worker_tracker.accepting
         ):
             cycle_started = time.time()
+            cycle_started_monotonic = self._cycle_clock()
             try:
                 self._update_mode_based_on_activity()
                 current_interval = self._get_current_interval()
@@ -618,6 +641,12 @@ class SnapshotCollector:
                     "due_nodes": len(due_nodes),
                     "queued_nodes": max(0, len(due_nodes) - self.max_parallel_polls),
                 }
+
+                if due_nodes:
+                    self._observe_metric(
+                        self._collector_cycle_duration_metric,
+                        max(0.0, self._cycle_clock() - cycle_started_monotonic),
+                    )
 
                 if force_poll:
                     self._force_poll_event.clear()
