@@ -102,6 +102,8 @@ _SESSION_FIRST_PATHS = (
     "/api/v1/clients/depleted",
     "/api/v1/clients/presence",
     "/api/v1/inbounds/options",
+    "/api/v1/inbounds",
+    "/api/v1/inbounds/stats",
 )
 
 
@@ -142,6 +144,47 @@ def test_invalid_session_falls_back_to_basic_for_a_session_first_read():
     assert response.status_code == 200
     assert response.json()["via"] == "basic"
     assert calls == {"basic": ["Basic stale"], "session": 1, "mfa": 1}
+
+
+@pytest.mark.parametrize("path", ("/api/v1/inbounds", "/api/v1/inbounds/stats"))
+@pytest.mark.parametrize("cookie", (None, "web-session=invalid"))
+def test_inbounds_session_first_reads_fall_back_to_basic_without_a_valid_session(
+    path, cookie
+):
+    client, calls = _app()
+    headers = {"Authorization": "Basic stale"}
+    if cookie:
+        headers["Cookie"] = cookie
+
+    response = client.get(path, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["via"] == "basic"
+    assert calls == {"basic": ["Basic stale"], "session": 1, "mfa": 1}
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/api/v1/emails",
+        "/api/v1/subscription-groups",
+        "/api/v1/backup/all",
+        "/api/v1/nodes/42/api-tokens",
+        "/api/v1/nodes/42/xray-config",
+        "/api/v1/telegram/requests",
+    ),
+)
+def test_sensitive_or_unclassified_reads_keep_basic_first(path):
+    client, calls = _app()
+
+    response = client.get(
+        path,
+        headers={"Authorization": "Basic stale", "Cookie": "web-session=valid"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["via"] == "basic"
+    assert calls == {"basic": ["Basic stale"], "session": 0, "mfa": 1}
 
 
 def test_unknown_get_keeps_basic_first_even_when_the_browser_session_is_valid():
