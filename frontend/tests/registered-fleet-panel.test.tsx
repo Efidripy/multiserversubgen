@@ -168,7 +168,10 @@ describe('RegisteredFleetPanel edit action', () => {
     );
 
     await waitFor(() => expect(mocks.listTelegramNodePolicies).toHaveBeenCalledTimes(1));
-    expect(mocks.listTelegramNodePolicies).toHaveBeenCalledWith({ signal: expect.any(AbortSignal) });
+    expect(mocks.listTelegramNodePolicies).toHaveBeenCalledWith({
+      signal: expect.any(AbortSignal),
+      sessionOnlyAuth: true,
+    });
     await waitFor(() => expect(screen.getByRole('button', { name: 'nodes.telegramPolicyOnTitle' })).toBeTruthy());
     expect(mocks.updateTelegramNodePolicy).not.toHaveBeenCalled();
     expect(mocks.getRegisteredFleetOverview).not.toHaveBeenCalled();

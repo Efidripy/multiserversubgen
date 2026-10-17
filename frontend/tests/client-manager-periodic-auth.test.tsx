@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import api, { resetInFlightGetRequests } from '../src/api/client';
 import { getClientPresence, listClientsBySource } from '../src/api/clients';
 import { getInboundOptions } from '../src/api/inbounds';
-import { listNodes } from '../src/api/nodes';
+import { listNodes, listTelegramNodePolicies } from '../src/api/nodes';
 import { clearAuthCredentials, setAuthCredentials } from '../src/auth';
 import { cacheService } from '../src/services/cacheService';
 
@@ -45,6 +45,7 @@ describe('Client Manager periodic browser session auth', () => {
       listClientsBySource('all', { signal: controller.signal, sessionOnlyAuth: true }),
       getInboundOptions({ signal: controller.signal, sessionOnlyAuth: true }),
       getClientPresence(controller.signal, { sessionOnlyAuth: true }),
+      listTelegramNodePolicies({ signal: controller.signal, sessionOnlyAuth: true }),
     ]);
 
     expect(requests.map((request) => request.url)).toEqual([
@@ -52,6 +53,7 @@ describe('Client Manager periodic browser session auth', () => {
       '/v1/clients',
       '/v1/inbounds/options',
       '/v1/clients/presence',
+      '/v1/telegram/node-policies',
     ]);
     for (const request of requests) {
       expect(request.auth).toBeUndefined();
@@ -86,5 +88,13 @@ describe('Client Manager periodic browser session auth', () => {
     expect(source).toContain('listNodes({ signal: controller.signal, sessionOnlyAuth: true })');
     expect(source).toContain("listClientsBySource(sourceFilter, { signal: controller.signal, sessionOnlyAuth: true })");
     expect(source).toContain('getInboundOptions({ signal: controller.signal, sessionOnlyAuth: true })');
+  });
+
+  it('binds the automatic Telegram policy badge read to the browser session', () => {
+    const fleetPanel = read('src/components/RegisteredFleetPanel.tsx');
+    const nodesApi = read('src/api/nodes.ts');
+
+    expect(fleetPanel).toContain('listTelegramNodePolicies({\n        signal: controller.signal,\n        sessionOnlyAuth: true,\n      })');
+    expect(nodesApi).toContain("...(options.sessionOnlyAuth ? { sessionOnlyAuth: true } : { auth: getAuth() })");
   });
 });
