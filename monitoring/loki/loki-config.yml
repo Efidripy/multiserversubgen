@@ -37,14 +37,15 @@ limits_config:
   max_query_series: 2000
   reject_old_samples: true
   reject_old_samples_max_age: 168h
+  # TSDB retention is enforced by the compactor. Keep two weeks of operator
+  # evidence without letting filesystem storage grow unbounded.
+  retention_period: 336h
 
 compactor:
   working_directory: /var/lib/loki/compactor
-  compaction_interval: 10m
+  # A small single-node install does not need ten-minute table compaction.
+  # Thirty minutes lowers periodic CPU/I/O work while keeping retention timely.
+  compaction_interval: 30m
   retention_enabled: true
   delete_request_store: filesystem
   retention_delete_delay: 2h
-
-table_manager:
-  retention_deletes_enabled: true
-  retention_period: 336h

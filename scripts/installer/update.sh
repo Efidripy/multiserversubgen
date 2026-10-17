@@ -15,6 +15,7 @@ source "${MSSG_OPS_DIR}/lib/install_log.sh"
 source "${INSTALLER_DIR}/lib/runtime_secrets.sh"
 source "${INSTALLER_DIR}/lib/config_activation.sh"
 source "${INSTALLER_DIR}/lib/component_ownership.sh"
+source "${INSTALLER_DIR}/lib/loki_config.sh"
 APT_DPKG_OPTS=(-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold)
 
 apt_update() {
@@ -562,11 +563,19 @@ EOF
         adguard_loki_enabled="false"
     fi
 
+    if [ "$adguard_loki_enabled" = "true" ] && ! mssg_ownership_allow_loki_mutation; then
+        echo "  ⚠️ Loki/promtail are external or unknown and will remain untouched."
+        echo "     Explicit adoption: scripts/installer/component-ownership.sh adopt loki promtail"
+        adguard_loki_enabled="false"
+    fi
+
     if [ "$adguard_loki_enabled" = "true" ]; then
         if apt_install_missing loki promtail >/dev/null 2>&1; then
             mkdir -p /etc/loki /etc/promtail /var/lib/loki /var/lib/promtail
-            cp "$MSSG_LOKI_CONFIG" /etc/loki/config.yml
-            cp "$MSSG_LOKI_CONFIG" /etc/loki/local-config.yaml
+            mssg_reconcile_loki_config "$MSSG_LOKI_CONFIG" || {
+                echo "  ⚠️ Loki rejected the managed configuration. Existing configuration was preserved."
+                return 1
+            }
             if ! ADGUARD_QUERYLOG_PATH="$adguard_querylog_path" \
                 ADGUARD_SYSTEMD_UNIT="$adguard_systemd_unit" \
                 PROMTAIL_CONFIG_TEMPLATE="$MSSG_PROMTAIL_CONFIG" \
@@ -580,6 +589,8 @@ EOF
             chmod 0755 /var/lib/loki /var/lib/promtail >/dev/null 2>&1 || true
             resource_guard_restart_services_sequentially loki promtail
             loki_ready="true"
+            mssg_ownership_claim_managed loki || return 1
+            mssg_ownership_claim_managed promtail || return 1
             echo "  ✓ Loki и promtail настроены."
         else
             echo "  ⚠️ Не удалось установить loki/promtail. Продолжаем без логов AdGuard."
