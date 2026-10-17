@@ -6,61 +6,28 @@ from urllib.parse import urlparse
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
-from shared.observability import begin_request, endpoint_label, finish_request, record_admission, server_timing
+from shared.observability import (
+    begin_request,
+    endpoint_label,
+    finish_request,
+    record_admission,
+    server_timing,
+)
 from shared.security import safe_request_id
 
 
-_SESSION_FIRST_BROWSER_READ_PATHS = frozenset(
-    {
-        "/api/v1/dashboard/overview",
-        "/api/v1/nodes",
-        "/api/v1/history/nodes",
-        "/api/v1/snapshots/latest",
-        "/api/v1/traffic/stats",
-        "/api/v1/traffic/stats-by-period",
-        "/api/v1/health/deps",
-        "/api/v1/adguard/sources",
-        "/api/v1/adguard/overview",
-        "/api/v1/adguard/history",
-        "/api/v1/monitoring/stack",
-        "/api/v1/servers/status",
-        "/api/v1/collector/status",
-        "/api/v1/clients",
-        "/api/v1/clients/expired",
-        "/api/v1/clients/depleted",
-        "/api/v1/clients/presence",
-        "/api/v1/telegram/node-policies",
-        "/api/v1/inbounds/options",
-        "/api/v1/inbounds",
-        "/api/v1/inbounds/stats",
-    }
-)
+def is_session_first_protected_get(request: Request) -> bool:
+    """Return whether a protected, non-public request can prefer web session.
 
+    The caller applies this only after its protected-path, public-endpoint and
+    trusted-loopback-metrics gates. Every remaining HTTP GET first checks the
+    signed HttpOnly browser session. This prevents stale Basic headers from
+    invoking PAM during browser navigation while keeping a missing or invalid
+    session compatible with Basic-auth API clients.
 
-def is_session_first_browser_read(request: Request) -> bool:
-    """Identify narrowly classified, same-origin browser read projections.
-
-    A stale browser bundle can retain a Basic header after the current bundle
-    has already established the signed HttpOnly web session. For this small
-    allowlist a valid session is sufficient and must be tried before parsing
-    Basic, which avoids needless PAM work. All other routes keep their
-    established Basic-first ordering.
+    Mutations, WebSocket handling and public endpoints never reach this guard.
     """
-    if request.method != "GET":
-        return False
-
-    path = request.url.path
-    if path in _SESSION_FIRST_BROWSER_READ_PATHS:
-        return True
-
-    for prefix, suffix in (
-        ("/api/v1/history/nodes/", ""),
-        ("/api/v1/servers/", "/status"),
-    ):
-        if path.startswith(prefix) and path.endswith(suffix):
-            node_id = path[len(prefix) : len(path) - len(suffix) if suffix else None]
-            return node_id.isdecimal()
-    return False
+    return request.method == "GET"
 
 
 def is_trusted_loopback_metrics_scrape(request: Request) -> bool:
@@ -110,14 +77,25 @@ def build_request_controls_and_audit_middleware(
     enqueue_audit_event,
     allowed_origins=None,
 ):
-    configured_origins = {str(origin).rstrip("/") for origin in (allowed_origins or []) if origin}
+    configured_origins = {
+        str(origin).rstrip("/") for origin in (allowed_origins or []) if origin
+    }
 
     def _csrf_origin_ok(request: Request) -> bool:
-        if request.method not in {"POST", "PUT", "PATCH", "DELETE"} or not request.url.path.startswith("/api/v1/"):
+        if request.method not in {
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+        } or not request.url.path.startswith("/api/v1/"):
             return True
         origin = request.headers.get("Origin", "").strip().rstrip("/")
         referer = request.headers.get("Referer", "").strip()
-        candidate = origin or (f"{urlparse(referer).scheme}://{urlparse(referer).netloc}" if referer else "")
+        candidate = origin or (
+            f"{urlparse(referer).scheme}://{urlparse(referer).netloc}"
+            if referer
+            else ""
+        )
         if not candidate:
             return False
         if candidate in configured_origins:
@@ -126,7 +104,9 @@ def build_request_controls_and_audit_middleware(
         return candidate == request_origin
 
     async def request_controls_and_audit_middleware(request: Request, call_next):
-        request_id = safe_request_id(request.headers.get("X-Request-ID")) or uuid.uuid4().hex
+        request_id = (
+            safe_request_id(request.headers.get("X-Request-ID")) or uuid.uuid4().hex
+        )
         start = time.perf_counter()
         path = request.url.path
         attribution_token = begin_request(request_id, path)
@@ -136,35 +116,51 @@ def build_request_controls_and_audit_middleware(
             request.state.auth_mfa_ok = False
             request.state.auth_via = None
             request.state.request_id = request_id
-            request.state.metrics_loopback_allowed = is_trusted_loopback_metrics_scrape(request)
+            request.state.metrics_loopback_allowed = is_trusted_loopback_metrics_scrape(
+                request
+            )
 
             response = None
 
             protected_path = path.startswith("/api/v1/") or path == "/metrics"
-            if protected_path and not request.state.metrics_loopback_allowed and not is_public_endpoint(path):
-                session_first_read = is_session_first_browser_read(request)
+            if (
+                protected_path
+                and not request.state.metrics_loopback_allowed
+                and not is_public_endpoint(path)
+            ):
+                session_first_read = is_session_first_protected_get(request)
                 if session_first_read:
                     auth_user = check_web_session(request)
                     auth_via = "session" if auth_user else None
                 else:
-                    auth_user = check_basic_auth_header(request.headers.get("Authorization"))
+                    auth_user = check_basic_auth_header(
+                        request.headers.get("Authorization")
+                    )
                     auth_via = "basic" if auth_user else None
                 if not auth_user and session_first_read:
-                    auth_user = check_basic_auth_header(request.headers.get("Authorization"))
+                    auth_user = check_basic_auth_header(
+                        request.headers.get("Authorization")
+                    )
                     auth_via = "basic" if auth_user else None
                 if not auth_user and not session_first_read:
                     auth_user = check_web_session(request)
                     auth_via = "session" if auth_user else None
                 if not auth_user:
-                    response = JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+                    response = JSONResponse(
+                        status_code=401, content={"detail": "Unauthorized"}
+                    )
                 else:
                     auth_role = get_user_role(auth_user)
                     request.state.auth_user = auth_user
                     request.state.auth_role = auth_role
                     request.state.auth_via = auth_via
-                    mfa_ok = auth_via == "session" or verify_totp_code(auth_user, request.headers.get("X-TOTP-Code"))
+                    mfa_ok = auth_via == "session" or verify_totp_code(
+                        auth_user, request.headers.get("X-TOTP-Code")
+                    )
                     if not mfa_ok:
-                        response = JSONResponse(status_code=401, content={"detail": "MFA required"})
+                        response = JSONResponse(
+                            status_code=401, content={"detail": "MFA required"}
+                        )
                         request.state.auth_mfa_ok = False
                     else:
                         request.state.auth_mfa_ok = True
@@ -173,18 +169,34 @@ def build_request_controls_and_audit_middleware(
                     if response is None and not has_min_role(auth_role, required_role):
                         response = JSONResponse(
                             status_code=403,
-                            content={"detail": f"Forbidden for role '{auth_role}', requires '{required_role}'"},
+                            content={
+                                "detail": f"Forbidden for role '{auth_role}', requires '{required_role}'"
+                            },
                         )
                     if response is None and not _csrf_origin_ok(request):
-                        response = JSONResponse(status_code=403, content={"detail": "CSRF origin check failed"})
+                        response = JSONResponse(
+                            status_code=403,
+                            content={"detail": "CSRF origin check failed"},
+                        )
 
-            if response is None and read_only_mode and request.method in {"POST", "PUT", "DELETE", "PATCH"} and path.startswith("/api/v1/"):
+            if (
+                response is None
+                and read_only_mode
+                and request.method in {"POST", "PUT", "DELETE", "PATCH"}
+                and path.startswith("/api/v1/")
+            ):
                 response = JSONResponse(
                     status_code=403,
                     content={"detail": "Read-only mode is enabled"},
                 )
 
-            admission_outcome = "ok" if response is None else "http_4xx" if response.status_code < 500 else "http_5xx"
+            admission_outcome = (
+                "ok"
+                if response is None
+                else "http_4xx"
+                if response.status_code < 500
+                else "http_5xx"
+            )
             record_admission(start, outcome=admission_outcome)
 
             if response is None:
@@ -194,7 +206,9 @@ def build_request_controls_and_audit_middleware(
                 response.status_code < 400
                 and request.method in {"POST", "PUT", "DELETE", "PATCH"}
                 and path.startswith("/api/v1/")
-                and not getattr(request.state, "skip_read_projection_invalidation", False)
+                and not getattr(
+                    request.state, "skip_read_projection_invalidation", False
+                )
             ):
                 invalidate_read_projections()
 
@@ -205,8 +219,12 @@ def build_request_controls_and_audit_middleware(
             route = request.scope.get("route")
             path_label = getattr(route, "path", None) or endpoint_label(path)
             response.headers["Server-Timing"] = server_timing(duration_ms, attribution)
-            http_request_count.labels(request.method, path_label, str(response.status_code)).inc()
-            http_request_latency.labels(request.method, path_label).observe(duration_ms / 1000.0)
+            http_request_count.labels(
+                request.method, path_label, str(response.status_code)
+            ).inc()
+            http_request_latency.labels(request.method, path_label).observe(
+                duration_ms / 1000.0
+            )
             if should_audit_http_access(request):
                 audit_payload = {
                     "event": "http_access",
@@ -216,7 +234,9 @@ def build_request_controls_and_audit_middleware(
                     "status_code": response.status_code,
                     "duration_ms": duration_ms,
                     "client_ip": get_client_ip(request),
-                    "user_hint": request.state.auth_user or extract_basic_auth_username(request.headers.get("Authorization")) or "anonymous",
+                    "user_hint": request.state.auth_user
+                    or extract_basic_auth_username(request.headers.get("Authorization"))
+                    or "anonymous",
                     "user_role": request.state.auth_role,
                 }
                 enqueue_audit_event(audit_payload)
