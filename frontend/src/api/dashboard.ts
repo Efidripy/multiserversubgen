@@ -218,7 +218,7 @@ export function dashboardFleetToServerDeck(fleet: DashboardFleetNode[]): Dashboa
 }
 
 export async function getInboundsHeaderSource(options: { signal?: AbortSignal } = {}): Promise<any[]> {
-  const res = await api.get('/v1/inbounds', { auth: getAuth(), signal: options.signal });
+  const res = await api.get('/v1/inbounds', { sessionOnlyAuth: true, signal: options.signal });
   return Array.isArray(res.data?.inbounds) ? res.data.inbounds
     : Array.isArray(res.data) ? res.data : [];
 }
