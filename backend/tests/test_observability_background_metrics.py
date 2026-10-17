@@ -81,7 +81,7 @@ def _snapshot(node_id=1):
     }
 
 
-def _collector(*, fetch_nodes, metric, clock, on_snapshots=None):
+def _collector(*, fetch_nodes, metric, clock, on_snapshots=None, **metrics):
     return SnapshotCollector(
         fetch_nodes=fetch_nodes,
         xui_monitor=SimpleNamespace(),
@@ -90,6 +90,7 @@ def _collector(*, fetch_nodes, metric, clock, on_snapshots=None):
         cycle_clock=clock,
         on_snapshots=on_snapshots,
         poll_jitter_sec=0,
+        **metrics,
     )
 
 
@@ -127,6 +128,8 @@ def test_collector_cycle_duration_metric_failure_does_not_abort_completed_cycle(
         metric=_Histogram(fail=True),
         clock=lambda: 1.0,
         on_snapshots=lambda _snapshots: setattr(collector, "_running", False),
+        collector_poll_cycles_metric=_Counter(fail=True),
+        collector_due_nodes_metric=_Histogram(fail=True),
     )
 
     async def poll_due(_due_nodes, *, force_poll):
@@ -137,6 +140,66 @@ def test_collector_cycle_duration_metric_failure_does_not_abort_completed_cycle(
     _run_one_collector_cycle(collector)
 
     assert collector.runtime_status()["last_cycle"]["due_nodes"] == 1
+
+
+def test_completed_due_cycle_records_mode_trigger_and_due_node_count(monkeypatch):
+    duration = _Histogram()
+    cycles = _Counter()
+    due_nodes = _Histogram()
+    collector = _collector(
+        fetch_nodes=lambda: [{"id": 1, "name": "alpha"}],
+        metric=duration,
+        clock=lambda: 1.0,
+        on_snapshots=lambda _snapshots: setattr(collector, "_running", False),
+        collector_poll_cycles_metric=cycles,
+        collector_due_nodes_metric=due_nodes,
+    )
+    collector._last_ws_activity = time.time()
+
+    async def poll_due(_due_nodes, *, force_poll):
+        assert force_poll is False
+        return [_snapshot()]
+
+    monkeypatch.setattr(collector, "_poll_due_nodes", poll_due)
+    collector._running = True
+    _run_one_collector_cycle(collector)
+
+    labels = {"mode": "idle", "trigger": "scheduled"}
+    assert cycles.increments == [(labels, 1)]
+    assert due_nodes.observations == [(labels, 1)]
+    last_cycle = collector.runtime_status()["last_cycle"]
+    assert last_cycle["due_nodes"] == 1
+    assert last_cycle["queued_nodes"] == 0
+    assert last_cycle["mode"] == "idle"
+    assert last_cycle["trigger"] == "scheduled"
+
+
+def test_force_poll_uses_distinct_trigger_without_changing_cycle_outcome(monkeypatch):
+    cycles = _Counter()
+    due_nodes = _Histogram()
+    collector = _collector(
+        fetch_nodes=lambda: [{"id": 1, "name": "alpha"}],
+        metric=_Histogram(),
+        clock=lambda: 1.0,
+        on_snapshots=lambda _snapshots: setattr(collector, "_running", False),
+        collector_poll_cycles_metric=cycles,
+        collector_due_nodes_metric=due_nodes,
+    )
+    collector._last_ws_activity = time.time()
+    collector._force_poll_event.set()
+
+    async def poll_due(_due_nodes, *, force_poll):
+        assert force_poll is True
+        return [_snapshot()]
+
+    monkeypatch.setattr(collector, "_poll_due_nodes", poll_due)
+    collector._running = True
+    _run_one_collector_cycle(collector)
+
+    labels = {"mode": "idle", "trigger": "force_poll"}
+    assert cycles.increments == [(labels, 1)]
+    assert due_nodes.observations == [(labels, 1)]
+    assert collector.runtime_status()["last_cycle"]["trigger"] == "force_poll"
 
 
 def test_collector_cycle_duration_skips_no_due_and_failed_cycles():

@@ -98,6 +98,43 @@ def test_default_cadence_keeps_active_freshness_and_bounded_idle_polling(monkeyp
     assert collector._node_state[key]["interval"] == 300.0
 
 
+def test_activity_transitions_are_deterministic_and_do_not_infer_mode_from_due_work(
+    monkeypatch,
+):
+    import services.collector as collector_module
+
+    now = [1000.0]
+    monkeypatch.setattr(collector_module.time, "time", lambda: now[0])
+    ws_manager = SimpleNamespace(active_connections=[])
+    collector = SnapshotCollector(
+        fetch_nodes=lambda: [],
+        xui_monitor=SimpleNamespace(),
+        ws_manager=ws_manager,
+        active_interval_sec=90,
+        idle_interval_sec=300,
+        idle_after_sec=900,
+    )
+
+    collector._mode = CollectorMode.ACTIVE
+    collector._last_ws_activity = 99.0
+    collector._update_mode_based_on_activity()
+    assert collector.get_mode() == "idle"
+    assert collector._get_current_interval() == 300.0
+
+    ws_manager.active_connections.append(object())
+    collector._update_mode_based_on_activity()
+    assert collector.get_mode() == "warming"
+    assert collector._last_ws_activity == 1000.0
+
+    now[0] = 1901.0
+    ws_manager.active_connections.clear()
+    collector._update_mode_based_on_activity()
+    assert collector.get_mode() == "idle"
+
+    collector._switch_mode(CollectorMode.ACTIVE)
+    assert collector._get_current_interval() == 90.0
+
+
 def test_due_cycle_spreads_ordinary_polls_deterministically_without_delaying_force_poll(
     monkeypatch,
 ):

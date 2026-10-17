@@ -174,6 +174,20 @@ persistent runtime state не затрагиваются.
   успешно завершённого poll cycle, в котором был хотя бы один due node. Использует
   monotonic `perf_counter` и включает bounded polling, snapshot persistence и
   completed-snapshot callback. Idle/no-due и оборванные error cycles не наблюдаются.
+- `sub_manager_collector_poll_cycles_total{mode,trigger}` — число завершённых
+  poll cycle с хотя бы одним due node. `mode` — режим, зафиксированный после
+  проверки WebSocket-activity в начале цикла; `trigger` имеет только
+  `scheduled` и `force_poll`. Рост этого счётчика сам по себе не доказывает
+  active cadence: нормальные сроки `next_poll` у разных nodes могут быть
+  разнесены.
+- `sub_manager_collector_poll_cycle_due_nodes{mode,trigger}` — histogram числа
+  due nodes в таких же завершённых cycle. Это кандидаты до polling attempt, а
+  не число успешных XUI snapshots. Вместе с предыдущей series он отделяет
+  количество cycle от размера работы, не добавляя SQLite read.
+- В authenticated `collector.runtime_status().last_cycle` также сохраняются
+  тот же `mode` и `trigger` последнего завершённого loop cycle, включая cycle
+  без due node. Это bounded operational receipt без WebSocket count, node ID,
+  URL или user data.
 - `sub_manager_sqlite_batch_rows{operation}` — количество строк в semantic SQLite
   batch после commit. Единственные фиксированные `operation`:
   `collector_snapshot_upsert`, `node_history_insert`, `audit_memory_persist`,
