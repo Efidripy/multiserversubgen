@@ -30,6 +30,7 @@ mssg_resolve_source_layout() {
         "scripts/deploy/build-and-publish-frontend.sh" \
         "scripts/deploy/verify-frontend-release.sh" \
         "scripts/installer/lib/entrypoint_layout.sh" \
+        "scripts/installer/lib/loki_config.sh" \
         "monitoring/prometheus/rules.yml" \
         "monitoring/loki/loki-config.yml" \
         "monitoring/promtail/promtail-config.yml" \
@@ -66,6 +67,7 @@ mssg_resolve_source_layout() {
         "deploy/build-and-publish-frontend.sh" \
         "deploy/verify-frontend-release.sh" \
         "installer/lib/entrypoint_layout.sh" \
+        "installer/lib/loki_config.sh" \
         "prometheus/rules.yml" \
         "loki/loki-config.yml" \
         "promtail/promtail-config.yml" \

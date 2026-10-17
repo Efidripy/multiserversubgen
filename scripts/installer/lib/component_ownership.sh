@@ -171,6 +171,7 @@ mssg_ownership_component_version() {
     fi
     case "$component" in
         grafana) grafana-server -v 2>/dev/null | head -n 1 || printf 'unknown' ;;
+        loki|promtail) "$component" -version 2>/dev/null | head -n 1 || printf 'unknown' ;;
         *) "$component" --version 2>/dev/null | head -n 1 || printf 'unknown' ;;
     esac
 }
@@ -193,6 +194,11 @@ mssg_ownership_discover_component() {
 mssg_ownership_discover_monitoring() {
     mssg_ownership_discover_component prometheus || return 1
     mssg_ownership_discover_component grafana || return 1
+}
+
+mssg_ownership_discover_loki_stack() {
+    mssg_ownership_discover_component loki || return 1
+    mssg_ownership_discover_component promtail || return 1
 }
 
 mssg_ownership_is_managed() {
@@ -244,9 +250,50 @@ mssg_ownership_allow_monitoring_mutation() {
     return 0
 }
 
+# Loki and Promtail are optional monitoring dependencies, but their service
+# units and data directories are host-wide.  Existing stacks therefore stay
+# external until an operator explicitly adopts both components.
+mssg_ownership_allow_loki_mutation() {
+    local component ownership=""
+    mssg_ownership_discover_loki_stack || return 1
+    for component in loki promtail; do
+        ownership="$(mssg_ownership_read "$component" 2>/dev/null || true)"
+        case "$ownership" in
+            "") ;;
+            mssg-managed|adopted)
+                if ! mssg_ownership_component_present "$component"; then
+                    echo "Ownership registry marks $component as $ownership, but it is missing. Refusing automatic repair." >&2
+                    return 1
+                fi
+                if ! mssg_ownership_version_matches_registry "$component"; then
+                    echo "$component version differs from the ownership registry. Treating it as externally maintained; no mutation is allowed." >&2
+                    return 1
+                fi
+                ;;
+            external|unknown)
+                echo "Loki stack is not modified: $component ownership is $ownership. Run the explicit adoption workflow first." >&2
+                return 1
+                ;;
+            *)
+                echo "Loki stack is not modified: invalid ownership state for $component." >&2
+                return 1
+                ;;
+        esac
+    done
+    return 0
+}
+
 mssg_ownership_claim_managed() {
     local component="$1"
-    mssg_ownership_write "$component" mssg-managed apt
+    local install_method="${2:-}"
+    if [ -z "$install_method" ]; then
+        if dpkg -s "$component" >/dev/null 2>&1; then
+            install_method="apt"
+        else
+            install_method="upstream-binary"
+        fi
+    fi
+    mssg_ownership_write "$component" mssg-managed "$install_method"
 }
 
 mssg_ownership_report() {

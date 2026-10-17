@@ -7,7 +7,7 @@ Accepted.
 ## Context
 
 `multiserversubgen` is often installed beside manually administered software:
-Grafana, Prometheus, 3x-ui, nginx and other host components. A normal panel
+Grafana, Prometheus, Loki, Promtail, 3x-ui, nginx and other host components. A normal panel
 update must never turn into an implicit package upgrade, global configuration
 rewrite or destructive cleanup of that software.
 
@@ -30,7 +30,8 @@ The normal updater is **panel-only**:
 
 - it updates Sub-Manager code and its own service;
 - it does not run package upgrades for present packages;
-- it does not install or configure external/unknown Grafana or Prometheus;
+- it does not install or configure external/unknown Grafana, Prometheus, Loki
+  or Promtail;
 - it does not update 3x-ui.
 
 MSSG Grafana files are namespaced: provisioning files, dashboard directory and
@@ -50,19 +51,27 @@ Inspect without mutation:
 sudo bash scripts/installer/component-ownership.sh report
 ```
 
-Adopt an existing Grafana/Prometheus only after a backup and compatibility
+Adopt existing monitoring components only after a backup and compatibility
 review. Adoption updates only the local registry; it does not restart a
 service, alter a package or rewrite configuration:
 
 ```bash
-sudo bash scripts/installer/component-ownership.sh adopt grafana prometheus
+sudo bash scripts/installer/component-ownership.sh adopt grafana prometheus loki promtail
 ```
 
 Before manually maintaining an MSSG-managed monitoring component, release it:
 
 ```bash
-sudo bash scripts/installer/component-ownership.sh release grafana prometheus
+sudo bash scripts/installer/component-ownership.sh release grafana prometheus loki promtail
 ```
+
+For an MSSG-managed Loki instance, the updater validates the candidate
+configuration with the installed `loki -verify-config` before an atomic
+activation. It retains Loki data for 14 days through the TSDB compactor and
+uses `server.log_level: warn`; the 30-minute compaction interval is selected
+for low-resource single-node hosts. The old configuration is copied to
+`/var/backups/sub-manager_loki` before activation; a rejected candidate leaves
+the live configuration intact.
 
 3x-ui version changes remain a separate operator operation. The normal panel
 updater never invokes `xui_install_release`, `x-ui migrate` or an x-ui
@@ -70,7 +79,7 @@ restart.
 
 ## Consequences
 
-- Legacy Grafana/Prometheus no longer receive automatic MSSG provisioning
+- Legacy Grafana/Prometheus/Loki/Promtail no longer receive automatic MSSG provisioning
   until the operator explicitly adopts them.
 - A version changed outside MSSG requires a conscious adoption/release decision
   before MSSG can reconcile monitoring again.

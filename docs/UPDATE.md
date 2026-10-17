@@ -32,8 +32,8 @@ checkpoint, backup, замена runtime и автоматический restore
 ## Внешние компоненты на том же сервере
 
 Обычный updater обновляет только Sub-Manager. Он не обновляет вручную
-установленные Grafana, Prometheus, 3x-ui и другие уже существующие пакеты.
-Для legacy-хоста без ownership registry обнаруженные Grafana/Prometheus
+установленные Grafana, Prometheus, Loki, Promtail, 3x-ui и другие уже существующие пакеты.
+Для legacy-хоста без ownership registry обнаруженные Grafana/Prometheus/Loki/Promtail
 считаются `external`: updater не трогает их APT source, сервис или глобальные
 конфиги.
 
@@ -43,20 +43,27 @@ checkpoint, backup, замена runtime и автоматический restore
 sudo bash scripts/installer/component-ownership.sh report
 ```
 
-Если оператор хочет передать существующие Grafana и Prometheus под управление
+Если оператор хочет передать существующие Grafana, Prometheus, Loki и Promtail под управление
 MSSG, это отдельное подтверждаемое действие. Оно меняет только registry, без
 перезапуска и изменения конфигурации:
 
 ```bash
-sudo bash scripts/installer/component-ownership.sh adopt grafana prometheus
+sudo bash scripts/installer/component-ownership.sh adopt grafana prometheus loki promtail
 ```
 
 Перед ручным обновлением компонента, установленного MSSG, снимите с него
 управление MSSG:
 
 ```bash
-sudo bash scripts/installer/component-ownership.sh release grafana prometheus
+sudo bash scripts/installer/component-ownership.sh release grafana prometheus loki promtail
 ```
+
+Для MSSG-managed Loki updater перед заменой проверяет candidate тем же
+установленным бинарником (`loki -verify-config`) и только затем атомарно
+активирует его. Политика Loki: `warn` вместо шумного INFO, compaction каждые
+30 минут и TSDB retention 14 дней. Предыдущий `local-config.yaml` сохраняется
+в `/var/backups/sub-manager_loki`; при ошибке валидации live-конфиг остаётся
+без изменений.
 
 Полные правила и границы: [ADR-0003](./ADR-0003-component-ownership.md).
 

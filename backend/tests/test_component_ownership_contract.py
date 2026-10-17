@@ -55,6 +55,30 @@ def test_registry_version_drift_is_a_fail_closed_part_of_the_monitoring_gate():
     assert "Treating it as externally maintained; no mutation is allowed." in library
 
 
+def test_preexisting_loki_stack_is_recorded_as_external_and_fail_closed(tmp_path: Path):
+    result = _run(
+        f'''source "{LIBRARY}"
+dpkg() {{ return 0; }}
+dpkg-query() {{ printf '3.7.8'; }}
+mssg_ownership_allow_loki_mutation
+''',
+        tmp_path / "state",
+    )
+
+    assert result.returncode != 0
+    registry = json.loads((tmp_path / "state/component-ownership.json").read_text())
+    assert registry["components"]["loki"]["ownership"] == "external"
+    assert registry["components"]["promtail"]["ownership"] == "external"
+    assert "Loki stack is not modified" in result.stderr
+
+
+def test_loki_stack_uses_the_binary_version_flag_for_ownership_drift_detection():
+    library = (REPO / LIBRARY).read_text(encoding="utf-8")
+
+    assert 'loki|promtail) "$component" -version' in library
+    assert 'install_method="upstream-binary"' in library
+
+
 def test_update_gates_monitoring_before_any_package_install_or_global_grafana_config():
     for relative_path in ("scripts/installer/install.sh", "scripts/installer/update.sh"):
         script = (REPO / relative_path).read_text(encoding="utf-8")
@@ -69,12 +93,26 @@ def test_update_gates_monitoring_before_any_package_install_or_global_grafana_co
         assert "component_ownership.sh" in script
 
 
+def test_install_and_update_gate_loki_stack_before_reconcile_or_restart():
+    for relative_path in ("scripts/installer/install.sh", "scripts/installer/update.sh"):
+        script = (REPO / relative_path).read_text(encoding="utf-8")
+        function_start = script.index("configure_monitoring_stack() {")
+        gate = script.index("mssg_ownership_allow_loki_mutation", function_start)
+        reconcile = script.index('mssg_reconcile_loki_config "$MSSG_LOKI_CONFIG"', gate)
+        restart = script.index(
+            "resource_guard_restart_services_sequentially loki promtail", reconcile
+        )
+
+        assert gate < reconcile < restart
+
+
 def test_explicit_ownership_cli_does_not_offer_implicit_adoption():
     command = (REPO / "scripts/installer/component-ownership.sh").read_text(encoding="utf-8")
 
     assert "ADOPT_MSSG_MONITORING" in command
     assert "RELEASE_MSSG_MONITORING" in command
     assert "No packages, services, or configuration were changed." in command
+    assert "loki|promtail" in command
 
 
 def test_all_removal_paths_preserve_unproven_host_wide_components():
