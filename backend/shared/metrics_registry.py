@@ -23,6 +23,8 @@ class MetricsRegistry:
     adguard_dns_cache_hit_ratio: Gauge
     adguard_dns_upstream_errors: Gauge
     collector_poll_cycle_duration_seconds: Histogram
+    collector_poll_cycles_total: Counter
+    collector_poll_cycle_due_nodes: Histogram
     sqlite_batch_rows: Histogram
     audit_memory_queue_depth: Gauge
     audit_events_dropped_total: Counter
@@ -108,6 +110,16 @@ def build_metrics_registry() -> MetricsRegistry:
         collector_poll_cycle_duration_seconds=Histogram(
             "sub_manager_collector_poll_cycle_duration_seconds",
             "Completed collector poll cycle duration for cycles with due nodes",
+        ),
+        collector_poll_cycles_total=Counter(
+            "sub_manager_collector_poll_cycles_total",
+            "Completed collector poll cycles with due nodes by mode and trigger",
+            ["mode", "trigger"],
+        ),
+        collector_poll_cycle_due_nodes=Histogram(
+            "sub_manager_collector_poll_cycle_due_nodes",
+            "Due nodes per completed collector poll cycle by mode and trigger",
+            ["mode", "trigger"],
         ),
         sqlite_batch_rows=Histogram(
             "sub_manager_sqlite_batch_rows",
