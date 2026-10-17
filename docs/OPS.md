@@ -148,6 +148,22 @@ acceptance, а не доказательство production p95, browser UX ре
 или отсутствия egress у сторонних расширений браузера. Для rollback выключите
 feature flag или удалите collectors: request behavior не меняется.
 
+### Cadence collector
+
+По умолчанию `COLLECTOR_ACTIVE_INTERVAL_SEC=90`: после warming и при active
+WebSocket-сессии следующий node poll не растягивается стабильными snapshot-ами
+дольше 90 секунд. `COLLECTOR_IDLE_INTERVAL_SEC=300`: без active-сессии collector
+переходит на node poll раз в 5 минут. После `COLLECTOR_IDLE_AFTER_SEC` (default
+900 секунд без WebSocket-activity) active режим также возвращается в idle;
+`force_poll` остаётся немедленным.
+
+Это интервал remote snapshot/persistence node poll, а не выключатель control
+loop: collector продолжает bounded проверку inventory и может быть разбужен
+явным force poll. Изменение cadence не меняет bounded fan-out, SQLite policy,
+XUI fallback или dashboard snapshot-first contract. Для rollback верните оба
+значения через source/systemd drop-in либо изолированный source commit; schema и
+persistent runtime state не затрагиваются.
+
 ### Фоновые collector/audit metrics
 
 Эти метрики включены всегда и passive: они не делают новых SQLite-запросов, не

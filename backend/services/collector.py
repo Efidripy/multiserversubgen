@@ -76,10 +76,10 @@ def _detect_api_version(panel_version: str) -> str:
 
 class CollectorMode(Enum):
     """Collector operating modes."""
-    ULTRA_IDLE = "ultra_idle"     # No activity for 24h → poll once a day
-    IDLE = "idle"                 # No activity for 10min → poll once an hour
-    WARMING = "warming"           # First 10min after connect → poll every 5-20s
-    ACTIVE = "active"             # Long active session → poll every 30s
+    ULTRA_IDLE = "ultra_idle"  # No activity for 24h → lower-priority cadence
+    IDLE = "idle"  # No activity after idle_after → default poll every 5min
+    WARMING = "warming"  # First 10min after connect → polling ramps up
+    ACTIVE = "active"  # Active WebSocket session → default poll every 90s
 
 
 class SnapshotCollector:
@@ -101,12 +101,12 @@ class SnapshotCollector:
         warming_interval_1_sec: int = 30,
         warming_interval_2_sec: int = 60,
         warming_interval_3_sec: int = 120,
-        active_interval_sec: int = 120,
-        idle_interval_sec: int = 3600,
+        active_interval_sec: int = 90,
+        idle_interval_sec: int = 300,
         ultra_idle_interval_sec: int = 86400,
         idle_after_sec: int = 900,
         ultra_idle_after_sec: int = 86400,
-        poll_interval_ceiling_sec: int = 60,
+        poll_interval_ceiling_sec: Optional[int] = None,
         degraded_backoff_sec: int = 300,
         poll_jitter_sec: float = 3.0,
         collector_cycle_duration_metric=None,
@@ -133,7 +133,14 @@ class SnapshotCollector:
         self.ultra_idle_interval_sec = max(self.idle_interval_sec, ultra_idle_interval_sec)
         self.idle_after_sec = max(60, idle_after_sec)
         self.ultra_idle_after_sec = max(self.idle_after_sec, ultra_idle_after_sec)
-        self.poll_interval_ceiling_sec = max(30, min(60, poll_interval_ceiling_sec))
+        effective_poll_interval_ceiling = (
+            self.ultra_idle_interval_sec
+            if poll_interval_ceiling_sec is None
+            else poll_interval_ceiling_sec
+        )
+        self.poll_interval_ceiling_sec = max(
+            30, min(self.max_interval_sec, effective_poll_interval_ceiling)
+        )
         self.degraded_backoff_sec = max(180, min(300, degraded_backoff_sec))
         self.db_path = db_path
         self._collector_cycle_duration_metric = collector_cycle_duration_metric
@@ -743,9 +750,17 @@ class SnapshotCollector:
             # Adaptive interval per node based on current mode and stability.
             current_interval = self._get_current_interval()
             stable_boost = min(4, 1 + state["stable_cycles"] // 3)
+            # Active and idle modes keep their configured freshness/cadence
+            # bounds even after stable snapshots. Ultra-idle remains bounded by
+            # its own configured interval or an explicit global ceiling.
+            interval_ceiling = self.poll_interval_ceiling_sec
+            if self._mode == CollectorMode.ACTIVE:
+                interval_ceiling = min(interval_ceiling, self.active_interval_sec)
+            elif self._mode == CollectorMode.IDLE:
+                interval_ceiling = min(interval_ceiling, self.idle_interval_sec)
             interval = min(
                 self.max_interval_sec,
-                self.poll_interval_ceiling_sec,
+                interval_ceiling,
                 max(self.min_interval_sec, current_interval * stable_boost),
             )
             state["interval"] = float(interval)

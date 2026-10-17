@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from services.collector import SnapshotCollector
+from services.collector import CollectorMode, SnapshotCollector
 from services.db_bootstrap import connect, init_db
 from services.metrics_runtime import MetricsRuntime
 
@@ -73,6 +73,29 @@ def _metrics_runtime(db_path: str, state: dict) -> MetricsRuntime:
         node_traffic_total_bytes_metric=metrics[4],
         node_poll_duration_ms_metric=metrics[5],
     )
+
+
+def test_default_cadence_keeps_active_freshness_and_bounded_idle_polling(monkeypatch):
+    collector = _collector()
+
+    assert collector.active_interval_sec == 90
+    assert collector.idle_interval_sec == 300
+
+    async def fake_run_blocking(_label, _function, node):
+        return _snapshot(node["id"])
+
+    monkeypatch.setattr(collector, "_run_blocking", fake_run_blocking)
+    node = {"id": 1, "name": "alpha"}
+    key = "id:1"
+
+    collector._mode = CollectorMode.ACTIVE
+    for _ in range(5):
+        asyncio.run(collector._poll_node(node, key))
+    assert collector._node_state[key]["interval"] == 90.0
+
+    collector._mode = CollectorMode.IDLE
+    asyncio.run(collector._poll_node(node, key))
+    assert collector._node_state[key]["interval"] == 300.0
 
 
 def test_due_cycle_spreads_ordinary_polls_deterministically_without_delaying_force_poll(
