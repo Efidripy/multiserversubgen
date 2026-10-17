@@ -110,6 +110,8 @@ class SnapshotCollector:
         degraded_backoff_sec: int = 300,
         poll_jitter_sec: float = 3.0,
         collector_cycle_duration_metric=None,
+        collector_poll_cycles_metric=None,
+        collector_due_nodes_metric=None,
         sqlite_batch_rows_metric=None,
         cycle_clock: Callable[[], float] = time.perf_counter,
     ):
@@ -144,6 +146,8 @@ class SnapshotCollector:
         self.degraded_backoff_sec = max(180, min(300, degraded_backoff_sec))
         self.db_path = db_path
         self._collector_cycle_duration_metric = collector_cycle_duration_metric
+        self._collector_poll_cycles_metric = collector_poll_cycles_metric
+        self._collector_due_nodes_metric = collector_due_nodes_metric
         self._sqlite_batch_rows_metric = sqlite_batch_rows_metric
         self._cycle_clock = cycle_clock
         if on_snapshots is not None:
@@ -186,6 +190,8 @@ class SnapshotCollector:
             "duration_ms": 0.0,
             "due_nodes": 0,
             "queued_nodes": 0,
+            "mode": CollectorMode.IDLE.value,
+            "trigger": "scheduled",
         }
 
         # Adaptive mode state
@@ -202,6 +208,17 @@ class SnapshotCollector:
         try:
             target = metric.labels(**labels) if labels else metric
             target.observe(value)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _increment_metric(metric, **labels) -> None:
+        """Increment an optional bounded metric without changing collector outcome."""
+        if metric is None:
+            return
+        try:
+            target = metric.labels(**labels) if labels else metric
+            target.inc()
         except Exception:
             pass
 
@@ -603,6 +620,7 @@ class SnapshotCollector:
             try:
                 self._update_mode_based_on_activity()
                 current_interval = self._get_current_interval()
+                cycle_mode = self._mode.value
 
                 nodes = await self._run_blocking("collector.fetch_nodes", self.fetch_nodes)
                 now = time.time()
@@ -647,12 +665,26 @@ class SnapshotCollector:
                     "duration_ms": round((time.time() - cycle_started) * 1000, 2),
                     "due_nodes": len(due_nodes),
                     "queued_nodes": max(0, len(due_nodes) - self.max_parallel_polls),
+                    "mode": cycle_mode,
+                    "trigger": "force_poll" if force_poll else "scheduled",
                 }
 
                 if due_nodes:
+                    metric_labels = {
+                        "mode": cycle_mode,
+                        "trigger": "force_poll" if force_poll else "scheduled",
+                    }
                     self._observe_metric(
                         self._collector_cycle_duration_metric,
                         max(0.0, self._cycle_clock() - cycle_started_monotonic),
+                    )
+                    self._increment_metric(
+                        self._collector_poll_cycles_metric, **metric_labels
+                    )
+                    self._observe_metric(
+                        self._collector_due_nodes_metric,
+                        len(due_nodes),
+                        **metric_labels,
                     )
 
                 if force_poll:

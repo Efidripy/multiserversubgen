@@ -133,6 +133,8 @@ def build_app_runtime_bundle(
         idle_after_sec=collector_idle_after_sec,
         ultra_idle_after_sec=collector_ultra_idle_after_sec,
         collector_cycle_duration_metric=metrics.collector_poll_cycle_duration_seconds,
+        collector_poll_cycles_metric=metrics.collector_poll_cycles_total,
+        collector_due_nodes_metric=metrics.collector_poll_cycle_due_nodes,
         sqlite_batch_rows_metric=metrics.sqlite_batch_rows,
     )
     ws_manager.set_activity_callback(snapshot_collector.on_websocket_activity)
