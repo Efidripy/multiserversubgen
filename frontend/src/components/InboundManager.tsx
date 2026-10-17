@@ -542,7 +542,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     try {
       // Single parallel fetch â€” backend returns from cache (30s fresh / 300s stale).
       const inboundStatsPromise = api
-        .get('/v1/inbounds/stats', { auth: getAuth(), signal: controller.signal })
+        .get('/v1/inbounds/stats', { sessionOnlyAuth: true, signal: controller.signal })
         .then((res) => normalizeInboundStats(res.data))
         .catch(() => null);
 
