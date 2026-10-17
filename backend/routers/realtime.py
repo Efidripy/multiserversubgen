@@ -28,9 +28,11 @@ def build_realtime_router(
     async def websocket_endpoint(websocket: WebSocket):
         protocols = websocket.headers.get("sec-websocket-protocol", "")
         ticket = next(
-            (item[len("mssg-ticket."):]
-             for item in (part.strip() for part in protocols.split(","))
-             if item.startswith("mssg-ticket.") and len(item) > len("mssg-ticket.")),
+            (
+                item[len("mssg-ticket.") :]
+                for item in (part.strip() for part in protocols.split(","))
+                if item.startswith("mssg-ticket.") and len(item) > len("mssg-ticket.")
+            ),
             None,
         )
         user = verify_ws_ticket(ticket)
@@ -49,14 +51,17 @@ def build_realtime_router(
                 if data.get("type") in {"subscribe", "unsubscribe"}:
                     channel = str(data.get("channel") or "")
                     minimum_role = CHANNEL_MIN_ROLES.get(channel)
-                    if not minimum_role or not ws_manager.has_channel_access(role, minimum_role):
+                    if not minimum_role or not ws_manager.has_channel_access(
+                        role, minimum_role
+                    ):
                         await websocket.close(code=1008)
                         return
                 await handle_websocket_message(websocket, data)
         except WebSocketDisconnect:
-            ws_manager.disconnect(websocket)
+            pass
         except Exception as exc:
             logger.error("WebSocket error: %s", exc)
+        finally:
             ws_manager.disconnect(websocket)
 
     return router
