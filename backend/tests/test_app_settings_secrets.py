@@ -49,6 +49,24 @@ def test_development_keeps_explicit_ephemeral_fallback(monkeypatch):
     assert len(settings.subscription_signing_secret) == 64
 
 
+def test_collector_cadence_defaults_and_explicit_overrides(monkeypatch):
+    for name in ("COLLECTOR_ACTIVE_INTERVAL_SEC", "COLLECTOR_IDLE_INTERVAL_SEC"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("REQUIRE_PERSISTENT_SECRETS", "false")
+
+    defaults = load_app_settings(parse_mfa_users=_parse_mfa_users)
+
+    assert defaults.collector_active_interval_sec == 90
+    assert defaults.collector_idle_interval_sec == 300
+
+    monkeypatch.setenv("COLLECTOR_ACTIVE_INTERVAL_SEC", "120")
+    monkeypatch.setenv("COLLECTOR_IDLE_INTERVAL_SEC", "900")
+    overrides = load_app_settings(parse_mfa_users=_parse_mfa_users)
+
+    assert overrides.collector_active_interval_sec == 120
+    assert overrides.collector_idle_interval_sec == 900
+
+
 def test_telegram_is_disabled_by_default_and_does_not_need_runtime_secrets(monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_ENABLED", raising=False)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
