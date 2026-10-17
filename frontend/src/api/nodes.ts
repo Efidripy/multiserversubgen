@@ -240,9 +240,11 @@ export async function updateNode(nodeId: number, payload: unknown): Promise<any>
   return res.data;
 }
 
-export async function listTelegramNodePolicies(options: { signal?: AbortSignal } = {}): Promise<TelegramNodePolicy[]> {
+export async function listTelegramNodePolicies(
+  options: { signal?: AbortSignal; sessionOnlyAuth?: boolean } = {},
+): Promise<TelegramNodePolicy[]> {
   const res = await api.get<{ items?: TelegramNodePolicy[] }>('/v1/telegram/node-policies', {
-    auth: getAuth(),
+    ...(options.sessionOnlyAuth ? { sessionOnlyAuth: true } : { auth: getAuth() }),
     signal: options.signal,
   });
   return Array.isArray(res.data?.items) ? res.data.items : [];
