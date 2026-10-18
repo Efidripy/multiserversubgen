@@ -12,6 +12,7 @@ from core.lifecycle_work import LifecycleWorkAdmissionClosed
 from services.snapshot_push import build_snapshot_push_payload
 from services.system_clients import normalize_email, system_client_emails_from_inbounds
 from services.xray_compatibility import summarize_node_inbounds
+from xui_session import suppress_collector_transport_diagnostics
 
 
 logger = logging.getLogger("sub_manager")
@@ -43,9 +44,14 @@ _DASHBOARD_SNAPSHOT_FIELDS = (
     "circuit_open_until",
     "cached_from_db",
     "snapshot_updated_at",
+    "stale",
+    "last_success_at",
+    "last_attempt_at",
 )
 
 _CLIENT_PRESENCE_RETENTION_SEC = 30 * 24 * 60 * 60
+_TRANSPORT_FAILURE_BACKOFF_SEC = (300.0, 600.0, 900.0)
+_TRANSPORT_DIAGNOSTIC_INTERVAL_SEC = 900.0
 
 
 def _online_client_emails(payload: Any) -> List[str]:
@@ -166,6 +172,7 @@ class SnapshotCollector:
         self._lock = asyncio.Lock()
         self._snapshot_write_lock = asyncio.Lock()
         self._node_state: Dict[str, Dict] = {}
+        self._last_transport_diagnostic_at: Dict[str, float] = {}
         self._latest = {"timestamp": None, "nodes": {}}
         # Observed presence is deliberately internal: Dashboard remains bounded
         # and never serializes client emails. Client Manager receives it through
@@ -630,6 +637,7 @@ class SnapshotCollector:
                 for stale in list(self._node_state.keys()):
                     if stale not in active_node_keys:
                         self._node_state.pop(stale, None)
+                        self._last_transport_diagnostic_at.pop(stale, None)
                         self._latest["nodes"].pop(stale, None)
                         self._refresh_client_presence_projection()
 
@@ -656,8 +664,17 @@ class SnapshotCollector:
 
                 completed_snapshots = await self._poll_due_nodes(due_nodes, force_poll=force_poll)
                 if completed_snapshots:
-                    await self._persist_snapshots(completed_snapshots)
-                    await self._notify_completed_snapshots(completed_snapshots)
+                    # Keep transport degradation process-local: the last
+                    # durable success remains the source after a restart.
+                    durable_snapshots = [
+                        snapshot for snapshot in completed_snapshots
+                        if not snapshot.get("_transient_transport_failure")
+                    ]
+                    if durable_snapshots:
+                        await self._persist_snapshots(durable_snapshots)
+                        await self._notify_completed_snapshots(durable_snapshots)
+                    for snapshot in completed_snapshots:
+                        snapshot.pop("_transient_transport_failure", None)
 
                 self._last_cycle = {
                     "started_at": cycle_started,
@@ -767,6 +784,8 @@ class SnapshotCollector:
         )
 
         if snapshot.get("available"):
+            prior_transport_failures = int(state.get("failures", 0))
+            recovered_transport = bool(state.get("transport_degraded"))
             curr_hash = json.dumps(snapshot, sort_keys=True, ensure_ascii=False)
             changed = curr_hash != state["last_hash"]
             if changed:
@@ -778,6 +797,15 @@ class SnapshotCollector:
             state["last_hash"] = curr_hash
             state["failures"] = 0
             state["circuit_until"] = 0.0
+            state["transport_degraded"] = False
+            state["transport_failures_since_log"] = 0
+            state["last_success_snapshot"] = dict(snapshot)
+            self._last_transport_diagnostic_at.pop(key, None)
+            if recovered_transport:
+                logger.info(
+                    "Collector transport recovered after %d failed attempt(s)",
+                    prior_transport_failures,
+                )
 
             # Adaptive interval per node based on current mode and stability.
             current_interval = self._get_current_interval()
@@ -799,12 +827,17 @@ class SnapshotCollector:
         else:
             state["failures"] += 1
             if self._is_timeout_snapshot(snapshot):
-                circuit_until = time.time() + self.degraded_backoff_sec
-                state["interval"] = float(self.degraded_backoff_sec)
+                backoff = self._transport_backoff_for_failures(state["failures"])
+                circuit_until = time.time() + backoff
+                state["interval"] = backoff
                 state["circuit_until"] = circuit_until
+                state["transport_degraded"] = True
+                snapshot = self._stale_snapshot_from_failure(state, previous, snapshot)
+                snapshot["_transient_transport_failure"] = True
                 snapshot["circuit_open_until"] = circuit_until
                 snapshot["reason"] = "timeout"
                 snapshot["status"] = "offline"
+                self._log_transport_failure_once(key, state, backoff)
             else:
                 current_interval = min(self._get_current_interval(), self.poll_interval_ceiling_sec)
                 backoff = current_interval * (2 ** min(state["failures"], 4))
@@ -846,7 +879,66 @@ class SnapshotCollector:
             await self._broadcast_delta(str(snapshot.get("name") or key), snapshot, previous=previous)
         return snapshot
 
+    @staticmethod
+    def _transport_backoff_for_failures(failures: int) -> float:
+        """Bound consecutive transport failures without changing fleet fan-out."""
+        position = min(max(1, int(failures)), len(_TRANSPORT_FAILURE_BACKOFF_SEC)) - 1
+        return _TRANSPORT_FAILURE_BACKOFF_SEC[position]
+
+    def _log_transport_failure_once(self, key: str, state: Dict, backoff_sec: float) -> None:
+        """Emit a redacted transition/periodic collector summary for one node."""
+        now = time.time()
+        last_logged = self._last_transport_diagnostic_at.get(key, 0.0)
+        repeated = int(state.get("transport_failures_since_log", 0)) + 1
+        state["transport_failures_since_log"] = repeated
+        if last_logged and now - last_logged < _TRANSPORT_DIAGNOSTIC_INTERVAL_SEC:
+            return
+        self._last_transport_diagnostic_at[key] = now
+        if last_logged:
+            logger.warning(
+                "Collector transport failure persists: repeated_attempts=%d retry_in_sec=%d",
+                repeated,
+                int(backoff_sec),
+            )
+        else:
+            logger.warning("Collector transport unavailable; retry_in_sec=%d", int(backoff_sec))
+        state["transport_failures_since_log"] = 0
+
+    @staticmethod
+    def _stale_snapshot_from_failure(state: Dict, previous: Optional[Dict], failure: Dict) -> Dict:
+        """Keep the last completed snapshot visible while marking a failed attempt."""
+        last_success = state.get("last_success_snapshot")
+        if not isinstance(last_success, dict) and isinstance(previous, dict) and previous.get("available"):
+            last_success = previous
+        attempted_at = float(failure.get("timestamp") or time.time())
+        if not isinstance(last_success, dict):
+            failure["stale"] = False
+            failure["last_attempt_at"] = attempted_at
+            return failure
+
+        stale = dict(last_success)
+        last_success_at = stale.get("timestamp")
+        stale.update(
+            {
+                "available": False,
+                "status": "offline",
+                "reason": str(failure.get("reason") or "unavailable"),
+                "error": "Node panel transport is unavailable",
+                "stale": True,
+                "last_success_at": last_success_at,
+                "last_attempt_at": attempted_at,
+            }
+        )
+        stale.pop("circuit_open_until", None)
+        stale.pop("cached_from_db", None)
+        stale.pop("snapshot_updated_at", None)
+        return stale
+
     def _collect_node_snapshot(self, node: Dict) -> Dict:
+        with suppress_collector_transport_diagnostics():
+            return self._collect_node_snapshot_unfiltered(node)
+
+    def _collect_node_snapshot_unfiltered(self, node: Dict) -> Dict:
         name = node.get("name", "unknown")
         try:
             status = self.xui_monitor.get_server_status(node)
@@ -952,7 +1044,12 @@ class SnapshotCollector:
     def _is_timeout_snapshot(snapshot: Dict) -> bool:
         reason = str(snapshot.get("reason") or "").lower()
         error = str(snapshot.get("error") or "").lower()
-        return "timeout" in reason or "timed out" in error or "read timed out" in error
+        if reason in {"timeout", "network_error", "request_failed", "connection_failed"}:
+            return True
+        return any(
+            marker in error
+            for marker in ("timed out", "timeout", "connection refused", "network is unreachable")
+        )
 
     async def _broadcast_delta(self, key: str, snapshot: Dict, *, previous: Optional[Dict] = None):
         if not getattr(self.ws_manager, "active_connections", None):

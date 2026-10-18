@@ -17,6 +17,7 @@ from xui_session import (
     XUI_FAST_RETRIES,
     XUI_FAST_TIMEOUT_SEC,
     build_panel_base_url,
+    collector_transport_diagnostics_suppressed,
     diagnose_xui_failure,
     extract_node_auth,
     get_capability_route,
@@ -300,10 +301,18 @@ class ThreeXUIMonitor:
                 force_reauth=force_reauth,
             )
             if not auth.get("ok"):
-                logger.warning(f"ThreeXUIMonitor: failed to login to {node['name']}")
+                if not (
+                    collector_transport_diagnostics_suppressed()
+                    and auth.get("reason") in {"timeout", "network_error", "tls_error"}
+                ):
+                    logger.warning(f"ThreeXUIMonitor: failed to login to {node['name']}")
                 return None, None, auth
         except Exception as exc:
-            logger.warning(f"ThreeXUIMonitor: login error for {node['name']}: {exc}")
+            if not (
+                collector_transport_diagnostics_suppressed()
+                and isinstance(exc, requests.RequestException)
+            ):
+                logger.warning(f"ThreeXUIMonitor: login error for {node['name']}: {exc}")
             return None, None, {
                 "ok": False,
                 "reason": "monitor_exception",
@@ -421,7 +430,11 @@ class ThreeXUIMonitor:
                 **self._diagnostic_payload(response=res),
             }
         except Exception as exc:
-            logger.warning(f"ThreeXUIMonitor: get_server_status error for {node['name']}: {exc}")
+            if not (
+                collector_transport_diagnostics_suppressed()
+                and isinstance(exc, requests.RequestException)
+            ):
+                logger.warning(f"ThreeXUIMonitor: get_server_status error for {node['name']}: {exc}")
             return {
                 "node": node["name"],
                 "available": False,
