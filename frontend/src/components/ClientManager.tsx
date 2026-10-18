@@ -19,8 +19,13 @@ import { UIIcon } from './UIIcon';
 import { readStaleCache, writeStaleCache } from '../services/staleCache';
 import {
   beginProjectionOperation,
+  clearProjectionOperation,
+  clientProjectionTargetKey,
   setProjectionOperationStatus,
+  setProjectionOperationTargetStatus,
   useProjectionOperations,
+  type ProjectionOperation,
+  type ProjectionOperationStatus,
 } from '../services/projectionOperationStore';
 import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
 import { ClientEditModal } from './ClientEditModal';
@@ -374,6 +379,9 @@ export const ClientManager: React.FC = () => {
   const clientsLoadAbortRef = useRef<AbortController | null>(null);
   const clientsReconcileTimerRef = useRef<number | null>(null);
   const clientProjectionMatchersRef = useRef<Map<number, (rows: Client[]) => boolean>>(new Map());
+  const clientTargetProjectionMatchersRef = useRef<Map<number, Map<string, (rows: Client[]) => boolean>>>(new Map());
+  const clientTargetConfirmOperationRef = useRef<Map<number, boolean>>(new Map());
+  const clientTargetConfirmationClearsRef = useRef<Map<number, number>>(new Map());
   const trafficFetchAbortRef = useRef<AbortController | null>(null);
   const clientPresenceAbortRef = useRef<AbortController | null>(null);
   const realtimeRefreshRef = useRef(0);
@@ -485,6 +493,7 @@ export const ClientManager: React.FC = () => {
     return () => {
       clientsLoadAbortRef.current?.abort();
       if (clientsReconcileTimerRef.current) window.clearTimeout(clientsReconcileTimerRef.current);
+      clientTargetConfirmationClearsRef.current.forEach((timer) => window.clearTimeout(timer));
       trafficFetchAbortRef.current?.abort();
       clientPresenceAbortRef.current?.abort();
       ipSearchRequestIdRef.current += 1;
@@ -601,6 +610,27 @@ export const ClientManager: React.FC = () => {
           clientProjectionMatchersRef.current.delete(operationId);
         }
       });
+      clientTargetProjectionMatchersRef.current.forEach((targetMatchers, operationId) => {
+        targetMatchers.forEach((matches, targetKey) => {
+          if (!matches(next)) return;
+          setProjectionOperationTargetStatus(operationId, targetKey, 'visible_in_projection');
+          targetMatchers.delete(targetKey);
+        });
+        if (targetMatchers.size === 0) {
+          clientTargetProjectionMatchersRef.current.delete(operationId);
+          const markOperationVisible = clientTargetConfirmOperationRef.current.get(operationId) !== false;
+          clientTargetConfirmOperationRef.current.delete(operationId);
+          if (!markOperationVisible) return;
+          setProjectionOperationStatus(operationId, 'visible_in_projection');
+          const oldTimer = clientTargetConfirmationClearsRef.current.get(operationId);
+          if (oldTimer) window.clearTimeout(oldTimer);
+          const timer = window.setTimeout(() => {
+            clearProjectionOperation(operationId);
+            clientTargetConfirmationClearsRef.current.delete(operationId);
+          }, 4_000);
+          clientTargetConfirmationClearsRef.current.set(operationId, timer);
+        }
+      });
       setProjectionSnapshotAt(Date.now());
       setProjectionState('received');
       writeStaleCache<ClientsPageCache>(CLIENTS_PAGE_CACHE_KEY, {
@@ -649,19 +679,65 @@ export const ClientManager: React.FC = () => {
     clientProjectionMatchersRef.current.set(operationId, matches);
   };
 
-  const handleMultiServerRemoteSuccess = ({ email, result }: { email: string; result: { summary: { successful: number; failed: number } } }) => {
-    const operationId = beginProjectionOperation('clients', t('clients.projectionAddPending', { email }));
+  const confirmClientTargetsFromProjection = (
+    operationId: number,
+    targets: Array<{ key: string; matches: (rows: Client[]) => boolean }>,
+    markOperationVisible = true,
+  ) => {
+    clientTargetProjectionMatchersRef.current.set(
+      operationId,
+      new Map(targets.map((target) => [target.key, target.matches])),
+    );
+    clientTargetConfirmOperationRef.current.set(operationId, markOperationVisible);
+  };
+
+  const handleMultiServerRemoteSuccess = ({
+    email,
+    result,
+    targets,
+  }: {
+    email: string;
+    result: { results: Array<{ node: string; success: boolean }>; summary: { successful: number; failed: number } };
+    targets: Array<{ key: string; nodeId: number; nodeName: string; inboundId: number }>;
+  }): number => {
+    const operationId = beginProjectionOperation('clients', t('clients.projectionAddPending', { email }), {
+      kind: 'add',
+      targets: targets.map((target) => ({ ...target, email })),
+    });
     if (result.summary.successful === 0) {
       setProjectionOperationStatus(operationId, 'failed');
-      return;
+      targets.forEach((target) => setProjectionOperationTargetStatus(operationId, target.key, 'failed'));
+      return operationId;
     }
+    const resultByNode = new Map(result.results.map((entry) => [entry.node.trim().toLowerCase(), entry]));
+    const successfulTargets = targets.filter((target) => resultByNode.get(target.nodeName.trim().toLowerCase())?.success);
+    targets.forEach((target) => {
+      const remoteTarget = resultByNode.get(target.nodeName.trim().toLowerCase());
+      setProjectionOperationTargetStatus(
+        operationId,
+        target.key,
+        remoteTarget?.success
+          ? 'remote_succeeded_awaiting_projection'
+          : remoteTarget
+            ? 'failed'
+            : 'outcome_unknown',
+      );
+    });
     if (result.summary.failed > 0) {
       setProjectionOperationStatus(operationId, 'partial');
     }
-    if (result.summary.failed === 0) {
-      confirmClientOperationFromProjection(operationId, (rows) => rows.some((client) => client.email === email));
+    if (successfulTargets.length > 0) {
+      confirmClientTargetsFromProjection(operationId, successfulTargets.map((target) => ({
+        key: target.key,
+        matches: (rows) => rows.some((client) => clientProjectionTargetKey(client.node_id, client.inbound_id, client.email) === target.key),
+      })), result.summary.failed === 0);
     }
-    reconcileClientsAfterMutation(operationId, result.summary.failed === 0);
+    if (result.summary.failed === 0) {
+      reconcileClientsAfterMutation(operationId);
+    } else if (successfulTargets.length > 0) {
+      reconcileClientsAfterMutation(operationId, false);
+    }
+    return operationId;
   };
 
   const loadClientPresence = async (signal?: AbortSignal) => {
@@ -1813,6 +1889,39 @@ export const ClientManager: React.FC = () => {
       expiry: nearestExpiry ? new Date(nearestExpiry).toLocaleDateString() : t('clients.never'),
     });
   };
+  const operationTargetForClient = (client: Client): { operation: ProjectionOperation; status: ProjectionOperationStatus } | null => {
+    const key = clientProjectionTargetKey(client.node_id, client.inbound_id, client.email);
+    for (let index = clientOperations.length - 1; index >= 0; index -= 1) {
+      const operation = clientOperations[index];
+      const target = operation.targets.find((item) => item.key === key);
+      if (target) return { operation, status: target.status };
+    }
+    return null;
+  };
+  const groupOperationSummary = (group: ClientEmailGroup<Client>): string | null => {
+    const email = normalizeClientEmail(group.email);
+    const latest = [...clientOperations].reverse().find((operation) => operation.targets.some((target) => normalizeClientEmail(target.email || '') === email));
+    if (!latest || latest.targets.length === 0) return null;
+    const confirmed = latest.targets.filter((target) => target.status === 'visible_in_projection').length;
+    return t('clients.operationTargetSummary', { confirmed, total: latest.targets.length });
+  };
+  const targetStatusLabel = (operation: ProjectionOperation, status: ProjectionOperationStatus): string => {
+    if (operation.kind === 'delete' && (status === 'sending' || status === 'remote_succeeded_awaiting_projection')) return t('clients.operationTargetDeleting');
+    if (status === 'sending') return t('clients.operationTargetSending');
+    if (status === 'remote_succeeded_awaiting_projection') return t('clients.operationTargetAwaiting');
+    if (status === 'visible_in_projection') return t('clients.operationTargetVisible');
+    if (status === 'partial') return t('clients.operationTargetPartial');
+    if (status === 'failed') return t('clients.operationTargetFailed');
+    return t('clients.operationTargetUnknown');
+  };
+  const targetStatusIcon = (operation: ProjectionOperation, status: ProjectionOperationStatus): 'trash' | 'spinner' | 'clock' | 'check' | 'warning' | 'x' => {
+    if (operation.kind === 'delete' && (status === 'sending' || status === 'remote_succeeded_awaiting_projection')) return 'trash';
+    if (status === 'sending') return 'spinner';
+    if (status === 'remote_succeeded_awaiting_projection') return 'clock';
+    if (status === 'visible_in_projection') return 'check';
+    if (status === 'failed') return 'x';
+    return 'warning';
+  };
   const toggleClientEnabled = async (client: Client) => {
     const identifier = clientIdentifier(client);
     if (!identifier) return;
@@ -1836,20 +1945,67 @@ export const ClientManager: React.FC = () => {
       return;
     }
     if (!window.confirm(`Delete client "${client.email}"?`)) return;
+    const targetKey = clientProjectionTargetKey(client.node_id, client.inbound_id, client.email);
+    const operationId = beginProjectionOperation('clients', client.email, {
+      kind: 'delete',
+      targets: [{
+        key: targetKey,
+        email: client.email,
+        nodeId: client.node_id,
+        nodeName: client.node_name,
+        inboundId: client.inbound_id,
+      }],
+    });
     try {
       await api.delete(`/v1/clients/${encodeURIComponent(identifier)}`, {
         auth: getAuth(),
         params: { node_id: client.node_id, inbound_id: client.inbound_id },
       });
-      const operationId = beginProjectionOperation('clients', client.email);
-      confirmClientOperationFromProjection(operationId, (rows) => !rows.some((item) => clientKey(item) === clientKey(client)));
+      setProjectionOperationStatus(operationId, 'remote_succeeded_awaiting_projection');
+      setProjectionOperationTargetStatus(operationId, targetKey, 'remote_succeeded_awaiting_projection');
+      confirmClientTargetsFromProjection(operationId, [{
+        key: targetKey,
+        matches: (rows) => !rows.some((item) => clientKey(item) === clientKey(client)),
+      }]);
       reconcileClientsAfterMutation(operationId);
     } catch (error: any) {
+      const status: ProjectionOperationStatus = error?.response ? 'failed' : 'outcome_unknown';
+      setProjectionOperationStatus(operationId, status);
+      setProjectionOperationTargetStatus(operationId, targetKey, status);
       toast(error.response?.data?.detail || 'Delete failed', 'error');
     }
   };
+  const renderTargetOperation = (client: Client) => {
+    const current = operationTargetForClient(client);
+    if (!current) return null;
+    const { operation, status } = current;
+    const label = targetStatusLabel(operation, status);
+    const isDeleteInFlight = operation.kind === 'delete' && (status === 'sending' || status === 'remote_succeeded_awaiting_projection');
+    const isUnknown = status === 'outcome_unknown';
+    return (
+      <span className="inline-flex items-center gap-1" role="status" aria-live="polite">
+        <span
+          className={cn(
+            'inline-flex h-7 items-center gap-1 rounded-md border px-2 text-[10px] font-medium',
+            isDeleteInFlight && 'border-rose-400/40 bg-rose-500/15 text-rose-200',
+            status === 'visible_in_projection' && 'border-emerald-400/40 bg-emerald-500/10 text-emerald-200',
+            status === 'partial' && 'border-amber-400/40 bg-amber-500/10 text-amber-200',
+            (status === 'failed' || status === 'outcome_unknown') && 'border-rose-400/40 bg-rose-500/10 text-rose-200',
+            !isDeleteInFlight && status !== 'visible_in_projection' && status !== 'partial' && status !== 'failed' && status !== 'outcome_unknown' && 'border-cyan-400/30 bg-cyan-500/10 text-cyan-100',
+          )}
+          title={label}
+          aria-label={label}
+        >
+          <UIIcon name={targetStatusIcon(operation, status)} size={13} className={cn((status === 'sending' || isDeleteInFlight) && 'animate-pulse motion-reduce:animate-none')} />
+          <span className="sr-only">{label}</span>
+        </span>
+        {isUnknown && <button type="button" className={buttonIconClass} onClick={() => void loadClients(true)} title={t('clients.operationSafeRefresh')} aria-label={t('clients.operationSafeRefresh')}><UIIcon name="refresh" size={13} /></button>}
+      </span>
+    );
+  };
   const renderClientActions = (client: Client) => (
     <div className="flex flex-wrap justify-end gap-1">
+      {renderTargetOperation(client)}
       <button type="button" className={buttonIconClass} onClick={() => handleClientEditClick(client)} title={t('messages.editClient')}><UIIcon name="edit" size={14} /></button>
       <button type="button" className={buttonIconClass} onClick={() => handleResetTraffic(client)} title={t('clients.resetTraffic')}><UIIcon name="refresh" size={14} /></button>
       <button type="button" className={buttonIconClass} onClick={() => handleOpenAttach(client, 'attach')} title={t('clients.attachDetachInbounds')}><UIIcon name="attach" size={14} /></button>
@@ -2673,10 +2829,11 @@ export const ClientManager: React.FC = () => {
             {visibleClientGroups.map((group) => {
               const selectionState = getGroupSelectionState(group);
               const expanded = expandedEmailKeys.has(group.key);
+              const operationSummary = groupOperationSummary(group);
               return <article key={group.key} className="min-w-0 overflow-hidden rounded-lg bg-[#0a0e1a] p-3 ring-1 ring-cyan-500/10">
                 <div className="flex min-w-0 items-start gap-2">
                   <input className={checkboxClass} type="checkbox" checked={selectionState === 'all'} aria-checked={selectionState === 'partial' ? 'mixed' : selectionState === 'all'} aria-label={t('clients.selectEmailGroup', { email: group.email })} ref={(input) => { if (input) input.indeterminate = selectionState === 'partial'; }} onChange={() => toggleGroupSelection(group)} />
-                  <button type="button" className="min-w-0 flex-1 text-left" aria-expanded={expanded} aria-label={expanded ? t('clients.collapseClientGroup', { email: group.email }) : t('clients.expandClientGroup', { email: group.email })} onClick={() => toggleGroupExpanded(group)}><span className="flex min-w-0 items-center gap-2"><span className={tableLongEmailClass} title={group.email}>{expanded ? '−' : '+'} {group.email}</span>{group.clients.some((client) => client.telegram_linked) && <span className={cn(badgeBaseClass, 'shrink-0 border-cyan-500/20 bg-[#0f1420] text-cyan-300')} title={t('clients.telegramLinked')} aria-label={t('clients.telegramLinked')}>TG</span>}</span><span className="mt-1 block truncate text-xs text-slate-500">{getGroupSummary(group)}</span></button>
+                  <button type="button" className="min-w-0 flex-1 text-left" aria-expanded={expanded} aria-label={expanded ? t('clients.collapseClientGroup', { email: group.email }) : t('clients.expandClientGroup', { email: group.email })} onClick={() => toggleGroupExpanded(group)}><span className="flex min-w-0 items-center gap-2"><span className={tableLongEmailClass} title={group.email}>{expanded ? '−' : '+'} {group.email}</span>{group.clients.some((client) => client.telegram_linked) && <span className={cn(badgeBaseClass, 'shrink-0 border-cyan-500/20 bg-[#0f1420] text-cyan-300')} title={t('clients.telegramLinked')} aria-label={t('clients.telegramLinked')}>TG</span>}</span><span className="mt-1 block truncate text-xs text-slate-500">{getGroupSummary(group)}</span>{operationSummary && <span className="mt-1 block text-xs text-cyan-200" role="status" aria-live="polite">{operationSummary}</span>}</button>
                 </div>
                 {expanded && <div className="mt-3 grid min-w-0 grid-cols-1 gap-2">{group.clients.map(renderMobileChild)}</div>}
               </article>;
@@ -2686,8 +2843,9 @@ export const ClientManager: React.FC = () => {
             {visibleClientGroups.map((group) => {
               const selectionState = getGroupSelectionState(group);
               const expanded = expandedEmailKeys.has(group.key);
+              const operationSummary = groupOperationSummary(group);
               return <React.Fragment key={group.key}>
-                <tr className="bg-cyan-500/5 text-slate-100"><td className="px-3 py-3"><input className={checkboxClass} type="checkbox" checked={selectionState === 'all'} aria-checked={selectionState === 'partial' ? 'mixed' : selectionState === 'all'} aria-label={t('clients.selectEmailGroup', { email: group.email })} ref={(input) => { if (input) input.indeterminate = selectionState === 'partial'; }} onChange={() => toggleGroupSelection(group)} /></td><td colSpan={denseView ? 8 : 10} className="px-3 py-3"><button type="button" className="flex min-w-0 items-center gap-2 text-left" aria-expanded={expanded} aria-label={expanded ? t('clients.collapseClientGroup', { email: group.email }) : t('clients.expandClientGroup', { email: group.email })} onClick={() => toggleGroupExpanded(group)}><span className="font-mono text-cyan-300">{expanded ? '−' : '+'}</span><span className="min-w-0"><span className="flex min-w-0 items-center gap-2"><span className={tableLongEmailClass} title={group.email}>{group.email}</span>{group.clients.some((client) => client.telegram_linked) && <span className={cn(badgeBaseClass, 'shrink-0 border-cyan-500/20 bg-[#0f1420] text-cyan-300')} title={t('clients.telegramLinked')} aria-label={t('clients.telegramLinked')}>TG</span>}</span><span className="mt-1 block truncate text-xs text-slate-500">{getGroupSummary(group)}</span></span></button></td></tr>
+                <tr className="bg-cyan-500/5 text-slate-100"><td className="px-3 py-3"><input className={checkboxClass} type="checkbox" checked={selectionState === 'all'} aria-checked={selectionState === 'partial' ? 'mixed' : selectionState === 'all'} aria-label={t('clients.selectEmailGroup', { email: group.email })} ref={(input) => { if (input) input.indeterminate = selectionState === 'partial'; }} onChange={() => toggleGroupSelection(group)} /></td><td colSpan={denseView ? 8 : 10} className="px-3 py-3"><button type="button" className="flex min-w-0 items-center gap-2 text-left" aria-expanded={expanded} aria-label={expanded ? t('clients.collapseClientGroup', { email: group.email }) : t('clients.expandClientGroup', { email: group.email })} onClick={() => toggleGroupExpanded(group)}><span className="font-mono text-cyan-300">{expanded ? '−' : '+'}</span><span className="min-w-0"><span className="flex min-w-0 items-center gap-2"><span className={tableLongEmailClass} title={group.email}>{group.email}</span>{group.clients.some((client) => client.telegram_linked) && <span className={cn(badgeBaseClass, 'shrink-0 border-cyan-500/20 bg-[#0f1420] text-cyan-300')} title={t('clients.telegramLinked')} aria-label={t('clients.telegramLinked')}>TG</span>}</span><span className="mt-1 block truncate text-xs text-slate-500">{getGroupSummary(group)}</span>{operationSummary && <span className="mt-1 block text-xs text-cyan-200" role="status" aria-live="polite">{operationSummary}</span>}</span></button></td></tr>
                 {expanded && group.clients.map(renderDesktopChild)}
               </React.Fragment>;
             })}
@@ -2869,7 +3027,7 @@ export const ClientManager: React.FC = () => {
                 </button>
               </div>
               <div className={modalBodyClass}>
-                <AddClientMultiServer onRemoteSuccess={handleMultiServerRemoteSuccess} />
+                <AddClientMultiServer onRemoteSuccess={handleMultiServerRemoteSuccess} onSafeReadRefresh={() => void loadClients(true)} />
               </div>
             </div>
           </div>
