@@ -10,15 +10,24 @@ interface NodeOption {
   name: string;
 }
 
-interface NodeResult {
+export interface AddClientNodeResult {
   node: string;
   success: boolean;
   error?: string;
 }
 
-interface AddResult {
-  results: NodeResult[];
+export interface AddClientMultiServerResult {
+  results: AddClientNodeResult[];
   summary: { total: number; successful: number; failed: number };
+}
+
+export interface AddClientMultiServerSuccess {
+  email: string;
+  result: AddClientMultiServerResult;
+}
+
+interface AddClientMultiServerProps {
+  onRemoteSuccess?: (success: AddClientMultiServerSuccess) => void;
 }
 
 const FLOW_OPTIONS = [
@@ -27,7 +36,7 @@ const FLOW_OPTIONS = [
   { value: 'xtls-rprx-vision-udp443', label: 'vision-udp443' },
 ];
 
-export const AddClientMultiServer: React.FC = () => {
+export const AddClientMultiServer: React.FC<AddClientMultiServerProps> = ({ onRemoteSuccess }) => {
   const { t } = useTranslation();
   const [email, setEmail] = useState('');
   const [flow, setFlow] = useState('');
@@ -39,7 +48,7 @@ export const AddClientMultiServer: React.FC = () => {
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [result, setResult] = useState<AddResult | null>(null);
+  const [result, setResult] = useState<AddClientMultiServerResult | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
   const nodesRequestIdRef = useRef(0);
   const nodesAbortRef = useRef<AbortController | null>(null);
@@ -118,8 +127,10 @@ export const AddClientMultiServer: React.FC = () => {
         auth: getAuth(),
       });
 
-      setResult(res.data as AddResult);
+      const remoteResult = res.data as AddClientMultiServerResult;
+      setResult(remoteResult);
       setShowResultModal(true);
+      onRemoteSuccess?.({ email: email.trim(), result: remoteResult });
     } catch (err: any) {
       setError(err.response?.data?.detail || t('clients.addMulti.addFailed'));
     } finally {

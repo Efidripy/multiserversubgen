@@ -17,6 +17,11 @@ import { getAuth } from '../auth';
 import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
 import { readStaleCache, writeStaleCache } from '../services/staleCache';
+import {
+  beginProjectionOperation,
+  setProjectionOperationStatus,
+  useProjectionOperations,
+} from '../services/projectionOperationStore';
 import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
 import { ClientEditModal } from './ClientEditModal';
 import { groupClientsByEmail, normalizeClientEmail, type ClientEmailGroup } from '../utils/clientGroups';
@@ -300,6 +305,9 @@ export const ClientManager: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [trafficLoading, setTrafficLoading] = useState(false);
   const [error, setError] = useState('');
+  const [projectionState, setProjectionState] = useState<'cold' | 'cached' | 'refreshing' | 'received' | 'refresh_failed'>('cold');
+  const [projectionSnapshotAt, setProjectionSnapshotAt] = useState(0);
+  const clientOperations = useProjectionOperations('clients');
   // Map of "node_id:email" -> TrafficData
   const [trafficCache, setTrafficCache] = useState<Record<string, TrafficData | null>>({});
   // Endpoint mode compatibility:
@@ -364,6 +372,8 @@ export const ClientManager: React.FC = () => {
   const clientsLoadLoadingRequestIdRef = useRef<number | null>(null);
   const trafficRefreshTimerRef = useRef<number | null>(null);
   const clientsLoadAbortRef = useRef<AbortController | null>(null);
+  const clientsReconcileTimerRef = useRef<number | null>(null);
+  const clientProjectionMatchersRef = useRef<Map<number, (rows: Client[]) => boolean>>(new Map());
   const trafficFetchAbortRef = useRef<AbortController | null>(null);
   const clientPresenceAbortRef = useRef<AbortController | null>(null);
   const realtimeRefreshRef = useRef(0);
@@ -450,7 +460,7 @@ export const ClientManager: React.FC = () => {
     } catch {}
 
     // Show cached snapshot instantly if available, then refresh in background.
-    const cached = readStaleCache<ClientsPageCache>(CLIENTS_PAGE_CACHE_KEY, CLIENTS_PAGE_CACHE_MAX_AGE_MS);
+    const cached = readStaleCache<ClientsPageCache>(CLIENTS_PAGE_CACHE_KEY, Number.MAX_SAFE_INTEGER);
     if (cached.data && (cached.data.sourceFilter ?? 'all') === 'all') {
       if (Array.isArray(cached.data.clients)) {
         clientsRef.current = cached.data.clients;
@@ -462,9 +472,11 @@ export const ClientManager: React.FC = () => {
       if (cached.data.endpointMode) {
         trafficEndpointModeRef.current = cached.data.endpointMode;
       }
+      setProjectionSnapshotAt(cached.ts);
+      setProjectionState(Date.now() - cached.ts <= CLIENTS_PAGE_CACHE_MAX_AGE_MS ? 'cached' : 'refreshing');
     }
 
-    loadClients(cached.isFresh);
+    void loadClients(Boolean(cached.data?.clients?.length));
 
     // Live presence and last-online are fleet fan-out endpoints.  They are
     // intentionally not requested on mount: a viewer previously generated a
@@ -472,6 +484,7 @@ export const ClientManager: React.FC = () => {
 
     return () => {
       clientsLoadAbortRef.current?.abort();
+      if (clientsReconcileTimerRef.current) window.clearTimeout(clientsReconcileTimerRef.current);
       trafficFetchAbortRef.current?.abort();
       clientPresenceAbortRef.current?.abort();
       ipSearchRequestIdRef.current += 1;
@@ -557,6 +570,7 @@ export const ClientManager: React.FC = () => {
       clientsLoadLoadingRequestIdRef.current = requestId;
       setLoading(true);
     }
+    if (clientsRef.current.length > 0) setProjectionState('refreshing');
     setError('');
     clientSourceFilterRef.current = sourceFilter;
 
@@ -581,6 +595,14 @@ export const ClientManager: React.FC = () => {
 
       clientsRef.current = next;
       setClients(next);
+      clientProjectionMatchersRef.current.forEach((matches, operationId) => {
+        if (matches(next)) {
+          setProjectionOperationStatus(operationId, 'visible_in_projection');
+          clientProjectionMatchersRef.current.delete(operationId);
+        }
+      });
+      setProjectionSnapshotAt(Date.now());
+      setProjectionState('received');
       writeStaleCache<ClientsPageCache>(CLIENTS_PAGE_CACHE_KEY, {
         ts: Date.now(),
         clients: next,
@@ -600,6 +622,7 @@ export const ClientManager: React.FC = () => {
         return;
       }
       setError(err.response?.data?.detail || t('clients.loadFailed'));
+      if (clientsRef.current.length > 0) setProjectionState('refresh_failed');
     } finally {
       if (requestIdRef.current === requestId) {
         refreshInFlightRef.current = false;
@@ -612,6 +635,33 @@ export const ClientManager: React.FC = () => {
         }
       }
     }
+  };
+
+  const reconcileClientsAfterMutation = (operationId: number, markAwaiting = true) => {
+    if (markAwaiting) setProjectionOperationStatus(operationId, 'remote_succeeded_awaiting_projection');
+    if (clientsReconcileTimerRef.current) window.clearTimeout(clientsReconcileTimerRef.current);
+    clientsReconcileTimerRef.current = window.setTimeout(() => {
+      void loadClients(true);
+    }, 750);
+  };
+
+  const confirmClientOperationFromProjection = (operationId: number, matches: (rows: Client[]) => boolean) => {
+    clientProjectionMatchersRef.current.set(operationId, matches);
+  };
+
+  const handleMultiServerRemoteSuccess = ({ email, result }: { email: string; result: { summary: { successful: number; failed: number } } }) => {
+    const operationId = beginProjectionOperation('clients', t('clients.projectionAddPending', { email }));
+    if (result.summary.successful === 0) {
+      setProjectionOperationStatus(operationId, 'failed');
+      return;
+    }
+    if (result.summary.failed > 0) {
+      setProjectionOperationStatus(operationId, 'partial');
+    }
+    if (result.summary.failed === 0) {
+      confirmClientOperationFromProjection(operationId, (rows) => rows.some((client) => client.email === email));
+    }
+    reconcileClientsAfterMutation(operationId, result.summary.failed === 0);
   };
 
   const loadClientPresence = async (signal?: AbortSignal) => {
@@ -1410,7 +1460,7 @@ export const ClientManager: React.FC = () => {
     }));
     
     try {
-      await api.post('/v1/clients/batch-add', {
+      const result = await api.post('/v1/clients/batch-add', {
         node_ids: null,
         clients: clientsToAdd
       }, {
@@ -1421,7 +1471,11 @@ export const ClientManager: React.FC = () => {
       setBatchText('');
       setBatchFlow('');
       setBatchEnable(true);
-      loadClients();
+      const operationId = beginProjectionOperation('clients', t('clients.projectionAddPending', { email: `${emails.length}` }));
+      if (Array.isArray(result.data?.results) && result.data.results.some((entry: { success?: boolean }) => !entry.success)) {
+        setProjectionOperationStatus(operationId, 'partial');
+      }
+      reconcileClientsAfterMutation(operationId);
       toast(t('clients.addedSuccess', { count: emails.length }), 'success');
     } catch (err: any) {
       setError(err.response?.data?.detail || t('clients.addFailed'));
@@ -1462,7 +1516,9 @@ export const ClientManager: React.FC = () => {
         }
 
         setSelectedClientKeys(new Set());
-        await loadClients();
+        const operationId = beginProjectionOperation('clients', t('clients.deleteSuccess'));
+        setProjectionOperationStatus(operationId, failed > 0 ? 'partial' : 'remote_succeeded_awaiting_projection');
+        reconcileClientsAfterMutation(operationId);
         if (failed > 0) {
           toast(t('clients.deletePartialError', { count: failed }), 'warning');
         } else {
@@ -1482,7 +1538,8 @@ export const ClientManager: React.FC = () => {
         auth: getAuth()
       });
 
-      await loadClients();
+      const operationId = beginProjectionOperation('clients', t('clients.deleteSuccess'));
+      reconcileClientsAfterMutation(operationId);
       toast(t('clients.deleteSuccess'), 'success');
     } catch (err: any) {
       setError(err.response?.data?.detail || t('clients.deleteFailed'));
@@ -1765,7 +1822,9 @@ export const ClientManager: React.FC = () => {
         inbound_id: client.inbound_id,
         updates: { email: client.email, enable: !client.enable },
       }, { auth: getAuth() });
-      setClients((previous) => previous.map((item) => clientKey(item) === clientKey(client) ? { ...item, enable: !item.enable } : item));
+      const operationId = beginProjectionOperation('clients', client.email);
+      confirmClientOperationFromProjection(operationId, (rows) => rows.some((item) => clientKey(item) === clientKey(client) && item.enable === !client.enable));
+      reconcileClientsAfterMutation(operationId);
     } catch (error: any) {
       toast(error.response?.data?.detail || t('common.failed'), 'error');
     }
@@ -1782,7 +1841,9 @@ export const ClientManager: React.FC = () => {
         auth: getAuth(),
         params: { node_id: client.node_id, inbound_id: client.inbound_id },
       });
-      loadClients(true);
+      const operationId = beginProjectionOperation('clients', client.email);
+      confirmClientOperationFromProjection(operationId, (rows) => !rows.some((item) => clientKey(item) === clientKey(client)));
+      reconcileClientsAfterMutation(operationId);
     } catch (error: any) {
       toast(error.response?.data?.detail || 'Delete failed', 'error');
     }
@@ -1887,6 +1948,30 @@ export const ClientManager: React.FC = () => {
           })()}
         </div>
         {error && <div className={tableErrorClass}>{error}</div>}
+        {(projectionState !== 'cold' || clientOperations.length > 0) && (
+          <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2 text-xs text-slate-400">
+            {projectionState !== 'cold' && (
+              <span className={cn(tableStateChipClass, projectionState === 'refresh_failed' ? 'border-rose-400/30 text-rose-300' : 'border-cyan-400/30 text-cyan-200')}>
+                {projectionState === 'cached' && t('clients.projectionCached')}
+                {projectionState === 'refreshing' && t('clients.projectionRefreshing')}
+                {projectionState === 'received' && t('clients.projectionReceived')}
+                {projectionState === 'refresh_failed' && t('clients.projectionRefreshFailed')}
+                {projectionSnapshotAt > 0 && ` · ${new Date(projectionSnapshotAt).toLocaleTimeString()}`}
+              </span>
+            )}
+            {clientOperations.map((operation) => (
+              <span key={operation.id} className={cn(tableStateChipClass, operation.status === 'failed' ? 'border-rose-400/30 text-rose-300' : operation.status === 'partial' ? 'border-amber-400/30 text-amber-200' : 'border-cyan-400/30 text-cyan-200')}>
+                {operation.status === 'sending' && t('clients.projectionOperationSending')}
+                {operation.status === 'remote_succeeded_awaiting_projection' && t('clients.projectionOperationAwaiting')}
+                {operation.status === 'visible_in_projection' && t('clients.projectionOperationVisible')}
+                {operation.status === 'partial' && t('clients.projectionOperationPartial')}
+                {operation.status === 'failed' && t('clients.projectionOperationFailed')}
+                {operation.status === 'outcome_unknown' && t('clients.projectionOperationUnknown')}
+                {` · ${operation.label}`}
+              </span>
+            ))}
+          </div>
+        )}
 
         <div className="panel-grid panel-grid--3col">
           <div className="panel-block">
@@ -2784,7 +2869,7 @@ export const ClientManager: React.FC = () => {
                 </button>
               </div>
               <div className={modalBodyClass}>
-                <AddClientMultiServer />
+                <AddClientMultiServer onRemoteSuccess={handleMultiServerRemoteSuccess} />
               </div>
             </div>
           </div>

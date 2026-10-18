@@ -508,7 +508,18 @@
     "expiresToday": "Expires today",
     "daysRemaining": "{{days}}d remaining",
     "setExpiryDaysTitle": "Set expiry to {{days}} days from now (or from current expiry)",
-    "noExpiry": "No expiry"
+    "noExpiry": "No expiry",
+    "projectionCached": "Showing a local snapshot",
+    "projectionRefreshing": "Refreshing snapshot",
+    "projectionReceived": "Snapshot received",
+    "projectionRefreshFailed": "Snapshot refresh failed",
+    "projectionAddPending": "Client {{email}} was added on nodes; awaiting snapshot confirmation",
+    "projectionOperationSending": "Operation is being sent",
+    "projectionOperationAwaiting": "Operation completed remotely; awaiting snapshot",
+    "projectionOperationVisible": "Operation confirmed by snapshot",
+    "projectionOperationPartial": "Operation partially completed; awaiting reconciliation",
+    "projectionOperationFailed": "Operation failed",
+    "projectionOperationUnknown": "Operation outcome is unknown; refresh the snapshot"
   },
   "traffic": {
     "title": "Traffic Statistics",
@@ -745,7 +756,16 @@
     "metadataOnly": "Metadata Only",
     "routeOnly": "Route Only",
     "ipsExcluded": "IPs Excluded",
-    "domainsExcluded": "Domains Excluded"
+    "domainsExcluded": "Domains Excluded",
+    "projectionCached": "Showing a local snapshot",
+    "projectionRefreshing": "Refreshing snapshot",
+    "projectionReceived": "Snapshot received",
+    "projectionRefreshFailed": "Snapshot refresh failed",
+    "projectionOperationAwaiting": "Operation completed remotely; awaiting snapshot",
+    "projectionOperationVisible": "Operation confirmed by snapshot",
+    "projectionOperationPartial": "Operation partially completed; awaiting reconciliation",
+    "projectionOperationFailed": "Operation failed",
+    "projectionOperationUnknown": "Operation outcome is unknown; refresh the snapshot"
   },
   "subscriptions": {
     "title": "Subscription Manager",
