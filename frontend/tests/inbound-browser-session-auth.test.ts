@@ -58,5 +58,8 @@ describe('Inbound browser session auth', () => {
     expect(read('src/components/InboundManager.tsx')).toContain(
       ".get('/v1/inbounds/stats', { sessionOnlyAuth: true, signal: controller.signal })",
     );
+    expect(read('src/components/InboundManager.tsx')).toContain(
+      'listNodes({ signal: controller.signal, sessionOnlyAuth: true })',
+    );
   });
 });
