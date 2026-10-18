@@ -52,6 +52,7 @@ _DASHBOARD_SNAPSHOT_FIELDS = (
 _CLIENT_PRESENCE_RETENTION_SEC = 30 * 24 * 60 * 60
 _TRANSPORT_FAILURE_BACKOFF_SEC = (300.0, 600.0, 900.0)
 _TRANSPORT_DIAGNOSTIC_INTERVAL_SEC = 900.0
+_INVENTORY_RECHECK_SEC = 60.0
 
 
 def _online_client_emails(payload: Any) -> List[str]:
@@ -206,6 +207,13 @@ class SnapshotCollector:
         self._last_ws_activity = 0.0
         self._mode_started_at = time.time()
         self._force_poll_event = asyncio.Event()
+        # The control loop does not need to read the local node inventory every
+        # ten seconds while all known node deadlines are in the future. A
+        # separate wake keeps activity changes distinct from an operator force
+        # poll, and the generation closes the Event.clear()/wait() race.
+        self._scheduler_wake_event = asyncio.Event()
+        self._scheduler_wake_generation = 0
+        self._scheduler_loop = None
 
     @staticmethod
     def _observe_metric(metric, value: float, **labels) -> None:
@@ -533,11 +541,56 @@ class SnapshotCollector:
         self._last_ws_activity = now
         if self._mode in (CollectorMode.IDLE, CollectorMode.ULTRA_IDLE):
             self._switch_mode(CollectorMode.WARMING)
+        self._request_scheduler_wake()
 
     async def force_poll_all(self):
         """Force an immediate poll of all nodes (triggered by UI button)."""
         logger.info("Force poll all nodes requested")
         self._force_poll_event.set()
+        self._request_scheduler_wake()
+
+    def _mark_scheduler_wake(self) -> None:
+        """Record one control-loop wake on the collector event loop."""
+        self._scheduler_wake_generation += 1
+        self._scheduler_wake_event.set()
+
+    def _request_scheduler_wake(self) -> None:
+        """Wake a running scheduler from either its loop or a callback thread."""
+        loop = self._scheduler_loop
+        if loop is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(self._mark_scheduler_wake)
+
+    def _next_control_loop_timeout(self, *, now: Optional[float] = None) -> float:
+        """Return the bounded wait until inventory refresh or a known due poll.
+
+        ``next_poll`` belongs to an individual node, so this never stretches a
+        known remote-poll deadline. Nodes left overdue by an unexpected task
+        exception get a short retry rather than a tight zero-delay loop.
+        """
+        current_time = time.time() if now is None else now
+        deadlines = [
+            self._coerce_float(state.get("next_poll"), 0.0)
+            for state in self._node_state.values()
+        ]
+        future_deadlines = [deadline for deadline in deadlines if deadline > current_time]
+        if any(deadline <= current_time for deadline in deadlines):
+            return min(_INVENTORY_RECHECK_SEC, float(self.min_interval_sec))
+        if not future_deadlines:
+            return _INVENTORY_RECHECK_SEC
+        return max(0.0, min(_INVENTORY_RECHECK_SEC, min(future_deadlines) - current_time))
+
+    async def _wait_for_scheduler_wake(self, timeout: float, *, observed_generation: int) -> None:
+        """Wait for a deadline or a post-cycle wake without losing callbacks."""
+        if self._scheduler_wake_generation != observed_generation:
+            return
+        self._scheduler_wake_event.clear()
+        if self._scheduler_wake_generation != observed_generation:
+            return
+        try:
+            await asyncio.wait_for(self._scheduler_wake_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            pass
 
     def _switch_mode(self, new_mode: CollectorMode):
         """Switch to a new operating mode."""
@@ -600,6 +653,7 @@ class SnapshotCollector:
             return
         self._worker_tracker = worker_tracker
         await self.load_persisted_snapshots()
+        self._scheduler_loop = asyncio.get_running_loop()
         self._running = True
         self._last_ws_activity = time.time()
         self._task = asyncio.create_task(self._run())
@@ -607,6 +661,7 @@ class SnapshotCollector:
     async def stop(self):
         self._running = False
         self._force_poll_event.set()
+        self._request_scheduler_wake()
         if self._task:
             if self._worker_tracker is None:
                 self._task.cancel()
@@ -617,11 +672,13 @@ class SnapshotCollector:
             else:
                 await self._task
             self._task = None
+        self._scheduler_loop = None
 
     async def _run(self):
         while self._running and (
             self._worker_tracker is None or self._worker_tracker.accepting
         ):
+            observed_wake_generation = self._scheduler_wake_generation
             cycle_started = time.time()
             cycle_started_monotonic = self._cycle_clock()
             try:
@@ -643,6 +700,10 @@ class SnapshotCollector:
 
                 due_nodes = []
                 force_poll = self._force_poll_event.is_set()
+                if force_poll:
+                    # Clear before polling so a later explicit request remains
+                    # pending for the next cycle instead of being swallowed.
+                    self._force_poll_event.clear()
 
                 for node in nodes:
                     key = self._node_key(node)
@@ -705,7 +766,6 @@ class SnapshotCollector:
                     )
 
                 if force_poll:
-                    self._force_poll_event.clear()
                     logger.info(f"Force poll completed: {len(due_nodes)} nodes polled")
 
             except LifecycleWorkAdmissionClosed:
@@ -713,12 +773,17 @@ class SnapshotCollector:
             except Exception as exc:
                 logger.error(f"Collector loop error: {exc}")
 
-            # Adaptive sleep: longer in idle modes; force_poll_event provides early wake-up.
-            sleep_time = min(10.0, self.poll_interval_ceiling_sec / 10, self._get_current_interval() / 10)
-            try:
-                await asyncio.wait_for(self._force_poll_event.wait(), timeout=sleep_time)
-            except asyncio.TimeoutError:
-                pass
+            if not self._running or (
+                self._worker_tracker is not None and not self._worker_tracker.accepting
+            ):
+                break
+            # Do not turn the five-minute node cadence into 10-second empty
+            # inventory reads. New/removed nodes are still seen within one
+            # minute, and force/activity callbacks wake this wait immediately.
+            await self._wait_for_scheduler_wake(
+                self._next_control_loop_timeout(),
+                observed_generation=observed_wake_generation,
+            )
 
     def _poll_delay_for_position(self, position: int, total: int, *, force_poll: bool) -> float:
         """Return a deterministic, bounded ordinary-cycle start delay."""
