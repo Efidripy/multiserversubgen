@@ -158,11 +158,15 @@ WebSocket-сессии следующий node poll не растягивает�
 `force_poll` остаётся немедленным.
 
 Это интервал remote snapshot/persistence node poll, а не выключатель control
-loop: collector продолжает bounded проверку inventory и может быть разбужен
-явным force poll. Изменение cadence не меняет bounded fan-out, SQLite policy,
-XUI fallback или dashboard snapshot-first contract. Для rollback верните оба
-значения через source/systemd drop-in либо изолированный source commit; schema и
-persistent runtime state не затрагиваются.
+loop. Когда все известные `next_poll` находятся в будущем, collector перечитывает
+локальный inventory не чаще одного раза в 60 секунд; более ранний известный
+`next_poll` сохраняет свой deadline. Добавление или удаление node поэтому видны
+не позднее следующего 60-секундного recheck. WebSocket-activity может немедленно
+разбудить loop только для пересчёта режима, но не становится `force_poll`;
+явный `force_poll` остаётся немедленным. Изменение cadence не меняет bounded
+fan-out, SQLite policy, XUI fallback или dashboard snapshot-first contract. Для
+rollback верните изолированный source commit; schema и persistent runtime state
+не затрагиваются.
 
 ### Фоновые collector/audit metrics
 
