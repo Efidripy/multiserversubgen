@@ -86,6 +86,10 @@ describe('client and inbound projection lifecycle contract', () => {
     expect(clients).toContain('confirmClientOperationFromProjection');
     expect(clients).toContain("'visible_in_projection'");
     expect(clients).toContain('onRemoteSuccess={handleMultiServerRemoteSuccess}');
+    expect(clients).toContain('clientProjectionTargetKey');
+    expect(clients).toContain('confirmClientTargetsFromProjection');
+    expect(clients).toContain("kind: 'delete'");
+    expect(clients).toContain("operation.kind === 'delete'");
     expect(inbounds).toContain('reconcileInboundsAfterMutation');
     expect(inbounds).toContain('confirmInboundOperationFromProjection');
     expect(inbounds).toContain("'visible_in_projection'");
