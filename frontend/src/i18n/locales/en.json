@@ -519,7 +519,16 @@
     "projectionOperationVisible": "Operation confirmed by snapshot",
     "projectionOperationPartial": "Operation partially completed; awaiting reconciliation",
     "projectionOperationFailed": "Operation failed",
-    "projectionOperationUnknown": "Operation outcome is unknown; refresh the snapshot"
+    "projectionOperationUnknown": "Operation outcome is unknown; refresh the snapshot",
+    "operationTargetSending": "Sending to nodes",
+    "operationTargetAwaiting": "Node acknowledged; waiting for synchronization",
+    "operationTargetVisible": "Confirmed by snapshot",
+    "operationTargetPartial": "Partially completed; awaiting reconciliation",
+    "operationTargetFailed": "Operation on node failed",
+    "operationTargetUnknown": "Outcome on node is unknown",
+    "operationTargetDeleting": "Deleting; waiting for node confirmation",
+    "operationTargetSummary": "{{confirmed}} of {{total}} confirmed",
+    "operationSafeRefresh": "Safely refresh snapshot"
   },
   "traffic": {
     "title": "Traffic Statistics",
