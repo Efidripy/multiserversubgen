@@ -762,7 +762,10 @@
     "projectionReceived": "Снимок получен",
     "projectionRefreshFailed": "Не удалось обновить снимок",
     "projectionOperationAwaiting": "Операция выполнена удалённо; ожидается снимок",
-    "projectionOperationPartial": "Операция выполнена частично; ожидается сверка"
+    "projectionOperationVisible": "Операция подтверждена снимком",
+    "projectionOperationPartial": "Операция выполнена частично; ожидается сверка",
+    "projectionOperationFailed": "Операция не выполнена",
+    "projectionOperationUnknown": "Результат операции неизвестен; обновите снимок"
   },
   "subscriptions": {
     "title": "Управление подписками",

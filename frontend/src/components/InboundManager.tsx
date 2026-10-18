@@ -374,6 +374,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   const requestIdRef = useRef(0);
   const inboundsAbortRef = useRef<AbortController | null>(null);
   const inboundsReconcileTimerRef = useRef<number | null>(null);
+  const inboundProjectionMatchersRef = useRef<Map<number, (rows: Inbound[]) => boolean>>(new Map());
 
   // Inbound config viewer modal
   const [showConfigModal, setShowConfigModal] = useState(false);
@@ -384,6 +385,22 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   useEffect(() => {
     inboundsRef.current = inbounds;
   }, [inbounds]);
+
+  const confirmInboundOperationFromProjection = (
+    operationId: number,
+    matches: (rows: Inbound[]) => boolean,
+  ) => {
+    inboundProjectionMatchersRef.current.set(operationId, matches);
+  };
+
+  const confirmInboundOperationsFromProjection = (rows: Inbound[]) => {
+    inboundProjectionMatchersRef.current.forEach((matches, operationId) => {
+      if (matches(rows)) {
+        setProjectionOperationStatus(operationId, 'visible_in_projection');
+        inboundProjectionMatchersRef.current.delete(operationId);
+      }
+    });
+  };
 
   useEffect(() => {
     // Always show stale data instantly (stale-while-revalidate), then refresh in background.
@@ -590,6 +607,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
       const normalized = normalizeInboundRows(rawInbounds, nameMap);
 
+      confirmInboundOperationsFromProjection(normalized);
       setInbounds(normalized);
       setProjectionSnapshotAt(Date.now());
       setProjectionState('received');
@@ -617,6 +635,28 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     }, 750);
   };
 
+  const reconcileInboundRemarkAfterMutation = (inbound: Inbound, remark: string) => {
+    const operationId = beginProjectionOperation('inbounds', inbound.remark || `#${inbound.id}`);
+    confirmInboundOperationFromProjection(
+      operationId,
+      (rows) => rows.some((row) =>
+        inboundKey(row) === inboundKey(inbound) && row.remark === remark,
+      ),
+    );
+    reconcileInboundsAfterMutation(operationId);
+  };
+
+  const reconcileInboundEnableAfterMutation = (inbound: Inbound) => {
+    const operationId = beginProjectionOperation('inbounds', inbound.remark || `#${inbound.id}`);
+    confirmInboundOperationFromProjection(
+      operationId,
+      (rows) => rows.some((row) =>
+        inboundKey(row) === inboundKey(inbound) && row.enable === !inbound.enable,
+      ),
+    );
+    reconcileInboundsAfterMutation(operationId);
+  };
+
   const handleRealtimeUpdate = useCallback(
     (update: TrafficUpdate) => {
       if (update.type !== 'inbound_update') return;
@@ -636,6 +676,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
           const deduped = new Map<string, Inbound>();
           [...retained, ...incoming].forEach((ib) => deduped.set(inboundKey(ib), ib));
           const nextInbounds = Array.from(deduped.values());
+          confirmInboundOperationsFromProjection(nextInbounds);
           inboundsRef.current = nextInbounds;
           setInbounds(nextInbounds);
           writeStaleCache<InboundsPageCache>(INBOUNDS_PAGE_CACHE_KEY, {
@@ -730,6 +771,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
       clearSelection();
       const operationId = beginProjectionOperation('inbounds', inbound.remark || `#${inbound.id}`);
+      confirmInboundOperationFromProjection(
+        operationId,
+        (rows) => !rows.some((row) => inboundKey(row) === inboundKey(inbound)),
+      );
       reconcileInboundsAfterMutation(operationId);
       onReload?.();
     } catch (err: any) {
@@ -1061,8 +1106,16 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               </span>
             )}
             {inboundOperations.map((operation) => (
-              <span key={operation.id} className={cn(tableStateChipClass, operation.status === 'partial' ? 'border-amber-400/30 text-amber-200' : 'border-cyan-400/30 text-cyan-200')}>
-                {operation.status === 'partial' ? t('inbounds.projectionOperationPartial') : t('inbounds.projectionOperationAwaiting')}
+              <span key={operation.id} className={cn(tableStateChipClass,
+                operation.status === 'partial' ? 'border-amber-400/30 text-amber-200'
+                  : operation.status === 'failed' || operation.status === 'outcome_unknown' ? 'border-rose-400/30 text-rose-300'
+                    : operation.status === 'visible_in_projection' ? 'border-emerald-400/30 text-emerald-200'
+                      : 'border-cyan-400/30 text-cyan-200')}>
+                {operation.status === 'partial' && t('inbounds.projectionOperationPartial')}
+                {operation.status === 'visible_in_projection' && t('inbounds.projectionOperationVisible')}
+                {operation.status === 'failed' && t('inbounds.projectionOperationFailed')}
+                {operation.status === 'outcome_unknown' && t('inbounds.projectionOperationUnknown')}
+                {(operation.status === 'sending' || operation.status === 'remote_succeeded_awaiting_projection') && t('inbounds.projectionOperationAwaiting')}
                 {` · ${operation.label}`}
               </span>
             ))}
@@ -1510,8 +1563,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                           if (!nodeObj) return;
                           try {
                             await api.put('/v1/inbounds/' + nodeObj.id + '/' + ib.id, { remark: newRemark }, { auth: getAuth() });
-                            setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, remark: newRemark } : x));
-                            toast(t('inbounds.remarkUpdated', { remark: newRemark || t('inbounds.emptyRemark') }), 'success');
+                            reconcileInboundRemarkAfterMutation(ib, newRemark);
                           } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                         }}
                       >
@@ -1529,8 +1581,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                         const { user, password } = getAuth();
                         try {
                           await api.post('/v1/inbounds/' + nodeObj.id + '/' + ib.id + '/set-enable', { enable: !ib.enable }, { auth: { username: user, password } });
-                          setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, enable: !ib.enable } : x));
-                          toast(t('inbounds.enableToggled', { name: ib.remark || '#' + ib.id, status: !ib.enable ? t('common.enabled') : t('common.disabled') }), 'success');
+                          reconcileInboundEnableAfterMutation(ib);
                         } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                       }}
                     >
@@ -1630,8 +1681,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                           if (!nodeObj) return;
                           try {
                             await api.put('/v1/inbounds/' + nodeObj.id + '/' + ib.id, { remark: newRemark }, { auth: getAuth() });
-                            setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, remark: newRemark } : x));
-                            toast(t('inbounds.remarkUpdated', { remark: newRemark || t('inbounds.emptyRemark') }), 'success');
+                            reconcileInboundRemarkAfterMutation(ib, newRemark);
                           } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                         }}><span className={inboundLongValueClass} title={ib.remark || `#${ib.id}`}>{ib.remark || <span className="text-slate-600">-</span>}</span></td>
                         <td className="px-3 py-3 align-middle"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} title={filterProtocol === ib.protocol ? t('inbounds.clearProtocolFilter') : t('inbounds.filterByProtocolName', { protocol: ib.protocol })} onClick={() => setFilterProtocol(prev => prev === ib.protocol ? '' : ib.protocol)}>{ib.protocol.toUpperCase()}</button></td>
@@ -1647,8 +1697,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                           const { user, password } = getAuth();
                           try {
                             await api.post('/v1/inbounds/' + nodeObj.id + '/' + ib.id + '/set-enable', { enable: !ib.enable }, { auth: { username: user, password } });
-                            setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, enable: !ib.enable } : x));
-                            toast(t('inbounds.enableToggled', { name: ib.remark || '#' + ib.id, status: !ib.enable ? t('common.enabled') : t('common.disabled') }), 'success');
+                            reconcileInboundEnableAfterMutation(ib);
                           } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                         }}>{ib.enable ? t('common.enabled') : t('common.disabled')}</button></td>
                         <td className="px-3 py-3 align-middle">
