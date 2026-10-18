@@ -66,6 +66,18 @@ const HEADER_SUMMARY_CACHE_MAX_AGE_MS = 15 * 60 * 1000;
 const ACTIVE_TAB_CACHE_KEY = 'sub_manager_active_tab_v1';
 const FLEET_RAIL_COLLAPSED_KEY = 'sub_manager_fleet_rail_collapsed_v1';
 
+export function SectionNetworkActivity({ active, label }: { active: boolean; label: string }) {
+  if (!active) return null;
+  return (
+    <span
+      className="app-topbar__activity-dot"
+      role="status"
+      aria-label={label}
+      title={label}
+    />
+  );
+}
+
 const TAB_META: Record<TabType, { icon: IconName; labelKey: string; eyebrowKey: string; descriptionKey: string }> = {
   dashboard: {
     icon: 'dashboard',
@@ -863,6 +875,10 @@ export const App: React.FC = () => {
             <span className="inline-flex items-center gap-2">
               <UIIcon name={tabMeta[activeTab].icon} size={16} />
               {tabMeta[activeTab].label}
+              <SectionNetworkActivity
+                active={pendingRequests > 0}
+                label={t('app.networkActivity')}
+              />
             </span>
           </h1>
 

@@ -1,18 +1,25 @@
 import asyncio
 import json
 import logging
+import socket
 import sqlite3
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 from enum import Enum
+from urllib.parse import urlparse
 
+from shared.security import validate_and_resolve_outbound_url
 from services.db_bootstrap import connect
 from core.lifecycle_work import LifecycleWorkAdmissionClosed
 from services.snapshot_push import build_snapshot_push_payload
 from services.system_clients import normalize_email, system_client_emails_from_inbounds
 from services.xray_compatibility import summarize_node_inbounds
-from xui_session import suppress_collector_transport_diagnostics
+from xui_session import (
+    XUI_CONNECT_TIMEOUT_SEC,
+    build_panel_base_url,
+    suppress_collector_transport_diagnostics,
+)
 
 
 logger = logging.getLogger("sub_manager")
@@ -41,6 +48,7 @@ _DASHBOARD_SNAPSHOT_FIELDS = (
     "api_version",
     "xray_compatibility",
     "poll_ms",
+    "tcp_rtt_ms",
     "circuit_open_until",
     "cached_from_db",
     "snapshot_updated_at",
@@ -79,6 +87,32 @@ def _detect_api_version(panel_version: str) -> str:
         return "v3" if major >= 3 else "v2"
     except (ValueError, IndexError):
         return "unknown"
+
+
+def measure_node_tcp_rtt_ms(
+    node: Dict,
+    *,
+    clock: Callable[[], float] = time.perf_counter,
+    connector: Callable[..., Any] = socket.create_connection,
+) -> float | None:
+    """Measure one TCP handshake to the validated, address-pinned panel endpoint.
+
+    This is best-effort ephemeral telemetry. It deliberately does not change
+    node availability, collector backoff, or XUI fallback behaviour.
+    """
+    try:
+        base_url = build_panel_base_url(node)
+        valid, _error, pinned_address = validate_and_resolve_outbound_url(base_url)
+        if not valid or not pinned_address:
+            return None
+        parsed = urlparse(base_url)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        started = clock()
+        with connector((pinned_address, port), timeout=XUI_CONNECT_TIMEOUT_SEC):
+            pass
+        return round(max(0.0, clock() - started) * 1000, 2)
+    except (OSError, ValueError):
+        return None
 
 
 class CollectorMode(Enum):
@@ -420,6 +454,9 @@ class SnapshotCollector:
             node_name = row["node_name"] or snapshot.get("name") or str(node_id)
             is_online = bool(row["is_online"])
             snapshot = dict(snapshot)
+            # TCP RTT is process-memory telemetry only. Ignore any stale
+            # legacy value so a restored SQLite cache reports it as unknown.
+            snapshot.pop("tcp_rtt_ms", None)
             snapshot["node_id"] = snapshot.get("node_id") or node_id
             snapshot["name"] = node_name
             snapshot.setdefault("available", is_online)
@@ -454,6 +491,14 @@ class SnapshotCollector:
     def _upsert_snapshot_row(self, snapshot: Dict) -> None:
         self._upsert_snapshot_rows([snapshot])
 
+    @staticmethod
+    def _durable_snapshot_payload(snapshot: Dict) -> Dict:
+        """Return the SQLite-safe snapshot shape without ephemeral TCP telemetry."""
+        payload = dict(snapshot)
+        for field in ("cached_from_db", "snapshot_updated_at", "tcp_rtt_ms"):
+            payload.pop(field, None)
+        return payload
+
     def _upsert_snapshot_rows(self, snapshots: List[Dict]) -> None:
         if not self.db_path:
             return
@@ -463,9 +508,7 @@ class SnapshotCollector:
                 node_id_int = int(snapshot.get("node_id"))
             except (TypeError, ValueError):
                 continue
-            payload = dict(snapshot)
-            payload.pop("cached_from_db", None)
-            payload.pop("snapshot_updated_at", None)
+            payload = self._durable_snapshot_payload(snapshot)
             rows.append((node_id_int, json.dumps(payload, ensure_ascii=False, sort_keys=True), 1 if bool(snapshot.get("available")) else 0))
         if not rows:
             return
@@ -831,9 +874,19 @@ class SnapshotCollector:
                 snapshot = await self._run_blocking(
                     "collector.poll_node", self._collect_node_snapshot, node
                 )
+                # Keep existing poll_ms semantics: it measures the collector
+                # snapshot, while the optional TCP handshake is separate and
+                # still consumes the same bounded per-node semaphore slot.
+                elapsed = time.time() - started
+                if snapshot.get("available"):
+                    try:
+                        snapshot["tcp_rtt_ms"] = await self._run_blocking(
+                            "collector.tcp_rtt", measure_node_tcp_rtt_ms, node
+                        )
+                    except Exception:
+                        snapshot["tcp_rtt_ms"] = None
         finally:
             self._inflight_polls = max(0, self._inflight_polls - 1)
-        elapsed = time.time() - started
         previous = self._latest["nodes"].get(key)
         should_broadcast = False
         state = self._node_state.setdefault(
@@ -1134,6 +1187,7 @@ class SnapshotCollector:
                 "network",
                 "online_clients",
                 "traffic_total",
+                "tcp_rtt_ms",
                 "panel_version",
                 "api_version",
                 "xray_compatibility",
@@ -1181,6 +1235,7 @@ class SnapshotCollector:
                     "online_clients": snapshot.get("online_clients"),
                     "traffic_total": snapshot.get("traffic_total"),
                     "poll_ms": snapshot.get("poll_ms"),
+                    "tcp_rtt_ms": snapshot.get("tcp_rtt_ms"),
                     "timestamp": snapshot.get("timestamp"),
                     "_delta": bool(delta_fields),
                     "changes": delta_fields,

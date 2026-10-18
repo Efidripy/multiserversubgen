@@ -48,6 +48,7 @@ export interface DashboardFleetNode {
   traffic_total?: number;
   timestamp?: number;
   poll_ms?: number;
+  tcp_rtt_ms?: number;
   panel_version?: string;
   api_version?: string;
   xray_compatibility?: XrayCompatibilitySummary;
@@ -74,6 +75,7 @@ export interface DashboardServerStatus {
   panel_version?: string;
   api_version?: string;
   xray_compatibility?: XrayCompatibilitySummary;
+  tcp_rtt_ms?: number;
 }
 
 export interface XrayCompatibilitySummary {
@@ -92,6 +94,12 @@ export interface DashboardServerDeck {
 const toFiniteNumber = (value: unknown): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const toOptionalFiniteNumber = (value: unknown): number | undefined => {
+  if (value === undefined || value === null || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 };
 
 const normalizeNumberRecord = (value: unknown): Record<string, number> => {
@@ -165,6 +173,7 @@ const normalizeDashboardFleet = (raw: unknown): DashboardFleetNode[] => {
       traffic_total: toFiniteNumber(value.traffic_total),
       timestamp: toFiniteNumber(value.timestamp),
       poll_ms: toFiniteNumber(value.poll_ms),
+      tcp_rtt_ms: toOptionalFiniteNumber(value.tcp_rtt_ms),
       panel_version: typeof value.panel_version === 'string' ? value.panel_version : '',
       api_version: typeof value.api_version === 'string' ? value.api_version : '',
       xray_compatibility: value.xray_compatibility as XrayCompatibilitySummary | undefined,
@@ -212,6 +221,7 @@ export function dashboardFleetToServerDeck(fleet: DashboardFleetNode[]): Dashboa
       panel_version: node.panel_version,
       api_version: node.api_version,
       xray_compatibility: node.xray_compatibility,
+      tcp_rtt_ms: node.tcp_rtt_ms,
     };
   });
   return { servers, nodeIdsByName, latencyByNode, updateAvailableNodeIds: [] };
