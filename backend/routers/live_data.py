@@ -220,6 +220,7 @@ def build_live_data_router(
             "traffic_total": cached.get("traffic_total"),
             "timestamp": cached.get("timestamp"),
             "poll_ms": cached.get("poll_ms"),
+            "tcp_rtt_ms": cached.get("tcp_rtt_ms"),
             "panel_version": cached.get("panel_version") or node.get("panel_version") or "",
             "api_version": cached.get("api_version") or node.get("api_version") or "",
             "xray_compatibility": cached.get("xray_compatibility"),

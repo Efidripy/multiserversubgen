@@ -651,6 +651,37 @@
     filter: drop-shadow(0 0 8px rgba(34, 211, 238, 0.35));
   }
 
+  .app-topbar__activity-dot {
+    width: 7px;
+    height: 7px;
+    margin-left: 2px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: #67e8f9;
+    box-shadow: 0 0 0 3px rgba(103, 232, 249, 0.10), 0 0 12px rgba(103, 232, 249, 0.62);
+    animation: app-topbar-activity-pulse 1.25s ease-in-out infinite;
+  }
+
+  @keyframes app-topbar-activity-pulse {
+    0%, 100% {
+      opacity: 0.58;
+      transform: scale(0.82);
+      box-shadow: 0 0 0 2px rgba(103, 232, 249, 0.08), 0 0 7px rgba(103, 232, 249, 0.38);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1);
+      box-shadow: 0 0 0 4px rgba(103, 232, 249, 0.14), 0 0 15px rgba(103, 232, 249, 0.72);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .app-topbar__activity-dot {
+      animation: none;
+      transform: none;
+    }
+  }
+
   .app-topbar__menu-btn {
     display: none;
   }
