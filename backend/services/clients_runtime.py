@@ -26,13 +26,14 @@ class ClientsRuntime:
         self._cache_state_lock = Lock()
         self._cache_generation = 0
 
-    def _snapshot_cache(self) -> tuple[float, List[Dict], int]:
+    def _snapshot_cache(self) -> tuple[float, List[Dict], int, bool]:
         with self._cache_state_lock:
             data = self.clients_cache.get("data")
             return (
                 float(self.clients_cache.get("ts") or 0.0),
                 data if isinstance(data, list) else [],
                 self._cache_generation,
+                bool(self.clients_cache.get("invalidated")),
             )
 
     def _store_cache(self, data: List[Dict], generation: int) -> bool:
@@ -42,18 +43,24 @@ class ClientsRuntime:
                 return False
             self.clients_cache["ts"] = time.time()
             self.clients_cache["data"] = data
+            self.clients_cache["invalidated"] = False
             return True
 
     def invalidate(self) -> None:
-        """Discard the fleet projection after a successful control-plane write."""
+        """Invalidate a projection without discarding its last valid snapshot."""
         with self._cache_state_lock:
             self._cache_generation += 1
-            self.clients_cache["ts"] = 0.0
-            self.clients_cache["data"] = []
+            if self.clients_cache.get("data"):
+                self.clients_cache["invalidated"] = True
+            else:
+                self.clients_cache["ts"] = 0.0
+                self.clients_cache["invalidated"] = False
 
-    def get_cached_clients(self, nodes: List[Dict], email_filter: Optional[str] = None) -> List[Dict]:
+    def get_cached_clients(
+        self, nodes: List[Dict], email_filter: Optional[str] = None
+    ) -> List[Dict]:
         now = time.time()
-        cached_at, full_list, generation = self._snapshot_cache()
+        cached_at, full_list, generation, invalidated = self._snapshot_cache()
 
         def _apply_filter(items: List[Dict]) -> List[Dict]:
             if not email_filter:
@@ -61,12 +68,23 @@ class ClientsRuntime:
             needle = email_filter.lower()
             return [c for c in items if needle in str(c.get("email", "")).lower()]
 
+        if full_list and invalidated:
+            record_cache("memory_stale")
+
+            def _refresh() -> None:
+                fresh = self.client_mgr.get_all_clients(nodes, email_filter=None)
+                self._store_cache(fresh, generation)
+
+            self.start_cache_refresh("clients", _refresh)
+            return _apply_filter(full_list)
+
         if full_list and now - cached_at < self.clients_cache_ttl:
             record_cache("memory_fresh")
             return _apply_filter(full_list)
 
         if full_list and now - cached_at < self.clients_cache_stale_ttl:
             record_cache("memory_stale")
+
             def _refresh() -> None:
                 fresh = self.client_mgr.get_all_clients(nodes, email_filter=None)
                 self._store_cache(fresh, generation)
@@ -79,7 +97,10 @@ class ClientsRuntime:
         # loader leaves the critical section.
         with self._cold_load_lock:
             now = time.time()
-            cached_at, full_list, generation = self._snapshot_cache()
+            cached_at, full_list, generation, invalidated = self._snapshot_cache()
+            if full_list and invalidated:
+                record_cache("memory_stale")
+                return _apply_filter(full_list)
             if full_list and now - cached_at < self.clients_cache_ttl:
                 record_cache("memory_fresh")
                 return _apply_filter(full_list)

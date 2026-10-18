@@ -508,7 +508,18 @@
     "expiresToday": "Истекает сегодня",
     "daysRemaining": "Осталось {{days}} дн.",
     "setExpiryDaysTitle": "Установить срок на {{days}} дней от текущей даты (или до указанной даты)",
-    "noExpiry": "Без срока"
+    "noExpiry": "Без срока",
+    "projectionCached": "Показан локальный снимок",
+    "projectionRefreshing": "Обновляем снимок",
+    "projectionReceived": "Снимок получен",
+    "projectionRefreshFailed": "Не удалось обновить снимок",
+    "projectionAddPending": "Клиент {{email}} добавлен на узлах; ожидается подтверждение снимком",
+    "projectionOperationSending": "Операция отправляется",
+    "projectionOperationAwaiting": "Операция выполнена удалённо; ожидается снимок",
+    "projectionOperationVisible": "Операция подтверждена снимком",
+    "projectionOperationPartial": "Операция выполнена частично; ожидается сверка",
+    "projectionOperationFailed": "Операция не выполнена",
+    "projectionOperationUnknown": "Результат операции неизвестен; обновите снимок"
   },
   "traffic": {
     "title": "Статистика трафика",
@@ -745,7 +756,13 @@
     "metadataOnly": "Только метаданные",
     "routeOnly": "Только для маршрутизации",
     "ipsExcluded": "Исключённые IP",
-    "domainsExcluded": "Исключённые домены"
+    "domainsExcluded": "Исключённые домены",
+    "projectionCached": "Показан локальный снимок",
+    "projectionRefreshing": "Обновляем снимок",
+    "projectionReceived": "Снимок получен",
+    "projectionRefreshFailed": "Не удалось обновить снимок",
+    "projectionOperationAwaiting": "Операция выполнена удалённо; ожидается снимок",
+    "projectionOperationPartial": "Операция выполнена частично; ожидается сверка"
   },
   "subscriptions": {
     "title": "Управление подписками",
