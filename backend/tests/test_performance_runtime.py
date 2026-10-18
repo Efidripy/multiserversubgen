@@ -135,7 +135,9 @@ def test_clients_and_inbounds_cold_cache_misses_are_single_flight():
         start_cache_refresh=lambda *_args, **_kwargs: None,
     )
     with ThreadPoolExecutor(max_workers=2) as executor:
-        results = list(executor.map(lambda _: inbounds_runtime.get_cached_inbounds([]), range(2)))
+        results = list(
+            executor.map(lambda _: inbounds_runtime.get_cached_inbounds([]), range(2))
+        )
     assert results == [[{"id": 1}], [{"id": 1}]]
     assert inbound_manager.calls == 1
 
@@ -167,7 +169,9 @@ def test_period_snapshot_seed_is_single_flight_across_collector_callbacks():
         return {"stats": {group_by: {"total": 1}}}
 
     runtime._snapshot_projection = projection
-    runtime._save_period_snapshots = lambda group_by, *_args: saved_groups.append(group_by)
+    runtime._save_period_snapshots = lambda group_by, *_args: saved_groups.append(
+        group_by
+    )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         first = executor.submit(runtime.seed_period_snapshots_from_collector, 100.0)
@@ -175,13 +179,17 @@ def test_period_snapshot_seed_is_single_flight_across_collector_callbacks():
         second = executor.submit(runtime.seed_period_snapshots_from_collector, 100.0)
         assert second.result(timeout=1) == {}
         release.set()
-        assert first.result(timeout=2) == {"client": True, "inbound": True, "node": True}
+        assert first.result(timeout=2) == {
+            "client": True,
+            "inbound": True,
+            "node": True,
+        }
 
     assert projection_calls == ["client", "inbound", "node"]
     assert saved_groups == ["client", "inbound", "node"]
 
 
-def test_read_projections_refetch_immediately_after_invalidation():
+def test_read_projections_serve_last_snapshot_and_schedule_one_refresh_after_invalidation():
     class ClientManager:
         calls = 0
 
@@ -189,15 +197,19 @@ def test_read_projections_refetch_immediately_after_invalidation():
             self.calls += 1
             return [{"email": "fresh@example.test"}]
 
+    client_refreshes = []
     clients_runtime = ClientsRuntime(
         client_mgr=ClientManager(),
         clients_cache={"ts": time.time(), "data": [{"email": "stale@example.test"}]},
         clients_cache_ttl=60,
         clients_cache_stale_ttl=300,
-        start_cache_refresh=lambda *_args, **_kwargs: None,
+        start_cache_refresh=lambda _key, refresh: client_refreshes.append(refresh),
     )
     assert clients_runtime.get_cached_clients([]) == [{"email": "stale@example.test"}]
     clients_runtime.invalidate()
+    assert clients_runtime.get_cached_clients([]) == [{"email": "stale@example.test"}]
+    assert len(client_refreshes) == 1
+    client_refreshes.pop()()
     assert clients_runtime.get_cached_clients([]) == [{"email": "fresh@example.test"}]
     assert clients_runtime.client_mgr.calls == 1
 
@@ -219,13 +231,19 @@ def test_read_projections_refetch_immediately_after_invalidation():
             return [{"id": "fresh-options"}]
 
     inbound_manager = InboundManager()
+    inbound_refreshes = []
     inbounds_runtime = InboundsRuntime(
         inbound_mgr=inbound_manager,
         inbounds_cache={"ts": time.time(), "data": [{"id": "stale-full"}]},
-        start_cache_refresh=lambda *_args, **_kwargs: None,
+        start_cache_refresh=lambda _key, refresh: inbound_refreshes.append(
+            ("inbounds", refresh)
+        ),
     )
     inbounds_runtime._slim_cache = {"ts": time.time(), "data": [{"id": "stale-slim"}]}
-    inbounds_runtime._options_cache = {"ts": time.time(), "data": [{"id": "stale-options"}]}
+    inbounds_runtime._options_cache = {
+        "ts": time.time(),
+        "data": [{"id": "stale-options"}],
+    }
 
     assert inbounds_runtime.get_cached_inbounds([]) == [{"id": "stale-full"}]
     assert inbounds_runtime.get_cached_slim_inbounds([]) == [{"id": "stale-slim"}]
@@ -233,10 +251,21 @@ def test_read_projections_refetch_immediately_after_invalidation():
 
     inbounds_runtime.invalidate()
 
+    assert inbounds_runtime.get_cached_inbounds([]) == [{"id": "stale-full"}]
+    assert inbounds_runtime.get_cached_slim_inbounds([]) == [{"id": "stale-slim"}]
+    assert inbounds_runtime.get_cached_inbound_options([]) == [{"id": "stale-options"}]
+    assert len(inbound_refreshes) == 3
+    for _key, refresh in inbound_refreshes:
+        refresh()
+
     assert inbounds_runtime.get_cached_inbounds([]) == [{"id": "fresh-full"}]
     assert inbounds_runtime.get_cached_slim_inbounds([]) == [{"id": "fresh-slim"}]
     assert inbounds_runtime.get_cached_inbound_options([]) == [{"id": "fresh-options"}]
-    assert (inbound_manager.full_calls, inbound_manager.slim_calls, inbound_manager.options_calls) == (1, 1, 1)
+    assert (
+        inbound_manager.full_calls,
+        inbound_manager.slim_calls,
+        inbound_manager.options_calls,
+    ) == (1, 1, 1)
 
 
 def test_invalidation_rejects_an_in_flight_pre_mutation_refresh():
@@ -251,11 +280,20 @@ def test_invalidation_rejects_an_in_flight_pre_mutation_refresh():
         clients_cache_stale_ttl=300,
         start_cache_refresh=lambda *_args, **_kwargs: None,
     )
-    _cached_at, _cached, generation = clients_runtime._snapshot_cache()
+    _cached_at, _cached, generation, _invalidated = clients_runtime._snapshot_cache()
     clients_runtime.invalidate()
 
-    assert clients_runtime._store_cache([{"email": "before-mutation@example.test"}], generation) is False
-    assert clients_runtime.clients_cache == {"ts": 0.0, "data": []}
+    assert (
+        clients_runtime._store_cache(
+            [{"email": "before-mutation@example.test"}], generation
+        )
+        is False
+    )
+    assert clients_runtime.clients_cache == {
+        "ts": 0.0,
+        "data": [],
+        "invalidated": False,
+    }
 
     class InboundManager:
         pass
@@ -265,16 +303,25 @@ def test_invalidation_rejects_an_in_flight_pre_mutation_refresh():
         inbounds_cache={"ts": 0.0, "data": []},
         start_cache_refresh=lambda *_args, **_kwargs: None,
     )
-    _cached_at, _cached, generation = inbounds_runtime._snapshot_cache(inbounds_runtime._options_cache, "inbounds_options")
+    _cached_at, _cached, generation, _invalidated = inbounds_runtime._snapshot_cache(
+        inbounds_runtime._options_cache, "inbounds_options"
+    )
     inbounds_runtime.invalidate()
 
-    assert inbounds_runtime._store_cache(
-        cache=inbounds_runtime._options_cache,
-        cache_key="inbounds_options",
-        data=[{"id": "before-mutation"}],
-        generation=generation,
-    ) is False
-    assert inbounds_runtime._options_cache == {"ts": 0.0, "data": []}
+    assert (
+        inbounds_runtime._store_cache(
+            cache=inbounds_runtime._options_cache,
+            cache_key="inbounds_options",
+            data=[{"id": "before-mutation"}],
+            generation=generation,
+        )
+        is False
+    )
+    assert inbounds_runtime._options_cache == {
+        "ts": 0.0,
+        "data": [],
+        "invalidated": False,
+    }
 
 
 def test_client_notes_query_only_matches_requested_identities(monkeypatch, tmp_path):
@@ -305,7 +352,9 @@ def test_client_notes_query_only_matches_requested_identities(monkeypatch, tmp_p
     )
 
     assert enriched[0]["notes"] == "wanted note"
-    select = next(statement for statement in statements if "SELECT node_id" in statement)
+    select = next(
+        statement for statement in statements if "SELECT node_id" in statement
+    )
     assert "WHERE (node_id" in select
     assert "unrelated" not in select
 
@@ -317,7 +366,10 @@ def test_fleet_history_is_one_bounded_route(tmp_path):
     with connect(db_path) as conn:
         history_rows = [
             (now - offset, node_id, node_name, 1, 1, cpu, online, traffic + offset, 5)
-            for node_id, node_name, cpu, online, traffic in ((1, "alpha", 10, 2, 1000), (2, "beta", 20, 4, 2000))
+            for node_id, node_name, cpu, online, traffic in (
+                (1, "alpha", 10, 2, 1000),
+                (2, "beta", 20, 4, 2000),
+            )
             for offset in range(1, 102)
         ]
         conn.executemany(
@@ -348,7 +400,9 @@ def test_fleet_history_is_one_bounded_route(tmp_path):
             snapshot_collector=SnapshotCollector(),
         )
     )
-    response = TestClient(app).get("/api/v1/history/nodes?since_sec=999999&limit_per_node=100")
+    response = TestClient(app).get(
+        "/api/v1/history/nodes?since_sec=999999&limit_per_node=100"
+    )
 
     assert response.status_code == 200
     payload = response.json()
@@ -373,7 +427,17 @@ def test_fleet_history_fairly_bounds_large_response_to_point_budget(tmp_path):
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             [
-                (now - offset, node_id, f"node-{node_id}", 1, 1, 10, 1, 1000 + offset, 5)
+                (
+                    now - offset,
+                    node_id,
+                    f"node-{node_id}",
+                    1,
+                    1,
+                    10,
+                    1,
+                    1000 + offset,
+                    5,
+                )
                 for node_id in range(1, node_count + 1)
                 for offset in range(1, points_per_node + 1)
             ],
@@ -399,7 +463,9 @@ def test_fleet_history_fairly_bounds_large_response_to_point_budget(tmp_path):
             snapshot_collector=SnapshotCollector(),
         )
     )
-    response = TestClient(app).get("/api/v1/history/nodes?since_sec=999999&limit_per_node=300")
+    response = TestClient(app).get(
+        "/api/v1/history/nodes?since_sec=999999&limit_per_node=300"
+    )
 
     assert response.status_code == 200
     payload = response.json()
@@ -407,8 +473,12 @@ def test_fleet_history_fairly_bounds_large_response_to_point_budget(tmp_path):
     assert payload["point_budget"] == 24_000
     assert payload["effective_limit_per_node"] == 240
     assert payload["count"] == 24_000
-    assert {point["node_id"] for point in payload["points"]} == set(range(1, node_count + 1))
-    assert Counter(point["node_id"] for point in payload["points"]) == {node_id: 240 for node_id in range(1, node_count + 1)}
+    assert {point["node_id"] for point in payload["points"]} == set(
+        range(1, node_count + 1)
+    )
+    assert Counter(point["node_id"] for point in payload["points"]) == {
+        node_id: 240 for node_id in range(1, node_count + 1)
+    }
     assert [(point["ts"], point["node_id"]) for point in payload["points"]] == sorted(
         (point["ts"], point["node_id"]) for point in payload["points"]
     )

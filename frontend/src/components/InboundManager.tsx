@@ -8,6 +8,11 @@ import { listNodes } from '../api/nodes';
 import { UIIcon } from './UIIcon';
 import { InboundEditModal } from './InboundEditModal';
 import { readStaleCache, writeStaleCache } from '../services/staleCache';
+import {
+  beginProjectionOperation,
+  setProjectionOperationStatus,
+  useProjectionOperations,
+} from '../services/projectionOperationStore';
 import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
 
 interface Inbound {
@@ -57,6 +62,7 @@ interface InboundsPageCache {
   filterNode: string;
   sortField: 'name' | 'node' | 'protocol' | 'port' | 'status' | 'clients';
   sortDirection: 'asc' | 'desc';
+  inboundStats?: InboundStats | null;
 }
 
 const parseMaybeJsonObject = (value: any): Record<string, any> => {
@@ -325,6 +331,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   const [loading, setLoading] = useState(false);
   const [pageLoading, setPageLoading] = useState(false);
   const [error, setError] = useState('');
+  const [projectionState, setProjectionState] = useState<'cold' | 'cached' | 'refreshing' | 'received' | 'refresh_failed'>('cold');
+  const [projectionSnapshotAt, setProjectionSnapshotAt] = useState(0);
+  const inboundOperations = useProjectionOperations('inbounds');
+  const [cacheHydrated, setCacheHydrated] = useState(false);
 
   const [ibPage, setIbPage] = useState(1);
   const [ibPageSize, setIbPageSize] = useState(50);
@@ -363,6 +373,8 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   const [batchEnableMode, setBatchEnableMode] = useState<'none' | 'enable' | 'disable'>('none');
   const requestIdRef = useRef(0);
   const inboundsAbortRef = useRef<AbortController | null>(null);
+  const inboundsReconcileTimerRef = useRef<number | null>(null);
+  const inboundProjectionMatchersRef = useRef<Map<number, (rows: Inbound[]) => boolean>>(new Map());
 
   // Inbound config viewer modal
   const [showConfigModal, setShowConfigModal] = useState(false);
@@ -373,6 +385,22 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   useEffect(() => {
     inboundsRef.current = inbounds;
   }, [inbounds]);
+
+  const confirmInboundOperationFromProjection = (
+    operationId: number,
+    matches: (rows: Inbound[]) => boolean,
+  ) => {
+    inboundProjectionMatchersRef.current.set(operationId, matches);
+  };
+
+  const confirmInboundOperationsFromProjection = (rows: Inbound[]) => {
+    inboundProjectionMatchersRef.current.forEach((matches, operationId) => {
+      if (matches(rows)) {
+        setProjectionOperationStatus(operationId, 'visible_in_projection');
+        inboundProjectionMatchersRef.current.delete(operationId);
+      }
+    });
+  };
 
   useEffect(() => {
     // Always show stale data instantly (stale-while-revalidate), then refresh in background.
@@ -389,19 +417,28 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       if (parsed.nodeNameToId && typeof parsed.nodeNameToId === 'object') {
         setNodeNameToId(parsed.nodeNameToId);
       }
+      if (parsed.inboundStats) setInboundStats(parsed.inboundStats);
       if (typeof parsed.filterProtocol === 'string') setFilterProtocol(parsed.filterProtocol);
       if (typeof parsed.filterSecurity === 'string') setFilterSecurity(parsed.filterSecurity);
       if (typeof parsed.filterNode === 'string') setFilterNode(parsed.filterNode);
       if (parsed.sortField) setSortField(parsed.sortField);
       if (parsed.sortDirection) setSortDirection(parsed.sortDirection);
+      setProjectionSnapshotAt(cached.ts);
+      setProjectionState(Date.now() - cached.ts <= 10 * 60 * 1000 ? 'cached' : 'refreshing');
     }
 
-    // Refresh silently if cache is fresh enough, otherwise show spinner.
-    loadInbounds(cached.isFresh ? true : false);
-    return () => inboundsAbortRef.current?.abort();
+    // Do not let the initial persistence effect overwrite the snapshot before
+    // hydration state is committed.
+    setCacheHydrated(true);
+    void loadInbounds(Boolean(cached.data?.inbounds?.length));
+    return () => {
+      inboundsAbortRef.current?.abort();
+      if (inboundsReconcileTimerRef.current) window.clearTimeout(inboundsReconcileTimerRef.current);
+    };
   }, []);
 
   useEffect(() => {
+    if (!cacheHydrated) return;
     writeStaleCache<InboundsPageCache>(INBOUNDS_PAGE_CACHE_KEY, {
       ts: Date.now(),
       inbounds,
@@ -412,6 +449,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       filterNode,
       sortField,
       sortDirection,
+      inboundStats,
     });
   }, [
     inbounds,
@@ -424,6 +462,8 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     searchTerm,
     sortField,
     sortDirection,
+    inboundStats,
+    cacheHydrated,
   ]);
 
   // Persist filter changes
@@ -537,6 +577,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     const controller = new AbortController();
     inboundsAbortRef.current = controller;
     if (!silent) setPageLoading(true);
+    if (inboundsRef.current.length > 0) setProjectionState('refreshing');
     setError('');
 
     try {
@@ -547,7 +588,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         .catch(() => null);
 
       const [nodes, rawInbounds, stats] = await Promise.all([
-        listNodes({ signal: controller.signal }),
+        listNodes({ signal: controller.signal, sessionOnlyAuth: true }),
         getInboundsHeaderSource({ signal: controller.signal }),
         inboundStatsPromise,
       ]);
@@ -566,12 +607,16 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
       const normalized = normalizeInboundRows(rawInbounds, nameMap);
 
+      confirmInboundOperationsFromProjection(normalized);
       setInbounds(normalized);
+      setProjectionSnapshotAt(Date.now());
+      setProjectionState('received');
 
     } catch (err: any) {
       if (requestIdRef.current !== requestId) return;
       if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return;
       setError(err.response?.data?.detail || t('messages.operationFailed'));
+      if (inboundsRef.current.length > 0) setProjectionState('refresh_failed');
     } finally {
       if (requestIdRef.current === requestId) {
         if (inboundsAbortRef.current === controller) {
@@ -580,6 +625,36 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         setPageLoading(false);
       }
     }
+  };
+
+  const reconcileInboundsAfterMutation = (operationId: number) => {
+    setProjectionOperationStatus(operationId, 'remote_succeeded_awaiting_projection');
+    if (inboundsReconcileTimerRef.current) window.clearTimeout(inboundsReconcileTimerRef.current);
+    inboundsReconcileTimerRef.current = window.setTimeout(() => {
+      void loadInbounds(true);
+    }, 750);
+  };
+
+  const reconcileInboundRemarkAfterMutation = (inbound: Inbound, remark: string) => {
+    const operationId = beginProjectionOperation('inbounds', inbound.remark || `#${inbound.id}`);
+    confirmInboundOperationFromProjection(
+      operationId,
+      (rows) => rows.some((row) =>
+        inboundKey(row) === inboundKey(inbound) && row.remark === remark,
+      ),
+    );
+    reconcileInboundsAfterMutation(operationId);
+  };
+
+  const reconcileInboundEnableAfterMutation = (inbound: Inbound) => {
+    const operationId = beginProjectionOperation('inbounds', inbound.remark || `#${inbound.id}`);
+    confirmInboundOperationFromProjection(
+      operationId,
+      (rows) => rows.some((row) =>
+        inboundKey(row) === inboundKey(inbound) && row.enable === !inbound.enable,
+      ),
+    );
+    reconcileInboundsAfterMutation(operationId);
   };
 
   const handleRealtimeUpdate = useCallback(
@@ -601,6 +676,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
           const deduped = new Map<string, Inbound>();
           [...retained, ...incoming].forEach((ib) => deduped.set(inboundKey(ib), ib));
           const nextInbounds = Array.from(deduped.values());
+          confirmInboundOperationsFromProjection(nextInbounds);
           inboundsRef.current = nextInbounds;
           setInbounds(nextInbounds);
           writeStaleCache<InboundsPageCache>(INBOUNDS_PAGE_CACHE_KEY, {
@@ -694,7 +770,12 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       });
 
       clearSelection();
-      await loadInbounds();
+      const operationId = beginProjectionOperation('inbounds', inbound.remark || `#${inbound.id}`);
+      confirmInboundOperationFromProjection(
+        operationId,
+        (rows) => !rows.some((row) => inboundKey(row) === inboundKey(inbound)),
+      );
+      reconcileInboundsAfterMutation(operationId);
       onReload?.();
     } catch (err: any) {
       setError(err.response?.data?.detail || t('inbounds.deleteFailed'));
@@ -749,7 +830,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
       setShowCloneModal(false);
       setCloneTargetNodeIds(new Set());
-      await loadInbounds();
+      reconcileInboundsAfterMutation(beginProjectionOperation('inbounds', cloneRemark || t('inbounds.cloneInbound')));
       onReload?.();
     } catch (err: any) {
       setError(err.response?.data?.detail || t('inbounds.cloneFailed'));
@@ -787,7 +868,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       };
       await api.post('/v1/inbounds', payload, { auth: getAuth() });
       setShowAddModal(false);
-      await loadInbounds();
+      reconcileInboundsAfterMutation(beginProjectionOperation('inbounds', t('inbounds.addInbound')));
       onReload?.();
     } catch (err: any) {
       if (err instanceof SyntaxError) {
@@ -818,7 +899,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       );
 
       clearSelection();
-      await loadInbounds();
+      reconcileInboundsAfterMutation(beginProjectionOperation('inbounds', t('inbounds.title')));
       onReload?.();
     } catch (err: any) {
       setError(err.response?.data?.detail || t('inbounds.batchEnableFailed'));
@@ -857,7 +938,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       setBatchRemark('');
       setBatchEnableMode('none');
       clearSelection();
-      await loadInbounds();
+      reconcileInboundsAfterMutation(beginProjectionOperation('inbounds', t('inbounds.title')));
       onReload?.();
     } catch (err: any) {
       setError(err.response?.data?.detail || t('inbounds.batchUpdateFailed'));
@@ -885,7 +966,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
       );
 
       clearSelection();
-      await loadInbounds();
+      reconcileInboundsAfterMutation(beginProjectionOperation('inbounds', t('inbounds.deleteInbound')));
       onReload?.();
     } catch (err: any) {
       setError(err.response?.data?.detail || t('inbounds.batchDeleteFailed'));
@@ -1013,6 +1094,33 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         </div>
 
         {error && <div className={tableErrorClass}>{error}</div>}
+        {(projectionState !== 'cold' || inboundOperations.length > 0) && (
+          <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2 text-xs text-slate-400">
+            {projectionState !== 'cold' && (
+              <span className={cn(tableStateChipClass, projectionState === 'refresh_failed' ? 'border-rose-400/30 text-rose-300' : 'border-cyan-400/30 text-cyan-200')}>
+                {projectionState === 'cached' && t('inbounds.projectionCached')}
+                {projectionState === 'refreshing' && t('inbounds.projectionRefreshing')}
+                {projectionState === 'received' && t('inbounds.projectionReceived')}
+                {projectionState === 'refresh_failed' && t('inbounds.projectionRefreshFailed')}
+                {projectionSnapshotAt > 0 && ` · ${new Date(projectionSnapshotAt).toLocaleTimeString()}`}
+              </span>
+            )}
+            {inboundOperations.map((operation) => (
+              <span key={operation.id} className={cn(tableStateChipClass,
+                operation.status === 'partial' ? 'border-amber-400/30 text-amber-200'
+                  : operation.status === 'failed' || operation.status === 'outcome_unknown' ? 'border-rose-400/30 text-rose-300'
+                    : operation.status === 'visible_in_projection' ? 'border-emerald-400/30 text-emerald-200'
+                      : 'border-cyan-400/30 text-cyan-200')}>
+                {operation.status === 'partial' && t('inbounds.projectionOperationPartial')}
+                {operation.status === 'visible_in_projection' && t('inbounds.projectionOperationVisible')}
+                {operation.status === 'failed' && t('inbounds.projectionOperationFailed')}
+                {operation.status === 'outcome_unknown' && t('inbounds.projectionOperationUnknown')}
+                {(operation.status === 'sending' || operation.status === 'remote_succeeded_awaiting_projection') && t('inbounds.projectionOperationAwaiting')}
+                {` · ${operation.label}`}
+              </span>
+            ))}
+          </div>
+        )}
 
         {inboundStats && (
           <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
@@ -1455,8 +1563,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                           if (!nodeObj) return;
                           try {
                             await api.put('/v1/inbounds/' + nodeObj.id + '/' + ib.id, { remark: newRemark }, { auth: getAuth() });
-                            setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, remark: newRemark } : x));
-                            toast(t('inbounds.remarkUpdated', { remark: newRemark || t('inbounds.emptyRemark') }), 'success');
+                            reconcileInboundRemarkAfterMutation(ib, newRemark);
                           } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                         }}
                       >
@@ -1474,8 +1581,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                         const { user, password } = getAuth();
                         try {
                           await api.post('/v1/inbounds/' + nodeObj.id + '/' + ib.id + '/set-enable', { enable: !ib.enable }, { auth: { username: user, password } });
-                          setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, enable: !ib.enable } : x));
-                          toast(t('inbounds.enableToggled', { name: ib.remark || '#' + ib.id, status: !ib.enable ? t('common.enabled') : t('common.disabled') }), 'success');
+                          reconcileInboundEnableAfterMutation(ib);
                         } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                       }}
                     >
@@ -1575,8 +1681,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                           if (!nodeObj) return;
                           try {
                             await api.put('/v1/inbounds/' + nodeObj.id + '/' + ib.id, { remark: newRemark }, { auth: getAuth() });
-                            setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, remark: newRemark } : x));
-                            toast(t('inbounds.remarkUpdated', { remark: newRemark || t('inbounds.emptyRemark') }), 'success');
+                            reconcileInboundRemarkAfterMutation(ib, newRemark);
                           } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                         }}><span className={inboundLongValueClass} title={ib.remark || `#${ib.id}`}>{ib.remark || <span className="text-slate-600">-</span>}</span></td>
                         <td className="px-3 py-3 align-middle"><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} title={filterProtocol === ib.protocol ? t('inbounds.clearProtocolFilter') : t('inbounds.filterByProtocolName', { protocol: ib.protocol })} onClick={() => setFilterProtocol(prev => prev === ib.protocol ? '' : ib.protocol)}>{ib.protocol.toUpperCase()}</button></td>
@@ -1592,8 +1697,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                           const { user, password } = getAuth();
                           try {
                             await api.post('/v1/inbounds/' + nodeObj.id + '/' + ib.id + '/set-enable', { enable: !ib.enable }, { auth: { username: user, password } });
-                            setInbounds(prev => prev.map(x => inboundKey(x) === inboundKey(ib) ? { ...x, enable: !ib.enable } : x));
-                            toast(t('inbounds.enableToggled', { name: ib.remark || '#' + ib.id, status: !ib.enable ? t('common.enabled') : t('common.disabled') }), 'success');
+                            reconcileInboundEnableAfterMutation(ib);
                           } catch (e: any) { toast(e.response?.data?.detail || t('common.failed'), 'error'); }
                         }}>{ib.enable ? t('common.enabled') : t('common.disabled')}</button></td>
                         <td className="px-3 py-3 align-middle">
