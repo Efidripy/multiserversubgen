@@ -58,7 +58,7 @@ type UiServer = ServerMemoryMetric & {
   nodeId?: number;
   name: string;
   status: 'online' | 'offline';
-  latency: string;
+  tcpRtt: string;
   cpu?: number;
   ramPercent?: number;
   ramDetail: string;
@@ -79,6 +79,7 @@ type ServerMetaItem = {
   value: string;
   icon: ReactNode;
   tone?: string;
+  title?: string;
 };
 
 const nodeActionKey = (server: UiServer, action: NodeAction) => `${server.nodeId ?? server.name}:${action}`;
@@ -212,6 +213,11 @@ const metricDetail = (metric: any, fallback: string) => {
   return current === undefined || total === undefined ? fallback : `${formatBytes(current)}/${formatBytes(total)}`;
 };
 
+const formatTcpRtt = (value: unknown): string => {
+  const rtt = Number(value);
+  return Number.isFinite(rtt) && rtt >= 0 ? `${rtt.toFixed(rtt % 1 === 0 ? 0 : 2)} ms` : '—';
+};
+
 export const toUiServer = (server: DashboardServerStatus): UiServer => {
   const isOnline = Boolean(server.available);
   const cpu = telemetryMetric(server.system?.cpu);
@@ -221,7 +227,7 @@ export const toUiServer = (server: DashboardServerStatus): UiServer => {
     nodeId: server.nodeId,
     name: server.node,
     status: isOnline ? 'online' : 'offline',
-    latency: isOnline ? 'online' : 'No connection',
+    tcpRtt: isOnline ? formatTcpRtt(server.tcp_rtt_ms) : 'No connection',
     cpu,
     ramPercent,
     ramCurrentBytes: telemetryBytes(server.system?.mem?.current),
@@ -254,6 +260,7 @@ export function ServerStatus({
   const dashboardData = useDashboardData();
   const [servers, setServers] = useState<UiServer[]>([]);
   const [loading, setLoading] = useState(false);
+  const [refreshPending, setRefreshPending] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [cardSort, setCardSort] = useState<SortMode>('name');
   const [pendingActions, setPendingActions] = useState<Record<string, boolean>>({});
@@ -286,11 +293,20 @@ export function ServerStatus({
   }, [dashboardData]);
 
   const refreshDeck = useCallback(async () => {
+    setRefreshPending(true);
     try {
-      await refreshNodesNow();
-    } catch {}
-    await dashboardData?.refresh();
+      try {
+        await refreshNodesNow();
+      } catch {
+        // Preserve the existing best-effort force refresh before the aggregate read.
+      }
+      await dashboardData?.refresh();
+    } finally {
+      setRefreshPending(false);
+    }
   }, [dashboardData]);
+
+  const refreshBusy = loading || refreshPending;
 
   const requireNodeId = useCallback((server: UiServer): number | null => {
     if (server.nodeId !== undefined && Number.isFinite(server.nodeId)) {
@@ -494,12 +510,13 @@ export function ServerStatus({
               <button
                 className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 text-white disabled:opacity-50"
                 onClick={refreshDeck}
-                disabled={loading}
+                disabled={refreshBusy}
                 type="button"
-                title="Refresh"
-                aria-label="Refresh"
+                title={t('common.refresh')}
+                aria-label={t('common.refresh')}
+                aria-busy={refreshBusy}
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshBusy ? 'animate-spin motion-reduce:animate-none' : ''}`} />
               </button>
               {onToggleFleet && (
                 <button
@@ -656,7 +673,7 @@ function ServerCard({
     { label: 'Uptime', value: server.uptime, icon: <Timer className="w-3.5 h-3.5" /> },
     { label: 'Load', value: server.load, icon: <Gauge className="w-3.5 h-3.5" /> },
     { label: 'Swap', value: server.swap, icon: <HardDrive className="w-3.5 h-3.5" /> },
-    { label: 'Ping', value: server.latency, icon: <Activity className="w-3.5 h-3.5" />, tone: isOffline ? 'text-red-300/70' : 'text-amber-300/75' },
+    { label: t('serverStatus.tcpRtt'), value: server.tcpRtt, icon: <Activity className="w-3.5 h-3.5" />, tone: isOffline ? 'text-red-300/70' : 'text-amber-300/75', title: t('serverStatus.tcpRttTitle') },
     { label: 'Seen', value: server.lastSeen, icon: <CheckCircle className="w-3.5 h-3.5" /> },
   ];
 
@@ -671,9 +688,11 @@ function ServerCard({
           <span className={`rounded border px-1.5 py-px font-mono text-[10px] font-light leading-tight ${isOffline ? 'border-red-300/20 bg-red-950/60 text-red-300/80' : 'border-emerald-300/20 bg-emerald-950/60 text-emerald-300/80'}`}>
             {server.status}
           </span>
-          <span className={`rounded border px-1.5 py-px font-mono text-[10px] font-light leading-tight ${isOffline ? 'border-red-300/20 bg-red-950/45 text-red-300/75' : 'border-amber-300/20 bg-amber-950/55 text-amber-300/80'}`}>
-            {server.latency}
-          </span>
+          {isOffline && (
+            <span className="rounded border border-red-300/20 bg-red-950/45 px-1.5 py-px font-mono text-[10px] font-light leading-tight text-red-300/75">
+              {server.tcpRtt}
+            </span>
+          )}
         </div>
       </div>
 
@@ -697,7 +716,7 @@ function ServerCard({
           <div key={item.label} className="grid grid-cols-[auto_minmax(34px,1fr)_minmax(0,1.4fr)] items-center gap-1.5 min-w-0">
             <span className="text-gray-500/60 flex items-center justify-center">{item.icon}</span>
             <span className="text-gray-500 uppercase tracking-wide">{item.label}</span>
-            <span className={`text-right truncate ${item.tone || 'text-gray-400'}`} title={item.value}>{item.value}</span>
+            <span className={`text-right truncate ${item.tone || 'text-gray-400'}`} title={item.title || item.value}>{item.value}</span>
           </div>
         ))}
       </div>
