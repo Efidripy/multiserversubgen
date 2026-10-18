@@ -203,6 +203,35 @@ persistent runtime state не затрагиваются.
 или другая приватная runtime data. Эти signals помогают разделить collector/audit
 pulse; они не доказывают production p95, distributed trace или alert delivery.
 
+### Деградация недоступных XUI nodes
+
+Collector хранит последний успешный snapshot node в памяти. Если очередной
+background XUI transport attempt не отвечает, node остаётся `available=false`,
+но её предыдущие агрегаты не обнуляются: в dashboard projection появляются
+`stale=true`, `last_success_at` и `last_attempt_at`. Это означает «сейчас
+недоступна, показаны последние подтверждённые значения», а не отсутствие
+клиентов, inbounds или трафика. Для node, у которой ещё не было успешного
+snapshot, `stale=false` и новых значений не создаётся.
+
+Только обычный scheduled poll получает node-local backoff после подряд идущих
+transport failures: 300 секунд после первого, 600 после второго и 900 после
+третьего и последующих. `force_poll` намеренно обходит этот backoff; healthy
+nodes, общий cadence, bounded fan-out и SQLite policy не меняются. Успешный
+completed snapshot сбрасывает failure state и возвращает node к обычному
+режиму.
+
+Для collector-initiated poll raw adapter diagnostics подавляются только в его
+process-local `ContextVar`: интерактивные/API XUI calls сохраняют прежние
+warnings. Вместо потока одинаковых сообщений collector пишет один redacted
+warning при первом transport failure, затем не чаще одного агрегированного
+warning на node за 900 секунд и один recovery info при успехе. Сообщения не
+содержат URL, node ID/name, credentials, token, клиента или request path.
+
+Этот state не имеет SQLite schema и очищается при restart. Он не меняет XUI,
+клиентов, subscription, provisioning, Telegram, RBAC или durable job/outbox
+семантику. Для rollback достаточно вернуть изолированный source commit; данные
+и runtime migration не требуются.
+
 См. директории:
 
 - `monitoring/prometheus/`
