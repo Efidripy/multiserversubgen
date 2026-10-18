@@ -135,6 +135,77 @@ def test_activity_transitions_are_deterministic_and_do_not_infer_mode_from_due_w
     assert collector._get_current_interval() == 90.0
 
 
+def test_idle_control_loop_waits_for_earliest_node_deadline_or_inventory_recheck():
+    collector = _collector()
+    now = 1000.0
+    collector._node_state = {
+        f"id:{node_id}": {"next_poll": now + 15.0 * node_id} for node_id in range(1, 15)
+    }
+
+    # Fourteen staggered nodes do not create an early fleet poll: the loop
+    # wakes at the first individual deadline, which remains due at that time.
+    assert collector._next_control_loop_timeout(now=now) == 15.0
+    assert collector._next_control_loop_timeout(now=now + 14.0) == 1.0
+
+    # A future fleet deadline does not cause 10-second empty inventory reads;
+    # add/remove discovery is instead bounded by the explicit 60-second check.
+    for state in collector._node_state.values():
+        state["next_poll"] = now + 300.0
+    assert collector._next_control_loop_timeout(now=now) == 60.0
+
+
+def test_idle_control_loop_retries_unexpected_overdue_state_without_busy_loop():
+    collector = _collector(min_interval_sec=3)
+    collector._node_state = {"id:1": {"next_poll": 999.0}}
+
+    assert collector._next_control_loop_timeout(now=1000.0) == 3.0
+
+
+def test_force_and_activity_wake_scheduler_without_conflating_triggers():
+    async def exercise():
+        collector = _collector()
+        collector._scheduler_loop = asyncio.get_running_loop()
+
+        observed = collector._scheduler_wake_generation
+        waiter = asyncio.create_task(
+            collector._wait_for_scheduler_wake(30.0, observed_generation=observed)
+        )
+        await asyncio.sleep(0)
+        await collector.force_poll_all()
+        await asyncio.wait_for(waiter, timeout=0.2)
+        assert collector._force_poll_event.is_set() is True
+
+        collector._force_poll_event.clear()
+        observed = collector._scheduler_wake_generation
+        waiter = asyncio.create_task(
+            collector._wait_for_scheduler_wake(30.0, observed_generation=observed)
+        )
+        await asyncio.sleep(0)
+        collector.on_websocket_activity()
+        await asyncio.wait_for(waiter, timeout=0.2)
+
+        assert collector._force_poll_event.is_set() is False
+        assert collector.get_mode() == CollectorMode.WARMING.value
+
+    asyncio.run(exercise())
+
+
+def test_scheduler_wake_queued_before_wait_is_not_lost():
+    async def exercise():
+        collector = _collector()
+        observed = collector._scheduler_wake_generation
+
+        # This is the clear/wait race boundary: the wake was queued after the
+        # cycle captured its generation but before it started waiting.
+        collector._mark_scheduler_wake()
+        await asyncio.wait_for(
+            collector._wait_for_scheduler_wake(30.0, observed_generation=observed),
+            timeout=0.2,
+        )
+
+    asyncio.run(exercise())
+
+
 def test_due_cycle_spreads_ordinary_polls_deterministically_without_delaying_force_poll(
     monkeypatch,
 ):
