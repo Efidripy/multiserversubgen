@@ -4,6 +4,11 @@ import api from '../api';
 import { getAuth } from '../auth';
 import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
+import {
+  clientProjectionTargetKey,
+  useProjectionOperations,
+  type ProjectionOperationStatus,
+} from '../services/projectionOperationStore';
 
 interface NodeOption {
   id: number;
@@ -24,10 +29,17 @@ export interface AddClientMultiServerResult {
 export interface AddClientMultiServerSuccess {
   email: string;
   result: AddClientMultiServerResult;
+  targets: Array<{
+    key: string;
+    nodeId: number;
+    nodeName: string;
+    inboundId: number;
+  }>;
 }
 
 interface AddClientMultiServerProps {
-  onRemoteSuccess?: (success: AddClientMultiServerSuccess) => void;
+  onRemoteSuccess?: (success: AddClientMultiServerSuccess) => number | void;
+  onSafeReadRefresh?: () => void;
 }
 
 const FLOW_OPTIONS = [
@@ -36,7 +48,7 @@ const FLOW_OPTIONS = [
   { value: 'xtls-rprx-vision-udp443', label: 'vision-udp443' },
 ];
 
-export const AddClientMultiServer: React.FC<AddClientMultiServerProps> = ({ onRemoteSuccess }) => {
+export const AddClientMultiServer: React.FC<AddClientMultiServerProps> = ({ onRemoteSuccess, onSafeReadRefresh }) => {
   const { t } = useTranslation();
   const [email, setEmail] = useState('');
   const [flow, setFlow] = useState('');
@@ -50,8 +62,13 @@ export const AddClientMultiServer: React.FC<AddClientMultiServerProps> = ({ onRe
   const [error, setError] = useState('');
   const [result, setResult] = useState<AddClientMultiServerResult | null>(null);
   const [showResultModal, setShowResultModal] = useState(false);
+  const [submissionOperationId, setSubmissionOperationId] = useState<number | null>(null);
+  const [submissionStatus, setSubmissionStatus] = useState<ProjectionOperationStatus | null>(null);
+  const [submissionTargetKeys, setSubmissionTargetKeys] = useState<Set<string>>(() => new Set());
   const nodesRequestIdRef = useRef(0);
   const nodesAbortRef = useRef<AbortController | null>(null);
+  const clientOperations = useProjectionOperations('clients');
+  const submissionOperation = clientOperations.find((operation) => operation.id === submissionOperationId);
 
   useEffect(() => {
     void loadNodes();
@@ -105,6 +122,18 @@ export const AddClientMultiServer: React.FC<AddClientMultiServerProps> = ({ onRe
     setError('');
     setResult(null);
 
+    const selectedTargets = nodes
+      .filter((node) => selectedNodeIds.has(node.id))
+      .map((node) => ({
+        key: clientProjectionTargetKey(node.id, inboundIdNum, email),
+        nodeId: node.id,
+        nodeName: node.name,
+        inboundId: inboundIdNum,
+      }));
+    setSubmissionTargetKeys(new Set(selectedTargets.map((target) => target.key)));
+    setSubmissionOperationId(null);
+    setSubmissionStatus('sending');
+
     const expiryMs = expiryTime ? new Date(expiryTime).getTime() : 0;
 
     try {
@@ -130,12 +159,39 @@ export const AddClientMultiServer: React.FC<AddClientMultiServerProps> = ({ onRe
       const remoteResult = res.data as AddClientMultiServerResult;
       setResult(remoteResult);
       setShowResultModal(true);
-      onRemoteSuccess?.({ email: email.trim(), result: remoteResult });
+      const operationId = onRemoteSuccess?.({ email: email.trim(), result: remoteResult, targets: selectedTargets });
+      setSubmissionOperationId(typeof operationId === 'number' ? operationId : null);
+      setSubmissionStatus(remoteResult.summary.failed > 0 ? 'partial' : 'remote_succeeded_awaiting_projection');
     } catch (err: any) {
+      setSubmissionStatus(err?.response ? 'failed' : 'outcome_unknown');
       setError(err.response?.data?.detail || t('clients.addMulti.addFailed'));
     } finally {
       setLoading(false);
     }
+  };
+
+  const targetOperationStatus = (node: NodeOption): ProjectionOperationStatus | null => {
+    const key = clientProjectionTargetKey(node.id, Number(inboundId), email);
+    const operationStatus = submissionOperation?.targets.find((target) => target.key === key)?.status;
+    if (operationStatus) return operationStatus;
+    return submissionTargetKeys.has(key) ? submissionStatus : null;
+  };
+
+  const statusIcon = (status: ProjectionOperationStatus): 'spinner' | 'clock' | 'check' | 'warning' | 'x' => {
+    if (status === 'sending') return 'spinner';
+    if (status === 'remote_succeeded_awaiting_projection') return 'clock';
+    if (status === 'visible_in_projection') return 'check';
+    if (status === 'failed') return 'x';
+    return 'warning';
+  };
+
+  const statusLabel = (status: ProjectionOperationStatus): string => {
+    if (status === 'sending') return t('clients.operationTargetSending');
+    if (status === 'remote_succeeded_awaiting_projection') return t('clients.operationTargetAwaiting');
+    if (status === 'visible_in_projection') return t('clients.operationTargetVisible');
+    if (status === 'partial') return t('clients.operationTargetPartial');
+    if (status === 'failed') return t('clients.operationTargetFailed');
+    return t('clients.operationTargetUnknown');
   };
 
   return (
@@ -280,6 +336,7 @@ export const AddClientMultiServer: React.FC<AddClientMultiServerProps> = ({ onRe
           <div className="panel-selection-grid">
             {nodes.map((node) => {
               const active = selectedNodeIds.has(node.id);
+              const operationStatus = targetOperationStatus(node);
               return (
                 <button
                   key={node.id}
@@ -296,6 +353,17 @@ export const AddClientMultiServer: React.FC<AddClientMultiServerProps> = ({ onRe
                   <span className="d-inline-flex align-items-center gap-1">
                     {active && <UIIcon name="check" size={12} />}
                     {node.name}
+                    {operationStatus && (
+                      <span
+                        className={`d-inline-flex align-items-center gap-1 ${operationStatus === 'failed' || operationStatus === 'outcome_unknown' ? 'text-danger' : operationStatus === 'visible_in_projection' ? 'text-success' : ''}`}
+                        role="status"
+                        aria-live="polite"
+                        title={statusLabel(operationStatus)}
+                      >
+                        <UIIcon name={statusIcon(operationStatus)} size={12} className={operationStatus === 'sending' ? 'animate-spin motion-reduce:animate-none' : undefined} />
+                        <span className="visually-hidden">{statusLabel(operationStatus)}</span>
+                      </span>
+                    )}
                   </span>
                 </button>
               );
@@ -320,6 +388,18 @@ export const AddClientMultiServer: React.FC<AddClientMultiServerProps> = ({ onRe
           </span>
         </button>
       </div>
+
+      {submissionStatus && (
+        <div className="small mt-2 d-flex align-items-center gap-2" role="status" aria-live="polite" style={{ color: 'var(--text-secondary)' }}>
+          <UIIcon name={statusIcon(submissionStatus)} size={14} className={submissionStatus === 'sending' ? 'animate-spin motion-reduce:animate-none' : undefined} />
+          <span>{statusLabel(submissionStatus)}</span>
+          {submissionStatus === 'outcome_unknown' && onSafeReadRefresh && (
+            <button type="button" className="btn btn-sm" onClick={onSafeReadRefresh}>
+              <UIIcon name="refresh" size={12} /> {t('clients.operationSafeRefresh')}
+            </button>
+          )}
+        </div>
+      )}
 
       {showResultModal && result && (
         <div className="modal d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)' }}>

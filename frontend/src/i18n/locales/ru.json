@@ -519,7 +519,16 @@
     "projectionOperationVisible": "Операция подтверждена снимком",
     "projectionOperationPartial": "Операция выполнена частично; ожидается сверка",
     "projectionOperationFailed": "Операция не выполнена",
-    "projectionOperationUnknown": "Результат операции неизвестен; обновите снимок"
+    "projectionOperationUnknown": "Результат операции неизвестен; обновите снимок",
+    "operationTargetSending": "Отправляем на узлы",
+    "operationTargetAwaiting": "Нода подтвердила, ждём синхронизацию",
+    "operationTargetVisible": "Подтверждено снимком",
+    "operationTargetPartial": "Выполнено частично; ждём сверку",
+    "operationTargetFailed": "Операция на ноде не выполнена",
+    "operationTargetUnknown": "Результат на ноде неизвестен",
+    "operationTargetDeleting": "Удаляется, ждём подтверждение от ноды",
+    "operationTargetSummary": "{{confirmed}} из {{total}} подтверждены",
+    "operationSafeRefresh": "Безопасно обновить снимок"
   },
   "traffic": {
     "title": "Статистика трафика",
