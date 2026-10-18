@@ -134,6 +134,16 @@ class CustomerTrafficLedger:
 
 
 @dataclass(frozen=True)
+class CustomerTrafficObservationBinding:
+    """One exact confirmed binding eligible for local traffic observation."""
+
+    customer_id: int
+    node_id: int
+    inbound_id: int
+    remote_email: str
+
+
+@dataclass(frozen=True)
 class CustomerTrafficQuotaBinding:
     """One current TG-managed client binding eligible for quota observation."""
 
@@ -508,7 +518,8 @@ class CustomerListItem:
     telegram_first_name: str | None
     telegram_last_name: str | None
     node_count: int
-    lifetime_bytes: int
+    lifetime_bytes: int | None
+    traffic_observed_at: str | None
     application_introduction: str | None
     created_at: str
     updated_at: str
@@ -3027,6 +3038,89 @@ class TelegramRegistry:
             )
         return tuple(candidates)
 
+    def list_customer_traffic_observation_bindings(self) -> dict[int, tuple[CustomerTrafficObservationBinding, ...]]:
+        """Return local exact bindings eligible to consume a collector snapshot."""
+
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT c.id, b.node_id, b.inbound_id, b.remote_email
+                FROM customers AS c
+                JOIN customer_node_bindings AS b ON b.customer_id = c.id
+                JOIN nodes AS n ON n.id = b.node_id
+                WHERE c.status = 'active' AND c.deleted_at IS NULL
+                  AND b.management_state = 'confirmed' AND b.desired_enabled = 1
+                  AND n.enabled = 1
+                  AND EXISTS (
+                      SELECT 1 FROM telegram_identities AS i
+                      WHERE i.customer_id = c.id AND i.access_status = 'approved'
+                  )
+                ORDER BY c.id, b.node_id, b.inbound_id
+                """
+            ).fetchall()
+        grouped: dict[int, list[CustomerTrafficObservationBinding]] = {}
+        unsafe_customers: set[int] = set()
+        seen: set[tuple[int, int, int]] = set()
+        for customer_id, node_id, inbound_id, remote_email in rows:
+            identity = (int(customer_id), int(node_id), int(inbound_id))
+            if identity in seen:
+                unsafe_customers.add(identity[0])
+                continue
+            seen.add(identity)
+            try:
+                email = canonicalize_email(str(remote_email))
+            except TelegramRegistryError:
+                unsafe_customers.add(identity[0])
+                continue
+            grouped.setdefault(identity[0], []).append(
+                CustomerTrafficObservationBinding(*identity, remote_email=email)
+            )
+        return {
+            customer_id: tuple(bindings)
+            for customer_id, bindings in grouped.items()
+            if customer_id not in unsafe_customers and bindings
+        }
+
+    def observe_customer_traffic_batch(self, observations: dict[int, int]) -> tuple[CustomerTrafficLedger, ...]:
+        """Persist one bounded collector observation batch in one transaction."""
+
+        normalized: dict[int, int] = {}
+        for customer_id, observed_bytes in observations.items():
+            normalized[_positive_int(customer_id, "customer_id")] = observed_bytes
+            if isinstance(observed_bytes, bool) or not isinstance(observed_bytes, int) or observed_bytes < 0:
+                raise TelegramRegistryError("observed_bytes must be a non-negative integer")
+        with connect(self._db_path) as conn:
+            result: list[CustomerTrafficLedger] = []
+            for customer_id, observed_bytes in sorted(normalized.items()):
+                if conn.execute("SELECT 1 FROM customers WHERE id = ?", (customer_id,)).fetchone() is None:
+                    raise TelegramRegistryError("customer was not found")
+                row = conn.execute(
+                    "SELECT lifetime_bytes, last_observed_bytes FROM customer_traffic_ledger WHERE customer_id = ?",
+                    (customer_id,),
+                ).fetchone()
+                if row is None:
+                    lifetime, previous = observed_bytes, observed_bytes
+                    conn.execute(
+                        "INSERT INTO customer_traffic_ledger (customer_id, lifetime_bytes, last_observed_bytes) VALUES (?, ?, ?)",
+                        (customer_id, lifetime, previous),
+                    )
+                else:
+                    lifetime, previous = int(row[0]), int(row[1])
+                    lifetime += observed_bytes - previous if observed_bytes >= previous else observed_bytes
+                    conn.execute(
+                        "UPDATE customer_traffic_ledger SET lifetime_bytes = ?, last_observed_bytes = ?, "
+                        "last_observed_at = CURRENT_TIMESTAMP, row_version = row_version + 1 WHERE customer_id = ?",
+                        (lifetime, observed_bytes, customer_id),
+                    )
+                stored = conn.execute(
+                    "SELECT customer_id, lifetime_bytes, last_observed_bytes, last_observed_at "
+                    "FROM customer_traffic_ledger WHERE customer_id = ?",
+                    (customer_id,),
+                ).fetchone()
+                assert stored is not None
+                result.append(CustomerTrafficLedger(int(stored[0]), int(stored[1]), int(stored[2]), str(stored[3])))
+        return tuple(result)
+
     def observe_customer_traffic(self, *, customer_id: int, observed_bytes: int) -> CustomerTrafficLedger:
         """Accumulate a customer lifetime counter independent of subscription tokens.
 
@@ -3035,52 +3129,7 @@ class TelegramRegistry:
         subtracting historical usage already recorded for this customer.
         """
 
-        local_customer_id = _positive_int(customer_id, "customer_id")
-        if isinstance(observed_bytes, bool) or not isinstance(observed_bytes, int) or observed_bytes < 0:
-            raise TelegramRegistryError("observed_bytes must be a non-negative integer")
-        with connect(self._db_path) as conn:
-            customer = conn.execute("SELECT 1 FROM customers WHERE id = ?", (local_customer_id,)).fetchone()
-            if customer is None:
-                raise TelegramRegistryError("customer was not found")
-            row = conn.execute(
-                "SELECT lifetime_bytes, last_observed_bytes FROM customer_traffic_ledger WHERE customer_id = ?",
-                (local_customer_id,),
-            ).fetchone()
-            if row is None:
-                lifetime, previous = observed_bytes, observed_bytes
-                conn.execute(
-                    """
-                    INSERT INTO customer_traffic_ledger
-                        (customer_id, lifetime_bytes, last_observed_bytes)
-                    VALUES (?, ?, ?)
-                    """,
-                    (local_customer_id, lifetime, previous),
-                )
-            else:
-                lifetime, previous = int(row[0]), int(row[1])
-                increment = observed_bytes - previous if observed_bytes >= previous else observed_bytes
-                lifetime += increment
-                conn.execute(
-                    """
-                    UPDATE customer_traffic_ledger
-                    SET lifetime_bytes = ?, last_observed_bytes = ?, last_observed_at = CURRENT_TIMESTAMP,
-                        row_version = row_version + 1
-                    WHERE customer_id = ?
-                    """,
-                    (lifetime, observed_bytes, local_customer_id),
-                )
-            result = conn.execute(
-                """
-                SELECT customer_id, lifetime_bytes, last_observed_bytes, last_observed_at
-                FROM customer_traffic_ledger WHERE customer_id = ?
-                """,
-                (local_customer_id,),
-            ).fetchone()
-        assert result is not None
-        return CustomerTrafficLedger(
-            customer_id=int(result[0]), lifetime_bytes=int(result[1]),
-            last_observed_bytes=int(result[2]), last_observed_at=str(result[3]),
-        )
+        return self.observe_customer_traffic_batch({customer_id: observed_bytes})[0]
 
     def get_customer_traffic(self, customer_id: int) -> CustomerTrafficLedger:
         local_customer_id = _positive_int(customer_id, "customer_id")
@@ -6242,7 +6291,8 @@ class TelegramRegistry:
                         WHERE ti.customer_id = c.id
                         ORDER BY ti.access_status = 'approved' DESC, ti.created_at ASC, ti.telegram_user_id ASC LIMIT 1),
                        (SELECT COUNT(*) FROM customer_node_bindings AS b WHERE b.customer_id = c.id),
-                       COALESCE((SELECT lifetime_bytes FROM customer_traffic_ledger AS ctl WHERE ctl.customer_id = c.id), 0),
+                       (SELECT lifetime_bytes FROM customer_traffic_ledger AS ctl WHERE ctl.customer_id = c.id),
+                       (SELECT last_observed_at FROM customer_traffic_ledger AS ctl WHERE ctl.customer_id = c.id),
                        (SELECT a.introduction_text
                         FROM telegram_identities AS i
                         JOIN telegram_applications AS a
@@ -6268,9 +6318,10 @@ class TelegramRegistry:
                     telegram_username=str(row[6]) if row[6] is not None else None,
                     telegram_first_name=str(row[7]) if row[7] is not None else None,
                     telegram_last_name=str(row[8]) if row[8] is not None else None,
-                    node_count=int(row[9]), lifetime_bytes=int(row[10]),
-                    application_introduction=str(row[11]) if row[11] is not None else None,
-                    created_at=str(row[12]), updated_at=str(row[13]), open_support_count=int(row[14]),
+                    node_count=int(row[9]), lifetime_bytes=int(row[10]) if row[10] is not None else None,
+                    traffic_observed_at=str(row[11]) if row[11] is not None else None,
+                    application_introduction=str(row[12]) if row[12] is not None else None,
+                    created_at=str(row[13]), updated_at=str(row[14]), open_support_count=int(row[15]),
                 )
                 for row in rows
             ),
@@ -6298,7 +6349,8 @@ class TelegramRegistry:
                         WHERE ti.customer_id = c.id
                         ORDER BY ti.access_status = 'approved' DESC, ti.created_at ASC, ti.telegram_user_id ASC LIMIT 1),
                        (SELECT COUNT(*) FROM customer_node_bindings AS b WHERE b.customer_id = c.id),
-                       COALESCE((SELECT lifetime_bytes FROM customer_traffic_ledger AS ctl WHERE ctl.customer_id = c.id), 0),
+                       (SELECT lifetime_bytes FROM customer_traffic_ledger AS ctl WHERE ctl.customer_id = c.id),
+                       (SELECT last_observed_at FROM customer_traffic_ledger AS ctl WHERE ctl.customer_id = c.id),
                        (SELECT a.introduction_text
                         FROM telegram_identities AS i
                         JOIN telegram_applications AS a
@@ -6323,9 +6375,10 @@ class TelegramRegistry:
             telegram_username=str(row[6]) if row[6] is not None else None,
             telegram_first_name=str(row[7]) if row[7] is not None else None,
             telegram_last_name=str(row[8]) if row[8] is not None else None,
-            node_count=int(row[9]), lifetime_bytes=int(row[10]),
-            application_introduction=str(row[11]) if row[11] is not None else None,
-            created_at=str(row[12]), updated_at=str(row[13]), open_support_count=int(row[14]),
+            node_count=int(row[9]), lifetime_bytes=int(row[10]) if row[10] is not None else None,
+            traffic_observed_at=str(row[11]) if row[11] is not None else None,
+            application_introduction=str(row[12]) if row[12] is not None else None,
+            created_at=str(row[13]), updated_at=str(row[14]), open_support_count=int(row[15]),
         )
 
     def get_customer_telegram_profile(self, customer_id: int) -> CustomerTelegramProfile:
