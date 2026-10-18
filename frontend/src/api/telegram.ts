@@ -76,7 +76,8 @@ export type TelegramCustomer = {
   telegram_first_name: string | null;
   telegram_last_name: string | null;
   node_count: number;
-  lifetime_bytes: number;
+  lifetime_bytes: number | null;
+  traffic_observed_at: string | null;
   application_introduction: string | null;
   created_at: string;
   updated_at: string;

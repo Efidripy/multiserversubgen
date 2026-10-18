@@ -42,6 +42,7 @@ from services.telegram_delivery import TelegramApiSender
 from services.telegram_outbox import TelegramApiOutboxPort, TelegramOutboxWorker
 from services.telegram_polling import TelegramBotApiClient, TelegramPollingWorker
 from services.telegram_registration import TelegramRegistrationService
+from services.telegram_traffic import TelegramTrafficService
 from services.telegram_registry import TelegramRegistry
 from services.telegram_retention import TelegramRetentionService
 from services.telegram_reminders import TelegramReminderService
@@ -184,6 +185,7 @@ node_metric_labels_lock = runtime_state.node_metric_labels_lock
 
 metrics_runtime = None
 live_stats_runtime = None
+telegram_traffic_reconciler = None
 
 
 def _on_snapshots(snapshots: list[dict]) -> None:
@@ -201,6 +203,15 @@ def _on_snapshots(snapshots: list[dict]) -> None:
         live_stats_runtime.seed_period_snapshots_from_collector()
     except Exception as exc:
         logger.warning("Traffic snapshot auto-seed failed: %s", exc)
+    if telegram_traffic_reconciler is not None:
+        try:
+            # A local reconciliation only consumes the already completed
+            # collector snapshot.  It never performs an XUI read or retry.
+            telegram_traffic_reconciler.reconcile_collector_snapshot(
+                snapshot_collector.latest_snapshot()
+            )
+        except Exception as exc:
+            logger.warning("Telegram traffic observation skipped: %s", exc)
 
 
 bundle = build_app_runtime_bundle(
@@ -299,6 +310,9 @@ HTTP_REQUEST_LATENCY = metrics.http_request_latency
 )
 
 bootstrap_db(DB_PATH)
+telegram_traffic_reconciler = TelegramTrafficService(
+    TelegramRegistry(DB_PATH), projection_loader=snapshot_collector.latest_snapshot
+)
 telegram_token_provider = TelegramBotTokenProvider(
     db_path=DB_PATH,
     encrypt=encrypt,
