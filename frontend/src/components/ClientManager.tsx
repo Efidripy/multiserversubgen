@@ -312,6 +312,7 @@ export const ClientManager: React.FC = () => {
   const [error, setError] = useState('');
   const [projectionState, setProjectionState] = useState<'cold' | 'cached' | 'refreshing' | 'received' | 'refresh_failed'>('cold');
   const [projectionSnapshotAt, setProjectionSnapshotAt] = useState(0);
+  const projectionRefreshing = projectionState === 'refreshing';
   const clientOperations = useProjectionOperations('clients');
   // Map of "node_id:email" -> TrafficData
   const [trafficCache, setTrafficCache] = useState<Record<string, TrafficData | null>>({});
@@ -2194,12 +2195,25 @@ export const ClientManager: React.FC = () => {
                 className={buttonAccentClass}
                 onClick={() => loadClients()}
                 disabled={loading}
+                aria-busy={loading || projectionRefreshing}
               >
                 <span className="inline-flex items-center gap-1">
-                  <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} />
+                  <UIIcon name={loading || projectionRefreshing ? 'spinner' : 'refresh'} size={14} className={loading || projectionRefreshing ? 'animate-spin motion-reduce:animate-none' : undefined} />
                   {t('common.refresh')}
                 </span>
               </button>
+              {projectionRefreshing && (
+                <span
+                  className={cn(tableStateChipClass, 'gap-1 border-cyan-400/30 text-cyan-200')}
+                  data-projection-refresh-status="clients"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  <UIIcon name="spinner" size={13} className="animate-spin motion-reduce:animate-none" />
+                  {t('clients.projectionRefreshing')}
+                </span>
+              )}
               <button
                 className={cn(autoRefresh ? buttonAccentClass : buttonNeutralClass)}
                 onClick={() => setAutoRefresh(v => !v)}

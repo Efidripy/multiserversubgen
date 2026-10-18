@@ -61,6 +61,55 @@ describe('client and inbound projection lifecycle contract', () => {
     expect(inbounds).toContain('void loadInbounds(Boolean(cached.data?.inbounds?.length));');
   });
 
+  it('keeps a warm inbound projection visible and announces its background or manual reconciliation', async () => {
+    const cachedInbound = {
+      id: 303,
+      node_name: 'node-cached',
+      node_ip: '127.0.0.3',
+      protocol: 'vless',
+      port: 443,
+      remark: 'cached inbound',
+      enable: true,
+      security: 'reality',
+      is_reality: true,
+      client_count: 2,
+    };
+    const neverSettles = new Promise<never>(() => undefined);
+
+    sessionStorage.setItem('sub_manager_inbounds_page_cache_v1', JSON.stringify({
+      ts: Date.now(),
+      data: {
+        inbounds: [cachedInbound],
+        allNodes: [{ id: 3, name: 'node-cached' }],
+        nodeNameToId: { 'node-cached': 3 },
+        filterProtocol: '',
+        filterSecurity: '',
+        filterNode: '',
+        sortField: 'name',
+        sortDirection: 'asc',
+      },
+    }));
+    listNodes.mockReturnValue(neverSettles);
+    getInboundsHeaderSource.mockReturnValue(neverSettles);
+    apiGet.mockReturnValue(neverSettles);
+
+    render(createElement(InboundManager));
+
+    expect((await screen.findAllByText('cached inbound')).length).toBeGreaterThan(0);
+    const refreshStatus = await screen.findByRole('status');
+    expect(refreshStatus.dataset.projectionRefreshStatus).toBe('inbounds');
+    expect(refreshStatus.textContent).toContain('inbounds.projectionRefreshing');
+
+    const refreshButton = screen.getByRole('button', { name: 'common.refresh' });
+    expect(refreshButton.getAttribute('aria-busy')).toBe('true');
+    expect((refreshButton as HTMLButtonElement).disabled).toBe(false);
+
+    fireEvent.click(refreshButton);
+    expect(getInboundsHeaderSource).toHaveBeenCalledTimes(2);
+    expect(screen.getAllByText('cached inbound').length).toBeGreaterThan(0);
+    expect(screen.getByRole('status')).toBeTruthy();
+  });
+
   it('does not overwrite an inbound snapshot during initial hydration and retains its aggregate stats', () => {
     const inbounds = read('src/components/InboundManager.tsx');
 
