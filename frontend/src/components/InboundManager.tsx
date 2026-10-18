@@ -333,6 +333,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   const [error, setError] = useState('');
   const [projectionState, setProjectionState] = useState<'cold' | 'cached' | 'refreshing' | 'received' | 'refresh_failed'>('cold');
   const [projectionSnapshotAt, setProjectionSnapshotAt] = useState(0);
+  const projectionRefreshing = projectionState === 'refreshing';
   const inboundOperations = useProjectionOperations('inbounds');
   const [cacheHydrated, setCacheHydrated] = useState(false);
 
@@ -407,7 +408,10 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     const cached = readStaleCache<InboundsPageCache>(INBOUNDS_PAGE_CACHE_KEY, Number.MAX_SAFE_INTEGER);
     if (cached.data) {
       const parsed = cached.data;
-      if (Array.isArray(parsed.inbounds)) setInbounds(parsed.inbounds);
+      if (Array.isArray(parsed.inbounds)) {
+        inboundsRef.current = parsed.inbounds;
+        setInbounds(parsed.inbounds);
+      }
       if (Array.isArray(parsed.allNodes)) {
         setAllNodes(parsed.allNodes);
         if (addTargetNodeIds.size === 0) {
@@ -1313,11 +1317,24 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                   type="button"
                   className={buttonAccentClass}
                   onClick={() => { void loadInbounds(); }}
-                  disabled={loading}
+                  disabled={loading || pageLoading}
+                  aria-busy={loading || pageLoading || projectionRefreshing}
                 >
-                  <UIIcon name="refresh" size={14} />
+                  <UIIcon name={loading || pageLoading || projectionRefreshing ? 'spinner' : 'refresh'} size={14} className={loading || pageLoading || projectionRefreshing ? 'animate-spin motion-reduce:animate-none' : undefined} />
                   {t('common.refresh')}
                 </button>
+                {projectionRefreshing && (
+                  <span
+                    className={cn(tableStateChipClass, 'col-span-2 gap-1 border-cyan-400/30 text-cyan-200')}
+                    data-projection-refresh-status="inbounds"
+                    role="status"
+                    aria-live="polite"
+                    aria-atomic="true"
+                  >
+                    <UIIcon name="spinner" size={13} className="animate-spin motion-reduce:animate-none" />
+                    {t('inbounds.projectionRefreshing')}
+                  </span>
+                )}
               </div>
             </div>
 
