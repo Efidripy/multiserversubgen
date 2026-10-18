@@ -5,7 +5,8 @@
     "loading": "Загрузка...",
     "error": "Ошибка",
     "success": "Успешно",
-    "themeToggleTitle": "Тема 1/2/3"
+    "themeToggleTitle": "Тема 1/2/3",
+    "networkActivity": "Сетевая активность"
   },
   "nav": {
     "dashboard": "Панель управления",
@@ -1107,6 +1108,8 @@
     "refreshThisNode": "Обновить этот узел",
     "onlineClientsOnNode": "Онлайн-клиенты на этом узле",
     "panelApiLatency": "Задержка API панели",
+    "tcpRtt": "TCP RTT",
+    "tcpRttTitle": "Время TCP-подключения к endpoint панели",
     "networkSinceReboot": "Сеть: upload / download с перезагрузки",
     "loadAveragesTitle": "Load average 1м / 5м / 15м",
     "swapUsage": "Использование swap",

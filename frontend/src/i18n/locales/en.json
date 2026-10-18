@@ -5,7 +5,8 @@
     "loading": "Loading...",
     "error": "Error",
     "success": "Success",
-    "themeToggleTitle": "Theme 1/2/3"
+    "themeToggleTitle": "Theme 1/2/3",
+    "networkActivity": "Network activity"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -1107,6 +1108,8 @@
     "refreshThisNode": "Refresh this node",
     "onlineClientsOnNode": "Online clients on this node",
     "panelApiLatency": "Panel API latency",
+    "tcpRtt": "TCP RTT",
+    "tcpRttTitle": "TCP connect time to the panel endpoint",
     "networkSinceReboot": "Network: upload / download since reboot",
     "loadAveragesTitle": "Load averages 1m / 5m / 15m",
     "swapUsage": "Swap usage",
