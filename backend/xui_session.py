@@ -6,6 +6,8 @@ import logging
 import hashlib
 import os
 import secrets
+from contextlib import contextmanager
+from contextvars import ContextVar
 from urllib.parse import urlparse
 import time
 from threading import Lock
@@ -20,6 +22,28 @@ from shared.security import redact_url, validate_and_resolve_outbound_url, valid
 from shared.observability import record_node_rpc
 
 logger = logging.getLogger("sub_manager")
+
+
+# Only the background collector sets this context. Interactive/API callers
+# retain the adapter's existing warning diagnostics.
+_collector_transport_diagnostics_suppressed: ContextVar[bool] = ContextVar(
+    "collector_transport_diagnostics_suppressed", default=False
+)
+
+
+def collector_transport_diagnostics_suppressed() -> bool:
+    """Return whether this call belongs to a collector-owned poll."""
+    return _collector_transport_diagnostics_suppressed.get()
+
+
+@contextmanager
+def suppress_collector_transport_diagnostics():
+    """Let SnapshotCollector emit its bounded transport diagnostic instead."""
+    token = _collector_transport_diagnostics_suppressed.set(True)
+    try:
+        yield
+    finally:
+        _collector_transport_diagnostics_suppressed.reset(token)
 
 Urllib3HTTPConnection = urllib3_connection.HTTPConnection
 Urllib3HTTPSConnection = urllib3_connection.HTTPSConnection
@@ -656,10 +680,13 @@ def xui_request(
                 and attempt < attempts - 1
             ):
                 sleep_for = XUI_HTTP_RETRY_BACKOFF_SEC * (2 ** attempt)
-                logger.warning(
-                    "XUI %s %s HTTP %d, retry in %.1fs (attempt %d/%d)",
-                    normalized_method, redact_url(url), response.status_code, sleep_for, attempt + 1, attempts,
-                )
+                if collector_transport_diagnostics_suppressed():
+                    logger.debug("Collector XUI retry suppressed at adapter boundary")
+                else:
+                    logger.warning(
+                        "XUI %s %s HTTP %d, retry in %.1fs (attempt %d/%d)",
+                        normalized_method, redact_url(url), response.status_code, sleep_for, attempt + 1, attempts,
+                    )
                 if sleep_for > 0:
                     time.sleep(sleep_for)
                 continue
@@ -667,7 +694,10 @@ def xui_request(
         except requests.RequestException as exc:
             record_node_rpc(url, method=normalized_method, started_at=started_at, outcome="error")
             last_exc = exc
-            logger.warning("XUI %s %s request error (attempt %d/%d): %s", normalized_method, redact_url(url), attempt + 1, attempts, type(exc).__name__)
+            if collector_transport_diagnostics_suppressed():
+                logger.debug("Collector XUI request error suppressed at adapter boundary")
+            else:
+                logger.warning("XUI %s %s request error (attempt %d/%d): %s", normalized_method, redact_url(url), attempt + 1, attempts, type(exc).__name__)
             if attempt >= attempts - 1:
                 raise
             sleep_for = XUI_HTTP_RETRY_BACKOFF_SEC * (2 ** attempt)
