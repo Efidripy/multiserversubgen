@@ -115,18 +115,25 @@ describe('primary-scroll pull to refresh', () => {
     await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
   });
 
-  it('leaves controls, dialogs and nested scroll containers to their owners', () => {
+  it('allows a Dashboard button pull but leaves form controls, dialogs and nested scroll containers to their owners', async () => {
     const refresh = vi.fn(async () => undefined);
     render(
       <PullProbe onRefresh={refresh}>
         <button type="button">Control</button>
+        <input aria-label="Form field" />
         <div role="dialog"><div data-testid="dialog-content">Dialog</div></div>
         <div data-testid="nested-scroll" style={{ overflowY: 'auto' }}><span>Nested</span></div>
       </PullProbe>,
     );
     const scroll = screen.getByTestId('primary-scroll');
+    const button = screen.getByRole('button', { name: 'Control' });
+    touch(button, 'touchStart', 0);
+    touch(button, 'touchMove', 80);
+    touch(button, 'touchEnd');
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+
     const attempts = [
-      screen.getByRole('button', { name: 'Control' }),
+      screen.getByRole('textbox', { name: 'Form field' }),
       screen.getByTestId('dialog-content'),
       screen.getByTestId('nested-scroll'),
     ];
@@ -137,7 +144,7 @@ describe('primary-scroll pull to refresh', () => {
       touch(target, 'touchEnd');
     });
     expect(screen.getByTestId('state').textContent).toBe('idle:0');
-    expect(refresh).not.toHaveBeenCalled();
+    expect(refresh).toHaveBeenCalledTimes(1);
 
     const move = createEvent.touchMove(scroll, { touches: [{ clientX: 0, clientY: 80 }], cancelable: true });
     touch(scroll, 'touchStart', 0);
