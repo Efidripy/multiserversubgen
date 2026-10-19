@@ -1,6 +1,5 @@
 import api from './client';
 import { getAuth } from '../auth';
-import { listNodes, type NodeRecord } from './nodes';
 
 export interface DashboardTopClient {
   email: string;
