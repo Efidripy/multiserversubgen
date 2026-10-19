@@ -25,6 +25,7 @@ describe('iOS standalone launch shell', () => {
   });
 
   it('declares standalone Apple metadata without changing app routes or API behavior', () => {
+    expect(indexHtml).toContain('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />');
     expect(indexHtml).toContain('<meta name="apple-mobile-web-app-capable" content="yes" />');
     expect(indexHtml).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />');
     expect(indexHtml).not.toContain('/api/');

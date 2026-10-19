@@ -6,7 +6,10 @@
     "error": "Ошибка",
     "success": "Успешно",
     "themeToggleTitle": "Тема 1/2/3",
-    "networkActivity": "Сетевая активность"
+    "networkActivity": "Сетевая активность",
+    "pullRefreshPull": "Потяните, чтобы обновить",
+    "pullRefreshRelease": "Отпустите, чтобы обновить",
+    "pullRefreshRefreshing": "Обновляем текущий раздел"
   },
   "nav": {
     "dashboard": "Панель управления",
