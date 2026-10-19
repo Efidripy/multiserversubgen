@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest';
 
 const indexHtml = readFileSync(resolve(__dirname, '../index.html'), 'utf8');
 const manifest = JSON.parse(readFileSync(resolve(__dirname, '../public/manifest.webmanifest'), 'utf8')) as Record<string, unknown>;
+const appCss = readFileSync(resolve(__dirname, '../src/App.css'), 'utf8');
+const appSource = readFileSync(resolve(__dirname, '../src/App.tsx'), 'utf8');
+const appleTouchIcon = readFileSync(resolve(__dirname, '../public/apple-touch-icon.png'));
 
 describe('iOS standalone launch shell', () => {
   it('sets the same dark palette before the Vite bundle can paint', () => {
@@ -28,6 +31,7 @@ describe('iOS standalone launch shell', () => {
     expect(indexHtml).toContain('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />');
     expect(indexHtml).toContain('<meta name="apple-mobile-web-app-capable" content="yes" />');
     expect(indexHtml).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />');
+    expect(indexHtml).toContain('<link rel="apple-touch-icon" sizes="512x512" href="%BASE_URL%apple-touch-icon.png" />');
     expect(indexHtml).not.toContain('/api/');
     expect(manifest).toMatchObject({
       display: 'standalone',
@@ -36,5 +40,24 @@ describe('iOS standalone launch shell', () => {
       background_color: '#0a0e1a',
       theme_color: '#0a0e1a',
     });
+    expect(manifest).toMatchObject({
+      icons: [{
+        src: 'apple-touch-icon.png',
+        sizes: '512x512',
+        type: 'image/png',
+      }],
+    });
+    expect(appleTouchIcon.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  });
+
+  it('keeps the standalone layout within the visual viewport without disabling zoom', () => {
+    expect(indexHtml).toContain('width=device-width, initial-scale=1, viewport-fit=cover');
+    expect(indexHtml).not.toMatch(/(?:maximum-scale|user-scalable)/i);
+    expect(appCss).toMatch(/@media \(max-width: 520px\)[\s\S]*?\.app-topbar\s*\{[\s\S]*?padding: env\(safe-area-inset-top, 0px\) 8px 0;/);
+    expect(appCss).toContain('text-overflow: ellipsis;');
+    expect(appCss).toContain('right: env(safe-area-inset-right, 0px);');
+    expect(appCss).toContain('width: min(420px, calc(100vw - 1rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));');
+    expect(appSource).toMatch(/id="login-username"[\s\S]*?text-base/);
+    expect(appSource).toMatch(/id="login-password"[\s\S]*?text-base/);
   });
 });
