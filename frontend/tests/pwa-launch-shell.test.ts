@@ -57,11 +57,16 @@ describe('iOS standalone launch shell', () => {
     expect(indexHtml).not.toMatch(/(?:maximum-scale|user-scalable)/i);
     expect(appCss).toMatch(/@media \(max-width: 1024px\)[\s\S]*?\.app-layout,[\s\S]*?\.app-shell\s*\{[\s\S]*?padding-top: env\(safe-area-inset-top, 0px\);/);
     expect(appCss).toMatch(/\.app-main\s*\{[\s\S]*?min-height: calc\(100dvh - env\(safe-area-inset-top, 0px\)\);/);
+    expect(appCss).toMatch(/\.sidebar,[\s\S]*?\.app-sidebar\s*\{[\s\S]*?top: env\(safe-area-inset-top, 0px\);[\s\S]*?height: calc\(100dvh - env\(safe-area-inset-top, 0px\)\);/);
     expect(appCss).toMatch(/\.app-topbar\s*\{[\s\S]*?height: 56px;[\s\S]*?padding: 0 12px;/);
+    expect(appCss).toMatch(/\.app-topbar__title-content\s*\{[\s\S]*?min-width: 0;[\s\S]*?overflow: hidden;/);
+    expect(appCss).toMatch(/\.app-topbar__activity-dot\s*\{[\s\S]*?flex: 0 0 auto;/);
     expect(appCss).toContain('text-overflow: ellipsis;');
     expect(appCss).toContain('right: env(safe-area-inset-right, 0px);');
     expect(appCss).toContain('width: min(420px, calc(100vw - 1rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));');
     expect(appSource).toMatch(/id="login-username"[\s\S]*?text-base/);
     expect(appSource).toMatch(/id="login-password"[\s\S]*?text-base/);
+    expect(appSource).toContain("enabled: activeTab !== 'dashboard' || dashboardRefreshReady");
+    expect(appSource).toMatch(/if \(activeTab === 'dashboard'\)[\s\S]*?window\.location\.reload\(\);/);
   });
 });
