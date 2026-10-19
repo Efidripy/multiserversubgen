@@ -687,7 +687,7 @@ export const App: React.FC = () => {
                 <input
                   id="login-username"
                   type="text"
-                  className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
+                  className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-base text-slate-100 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
                   value={user}
                   onChange={(e) => setUser(e.target.value)}
                   required
@@ -702,7 +702,7 @@ export const App: React.FC = () => {
                 <input
                   id="login-password"
                   type="password"
-                  className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
+                  className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-base text-slate-100 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   required
@@ -717,7 +717,7 @@ export const App: React.FC = () => {
                   <input
                     id="login-totp"
                     type="text"
-                    className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 font-mono text-sm tabular-nums text-slate-100 tracking-[0.2em] whitespace-nowrap outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
+                    className="block w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 font-mono text-base tabular-nums text-slate-100 tracking-[0.2em] whitespace-nowrap outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10"
                     value={totpCode}
                     onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 8))}
                     required
