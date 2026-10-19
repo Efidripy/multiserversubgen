@@ -91,12 +91,11 @@ describe('navigation performance regressions', () => {
     expect(fleetPanel).toContain('refreshFleetLive()');
   });
 
-  it('automatically reads the persisted Telegram policy once for an eligible Fleet panel', () => {
+  it('keeps persisted Telegram policy reads out of the Dashboard mount path', () => {
     const fleetPanel = read('src/components/RegisteredFleetPanel.tsx');
 
-    expect(fleetPanel).toContain('const telegramPoliciesAutoLoadStartedRef = useRef(false);');
-    expect(fleetPanel).toContain('if (telegramPoliciesAutoLoadStartedRef.current) return;');
-    expect(fleetPanel).toContain('void refreshTelegramPolicies();');
+    expect(fleetPanel).not.toContain('telegramPoliciesAutoLoadStartedRef');
+    expect(fleetPanel).not.toContain('void refreshTelegramPolicies();');
     expect(fleetPanel).not.toContain('VITE_DASHBOARD_EAGER_TELEGRAM_POLICIES');
     expect(fleetPanel).toContain('const refreshedPolicies = await refreshTelegramPolicies();');
     expect(fleetPanel).toContain('telegramPolicyLoadTitle');

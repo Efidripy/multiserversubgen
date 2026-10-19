@@ -142,11 +142,13 @@ describe('Client Manager periodic browser session auth', () => {
     expect(source).toContain('getInboundOptions({ signal: controller.signal, sessionOnlyAuth: true })');
   });
 
-  it('binds the automatic Telegram policy badge read to the browser session', () => {
+  it('binds the explicit Telegram policy refresh to the browser session', () => {
     const fleetPanel = read('src/components/RegisteredFleetPanel.tsx');
     const nodesApi = read('src/api/nodes.ts');
 
-    expect(fleetPanel).toContain('listTelegramNodePolicies({\n        signal: controller.signal,\n        sessionOnlyAuth: true,\n      })');
+    const normalizedFleetPanel = fleetPanel.replace(/\r\n/g, '\n');
+    expect(normalizedFleetPanel).toContain('listTelegramNodePolicies({\n        signal: controller.signal,\n        sessionOnlyAuth: true,\n      })');
+    expect(normalizedFleetPanel).not.toContain('void refreshTelegramPolicies();');
     expect(nodesApi).toContain("...(options.sessionOnlyAuth ? { sessionOnlyAuth: true } : { auth: getAuth() })");
   });
 
