@@ -31,6 +31,7 @@ describe('iOS standalone launch shell', () => {
     expect(indexHtml).toContain('<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />');
     expect(indexHtml).toContain('<meta name="apple-mobile-web-app-capable" content="yes" />');
     expect(indexHtml).toContain('<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />');
+    expect(indexHtml).toContain('<meta name="apple-mobile-web-app-title" content="&#8203;" />');
     expect(indexHtml).toContain('<link rel="apple-touch-icon" sizes="512x512" href="%BASE_URL%apple-touch-icon.png" />');
     expect(indexHtml).not.toContain('/api/');
     expect(manifest).toMatchObject({
@@ -41,6 +42,7 @@ describe('iOS standalone launch shell', () => {
       theme_color: '#0a0e1a',
     });
     expect(manifest).toMatchObject({
+      short_name: '\u200B',
       icons: [{
         src: 'apple-touch-icon.png',
         sizes: '512x512',
@@ -53,7 +55,9 @@ describe('iOS standalone launch shell', () => {
   it('keeps the standalone layout within the visual viewport without disabling zoom', () => {
     expect(indexHtml).toContain('width=device-width, initial-scale=1, viewport-fit=cover');
     expect(indexHtml).not.toMatch(/(?:maximum-scale|user-scalable)/i);
-    expect(appCss).toMatch(/@media \(max-width: 520px\)[\s\S]*?\.app-topbar\s*\{[\s\S]*?padding: env\(safe-area-inset-top, 0px\) 8px 0;/);
+    expect(appCss).toMatch(/@media \(max-width: 1024px\)[\s\S]*?\.app-layout,[\s\S]*?\.app-shell\s*\{[\s\S]*?padding-top: env\(safe-area-inset-top, 0px\);/);
+    expect(appCss).toMatch(/\.app-main\s*\{[\s\S]*?min-height: calc\(100dvh - env\(safe-area-inset-top, 0px\)\);/);
+    expect(appCss).toMatch(/\.app-topbar\s*\{[\s\S]*?height: 56px;[\s\S]*?padding: 0 12px;/);
     expect(appCss).toContain('text-overflow: ellipsis;');
     expect(appCss).toContain('right: env(safe-area-inset-right, 0px);');
     expect(appCss).toContain('width: min(420px, calc(100vw - 1rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));');

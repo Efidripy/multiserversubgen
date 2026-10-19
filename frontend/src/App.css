@@ -172,6 +172,7 @@
     min-width: 0;
     min-height: 100vh;
     min-height: 100dvh;
+    box-sizing: border-box;
     display: flex;
     align-items: stretch;
     background: #0a0e1a;
@@ -1674,6 +1675,14 @@
   .app-layout,
   .app-shell {
     display: block;
+    /* In standalone iOS the translucent status bar belongs to the viewport.
+       Reserve its inset on the root so no interactive topbar content is ever
+       painted underneath the system blur. */
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  .app-main {
+    min-height: calc(100dvh - env(safe-area-inset-top, 0px));
   }
 
   .sidebar,
@@ -1697,9 +1706,9 @@
   .app-topbar {
     align-items: center;
     flex-direction: row;
-    height: calc(56px + env(safe-area-inset-top));
-    min-height: calc(56px + env(safe-area-inset-top));
-    padding: env(safe-area-inset-top) 12px 0;
+    height: 56px;
+    min-height: 56px;
+    padding: 0 12px;
     width: 100%;
     max-width: 100%;
     box-sizing: border-box;
@@ -1707,7 +1716,7 @@
   }
 
   .app-pull-refresh {
-    top: calc(56px + env(safe-area-inset-top));
+    top: 56px;
   }
 
   .app-topbar__menu-btn {
@@ -1773,8 +1782,7 @@
 
 @media (max-width: 520px) {
   .app-topbar {
-    /* Keep the content below the translucent standalone-PWA status bar. */
-    padding: env(safe-area-inset-top, 0px) 8px 0;
+    padding: 0 8px;
     gap: 8px;
   }
 
