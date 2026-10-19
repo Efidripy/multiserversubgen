@@ -71,7 +71,7 @@ describe('navigation performance regressions', () => {
     expect(app).not.toContain('getTrafficHeaderSource');
     expect(app).toContain("case 'inbounds':\n          case 'clients':\n          case 'traffic':");
     expect(clients).toContain('listNodes({ signal: controller.signal, sessionOnlyAuth: true })');
-    expect(clients).toContain('getInboundOptions({ signal: controller.signal, sessionOnlyAuth: true })');
+    expect(clients).toContain('void loadInboundOptionsAfterPageProjection();');
     expect(clients).not.toContain('getInboundsHeaderSource({ signal: controller.signal })');
     expect(clients).toContain('const nodeOptions = inboundOptions.filter(option => option.node_id === client.node_id)');
     expect(clients).not.toContain("api.get('/v1/inbounds', { auth: getAuth() })");

@@ -378,6 +378,8 @@ export const ClientManager: React.FC = () => {
   const clientsLoadLoadingRequestIdRef = useRef<number | null>(null);
   const trafficRefreshTimerRef = useRef<number | null>(null);
   const clientsLoadAbortRef = useRef<AbortController | null>(null);
+  const inboundOptionsAbortRef = useRef<AbortController | null>(null);
+  const inboundOptionsRequestIdRef = useRef(0);
   const clientsReconcileTimerRef = useRef<number | null>(null);
   const clientProjectionMatchersRef = useRef<Map<number, (rows: Client[]) => boolean>>(new Map());
   const clientTargetProjectionMatchersRef = useRef<Map<number, Map<string, (rows: Client[]) => boolean>>>(new Map());
@@ -493,6 +495,8 @@ export const ClientManager: React.FC = () => {
 
     return () => {
       clientsLoadAbortRef.current?.abort();
+      inboundOptionsRequestIdRef.current += 1;
+      inboundOptionsAbortRef.current?.abort();
       if (clientsReconcileTimerRef.current) window.clearTimeout(clientsReconcileTimerRef.current);
       clientTargetConfirmationClearsRef.current.forEach((timer) => window.clearTimeout(timer));
       trafficFetchAbortRef.current?.abort();
@@ -561,6 +565,28 @@ export const ClientManager: React.FC = () => {
     };
   }, [expandedKey, filteredClients, trafficCache]);
   
+  const loadInboundOptionsAfterPageProjection = async () => {
+    const requestId = ++inboundOptionsRequestIdRef.current;
+    inboundOptionsAbortRef.current?.abort();
+    const controller = new AbortController();
+    inboundOptionsAbortRef.current = controller;
+
+    try {
+      const options = await getInboundOptions({ signal: controller.signal, sessionOnlyAuth: true });
+      if (inboundOptionsRequestIdRef.current === requestId) {
+        setInboundOptions(options);
+      }
+    } catch (err: any) {
+      if (controller.signal.aborted || err?.code === 'ERR_CANCELED') return;
+      // Picker data enhances controls but must not keep the independent table
+      // projection in a loading state.
+    } finally {
+      if (inboundOptionsAbortRef.current === controller) {
+        inboundOptionsAbortRef.current = null;
+      }
+    }
+  };
+
   const loadClients = async (silent = false, sourceFilter: ClientSourceFilter = clientSourceFilterRef.current) => {
     const requestId = ++requestIdRef.current;
 
@@ -585,11 +611,12 @@ export const ClientManager: React.FC = () => {
     clientSourceFilterRef.current = sourceFilter;
 
     try {
-      // Fetch page projections in parallel; each route is independently cached.
-      const [nodeList, clientsPayload, inboundOptions] = await Promise.all([
+      // The table must not wait for the independent picker route. With cold
+      // server caches it can trigger a second fleet read, so load it after the
+      // page projection is usable.
+      const [nodeList, clientsPayload] = await Promise.all([
         listNodes({ signal: controller.signal, sessionOnlyAuth: true }),
         listClientsBySource(sourceFilter, { signal: controller.signal, sessionOnlyAuth: true }),
-        getInboundOptions({ signal: controller.signal, sessionOnlyAuth: true }),
       ]);
 
       if (requestIdRef.current !== requestId) return;
@@ -642,7 +669,7 @@ export const ClientManager: React.FC = () => {
         sourceFilter,
       });
 
-      setInboundOptions(inboundOptions);
+      void loadInboundOptionsAfterPageProjection();
 
       if (!silent && trafficEndpointModeRef.current === 'disabled') {
         trafficEndpointModeRef.current = 'unknown';

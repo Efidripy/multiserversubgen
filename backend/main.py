@@ -195,6 +195,16 @@ def _on_snapshots(snapshots: list[dict]) -> None:
     metrics_runtime.record_node_snapshots(snapshots)
     for snapshot in snapshots:
         _persist_node_version(snapshot)
+    if inbounds_runtime is not None:
+        try:
+            # The collector already owns these full DTOs. Seed only from an
+            # exact all-enabled-node completed cycle; partial data must keep
+            # the normal route fallback rather than masquerade as fresh.
+            inbounds_runtime.seed_full_cache_from_completed_collector_cycle(
+                snapshots, node_service.list_nodes()
+            )
+        except Exception as exc:
+            logger.warning("Inbound projection seed skipped: %s", exc)
     if live_stats_runtime is None:
         return
     try:
