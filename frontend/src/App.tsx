@@ -13,15 +13,13 @@ import { useTheme } from './contexts/ThemeContext';
 import { useWebSocketMessages, wsManager } from './services/webSocketManager';
 import { clearAuthCredentials, setAuthCredentials, setWsTicket } from './auth';
 import { clearBrowserSession, createBrowserSession, getMfaStatus, verifyCurrentAuth } from './api/authService';
-import {
-  getBackupHeaderSource,
-} from './api/dashboard';
 import { IconName, UIIcon } from './components/UIIcon';
 import { requestActivityStore } from './services/requestActivity';
 import { clearManagerSnapshotCaches, readStaleCache, writeStaleCache } from './services/staleCache';
 import { DashboardDataProvider } from './services/DashboardDataContext';
 import { AUTH_REQUIRED_EVENT, resetAuthRequiredEventGuard } from './api/client';
 import type { NodeRecord } from './api/nodes';
+import type { BackupHeaderProjection } from './components/BackupManager';
 import type { MonitoringHeaderProjection } from './components/MonitoringDashboard';
 import type { SubscriptionHeaderProjection } from './components/SubscriptionManager';
 
@@ -252,6 +250,13 @@ export const App: React.FC = () => {
   }, [t, activeTab]);
 
   useEffect(() => {
+    if (activeTab === 'backup') {
+      setHeaderSummary({
+        description: t(TAB_META.backup.descriptionKey),
+        stats: [],
+      });
+      return;
+    }
     const cachedStore = readStaleCache<Partial<Record<TabType, HeaderSummary>>>(
       HEADER_SUMMARY_CACHE_KEY,
       HEADER_SUMMARY_CACHE_MAX_AGE_MS,
@@ -408,17 +413,13 @@ export const App: React.FC = () => {
             break;
           }
           case 'backup': {
-            const { nodes } = await getBackupHeaderSource({ signal: controller.signal });
-            const readOnly = nodes.filter((node: any) => Boolean(node.read_only)).length;
+            // BackupManager owns the initial node inventory. Do not duplicate
+            // its /v1/nodes read solely for header decoration; wait for its
+            // successful, current projection instead of guessing zeroes.
             if (!cancelled) {
               updateHeaderSummary({
                 description: t('header.backup.description'),
-                stats: [
-                  { label: t('header.backup.knownNodes'), value: String(nodes.length) },
-                  { label: t('header.backup.writable'), value: String(nodes.length - readOnly), tone: nodes.length - readOnly > 0 ? 'success' : 'warning' },
-                  { label: t('header.backup.readOnly'), value: String(readOnly) },
-                  { label: t('header.backup.restoreTargets'), value: String(nodes.length) },
-                ],
+                stats: [],
               });
             }
             break;
@@ -838,7 +839,17 @@ export const App: React.FC = () => {
           });
         }} />;
       case 'backup':
-        return <LazyBackupManager />;
+        return <LazyBackupManager onHeaderProjectionChange={(projection: BackupHeaderProjection) => {
+          updateHeaderSummary({
+            description: t('header.backup.description'),
+            stats: [
+              { label: t('header.backup.knownNodes'), value: String(projection.knownNodes) },
+              { label: t('header.backup.writable'), value: String(projection.writableNodes), tone: projection.writableNodes > 0 ? 'success' : 'warning' },
+              { label: t('header.backup.readOnly'), value: String(projection.readOnlyNodes) },
+              { label: t('header.backup.restoreTargets'), value: String(projection.restoreTargets) },
+            ],
+          });
+        }} />;
       case 'subscriptions':
         return <LazySubscriptionManager
           key={key}

@@ -8,10 +8,7 @@ vi.mock('../src/api/client', () => ({ default: { get: mocks.apiGet } }));
 vi.mock('../src/auth', () => ({ getAuth: () => ({ username: 'test', password: 'test' }) }));
 vi.mock('../src/api/nodes', () => ({ listNodes: mocks.listNodes }));
 
-import {
-  getBackupHeaderSource,
-  getMonitoringHeaderSource,
-} from '../src/api/dashboard';
+import { getMonitoringHeaderSource } from '../src/api/dashboard';
 
 const read = (relativePath: string) => fs.readFileSync(path.resolve(__dirname, '..', relativePath), 'utf8');
 
@@ -22,7 +19,6 @@ describe('header summary request lifecycle', () => {
     mocks.listNodes.mockResolvedValue([]);
 
     await getMonitoringHeaderSource({ signal: controller.signal });
-    await getBackupHeaderSource({ signal: controller.signal });
 
     expect(mocks.apiGet).toHaveBeenCalledWith('/v1/health/deps', expect.objectContaining({ signal: controller.signal }));
     expect(mocks.apiGet).toHaveBeenCalledWith('/v1/adguard/overview', expect.objectContaining({ signal: controller.signal }));
@@ -35,7 +31,8 @@ describe('header summary request lifecycle', () => {
     expect(source).toContain('const controller = new AbortController();');
     expect(source).not.toContain('getMonitoringHeaderSource({ signal: controller.signal })');
     expect(source).toContain('onHeaderProjectionChange');
-    expect(source).toContain('getBackupHeaderSource({ signal: controller.signal })');
+    expect(source).not.toContain('getBackupHeaderSource');
+    expect(source).toContain('<LazyBackupManager onHeaderProjectionChange=');
     expect(source).not.toContain('getSubscriptionsHeaderSource');
     expect(source).toContain('SubscriptionManager is the only owner of /emails and /nodes.');
     expect(source).toContain('controller.abort();');

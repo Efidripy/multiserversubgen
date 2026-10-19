@@ -13,6 +13,17 @@ import { useTranslation } from 'react-i18next';
 
 type Node = NodeRecord;
 
+export interface BackupHeaderProjection {
+  knownNodes: number;
+  writableNodes: number;
+  readOnlyNodes: number;
+  restoreTargets: number;
+}
+
+interface BackupManagerProps {
+  onHeaderProjectionChange?: (projection: BackupHeaderProjection) => void;
+}
+
 const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
 
 const shellClass = 'min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6';
@@ -36,7 +47,7 @@ const isTelegramDeliverySuccess = (result: unknown): boolean => (
  * record. Keep it out of the cold path: list configured nodes first and only
  * request bytes after an explicit operator action.
  */
-export const BackupManager: React.FC = () => {
+export const BackupManager: React.FC<BackupManagerProps> = ({ onHeaderProjectionChange }) => {
   const { toast } = useToast();
   const { t } = useTranslation();
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -64,6 +75,13 @@ export const BackupManager: React.FC = () => {
       const nextNodes = await listNodes({ signal: controller.signal });
       if (controller.signal.aborted || requestId !== nodesRequestIdRef.current) return;
       setNodes(nextNodes);
+      const readOnlyNodes = nextNodes.filter((node) => Boolean(node.read_only)).length;
+      onHeaderProjectionChange?.({
+        knownNodes: nextNodes.length,
+        writableNodes: nextNodes.length - readOnlyNodes,
+        readOnlyNodes,
+        restoreTargets: nextNodes.length,
+      });
     } catch (err: any) {
       if (controller.signal.aborted || requestId !== nodesRequestIdRef.current
         || err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.message === 'canceled') return;

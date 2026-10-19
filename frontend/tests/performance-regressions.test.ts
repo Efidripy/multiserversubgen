@@ -201,9 +201,13 @@ describe('navigation performance regressions', () => {
   });
 
   it('does not fetch complete node databases just to render Backup Manager', () => {
+    const app = read('src/App.tsx');
     const backupManager = read('src/components/BackupManager.tsx');
 
+    expect(app).not.toContain('getBackupHeaderSource');
+    expect(app).toContain('<LazyBackupManager onHeaderProjectionChange=');
     expect(backupManager).toContain('void loadNodes();');
+    expect(backupManager).toContain('onHeaderProjectionChange?.({');
     expect(backupManager).not.toContain("api.get('/v1/backup/all'");
     expect(backupManager).not.toContain('format: \'json\'');
     expect(backupManager).not.toContain('await refreshBackups()');

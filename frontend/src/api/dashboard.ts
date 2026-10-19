@@ -245,7 +245,3 @@ export async function getMonitoringHeaderSource(options: { signal?: AbortSignal 
     stack: stackRes.status === 'fulfilled' ? stackRes.value.data : null,
   };
 }
-
-export async function getBackupHeaderSource(options: { signal?: AbortSignal } = {}): Promise<{ nodes: NodeRecord[] }> {
-  return { nodes: await listNodes({ signal: options.signal }) };
-}
