@@ -12,6 +12,12 @@ interface Stats {
   last: string;
 }
 
+export interface SubscriptionHeaderProjection {
+  emails: string[];
+  stats: Record<string, Stats>;
+  nodes: NodeRecord[];
+}
+
 interface SubscriptionGroup {
   id: number;
   name: string;
@@ -89,7 +95,10 @@ const isCancelledRead = (error: any, signal: AbortSignal) => signal.aborted
   || error?.name === 'CanceledError'
   || error?.message === 'canceled';
 
-export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) => {
+export const SubscriptionManager: React.FC<{
+  apiUrl: string;
+  onHeaderProjectionChange?: (projection: SubscriptionHeaderProjection) => void;
+}> = ({ apiUrl, onHeaderProjectionChange }) => {
   const { toast } = useToast();
   const { t } = useTranslation();
   const [emails, setEmails] = useState<string[]>([]);
@@ -178,7 +187,7 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     }
   };
 
-  const loadEmails = async (request: ReadRequest) => {
+  const loadEmails = async (request: ReadRequest): Promise<Pick<SubscriptionHeaderProjection, 'emails' | 'stats'> | null> => {
     setEmailsLoading(true);
     setError('');
     setSuccessMessage('');
@@ -188,18 +197,22 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
         headers: { 'Cache-Control': 'no-cache' },
         signal: request.signal,
       });
-      if (!isCurrentRead(request)) return;
-      setEmails(Array.isArray(res.data?.emails) ? res.data.emails : []);
+      if (!isCurrentRead(request)) return null;
+      const nextEmails = Array.isArray(res.data?.emails) ? res.data.emails : [];
+      const nextStats = res.data?.stats || {};
+      setEmails(nextEmails);
       setEmailTokens(res.data?.subscription_tokens && typeof res.data.subscription_tokens === 'object'
         ? res.data.subscription_tokens
         : {});
-      setStats(res.data?.stats || {});
+      setStats(nextStats);
       setSuccessMessage(t('subscriptions.emailsRefreshed'));
       window.setTimeout(() => setSuccessMessage(''), 3000);
+      return { emails: nextEmails, stats: nextStats };
     } catch (err: any) {
-      if (isCancelledRead(err, request.signal) || !isCurrentRead(request)) return;
+      if (isCancelledRead(err, request.signal) || !isCurrentRead(request)) return null;
       console.error('Failed to load subscriptions:', err);
       setError(err.response?.data?.detail || t('subscriptions.refreshEmailsFailed'));
+      return null;
     } finally {
       if (isCurrentRead(request)) setEmailsLoading(false);
     }
@@ -262,14 +275,17 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     }
   };
 
-  const loadNodes = async (request: ReadRequest) => {
+  const loadNodes = async (request: ReadRequest): Promise<NodeRecord[] | null> => {
     setNodesLoading(true);
     try {
       const nextNodes = await listNodes({ signal: request.signal });
-      if (isCurrentRead(request)) setNodes(nextNodes);
+      if (!isCurrentRead(request)) return null;
+      setNodes(nextNodes);
+      return nextNodes;
     } catch (err: any) {
-      if (isCancelledRead(err, request.signal) || !isCurrentRead(request)) return;
+      if (isCancelledRead(err, request.signal) || !isCurrentRead(request)) return null;
       console.error('Failed to load nodes:', err);
+      return null;
     } finally {
       if (isCurrentRead(request)) setNodesLoading(false);
     }
@@ -279,7 +295,14 @@ export const SubscriptionManager: React.FC<{ apiUrl: string }> = ({ apiUrl }) =>
     const request = beginRead(true);
     setLoading(true);
     try {
-      await Promise.all([loadEmails(request), loadGroups(request), loadNodes(request)]);
+      const [emailProjection, , nodeProjection] = await Promise.all([
+        loadEmails(request),
+        loadGroups(request),
+        loadNodes(request),
+      ]);
+      if (isCurrentRead(request) && emailProjection && nodeProjection) {
+        onHeaderProjectionChange?.({ ...emailProjection, nodes: nodeProjection });
+      }
     } finally {
       if (isCurrentRead(request)) {
         setLoading(false);

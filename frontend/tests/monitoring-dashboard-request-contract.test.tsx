@@ -74,6 +74,21 @@ describe('Monitoring request ownership contract', () => {
     }
   });
 
+  it('keeps history and monitoring probes out of the first-view core until the operator asks for them', () => {
+    const source = read('src/components/MonitoringDashboard.tsx');
+    const initialOwner = source.slice(source.indexOf('useEffect(() => {\n    let cancelled = false;'), source.indexOf('useEffect(() => {\n    if (!onHeaderProjectionChange'));
+
+    expect(source).toContain("const [historyRequested, setHistoryRequested] = useState(false);");
+    expect(source).toContain("const [monitoringDetailsRequested, setMonitoringDetailsRequested] = useState(false);");
+    expect(source).toContain("if (!historyRequested) return;");
+    expect(source).toContain("if (!monitoringDetailsRequested) return;");
+    expect(source).toContain("setHistoryRequested(true)");
+    expect(source).toContain("setMonitoringDetailsRequested(true)");
+    expect(initialOwner).not.toContain('loadHistory(');
+    expect(initialOwner).not.toContain('loadAdguard');
+    expect(initialOwner).not.toContain('loadStackStatus');
+  });
+
   it('uses the HttpOnly browser session for every Monitoring read without weakening mutations', () => {
     const source = read('src/components/MonitoringDashboard.tsx');
     const reads = source.slice(0, source.indexOf('const collectAdguardNow'));

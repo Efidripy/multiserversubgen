@@ -5,6 +5,7 @@ from threading import Lock
 from typing import Dict, List
 
 from shared.observability import record_cache
+from services.snapshot_push import flatten_snapshot_tables
 
 
 class InboundsRuntime:
@@ -82,6 +83,72 @@ class InboundsRuntime:
                 else:
                     cache["ts"] = 0.0
                     cache["invalidated"] = False
+
+    def seed_full_cache_from_completed_collector_cycle(
+        self, snapshots: List[Dict], nodes: List[Dict]
+    ) -> bool:
+        """Seed an empty full-DTO cache from one complete successful poll cycle.
+
+        This consumes collector-owned inbound records only. Every enabled
+        configured node must appear exactly once, be available, and provide an
+        inbound list in this same completed callback. A partial, restored,
+        stale, or failed snapshot leaves the cache empty so the normal route
+        retains its live-read fallback.
+        """
+        expected_ids = set()
+        for node in nodes:
+            if not isinstance(node, dict) or not bool(node.get("enabled", True)):
+                continue
+            try:
+                expected_ids.add(int(node["id"]))
+            except (KeyError, TypeError, ValueError):
+                return False
+        if not expected_ids:
+            return False
+
+        snapshots_by_id: Dict[int, Dict] = {}
+        for snapshot in snapshots:
+            if not isinstance(snapshot, dict):
+                return False
+            try:
+                node_id = int(snapshot["node_id"])
+            except (KeyError, TypeError, ValueError):
+                return False
+            if node_id not in expected_ids or node_id in snapshots_by_id:
+                return False
+            if (
+                not snapshot.get("available")
+                or snapshot.get("stale")
+                or snapshot.get("cached_from_db")
+                or snapshot.get("_transient_transport_failure")
+                or not isinstance(snapshot.get("inbounds"), list)
+            ):
+                return False
+            snapshots_by_id[node_id] = snapshot
+        if set(snapshots_by_id) != expected_ids:
+            return False
+
+        rows: List[Dict] = []
+        observed_at = 0.0
+        for node_id in sorted(expected_ids):
+            snapshot = snapshots_by_id[node_id]
+            rows.extend(flatten_snapshot_tables(snapshot)["inbounds"])
+            try:
+                observed_at = max(observed_at, float(snapshot.get("timestamp") or 0.0))
+            except (TypeError, ValueError):
+                return False
+        if observed_at <= 0.0:
+            return False
+
+        with self._cache_state_lock:
+            # Never let a collector result overwrite a route result or a
+            # last-known projection retained across a mutation.
+            if self.inbounds_cache.get("data"):
+                return False
+            self.inbounds_cache["ts"] = observed_at
+            self.inbounds_cache["data"] = rows
+            self.inbounds_cache["invalidated"] = False
+        return True
 
     def _cached_full_by_node(self) -> Dict[str, List[Dict]]:
         """Index already-held full cache rows for legacy projection fallback.

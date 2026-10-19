@@ -172,23 +172,23 @@ export const newIdempotencyKey = (): string => {
   return `tg-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 };
 
-export async function listTelegramRequests(): Promise<TelegramRequest[]> {
-  const response = await api.get('/v1/telegram/requests', { auth: getAuth() });
+export async function listTelegramRequests(signal?: AbortSignal): Promise<TelegramRequest[]> {
+  const response = await api.get('/v1/telegram/requests', { auth: getAuth(), signal });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
-export async function listBlockedTelegramIdentities(): Promise<BlockedIdentity[]> {
-  const response = await api.get('/v1/telegram/identities/blocked', { auth: getAuth() });
+export async function listBlockedTelegramIdentities(signal?: AbortSignal): Promise<BlockedIdentity[]> {
+  const response = await api.get('/v1/telegram/identities/blocked', { auth: getAuth(), signal });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
-export async function getTelegramTransport(): Promise<TelegramTransportStatus> {
-  const response = await api.get('/v1/telegram/transport', { auth: getAuth() });
+export async function getTelegramTransport(signal?: AbortSignal): Promise<TelegramTransportStatus> {
+  const response = await api.get('/v1/telegram/transport', { auth: getAuth(), signal });
   return response.data?.transport as TelegramTransportStatus;
 }
 
-export async function getTelegramBotConfiguration(): Promise<TelegramBotConfigurationStatus> {
-  const response = await api.get('/v1/telegram/bot-configuration', { auth: getAuth() });
+export async function getTelegramBotConfiguration(signal?: AbortSignal): Promise<TelegramBotConfigurationStatus> {
+  const response = await api.get('/v1/telegram/bot-configuration', { auth: getAuth(), signal });
   return response.data?.configuration as TelegramBotConfigurationStatus;
 }
 
@@ -274,33 +274,33 @@ export async function unblockTelegramIdentity(identity: BlockedIdentity): Promis
   }, { auth: getAuth() });
 }
 
-export async function listTelegramCustomers(query = '', refreshToken?: number): Promise<TelegramCustomer[]> {
-  const response = await api.get('/v1/telegram/customers', { auth: getAuth(), params: { query, page_size: 100, ...(refreshToken ? { _refresh: refreshToken } : {}) } });
+export async function listTelegramCustomers(query = '', refreshToken?: number, signal?: AbortSignal): Promise<TelegramCustomer[]> {
+  const response = await api.get('/v1/telegram/customers', { auth: getAuth(), signal, params: { query, page_size: 100, ...(refreshToken ? { _refresh: refreshToken } : {}) } });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
-export async function getCustomerNodes(customerId: number, refreshToken?: number): Promise<CustomerNode[]> {
-  const response = await api.get(`/v1/telegram/customers/${customerId}/nodes`, { auth: getAuth(), params: refreshToken ? { _refresh: refreshToken } : undefined });
+export async function getCustomerNodes(customerId: number, refreshToken?: number, signal?: AbortSignal): Promise<CustomerNode[]> {
+  const response = await api.get(`/v1/telegram/customers/${customerId}/nodes`, { auth: getAuth(), signal, params: refreshToken ? { _refresh: refreshToken } : undefined });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
-export async function getCustomerTraffic(customerId: number, refreshToken?: number): Promise<CustomerTraffic> {
-  const response = await api.get(`/v1/telegram/customers/${customerId}/traffic`, { auth: getAuth(), params: refreshToken ? { _refresh: refreshToken } : undefined });
+export async function getCustomerTraffic(customerId: number, refreshToken?: number, signal?: AbortSignal): Promise<CustomerTraffic> {
+  const response = await api.get(`/v1/telegram/customers/${customerId}/traffic`, { auth: getAuth(), signal, params: refreshToken ? { _refresh: refreshToken } : undefined });
   return response.data?.traffic as CustomerTraffic;
 }
 
-export async function getCustomerOperations(customerId: number, refreshToken?: number): Promise<CustomerOperation[]> {
-  const response = await api.get(`/v1/telegram/customers/${customerId}/operations`, { auth: getAuth(), params: refreshToken ? { _refresh: refreshToken } : undefined });
+export async function getCustomerOperations(customerId: number, refreshToken?: number, signal?: AbortSignal): Promise<CustomerOperation[]> {
+  const response = await api.get(`/v1/telegram/customers/${customerId}/operations`, { auth: getAuth(), signal, params: refreshToken ? { _refresh: refreshToken } : undefined });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
-export async function getTelegramDashboard(): Promise<TelegramAdminDashboard> {
-  const response = await api.get('/v1/telegram/dashboard', { auth: getAuth() });
+export async function getTelegramDashboard(signal?: AbortSignal): Promise<TelegramAdminDashboard> {
+  const response = await api.get('/v1/telegram/dashboard', { auth: getAuth(), signal });
   return response.data?.dashboard as TelegramAdminDashboard;
 }
 
-export async function getCustomerTags(customerId: number, refreshToken?: number): Promise<CustomerTag[]> {
-  const response = await api.get(`/v1/telegram/customers/${customerId}/tags`, { auth: getAuth(), params: refreshToken ? { _refresh: refreshToken } : undefined });
+export async function getCustomerTags(customerId: number, refreshToken?: number, signal?: AbortSignal): Promise<CustomerTag[]> {
+  const response = await api.get(`/v1/telegram/customers/${customerId}/tags`, { auth: getAuth(), signal, params: refreshToken ? { _refresh: refreshToken } : undefined });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
@@ -309,13 +309,13 @@ export async function setCustomerTags(customerId: number, tags: string[]): Promi
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
-export async function getCustomerTimeline(customerId: number, refreshToken?: number): Promise<CustomerTimelineEvent[]> {
-  const response = await api.get(`/v1/telegram/customers/${customerId}/timeline`, { auth: getAuth(), params: refreshToken ? { _refresh: refreshToken } : undefined });
+export async function getCustomerTimeline(customerId: number, refreshToken?: number, signal?: AbortSignal): Promise<CustomerTimelineEvent[]> {
+  const response = await api.get(`/v1/telegram/customers/${customerId}/timeline`, { auth: getAuth(), signal, params: refreshToken ? { _refresh: refreshToken } : undefined });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
-export async function listLifecycleSchedules(customerId?: number): Promise<LifecycleSchedule[]> {
-  const response = await api.get('/v1/telegram/lifecycle-schedules', { auth: getAuth(), params: customerId ? { customer_id: customerId } : undefined });
+export async function listLifecycleSchedules(customerId?: number, signal?: AbortSignal): Promise<LifecycleSchedule[]> {
+  const response = await api.get('/v1/telegram/lifecycle-schedules', { auth: getAuth(), signal, params: customerId ? { customer_id: customerId } : undefined });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
@@ -358,8 +358,8 @@ export async function queueBulkCustomerOperations(preview: BulkLifecyclePreview)
   }, { auth: getAuth() });
 }
 
-export async function listDriftFindings(): Promise<DriftFinding[]> {
-  const response = await api.get('/v1/telegram/drift', { auth: getAuth() });
+export async function listDriftFindings(signal?: AbortSignal): Promise<DriftFinding[]> {
+  const response = await api.get('/v1/telegram/drift', { auth: getAuth(), signal });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
@@ -445,8 +445,8 @@ export async function retryCustomerOperation(operation: CustomerOperation): Prom
   );
 }
 
-export async function listTelegramJobsPage(limit = 100, offset = 0): Promise<ProvisioningJobPage> {
-  const response = await api.get('/v1/telegram/jobs', { auth: getAuth(), params: { limit, offset } });
+export async function listTelegramJobsPage(limit = 100, offset = 0, signal?: AbortSignal): Promise<ProvisioningJobPage> {
+  const response = await api.get('/v1/telegram/jobs', { auth: getAuth(), signal, params: { limit, offset } });
   return {
     items: Array.isArray(response.data?.items) ? response.data.items : [],
     total: Number.isInteger(response.data?.total) && response.data.total >= 0 ? response.data.total : 0,
@@ -475,8 +475,8 @@ export async function reconcileTelegramJob(job: ProvisioningJob): Promise<void> 
   );
 }
 
-export async function listTelegramAppeals(): Promise<TelegramAppeal[]> {
-  const response = await api.get('/v1/telegram/appeals', { auth: getAuth(), params: { status: 'open' } });
+export async function listTelegramAppeals(signal?: AbortSignal): Promise<TelegramAppeal[]> {
+  const response = await api.get('/v1/telegram/appeals', { auth: getAuth(), signal, params: { status: 'open' } });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
@@ -488,8 +488,8 @@ export async function resolveTelegramAppeal(appeal: TelegramAppeal, status: 'han
   );
 }
 
-export async function listTelegramSupportRequests(status: 'open' | 'read' | 'resolved' | 'all'): Promise<TelegramSupportRequest[]> {
-  const response = await api.get('/v1/telegram/support', { auth: getAuth(), params: { status, limit: 100 } });
+export async function listTelegramSupportRequests(status: 'open' | 'read' | 'resolved' | 'all', signal?: AbortSignal): Promise<TelegramSupportRequest[]> {
+  const response = await api.get('/v1/telegram/support', { auth: getAuth(), signal, params: { status, limit: 100 } });
   return Array.isArray(response.data?.items) ? response.data.items : [];
 }
 
