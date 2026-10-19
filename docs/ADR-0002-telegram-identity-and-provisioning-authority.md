@@ -156,10 +156,18 @@ node to become the authority for the customer lifecycle.
   the admin queue. It never mutates the remote node and does not reclassify a
   still missing or conflicting binding as confirmed.
 - `customer_traffic_ledger` belongs to the local `customer_id`, never a
-  subscription token. It accumulates deltas from the existing read-only client
-  projection; a lower source counter begins a new epoch and cannot subtract
-  previously observed traffic. It never triggers a remote fleet read from a
-  Telegram webhook.
+  subscription token. It is reconciled only after a completed local collector
+  snapshot, using confirmed `node_id + inbound_id + canonical remote_email`
+  bindings. A ledger observation is valid only when every enabled confirmed
+  target has exactly one available, unambiguous snapshot match; incomplete or
+  ambiguous targets leave the value `unknown` and do not write the ledger. The
+  first complete observation records the current panel aggregate as the
+  lifetime baseline, including traffic accumulated before a later Telegram
+  linkage. A lower source counter begins a new epoch and cannot subtract
+  previously observed traffic. Reconciliation is local-only and never triggers
+  a remote fleet read, retry, Telegram transport or remote mutation from a
+  Telegram webhook. The admin UI must distinguish an unobserved value from a
+  confirmed zero and expose the timestamp of the last valid observation.
 
 ## Частичная готовность существующего клиента
 
