@@ -54,4 +54,57 @@ describe('SubscriptionManager read lifecycle', () => {
     expect(apiGet.mock.calls[0][1].signal.aborted).toBe(true);
     expect(listNodes.mock.calls[0][0].signal.aborted).toBe(true);
   });
+
+  it('owns the initial email and node reads once, then publishes the header only after both are authoritative', async () => {
+    let resolveEmails: ((value: any) => void) | undefined;
+    let resolveNodes: ((value: any) => void) | undefined;
+    const emails = new Promise((resolve) => { resolveEmails = resolve; });
+    const nodes = new Promise((resolve) => { resolveNodes = resolve; });
+    const onHeaderProjectionChange = vi.fn();
+
+    apiGet.mockImplementation((path: string) => {
+      if (path === '/v1/emails') return emails;
+      return Promise.resolve({ data: { groups: [] } });
+    });
+    listNodes.mockReturnValue(nodes);
+
+    render(<SubscriptionManager apiUrl="https://example.test" onHeaderProjectionChange={onHeaderProjectionChange} />);
+
+    await waitFor(() => expect(apiGet.mock.calls.filter(([path]) => path === '/v1/emails')).toHaveLength(1));
+    expect(listNodes).toHaveBeenCalledTimes(1);
+    expect(onHeaderProjectionChange).not.toHaveBeenCalled();
+
+    resolveEmails?.({ data: { emails: ['owner@example.test'], stats: { 'owner@example.test': { count: 0, last: '' } } } });
+    await Promise.resolve();
+    expect(onHeaderProjectionChange).not.toHaveBeenCalled();
+
+    resolveNodes?.([{ id: 1, name: 'node-a' }]);
+    await waitFor(() => expect(onHeaderProjectionChange).toHaveBeenCalledWith({
+      emails: ['owner@example.test'],
+      stats: { 'owner@example.test': { count: 0, last: '' } },
+      nodes: [{ id: 1, name: 'node-a' }],
+    }));
+  });
+
+  it('does not publish a stale header projection after the route unmounts', async () => {
+    let resolveEmails: ((value: any) => void) | undefined;
+    let resolveNodes: ((value: any) => void) | undefined;
+    const onHeaderProjectionChange = vi.fn();
+    apiGet.mockImplementation((path: string) => {
+      if (path === '/v1/emails') return new Promise((resolve) => { resolveEmails = resolve; });
+      return Promise.resolve({ data: { groups: [] } });
+    });
+    listNodes.mockImplementation(() => new Promise((resolve) => { resolveNodes = resolve; }));
+
+    const view = render(<SubscriptionManager apiUrl="https://example.test" onHeaderProjectionChange={onHeaderProjectionChange} />);
+    await waitFor(() => expect(listNodes).toHaveBeenCalledTimes(1));
+    view.unmount();
+
+    resolveEmails?.({ data: { emails: ['stale@example.test'], stats: {} } });
+    resolveNodes?.([{ id: 1, name: 'node-a' }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(onHeaderProjectionChange).not.toHaveBeenCalled();
+  });
 });

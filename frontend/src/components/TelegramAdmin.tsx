@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useToast } from './Toast';
@@ -77,6 +77,14 @@ const primaryButtonClass = 'inline-flex h-9 items-center justify-center gap-2 ro
 
 type TelegramAdminTab = 'users' | 'operations' | 'settings';
 type TelegramUsersSection = 'requests' | 'customers' | 'support' | 'blocked';
+type TelegramReadDomain = 'customers' | 'requests' | 'blocked' | 'support' | 'operations' | 'settings' | 'customerDetails' | 'jobHistory';
+type TelegramDomainState = { loading: boolean; ready: boolean; error: boolean };
+
+const telegramReadDomains: TelegramReadDomain[] = ['customers', 'requests', 'blocked', 'support', 'operations', 'settings', 'customerDetails', 'jobHistory'];
+const emptyTelegramDomainStates = (): Record<TelegramReadDomain, TelegramDomainState> => Object.fromEntries(
+  telegramReadDomains.map((domain) => [domain, { loading: false, ready: false, error: false }]),
+) as Record<TelegramReadDomain, TelegramDomainState>;
+
 
 const TELEGRAM_NAVIGATION_CACHE_KEY = 'sub_manager_telegram_admin_navigation_v1';
 const telegramTabs: TelegramAdminTab[] = ['users', 'operations', 'settings'];
@@ -85,14 +93,14 @@ const telegramUsersSections: TelegramUsersSection[] = ['requests', 'customers', 
 const readTelegramNavigation = (): { activeTab: TelegramAdminTab; activeUsersSection: TelegramUsersSection } => {
   try {
     const raw = localStorage.getItem(TELEGRAM_NAVIGATION_CACHE_KEY);
-    if (!raw) return { activeTab: 'users', activeUsersSection: 'requests' };
+    if (!raw) return { activeTab: 'users', activeUsersSection: 'customers' };
     const parsed = JSON.parse(raw) as Partial<{ activeTab: TelegramAdminTab; activeUsersSection: TelegramUsersSection }>;
     return {
       activeTab: telegramTabs.includes(parsed.activeTab as TelegramAdminTab) ? parsed.activeTab as TelegramAdminTab : 'users',
-      activeUsersSection: telegramUsersSections.includes(parsed.activeUsersSection as TelegramUsersSection) ? parsed.activeUsersSection as TelegramUsersSection : 'requests',
+      activeUsersSection: telegramUsersSections.includes(parsed.activeUsersSection as TelegramUsersSection) ? parsed.activeUsersSection as TelegramUsersSection : 'customers',
     };
   } catch {
-    return { activeTab: 'users', activeUsersSection: 'requests' };
+    return { activeTab: 'users', activeUsersSection: 'customers' };
   }
 };
 
@@ -131,7 +139,6 @@ export const TelegramAdmin: React.FC = () => {
   const [customerRefreshDeadline, setCustomerRefreshDeadline] = useState<number | null>(null);
   const [applicationNoteTooltip, setApplicationNoteTooltip] = useState<{ note: string; left: number; top: number } | null>(null);
   const [search, setSearch] = useState('');
-  const [loading, setLoading] = useState(true);
   const [mutating, setMutating] = useState(false);
   const [transport, setTransport] = useState<TelegramTransportStatus | null>(null);
   const [transportModeDraft, setTransportModeDraft] = useState<TelegramTransportStatus['mode']>('direct');
@@ -169,6 +176,44 @@ export const TelegramAdmin: React.FC = () => {
   const [selectedRequestId, setSelectedRequestId] = useState<number | null>(null);
   const [customerStatusFilter, setCustomerStatusFilter] = useState('');
   const [customerPage, setCustomerPage] = useState(1);
+  const [domainStates, setDomainStates] = useState<Record<TelegramReadDomain, TelegramDomainState>>(emptyTelegramDomainStates);
+  const readControllers = useRef<Partial<Record<TelegramReadDomain, AbortController>>>({});
+  const readGenerations = useRef<Partial<Record<TelegramReadDomain, number>>>({});
+
+  const abortRead = useCallback((domain: TelegramReadDomain) => {
+    readControllers.current[domain]?.abort();
+    delete readControllers.current[domain];
+  }, []);
+
+  const runDomainRead = useCallback(async <Result,>(
+    domain: TelegramReadDomain,
+    read: (signal: AbortSignal) => Promise<Result>,
+    apply: (result: Result) => void,
+  ) => {
+    abortRead(domain);
+    const controller = new AbortController();
+    const generation = (readGenerations.current[domain] ?? 0) + 1;
+    readControllers.current[domain] = controller;
+    readGenerations.current[domain] = generation;
+    setDomainStates((current) => ({ ...current, [domain]: { loading: true, ready: current[domain].ready, error: false } }));
+    try {
+      const result = await read(controller.signal);
+      if (controller.signal.aborted || readGenerations.current[domain] !== generation) return false;
+      apply(result);
+      setDomainStates((current) => ({ ...current, [domain]: { loading: false, ready: true, error: false } }));
+      return true;
+    } catch {
+      if (controller.signal.aborted || readGenerations.current[domain] !== generation) return false;
+      setDomainStates((current) => ({ ...current, [domain]: { loading: false, ready: false, error: true } }));
+      return false;
+    } finally {
+      if (readControllers.current[domain] === controller) delete readControllers.current[domain];
+    }
+  }, [abortRead]);
+
+  useEffect(() => () => {
+    telegramReadDomains.forEach((domain) => abortRead(domain));
+  }, [abortRead]);
 
   useEffect(() => {
     try {
@@ -251,37 +296,97 @@ export const TelegramAdmin: React.FC = () => {
   );
   const jobHistoryPageCount = Math.max(1, Math.ceil(jobHistoryTotal / 15));
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const [nextRequests, nextCustomers, nextBlocked, nextTransport, nextBotConfiguration, nextJobsPage, nextAppeals, nextSupportRequests, nextDashboard, nextSchedules, nextDrift] = await Promise.all([
-        listTelegramRequests(), listTelegramCustomers(search), listBlockedTelegramIdentities(), getTelegramTransport(), getTelegramBotConfiguration(), listTelegramJobsPage(5), listTelegramAppeals(), listTelegramSupportRequests('all'), getTelegramDashboard(), listLifecycleSchedules(), listDriftFindings(),
-      ]);
-      setRequests(nextRequests);
-      setCustomers(nextCustomers);
-      setBlocked(nextBlocked);
-      setTransport(nextTransport);
-      setTransportModeDraft(nextTransport.mode);
-      setProxyHost(nextTransport.proxy_host ?? '127.0.0.1');
-      setProxyPort(nextTransport.proxy_port ? String(nextTransport.proxy_port) : '');
-      setBotConfiguration(nextBotConfiguration);
-      setJobs(nextJobsPage.items);
-      setJobsTotal(nextJobsPage.total);
-      setAppeals(nextAppeals);
-      setSupportRequests(nextSupportRequests);
-      setSelectedSupportCustomerId((current) => current && nextSupportRequests.some((item) => item.customer_id === current) ? current : nextSupportRequests[0]?.customer_id ?? null);
-      setDashboard(nextDashboard);
-      setSchedules(nextSchedules);
-      setDriftFindings(nextDrift);
-      setSelectedCustomerIds((current) => current.filter((customerId) => nextCustomers.some((customer) => customer.customer_id === customerId)));
-    } catch {
-      toast(t('telegram.loadFailed'), 'error');
-    } finally {
-      setLoading(false);
-    }
-  }, [search, t, toast]);
+  const loadCustomers = useCallback(async (query: string) => {
+    await runDomainRead('customers',
+      (signal) => listTelegramCustomers(query, undefined, signal),
+      (nextCustomers) => {
+        setCustomers(nextCustomers);
+        setSelectedCustomerIds((current) => current.filter((customerId) => nextCustomers.some((customer) => customer.customer_id === customerId)));
+      },
+    );
+  }, [runDomainRead]);
 
-  useEffect(() => { void load(); }, [load]);
+  const loadRequests = useCallback(async () => {
+    await runDomainRead('requests', (signal) => listTelegramRequests(signal), setRequests);
+  }, [runDomainRead]);
+
+  const loadBlocked = useCallback(async () => {
+    await runDomainRead('blocked',
+      async (signal) => Promise.all([listBlockedTelegramIdentities(signal), listTelegramAppeals(signal)]),
+      ([nextBlocked, nextAppeals]) => { setBlocked(nextBlocked); setAppeals(nextAppeals); },
+    );
+  }, [runDomainRead]);
+
+  const loadSupport = useCallback(async () => {
+    await runDomainRead('support',
+      (signal) => listTelegramSupportRequests('all', signal),
+      (nextSupportRequests) => {
+        setSupportRequests(nextSupportRequests);
+        setSelectedSupportCustomerId((current) => current && nextSupportRequests.some((item) => item.customer_id === current) ? current : nextSupportRequests[0]?.customer_id ?? null);
+      },
+    );
+  }, [runDomainRead]);
+
+  const loadOperations = useCallback(async () => {
+    await runDomainRead('operations',
+      async (signal) => Promise.all([listTelegramJobsPage(5, 0, signal), getTelegramDashboard(signal), listLifecycleSchedules(undefined, signal), listDriftFindings(signal)]),
+      ([nextJobsPage, nextDashboard, nextSchedules, nextDrift]) => {
+        setJobs(nextJobsPage.items);
+        setJobsTotal(nextJobsPage.total);
+        setDashboard(nextDashboard);
+        setSchedules(nextSchedules);
+        setDriftFindings(nextDrift);
+      },
+    );
+  }, [runDomainRead]);
+
+  const loadSettings = useCallback(async () => {
+    await runDomainRead('settings',
+      async (signal) => Promise.all([getTelegramTransport(signal), getTelegramBotConfiguration(signal)]),
+      ([nextTransport, nextBotConfiguration]) => {
+        setTransport(nextTransport);
+        setTransportModeDraft(nextTransport.mode);
+        setProxyHost(nextTransport.proxy_host ?? '127.0.0.1');
+        setProxyPort(nextTransport.proxy_port ? String(nextTransport.proxy_port) : '');
+        setBotConfiguration(nextBotConfiguration);
+      },
+    );
+  }, [runDomainRead]);
+
+  const activeDomain = activeTab === 'operations' ? 'operations'
+    : activeTab === 'settings' ? 'settings'
+      : activeUsersSection;
+  const loading = domainStates[activeDomain].loading;
+  const renderDomainState = (domain: TelegramReadDomain) => {
+    if (domainStates[domain].loading) return <p className="py-7 text-center text-[18px] font-light text-slate-500">{t('common.loading')}</p>;
+    if (domainStates[domain].error) return <p role="alert" className="py-7 text-center text-[18px] font-light text-rose-200">{t('telegram.domainLoadFailed')}</p>;
+    return null;
+  };
+
+  const loadActiveDomain = useCallback(async () => {
+    if (activeTab === 'operations') return loadOperations();
+    if (activeTab === 'settings') return loadSettings();
+    if (activeUsersSection === 'customers') return loadCustomers(search);
+    if (activeUsersSection === 'requests') return loadRequests();
+    if (activeUsersSection === 'blocked') return loadBlocked();
+    return loadSupport();
+  }, [activeTab, activeUsersSection, loadBlocked, loadCustomers, loadOperations, loadRequests, loadSettings, loadSupport, search]);
+
+  useEffect(() => {
+    if (activeTab === 'users' && activeUsersSection === 'customers') return undefined;
+    void loadActiveDomain();
+    return () => abortRead(activeDomain);
+  }, [abortRead, activeDomain, activeTab, activeUsersSection, loadActiveDomain]);
+
+  useEffect(() => {
+    if (activeTab !== 'users' || activeUsersSection !== 'customers') return undefined;
+    if (!search.trim()) {
+      void loadCustomers(search);
+      return () => abortRead('customers');
+    }
+    const timeoutId = window.setTimeout(() => { void loadCustomers(search); }, 300);
+    return () => { window.clearTimeout(timeoutId); abortRead('customers'); };
+  }, [abortRead, activeTab, activeUsersSection, loadCustomers, search]);
 
   useEffect(() => {
     if (!isCustomerDialogOpen) return undefined;
@@ -319,25 +424,29 @@ export const TelegramAdmin: React.FC = () => {
 
   const refreshCustomerDetails = useCallback(async (customerId: number, syncTagInput = false) => {
     const refreshToken = Date.now();
-    const [nextNodes, nextOperations, nextTraffic, nextTags, nextTimeline, nextJobsPage, nextCustomers] = await Promise.all([
-      getCustomerNodes(customerId, refreshToken),
-      getCustomerOperations(customerId, refreshToken),
-      getCustomerTraffic(customerId, refreshToken),
-      getCustomerTags(customerId, refreshToken),
-      getCustomerTimeline(customerId, refreshToken),
-      listTelegramJobsPage(200),
-      listTelegramCustomers(search, refreshToken),
-    ]);
-    setNodes(nextNodes);
-    setOperations(nextOperations);
-    setTraffic(nextTraffic);
-    setTags(nextTags);
-    if (syncTagInput) setTagInput(nextTags.map((tag) => tag.tag).join(', '));
-    setTimeline(nextTimeline);
-    setJobs(nextJobsPage.items);
-    setJobsTotal(nextJobsPage.total);
-    setCustomers(nextCustomers);
-  }, [search]);
+    return runDomainRead('customerDetails',
+      async (signal) => Promise.all([
+        getCustomerNodes(customerId, refreshToken, signal),
+        getCustomerOperations(customerId, refreshToken, signal),
+        getCustomerTraffic(customerId, refreshToken, signal),
+        getCustomerTags(customerId, refreshToken, signal),
+        getCustomerTimeline(customerId, refreshToken, signal),
+        listTelegramJobsPage(200, 0, signal),
+        listTelegramCustomers(search, refreshToken, signal),
+      ]),
+      ([nextNodes, nextOperations, nextTraffic, nextTags, nextTimeline, nextJobsPage, nextCustomers]) => {
+        setNodes(nextNodes);
+        setOperations(nextOperations);
+        setTraffic(nextTraffic);
+        setTags(nextTags);
+        if (syncTagInput) setTagInput(nextTags.map((tag) => tag.tag).join(', '));
+        setTimeline(nextTimeline);
+        setJobs(nextJobsPage.items);
+        setJobsTotal(nextJobsPage.total);
+        setCustomers(nextCustomers);
+      },
+    );
+  }, [runDomainRead, search]);
 
   const selectCustomer = useCallback(async (customer: TelegramCustomer) => {
     setSelectedCustomerId(customer.customer_id);
@@ -348,11 +457,8 @@ export const TelegramAdmin: React.FC = () => {
     setTraffic(null);
     setTags([]);
     setTimeline([]);
-    try {
-      await refreshCustomerDetails(customer.customer_id, true);
-    } catch {
-      toast(t('telegram.detailsFailed'), 'error');
-    }
+    const loaded = await refreshCustomerDetails(customer.customer_id, true);
+    if (!loaded) toast(t('telegram.detailsFailed'), 'error');
   }, [refreshCustomerDetails, t, toast]);
 
   const openCustomerDialog = useCallback((customer: TelegramCustomer) => {
@@ -367,7 +473,7 @@ export const TelegramAdmin: React.FC = () => {
       await approveTelegramRequest(approval.request, approval.email);
       toast(t('telegram.approvalQueued'), 'success');
       setApproval(null);
-      await load();
+      await loadRequests();
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -396,7 +502,7 @@ export const TelegramAdmin: React.FC = () => {
       await deferExistingTelegramCustomer(approval.request, approval.email);
       toast(t('telegram.existingDeferredQueued'), 'success');
       setApproval(null);
-      await load();
+      await loadRequests();
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -411,7 +517,7 @@ export const TelegramAdmin: React.FC = () => {
       await adoptExistingTelegramCustomer(approval.request, approval.email);
       toast(t('telegram.requestUpdated'), 'success');
       setApproval(null);
-      await load();
+      await loadRequests();
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -426,7 +532,7 @@ export const TelegramAdmin: React.FC = () => {
       if (action === 'block') await blockTelegramRequest(request);
       else await rejectTelegramRequest(request);
       toast(t('telegram.requestUpdated'), 'success');
-      await load();
+      await loadRequests();
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -520,7 +626,7 @@ export const TelegramAdmin: React.FC = () => {
       setScheduleAt('');
       setPreview(null);
       toast(t('telegram.scheduleCreated'), 'success');
-      await load();
+      await loadOperations();
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -534,7 +640,7 @@ export const TelegramAdmin: React.FC = () => {
     try {
       await cancelLifecycleSchedule(schedule);
       toast(t('telegram.scheduleCancelled'), 'success');
-      await load();
+      await loadOperations();
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -563,7 +669,7 @@ export const TelegramAdmin: React.FC = () => {
       setBulkPreview(null);
       setSelectedCustomerIds([]);
       toast(t('telegram.operationQueued'), 'success');
-      await load();
+      await loadCustomers(search);
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -601,18 +707,18 @@ export const TelegramAdmin: React.FC = () => {
 
   const loadJobHistory = useCallback(async (page: number) => {
     setJobHistoryLoading(true);
-    try {
-      const next = await listTelegramJobsPage(15, (page - 1) * 15);
-      setJobHistory(next.items);
-      setJobHistoryTotal(next.total);
-      setCanClearJobHistory(next.can_clear_history);
-      setJobHistoryPage(page);
-    } catch {
-      toast(t('telegram.loadFailed'), 'error');
-    } finally {
-      setJobHistoryLoading(false);
-    }
-  }, [t, toast]);
+    const loaded = await runDomainRead('jobHistory',
+      (signal) => listTelegramJobsPage(15, (page - 1) * 15, signal),
+      (next) => {
+        setJobHistory(next.items);
+        setJobHistoryTotal(next.total);
+        setCanClearJobHistory(next.can_clear_history);
+        setJobHistoryPage(page);
+      },
+    );
+    if (!loaded) toast(t('telegram.loadFailed'), 'error');
+    setJobHistoryLoading(false);
+  }, [runDomainRead, t, toast]);
 
   const openJobHistory = useCallback(() => {
     setIsJobHistoryOpen(true);
@@ -625,7 +731,7 @@ export const TelegramAdmin: React.FC = () => {
     try {
       const deletedCount = await clearTelegramJobHistory();
       setIsJobHistoryClearConfirmOpen(false);
-      await Promise.all([load(), loadJobHistory(1)]);
+      await Promise.all([loadOperations(), loadJobHistory(1)]);
       toast(t('telegram.clearJobsHistoryDone', { count: deletedCount }), 'success');
     } catch {
       toast(t('telegram.actionFailed'), 'error');
@@ -655,7 +761,7 @@ export const TelegramAdmin: React.FC = () => {
       toast(t('telegram.transportUpdated'), 'success');
     } catch {
       toast(t('telegram.transportUpdateFailed'), 'error');
-      await load();
+      await loadSettings();
     } finally {
       setMutating(false);
     }
@@ -701,7 +807,7 @@ export const TelegramAdmin: React.FC = () => {
       await resolveTelegramSupportRequest(supportReply.request, supportReply.body.trim());
       setSupportReply(null);
       toast(t('telegram.supportResolved'), 'success');
-      await load();
+      await loadSupport();
     } catch {
       toast(t('telegram.actionFailed'), 'error');
     } finally {
@@ -769,7 +875,7 @@ export const TelegramAdmin: React.FC = () => {
         <div>
             <h2 className="text-[24px] font-medium tracking-[-0.02em] text-[#eef4fa]">{tabs.find((tab) => tab.id === activeTab)?.label}</h2>
         </div>
-          <button type="button" className={buttonClass} onClick={() => void load()} disabled={loading || mutating} aria-live="polite"><UIIcon name="refresh" size={14} />{t('common.refresh')}</button>
+          <button type="button" className={buttonClass} onClick={() => void loadActiveDomain()} disabled={loading || mutating} aria-live="polite"><UIIcon name="refresh" size={14} />{t('common.refresh')}</button>
         </div>
       </div>
 
@@ -793,9 +899,11 @@ export const TelegramAdmin: React.FC = () => {
         </div>
       </nav>
 
-      {activeTab === 'operations' && dashboard && <div className="mb-4 grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
+      {activeTab === 'operations' && !domainStates.operations.ready && <section className={`${panelClass} mb-4`} aria-live="polite">{renderDomainState('operations')}</section>}
+      {activeTab === 'settings' && !domainStates.settings.ready && <section className={`${panelClass} mb-4`} aria-live="polite">{renderDomainState('settings')}</section>}
+      {activeTab === 'operations' && domainStates.operations.ready && dashboard && <div className="mb-4 grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(280px,0.75fr)]">
         <section className={panelClass} aria-label={t('telegram.jobsTitle')}>
-          <div className="flex items-center justify-between gap-3 border-b border-cyan-400/12 pb-3"><div><h3 className="text-[16px] font-semibold uppercase tracking-[0.14em] text-slate-200">{t('telegram.jobsTitle')}</h3><p className="mt-1 text-[15px] text-slate-500">{t('telegram.operations')}</p></div><div className="flex items-center gap-2"><span className="rounded-full bg-[#151d2a] px-2 py-1 font-mono text-[14px] text-cyan-100">{jobsTotal}</span><button type="button" className={buttonClass} disabled={loading || mutating} onClick={openJobHistory}>{t('telegram.jobsHistory')}</button></div></div>
+          <div className="flex items-center justify-between gap-3 border-b border-cyan-400/12 pb-3"><div><h3 className="text-[16px] font-semibold uppercase tracking-[0.14em] text-slate-200">{t('telegram.jobsTitle')}</h3><p className="mt-1 text-[15px] text-slate-500">{t('telegram.operations')}</p></div><div className="flex items-center gap-2"><span className="rounded-full bg-[#151d2a] px-2 py-1 font-mono text-[14px] text-cyan-100">{jobsTotal}</span><button type="button" className={buttonClass} disabled={domainStates.operations.loading || domainStates.jobHistory.loading || mutating} onClick={openJobHistory}>{t('telegram.jobsHistory')}</button></div></div>
           <div className="mt-3 space-y-2">{jobs.slice(0, 5).map((job) => <div key={job.job_id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-cyan-400/12 bg-[#0a0f19] px-3 py-2"><span className="min-w-0 truncate text-[16px] text-slate-200">{job.customer_email}</span><span className={['succeeded'].includes(job.status) ? 'font-mono text-[14px] text-emerald-200' : 'font-mono text-[14px] text-amber-200'}>{job.status}</span></div>)}{jobs.length === 0 && <p className="py-7 text-center text-[18px] font-light text-slate-500">{t('telegram.noJobs')}</p>}</div>
         </section>
         <aside className={panelClass} aria-label={t('telegram.attentionTitle')}>
@@ -805,7 +913,7 @@ export const TelegramAdmin: React.FC = () => {
         </aside>
       </div>}
 
-      {activeTab === 'settings' && <section className={`${panelClass} mb-4`} aria-label={t('telegram.botTokenTitle')}>
+      {activeTab === 'settings' && domainStates.settings.ready && <section className={`${panelClass} mb-4`} aria-label={t('telegram.botTokenTitle')}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h3 className="text-[16px] font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.botTokenTitle')}</h3>
@@ -834,7 +942,7 @@ export const TelegramAdmin: React.FC = () => {
         <p className="mt-2 text-[15px] text-slate-500">{botConfiguration?.source === 'panel' ? t('telegram.botTokenPanelSource') : t('telegram.botTokenEnvironmentSource')}</p>
       </section>}
 
-      {activeTab === 'settings' && <section className={`${panelClass} mb-4`} aria-label={t('telegram.transportTitle')}>
+      {activeTab === 'settings' && domainStates.settings.ready && <section className={`${panelClass} mb-4`} aria-label={t('telegram.transportTitle')}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h3 className="text-[16px] font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.transportTitle')}</h3>
@@ -864,10 +972,10 @@ export const TelegramAdmin: React.FC = () => {
       {activeTab === 'users' && <>
         <section className="mb-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4" aria-label={t('telegram.dashboardTitle')}>
           {[
-            { id: 'customers' as const, value: customers.length, label: t('telegram.customers'), icon: 'clients' as const, tone: 'cyan' },
-            { id: 'requests' as const, value: requests.length, label: t('telegram.requests'), icon: 'bell' as const, tone: 'amber' },
-            { id: 'support' as const, value: openSupportRequests.length, label: t('telegram.supportOpenTitle'), icon: 'note' as const, tone: 'violet' },
-            { id: 'blocked' as const, value: blocked.length, label: t('telegram.blocked'), icon: 'statusOff' as const, tone: 'slate' },
+            { id: 'customers' as const, value: domainStates.customers.ready ? customers.length : '—', label: t('telegram.customers'), icon: 'clients' as const, tone: 'cyan' },
+            { id: 'requests' as const, value: domainStates.requests.ready ? requests.length : '—', label: t('telegram.requests'), icon: 'bell' as const, tone: 'amber' },
+            { id: 'support' as const, value: domainStates.support.ready ? openSupportRequests.length : '—', label: t('telegram.supportOpenTitle'), icon: 'note' as const, tone: 'violet' },
+            { id: 'blocked' as const, value: domainStates.blocked.ready ? blocked.length : '—', label: t('telegram.blocked'), icon: 'statusOff' as const, tone: 'slate' },
           ].map((metric) => {
             const selected = activeUsersSection === metric.id;
             return <button key={metric.id} type="button" aria-pressed={selected} onClick={() => setActiveUsersSection(metric.id)} className={`relative flex min-h-[66px] min-w-0 items-center gap-2.5 rounded-[7px] border px-2.5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 ${selected ? 'border-cyan-300/50 bg-cyan-400/[0.08] shadow-[inset_0_-2px_0_#22d3ee]' : metric.tone === 'amber' ? 'border-amber-400/22 bg-[#0d131f] hover:border-amber-300/45' : 'border-cyan-400/12 bg-[#0d131f] hover:border-cyan-300/35'}`}>
@@ -876,7 +984,9 @@ export const TelegramAdmin: React.FC = () => {
           })}
         </section>
 
-        {activeUsersSection === 'customers' && <section className={`${panelClass} mb-4`} aria-label={t('telegram.customers')}>
+        {!domainStates[activeUsersSection].ready && <section className={`${panelClass} mb-4`} aria-live="polite">{renderDomainState(activeUsersSection)}</section>}
+        {domainStates[activeUsersSection].ready && (domainStates[activeUsersSection].loading || domainStates[activeUsersSection].error) && <p className="mb-3 text-[15px] text-slate-500" aria-live="polite">{renderDomainState(activeUsersSection)}</p>}
+        {activeUsersSection === 'customers' && domainStates.customers.ready && <section className={`${panelClass} mb-4`} aria-label={t('telegram.customers')}>
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cyan-400/12 pb-3">
             <div><h3 className="text-[16px] font-semibold uppercase tracking-[0.14em] text-slate-200">{t('telegram.customers')}</h3><p className="mt-1 text-[15px] text-slate-500">{t('telegram.shownOf', { shown: visibleCustomers.length, total: filteredCustomers.length })}</p></div>
             <div className="flex w-full flex-wrap gap-2 sm:w-auto">
@@ -907,7 +1017,7 @@ export const TelegramAdmin: React.FC = () => {
       </>}
 
       {activeTab === 'users' && <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(290px,0.9fr)_minmax(0,1.3fr)]">
-        {activeUsersSection === 'requests' && <section className={`${panelClass} xl:col-span-2 p-0`} aria-label={t('telegram.requests')}>
+        {activeUsersSection === 'requests' && domainStates.requests.ready && <section className={`${panelClass} xl:col-span-2 p-0`} aria-label={t('telegram.requests')}>
           <div className="grid min-w-0 xl:grid-cols-[minmax(280px,0.48fr)_minmax(0,1fr)]">
             <div className="min-w-0 border-b border-cyan-400/12 xl:border-b-0 xl:border-r">
               <div className="flex h-[45px] items-center justify-between border-b border-cyan-400/12 px-3"><h3 className="text-[15px] font-semibold uppercase tracking-[0.1em] text-slate-200">{t('telegram.requests')}</h3><span className="rounded-full bg-cyan-400/10 px-1.5 py-0.5 font-mono text-[14px] text-cyan-100">{requests.length}</span></div>
@@ -936,13 +1046,13 @@ export const TelegramAdmin: React.FC = () => {
           </div>
         </section>}
 
-        {activeUsersSection === 'blocked' && <section className={panelClass} aria-label={t('telegram.blocked')}>
-          <h3 className="text-[16px] font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.blocked')}</h3><div className="mt-3 space-y-2">{blocked.length === 0 && <p className="text-[18px] font-light text-slate-500">{t('telegram.noBlocked')}</p>}{blocked.map((identity) => <div key={identity.telegram_user_id} className="flex items-center justify-between gap-3 rounded border border-rose-400/15 bg-[#0a0e1a] p-3"><span className="truncate text-[18px] text-slate-300">{identity.username ? `@${identity.username}` : identity.first_name || `#${identity.telegram_user_id}`}</span><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await unblockTelegramIdentity(identity); toast(t('telegram.requestUpdated'), 'success'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.unblock')}</button></div>)}</div>
+        {activeUsersSection === 'blocked' && domainStates.blocked.ready && <section className={panelClass} aria-label={t('telegram.blocked')}>
+          <h3 className="text-[16px] font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.blocked')}</h3><div className="mt-3 space-y-2">{blocked.length === 0 && <p className="text-[18px] font-light text-slate-500">{t('telegram.noBlocked')}</p>}{blocked.map((identity) => <div key={identity.telegram_user_id} className="flex items-center justify-between gap-3 rounded border border-rose-400/15 bg-[#0a0e1a] p-3"><span className="truncate text-[18px] text-slate-300">{identity.username ? `@${identity.username}` : identity.first_name || `#${identity.telegram_user_id}`}</span><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await unblockTelegramIdentity(identity); toast(t('telegram.requestUpdated'), 'success'); await loadBlocked(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.unblock')}</button></div>)}</div>
         </section>}
 
-        {activeUsersSection === 'blocked' && <section className={panelClass} aria-label={t('telegram.appealsTitle')}>
+        {activeUsersSection === 'blocked' && domainStates.blocked.ready && <section className={panelClass} aria-label={t('telegram.appealsTitle')}>
           <h3 className="text-[16px] font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.appealsTitle')}</h3>
-          <div className="mt-3 space-y-2">{appeals.length === 0 && <p className="text-[18px] font-light text-slate-500">{t('telegram.noAppeals')}</p>}{appeals.map((appeal) => <article key={appeal.appeal_id} className="rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><span className="block truncate text-[16px] text-slate-200">{appeal.email_display}</span><p className="mt-2 whitespace-pre-wrap text-[16px] text-slate-400">{appeal.body}</p><div className="mt-2 flex gap-2"><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await resolveTelegramAppeal(appeal, 'handled'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.closeAppeal')}</button><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await resolveTelegramAppeal(appeal, 'rejected'); await load(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reject')}</button></div></article>)}</div>
+          <div className="mt-3 space-y-2">{appeals.length === 0 && <p className="text-[18px] font-light text-slate-500">{t('telegram.noAppeals')}</p>}{appeals.map((appeal) => <article key={appeal.appeal_id} className="rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><span className="block truncate text-[16px] text-slate-200">{appeal.email_display}</span><p className="mt-2 whitespace-pre-wrap text-[16px] text-slate-400">{appeal.body}</p><div className="mt-2 flex gap-2"><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await resolveTelegramAppeal(appeal, 'handled'); await loadBlocked(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.closeAppeal')}</button><button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await resolveTelegramAppeal(appeal, 'rejected'); await loadBlocked(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reject')}</button></div></article>)}</div>
         </section>}
 
       </div>}
@@ -1005,7 +1115,7 @@ export const TelegramAdmin: React.FC = () => {
       {isJobHistoryOpen && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-[#02050bd9] p-3 sm:p-5" onMouseDown={() => { if (!isJobHistoryClearConfirmOpen && !mutating) setIsJobHistoryOpen(false); }}>
         <section role="dialog" aria-modal="true" aria-labelledby="telegram-job-history-dialog-title" className="flex max-h-[calc(100vh-1.5rem)] w-full max-w-4xl flex-col overflow-hidden rounded-[8px] border border-cyan-400/20 bg-[#0d131f] shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
           <div className="flex items-start justify-between gap-4 border-b border-cyan-400/12 px-4 py-3"><div><p className="text-[13px] uppercase tracking-[0.14em] text-slate-500">{t('telegram.jobsTitle')}</p><h3 id="telegram-job-history-dialog-title" className="mt-1 text-[18px] font-medium text-[#e9f1f8]">{t('telegram.jobsHistoryTitle')}</h3><p className="mt-1 text-[15px] text-slate-500">{t('telegram.jobsHistoryHint')}</p></div><button type="button" className={`${buttonClass} h-8 px-2`} disabled={mutating} onClick={() => setIsJobHistoryOpen(false)} aria-label={t('telegram.closeCustomer')}><UIIcon name="x" size={15} /></button></div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4"><div className="space-y-2">{jobHistoryLoading && <p className="py-7 text-center text-[18px] font-light text-slate-500">{t('common.loading')}</p>}{!jobHistoryLoading && jobHistory.length === 0 && <p className="py-7 text-center text-[18px] font-light text-slate-500">{t('telegram.noJobs')}</p>}{jobHistory.map((job) => <article key={job.job_id} className="rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="truncate text-[16px] text-slate-200">{job.customer_email}</span><span className="font-mono text-[14px] text-slate-500">{job.status}</span></div><p className="mt-1 text-[15px] text-slate-500">{t('telegram.nodesReady', { ready: job.attempts.filter((attempt) => attempt.status === 'succeeded').length, total: job.attempts.length })} · {formatDate(job.created_at)}</p>{job.attempts.some((attempt) => ['partial', 'failed', 'ambiguous', 'blocked'].includes(attempt.status)) && <button type="button" className={`${buttonClass} mt-2`} disabled={mutating} onClick={async () => { setMutating(true); try { await reconcileTelegramJob(job); toast(t('telegram.operationQueued'), 'success'); await Promise.all([load(), loadJobHistory(jobHistoryPage)]); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reconcile')}</button>}</article>)}</div></div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-4"><div className="space-y-2">{jobHistoryLoading && <p className="py-7 text-center text-[18px] font-light text-slate-500">{t('common.loading')}</p>}{!jobHistoryLoading && jobHistory.length === 0 && <p className="py-7 text-center text-[18px] font-light text-slate-500">{t('telegram.noJobs')}</p>}{jobHistory.map((job) => <article key={job.job_id} className="rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><span className="truncate text-[16px] text-slate-200">{job.customer_email}</span><span className="font-mono text-[14px] text-slate-500">{job.status}</span></div><p className="mt-1 text-[15px] text-slate-500">{t('telegram.nodesReady', { ready: job.attempts.filter((attempt) => attempt.status === 'succeeded').length, total: job.attempts.length })} · {formatDate(job.created_at)}</p>{job.attempts.some((attempt) => ['partial', 'failed', 'ambiguous', 'blocked'].includes(attempt.status)) && <button type="button" className={`${buttonClass} mt-2`} disabled={mutating} onClick={async () => { setMutating(true); try { await reconcileTelegramJob(job); toast(t('telegram.operationQueued'), 'success'); await Promise.all([loadOperations(), loadJobHistory(jobHistoryPage)]); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reconcile')}</button>}</article>)}</div></div>
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-cyan-400/12 px-4 py-3"><div>{canClearJobHistory && <button type="button" className={`${buttonClass} border-rose-400/25 text-rose-200 hover:text-rose-100`} disabled={mutating || jobHistoryTotal === 0} onClick={() => setIsJobHistoryClearConfirmOpen(true)}>{t('telegram.clearJobsHistory')}</button>}</div><div className="flex items-center gap-2"><button type="button" className={buttonClass} disabled={jobHistoryLoading || jobHistoryPage <= 1} onClick={() => void loadJobHistory(jobHistoryPage - 1)}>{t('telegram.previousPage')}</button><span className="font-mono text-[15px] text-slate-500">{jobHistoryPage} / {jobHistoryPageCount}</span><button type="button" className={buttonClass} disabled={jobHistoryLoading || jobHistoryPage >= jobHistoryPageCount} onClick={() => void loadJobHistory(jobHistoryPage + 1)}>{t('telegram.nextPage')}</button></div></div>
         </section>
       </div>}
@@ -1014,7 +1124,7 @@ export const TelegramAdmin: React.FC = () => {
         <section role="dialog" aria-modal="true" aria-labelledby="telegram-job-history-clear-dialog-title" className="w-full max-w-md rounded-[8px] border border-rose-400/30 bg-[#0d131f] p-4 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><p className="text-[13px] uppercase tracking-[0.14em] text-rose-200">{t('telegram.jobsHistory')}</p><h4 id="telegram-job-history-clear-dialog-title" className="mt-1 text-[18px] font-medium text-slate-100">{t('telegram.clearJobsHistoryTitle')}</h4><p className="mt-3 rounded border border-rose-400/20 bg-rose-400/[0.04] p-3 text-[16px] leading-5 text-rose-100">{t('telegram.clearJobsHistoryHint')}</p><div className="mt-4 flex justify-end gap-2"><button type="button" className={buttonClass} disabled={mutating} onClick={() => setIsJobHistoryClearConfirmOpen(false)}>{t('common.cancel')}</button><button type="button" className={`${primaryButtonClass} bg-rose-300 hover:bg-rose-200`} disabled={mutating} onClick={() => void clearJobHistory()}>{t('common.confirm')}</button></div></section>
       </div>}
 
-      {activeTab === 'users' && activeUsersSection === 'support' && <section className={`${panelClass} mt-4`} aria-label={t('telegram.supportTitle')}>
+      {activeTab === 'users' && activeUsersSection === 'support' && domainStates.support.ready && <section className={`${panelClass} mt-4`} aria-label={t('telegram.supportTitle')}>
         <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-cyan-400/12 pb-3">
           <div>
             <h3 className="text-[16px] font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.supportTitle')}</h3>
@@ -1027,7 +1137,7 @@ export const TelegramAdmin: React.FC = () => {
         <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-cyan-400/12 pt-3"><button type="button" className={buttonClass} disabled={supportPage <= 1} onClick={() => setSupportPage((page) => Math.max(1, page - 1))}>{t('telegram.previousPage')}</button><span className="font-mono text-[15px] text-slate-500">{supportPage} / {supportPageCount}</span><button type="button" className={buttonClass} disabled={supportPage >= supportPageCount} onClick={() => setSupportPage((page) => Math.min(supportPageCount, page + 1))}>{t('telegram.nextPage')}</button></div>
       </section>}
 
-      {activeTab === 'operations' && <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
+      {activeTab === 'operations' && domainStates.operations.ready && <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-2">
         <section className={panelClass} aria-label={t('telegram.schedulesTitle')}>
           <h3 className="text-[16px] font-medium uppercase tracking-[0.14em] text-slate-300">{t('telegram.schedulesTitle')}</h3>
           <div className="mt-3 space-y-2">{schedules.length === 0 && <p className="text-[18px] font-light text-slate-500">{t('telegram.noSchedules')}</p>}{schedules.map((schedule) => <article key={schedule.schedule_id} className="flex flex-wrap items-center justify-between gap-3 rounded border border-cyan-500/15 bg-[#0a0e1a] p-3"><div><p className="text-[16px] text-slate-300">{schedule.customer_email} · {schedule.operation_type}</p><p className="mt-1 font-mono text-[14px] text-slate-500">{formatDate(schedule.execute_not_before)} · {schedule.status}</p></div>{schedule.status === 'scheduled' && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void cancelSchedule(schedule)}>{t('common.cancel')}</button>}</article>)}</div>

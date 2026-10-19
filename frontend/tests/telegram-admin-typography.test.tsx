@@ -89,7 +89,7 @@ describe('TelegramAdmin typography +4 px', () => {
   it('renders scoped +4 typography for the section heading, tabs, controls and settings input', async () => {
     render(<TelegramAdmin />);
 
-    await waitFor(() => expect(api.listTelegramRequests).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.listTelegramCustomers).toHaveBeenCalledTimes(1));
     const root = screen.getByTestId('telegram-admin');
     expect(root).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'telegram.tabs.users' }).className).toContain('text-[24px]');
@@ -107,7 +107,7 @@ describe('TelegramAdmin typography +4 px', () => {
   it('keeps the enlarged metric cards content-led instead of clipping it at the former fixed height', async () => {
     render(<TelegramAdmin />);
 
-    await waitFor(() => expect(api.listTelegramRequests).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(api.listTelegramCustomers).toHaveBeenCalledTimes(1));
     const metric = screen.getByRole('button', { name: /telegram\.customers/ });
     expect(metric.className).toContain('min-h-[66px]');
     expect(metric.className).not.toContain('h-[58px]');
