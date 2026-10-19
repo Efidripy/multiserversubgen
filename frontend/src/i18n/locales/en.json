@@ -6,7 +6,10 @@
     "error": "Error",
     "success": "Success",
     "themeToggleTitle": "Theme 1/2/3",
-    "networkActivity": "Network activity"
+    "networkActivity": "Network activity",
+    "pullRefreshPull": "Pull to refresh",
+    "pullRefreshRelease": "Release to refresh",
+    "pullRefreshRefreshing": "Refreshing current view"
   },
   "nav": {
     "dashboard": "Dashboard",

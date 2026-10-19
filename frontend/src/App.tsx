@@ -16,12 +16,13 @@ import { clearBrowserSession, createBrowserSession, getMfaStatus, verifyCurrentA
 import { IconName, UIIcon } from './components/UIIcon';
 import { requestActivityStore } from './services/requestActivity';
 import { clearManagerSnapshotCaches, readStaleCache, writeStaleCache } from './services/staleCache';
-import { DashboardDataProvider } from './services/DashboardDataContext';
+import { DashboardDataProvider, useDashboardData } from './services/DashboardDataContext';
 import { AUTH_REQUIRED_EVENT, resetAuthRequiredEventGuard } from './api/client';
 import type { NodeRecord } from './api/nodes';
 import type { BackupHeaderProjection } from './components/BackupManager';
 import type { MonitoringHeaderProjection } from './components/MonitoringDashboard';
 import type { SubscriptionHeaderProjection } from './components/SubscriptionManager';
+import { usePullToRefresh } from './hooks/usePullToRefresh';
 
 const LazySubscriptionManager = React.lazy(() => import('./components/SubscriptionManager').then((module) => ({ default: module.SubscriptionManager })));
 const LazyInboundManager = React.lazy(() => import('./components/InboundManager').then((module) => ({ default: module.InboundManager })));
@@ -74,6 +75,20 @@ export function SectionNetworkActivity({ active, label }: { active: boolean; lab
       title={label}
     />
   );
+}
+
+function DashboardPullRefreshRegistration({ onRegister, children }: {
+  onRegister: (refresh: (() => Promise<void>) | null) => void;
+  children: React.ReactNode;
+}) {
+  const dashboard = useDashboardData();
+
+  useEffect(() => {
+    onRegister(dashboard?.refresh ?? null);
+    return () => onRegister(null);
+  }, [dashboard?.refresh, onRegister]);
+
+  return <>{children}</>;
 }
 
 const TAB_META: Record<TabType, { icon: IconName; labelKey: string; eyebrowKey: string; descriptionKey: string }> = {
@@ -156,6 +171,7 @@ export const App: React.FC = () => {
     return 'dashboard';
   });
   const [key, setKey] = useState(0);
+  const [dashboardRefreshReady, setDashboardRefreshReady] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [headerSummary, setHeaderSummary] = useState<HeaderSummary>({
     description: t(TAB_META.dashboard.descriptionKey),
@@ -589,6 +605,28 @@ export const App: React.FC = () => {
     return fullApiUrl;
   };
 
+  const dashboardRefreshRef = useRef<(() => Promise<void>) | null>(null);
+  const registerDashboardRefresh = useCallback((refresh: (() => Promise<void>) | null) => {
+    dashboardRefreshRef.current = refresh;
+    setDashboardRefreshReady(refresh !== null);
+  }, []);
+  const refreshDashboard = useCallback(async () => {
+    // DashboardDataProvider owns one bounded aggregate snapshot read. Awaiting
+    // it makes the pull indicator truthful without a hard reload or fleet-wide
+    // mutation. Other tabs stay native until they expose an equivalent contract.
+    await dashboardRefreshRef.current?.();
+  }, []);
+
+  const pullToRefresh = usePullToRefresh({
+    enabled: activeTab === 'dashboard' && dashboardRefreshReady,
+    onRefresh: refreshDashboard,
+  });
+  const pullRefreshLabel = pullToRefresh.state === 'refreshing'
+    ? t('app.pullRefreshRefreshing')
+    : pullToRefresh.state === 'armed'
+      ? t('app.pullRefreshRelease')
+      : t('app.pullRefreshPull');
+
   if (!authBootstrapDone) {
     return (
       <div className="login-wrapper flex min-h-screen items-center justify-center bg-[#0a0e1a]">
@@ -748,6 +786,7 @@ export const App: React.FC = () => {
       case 'dashboard':
         return (
           <DashboardDataProvider>
+          <DashboardPullRefreshRegistration onRegister={registerDashboardRefresh}>
           <div className="dashboard-command-grid min-w-0 overflow-hidden p-6 min-h-screen transition-all duration-300 ease-in-out xl:grid xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start xl:gap-6">
             <div className="dashboard-command-grid__main min-w-0 overflow-hidden">
               <DashboardSummary onNavigate={(tab) => {
@@ -805,6 +844,7 @@ export const App: React.FC = () => {
               }}
             />
           </div>
+          </DashboardPullRefreshRegistration>
           </DashboardDataProvider>
         );
       case 'inbounds':
@@ -883,7 +923,17 @@ export const App: React.FC = () => {
         onMobileClose={() => setMobileSidebarOpen(false)}
       />
 
-      <div className="app-main min-w-0 flex-1 overflow-hidden">
+      <div ref={pullToRefresh.rootRef} className="app-main min-w-0 flex-1 overflow-hidden" {...pullToRefresh.handlers}>
+        <div
+          className={`app-pull-refresh is-${pullToRefresh.state}`}
+          role="status"
+          aria-live="polite"
+          aria-busy={pullToRefresh.state === 'refreshing'}
+          style={{ '--pull-distance': `${pullToRefresh.pullDistance}px` } as React.CSSProperties}
+        >
+          <UIIcon name="refresh" size={14} />
+          <span>{pullRefreshLabel}</span>
+        </div>
         <header className="app-topbar">
           <button
             className="app-topbar__menu-btn"
