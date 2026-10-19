@@ -131,6 +131,7 @@
     "nodeReady": "Готов",
     "nodeNotReady": "Не готов",
     "loadFailed": "Не удалось загрузить Telegram-данные",
+    "domainLoadFailed": "Не удалось загрузить раздел Telegram",
     "detailsFailed": "Не удалось загрузить карточку пользователя",
     "previewFailed": "Не удалось подготовить безопасный preview",
     "actionFailed": "Операция не выполнена",

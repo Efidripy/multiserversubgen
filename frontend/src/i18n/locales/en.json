@@ -131,6 +131,7 @@
     "nodeReady": "Ready",
     "nodeNotReady": "Not ready",
     "loadFailed": "Could not load Telegram data",
+    "domainLoadFailed": "Could not load this Telegram section",
     "detailsFailed": "Could not load customer details",
     "previewFailed": "Could not create a safe preview",
     "actionFailed": "Operation failed",
