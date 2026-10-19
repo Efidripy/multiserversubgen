@@ -688,11 +688,16 @@
     white-space: nowrap;
   }
 
-  .app-topbar__title > span {
-    display: inline-flex !important;
-    align-items: center !important;
-    gap: 8px !important;
+  .app-topbar__title-content {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
     line-height: 1;
+  }
+
+  .app-topbar__title-label {
+    min-width: 0;
   }
 
   .app-topbar__title svg {
@@ -1689,7 +1694,8 @@
   .app-sidebar {
     position: fixed;
     left: 0;
-    top: 0;
+    top: env(safe-area-inset-top, 0px);
+    height: calc(100dvh - env(safe-area-inset-top, 0px));
     flex-basis: auto;
     width: min(20rem, calc(100% - 2rem));
     transform: translateX(-100%);
@@ -1740,17 +1746,25 @@
   }
 
   .app-topbar__title {
+    display: flex;
     flex: 1 1 auto;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    align-items: center;
+    gap: 6px;
+    overflow: visible;
     font-size: 11px;
   }
 
-  .app-topbar__title > span {
+  .app-topbar__title-content {
+    min-width: 0;
     max-width: 100%;
     overflow: hidden;
-    gap: 4px !important;
+    gap: 4px;
+  }
+
+  .app-topbar__title-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .app-topbar__command-btn {

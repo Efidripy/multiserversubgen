@@ -610,16 +610,21 @@ export const App: React.FC = () => {
     dashboardRefreshRef.current = refresh;
     setDashboardRefreshReady(refresh !== null);
   }, []);
-  const refreshDashboard = useCallback(async () => {
-    // DashboardDataProvider owns one bounded aggregate snapshot read. Awaiting
-    // it makes the pull indicator truthful without a hard reload or fleet-wide
-    // mutation. Other tabs stay native until they expose an equivalent contract.
-    await dashboardRefreshRef.current?.();
-  }, []);
+  const refreshActiveTab = useCallback(async () => {
+    if (activeTab === 'dashboard') {
+      // DashboardDataProvider owns one bounded aggregate snapshot read.
+      await dashboardRefreshRef.current?.();
+      return;
+    }
+
+    // Other tabs do not expose one shared bounded refresh contract. A complete
+    // page reload is the truthful, non-mutating refresh action for their active view.
+    window.location.reload();
+  }, [activeTab]);
 
   const pullToRefresh = usePullToRefresh({
-    enabled: activeTab === 'dashboard' && dashboardRefreshReady,
-    onRefresh: refreshDashboard,
+    enabled: activeTab !== 'dashboard' || dashboardRefreshReady,
+    onRefresh: refreshActiveTab,
   });
   const pullRefreshLabel = pullToRefresh.state === 'refreshing'
     ? t('app.pullRefreshRefreshing')
@@ -943,14 +948,14 @@ export const App: React.FC = () => {
             <UIIcon name="menu" size={16} />
           </button>
           <h1 className="app-topbar__title">
-            <span className="inline-flex items-center gap-2">
+            <span className="app-topbar__title-content">
               <UIIcon name={tabMeta[activeTab].icon} size={16} />
-              {tabMeta[activeTab].label}
-              <SectionNetworkActivity
-                active={pendingRequests > 0}
-                label={t('app.networkActivity')}
-              />
+              <span className="app-topbar__title-label">{tabMeta[activeTab].label}</span>
             </span>
+            <SectionNetworkActivity
+              active={pendingRequests > 0}
+              label={t('app.networkActivity')}
+            />
           </h1>
 
           <div className="app-topbar__actions flex items-center gap-2">
