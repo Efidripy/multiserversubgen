@@ -500,6 +500,8 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
   const [trafficStepSec, setTrafficStepSec] = useState<number>(60);
   const [trafficVisualStyle, setTrafficVisualStyle] = useState<TrafficVisualStyle>('stepped');
   const [trafficSmoothing, setTrafficSmoothing] = useState<TrafficSmoothing>('raw');
+  const [historyRequested, setHistoryRequested] = useState(false);
+  const [monitoringDetailsRequested, setMonitoringDetailsRequested] = useState(false);
   const [liveTrafficSeries, setLiveTrafficSeries] = useState<LiveTrafficPoint[]>([]);
   const [liveTrafficError, setLiveTrafficError] = useState('');
   const [history, setHistory] = useState<HistoryPoint[]>([]);
@@ -512,6 +514,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
   const [adguardOverview, setAdguardOverview] = useState<AdGuardOverview | null>(null);
   const [adguardHistory, setAdguardHistory] = useState<AdGuardHistoryResponse | null>(null);
   const [stackStatus, setStackStatus] = useState<StackStatusResponse | null>(null);
+  const [stackError, setStackError] = useState('');
   const [serverStatuses, setServerStatuses] = useState<ServerResourceStatus[]>([]);
   const [collectorStatus, setCollectorStatus] = useState<CollectorStatus | null>(null);
   const [adguardMutationLoading, setAdguardMutationLoading] = useState(false);
@@ -799,9 +802,11 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
       const res = await api.get('/v1/monitoring/stack', { sessionOnlyAuth: true, signal: controller.signal });
       if (controller.signal.aborted || requestId !== stackStatusRequestIdRef.current) return;
       setStackStatus(res.data as StackStatusResponse);
-    } catch {
+      setStackError('');
+    } catch (err: any) {
       if (controller.signal.aborted || requestId !== stackStatusRequestIdRef.current) return;
       setStackStatus(null);
+      setStackError(err?.response?.data?.detail || t('monitoringDashboard.loadStackFailed'));
     } finally {
       if (stackStatusAbortRef.current === controller) {
         stackStatusAbortRef.current = null;
@@ -981,22 +986,13 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     loadDepsHealth();
     loadServerStatuses().catch(() => undefined);
     loadCollectorStatus().catch(() => undefined);
-    // AdGuard history and stack probes are auxiliary panels. Let the core
-    // fleet status cards render first instead of competing with their burst.
-    const detailTimer = window.setTimeout(() => {
-      if (cancelled) return;
-      loadAdguardSources().catch(() => undefined);
-      loadAdguardOverview().catch(() => undefined);
-      loadStackStatus().catch(() => undefined);
-    }, 750);
     return () => {
       cancelled = true;
-      window.clearTimeout(detailTimer);
     };
   }, [isAllScope, selectedNodeId]);
 
   useEffect(() => {
-    if (!onHeaderProjectionChange) return;
+    if (!onHeaderProjectionChange || !monitoringDetailsRequested || !adguardOverview || !stackStatus) return;
     const services = stackStatus?.services ? Object.values(stackStatus.services) as Array<{ ok?: boolean }> : [];
     const projection = {
       servicesUp: services.filter((service) => service.ok).length,
@@ -1010,21 +1006,29 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     if (serialized === lastHeaderProjectionRef.current) return;
     lastHeaderProjectionRef.current = serialized;
     onHeaderProjectionChange(projection);
-  }, [adguardOverview, depsHealth, onHeaderProjectionChange, stackStatus]);
+  }, [adguardOverview, depsHealth, monitoringDetailsRequested, onHeaderProjectionChange, stackStatus]);
 
   useEffect(() => {
+    if (!historyRequested) return;
     loadHistory(selectedScope, rangeSec);
-  }, [selectedScope, rangeSec, nodes.length]);
+  }, [historyRequested, selectedScope, rangeSec, nodes.length]);
 
   useEffect(() => {
-    if (!isAllScope) return;
+    if (!monitoringDetailsRequested) return;
+    loadAdguardSources().catch(() => undefined);
+    loadAdguardOverview().catch(() => undefined);
+    loadStackStatus().catch(() => undefined);
+  }, [monitoringDetailsRequested]);
+
+  useEffect(() => {
+    if (!monitoringDetailsRequested || !isAllScope) return;
     loadAdguardHistory(rangeSec);
     return () => {
       ++adguardHistoryRequestIdRef.current;
       adguardHistoryAbortRef.current?.abort();
       adguardHistoryAbortRef.current = null;
     };
-  }, [isAllScope, rangeSec]);
+  }, [monitoringDetailsRequested, isAllScope, rangeSec]);
 
   const effectiveTrafficSource: TrafficSource = !isAllScope && trafficSource !== 'nodes' ? 'nodes' : trafficSource;
   const effectiveTrafficMode: TrafficMode = effectiveTrafficSource === 'nodes' ? trafficMode : 'live';
@@ -1153,18 +1157,22 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
       if (now - realtimeRefreshRef.current < 3000) return;
       realtimeRefreshRef.current = now;
 
-      loadHistory(selectedScope, rangeSec);
+      if (historyRequested) {
+        loadHistory(selectedScope, rangeSec);
+      }
       if (!isAllScope && selectedNodeId !== null) {
         loadSelectedServerStatus(selectedNodeId);
         return;
       }
       loadLatestSnapshot();
       loadDepsHealth();
-      loadStackStatus();
+      if (monitoringDetailsRequested) {
+        loadStackStatus();
+      }
       loadServerStatuses();
       loadCollectorStatus();
     },
-    [isAllScope, selectedNodeId, selectedScope, rangeSec],
+    [historyRequested, isAllScope, monitoringDetailsRequested, selectedNodeId, selectedScope, rangeSec],
   );
 
   useTrafficStatsSubscription({
@@ -1173,14 +1181,18 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
     onError: (err) => console.warn('[MonitoringDashboard] realtime error:', err),
     fallbackPollIntervalMs: 60_000,
     fallbackRun: () => {
-      loadHistory(selectedScope, rangeSec);
+      if (historyRequested) {
+        loadHistory(selectedScope, rangeSec);
+      }
       if (!isAllScope && selectedNodeId !== null) {
         loadSelectedServerStatus(selectedNodeId);
         return;
       }
       loadLatestSnapshot();
       loadDepsHealth();
-      loadStackStatus();
+      if (monitoringDetailsRequested) {
+        loadStackStatus();
+      }
       loadServerStatuses();
       loadCollectorStatus();
     },
@@ -1322,7 +1334,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
   const trafficModeLabel = effectiveTrafficMode === 'live' ? 'Live' : 'History';
   const trafficSourceLabel = effectiveTrafficSource === 'nodes' ? 'Nodes' : effectiveTrafficSource === 'people' ? 'People' : 'Inbounds';
   const trafficSmoothingLabel = trafficSmoothing === 'raw' ? 'raw' : trafficSmoothing === 'sma3' ? 'SMA-3' : 'SMA-5';
-  const showingLiveSnapshotFallback = effectiveTrafficMode === 'history' && (isAllScope
+  const showingLiveSnapshotFallback = historyRequested && effectiveTrafficMode === 'history' && (isAllScope
     ? allScopeHistory.length === 0 && effectiveAllScopeHistory.length > 0
     : history.length === 0 && effectiveHistory.length > 0);
   const chartPalette = useMemo(
@@ -1897,20 +1909,20 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
   const stackCards = [
     {
       label: 'Prometheus',
-      ok: Boolean(stackStatus?.services?.prometheus?.ok),
-      value: stackStatus?.services?.prometheus?.ok ? t('nodes.online') : t('nodes.offline'),
+      ok: stackStatus?.services?.prometheus?.ok,
+      value: stackStatus?.services?.prometheus ? (stackStatus.services.prometheus.ok ? t('nodes.online') : t('nodes.offline')) : t('monitoringDashboard.statusUnknown'),
       percent: stackStatus?.services?.prometheus?.ok ? 100 : 0,
     },
     {
       label: 'Loki',
-      ok: Boolean(stackStatus?.services?.loki?.ok),
-      value: stackStatus?.services?.loki?.ok ? t('nodes.online') : t('nodes.offline'),
+      ok: stackStatus?.services?.loki?.ok,
+      value: stackStatus?.services?.loki ? (stackStatus.services.loki.ok ? t('nodes.online') : t('nodes.offline')) : t('monitoringDashboard.statusUnknown'),
       percent: stackStatus?.services?.loki?.ok ? 100 : 0,
     },
     {
       label: 'Grafana',
-      ok: Boolean(stackStatus?.services?.grafana?.ok),
-      value: stackStatus?.services?.grafana?.ok ? t('nodes.online') : t('nodes.offline'),
+      ok: stackStatus?.services?.grafana?.ok,
+      value: stackStatus?.services?.grafana ? (stackStatus.services.grafana.ok ? t('nodes.online') : t('nodes.offline')) : t('monitoringDashboard.statusUnknown'),
       percent: stackStatus?.services?.grafana?.ok ? 100 : 0,
     },
   ];
@@ -1982,18 +1994,23 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
             <button
               className={secondaryButtonClass}
               onClick={() => {
-                loadHistory(selectedScope, rangeSec);
+                if (historyRequested) {
+                  loadHistory(selectedScope, rangeSec);
+                }
                 if (!isAllScope && selectedNodeId !== null) {
                   loadSelectedServerStatus(selectedNodeId);
                   return;
                 }
                 loadLatestSnapshot();
                 loadDepsHealth();
-                loadAdguardOverview();
-                loadAdguardHistory();
-                loadStackStatus();
                 loadServerStatuses();
                 loadCollectorStatus();
+                if (monitoringDetailsRequested) {
+                  loadAdguardSources();
+                  loadAdguardOverview();
+                  loadAdguardHistory();
+                  loadStackStatus();
+                }
               }}
               disabled={loadingHistory || resourceLoading}
             >
@@ -2174,14 +2191,31 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
             <div className="min-w-0">
               <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-cyan-300">{t('monitoringDashboard.adguardTitle')}</h3>
             </div>
-            <button className={primaryButtonClass} onClick={collectAdguardNow} disabled={adguardMutationLoading}>
-              {adguardMutationLoading ? t('monitoringDashboard.collecting') : t('monitoringDashboard.collectNow')}
-            </button>
+              {monitoringDetailsRequested ? (
+                <button className={primaryButtonClass} onClick={collectAdguardNow} disabled={adguardMutationLoading}>
+                  {adguardMutationLoading ? t('monitoringDashboard.collecting') : t('monitoringDashboard.collectNow')}
+                </button>
+              ) : (
+                <button className={secondaryButtonClass} onClick={() => setMonitoringDetailsRequested(true)}>
+                  {t('monitoringDashboard.loadMonitoringDetails')}
+                </button>
+              )}
           </div>
 
+            {!monitoringDetailsRequested ? (
+              <div className="rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-3 text-sm text-slate-400">
+                {t('monitoringDashboard.monitoringDetailsDeferred')}
+              </div>
+            ) : (
+              <>
             {adguardError && (
               <div className="mb-4 rounded-lg border border-rose-500/45 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
                 {adguardError}
+              </div>
+            )}
+            {stackError && (
+              <div className="mb-4 rounded-lg border border-rose-500/45 bg-rose-500/10 px-4 py-3 text-sm text-rose-300">
+                {stackError}
               </div>
             )}
 
@@ -2206,6 +2240,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
             <div className="mb-5 grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-3">
               {stackCards.map((card) => {
                 const tone = gaugeTone(card.percent);
+                const valueTone = card.ok === undefined ? 'text-slate-400' : toneClass(card.ok);
                 return (
                   <article key={card.label} className={chartCardClass}>
                     <div className="flex items-center justify-between gap-3">
@@ -2213,7 +2248,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
                       <span className={cn('font-mono tabular-nums whitespace-nowrap text-xs font-medium', tone.text)}>{card.percent}%</span>
                     </div>
                     <div className="mt-3 flex items-center justify-between gap-3">
-                      <strong className={cn(metricValueClass, toneClass(card.ok))}>{card.value}</strong>
+                      <strong className={cn(metricValueClass, valueTone)}>{card.value}</strong>
                     </div>
                     <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#0a0e1a]">
                       <div className={cn('h-full rounded-full bg-gradient-to-r', tone.fill)} style={{ width: `${card.percent}%` }} />
@@ -2471,8 +2506,12 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
                 </div>
               </div>
             )}
+              </>
+            )}
         </section>
 
+        {historyRequested ? (
+          <>
         <section className={chartCardClass}>
             <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">CPU <span className="font-mono tabular-nums whitespace-nowrap text-slate-500">({selectedNodeName})</span></h6>
             <div style={{ height: 260 }}>
@@ -2499,6 +2538,16 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
               )}
             </div>
         </section>
+          </>
+        ) : (
+          <section className={chartCardClass}>
+            <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-cyan-300">{t('monitoringDashboard.historyTitle')}</h3>
+            <p className="mt-3 text-sm text-slate-400">{t('monitoringDashboard.historyDeferred')}</p>
+            <button className={`${secondaryButtonClass} mt-4`} onClick={() => setHistoryRequested(true)}>
+              {t('monitoringDashboard.loadHistory')}
+            </button>
+          </section>
+        )}
       </div>
     </div>
   );

@@ -110,7 +110,6 @@ export function RegisteredFleetPanel({
   const editAbortRef = useRef<AbortController | null>(null);
   const fleetRefreshAbortRef = useRef<AbortController | null>(null);
   const telegramPoliciesAbortRef = useRef<AbortController | null>(null);
-  const telegramPoliciesAutoLoadStartedRef = useRef(false);
   const telegramPoliciesLifecycleRef = useRef(0);
   const telegramPoliciesMountedRef = useRef(false);
 
@@ -285,32 +284,21 @@ export function RegisteredFleetPanel({
       editAbortRef.current = null;
       fleetRefreshAbortRef.current?.abort();
       fleetRefreshAbortRef.current = null;
-      // React StrictMode replays effects without discarding component state.
-      // Delay only this cancellation one microtask so the retained automatic
-      // persisted-policy read can finish; a real unmount still aborts it.
-      queueMicrotask(() => {
-        if (telegramPoliciesLifecycleRef.current !== lifecycle) return;
-        telegramPoliciesAbortRef.current?.abort();
-        telegramPoliciesAbortRef.current = null;
-      });
+      // A real unmount must leave an in-flight explicit policy read unknown.
+      // The lifecycle guard prevents a late response from updating a remounted panel.
+      if (telegramPoliciesLifecycleRef.current !== lifecycle) return;
+      telegramPoliciesAbortRef.current?.abort();
+      telegramPoliciesAbortRef.current = null;
     };
   }, []);
 
   useEffect(() => {
-    if (!canManageTelegram) {
-      telegramPoliciesAutoLoadStartedRef.current = false;
-      telegramPoliciesAbortRef.current?.abort();
-      telegramPoliciesAbortRef.current = null;
-      setTelegramPolicies({});
-      setTelegramPoliciesLoaded(false);
-      return;
-    }
-    if (telegramPoliciesAutoLoadStartedRef.current) return;
-    // This is one local persisted-policy read for the eligible panel instance.
-    // It neither probes XUI nodes nor changes a Telegram policy.
-    telegramPoliciesAutoLoadStartedRef.current = true;
-    void refreshTelegramPolicies();
-  }, [canManageTelegram, refreshTelegramPolicies]);
+    if (canManageTelegram) return;
+    telegramPoliciesAbortRef.current?.abort();
+    telegramPoliciesAbortRef.current = null;
+    setTelegramPolicies({});
+    setTelegramPoliciesLoaded(false);
+  }, [canManageTelegram]);
 
   useEffect(() => {
     if (!dashboardData) return;

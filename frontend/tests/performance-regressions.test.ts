@@ -71,7 +71,7 @@ describe('navigation performance regressions', () => {
     expect(app).not.toContain('getTrafficHeaderSource');
     expect(app).toContain("case 'inbounds':\n          case 'clients':\n          case 'traffic':");
     expect(clients).toContain('listNodes({ signal: controller.signal, sessionOnlyAuth: true })');
-    expect(clients).toContain('getInboundOptions({ signal: controller.signal, sessionOnlyAuth: true })');
+    expect(clients).toContain('void loadInboundOptionsAfterPageProjection();');
     expect(clients).not.toContain('getInboundsHeaderSource({ signal: controller.signal })');
     expect(clients).toContain('const nodeOptions = inboundOptions.filter(option => option.node_id === client.node_id)');
     expect(clients).not.toContain("api.get('/v1/inbounds', { auth: getAuth() })");
@@ -91,12 +91,11 @@ describe('navigation performance regressions', () => {
     expect(fleetPanel).toContain('refreshFleetLive()');
   });
 
-  it('automatically reads the persisted Telegram policy once for an eligible Fleet panel', () => {
+  it('keeps persisted Telegram policy reads out of the Dashboard mount path', () => {
     const fleetPanel = read('src/components/RegisteredFleetPanel.tsx');
 
-    expect(fleetPanel).toContain('const telegramPoliciesAutoLoadStartedRef = useRef(false);');
-    expect(fleetPanel).toContain('if (telegramPoliciesAutoLoadStartedRef.current) return;');
-    expect(fleetPanel).toContain('void refreshTelegramPolicies();');
+    expect(fleetPanel).not.toContain('telegramPoliciesAutoLoadStartedRef');
+    expect(fleetPanel).not.toContain('void refreshTelegramPolicies();');
     expect(fleetPanel).not.toContain('VITE_DASHBOARD_EAGER_TELEGRAM_POLICIES');
     expect(fleetPanel).toContain('const refreshedPolicies = await refreshTelegramPolicies();');
     expect(fleetPanel).toContain('telegramPolicyLoadTitle');
@@ -202,9 +201,13 @@ describe('navigation performance regressions', () => {
   });
 
   it('does not fetch complete node databases just to render Backup Manager', () => {
+    const app = read('src/App.tsx');
     const backupManager = read('src/components/BackupManager.tsx');
 
+    expect(app).not.toContain('getBackupHeaderSource');
+    expect(app).toContain('<LazyBackupManager onHeaderProjectionChange=');
     expect(backupManager).toContain('void loadNodes();');
+    expect(backupManager).toContain('onHeaderProjectionChange?.({');
     expect(backupManager).not.toContain("api.get('/v1/backup/all'");
     expect(backupManager).not.toContain('format: \'json\'');
     expect(backupManager).not.toContain('await refreshBackups()');

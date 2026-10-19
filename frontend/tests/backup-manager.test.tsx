@@ -61,6 +61,24 @@ describe('BackupManager cold path', () => {
     expect(mocks.sendNodeBackupToTelegram).not.toHaveBeenCalled();
   });
 
+  it('publishes the typed header projection only after its current node read succeeds', async () => {
+    const onHeaderProjectionChange = vi.fn();
+    mocks.listNodes.mockResolvedValue([
+      { id: 1, name: 'alpha', read_only: false },
+      { id: 2, name: 'beta', read_only: true },
+    ]);
+
+    render(<BackupManager onHeaderProjectionChange={onHeaderProjectionChange} />);
+
+    await waitFor(() => expect(onHeaderProjectionChange).toHaveBeenCalledWith({
+      knownNodes: 2,
+      writableNodes: 1,
+      readOnlyNodes: 1,
+      restoreTargets: 2,
+    }));
+    expect(mocks.listNodes).toHaveBeenCalledTimes(1);
+  });
+
   it('aborts the node metadata read when the backup panel unmounts', async () => {
     const pending = new Promise<never>(() => {});
     mocks.listNodes.mockImplementation((options: { signal?: AbortSignal }) => {
@@ -74,6 +92,22 @@ describe('BackupManager cold path', () => {
 
     view.unmount();
     expect(signal.aborted).toBe(true);
+  });
+
+  it('does not publish a stale header projection after unmount', async () => {
+    let resolveNodes: ((nodes: Array<{ id: number; name: string }>) => void) | undefined;
+    mocks.listNodes.mockImplementation(() => new Promise((resolve) => {
+      resolveNodes = resolve;
+    }));
+    const onHeaderProjectionChange = vi.fn();
+
+    const view = render(<BackupManager onHeaderProjectionChange={onHeaderProjectionChange} />);
+    await waitFor(() => expect(mocks.listNodes).toHaveBeenCalledTimes(1));
+    view.unmount();
+    resolveNodes?.([{ id: 1, name: 'alpha' }]);
+    await Promise.resolve();
+
+    expect(onHeaderProjectionChange).not.toHaveBeenCalled();
   });
 
   it('fetches a full backup only after the explicit node download action', async () => {
