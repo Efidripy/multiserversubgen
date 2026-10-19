@@ -1731,11 +1731,16 @@
   }
 
   .app-topbar__title {
-    flex: 0 0 auto;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
     font-size: 11px;
   }
 
   .app-topbar__title > span {
+    max-width: 100%;
+    overflow: hidden;
     gap: 4px !important;
   }
 
@@ -1756,11 +1761,20 @@
   .panel-grid--3col {
     grid-template-columns: 1fr;
   }
+
+  /* Keep the fixed fleet rail inside the standalone viewport and its side insets. */
+  .fleet-panel {
+    top: calc(56px + env(safe-area-inset-top, 0px));
+    right: env(safe-area-inset-right, 0px);
+    width: min(420px, calc(100vw - 1rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+    max-width: calc(100vw - 1rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
+  }
 }
 
 @media (max-width: 520px) {
   .app-topbar {
-    padding: 0 8px;
+    /* Keep the content below the translucent standalone-PWA status bar. */
+    padding: env(safe-area-inset-top, 0px) 8px 0;
     gap: 8px;
   }
 
