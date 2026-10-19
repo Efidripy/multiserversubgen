@@ -150,4 +150,27 @@ describe('primary-scroll pull to refresh', () => {
     touch(scroll, 'touchStart', 0);
     expect(fireEvent(scroll, move)).toBe(false);
   });
+
+  it('keeps a pull gesture when an interactive child stops bubble propagation', async () => {
+    const refresh = vi.fn(async () => undefined);
+    render(
+      <PullProbe onRefresh={refresh}>
+        <button
+          type="button"
+          onTouchStart={(event) => event.stopPropagation()}
+          onTouchMove={(event) => event.stopPropagation()}
+          onTouchEnd={(event) => event.stopPropagation()}
+        >
+          Card action
+        </button>
+      </PullProbe>,
+    );
+
+    const button = screen.getByRole('button', { name: 'Card action' });
+    touch(button, 'touchStart', 0);
+    touch(button, 'touchMove', 80);
+    touch(button, 'touchEnd');
+
+    await waitFor(() => expect(refresh).toHaveBeenCalledTimes(1));
+  });
 });

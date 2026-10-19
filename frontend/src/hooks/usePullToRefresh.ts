@@ -203,6 +203,13 @@ export function usePullToRefresh({ onRefresh, enabled = true, getScrollTop = def
     state,
     pullDistance,
     rootRef: setGestureRoot,
-    handlers: { onTouchStart, onTouchMove, onTouchEnd, onTouchCancel },
+    // Capture the gesture before a Dashboard card/button can stop propagation.
+    // iOS standalone may dispatch the first touch through an interactive child.
+    handlers: {
+      onTouchStartCapture: onTouchStart,
+      onTouchMoveCapture: onTouchMove,
+      onTouchEndCapture: onTouchEnd,
+      onTouchCancelCapture: onTouchCancel,
+    },
   };
 }
