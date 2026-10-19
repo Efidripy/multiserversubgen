@@ -22,13 +22,11 @@ const defaultScrollTop = () => {
 
 const INTERACTIVE_TARGET_SELECTOR = [
   'a',
-  'button',
   'input',
   'select',
   'textarea',
   'summary',
   '[contenteditable="true"]',
-  '[role="button"]',
   '[role="tab"]',
   '[role="menuitem"]',
   '[role="checkbox"]',
