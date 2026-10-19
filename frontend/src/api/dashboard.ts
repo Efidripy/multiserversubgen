@@ -249,15 +249,3 @@ export async function getMonitoringHeaderSource(options: { signal?: AbortSignal 
 export async function getBackupHeaderSource(options: { signal?: AbortSignal } = {}): Promise<{ nodes: NodeRecord[] }> {
   return { nodes: await listNodes({ signal: options.signal }) };
 }
-
-export async function getSubscriptionsHeaderSource(options: { signal?: AbortSignal } = {}): Promise<{ emails: string[]; stats: Record<string, any>; nodes: NodeRecord[] }> {
-  const [emailsRes, nodes] = await Promise.all([
-    api.get('/v1/emails', { auth: getAuth(), signal: options.signal }),
-    listNodes({ signal: options.signal }),
-  ]);
-  return {
-    emails: Array.isArray(emailsRes.data?.emails) ? emailsRes.data.emails : [],
-    stats: emailsRes.data?.stats || {},
-    nodes,
-  };
-}

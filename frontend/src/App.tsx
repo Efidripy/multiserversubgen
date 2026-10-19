@@ -15,7 +15,6 @@ import { clearAuthCredentials, setAuthCredentials, setWsTicket } from './auth';
 import { clearBrowserSession, createBrowserSession, getMfaStatus, verifyCurrentAuth } from './api/authService';
 import {
   getBackupHeaderSource,
-  getSubscriptionsHeaderSource,
 } from './api/dashboard';
 import { IconName, UIIcon } from './components/UIIcon';
 import { requestActivityStore } from './services/requestActivity';
@@ -24,6 +23,7 @@ import { DashboardDataProvider } from './services/DashboardDataContext';
 import { AUTH_REQUIRED_EVENT, resetAuthRequiredEventGuard } from './api/client';
 import type { NodeRecord } from './api/nodes';
 import type { MonitoringHeaderProjection } from './components/MonitoringDashboard';
+import type { SubscriptionHeaderProjection } from './components/SubscriptionManager';
 
 const LazySubscriptionManager = React.lazy(() => import('./components/SubscriptionManager').then((module) => ({ default: module.SubscriptionManager })));
 const LazyInboundManager = React.lazy(() => import('./components/InboundManager').then((module) => ({ default: module.InboundManager })));
@@ -231,6 +231,26 @@ export const App: React.FC = () => {
     writeStaleCache(HEADER_SUMMARY_CACHE_KEY, parsed);
   };
 
+  const handleSubscriptionsHeaderProjection = useCallback((projection: SubscriptionHeaderProjection) => {
+    const domains = new Map<string, number>();
+    let downloads = 0;
+    projection.emails.forEach((email) => {
+      const domain = email.split('@')[1] || 'unknown';
+      domains.set(domain, (domains.get(domain) || 0) + 1);
+      downloads += projection.stats[email]?.count || 0;
+    });
+    const groups = Array.from(domains.values()).filter((count) => count >= 2).length;
+    updateHeaderSummary({
+      description: t('header.subscriptions.description'),
+      stats: [
+        { label: t('header.subscriptions.emailLinks'), value: formatCompactNumber(projection.emails.length) },
+        { label: t('header.subscriptions.totalDownloads'), value: formatCompactNumber(downloads), tone: downloads > 0 ? 'accent' : 'default' },
+        { label: t('header.subscriptions.reusableGroups'), value: String(groups) },
+        { label: t('header.subscriptions.nodesInFilter'), value: String(projection.nodes.length) },
+      ],
+    });
+  }, [t, activeTab]);
+
   useEffect(() => {
     const cachedStore = readStaleCache<Partial<Record<TabType, HeaderSummary>>>(
       HEADER_SUMMARY_CACHE_KEY,
@@ -404,26 +424,12 @@ export const App: React.FC = () => {
             break;
           }
           case 'subscriptions': {
-            const { emails, stats, nodes } = await getSubscriptionsHeaderSource({ signal: controller.signal });
-            const domains = new Map<string, number>();
-            let downloads = 0;
-            let latest = 0;
-            emails.forEach((email: string) => {
-              const domain = email.split('@')[1] || 'unknown';
-              domains.set(domain, (domains.get(domain) || 0) + 1);
-              downloads += stats[email]?.count || 0;
-              latest = Math.max(latest, Date.parse(stats[email]?.last || '') || 0);
-            });
-            const groups = Array.from(domains.values()).filter((count) => count >= 2).length;
             if (!cancelled) {
               updateHeaderSummary({
                 description: t('header.subscriptions.description'),
-                stats: [
-                  { label: t('header.subscriptions.emailLinks'), value: formatCompactNumber(emails.length) },
-                  { label: t('header.subscriptions.totalDownloads'), value: formatCompactNumber(downloads), tone: downloads > 0 ? 'accent' : 'default' },
-                  { label: t('header.subscriptions.reusableGroups'), value: String(groups) },
-                  { label: t('header.subscriptions.nodesInFilter'), value: String(nodes.length) },
-                ],
+                // SubscriptionManager is the only owner of /emails and /nodes.
+                // Do not display a cached count before it has a complete response.
+                stats: [],
               });
             }
             break;
@@ -834,7 +840,11 @@ export const App: React.FC = () => {
       case 'backup':
         return <LazyBackupManager />;
       case 'subscriptions':
-        return <LazySubscriptionManager key={key} apiUrl={getApiUrl()} />;
+        return <LazySubscriptionManager
+          key={key}
+          apiUrl={getApiUrl()}
+          onHeaderProjectionChange={handleSubscriptionsHeaderProjection}
+        />;
       case 'telegram':
         return <LazyTelegramAdmin />;
       default:
