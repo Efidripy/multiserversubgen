@@ -3,7 +3,62 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0a0e1a" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
     <title>VPN Sub Manager</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        background: #0a0e1a;
+      }
+
+      html,
+      body,
+      #root {
+        min-height: 100%;
+        margin: 0;
+        background: #0a0e1a;
+      }
+
+      html:has(.app-bootstrap),
+      body:has(.app-bootstrap) {
+        height: 100%;
+        overflow: hidden;
+      }
+
+      .app-bootstrap {
+        box-sizing: border-box;
+        display: grid;
+        min-height: 100vh;
+        min-height: 100dvh;
+        place-items: center;
+        background: #0a0e1a;
+      }
+
+      .app-bootstrap__spinner {
+        box-sizing: border-box;
+        width: 28px;
+        height: 28px;
+        border: 2px solid rgba(34, 211, 238, 0.2);
+        border-top-color: #67e8f9;
+        border-radius: 999px;
+        animation: app-bootstrap-spin 800ms linear infinite;
+      }
+
+      @keyframes app-bootstrap-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .app-bootstrap__spinner {
+          animation: none;
+        }
+      }
+    </style>
     <script>
       (function () {
         var icons = [
@@ -30,7 +85,7 @@
     </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><div class="app-bootstrap" role="status" aria-label="Загрузка интерфейса"><div class="app-bootstrap__spinner" aria-hidden="true"></div></div></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
