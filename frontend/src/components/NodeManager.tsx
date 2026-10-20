@@ -513,7 +513,7 @@ export const NodeManager: React.FC<NodeManagerProps> = ({
                               <td>{row.name}</td>
                               <td><small className="mono-inline">{row.url}</small></td>
                               <td>{row.bearer_token ? '—' : row.user}</td>
-                              <td>{row.bearer_token ? '—' : row.password}</td>
+                              <td>{row.bearer_token ? '—' : '••••••••'}</td>
                               <td>
                                 {row.bearer_token
                                   ? <span className="badge" style={{ backgroundColor: colors.accent, color: colors.accentText }}>token</span>
