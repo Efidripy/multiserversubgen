@@ -48,8 +48,10 @@ ensure_grafana_repo() {
         apt_install_missing ca-certificates gnupg apt-transport-https curl || return 1
         install -d -m 0755 /etc/apt/keyrings
         local key_fetched="false"
+        local key_fingerprint=""
         local tmp_key_file
         local tmp_gpg_file
+        local -r grafana_key_fingerprint="B53AE77BADB630A683046005963FA27710458545"
         tmp_key_file="$(mktemp)"
         tmp_gpg_file="$(mktemp)"
         local key_urls=(
@@ -57,11 +59,15 @@ ensure_grafana_repo() {
             "https://packages.grafana.com/gpg.key"
         )
         for key_url in "${key_urls[@]}"; do
-            if curl -fsSL --retry 3 --retry-all-errors -A "Mozilla/5.0" "$key_url" -o "$tmp_key_file" \
-                && gpg --batch --yes --dearmor -o "$tmp_gpg_file" "$tmp_key_file" 2>/dev/null \
-                && install -m 0644 "$tmp_gpg_file" /etc/apt/keyrings/grafana.gpg; then
-                key_fetched="true"
-                break
+            key_fingerprint=""
+            if curl -fsSL --retry 3 --retry-all-errors -A "Mozilla/5.0" "$key_url" -o "$tmp_key_file"; then
+                key_fingerprint="$(gpg --batch --with-colons --show-keys "$tmp_key_file" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')"
+                if [ "$key_fingerprint" = "$grafana_key_fingerprint" ] \
+                    && gpg --batch --yes --dearmor -o "$tmp_gpg_file" "$tmp_key_file" 2>/dev/null \
+                    && install -m 0644 "$tmp_gpg_file" /etc/apt/keyrings/grafana.gpg; then
+                    key_fetched="true"
+                    break
+                fi
             fi
         done
         rm -f "$tmp_key_file" "$tmp_gpg_file"

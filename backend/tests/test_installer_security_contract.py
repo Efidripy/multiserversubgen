@@ -131,6 +131,18 @@ def test_privileged_binary_downloads_use_checked_in_digest_manifest():
     assert "releases/latest" not in xui
 
 
+def test_grafana_apt_key_is_pinned_before_the_keyring_is_written():
+    for relative_path in ("scripts/installer/install.sh", "scripts/installer/update.sh"):
+        script = _read(relative_path)
+
+        assert 'grafana_key_fingerprint="B53AE77BADB630A683046005963FA27710458545"' in script
+        assert 'gpg --batch --with-colons --show-keys "$tmp_key_file"' in script
+        assert '[ "$key_fingerprint" = "$grafana_key_fingerprint" ]' in script
+        assert script.index('gpg --batch --with-colons --show-keys "$tmp_key_file"') < script.index(
+            'install -m 0644 "$tmp_gpg_file" /etc/apt/keyrings/grafana.gpg'
+        )
+
+
 def test_xui_seed_matches_v3_hosts_contract():
     manifest = _read("scripts/installer/lib/artifact_manifest.sh")
     template = _read("scripts/installer/templates/xui-pro/base-inbounds.sql.tpl")
