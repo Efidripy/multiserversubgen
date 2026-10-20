@@ -252,6 +252,21 @@ def test_remove_requires_verified_install_state_before_any_mutation():
     assert state_gate < remove.index('rm -rf "$PROJECT_DIR"')
 
 
+def test_remove_stops_and_verifies_service_before_verified_sqlite_backup():
+    remove = _read("scripts/installer/remove.sh")
+
+    assert "require_project_service_inactive()" in remove
+    assert 'systemctl is-active --quiet "$PROJECT_NAME"' in remove
+    assert "Project service remains active; no removal performed." in remove
+    assert 'command -v sqlite3 >/dev/null 2>&1' in remove
+    assert 'sqlite3 "$PROJECT_DIR/admin.db" ".backup' in remove
+    assert "Project database integrity check failed; no removal performed." in remove
+    assert "Database backup integrity check failed; no removal performed." in remove
+    main = remove.split("main() {", 1)[1]
+    assert main.index("require_project_service_inactive") < main.index("backup_databases_if_requested")
+    assert main.index("backup_databases_if_requested") < main.index('rm -rf "$PROJECT_DIR"')
+
+
 def test_project_cleanup_preserves_evidence_and_supports_dry_run():
     script = _read("scripts/ops/project-cleanup.sh")
     safe_cleanup = script.split("cleanup_safe()", 1)[1].split("cleanup_deep()", 1)[0]

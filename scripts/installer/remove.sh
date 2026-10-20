@@ -93,9 +93,31 @@ restore_nginx_if_needed() {
 
 backup_databases_if_requested() {
     [ "$REMOVE_MODE" = "keep-db" ] || return 0
-    mkdir -p "$backup_dir"
-    if [ -d "$PROJECT_DIR" ]; then
-        find "$PROJECT_DIR" -maxdepth 1 -type f -name '*.db' -exec cp {} "$backup_dir/" \; 2>/dev/null || true
+    [ -f "$PROJECT_DIR/admin.db" ] || return 0
+    command -v sqlite3 >/dev/null 2>&1 || {
+        echo "sqlite3 is required to preserve the project database; no removal performed." >&2
+        exit 1
+    }
+    install -d -m 0700 "$backup_dir"
+    if [ "$(sqlite3 "$PROJECT_DIR/admin.db" 'PRAGMA integrity_check;' | tr -d '\r')" != "ok" ]; then
+        echo "Project database integrity check failed; no removal performed." >&2
+        exit 1
+    fi
+    sqlite3 "$PROJECT_DIR/admin.db" ".backup '$backup_dir/admin.db'"
+    if [ "$(sqlite3 "$backup_dir/admin.db" 'PRAGMA integrity_check;' | tr -d '\r')" != "ok" ]; then
+        echo "Database backup integrity check failed; no removal performed." >&2
+        exit 1
+    fi
+}
+
+require_project_service_inactive() {
+    if ! systemctl stop "$PROJECT_NAME" >/dev/null 2>&1 && systemctl is-active --quiet "$PROJECT_NAME"; then
+        echo "Project service could not be stopped; no removal performed." >&2
+        exit 1
+    fi
+    if systemctl is-active --quiet "$PROJECT_NAME"; then
+        echo "Project service remains active; no removal performed." >&2
+        exit 1
     fi
 }
 
@@ -133,7 +155,7 @@ main() {
     require_host_wide_acknowledgement
     confirm_or_die
 
-    systemctl stop "$PROJECT_NAME" >/dev/null 2>&1 || true
+    require_project_service_inactive
     systemctl disable "$PROJECT_NAME" >/dev/null 2>&1 || true
     rm -f "/etc/systemd/system/${PROJECT_NAME}.service"
     rm -f "/etc/${PROJECT_NAME}/runtime-secrets.env"
