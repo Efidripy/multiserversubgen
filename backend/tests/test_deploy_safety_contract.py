@@ -153,6 +153,10 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'export NODE_OPTIONS="$FRONTEND_NODE_OPTIONS"' in frontend_build
     assert 'find "$TARGET_BUILD_DIR" -type d -exec chmod 0755 {} +' in frontend_build
     assert 'find "$TARGET_BUILD_DIR" -type f -exec chmod 0644 {} +' in frontend_build
+    assert frontend_build.rindex('rm -rf "$PREV_BUILD_DIR"') > frontend_build.rindex(
+        'bash "$MSSG_VERIFY_FRONTEND_RELEASE_SCRIPT"'
+    )
+    assert '[[ ! -d "$PREV_BUILD_DIR" ]] || mv "$PREV_BUILD_DIR" "$TARGET_BUILD_DIR"' in frontend_build
     assert "umask 077" in script
 
 
