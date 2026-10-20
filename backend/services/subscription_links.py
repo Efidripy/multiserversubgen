@@ -5,10 +5,11 @@ import os
 import sqlite3
 import time
 from threading import Lock
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 from services.db_bootstrap import connect
 from utils import parse_field_as_dict
+from services.snapshot_push import _to_int, _traffic_by_email
 
 logger = logging.getLogger("sub_manager")
 
@@ -184,6 +185,65 @@ def get_emails(nodes: List[Dict]) -> List[str]:
         emails_cache["emails"] = emails_list
         emails_cache.setdefault("items", {})[cache_key] = (now, emails_list)
     return emails_list
+
+
+def get_subscription_userinfo(
+    nodes: Iterable[Dict], emails: Iterable[str]
+) -> Optional[Dict[str, int]]:
+    """Aggregate subscription traffic and quota from persisted node snapshots."""
+    wanted = {str(email).casefold() for email in emails if email}
+    if not wanted:
+        return None
+
+    pairs = set()
+    upload = download = total = 0
+    min_expiry = None
+    unlimited = False
+    for node in nodes:
+        node_key = node.get("id") or node.get("name")
+        node_traffic = {}
+        client_records = []
+        for inbound in fetch_inbounds(node):
+            traffic = _traffic_by_email(inbound)
+            for email, item in traffic.items():
+                node_traffic.setdefault(email.casefold(), item)
+            settings = parse_field_as_dict(
+                inbound.get("settings"),
+                node_id=node.get("name"),
+                field_name="settings",
+            )
+            clients = settings.get("clients", [])
+            if isinstance(clients, list):
+                client_records.extend(client for client in clients if isinstance(client, dict))
+
+        for client in client_records:
+            email = str(client.get("email") or "").strip()
+            email_key = email.casefold()
+            pair_key = (node_key, email_key)
+            if not email or email_key not in wanted or pair_key in pairs:
+                continue
+            pairs.add(pair_key)
+            traffic = node_traffic.get(email_key, {})
+            upload += _to_int(traffic.get("up", client.get("up", 0)))
+            download += _to_int(traffic.get("down", client.get("down", 0)))
+            quota = _to_int(client.get("totalGB", client.get("total", 0)))
+            if quota == 0:
+                unlimited = True
+            else:
+                total += quota
+            expiry = _to_int(client.get("expiryTime", 0))
+            if expiry > 0:
+                expiry_seconds = expiry // 1000
+                min_expiry = expiry_seconds if min_expiry is None else min(min_expiry, expiry_seconds)
+
+    if not pairs:
+        return None
+    return {
+        "upload": upload,
+        "download": download,
+        "total": 0 if unlimited else total,
+        "expire": min_expiry or 0,
+    }
 
 
 def _first_server_name(stream_settings: Dict) -> str:
