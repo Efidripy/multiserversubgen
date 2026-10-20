@@ -352,6 +352,20 @@ sync_backend_files() {
     done
 }
 
+run_atomic_release_update() {
+    echo "Подготовка staged release до остановки текущего сервиса..."
+    REPO_DIR="$MSSG_SOURCE_ROOT" \
+        PROJECT_NAME="$PROJECT_NAME" \
+        PROJECT_DIR="$PROJECT_DIR" \
+        APP_PORT="$APP_PORT" \
+        WEB_PATH="$WEB_PATH" \
+        GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" \
+        PUBLIC_SCHEME="$PUBLIC_SCHEME" \
+        PUBLIC_DOMAIN="$PUBLIC_DOMAIN" \
+        ROLLBACK_ON_FAIL=1 \
+        bash "$MSSG_DEPLOY_DIR/server-deploy.sh"
+}
+
 ensure_nginx_snippet_include_in_cfg() {
     local cfg_path="$1"
     local include_line="    include /etc/nginx/snippets/${PROJECT_NAME}.conf;"
@@ -1334,92 +1348,43 @@ if [[ "$update_choice" == "5" ]]; then
     exit 0
 fi
 
-# Бекап перед обновлением
-BACKUP_DIR="/var/backups/${PROJECT_NAME}_backup_$(date +%Y%m%d_%H%M%S)"
-echo ""
-echo "🔄 Создание резервной копии..."
-mkdir -p "$BACKUP_DIR"
-cp -r "$PROJECT_DIR"/*.py "$BACKUP_DIR/" 2>/dev/null
-if [ -f "$PROJECT_DIR/.encryption_key" ]; then
-    cp "$PROJECT_DIR/.encryption_key" "$BACKUP_DIR/.encryption_key"
-    chmod 600 "$BACKUP_DIR/.encryption_key" 2>/dev/null || true
+# Режимы 2 и 3 раньше меняли live runtime до завершения pip/Vite. Пока у
+# selective releases нет такого же staged/rollback контракта, не выполняем их.
+if [[ "$update_choice" =~ ^[23]$ ]]; then
+    echo "❌ Частичное обновление отключено: используйте атомарное полное обновление (режим 1)."
+    exit 2
 fi
-for pkg in core modules integrations routers services shared; do
-    if [ -d "$PROJECT_DIR/$pkg" ]; then
-        cp -r "$PROJECT_DIR/$pkg" "$BACKUP_DIR/"
+
+BACKUP_DIR=""
+if [[ "$update_choice" == "4" ]]; then
+    BACKUP_DIR="/var/backups/${PROJECT_NAME}_backup_$(date +%Y%m%d_%H%M%S)"
+    echo ""
+    echo "🔄 Создание резервной копии..."
+    mkdir -p "$BACKUP_DIR"
+    cp -r "$PROJECT_DIR"/*.py "$BACKUP_DIR/" 2>/dev/null
+    if [ -f "$PROJECT_DIR/.encryption_key" ]; then
+        cp "$PROJECT_DIR/.encryption_key" "$BACKUP_DIR/.encryption_key"
+        chmod 600 "$BACKUP_DIR/.encryption_key" 2>/dev/null || true
     fi
-done
-if [ -f "/etc/systemd/system/$PROJECT_NAME.service" ]; then
-    cp "/etc/systemd/system/$PROJECT_NAME.service" "$BACKUP_DIR/"
+    for pkg in core modules integrations routers services shared; do
+        if [ -d "$PROJECT_DIR/$pkg" ]; then
+            cp -r "$PROJECT_DIR/$pkg" "$BACKUP_DIR/"
+        fi
+    done
+    if [ -f "/etc/systemd/system/$PROJECT_NAME.service" ]; then
+        cp "/etc/systemd/system/$PROJECT_NAME.service" "$BACKUP_DIR/"
+    fi
+    echo "  ✓ Резервная копия: $BACKUP_DIR"
+    echo ""
 fi
-echo "  ✓ Резервная копия: $BACKUP_DIR"
 
-echo ""
-
-# Обновление
 case $update_choice in
     1) # Полное обновление
-        echo "[1/5] Остановка сервиса..."
-        systemctl stop "$PROJECT_NAME"
-        
-        echo "[2/5] Обновление всех модулей Backend..."
-        sync_backend_files
-        echo "  ✓ Скопировано $(ls -1 "$MSSG_BACKEND_DIR/"*.py | wc -l) модулей"
-        
-        echo "[3/5] Обновление Python-зависимостей..."
-        resource_guard_export_build_env
-        resource_guard_require_free_mb "${UPDATE_PYTHON_MIN_FREE_MB:-700}" "before Python dependency refresh" "/" || exit 1
-        if ! resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pip install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt" > /dev/null 2>&1; then
-            echo "  ❌ Не удалось обновить Python-зависимости. Обновление прервано."
-            exit 1
-        fi
-        if ! resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"; then
-            echo "  ❌ Не удалось скомпилировать Python-модули. Обновление прервано."
-            exit 1
-        fi
-        echo "  ✓ Зависимости обновлены"
-        
-        echo "[4/5] Пересборка Frontend..."
-        resource_guard_require_free_mb "${UPDATE_FRONTEND_MIN_FREE_MB:-900}" "before full frontend rebuild" "/" || exit 1
-        if ! resource_guard_run_heavy env PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$MSSG_DEPLOY_DIR/build-and-publish-frontend.sh"; then
-            echo "  ❌ Ошибка сборки/публикации фронтенда. Обновление прервано."
-            exit 1
-        fi
-        echo "  ✓ Frontend пересобран"
-        
-        echo "[5/5] Перезапуск сервиса..."
-        runtime_secrets_write
-        runtime_ensure_service_user
-        configure_monitoring_stack
-        if ! activate_manager_config resource_guard_restart_services_sequentially "$PROJECT_NAME"; then
-            echo "❌ Конфигурация manager не активирована; предыдущий unit/Nginx конфиг восстановлен."
-            exit 1
-        fi
-        sanitize_nginx_sites_for_stream_443 || exit 1
-        nginx -t && systemctl restart nginx
-        ;;
-        
-    2) # Только Backend
-        echo "[1/3] Остановка сервиса..."
-        systemctl stop "$PROJECT_NAME"
-        
-        echo "[2/3] Обновление модулей Backend..."
-        sync_backend_files
-        echo "  ✓ Скопировано $(ls -1 "$MSSG_BACKEND_DIR/"*.py | wc -l) модулей"
-        
-        echo "  → Обновление зависимостей..."
-        resource_guard_export_build_env
-        resource_guard_require_free_mb "${UPDATE_PYTHON_MIN_FREE_MB:-700}" "before backend dependency refresh" "/" || exit 1
-        if ! resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pip install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt" > /dev/null 2>&1; then
-            echo "  ❌ Не удалось обновить Python-зависимости. Обновление прервано."
-            exit 1
-        fi
-        if ! resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"; then
-            echo "  ❌ Не удалось скомпилировать Python-модули. Обновление прервано."
+        if ! run_atomic_release_update; then
+            echo "❌ Staged release не прошёл. Текущая установка не заменялась."
             exit 1
         fi
 
-        echo "[3/3] Перезапуск сервиса..."
         runtime_secrets_write
         runtime_ensure_service_user
         configure_monitoring_stack
@@ -1430,21 +1395,7 @@ case $update_choice in
         sanitize_nginx_sites_for_stream_443 || exit 1
         nginx -t && systemctl restart nginx
         ;;
-        
-    3) # Только Frontend
-        echo "[1/2] Пересборка Frontend..."
-        resource_guard_export_build_env
-        resource_guard_require_free_mb "${UPDATE_FRONTEND_MIN_FREE_MB:-900}" "before frontend-only rebuild" "/" || exit 1
-        if ! resource_guard_run_heavy env PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$MSSG_DEPLOY_DIR/build-and-publish-frontend.sh"; then
-            echo "  ❌ Ошибка сборки/публикации фронтенда. Обновление прервано."
-            exit 1
-        fi
-        echo "  ✓ Сборка завершена"
-        
-        echo "[2/2] Frontend обновлён."
-        echo "  ✓ Frontend обновлён (может потребоваться очистка кэша браузера Ctrl+Shift+R)"
-        ;;
-        
+
     4) # Nginx конфиг
         echo "[1/2] Обновление Nginx конфигурации..."
         cp "$SELECTED_CFG" "${SELECTED_CFG}.bak.$(date +%Y%m%d_%H%M%S)"
@@ -1557,8 +1508,10 @@ echo "  sudo bash $MSSG_OPS_DIR/hardening-profile.sh audit"
         fi
 
 echo ""
-echo "📦 Резервная копия сохранена: $BACKUP_DIR"
-echo ""
+if [ -n "$BACKUP_DIR" ]; then
+    echo "📦 Резервная копия сохранена: $BACKUP_DIR"
+    echo ""
+fi
 echo "Для удаления старых бэкапов (>7 дней):"
 echo "  find /var/backups/${PROJECT_NAME}_backup_* -type d -mtime +7 -exec rm -rf {} +"
 echo "Verification-артефакты backup/restore сохраняются отдельно. Сначала проверьте их:"

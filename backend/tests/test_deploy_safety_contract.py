@@ -212,6 +212,19 @@ def test_updater_waits_for_the_application_health_endpoint_after_restart():
     assert "sleep 2" in script
 
 
+def test_updater_delegates_full_release_to_the_staged_deployer():
+    update = (REPO / "scripts/installer/update.sh").read_text(encoding="utf-8")
+    deploy = (REPO / "scripts/deploy/server-deploy.sh").read_text(encoding="utf-8")
+
+    assert "run_atomic_release_update()" in update
+    assert 'bash "$MSSG_DEPLOY_DIR/server-deploy.sh"' in update
+    assert "Partial updates are disabled" not in update
+    assert "Частичное обновление отключено" in update
+    assert "UPDATE_CHOICE" in update
+    assert 'source archive lacks immutable .deploy-source-commit receipt' in deploy
+    assert '[[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]]' in deploy
+
+
 def test_runtime_secret_rewrites_preserve_configured_telegram_settings():
     script = (REPO / "scripts/installer/lib/runtime_secrets.sh").read_text(
         encoding="utf-8"
