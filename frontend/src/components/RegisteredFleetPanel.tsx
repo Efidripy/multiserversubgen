@@ -302,7 +302,7 @@ export function RegisteredFleetPanel({
 
   useEffect(() => {
     if (!dashboardData) return;
-    setNodes(dashboardData.fleet.map((node, index) => toUiNode(node as FleetNode, index)));
+    setNodes(dashboardData.fleet.map((node, index) => toUiNode(node as unknown as FleetNode, index)));
     setLoaded(true);
     setLoading(dashboardData.loading);
     setError(null);

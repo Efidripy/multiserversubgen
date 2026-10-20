@@ -1189,7 +1189,8 @@
     "ingressMatrixCopy": "Track registered panel nodes, access mode and ingress exposure without opening the full manager.",
     "ingressEmptyCopy": "Add your first panel node to start managing fleet access and client operations.",
     "stale": "Stale data",
-    "updatedUnknown": "Update time unknown"
+    "updatedUnknown": "Update time unknown",
+    "incompleteTelemetry": "Telemetry is incomplete for some nodes; traffic and active clients are not shown as zero."
   },
   "theme": {
     "light": "Light",

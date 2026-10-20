@@ -89,4 +89,21 @@ describe('DashboardSummary traffic projection', () => {
     mocks.dashboardData.stale = false;
     mocks.dashboardData.lastUpdated = new Date('2026-08-25T12:00:00Z');
   });
+
+  it('warns when an online node has incomplete inventory telemetry', () => {
+    const fleet = mocks.dashboardData.fleet;
+    (mocks.dashboardData as any).fleet = [{
+      id: 1,
+      name: 'alpha',
+      enabled: true,
+      available: true,
+      inbounds_available: false,
+      online_clients: null,
+      traffic_total: null,
+    }];
+    render(<DashboardSummary />);
+
+    expect(screen.getByText('dashboardSummary.incompleteTelemetry')).toBeTruthy();
+    (mocks.dashboardData as any).fleet = fleet;
+  });
 });

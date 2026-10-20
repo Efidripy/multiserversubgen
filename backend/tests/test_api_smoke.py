@@ -701,6 +701,7 @@ def test_dashboard_overview_is_one_projection_and_never_serializes_node_secrets(
                 "node_id": 1,
                 "available": True,
                 "online_clients": 3,
+                "inbounds_available": False,
                 "inbounds": [{"settings": {"clients": [{"email": "private@example.test"}]}}],
                 "inbounds_result": {"inbounds": [{"id": 1}]},
                 "server_status": {"session": "private"},
@@ -721,6 +722,7 @@ def test_dashboard_overview_is_one_projection_and_never_serializes_node_secrets(
     assert payload["projection"] == "dashboard-v1"
     assert payload["summary"]["traffic_period"] == "week"
     assert payload["fleet"][0]["name"] == "alpha"
+    assert payload["fleet"][0]["inbounds_available"] is False
     assert payload["fleet"][0]["panel_url"] == "https://alpha.example.test:5443/xui"
     serialized = response.text
     for forbidden in ("panel-secret", "node-password", "node-token", "private@example.test", "inbounds_result"):

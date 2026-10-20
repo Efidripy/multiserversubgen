@@ -43,8 +43,9 @@ export interface DashboardFleetNode {
   xray?: any;
   network?: any;
   xray_running?: boolean;
-  online_clients?: number;
-  traffic_total?: number;
+  online_clients: number | null;
+  traffic_total: number | null;
+  inbounds_available: boolean | null;
   timestamp?: number;
   poll_ms?: number;
   tcp_rtt_ms?: number;
@@ -101,6 +102,12 @@ const toOptionalFiniteNumber = (value: unknown): number | undefined => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
+const toNullableFiniteNumber = (value: unknown): number | null => {
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
 const normalizeNumberRecord = (value: unknown): Record<string, number> => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return Object.fromEntries(
@@ -143,7 +150,7 @@ export const normalizeDashboardSummary = (raw: any): DashboardSummaryData => ({
   top_clients: normalizeTopClients(raw?.top_clients),
 });
 
-const normalizeDashboardFleet = (raw: unknown): DashboardFleetNode[] => {
+export const normalizeDashboardFleet = (raw: unknown): DashboardFleetNode[] => {
   if (!Array.isArray(raw)) return [];
   return raw.flatMap((item, index) => {
     const value = item && typeof item === 'object' ? item as Record<string, unknown> : null;
@@ -168,8 +175,11 @@ const normalizeDashboardFleet = (raw: unknown): DashboardFleetNode[] => {
       xray: value.xray,
       network: value.network,
       xray_running: Boolean(value.xray_running),
-      online_clients: toFiniteNumber(value.online_clients),
-      traffic_total: toFiniteNumber(value.traffic_total),
+      online_clients: toNullableFiniteNumber(value.online_clients),
+      traffic_total: toNullableFiniteNumber(value.traffic_total),
+      inbounds_available: typeof value.inbounds_available === 'boolean'
+        ? value.inbounds_available
+        : null,
       timestamp: toFiniteNumber(value.timestamp),
       poll_ms: toFiniteNumber(value.poll_ms),
       tcp_rtt_ms: toOptionalFiniteNumber(value.tcp_rtt_ms),

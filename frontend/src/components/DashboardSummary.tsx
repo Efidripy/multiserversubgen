@@ -144,6 +144,9 @@ export function DashboardSummary({
   });
   const topClients = activeSummary.top_clients.slice(0, 5);
   const maxTraffic = Math.max(...topClients.map((client) => client.total), 1);
+  const hasIncompleteTelemetry = activeNodes.some(
+    (node) => node.available === true && node.inbounds_available === false,
+  );
 
   return (
     <section>
@@ -257,6 +260,11 @@ export function DashboardSummary({
         {activeSummary.traffic_note && (
           <div className="mb-4 rounded-md border border-amber-400/20 bg-amber-950/20 px-3 py-2 font-mono text-[11px] font-light text-amber-100/80">
             {t('dashboardSummary.collectingTrafficHistory')}
+          </div>
+        )}
+        {hasIncompleteTelemetry && (
+          <div className="mb-4 rounded-md border border-amber-400/20 bg-amber-950/20 px-3 py-2 font-mono text-[11px] font-light text-amber-100/80">
+            {t('dashboardSummary.incompleteTelemetry')}
           </div>
         )}
 
