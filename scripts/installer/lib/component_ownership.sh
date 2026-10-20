@@ -250,6 +250,36 @@ mssg_ownership_allow_monitoring_mutation() {
     return 0
 }
 
+# AdGuard Home uses a host-wide service and /opt state, so an existing
+# installation stays external until an operator explicitly adopts it.
+mssg_ownership_allow_adguard_mutation() {
+    local ownership=""
+    mssg_ownership_discover_component adguard || return 1
+    ownership="$(mssg_ownership_read adguard 2>/dev/null || true)"
+    case "$ownership" in
+        "") return 0 ;;
+        mssg-managed|adopted)
+            if ! mssg_ownership_component_present adguard; then
+                echo "Ownership registry marks adguard as $ownership, but it is missing. Refusing automatic repair." >&2
+                return 1
+            fi
+            if ! mssg_ownership_version_matches_registry adguard; then
+                echo "adguard version differs from the ownership registry. Treating it as externally maintained; no mutation is allowed." >&2
+                return 1
+            fi
+            return 0
+            ;;
+        external|unknown)
+            echo "AdGuard Home is not modified: ownership is $ownership. Run the explicit adoption workflow first." >&2
+            return 1
+            ;;
+        *)
+            echo "AdGuard Home is not modified: invalid ownership state." >&2
+            return 1
+            ;;
+    esac
+}
+
 # Loki and Promtail are optional monitoring dependencies, but their service
 # units and data directories are host-wide.  Existing stacks therefore stay
 # external until an operator explicitly adopts both components.
