@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import time
 from threading import Lock
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Set
 
 from shared.observability import record_cache
 from services.snapshot_push import flatten_snapshot_tables
@@ -100,7 +100,10 @@ class InboundsRuntime:
                     cache["invalidated"] = False
 
     def seed_full_cache_from_completed_collector_cycle(
-        self, snapshots: List[Dict], nodes: List[Dict]
+        self,
+        snapshots: List[Dict],
+        nodes: List[Dict],
+        excluded_node_ids: Optional[Set[str]] = None,
     ) -> bool:
         """Seed an empty full-DTO cache from one complete successful poll cycle.
 
@@ -108,8 +111,10 @@ class InboundsRuntime:
         configured node must appear exactly once, be available, and provide an
         inbound list in this same completed callback. A partial, restored,
         stale, or failed snapshot leaves the cache empty so the normal route
-        retains its live-read fallback.
+        retains its live-read fallback. Snapshots of ``excluded_node_ids``
+        (nodes the collector deliberately filtered out) are ignored.
         """
+        excluded = excluded_node_ids or set()
         expected_ids = set()
         for node in nodes:
             if not isinstance(node, dict) or not bool(node.get("enabled", True)):
@@ -129,6 +134,8 @@ class InboundsRuntime:
                 node_id = int(snapshot["node_id"])
             except (KeyError, TypeError, ValueError):
                 return False
+            if str(node_id) in excluded:
+                continue
             if node_id not in expected_ids or node_id in snapshots_by_id:
                 return False
             if (
