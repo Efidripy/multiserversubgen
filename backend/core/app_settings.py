@@ -367,7 +367,6 @@ class AppSettings:
     role_owners: Set[str]
     mfa_totp_enabled: bool
     mfa_totp_users: Dict[str, str]
-    mfa_totp_ws_strict: bool
     ws_auth_secret: str
     subscription_signing_secret: str
     adguard_collect_interval_sec: int
@@ -438,7 +437,6 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         role_owners=_env_csv_set("ROLE_OWNERS") or {"admin"},
         mfa_totp_enabled=_env_bool("MFA_TOTP_ENABLED", "false"),
         mfa_totp_users=parse_mfa_users(os.getenv("MFA_TOTP_USERS", "").strip()),
-        mfa_totp_ws_strict=_env_bool("MFA_TOTP_WS_STRICT", "true"),
         ws_auth_secret=_persistent_secret("WS_AUTH_SECRET"),
         subscription_signing_secret=_persistent_secret("SUBSCRIPTION_SIGNING_SECRET"),
         adguard_collect_interval_sec=int(os.getenv("ADGUARD_COLLECT_INTERVAL_SEC", "60")),

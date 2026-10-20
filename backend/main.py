@@ -114,7 +114,6 @@ ROLE_ADMINS = SETTINGS.role_admins
 ROLE_OWNERS = SETTINGS.role_owners
 MFA_TOTP_ENABLED = SETTINGS.mfa_totp_enabled
 MFA_TOTP_USERS = SETTINGS.mfa_totp_users
-MFA_TOTP_WS_STRICT = SETTINGS.mfa_totp_ws_strict
 WS_AUTH_SECRET = SETTINGS.ws_auth_secret
 SUBSCRIPTION_SIGNING_SECRET = SETTINGS.subscription_signing_secret
 ADGUARD_COLLECT_INTERVAL_SEC = SETTINGS.adguard_collect_interval_sec
@@ -510,7 +509,6 @@ register_app_routers(
     grafana_web_path=GRAFANA_WEB_PATH,
     server_monitor=server_monitor,
     check_basic_auth_header=check_basic_auth_header,
-    mfa_totp_ws_strict=MFA_TOTP_WS_STRICT,
     pam_authenticate=p.authenticate,
     handle_websocket_message=handle_websocket_message,
     telegram_settings=SETTINGS.telegram,

@@ -316,7 +316,6 @@ write_install_log() {
         ADGUARD_METRICS_ENABLED ADGUARD_METRICS_TARGETS ADGUARD_METRICS_PATH
         ADGUARD_LOKI_ENABLED ADGUARD_QUERYLOG_PATH ADGUARD_SYSTEMD_UNIT
         SECURITY_MTLS_ENABLED SECURITY_MTLS_CA_PATH SECURITY_IP_ALLOWLIST
-        MFA_TOTP_ENABLED MFA_TOTP_USERS MFA_TOTP_WS_STRICT
     )
     (umask 077; : > "$LOG_FILE")
     chmod 0600 "$LOG_FILE"
@@ -1138,7 +1137,6 @@ SECURITY_MTLS_CA_PATH=${SECURITY_MTLS_CA_PATH:-""}
 SECURITY_IP_ALLOWLIST=${SECURITY_IP_ALLOWLIST:-""}
 MFA_TOTP_ENABLED=${MFA_TOTP_ENABLED:-"false"}
 MFA_TOTP_USERS=${MFA_TOTP_USERS:-""}
-MFA_TOTP_WS_STRICT=${MFA_TOTP_WS_STRICT:-"true"}
 normalize_public_access_vars
 heal_public_domain_from_selected_cfg
 
@@ -1191,7 +1189,6 @@ echo "SECURITY_MTLS_ENABLED: $SECURITY_MTLS_ENABLED"
 echo "SECURITY_MTLS_CA_PATH: ${SECURITY_MTLS_CA_PATH:-<none>}"
 echo "SECURITY_IP_ALLOWLIST: ${SECURITY_IP_ALLOWLIST:-<none>}"
 echo "MFA_TOTP_ENABLED: $MFA_TOTP_ENABLED"
-echo "MFA_TOTP_WS_STRICT: $MFA_TOTP_WS_STRICT"
 echo "======================================================"
 echo ""
 harden_choice=$(ask_yes_no "Изменить настройки 2-го уровня защиты (mTLS/IP allowlist/TOTP)? (y/n, default: n): " "n")
