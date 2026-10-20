@@ -168,6 +168,53 @@ EOF
     fi
 }
 
+xui_stop_and_confirm_inactive() {
+    if sudo systemctl is-active --quiet x-ui; then
+        if ! sudo systemctl stop x-ui; then
+            echo "Cannot stop active x-ui; replacement was not started." >&2
+            return 1
+        fi
+    fi
+    if sudo systemctl is-active --quiet x-ui; then
+        echo "x-ui remains active after stop; replacement was not started." >&2
+        return 1
+    fi
+}
+
+xui_restore_binary_rollback() {
+    local rollback_dir="$1"
+    local restart_previous="$2"
+
+    if ! xui_stop_and_confirm_inactive; then
+        echo "Candidate x-ui could not be confirmed inactive; recover manually from ${rollback_dir}." >&2
+        return 1
+    fi
+    if ! sudo rm -rf /usr/local/x-ui; then
+        return 1
+    fi
+    if [ -d "${rollback_dir}/x-ui" ] && ! sudo cp -a "${rollback_dir}/x-ui" /usr/local/x-ui; then
+        return 1
+    fi
+    if [ -f "${rollback_dir}/x-ui-cli" ]; then
+        sudo install -m 0755 "${rollback_dir}/x-ui-cli" /usr/bin/x-ui || return 1
+    else
+        sudo rm -f /usr/bin/x-ui || return 1
+    fi
+    if [ -f "${rollback_dir}/x-ui.service" ]; then
+        sudo install -m 0644 "${rollback_dir}/x-ui.service" /etc/systemd/system/x-ui.service || return 1
+    else
+        sudo rm -f /etc/systemd/system/x-ui.service || return 1
+    fi
+    if [ -d "${rollback_dir}/etc-x-ui" ]; then
+        sudo rm -rf /etc/x-ui || return 1
+        sudo cp -a "${rollback_dir}/etc-x-ui" /etc/x-ui || return 1
+    fi
+    sudo systemctl daemon-reload || return 1
+    if [ "$restart_previous" = "1" ] && [ -f "${rollback_dir}/x-ui.service" ]; then
+        sudo systemctl start x-ui || return 1
+    fi
+}
+
 xui_install_binary() {
     local tag="$1"
     local workdir
@@ -176,9 +223,8 @@ xui_install_binary() {
     local staged_dir
     local rollback_root
     local rollback_dir
-    local previous_cli=""
-    local previous_unit=""
     local stamp
+    local prior_xui_was_active=0
 
     arch="$(xui_arch)" || {
         echo "Unsupported CPU architecture for x-ui" >&2
@@ -221,41 +267,50 @@ xui_install_binary() {
     stamp="$(date -u +%Y%m%dT%H%M%SZ)"
     rollback_root="/var/backups/multiserversubgen/x-ui"
     rollback_dir="${rollback_root}/${stamp}"
-    sudo install -d -m 0700 "$rollback_dir"
-    if [ -d /usr/local/x-ui ]; then
-        sudo systemctl stop x-ui >/dev/null 2>&1 || true
-        sudo mv /usr/local/x-ui "${rollback_dir}/x-ui"
-    fi
-    if [ -f /usr/bin/x-ui ]; then
-        previous_cli="${rollback_dir}/x-ui-cli"
-        sudo cp -p /usr/bin/x-ui "$previous_cli"
-    fi
-    if [ -f /etc/systemd/system/x-ui.service ]; then
-        previous_unit="${rollback_dir}/x-ui.service"
-        sudo cp -p /etc/systemd/system/x-ui.service "$previous_unit"
-    fi
-    sudo mv "$staged_dir" /usr/local/x-ui
-    sudo install -m 0755 /usr/local/x-ui/x-ui.sh /usr/bin/x-ui
-
-    if [ -f /usr/local/x-ui/x-ui.service.debian ]; then
-        sudo cp -f /usr/local/x-ui/x-ui.service.debian /etc/systemd/system/x-ui.service
-    fi
-
-    sudo systemctl daemon-reload
-    sudo systemctl enable x-ui >/dev/null
-    if ! sudo systemctl start x-ui; then
-        echo "3x-ui service failed after update; restoring rollback ${rollback_dir}." >&2
-        sudo systemctl stop x-ui >/dev/null 2>&1 || true
-        sudo rm -rf /usr/local/x-ui
-        if [ -d "${rollback_dir}/x-ui" ]; then sudo mv "${rollback_dir}/x-ui" /usr/local/x-ui; fi
-        if [ -n "$previous_cli" ] && [ -f "$previous_cli" ]; then sudo install -m 0755 "$previous_cli" /usr/bin/x-ui; fi
-        if [ -n "$previous_unit" ] && [ -f "$previous_unit" ]; then sudo install -m 0644 "$previous_unit" /etc/systemd/system/x-ui.service; fi
-        sudo systemctl daemon-reload
-        sudo systemctl start x-ui >/dev/null 2>&1 || true
+    if ! sudo install -d -m 0700 "$rollback_dir"; then
         rm -rf "$workdir"
         return 1
     fi
-    sudo x-ui migrate >/dev/null 2>&1 || true
+    if [ -f /usr/bin/x-ui ] && ! sudo cp -p /usr/bin/x-ui "${rollback_dir}/x-ui-cli"; then
+        rm -rf "$workdir"
+        return 1
+    fi
+    if [ -f /etc/systemd/system/x-ui.service ] && ! sudo cp -p /etc/systemd/system/x-ui.service "${rollback_dir}/x-ui.service"; then
+        rm -rf "$workdir"
+        return 1
+    fi
+    if [ -d /etc/x-ui ] && ! sudo cp -a /etc/x-ui "${rollback_dir}/etc-x-ui"; then
+        rm -rf "$workdir"
+        return 1
+    fi
+    if sudo systemctl is-active --quiet x-ui; then
+        prior_xui_was_active=1
+    fi
+    if ! xui_stop_and_confirm_inactive; then
+        echo "3x-ui rollback anchor retained at ${rollback_dir}." >&2
+        rm -rf "$workdir"
+        return 1
+    fi
+    if [ -d /usr/local/x-ui ] && ! sudo mv /usr/local/x-ui "${rollback_dir}/x-ui"; then
+        echo "3x-ui rollback anchor retained at ${rollback_dir}." >&2
+        rm -rf "$workdir"
+        return 1
+    fi
+
+    if ! sudo mv "$staged_dir" /usr/local/x-ui ||
+        ! sudo install -m 0755 /usr/local/x-ui/x-ui.sh /usr/bin/x-ui ||
+        ! sudo cp -f /usr/local/x-ui/x-ui.service.debian /etc/systemd/system/x-ui.service ||
+        ! sudo systemctl daemon-reload ||
+        ! sudo systemctl enable x-ui >/dev/null ||
+        ! sudo x-ui migrate ||
+        ! sudo systemctl start x-ui; then
+        echo "3x-ui replacement failed; restoring rollback ${rollback_dir}." >&2
+        if ! xui_restore_binary_rollback "$rollback_dir" "$prior_xui_was_active"; then
+            echo "3x-ui recovery is incomplete; candidate was stopped. Recover manually from ${rollback_dir}." >&2
+        fi
+        rm -rf "$workdir"
+        return 1
+    fi
 
     rm -rf "$workdir"
 }

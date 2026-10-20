@@ -96,7 +96,11 @@ def test_reconcile_collector_snapshot_rejects_ambiguous_or_incomplete_data(tmp_p
         {"email": "exact@example.test", "total": 10}, {"email": "EXACT@example.test", "total": 10},
     ]}]}]}
     unavailable = {"nodes": [{"node_id": 1, "available": False, "inbounds": []}]}
+    partial_inventory = {"nodes": [{"node_id": 1, "available": True, "inbounds_available": False, "inbounds": [
+        {"id": 1, "clientStats": [{"email": "exact@example.test", "total": 10}]},
+    ]}]}
 
     assert service.reconcile_collector_snapshot(duplicate) == 0
     assert service.reconcile_collector_snapshot(unavailable) == 0
+    assert service.reconcile_collector_snapshot(partial_inventory) == 0
     assert registry.get_customer_traffic(customer_id).last_observed_at == ""

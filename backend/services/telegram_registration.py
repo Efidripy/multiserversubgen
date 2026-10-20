@@ -44,6 +44,8 @@ class TelegramOutboundMessage:
     edit_message_id: int | None = None
     delete_message_id: int | None = None
     subscription_delivery: TelegramSubscriptionDelivery | None = None
+    update_response_update_id: int | None = None
+    update_response_index: int | None = None
 
 
 def _private_actor(
@@ -1677,9 +1679,7 @@ class TelegramRegistrationService:
         access = self._registry.get_customer_access(user_id)
         if access.access_status != "approved" or not access.customer_status:
             return TelegramOutboundMessage(chat_id, tr(locale, "status_waiting"))
-        lifetime = None
-        if access.customer_id is not None and access.email_display:
-            lifetime = self._traffic.refresh_for_access(customer_id=access.customer_id, email=access.email_display)
+        lifetime = self._registry.get_customer_traffic(access.customer_id) if access.customer_id is not None else None
         if lifetime is None or not lifetime.last_observed_at:
             traffic_line = tr(locale, "traffic_empty")
         else:
@@ -2027,6 +2027,82 @@ class TelegramRegistrationService:
         )
 
     def handle_update(self, update: dict[str, Any]) -> list[TelegramOutboundMessage]:
+        """Return the durable retry response before handling an update again."""
+
+        update_id = update.get("update_id")
+        if isinstance(update_id, bool) or not isinstance(update_id, int) or update_id <= 0:
+            return []
+        pending = self._registry.pending_update_responses(update_id)
+        if pending:
+            return [
+                TelegramOutboundMessage(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=markup,
+                    update_response_update_id=update_id,
+                    update_response_index=index,
+                )
+                for index, chat_id, text, markup in pending
+            ]
+
+        messages = self._handle_new_update(update)
+        if not messages:
+            return []
+        actor = _private_actor(update)
+        language_code = actor[2].get("language_code") if actor is not None else None
+        locale = normalize_telegram_locale(language_code) if isinstance(language_code, str) else "ru"
+        retry_messages = [self._retry_safe_message(message, locale) for message in messages]
+        self._registry.store_update_responses(
+            update_id=update_id,
+            responses=[
+                (message.chat_id, message.text, message.reply_markup)
+                for message in retry_messages
+            ],
+        )
+        return [
+            replace(
+                message,
+                update_response_update_id=update_id,
+                update_response_index=index,
+            )
+            for index, message in enumerate(messages)
+        ]
+
+    @staticmethod
+    def _retry_safe_message(message: TelegramOutboundMessage, locale: str) -> TelegramOutboundMessage:
+        """Never persist subscription URLs, QR bytes or mutable edit targets."""
+
+        if (
+            message.subscription_delivery is None
+            and message.photo_png is None
+            and message.edit_message_id is None
+            and message.delete_message_id is None
+        ):
+            return message
+        text = (
+            "We could not deliver that response. Open the menu and request it again."
+            if locale == "en"
+            else "Не удалось доставить ответ. Откройте меню и запросите его ещё раз."
+        )
+        return TelegramOutboundMessage(message.chat_id, text)
+
+    def mark_update_response_delivered(self, message: TelegramOutboundMessage) -> None:
+        if message.update_response_update_id is None or message.update_response_index is None:
+            return
+        self._registry.mark_update_response_delivered(
+            update_id=message.update_response_update_id,
+            response_index=message.update_response_index,
+        )
+
+    def retry_update_response(self, message: TelegramOutboundMessage) -> None:
+        if message.update_response_update_id is None or message.update_response_index is None:
+            return
+        self._registry.retry_update_response(
+            update_id=message.update_response_update_id,
+            response_index=message.update_response_index,
+        )
+
+    def _handle_new_update(self, update: dict[str, Any]) -> list[TelegramOutboundMessage]:
         update_id = update.get("update_id")
         if isinstance(update_id, bool) or not isinstance(update_id, int) or update_id <= 0:
             return []

@@ -69,7 +69,7 @@ done
 if [[ "$MODE" != "prune-verify-artifacts" && ( -n "$OLDER_THAN_DAYS" || "$APPLY_PRUNE" == "true" ) ]]; then
   fail "--older-than and --apply are valid only for prune-verify-artifacts"
 fi
-VERIFY_ARTIFACT_GLOB="${PROJECT_NAME}_verify_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9][0-9][0-9][0-9][0-9]"
+VERIFY_ARTIFACT_GLOB="${PROJECT_NAME}_verify_??????????????*"
 
 resolve_backup_root() {
   [[ -e "$BACKUP_ROOT" ]] || return 1
@@ -149,7 +149,7 @@ mkdir -p -m 0700 "$BACKUP_ROOT"
 resolve_backup_root || fail "cannot create BACKUP_ROOT: $BACKUP_ROOT"
 
 STAMP="$(date +%Y%m%d_%H%M%S)"
-OUT_DIR="${BACKUP_ROOT}/${PROJECT_NAME}_verify_${STAMP}"
+OUT_DIR="$(mktemp -d "${BACKUP_ROOT}/${PROJECT_NAME}_verify_${STAMP}_XXXXXX")" || fail "cannot create unique verification artifact directory"
 
 if [[ ! -f "$DB_FILE" ]]; then
   fail "DB file not found: $DB_FILE"

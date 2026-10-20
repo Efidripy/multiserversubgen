@@ -2,17 +2,17 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 os.environ.setdefault("PROJECT_DIR", "/tmp")
 import main
 
 
 def test_get_user_role_from_lists(monkeypatch):
-    monkeypatch.setattr(main, "ROLE_VIEWERS", {"viewer1"})
     monkeypatch.setattr(main, "ROLE_OPERATORS", {"operator1"})
     monkeypatch.setattr(main, "ROLE_ADMINS", {"admin1"})
 
-    assert main.get_user_role("viewer1") == "viewer"
     assert main.get_user_role("operator1") == "operator"
     assert main.get_user_role("admin1") == "admin"
     assert main.get_user_role("unknown") == "viewer"
@@ -35,3 +35,21 @@ def test_required_role_policy():
     assert main._required_role_for_request("POST", "/api/v1/subscription-tokens/email/D632-IOS/regenerate") == "admin"
     assert main._required_role_for_request("GET", "/api/v1/telegram/node-policies") == "admin"
     assert main._required_role_for_request("PUT", "/api/v1/telegram/node-policies/1") == "admin"
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    (
+        ("POST", "/api/v1/clients/del-depleted"),
+        ("POST", "/api/v1/clients/bulk-reset-traffic"),
+        ("GET", "/api/v1/clients/customer@example.test/links"),
+        ("GET", "/api/v1/clients/sub-links/sub-123"),
+    ),
+)
+def test_sensitive_client_routes_are_admin_only(method, path):
+    required_role = main._required_role_for_request(method, path)
+
+    assert required_role == "admin"
+    assert main.has_min_role("viewer", required_role) is False
+    assert main.has_min_role("operator", required_role) is False
+    assert main.has_min_role("admin", required_role) is True

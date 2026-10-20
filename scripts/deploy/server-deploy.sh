@@ -139,11 +139,21 @@ wait_for_telegram_public_health() {
 validate_persistent_runtime_secrets
 resolve_frontend_routes
 REPO_DIR="$(realpath -e -- "$REPO_DIR")"
-git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null || fail "REPO_DIR is not a Git worktree"
-DEPLOY_COMMIT="$(git -C "$REPO_DIR" rev-parse --verify "${DEPLOY_REF}^{commit}")" || fail "DEPLOY_REF is not a commit"
-CURRENT_COMMIT="$(git -C "$REPO_DIR" rev-parse HEAD)"
-[[ "$DEPLOY_COMMIT" == "$CURRENT_COMMIT" ]] || fail "checkout must already be at immutable DEPLOY_REF"
-[[ -z "$(git -C "$REPO_DIR" status --porcelain)" ]] || fail "refuse dirty source worktree"
+if git -C "$REPO_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  DEPLOY_COMMIT="$(git -C "$REPO_DIR" rev-parse --verify "${DEPLOY_REF}^{commit}")" || fail "DEPLOY_REF is not a commit"
+  CURRENT_COMMIT="$(git -C "$REPO_DIR" rev-parse HEAD)"
+  [[ "$DEPLOY_COMMIT" == "$CURRENT_COMMIT" ]] || fail "checkout must already be at immutable DEPLOY_REF"
+  [[ -z "$(git -C "$REPO_DIR" status --porcelain)" ]] || fail "refuse dirty source worktree"
+else
+  DEPLOY_RECEIPT="$REPO_DIR/.deploy-source-commit"
+  [[ -f "$DEPLOY_RECEIPT" && ! -L "$DEPLOY_RECEIPT" ]] \
+    || fail "source archive lacks immutable .deploy-source-commit receipt"
+  [[ "$(wc -l < "$DEPLOY_RECEIPT")" -eq 1 ]] \
+    || fail "source archive commit receipt must contain exactly one line"
+  DEPLOY_COMMIT="$(tr -d '\r\n' < "$DEPLOY_RECEIPT")"
+  [[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]] \
+    || fail "source archive commit receipt is invalid"
+fi
 SERVICE_TEMPLATE="$REPO_DIR/systemd/${PROJECT_NAME}.service"
 [[ -f "$SERVICE_TEMPLATE" ]] || fail "immutable systemd service template is missing: $SERVICE_TEMPLATE"
 

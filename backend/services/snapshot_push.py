@@ -144,7 +144,12 @@ def build_snapshot_push_payload(
     snapshot: Dict[str, Any],
     changes: Dict[str, Any],
 ) -> Dict[str, Any]:
-    table_payload = flatten_snapshot_tables(snapshot) if snapshot.get("available") else {"clients": [], "inbounds": []}
+    inventory_available = snapshot.get("inbounds_available") is not False
+    table_payload = (
+        flatten_snapshot_tables(snapshot)
+        if snapshot.get("available") and inventory_available
+        else {"clients": [], "inbounds": []}
+    )
     return {
         "source": "snapshot_collector",
         "action": "snapshot",
@@ -155,5 +160,5 @@ def build_snapshot_push_payload(
         "changes": _redact_snapshot(changes),
         "clients": table_payload["clients"],
         "inbounds": table_payload["inbounds"],
-        "has_table_payload": bool(snapshot.get("available")),
+        "has_table_payload": bool(snapshot.get("available") and inventory_available),
     }

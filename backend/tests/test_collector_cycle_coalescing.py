@@ -98,6 +98,22 @@ def test_default_cadence_keeps_active_freshness_and_bounded_idle_polling(monkeyp
     assert collector._node_state[key]["interval"] == 300.0
 
 
+def test_snapshot_publication_replaces_node_mapping_without_mutating_reader_view(monkeypatch):
+    collector = _collector()
+    collector._latest = {"timestamp": 1.0, "nodes": {"id:1": _snapshot(1)}}
+    reader_nodes = collector._latest["nodes"]
+
+    async def fake_run_blocking(_label, _function, node):
+        return _snapshot(node["id"])
+
+    monkeypatch.setattr(collector, "_run_blocking", fake_run_blocking)
+    asyncio.run(collector._poll_node({"id": 2, "name": "beta"}, "id:2"))
+
+    assert reader_nodes == {"id:1": reader_nodes["id:1"]}
+    assert collector._latest["nodes"] is not reader_nodes
+    assert set(collector._latest["nodes"]) == {"id:1", "id:2"}
+
+
 def test_activity_transitions_are_deterministic_and_do_not_infer_mode_from_due_work(
     monkeypatch,
 ):
@@ -309,3 +325,16 @@ def test_history_batch_is_single_transaction_deduplicated_and_retries_after_fail
         ).fetchall()
     assert [(row[0], row[1]) for row in rows] == [(1, 1), (2, 0)]
     assert len({row[2] for row in rows}) == 1
+
+
+def test_partial_inventory_does_not_write_zero_traffic_history(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    state = {"last_by_node": {}, "last_cleanup_ts": time.time()}
+    runtime = _metrics_runtime(db_path, state)
+    partial = {**_snapshot(1), "inbounds_available": False, "online_clients": None, "traffic_total": None}
+
+    runtime.record_node_snapshots([partial])
+
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM node_history").fetchone()[0] == 0

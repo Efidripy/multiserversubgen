@@ -5184,6 +5184,103 @@ class TelegramRegistry:
                 return False
         return True
 
+    def store_update_responses(
+        self,
+        *,
+        update_id: int,
+        responses: list[tuple[int, str, dict[str, Any] | None]],
+    ) -> None:
+        """Store retry-safe replies keyed by Telegram's immutable update id."""
+
+        normalized_update_id = _positive_int(update_id, "update_id")
+        rows: list[tuple[int, int, str, str | None]] = []
+        for index, (chat_id, text, markup) in enumerate(responses):
+            normalized_chat_id = _positive_int(chat_id, "chat_id")
+            normalized_text = _nonempty(text, "response_text")
+            if len(normalized_text) > 4096:
+                raise TelegramRegistryError("response_text is too long")
+            if markup is not None and not isinstance(markup, dict):
+                raise TelegramRegistryError("response_markup must be an object")
+            markup_json = (
+                json.dumps(markup, ensure_ascii=False, separators=(",", ":"))
+                if markup is not None
+                else None
+            )
+            if markup_json is not None and len(markup_json) > 16384:
+                raise TelegramRegistryError("response_markup is too long")
+            rows.append((normalized_update_id, index, normalized_chat_id, normalized_text, markup_json))
+        if not rows:
+            return
+        with connect(self._db_path) as conn:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO telegram_update_responses
+                    (update_id, response_index, chat_id, text, reply_markup_json)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+    def pending_update_responses(
+        self, update_id: int
+    ) -> list[tuple[int, int, str, dict[str, Any] | None]]:
+        normalized_update_id = _positive_int(update_id, "update_id")
+        with connect(self._db_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT response_index, chat_id, text, reply_markup_json
+                FROM telegram_update_responses
+                WHERE update_id = ?
+                  AND (
+                    status = 'queued'
+                    OR (status = 'prepared' AND created_at <= datetime('now', '-1 minute'))
+                  )
+                ORDER BY response_index
+                """,
+                (normalized_update_id,),
+            ).fetchall()
+        result: list[tuple[int, int, str, dict[str, Any] | None]] = []
+        for row in rows:
+            markup = None
+            if row[3] is not None:
+                try:
+                    decoded = json.loads(str(row[3]))
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise TelegramRegistryError("stored response markup is invalid") from exc
+                if not isinstance(decoded, dict):
+                    raise TelegramRegistryError("stored response markup is invalid")
+                markup = decoded
+            result.append((int(row[0]), int(row[1]), str(row[2]), markup))
+        return result
+
+    def mark_update_response_delivered(self, *, update_id: int, response_index: int) -> None:
+        normalized_update_id = _positive_int(update_id, "update_id")
+        if isinstance(response_index, bool) or not isinstance(response_index, int) or response_index < 0:
+            raise TelegramRegistryError("response_index is invalid")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                """
+                UPDATE telegram_update_responses
+                SET status = 'sent', sent_at = CURRENT_TIMESTAMP
+                WHERE update_id = ? AND response_index = ? AND status IN ('prepared', 'queued')
+                """,
+                (normalized_update_id, response_index),
+            )
+
+    def retry_update_response(self, *, update_id: int, response_index: int) -> None:
+        normalized_update_id = _positive_int(update_id, "update_id")
+        if isinstance(response_index, bool) or not isinstance(response_index, int) or response_index < 0:
+            raise TelegramRegistryError("response_index is invalid")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                """
+                UPDATE telegram_update_responses
+                SET status = 'queued'
+                WHERE update_id = ? AND response_index = ? AND status = 'prepared'
+                """,
+                (normalized_update_id, response_index),
+            )
+
     def get_subscription_message_receipt(
         self, telegram_user_id: int
     ) -> TelegramSubscriptionMessageReceipt | None:

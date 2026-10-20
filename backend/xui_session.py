@@ -141,6 +141,8 @@ _NODE_CAPABILITIES_LOCK = Lock()
 _NODE_CAPABILITIES_MAX = 1024
 _SESSION_CACHE_LOCK = Lock()
 _SESSION_LOGIN_LOCKS: dict[str, Lock] = {}
+_SESSION_LOGIN_LOCKS_MAX = 1024
+_SESSION_LOGIN_OVERFLOW_LOCK = Lock()
 _SESSION_CACHE: dict[str, Dict[str, Any]] = {}
 _SESSION_CACHE_SECRET = secrets.token_bytes(32)
 _SESSION_CACHE_MAX = 1024
@@ -399,6 +401,14 @@ def _node_lock(node_key: str) -> Lock:
     with _SESSION_CACHE_LOCK:
         lock = _SESSION_LOGIN_LOCKS.get(node_key)
         if lock is None:
+            if len(_SESSION_LOGIN_LOCKS) >= _SESSION_LOGIN_LOCKS_MAX:
+                for stale_key, stale_lock in list(_SESSION_LOGIN_LOCKS.items()):
+                    if not stale_lock.locked():
+                        _SESSION_LOGIN_LOCKS.pop(stale_key, None)
+                        if len(_SESSION_LOGIN_LOCKS) < _SESSION_LOGIN_LOCKS_MAX:
+                            break
+            if len(_SESSION_LOGIN_LOCKS) >= _SESSION_LOGIN_LOCKS_MAX:
+                return _SESSION_LOGIN_OVERFLOW_LOCK
             lock = Lock()
             _SESSION_LOGIN_LOCKS[node_key] = lock
         return lock

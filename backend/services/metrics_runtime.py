@@ -98,6 +98,10 @@ class MetricsRuntime:
         with self.history_write_lock:
             minimum_interval = max(1, self.node_history_min_interval_sec)
             for snapshot in snapshots:
+                # Inbound-derived traffic cannot be represented as a valid
+                # zero when a successful server-status poll lacks inventory.
+                if snapshot.get("inbounds_available") is False:
+                    continue
                 node_name = str(snapshot.get("name", "unknown"))
                 node_id = str(snapshot.get("node_id", "0"))
                 node_last = self.history_write_state["last_by_node"].get(node_id, 0.0)
@@ -153,12 +157,18 @@ class MetricsRuntime:
         self.node_cpu_percent_metric.labels(node_name=node_name, node_id=node_id).set(
             float(snapshot.get("cpu", 0) or 0)
         )
-        self.node_online_clients_metric.labels(node_name=node_name, node_id=node_id).set(
-            float(snapshot.get("online_clients", 0) or 0)
-        )
-        self.node_traffic_total_bytes_metric.labels(node_name=node_name, node_id=node_id).set(
-            float(snapshot.get("traffic_total", 0) or 0)
-        )
+        if snapshot.get("inbounds_available") is not False:
+            self.node_online_clients_metric.labels(node_name=node_name, node_id=node_id).set(
+                float(snapshot.get("online_clients", 0) or 0)
+            )
+            self.node_traffic_total_bytes_metric.labels(node_name=node_name, node_id=node_id).set(
+                float(snapshot.get("traffic_total", 0) or 0)
+            )
+        else:
+            # Remove a prior value rather than leaving stale traffic looking
+            # current while this node's inventory is unavailable.
+            self.node_online_clients_metric.remove(node_name, node_id)
+            self.node_traffic_total_bytes_metric.remove(node_name, node_id)
         self.node_poll_duration_ms_metric.labels(node_name=node_name, node_id=node_id).set(
             float(snapshot.get("poll_ms", 0) or 0)
         )

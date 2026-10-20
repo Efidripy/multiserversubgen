@@ -435,8 +435,10 @@ ensure_grafana_repo() {
         apt_install_missing ca-certificates gnupg apt-transport-https curl || return 1
         install -d -m 0755 /etc/apt/keyrings
         local key_fetched="false"
+        local key_fingerprint=""
         local tmp_key_file
         local tmp_gpg_file
+        local -r grafana_key_fingerprint="B53AE77BADB630A683046005963FA27710458545"
         tmp_key_file="$(mktemp)"
         tmp_gpg_file="$(mktemp)"
         local key_urls=(
@@ -444,11 +446,15 @@ ensure_grafana_repo() {
             "https://packages.grafana.com/gpg.key"
         )
         for key_url in "${key_urls[@]}"; do
-            if curl -fsSL --retry 3 --retry-all-errors -A "Mozilla/5.0" "$key_url" -o "$tmp_key_file" \
-                && gpg --batch --yes --dearmor -o "$tmp_gpg_file" "$tmp_key_file" 2>/dev/null \
-                && install -m 0644 "$tmp_gpg_file" /etc/apt/keyrings/grafana.gpg; then
-                key_fetched="true"
-                break
+            key_fingerprint=""
+            if curl -fsSL --retry 3 --retry-all-errors -A "Mozilla/5.0" "$key_url" -o "$tmp_key_file"; then
+                key_fingerprint="$(gpg --batch --with-colons --show-keys "$tmp_key_file" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')"
+                if [ "$key_fingerprint" = "$grafana_key_fingerprint" ] \
+                    && gpg --batch --yes --dearmor -o "$tmp_gpg_file" "$tmp_key_file" 2>/dev/null \
+                    && install -m 0644 "$tmp_gpg_file" /etc/apt/keyrings/grafana.gpg; then
+                    key_fetched="true"
+                    break
+                fi
             fi
         done
         rm -f "$tmp_key_file" "$tmp_gpg_file"
@@ -684,14 +690,13 @@ write_install_log() {
         SUB_RATE_LIMIT_COUNT SUB_RATE_LIMIT_WINDOW_SEC TRAFFIC_STATS_CACHE_TTL TRAFFIC_STATS_STALE_TTL
         CLIENTS_CACHE_TTL CLIENTS_CACHE_STALE_TTL TRAFFIC_MAX_WORKERS
         COLLECTOR_BASE_INTERVAL_SEC COLLECTOR_MAX_INTERVAL_SEC COLLECTOR_MAX_PARALLEL
-        AUDIT_QUEUE_BATCH_SIZE ROLE_VIEWERS ROLE_OPERATORS
+        AUDIT_QUEUE_BATCH_SIZE ROLE_OPERATORS
         MONITORING_ENABLED GRAFANA_WEB_PATH GRAFANA_HTTP_PORT
         ADGUARD_METRICS_ENABLED ADGUARD_METRICS_TARGETS ADGUARD_METRICS_PATH
         ADGUARD_LOKI_ENABLED ADGUARD_QUERYLOG_PATH ADGUARD_SYSTEMD_UNIT
         ADGUARD_INSTALL_ENABLED ADGUARD_DNS_BIND ADGUARD_WEB_PORT ADGUARD_WEB_PATH ADGUARD_DOH_PATH
         ADGUARD_ADMIN_USER
         SECURITY_MTLS_ENABLED SECURITY_MTLS_CA_PATH SECURITY_IP_ALLOWLIST
-        MFA_TOTP_ENABLED MFA_TOTP_WS_STRICT
         PREEXISTING_NGINX_INSTALLED PREEXISTING_PROMETHEUS_INSTALLED
         PREEXISTING_GRAFANA_INSTALLED PREEXISTING_LOKI_INSTALLED PREEXISTING_PROMTAIL_INSTALLED
     )
@@ -1204,11 +1209,16 @@ configure_adguard_home() {
         adguard_setup_web_port=3001
     fi
 
+    if ! mssg_ownership_allow_adguard_mutation; then
+        return 1
+    fi
+
     echo "Настройка AdGuard Home..."
     if ! install_adguard_home_binary; then
         echo "❌ Не удалось установить AdGuard Home binary."
         return 1
     fi
+    mssg_ownership_claim_managed adguard upstream-binary || return 1
 
     systemctl daemon-reload >/dev/null 2>&1 || true
     systemctl enable AdGuardHome >/dev/null 2>&1 || true
@@ -2177,7 +2187,6 @@ update_project() {
     COLLECTOR_MAX_PARALLEL=${COLLECTOR_MAX_PARALLEL:-"4"}
     REDIS_URL=${REDIS_URL:-""}
     AUDIT_QUEUE_BATCH_SIZE=${AUDIT_QUEUE_BATCH_SIZE:-"200"}
-    ROLE_VIEWERS=${ROLE_VIEWERS:-""}
     ROLE_OPERATORS=${ROLE_OPERATORS:-""}
     MONITORING_ENABLED=${MONITORING_ENABLED:-"true"}
     GRAFANA_WEB_PATH=${GRAFANA_WEB_PATH:-"grafana"}
@@ -2203,7 +2212,6 @@ update_project() {
     SECURITY_IP_ALLOWLIST=${SECURITY_IP_ALLOWLIST:-""}
     MFA_TOTP_ENABLED=${MFA_TOTP_ENABLED:-"false"}
     MFA_TOTP_USERS=${MFA_TOTP_USERS:-""}
-    MFA_TOTP_WS_STRICT=${MFA_TOTP_WS_STRICT:-"true"}
     PREEXISTING_NGINX_INSTALLED=${PREEXISTING_NGINX_INSTALLED:-"false"}
     PREEXISTING_PROMETHEUS_INSTALLED=${PREEXISTING_PROMETHEUS_INSTALLED:-"false"}
     PREEXISTING_GRAFANA_INSTALLED=${PREEXISTING_GRAFANA_INSTALLED:-"false"}
@@ -2408,14 +2416,12 @@ COLLECTOR_MAX_INTERVAL_SEC="60"
 COLLECTOR_MAX_PARALLEL="4"
 REDIS_URL=""
 AUDIT_QUEUE_BATCH_SIZE="200"
-ROLE_VIEWERS=""
 ROLE_OPERATORS=""
 SECURITY_IP_ALLOWLIST=""
 SECURITY_MTLS_ENABLED="false"
 SECURITY_MTLS_CA_PATH=""
 MFA_TOTP_ENABLED="false"
 MFA_TOTP_USERS=""
-MFA_TOTP_WS_STRICT="true"
 USE_PROXY="y"
 ADGUARD_METRICS_ENABLED="false"
 ADGUARD_METRICS_TARGETS=""
@@ -2466,8 +2472,6 @@ if [[ "$INSTALL_MODE_INPUT" =~ ^[aAфФ]$ ]]; then
     REDIS_URL=${REDIS_URL:-}
     read -p "Размер batch audit worker (default: $AUDIT_QUEUE_BATCH_SIZE): " AUDIT_QUEUE_BATCH_SIZE
     AUDIT_QUEUE_BATCH_SIZE=${AUDIT_QUEUE_BATCH_SIZE:-200}
-    read -p "Список viewer-пользователей через запятую (опционально): " ROLE_VIEWERS
-    ROLE_VIEWERS=${ROLE_VIEWERS:-}
     read -p "Список operator-пользователей через запятую (опционально): " ROLE_OPERATORS
     ROLE_OPERATORS=${ROLE_OPERATORS:-}
     read -p "Включить IP allowlist для панели (CIDR через запятую, Enter = без ограничений): " SECURITY_IP_ALLOWLIST

@@ -364,6 +364,34 @@ def test_xui_session_pool_reuses_session_until_forced_reauth(monkeypatch):
     xui_session.invalidate_session_cache(node_key)
 
 
+def test_xui_login_locks_are_bounded_and_preserve_locked_entries(monkeypatch):
+    import xui_session
+
+    original = xui_session._SESSION_LOGIN_LOCKS.copy()
+    try:
+        monkeypatch.setattr(xui_session, "_SESSION_LOGIN_LOCKS_MAX", 2)
+        xui_session._SESSION_LOGIN_LOCKS.clear()
+        xui_session._node_lock("first")
+        xui_session._node_lock("second")
+        assert len(xui_session._SESSION_LOGIN_LOCKS) == 2
+
+        third = xui_session._node_lock("third")
+        assert len(xui_session._SESSION_LOGIN_LOCKS) == 2
+
+        third.acquire()
+        fourth = xui_session._node_lock("fourth")
+        fourth.acquire()
+        try:
+            assert len(xui_session._SESSION_LOGIN_LOCKS) == 2
+            assert xui_session._node_lock("fifth") is xui_session._SESSION_LOGIN_OVERFLOW_LOCK
+        finally:
+            fourth.release()
+            third.release()
+    finally:
+        xui_session._SESSION_LOGIN_LOCKS.clear()
+        xui_session._SESSION_LOGIN_LOCKS.update(original)
+
+
 def test_snapshot_collector_opens_timeout_circuit():
     from services.collector import SnapshotCollector
 
@@ -600,6 +628,40 @@ def test_snapshot_collector_promotes_server_telemetry_to_snapshot():
     assert snapshot["online_clients"] == 2
     assert snapshot["traffic_total"] == 30
     assert snapshot["panel_version"] == "2.6.0"
+
+
+def test_snapshot_collector_keeps_status_healthy_when_inbound_inventory_fails():
+    from services.collector import SnapshotCollector
+    from services.snapshot_push import build_snapshot_push_payload
+
+    class PartialMonitor:
+        def get_server_status(self, node):
+            return {"node": node["name"], "available": True, "system": {}, "xray": {}, "network": {}}
+
+        def get_inbounds(self, _node):
+            return {"available": False, "reason": "timeout", "inbounds": []}
+
+        def get_online_clients(self, _node):
+            raise AssertionError("presence must not be published without inventory")
+
+    collector = SnapshotCollector(
+        fetch_nodes=lambda: [],
+        xui_monitor=PartialMonitor(),
+        ws_manager=SimpleNamespace(active_connections=[]),
+    )
+
+    snapshot = collector._collect_node_snapshot({"id": 1, "name": "alpha"})
+
+    assert snapshot["available"] is True
+    assert snapshot["status"] == "online"
+    assert snapshot["inbounds_available"] is False
+    assert snapshot["inbounds"] == []
+    assert snapshot["traffic_total"] is None
+    assert snapshot["online_clients"] is None
+    payload = build_snapshot_push_payload(key="alpha", snapshot=snapshot, changes={})
+    assert payload["has_table_payload"] is False
+    collector._latest["nodes"]["alpha"] = snapshot
+    assert collector.latest_dashboard_snapshot()["nodes"][0]["inbounds_available"] is False
 
 
 def test_snapshot_collector_broadcasts_server_status_telemetry():
