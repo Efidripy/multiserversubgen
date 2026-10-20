@@ -88,7 +88,6 @@ def _build_test_app(*, monitoring_enabled: bool) -> FastAPI:
         grafana_web_path=main.GRAFANA_WEB_PATH,
         server_monitor=main.server_monitor,
         check_basic_auth_header=main.check_basic_auth_header,
-        mfa_totp_ws_strict=main.MFA_TOTP_WS_STRICT,
         pam_authenticate=main.p.authenticate,
         handle_websocket_message=main.handle_websocket_message,
     )

@@ -45,7 +45,6 @@ Environment="AUDIT_QUEUE_BATCH_SIZE=200"
 Environment="ROLE_VIEWERS="
 Environment="ROLE_OPERATORS="
 Environment="MFA_TOTP_ENABLED=false"
-Environment="MFA_TOTP_WS_STRICT=false"
 Environment="LOG_LEVEL=INFO"
 Environment="LOG_FILE=/opt/sub-manager/logs/app.log"
 NoNewPrivileges=yes
