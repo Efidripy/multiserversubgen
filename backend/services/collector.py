@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import math
 import socket
 import sqlite3
 import time
@@ -59,6 +60,8 @@ _DASHBOARD_SNAPSHOT_FIELDS = (
 )
 
 _CLIENT_PRESENCE_RETENTION_SEC = 30 * 24 * 60 * 60
+# Keep brief transport outages eligible for a bounded live-read retry.
+_UNREACHABLE_AFTER_SEC = 600.0
 _TRANSPORT_FAILURE_BACKOFF_SEC = (300.0, 600.0, 900.0)
 _TRANSPORT_DIAGNOSTIC_INTERVAL_SEC = 900.0
 _INVENTORY_RECHECK_SEC = 60.0
@@ -295,6 +298,27 @@ class SnapshotCollector:
             "count": len(nodes),
             "mode": self._mode.value,
         }
+
+    def filter_reachable_nodes(self, nodes: List[Dict]) -> List[Dict]:
+        """Exclude nodes persistently unavailable according to the collector."""
+        latest = self._latest
+        snapshots = latest["nodes"]
+        now = time.time()
+        reachable = []
+        for node in nodes:
+            key = self._node_key(node if isinstance(node, dict) else {})
+            snapshot = snapshots.get(key)
+            if isinstance(snapshot, dict) and snapshot.get("available") is False:
+                last_success_at = self._coerce_float(snapshot.get("last_success_at"))
+                unavailable_for = now - last_success_at
+                if (
+                    not math.isfinite(last_success_at)
+                    or last_success_at <= 0.0
+                    or unavailable_for > _UNREACHABLE_AFTER_SEC
+                ):
+                    continue
+            reachable.append(node)
+        return reachable
 
     def latest_dashboard_snapshot(self) -> Dict:
         """Return the bounded, operator-safe projection used by Dashboard.

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 import time
 from threading import Lock
-from typing import Dict, List
+from typing import Callable, Dict, List, Optional
 
 from shared.observability import record_cache
 from services.snapshot_push import flatten_snapshot_tables
+
+
+logger = logging.getLogger(__name__)
 
 
 class InboundsRuntime:
@@ -24,12 +28,14 @@ class InboundsRuntime:
         fresh_ttl: int = 30,
         stale_ttl: int = 300,
         start_cache_refresh,
+        filter_reachable_nodes: Optional[Callable[[List[Dict]], List[Dict]]] = None,
     ) -> None:
         self.inbound_mgr = inbound_mgr
         self.inbounds_cache = inbounds_cache
         self.fresh_ttl = fresh_ttl
         self.stale_ttl = stale_ttl
         self.start_cache_refresh = start_cache_refresh
+        self.filter_reachable_nodes = filter_reachable_nodes or (lambda nodes: nodes)
         self._cold_load_lock = Lock()
         # These projections are deliberately independent from the full DTO
         # cache: a slim/options response must never be returned to an edit
@@ -44,6 +50,15 @@ class InboundsRuntime:
             "inbounds_slim": 0,
             "inbounds_options": 0,
         }
+
+    def _nodes_for_loader(self, nodes: List[Dict], projection: str) -> List[Dict]:
+        filtered = self.filter_reachable_nodes(nodes)
+        skipped = len(nodes) - len(filtered)
+        if skipped:
+            logger.debug(
+                "Filtered %d unavailable node(s) from %s projection", skipped, projection
+            )
+        return filtered
 
     def _snapshot_cache(
         self, cache: Dict, cache_key: str
@@ -181,7 +196,10 @@ class InboundsRuntime:
             record_cache("memory_stale")
 
             def _refresh() -> None:
-                fresh = loader(nodes, cached_full=self._cached_full_by_node())
+                fresh = loader(
+                    self._nodes_for_loader(nodes, cache_key),
+                    cached_full=self._cached_full_by_node(),
+                )
                 self._store_cache(
                     cache=cache, cache_key=cache_key, data=fresh, generation=generation
                 )
@@ -196,7 +214,10 @@ class InboundsRuntime:
             record_cache("memory_stale")
 
             def _refresh() -> None:
-                fresh = loader(nodes, cached_full=self._cached_full_by_node())
+                fresh = loader(
+                    self._nodes_for_loader(nodes, cache_key),
+                    cached_full=self._cached_full_by_node(),
+                )
                 self._store_cache(
                     cache=cache, cache_key=cache_key, data=fresh, generation=generation
                 )
@@ -216,7 +237,10 @@ class InboundsRuntime:
                 record_cache("memory_fresh")
                 return cached
             record_cache("memory_miss")
-            fresh = loader(nodes, cached_full=self._cached_full_by_node())
+            fresh = loader(
+                self._nodes_for_loader(nodes, cache_key),
+                cached_full=self._cached_full_by_node(),
+            )
             self._store_cache(
                 cache=cache, cache_key=cache_key, data=fresh, generation=generation
             )
@@ -231,7 +255,9 @@ class InboundsRuntime:
             record_cache("memory_stale")
 
             def _refresh() -> None:
-                fresh = self.inbound_mgr.get_all_inbounds(nodes)
+                fresh = self.inbound_mgr.get_all_inbounds(
+                    self._nodes_for_loader(nodes, "inbounds")
+                )
                 self._store_cache(
                     cache=self.inbounds_cache,
                     cache_key="inbounds",
@@ -250,7 +276,9 @@ class InboundsRuntime:
             record_cache("memory_stale")
 
             def _refresh() -> None:
-                fresh = self.inbound_mgr.get_all_inbounds(nodes)
+                fresh = self.inbound_mgr.get_all_inbounds(
+                    self._nodes_for_loader(nodes, "inbounds")
+                )
                 self._store_cache(
                     cache=self.inbounds_cache,
                     cache_key="inbounds",
@@ -275,7 +303,9 @@ class InboundsRuntime:
                 record_cache("memory_fresh")
                 return cached
             record_cache("memory_miss")
-            fresh = self.inbound_mgr.get_all_inbounds(nodes)
+            fresh = self.inbound_mgr.get_all_inbounds(
+                self._nodes_for_loader(nodes, "inbounds")
+            )
             self._store_cache(
                 cache=self.inbounds_cache,
                 cache_key="inbounds",
