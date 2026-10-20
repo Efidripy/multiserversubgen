@@ -82,6 +82,8 @@ CA_BUNDLE_PATH = SETTINGS.ca_bundle_path
 READ_ONLY_MODE = SETTINGS.read_only_mode
 SUB_RATE_LIMIT_COUNT = SETTINGS.sub_rate_limit_count
 SUB_RATE_LIMIT_WINDOW_SEC = SETTINGS.sub_rate_limit_window_sec
+SUB_PROFILE_UPDATE_INTERVAL_HOURS = SETTINGS.sub_profile_update_interval_hours
+SUB_PROFILE_TITLE = SETTINGS.sub_profile_title
 TRAFFIC_STATS_CACHE_TTL = SETTINGS.traffic_stats_cache_ttl
 TRAFFIC_STATS_STALE_TTL = SETTINGS.traffic_stats_stale_ttl
 CLIENTS_CACHE_TTL = SETTINGS.clients_cache_ttl
@@ -417,6 +419,7 @@ def check_web_session(request: Request):
 ) = build_subscription_links_facade(
     subscription_links_service=subscription_links_service, db_path=DB_PATH
 )
+get_subscription_userinfo = subscription_links_service.get_subscription_userinfo
 
 
 app.middleware("http")(
@@ -483,6 +486,9 @@ register_app_routers(
     check_subscription_rate_limit=_check_subscription_rate_limit,
     get_emails=get_emails,
     get_links_filtered=get_links_filtered,
+    get_subscription_userinfo=get_subscription_userinfo,
+    subscription_profile_update_interval_hours=SUB_PROFILE_UPDATE_INTERVAL_HOURS,
+    subscription_profile_title=SUB_PROFILE_TITLE,
     register_subscription_response_cache_invalidator=register_subscription_response_cache_invalidator,
     subscription_signing_secret=SUBSCRIPTION_SIGNING_SECRET,
     verify_tls_default=VERIFY_TLS,

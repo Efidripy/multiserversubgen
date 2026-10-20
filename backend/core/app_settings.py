@@ -13,6 +13,13 @@ def _env_bool(name: str, default: str) -> bool:
     return os.getenv(name, default).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _parse_bool(raw_value: str | None) -> bool | None:
     if raw_value is None:
         return None
@@ -335,6 +342,8 @@ class AppSettings:
     read_only_mode: bool
     sub_rate_limit_count: int
     sub_rate_limit_window_sec: int
+    sub_profile_update_interval_hours: int
+    sub_profile_title: str
     traffic_stats_cache_ttl: int
     traffic_stats_stale_ttl: int
     clients_cache_ttl: int
@@ -402,6 +411,8 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         read_only_mode=_env_bool("READ_ONLY_MODE", "false"),
         sub_rate_limit_count=int(os.getenv("SUB_RATE_LIMIT_COUNT", "30")),
         sub_rate_limit_window_sec=int(os.getenv("SUB_RATE_LIMIT_WINDOW_SEC", "60")),
+        sub_profile_update_interval_hours=_env_int("SUB_PROFILE_UPDATE_INTERVAL_HOURS", 12),
+        sub_profile_title=os.getenv("SUB_PROFILE_TITLE", ""),
         traffic_stats_cache_ttl=int(os.getenv("TRAFFIC_STATS_CACHE_TTL", "20")),
         traffic_stats_stale_ttl=int(os.getenv("TRAFFIC_STATS_STALE_TTL", "120")),
         clients_cache_ttl=int(os.getenv("CLIENTS_CACHE_TTL", "20")),
