@@ -36,14 +36,30 @@ def build_subscriptions_router(
     invalidate_subscription_cache,
     logger,
     register_subscription_response_cache_invalidator=None,
+    get_subscription_userinfo=None,
+    subscription_profile_update_interval_hours=None,
+    subscription_profile_title=None,
 ):
     router = APIRouter()
-    subscription_response_cache: Dict[str, tuple[float, str]] = {}
+    subscription_response_cache: Dict[str, tuple[float, str, Optional[Dict[str, int]]]] = {}
     subscription_response_cache_lock = Lock()
     subscription_response_cache_ttl = 300
     subscription_response_cache_max_size = 1024
     telegram_access_gate = TelegramSubscriptionAccessGate(db_path)
     telegram_registry = TelegramRegistry(db_path)
+    try:
+        profile_interval = 12 if subscription_profile_update_interval_hours is None else int(
+            subscription_profile_update_interval_hours
+        )
+        if profile_interval < 0:
+            profile_interval = 12
+    except (TypeError, ValueError):
+        profile_interval = 12
+    profile_update_interval_header = str(profile_interval) if profile_interval else None
+    profile_title = (subscription_profile_title or "").replace("\r", "").replace("\n", "")
+    if profile_title and not profile_title.isascii():
+        profile_title = "base64:" + base64.b64encode(profile_title.encode("utf-8")).decode("ascii")
+    profile_title_header = profile_title or None
 
     def _no_cache_headers():
         return {
@@ -55,6 +71,20 @@ def build_subscriptions_router(
     def _subscription_headers(cache_status: str):
         headers = _no_cache_headers()
         headers["X-Subscription-Cache"] = cache_status
+        return headers
+
+    def _with_subscription_headers(headers, nodes=None, emails=None, userinfo=None):
+        if userinfo is None and get_subscription_userinfo and nodes is not None and emails is not None:
+            userinfo = get_subscription_userinfo(nodes, emails)
+        if userinfo:
+            headers["Subscription-Userinfo"] = "; ".join(
+                f"{key}={userinfo[key]}" for key in ("upload", "download", "total", "expire")
+            )
+
+        if profile_update_interval_header is not None:
+            headers["Profile-Update-Interval"] = profile_update_interval_header
+        if profile_title_header is not None:
+            headers["Profile-Title"] = profile_title_header
         return headers
 
     def _subscription_cache_key(request: Request, identifier: str) -> str:
@@ -73,18 +103,18 @@ def build_subscriptions_router(
             cached = subscription_response_cache.get(cache_key)
             if not cached:
                 return None
-            ts, content = cached
+            ts, content, userinfo = cached
             if now - ts > subscription_response_cache_ttl:
                 subscription_response_cache.pop(cache_key, None)
                 return None
-            return content
+            return content, userinfo
 
-    def _set_subscription_response_cache(cache_key: str, content: str) -> None:
+    def _set_subscription_response_cache(cache_key: str, content: str, userinfo=None) -> None:
         with subscription_response_cache_lock:
             if len(subscription_response_cache) >= subscription_response_cache_max_size and cache_key not in subscription_response_cache:
                 oldest_key = min(subscription_response_cache, key=lambda item: subscription_response_cache[item][0])
                 subscription_response_cache.pop(oldest_key, None)
-            subscription_response_cache[cache_key] = (time.time(), content)
+            subscription_response_cache[cache_key] = (time.time(), content, userinfo)
 
     def _clear_subscription_response_cache() -> None:
         with subscription_response_cache_lock:
@@ -264,7 +294,7 @@ def build_subscriptions_router(
                     db.commit()
                 return PlainTextResponse(
                     content=base64.b64encode("\n".join(links).encode()).decode(),
-                    headers=no_cache_headers,
+                    headers=_with_subscription_headers(no_cache_headers, all_nodes, [resolved_email]),
                 )
 
         return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
@@ -304,7 +334,7 @@ def build_subscriptions_router(
                     db.commit()
                 return PlainTextResponse(
                     content=base64.b64encode("\n".join(links).encode()).decode(),
-                    headers=_no_cache_headers(),
+                    headers=_with_subscription_headers(_no_cache_headers(), all_nodes, [guest_link.email_display]),
                 )
         return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
 
@@ -337,9 +367,10 @@ def build_subscriptions_router(
         cache_key = _subscription_cache_key(request, resolved_identifier)
         cached_response = _get_subscription_response_cache(cache_key)
         if cached_response is not None:
+            cached_content, cached_userinfo = cached_response
             return PlainTextResponse(
-                content=cached_response,
-                headers=_subscription_headers("hit"),
+                content=cached_content,
+                headers=_with_subscription_headers(_subscription_headers("hit"), userinfo=cached_userinfo),
             )
 
         no_cache_headers = _subscription_headers("miss")
@@ -390,10 +421,11 @@ def build_subscriptions_router(
                             (matched_email, now, now),
                         )
                     db.commit()
-                _set_subscription_response_cache(cache_key, content)
+                userinfo = get_subscription_userinfo(all_nodes, matching_emails) if get_subscription_userinfo else None
+                _set_subscription_response_cache(cache_key, content, userinfo)
                 return PlainTextResponse(
                     content=content,
-                    headers=no_cache_headers,
+                    headers=_with_subscription_headers(no_cache_headers, userinfo=userinfo),
                 )
 
         return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
