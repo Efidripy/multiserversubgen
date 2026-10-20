@@ -15,7 +15,11 @@ from services.db_bootstrap import connect, init_db
 from services.telegram_access import TelegramSubscriptionAccessGate
 from services.telegram_delivery import TelegramMessageEditUnavailableError
 from services.subscription_tokens import resolve_token
-from services.telegram_registration import TelegramOutboundMessage, TelegramRegistrationService
+from services.telegram_registration import (
+    TelegramOutboundMessage,
+    TelegramRegistrationService,
+    TelegramSubscriptionDelivery,
+)
 from services.telegram_registry import TelegramRegistry
 from services.telegram_provisioning import ExistingRemoteBinding, ProvisioningRemoteError
 
@@ -436,10 +440,18 @@ def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscrip
             "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
             (customer_id, identity.telegram_user_id),
         )
+    projection_calls = 0
+
+    def projection_loader():
+        nonlocal projection_calls
+        projection_calls += 1
+        return {"stats": {"traffic_user": {"total": 4096}}}
+
+    registry.observe_customer_traffic(customer_id=customer_id, observed_bytes=4096)
     service = TelegramRegistrationService(
         registry,
         introduction_max_chars=700,
-        traffic_projection_loader=lambda: {"stats": {"traffic_user": {"total": 4096}}},
+        traffic_projection_loader=projection_loader,
     )
 
     status = service.handle_update(_message(15, "/status"))
@@ -450,6 +462,7 @@ def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscrip
     assert "<b>Последнее обновление данных:</b>" in status[0].text
     assert status[0].parse_mode == "HTML"
     assert registry.get_customer_traffic(customer_id).lifetime_bytes == 4096
+    assert projection_calls == 0
 
 
 def test_approved_status_is_honest_when_no_traffic_projection_has_been_observed(tmp_path):
@@ -1807,6 +1820,18 @@ class _EditFallbackSender(_Sender):
         return super().send(message)
 
 
+class _FailOnceSender(_Sender):
+    def __init__(self):
+        super().__init__()
+        self.attempts = 0
+
+    def send(self, message: TelegramOutboundMessage) -> int:
+        self.attempts += 1
+        if self.attempts == 1:
+            raise OSError("Telegram temporarily unavailable")
+        return super().send(message)
+
+
 def test_webhook_requires_exact_suffix_and_secret_then_dispatches_private_update(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
@@ -1833,6 +1858,85 @@ def test_webhook_requires_exact_suffix_and_secret_then_dispatches_private_update
     assert accepted.status_code == 200
     assert accepted.json() == {"ok": True}
     assert len(sender.messages) == 1
+
+
+def test_webhook_retries_a_durable_response_without_replaying_the_update(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    sender = _FailOnceSender()
+    settings = SimpleNamespace(
+        enabled=True,
+        bot_token="not-used-by-test-sender",
+        webhook_path_suffix="private-path",
+        webhook_secret="private-header-secret",
+        introduction_max_chars=700,
+    )
+    app = FastAPI()
+    app.include_router(build_telegram_webhook_router(telegram_settings=settings, db_path=db_path, sender=sender))
+    client = TestClient(app, raise_server_exceptions=False)
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "private-header-secret"}
+    update = _message(91, "/start")
+
+    assert client.post("/telegram/webhook/private-path", headers=headers, json=update).status_code == 500
+    assert client.post("/telegram/webhook/private-path", headers=headers, json=update).status_code == 200
+    assert client.post("/telegram/webhook/private-path", headers=headers, json=update).status_code == 200
+    assert sender.attempts == 2
+    assert len(sender.messages) == 1
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT status FROM telegram_update_responses WHERE update_id = 91"
+        ).fetchall() == [("sent",)]
+
+
+def test_crashed_inline_response_is_reclaimed_after_the_delivery_grace_period(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    service = TelegramRegistrationService(TelegramRegistry(db_path), introduction_max_chars=700)
+
+    assert service.handle_update(_message(93, "/start"))
+    assert service.handle_update(_message(93, "/start")) == []
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_update_responses "
+            "SET created_at = datetime('now', '-2 minutes') WHERE update_id = 93"
+        )
+
+    recovered = service.handle_update(_message(93, "/start"))
+
+    assert len(recovered) == 1
+    assert recovered[0].update_response_update_id == 93
+
+
+def test_update_response_storage_never_keeps_a_subscription_link_or_qr_payload(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.claim_update(
+        update_id=92,
+        telegram_user_id=None,
+        update_type="message",
+        payload_digest="a" * 64,
+    )
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    original = TelegramOutboundMessage(
+        chat_id=42,
+        text="Personal link: https://example.test/sub/sensitive-token",
+        photo_png=b"png-bytes",
+        subscription_delivery=TelegramSubscriptionDelivery(42, "digest"),
+    )
+    safe = service._retry_safe_message(original, "en")
+    registry.store_update_responses(
+        update_id=92,
+        responses=[(safe.chat_id, safe.text, safe.reply_markup)],
+    )
+
+    with connect(db_path) as conn:
+        stored = conn.execute(
+            "SELECT text, reply_markup_json FROM telegram_update_responses WHERE update_id = 92"
+        ).fetchone()
+    assert stored is not None
+    assert "sensitive-token" not in stored[0]
+    assert stored[1] is None
 
 
 def test_webhook_sender_receives_qr_as_a_photo_message(tmp_path):

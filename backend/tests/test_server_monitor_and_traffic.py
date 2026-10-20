@@ -122,8 +122,8 @@ class TestGetClientTrafficHardening:
 
         assert traffic == {}
 
-    def test_list_obj_does_not_break_get_traffic_stats(self):
-        """get_traffic_stats must not raise AttributeError when node panel returns a list for obj."""
+    def test_missing_client_stats_does_not_fabricate_client_traffic(self):
+        """Legacy inbounds without aggregates leave client traffic unknown."""
         mgr = self._build_manager()
 
         inbound = {
@@ -131,20 +131,12 @@ class TestGetClientTrafficHardening:
             "settings": json.dumps({"clients": [{"id": "uid1", "email": "u@t.com"}]})
         }
 
-        # API response with obj as list (unexpected but real-world case)
-        list_body = {"success": True, "obj": [{"up": 100, "down": 200}]}
-        resp = _make_response(200, list_body)
-
         with patch.object(mgr, '_fetch_inbounds_from_node', return_value=[inbound]):
-            with patch.object(mgr, '_get_session') as mock_gs:
-                sess = MagicMock()
-                mock_gs.return_value = (sess, "https://1.2.3.4:443")
-                with patch("client_manager.xui_request", return_value=resp):
-                    result = mgr.get_traffic_stats([self._node()])
+            with patch.object(mgr, "get_client_traffic") as get_client_traffic:
+                result = mgr.get_traffic_stats([self._node()])
 
-        assert "stats" in result
-        # Client entry should have zeroed traffic (list obj treated as empty)
-        assert result["stats"].get("u@t.com", {}).get("up", 0) == 0
+        get_client_traffic.assert_not_called()
+        assert result["stats"] == {}
 
     def test_none_obj_returns_empty_dict(self):
         """obj=null in response must return {}."""
@@ -191,6 +183,26 @@ class TestTrafficStatsFastPath:
         mock_get_client_traffic.assert_not_called()
         assert result["stats"]["a@test.com"]["total"] == 300
         assert result["stats"]["b@test.com"]["total"] == 75
+
+    def test_legacy_inbound_counters_support_node_and_inbound_without_client_rpc(self):
+        mgr = self._build_manager()
+        inbounds = [{
+            "id": 7,
+            "remark": "main",
+            "protocol": "vless",
+            "up": 100,
+            "down": 200,
+            "settings": json.dumps({"clients": [{"id": "uid1", "email": "u@t.com"}]}),
+        }]
+
+        with patch.object(mgr, "_fetch_inbounds_from_node", return_value=inbounds):
+            with patch.object(mgr, "get_client_traffic") as get_client_traffic:
+                node = mgr.get_traffic_stats([self._node()], group_by="node")
+                inbound = mgr.get_traffic_stats([self._node()], group_by="inbound")
+
+        get_client_traffic.assert_not_called()
+        assert node["stats"] == {"n1": {"up": 100, "down": 200, "total": 300, "count": 1}}
+        assert inbound["stats"] == {"n1:main": {"up": 100, "down": 200, "total": 300, "count": 1}}
 
     def test_duplicate_node_names_keep_cold_traffic_stats_separate(self):
         mgr = self._build_manager()

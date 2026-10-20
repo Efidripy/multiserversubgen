@@ -43,6 +43,7 @@ _DASHBOARD_SNAPSHOT_FIELDS = (
     "cpu",
     "online_clients",
     "traffic_total",
+    "inbounds_available",
     "timestamp",
     "panel_version",
     "api_version",
@@ -285,10 +286,11 @@ class SnapshotCollector:
         return f"name:{str(node.get('name') or '').strip()}"
 
     def latest_snapshot(self) -> Dict:
-        nodes = list(self._latest["nodes"].values())
+        latest = self._latest
+        nodes = list(latest["nodes"].values())
         nodes.sort(key=lambda x: x.get("name", ""))
         return {
-            "timestamp": self._latest["timestamp"],
+            "timestamp": latest["timestamp"],
             "nodes": nodes,
             "count": len(nodes),
             "mode": self._mode.value,
@@ -302,14 +304,15 @@ class SnapshotCollector:
         records with every Dashboard navigation turns an O(nodes) status view
         into O(nodes * inbounds * clients) network and JSON work.
         """
+        latest = self._latest
         nodes = [
             {field: snapshot[field] for field in _DASHBOARD_SNAPSHOT_FIELDS if field in snapshot}
-            for snapshot in self._latest["nodes"].values()
+            for snapshot in latest["nodes"].values()
             if isinstance(snapshot, dict)
         ]
         nodes.sort(key=lambda item: str(item.get("name") or "").casefold())
         return {
-            "timestamp": self._latest["timestamp"],
+            "timestamp": latest["timestamp"],
             "nodes": nodes,
             "count": len(nodes),
             "mode": self._mode.value,
@@ -337,9 +340,10 @@ class SnapshotCollector:
 
     def _refresh_client_presence_projection(self) -> None:
         """Publish an immutable presence view after collector-owned mutations."""
+        latest = self._latest
         online_emails = {
             email
-            for snapshot in self._latest["nodes"].values()
+            for snapshot in latest["nodes"].values()
             if isinstance(snapshot, dict)
             for email in snapshot.get("online_client_emails") or []
             if isinstance(email, str) and email
@@ -350,16 +354,16 @@ class SnapshotCollector:
                 for email in snapshot.get("online_client_emails") or []
                 if isinstance(email, str) and email
             }))
-            for snapshot in self._latest["nodes"].values()
+            for snapshot in latest["nodes"].values()
             if isinstance(snapshot, dict) and snapshot.get("node_id") is not None
         }
         node_names = {
             str(snapshot["node_id"]): str(snapshot.get("name") or snapshot["node_id"])
-            for snapshot in self._latest["nodes"].values()
+            for snapshot in latest["nodes"].values()
             if isinstance(snapshot, dict) and snapshot.get("node_id") is not None
         }
         self._client_presence = {
-            "timestamp": self._latest["timestamp"],
+            "timestamp": latest["timestamp"],
             "online_emails": tuple(sorted(online_emails)),
             "online_by_node": online_by_node,
             "node_names": node_names,
@@ -372,6 +376,7 @@ class SnapshotCollector:
 
     def runtime_status(self) -> Dict:
         """Small operational receipt for sizing a collector before fleet growth."""
+        latest = self._latest
         return {
             "mode": self._mode.value,
             "configured_max_parallel_polls": self.configured_max_parallel_polls,
@@ -379,7 +384,7 @@ class SnapshotCollector:
             "poll_jitter_sec": self.poll_jitter_sec,
             "inflight_polls": self._inflight_polls,
             "last_cycle": dict(self._last_cycle),
-            "snapshot_nodes": len(self._latest["nodes"]),
+            "snapshot_nodes": len(latest["nodes"]),
         }
 
     async def load_persisted_snapshots(self) -> int:
@@ -419,8 +424,7 @@ class SnapshotCollector:
         async with self._lock:
             if self._latest["nodes"]:
                 return 0
-            self._latest["nodes"] = latest_nodes
-            self._latest["timestamp"] = latest_ts or time.time()
+            self._latest = {"timestamp": latest_ts or time.time(), "nodes": latest_nodes}
             self._node_state.update(restored_node_state)
         logger.info("Loaded %d node snapshots from SQLite cache", len(latest_nodes))
         return len(latest_nodes)
@@ -738,8 +742,11 @@ class SnapshotCollector:
                     if stale not in active_node_keys:
                         self._node_state.pop(stale, None)
                         self._last_transport_diagnostic_at.pop(stale, None)
-                        self._latest["nodes"].pop(stale, None)
-                        self._refresh_client_presence_projection()
+                        async with self._lock:
+                            latest_nodes = dict(self._latest["nodes"])
+                            latest_nodes.pop(stale, None)
+                            self._latest = {"timestamp": time.time(), "nodes": latest_nodes}
+                            self._refresh_client_presence_projection()
 
                 due_nodes = []
                 force_poll = self._force_poll_event.is_set()
@@ -969,9 +976,11 @@ class SnapshotCollector:
         snapshot["poll_ms"] = round(elapsed * 1000, 2)
 
         async with self._lock:
-            self._latest["timestamp"] = time.time()
-            self._latest["nodes"][key] = snapshot
-            observed_at = float(snapshot.get("timestamp") or self._latest["timestamp"])
+            latest_timestamp = time.time()
+            latest_nodes = dict(self._latest["nodes"])
+            latest_nodes[key] = snapshot
+            self._latest = {"timestamp": latest_timestamp, "nodes": latest_nodes}
+            observed_at = float(snapshot.get("timestamp") or latest_timestamp)
             online_client_emails = snapshot.get("online_client_emails") or []
             for email in online_client_emails:
                 self._client_last_seen[email] = observed_at
@@ -1080,27 +1089,38 @@ class SnapshotCollector:
                     "cpu": 0,
                     "online_clients": 0,
                     "traffic_total": 0,
+                    "inbounds_available": False,
                     "inbounds": [],
                     "timestamp": time.time(),
                 }
             inbounds_result = self.xui_monitor.get_inbounds(node)
             available = bool(status.get("available"))
-            inbounds = (
-                inbounds_result.get("inbounds", [])
-                if isinstance(inbounds_result, dict) and inbounds_result.get("available")
-                else []
+            inbounds_available = bool(
+                isinstance(inbounds_result, dict)
+                and inbounds_result.get("available")
+                and isinstance(inbounds_result.get("inbounds"), list)
             )
+            inbounds = inbounds_result["inbounds"] if inbounds_available else []
             system_client_emails = system_client_emails_from_inbounds(inbounds)
-            online = self.xui_monitor.get_online_clients(node)
-            online_emails = [
-                email
-                for email in _online_client_emails(online)
-                if normalize_email(email) not in system_client_emails
-            ]
-            total_traffic = sum(
-                (inbound.get("up", 0) or 0) + (inbound.get("down", 0) or 0)
-                for inbound in inbounds
-                if isinstance(inbound, dict)
+            # Online presence is filtered through the inventory to exclude
+            # system clients. Do not publish a misleading count when that
+            # inventory is unavailable.
+            online_emails = []
+            if inbounds_available:
+                online = self.xui_monitor.get_online_clients(node)
+                online_emails = [
+                    email
+                    for email in _online_client_emails(online)
+                    if normalize_email(email) not in system_client_emails
+                ]
+            total_traffic = (
+                sum(
+                    (inbound.get("up", 0) or 0) + (inbound.get("down", 0) or 0)
+                    for inbound in inbounds
+                    if isinstance(inbound, dict)
+                )
+                if inbounds_available
+                else None
             )
             xray_compatibility = summarize_node_inbounds(inbounds)
 
@@ -1119,10 +1139,11 @@ class SnapshotCollector:
                 "network": network_status,
                 "xray_running": (xray_status.get("running", False) if isinstance(status, dict) else False),
                 "cpu": (system_status.get("cpu", 0) if isinstance(status, dict) else 0),
-                "online_clients": len(online_emails),
+                "online_clients": len(online_emails) if inbounds_available else None,
                 "online_client_emails": online_emails,
                 "system_client_emails": sorted(system_client_emails),
                 "traffic_total": total_traffic,
+                "inbounds_available": inbounds_available,
                 "timestamp": time.time(),
                 "panel_version": panel_version,
                 "api_version": api_version,
@@ -1154,6 +1175,7 @@ class SnapshotCollector:
                 "cpu": 0,
                 "online_clients": 0,
                 "traffic_total": 0,
+                "inbounds_available": False,
                 "inbounds": [],
                 "timestamp": time.time(),
             }
@@ -1187,6 +1209,7 @@ class SnapshotCollector:
                 "network",
                 "online_clients",
                 "traffic_total",
+                "inbounds_available",
                 "tcp_rtt_ms",
                 "panel_version",
                 "api_version",
@@ -1204,6 +1227,7 @@ class SnapshotCollector:
                 "available": {"old": None, "new": snapshot.get("available")},
                 "online_clients": {"old": None, "new": snapshot.get("online_clients")},
                 "traffic_total": {"old": None, "new": snapshot.get("traffic_total")},
+                "inbounds_available": {"old": None, "new": snapshot.get("inbounds_available")},
             }
             delta_fields = delta["changes"]
 
@@ -1234,6 +1258,7 @@ class SnapshotCollector:
                     "xray_compatibility": snapshot.get("xray_compatibility"),
                     "online_clients": snapshot.get("online_clients"),
                     "traffic_total": snapshot.get("traffic_total"),
+                    "inbounds_available": snapshot.get("inbounds_available"),
                     "poll_ms": snapshot.get("poll_ms"),
                     "tcp_rtt_ms": snapshot.get("tcp_rtt_ms"),
                     "timestamp": snapshot.get("timestamp"),
@@ -1264,12 +1289,13 @@ class SnapshotCollector:
                     "action": "snapshot",
                     "node": key,
                     "node_id": snapshot.get("node_id"),
-                    "traffic_total": snapshot.get("traffic_total", 0),
-                    "online_clients": snapshot.get("online_clients", 0),
+                    "traffic_total": snapshot.get("traffic_total"),
+                    "online_clients": snapshot.get("online_clients"),
+                    "inbounds_available": snapshot.get("inbounds_available"),
                     "_delta": bool(delta_fields),
                     "changes": {
                         field: delta_fields[field]
-                        for field in ("traffic_total", "online_clients")
+                        for field in ("traffic_total", "online_clients", "inbounds_available")
                         if field in delta_fields
                     },
                 }

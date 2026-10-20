@@ -218,6 +218,7 @@ def build_live_data_router(
             "xray_running": cached.get("xray_running"),
             "online_clients": cached.get("online_clients"),
             "traffic_total": cached.get("traffic_total"),
+            "inbounds_available": cached.get("inbounds_available"),
             "timestamp": cached.get("timestamp"),
             "poll_ms": cached.get("poll_ms"),
             "tcp_rtt_ms": cached.get("tcp_rtt_ms"),

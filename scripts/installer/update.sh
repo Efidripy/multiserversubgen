@@ -48,8 +48,10 @@ ensure_grafana_repo() {
         apt_install_missing ca-certificates gnupg apt-transport-https curl || return 1
         install -d -m 0755 /etc/apt/keyrings
         local key_fetched="false"
+        local key_fingerprint=""
         local tmp_key_file
         local tmp_gpg_file
+        local -r grafana_key_fingerprint="B53AE77BADB630A683046005963FA27710458545"
         tmp_key_file="$(mktemp)"
         tmp_gpg_file="$(mktemp)"
         local key_urls=(
@@ -57,11 +59,15 @@ ensure_grafana_repo() {
             "https://packages.grafana.com/gpg.key"
         )
         for key_url in "${key_urls[@]}"; do
-            if curl -fsSL --retry 3 --retry-all-errors -A "Mozilla/5.0" "$key_url" -o "$tmp_key_file" \
-                && gpg --batch --yes --dearmor -o "$tmp_gpg_file" "$tmp_key_file" 2>/dev/null \
-                && install -m 0644 "$tmp_gpg_file" /etc/apt/keyrings/grafana.gpg; then
-                key_fetched="true"
-                break
+            key_fingerprint=""
+            if curl -fsSL --retry 3 --retry-all-errors -A "Mozilla/5.0" "$key_url" -o "$tmp_key_file"; then
+                key_fingerprint="$(gpg --batch --with-colons --show-keys "$tmp_key_file" 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')"
+                if [ "$key_fingerprint" = "$grafana_key_fingerprint" ] \
+                    && gpg --batch --yes --dearmor -o "$tmp_gpg_file" "$tmp_key_file" 2>/dev/null \
+                    && install -m 0644 "$tmp_gpg_file" /etc/apt/keyrings/grafana.gpg; then
+                    key_fetched="true"
+                    break
+                fi
             fi
         done
         rm -f "$tmp_key_file" "$tmp_gpg_file"
@@ -305,12 +311,11 @@ write_install_log() {
         SUB_RATE_LIMIT_COUNT SUB_RATE_LIMIT_WINDOW_SEC TRAFFIC_STATS_CACHE_TTL TRAFFIC_STATS_STALE_TTL
         CLIENTS_CACHE_TTL CLIENTS_CACHE_STALE_TTL TRAFFIC_MAX_WORKERS
         COLLECTOR_BASE_INTERVAL_SEC COLLECTOR_MAX_INTERVAL_SEC COLLECTOR_MAX_PARALLEL
-        REDIS_URL AUDIT_QUEUE_BATCH_SIZE ROLE_VIEWERS ROLE_OPERATORS
+        REDIS_URL AUDIT_QUEUE_BATCH_SIZE ROLE_OPERATORS
         MONITORING_ENABLED GRAFANA_WEB_PATH GRAFANA_HTTP_PORT
         ADGUARD_METRICS_ENABLED ADGUARD_METRICS_TARGETS ADGUARD_METRICS_PATH
         ADGUARD_LOKI_ENABLED ADGUARD_QUERYLOG_PATH ADGUARD_SYSTEMD_UNIT
         SECURITY_MTLS_ENABLED SECURITY_MTLS_CA_PATH SECURITY_IP_ALLOWLIST
-        MFA_TOTP_ENABLED MFA_TOTP_USERS MFA_TOTP_WS_STRICT
     )
     (umask 077; : > "$LOG_FILE")
     chmod 0600 "$LOG_FILE"
@@ -345,6 +350,20 @@ sync_backend_files() {
             cp -r "$MSSG_BACKEND_DIR/$pkg" "$PROJECT_DIR/"
         fi
     done
+}
+
+run_atomic_release_update() {
+    echo "Подготовка staged release до остановки текущего сервиса..."
+    REPO_DIR="$MSSG_SOURCE_ROOT" \
+        PROJECT_NAME="$PROJECT_NAME" \
+        PROJECT_DIR="$PROJECT_DIR" \
+        APP_PORT="$APP_PORT" \
+        WEB_PATH="$WEB_PATH" \
+        GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" \
+        PUBLIC_SCHEME="$PUBLIC_SCHEME" \
+        PUBLIC_DOMAIN="$PUBLIC_DOMAIN" \
+        ROLLBACK_ON_FAIL=1 \
+        bash "$MSSG_DEPLOY_DIR/server-deploy.sh"
 }
 
 ensure_nginx_snippet_include_in_cfg() {
@@ -1114,7 +1133,6 @@ COLLECTOR_MAX_INTERVAL_SEC=${COLLECTOR_MAX_INTERVAL_SEC:-"60"}
 COLLECTOR_MAX_PARALLEL=${COLLECTOR_MAX_PARALLEL:-"4"}
 REDIS_URL=${REDIS_URL:-""}
 AUDIT_QUEUE_BATCH_SIZE=${AUDIT_QUEUE_BATCH_SIZE:-"200"}
-ROLE_VIEWERS=${ROLE_VIEWERS:-""}
 ROLE_OPERATORS=${ROLE_OPERATORS:-""}
 MONITORING_ENABLED=${MONITORING_ENABLED:-"true"}
 GRAFANA_WEB_PATH=${GRAFANA_WEB_PATH:-"grafana"}
@@ -1132,7 +1150,6 @@ SECURITY_MTLS_CA_PATH=${SECURITY_MTLS_CA_PATH:-""}
 SECURITY_IP_ALLOWLIST=${SECURITY_IP_ALLOWLIST:-""}
 MFA_TOTP_ENABLED=${MFA_TOTP_ENABLED:-"false"}
 MFA_TOTP_USERS=${MFA_TOTP_USERS:-""}
-MFA_TOTP_WS_STRICT=${MFA_TOTP_WS_STRICT:-"true"}
 normalize_public_access_vars
 heal_public_domain_from_selected_cfg
 
@@ -1172,7 +1189,6 @@ echo "COLLECTOR_MAX_INTERVAL_SEC: $COLLECTOR_MAX_INTERVAL_SEC"
 echo "COLLECTOR_MAX_PARALLEL: $COLLECTOR_MAX_PARALLEL"
 echo "REDIS_URL: <redacted>"
 echo "AUDIT_QUEUE_BATCH_SIZE: $AUDIT_QUEUE_BATCH_SIZE"
-echo "ROLE_VIEWERS: ${ROLE_VIEWERS:-<none>}"
 echo "ROLE_OPERATORS: ${ROLE_OPERATORS:-<none>}"
 echo "MONITORING_ENABLED: $MONITORING_ENABLED"
 echo "ADGUARD_METRICS_ENABLED: $ADGUARD_METRICS_ENABLED"
@@ -1185,7 +1201,6 @@ echo "SECURITY_MTLS_ENABLED: $SECURITY_MTLS_ENABLED"
 echo "SECURITY_MTLS_CA_PATH: ${SECURITY_MTLS_CA_PATH:-<none>}"
 echo "SECURITY_IP_ALLOWLIST: ${SECURITY_IP_ALLOWLIST:-<none>}"
 echo "MFA_TOTP_ENABLED: $MFA_TOTP_ENABLED"
-echo "MFA_TOTP_WS_STRICT: $MFA_TOTP_WS_STRICT"
 echo "======================================================"
 echo ""
 harden_choice=$(ask_yes_no "Изменить настройки 2-го уровня защиты (mTLS/IP allowlist/TOTP)? (y/n, default: n): " "n")
@@ -1333,92 +1348,43 @@ if [[ "$update_choice" == "5" ]]; then
     exit 0
 fi
 
-# Бекап перед обновлением
-BACKUP_DIR="/var/backups/${PROJECT_NAME}_backup_$(date +%Y%m%d_%H%M%S)"
-echo ""
-echo "🔄 Создание резервной копии..."
-mkdir -p "$BACKUP_DIR"
-cp -r "$PROJECT_DIR"/*.py "$BACKUP_DIR/" 2>/dev/null
-if [ -f "$PROJECT_DIR/.encryption_key" ]; then
-    cp "$PROJECT_DIR/.encryption_key" "$BACKUP_DIR/.encryption_key"
-    chmod 600 "$BACKUP_DIR/.encryption_key" 2>/dev/null || true
+# Режимы 2 и 3 раньше меняли live runtime до завершения pip/Vite. Пока у
+# selective releases нет такого же staged/rollback контракта, не выполняем их.
+if [[ "$update_choice" =~ ^[23]$ ]]; then
+    echo "❌ Частичное обновление отключено: используйте атомарное полное обновление (режим 1)."
+    exit 2
 fi
-for pkg in core modules integrations routers services shared; do
-    if [ -d "$PROJECT_DIR/$pkg" ]; then
-        cp -r "$PROJECT_DIR/$pkg" "$BACKUP_DIR/"
+
+BACKUP_DIR=""
+if [[ "$update_choice" == "4" ]]; then
+    BACKUP_DIR="/var/backups/${PROJECT_NAME}_backup_$(date +%Y%m%d_%H%M%S)"
+    echo ""
+    echo "🔄 Создание резервной копии..."
+    mkdir -p "$BACKUP_DIR"
+    cp -r "$PROJECT_DIR"/*.py "$BACKUP_DIR/" 2>/dev/null
+    if [ -f "$PROJECT_DIR/.encryption_key" ]; then
+        cp "$PROJECT_DIR/.encryption_key" "$BACKUP_DIR/.encryption_key"
+        chmod 600 "$BACKUP_DIR/.encryption_key" 2>/dev/null || true
     fi
-done
-if [ -f "/etc/systemd/system/$PROJECT_NAME.service" ]; then
-    cp "/etc/systemd/system/$PROJECT_NAME.service" "$BACKUP_DIR/"
+    for pkg in core modules integrations routers services shared; do
+        if [ -d "$PROJECT_DIR/$pkg" ]; then
+            cp -r "$PROJECT_DIR/$pkg" "$BACKUP_DIR/"
+        fi
+    done
+    if [ -f "/etc/systemd/system/$PROJECT_NAME.service" ]; then
+        cp "/etc/systemd/system/$PROJECT_NAME.service" "$BACKUP_DIR/"
+    fi
+    echo "  ✓ Резервная копия: $BACKUP_DIR"
+    echo ""
 fi
-echo "  ✓ Резервная копия: $BACKUP_DIR"
 
-echo ""
-
-# Обновление
 case $update_choice in
     1) # Полное обновление
-        echo "[1/5] Остановка сервиса..."
-        systemctl stop "$PROJECT_NAME"
-        
-        echo "[2/5] Обновление всех модулей Backend..."
-        sync_backend_files
-        echo "  ✓ Скопировано $(ls -1 "$MSSG_BACKEND_DIR/"*.py | wc -l) модулей"
-        
-        echo "[3/5] Обновление Python-зависимостей..."
-        resource_guard_export_build_env
-        resource_guard_require_free_mb "${UPDATE_PYTHON_MIN_FREE_MB:-700}" "before Python dependency refresh" "/" || exit 1
-        if ! resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pip install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt" > /dev/null 2>&1; then
-            echo "  ❌ Не удалось обновить Python-зависимости. Обновление прервано."
-            exit 1
-        fi
-        if ! resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"; then
-            echo "  ❌ Не удалось скомпилировать Python-модули. Обновление прервано."
-            exit 1
-        fi
-        echo "  ✓ Зависимости обновлены"
-        
-        echo "[4/5] Пересборка Frontend..."
-        resource_guard_require_free_mb "${UPDATE_FRONTEND_MIN_FREE_MB:-900}" "before full frontend rebuild" "/" || exit 1
-        if ! resource_guard_run_heavy env PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$MSSG_DEPLOY_DIR/build-and-publish-frontend.sh"; then
-            echo "  ❌ Ошибка сборки/публикации фронтенда. Обновление прервано."
-            exit 1
-        fi
-        echo "  ✓ Frontend пересобран"
-        
-        echo "[5/5] Перезапуск сервиса..."
-        runtime_secrets_write
-        runtime_ensure_service_user
-        configure_monitoring_stack
-        if ! activate_manager_config resource_guard_restart_services_sequentially "$PROJECT_NAME"; then
-            echo "❌ Конфигурация manager не активирована; предыдущий unit/Nginx конфиг восстановлен."
-            exit 1
-        fi
-        sanitize_nginx_sites_for_stream_443 || exit 1
-        nginx -t && systemctl restart nginx
-        ;;
-        
-    2) # Только Backend
-        echo "[1/3] Остановка сервиса..."
-        systemctl stop "$PROJECT_NAME"
-        
-        echo "[2/3] Обновление модулей Backend..."
-        sync_backend_files
-        echo "  ✓ Скопировано $(ls -1 "$MSSG_BACKEND_DIR/"*.py | wc -l) модулей"
-        
-        echo "  → Обновление зависимостей..."
-        resource_guard_export_build_env
-        resource_guard_require_free_mb "${UPDATE_PYTHON_MIN_FREE_MB:-700}" "before backend dependency refresh" "/" || exit 1
-        if ! resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m pip install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt" > /dev/null 2>&1; then
-            echo "  ❌ Не удалось обновить Python-зависимости. Обновление прервано."
-            exit 1
-        fi
-        if ! resource_guard_run_heavy "$PROJECT_DIR/venv/bin/python" -m compileall -q "$PROJECT_DIR"; then
-            echo "  ❌ Не удалось скомпилировать Python-модули. Обновление прервано."
+        if ! run_atomic_release_update; then
+            echo "❌ Staged release не прошёл. Текущая установка не заменялась."
             exit 1
         fi
 
-        echo "[3/3] Перезапуск сервиса..."
         runtime_secrets_write
         runtime_ensure_service_user
         configure_monitoring_stack
@@ -1429,21 +1395,7 @@ case $update_choice in
         sanitize_nginx_sites_for_stream_443 || exit 1
         nginx -t && systemctl restart nginx
         ;;
-        
-    3) # Только Frontend
-        echo "[1/2] Пересборка Frontend..."
-        resource_guard_export_build_env
-        resource_guard_require_free_mb "${UPDATE_FRONTEND_MIN_FREE_MB:-900}" "before frontend-only rebuild" "/" || exit 1
-        if ! resource_guard_run_heavy env PROJECT_DIR="$PROJECT_DIR" WEB_PATH="$WEB_PATH" GRAFANA_WEB_PATH="$GRAFANA_WEB_PATH" PUBLIC_SCHEME="$PUBLIC_SCHEME" PUBLIC_DOMAIN="$PUBLIC_DOMAIN" SKIP_LIVE_VERIFY=1 bash "$MSSG_DEPLOY_DIR/build-and-publish-frontend.sh"; then
-            echo "  ❌ Ошибка сборки/публикации фронтенда. Обновление прервано."
-            exit 1
-        fi
-        echo "  ✓ Сборка завершена"
-        
-        echo "[2/2] Frontend обновлён."
-        echo "  ✓ Frontend обновлён (может потребоваться очистка кэша браузера Ctrl+Shift+R)"
-        ;;
-        
+
     4) # Nginx конфиг
         echo "[1/2] Обновление Nginx конфигурации..."
         cp "$SELECTED_CFG" "${SELECTED_CFG}.bak.$(date +%Y%m%d_%H%M%S)"
@@ -1556,8 +1508,10 @@ echo "  sudo bash $MSSG_OPS_DIR/hardening-profile.sh audit"
         fi
 
 echo ""
-echo "📦 Резервная копия сохранена: $BACKUP_DIR"
-echo ""
+if [ -n "$BACKUP_DIR" ]; then
+    echo "📦 Резервная копия сохранена: $BACKUP_DIR"
+    echo ""
+fi
 echo "Для удаления старых бэкапов (>7 дней):"
 echo "  find /var/backups/${PROJECT_NAME}_backup_* -type d -mtime +7 -exec rm -rf {} +"
 echo "Verification-артефакты backup/restore сохраняются отдельно. Сначала проверьте их:"

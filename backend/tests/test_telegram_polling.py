@@ -56,3 +56,28 @@ def test_polling_keeps_pending_updates_when_switching_from_webhook():
     assert api.offsets == [(None, 25), (18, 25)]
     assert handled == [17]
     assert sender.messages == [TelegramOutboundMessage(chat_id=101, text="received")]
+
+
+def test_polling_marks_each_durable_update_response_after_send():
+    api = _Api([{"update_id": 18, "message": {}}])
+    sender = _Sender()
+    delivered = []
+    message = TelegramOutboundMessage(
+        chat_id=101,
+        text="received",
+        update_response_update_id=18,
+        update_response_index=0,
+    )
+    worker = TelegramPollingWorker(
+        api=api,
+        handle_update=lambda _update: [message],
+        sender=sender,
+        timeout_sec=25,
+        mark_update_response_delivered=lambda item: delivered.append(
+            (item.update_response_update_id, item.update_response_index)
+        ),
+    )
+
+    worker.run_once()
+
+    assert delivered == [(18, 0)]

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import queue
 import sqlite3
+import threading
 import time
 from typing import Dict
 
@@ -127,6 +128,10 @@ class AuditQueueRuntime:
         self._memory_queue: queue.Queue[Dict] = queue.Queue(
             maxsize=max(1, int(memory_queue_max_size))
         )
+        self._memory_queue_max_size = max(1, int(memory_queue_max_size))
+        self._memory_lock = threading.RLock()
+        self._persist_lock = threading.Lock()
+        self._retry_payloads: list[Dict] = []
         self._accepting_events = True
         self.accepted_events = 0
         self.dropped_events = 0
@@ -161,62 +166,68 @@ class AuditQueueRuntime:
             pass
 
     def enqueue_event(self, payload: Dict) -> bool:
-        if not self._accepting_events:
-            self.dropped_events += 1
-            self._record_drop("closed")
-            return False
-        try:
+        with self._memory_lock:
+            if not self._accepting_events:
+                self.dropped_events += 1
+                self._record_drop("closed")
+                return False
+            if self.pending_count() >= self._memory_queue_max_size:
+                self.dropped_events += 1
+                self._record_drop("full")
+                self.logger.warning(
+                    "Audit memory queue is full; dropping event (dropped=%s)",
+                    self.dropped_events,
+                )
+                return False
             self._memory_queue.put_nowait(dict(payload))
             self.accepted_events += 1
             self._record_queue_depth()
             return True
-        except queue.Full:
-            self.dropped_events += 1
-            self._record_drop("full")
-            self.logger.warning(
-                "Audit memory queue is full; dropping event (dropped=%s)",
-                self.dropped_events,
-            )
-            return False
 
     def pending_count(self) -> int:
-        return self._memory_queue.qsize()
+        with self._memory_lock:
+            return self._memory_queue.qsize() + len(self._retry_payloads)
 
     def close_admission(self) -> None:
         self._accepting_events = False
 
     def persist_memory_batch(self, limit: int) -> int:
-        payloads = []
-        for _ in range(max(1, int(limit))):
-            try:
-                payloads.append(self._memory_queue.get_nowait())
-            except queue.Empty:
-                break
-        if not payloads:
-            return 0
-        self._record_queue_depth()
+        with self._persist_lock:
+            with self._memory_lock:
+                if not self._retry_payloads:
+                    for _ in range(max(1, int(limit))):
+                        try:
+                            self._retry_payloads.append(
+                                self._memory_queue.get_nowait()
+                            )
+                        except queue.Empty:
+                            break
+                payloads = list(self._retry_payloads)
+            if not payloads:
+                return 0
 
-        try:
-            with connect(self.db_path) as conn:
-                conn.executemany(
-                    "INSERT INTO audit_events (payload) VALUES (?)",
-                    [
-                        (json.dumps(payload, ensure_ascii=False),)
-                        for payload in payloads
-                    ],
+            try:
+                with connect(self.db_path) as conn:
+                    conn.executemany(
+                        "INSERT INTO audit_events (payload) VALUES (?)",
+                        [
+                            (json.dumps(payload, ensure_ascii=False),)
+                            for payload in payloads
+                        ],
+                    )
+                    conn.commit()
+                with self._memory_lock:
+                    self._retry_payloads.clear()
+                self._record_queue_depth()
+                self._observe_sqlite_batch_rows("audit_memory_persist", len(payloads))
+                return len(payloads)
+            except Exception as exc:
+                self.logger.error(
+                    "Failed to persist %s audit events; retaining the bounded batch for retry: %s",
+                    len(payloads),
+                    exc,
                 )
-                conn.commit()
-            self._observe_sqlite_batch_rows("audit_memory_persist", len(payloads))
-            return len(payloads)
-        except Exception as exc:
-            # The queue is deliberately bounded: requeuing a failed batch would
-            # allow an unavailable SQLite file to grow process memory forever.
-            self.dropped_events += len(payloads)
-            self._record_drop("persist_error", len(payloads))
-            self.logger.error(
-                "Failed to persist %s audit events: %s", len(payloads), exc
-            )
-            return 0
+                return 0
 
     def drain_batch(self, limit: int) -> int:
         with connect(self.db_path) as conn:
@@ -253,17 +264,28 @@ class AuditQueueRuntime:
         drained = 0
         for _ in range(max(1, int(max_batches))):
             persisted_now = self.persist_memory_batch(self.batch_size)
-            drained_now = self.drain_batch(self.batch_size)
+            try:
+                drained_now = self.drain_batch(self.batch_size)
+            except Exception as exc:
+                self.logger.error("Audit shutdown drain failed: %s", exc)
+                drained_now = 0
             persisted += persisted_now
             drained += drained_now
             if persisted_now == 0 and drained_now == 0:
                 break
-        return {
+        result = {
             "persisted": persisted,
             "drained": drained,
             "pending": self.pending_count(),
             "dropped": self.dropped_events,
         }
+        if result["pending"]:
+            self.logger.error(
+                "Audit shutdown flush left %s unpersisted events after bounded retry; "
+                "SQLite recovery is required",
+                result["pending"],
+            )
+        return result
 
     async def worker_loop(self, worker_tracker) -> None:
         while worker_tracker.accepting:

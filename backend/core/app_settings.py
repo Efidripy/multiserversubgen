@@ -361,13 +361,11 @@ class AppSettings:
     audit_memory_queue_max_size: int
     audit_idle_sleep_sec: float
     audit_active_sleep_sec: float
-    role_viewers: Set[str]
     role_operators: Set[str]
     role_admins: Set[str]
     role_owners: Set[str]
     mfa_totp_enabled: bool
     mfa_totp_users: Dict[str, str]
-    mfa_totp_ws_strict: bool
     ws_auth_secret: str
     subscription_signing_secret: str
     adguard_collect_interval_sec: int
@@ -430,7 +428,6 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         audit_memory_queue_max_size=int(os.getenv("AUDIT_MEMORY_QUEUE_MAX", "2000")),
         audit_idle_sleep_sec=float(os.getenv("AUDIT_IDLE_SLEEP_SEC", "2.0")),
         audit_active_sleep_sec=float(os.getenv("AUDIT_ACTIVE_SLEEP_SEC", "0.2")),
-        role_viewers=_env_csv_set("ROLE_VIEWERS"),
         role_operators=_env_csv_set("ROLE_OPERATORS"),
         role_admins=_env_csv_set("ROLE_ADMINS") or {"admin"},
         # Owner deliberately does not inherit every administrator.  Bulk
@@ -438,7 +435,6 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         role_owners=_env_csv_set("ROLE_OWNERS") or {"admin"},
         mfa_totp_enabled=_env_bool("MFA_TOTP_ENABLED", "false"),
         mfa_totp_users=parse_mfa_users(os.getenv("MFA_TOTP_USERS", "").strip()),
-        mfa_totp_ws_strict=_env_bool("MFA_TOTP_WS_STRICT", "true"),
         ws_auth_secret=_persistent_secret("WS_AUTH_SECRET"),
         subscription_signing_secret=_persistent_secret("SUBSCRIPTION_SIGNING_SECRET"),
         adguard_collect_interval_sec=int(os.getenv("ADGUARD_COLLECT_INTERVAL_SEC", "60")),

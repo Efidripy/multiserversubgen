@@ -108,13 +108,11 @@ AUDIT_QUEUE_BATCH_SIZE = SETTINGS.audit_queue_batch_size
 AUDIT_MEMORY_QUEUE_MAX = SETTINGS.audit_memory_queue_max_size
 AUDIT_IDLE_SLEEP_SEC = SETTINGS.audit_idle_sleep_sec
 AUDIT_ACTIVE_SLEEP_SEC = SETTINGS.audit_active_sleep_sec
-ROLE_VIEWERS = SETTINGS.role_viewers
 ROLE_OPERATORS = SETTINGS.role_operators
 ROLE_ADMINS = SETTINGS.role_admins
 ROLE_OWNERS = SETTINGS.role_owners
 MFA_TOTP_ENABLED = SETTINGS.mfa_totp_enabled
 MFA_TOTP_USERS = SETTINGS.mfa_totp_users
-MFA_TOTP_WS_STRICT = SETTINGS.mfa_totp_ws_strict
 WS_AUTH_SECRET = SETTINGS.ws_auth_secret
 SUBSCRIPTION_SIGNING_SECRET = SETTINGS.subscription_signing_secret
 ADGUARD_COLLECT_INTERVAL_SEC = SETTINGS.adguard_collect_interval_sec
@@ -132,7 +130,6 @@ if REQUESTS_VERIFY is False:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 auth_service = AuthService(
-    role_viewers=ROLE_VIEWERS,
     role_operators=ROLE_OPERATORS,
     role_admins=ROLE_ADMINS,
     ws_auth_secret=WS_AUTH_SECRET,
@@ -378,7 +375,6 @@ adguard_collector_loop = adguard_runtime.collector_loop
 
 
 def _sync_auth_service_roles() -> None:
-    auth_service.role_viewers = ROLE_VIEWERS
     auth_service.role_operators = ROLE_OPERATORS
     auth_service.role_admins = ROLE_ADMINS
 
@@ -510,7 +506,6 @@ register_app_routers(
     grafana_web_path=GRAFANA_WEB_PATH,
     server_monitor=server_monitor,
     check_basic_auth_header=check_basic_auth_header,
-    mfa_totp_ws_strict=MFA_TOTP_WS_STRICT,
     pam_authenticate=p.authenticate,
     handle_websocket_message=handle_websocket_message,
     telegram_settings=SETTINGS.telegram,
@@ -690,6 +685,8 @@ async def _telegram_polling_worker_loop(worker_tracker) -> None:
         timeout_sec=SETTINGS.telegram.polling_timeout_sec,
         fallback_subscription_message=service.fallback_subscription_message,
         record_outbound_delivery=service.record_outbound_delivery,
+        mark_update_response_delivered=service.mark_update_response_delivered,
+        retry_update_response=service.retry_update_response,
     )
     while worker_tracker.accepting:
         try:

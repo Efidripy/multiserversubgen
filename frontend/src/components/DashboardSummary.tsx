@@ -104,6 +104,7 @@ export function DashboardSummary({
   const activeNodes = dashboardData?.fleet ?? [];
   const activeLoading = dashboardData?.loading ?? true;
   const activeLastUpdated = dashboardData?.lastUpdated ?? null;
+  const activeStale = dashboardData?.stale ?? false;
   const activeTrafficPeriod = dashboardData?.period ?? 'all_time';
   const isInitialLoading = activeLoading && activeLastUpdated === null;
   const totalNodes = activeSummary.nodes_total || activeNodes.length;
@@ -143,6 +144,9 @@ export function DashboardSummary({
   });
   const topClients = activeSummary.top_clients.slice(0, 5);
   const maxTraffic = Math.max(...topClients.map((client) => client.total), 1);
+  const hasIncompleteTelemetry = activeNodes.some(
+    (node) => node.available === true && node.inbounds_available === false,
+  );
 
   return (
     <section>
@@ -200,8 +204,10 @@ export function DashboardSummary({
                 dashboardData?.setPeriod(next);
               }}
             />
-            <span className="font-mono text-[10px] font-light tracking-wide text-gray-500">
-              {activeLastUpdated ? activeLastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '12:00 AM'}
+            <span className={`font-mono text-[10px] font-light tracking-wide ${activeStale ? 'text-yellow-300' : 'text-gray-500'}`}>
+              {activeLastUpdated
+                ? `${activeStale ? `${t('dashboardSummary.stale')} · ` : ''}${activeLastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+                : `${activeStale ? `${t('dashboardSummary.stale')} · ` : ''}${t('dashboardSummary.updatedUnknown')}`}
             </span>
             <button
               className="flex h-8 w-8 items-center justify-center rounded border border-cyan-500/20 bg-[#0a0e1a] transition-colors hover:border-cyan-400/30 disabled:opacity-50"
@@ -254,6 +260,11 @@ export function DashboardSummary({
         {activeSummary.traffic_note && (
           <div className="mb-4 rounded-md border border-amber-400/20 bg-amber-950/20 px-3 py-2 font-mono text-[11px] font-light text-amber-100/80">
             {t('dashboardSummary.collectingTrafficHistory')}
+          </div>
+        )}
+        {hasIncompleteTelemetry && (
+          <div className="mb-4 rounded-md border border-amber-400/20 bg-amber-950/20 px-3 py-2 font-mono text-[11px] font-light text-amber-100/80">
+            {t('dashboardSummary.incompleteTelemetry')}
           </div>
         )}
 
