@@ -364,6 +364,34 @@ def test_xui_session_pool_reuses_session_until_forced_reauth(monkeypatch):
     xui_session.invalidate_session_cache(node_key)
 
 
+def test_xui_login_locks_are_bounded_and_preserve_locked_entries(monkeypatch):
+    import xui_session
+
+    original = xui_session._SESSION_LOGIN_LOCKS.copy()
+    try:
+        monkeypatch.setattr(xui_session, "_SESSION_LOGIN_LOCKS_MAX", 2)
+        xui_session._SESSION_LOGIN_LOCKS.clear()
+        xui_session._node_lock("first")
+        xui_session._node_lock("second")
+        assert len(xui_session._SESSION_LOGIN_LOCKS) == 2
+
+        third = xui_session._node_lock("third")
+        assert len(xui_session._SESSION_LOGIN_LOCKS) == 2
+
+        third.acquire()
+        fourth = xui_session._node_lock("fourth")
+        fourth.acquire()
+        try:
+            assert len(xui_session._SESSION_LOGIN_LOCKS) == 2
+            assert xui_session._node_lock("fifth") is xui_session._SESSION_LOGIN_OVERFLOW_LOCK
+        finally:
+            fourth.release()
+            third.release()
+    finally:
+        xui_session._SESSION_LOGIN_LOCKS.clear()
+        xui_session._SESSION_LOGIN_LOCKS.update(original)
+
+
 def test_snapshot_collector_opens_timeout_circuit():
     from services.collector import SnapshotCollector
 
