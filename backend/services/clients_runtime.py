@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
 import time
 from threading import Lock
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from shared.observability import record_cache
+
+
+logger = logging.getLogger(__name__)
 
 
 class ClientsRuntime:
@@ -16,15 +20,24 @@ class ClientsRuntime:
         clients_cache_ttl: int,
         clients_cache_stale_ttl: int,
         start_cache_refresh,
+        filter_reachable_nodes: Optional[Callable[[List[Dict]], List[Dict]]] = None,
     ) -> None:
         self.client_mgr = client_mgr
         self.clients_cache = clients_cache
         self.clients_cache_ttl = clients_cache_ttl
         self.clients_cache_stale_ttl = clients_cache_stale_ttl
         self.start_cache_refresh = start_cache_refresh
+        self.filter_reachable_nodes = filter_reachable_nodes or (lambda nodes: nodes)
         self._cold_load_lock = Lock()
         self._cache_state_lock = Lock()
         self._cache_generation = 0
+
+    def _nodes_for_loader(self, nodes: List[Dict]) -> List[Dict]:
+        filtered = self.filter_reachable_nodes(nodes)
+        skipped = len(nodes) - len(filtered)
+        if skipped:
+            logger.debug("Filtered %d unavailable node(s) from clients projection", skipped)
+        return filtered
 
     def _snapshot_cache(self) -> tuple[float, List[Dict], int, bool]:
         with self._cache_state_lock:
@@ -72,7 +85,9 @@ class ClientsRuntime:
             record_cache("memory_stale")
 
             def _refresh() -> None:
-                fresh = self.client_mgr.get_all_clients(nodes, email_filter=None)
+                fresh = self.client_mgr.get_all_clients(
+                    self._nodes_for_loader(nodes), email_filter=None
+                )
                 self._store_cache(fresh, generation)
 
             self.start_cache_refresh("clients", _refresh)
@@ -86,7 +101,9 @@ class ClientsRuntime:
             record_cache("memory_stale")
 
             def _refresh() -> None:
-                fresh = self.client_mgr.get_all_clients(nodes, email_filter=None)
+                fresh = self.client_mgr.get_all_clients(
+                    self._nodes_for_loader(nodes), email_filter=None
+                )
                 self._store_cache(fresh, generation)
 
             self.start_cache_refresh("clients", _refresh)
@@ -105,6 +122,8 @@ class ClientsRuntime:
                 record_cache("memory_fresh")
                 return _apply_filter(full_list)
             record_cache("memory_miss")
-            fresh = self.client_mgr.get_all_clients(nodes, email_filter=None)
+            fresh = self.client_mgr.get_all_clients(
+                self._nodes_for_loader(nodes), email_filter=None
+            )
             self._store_cache(fresh, generation)
             return _apply_filter(fresh)
