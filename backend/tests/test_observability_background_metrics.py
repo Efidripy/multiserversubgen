@@ -361,7 +361,8 @@ def test_audit_metrics_track_queue_transitions_drops_and_semantic_batches(
 
     monkeypatch.setattr("services.runtime_support.connect", fail_connect)
     assert failing_db_runtime.persist_memory_batch(1) == 0
-    assert ({"reason": "persist_error"}, 1) in drops.increments
+    assert failing_db_runtime.pending_count() == 1
+    assert ({"reason": "persist_error"}, 1) not in drops.increments
 
 
 def test_metric_failures_do_not_change_audit_outcomes(tmp_path):
