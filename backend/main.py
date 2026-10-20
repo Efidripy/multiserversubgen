@@ -194,11 +194,19 @@ def _on_snapshots(snapshots: list[dict]) -> None:
         _persist_node_version(snapshot)
     if inbounds_runtime is not None:
         try:
-            # The collector already owns these full DTOs. Seed only from an
-            # exact all-enabled-node completed cycle; partial data must keep
+            # The collector already owns these full DTOs. Exclude nodes that
+            # it persistently considers unavailable; partial data must keep
             # the normal route fallback rather than masquerade as fresh.
+            enabled_nodes = node_service.list_nodes()
+            reachable_nodes = snapshot_collector.filter_reachable_nodes(enabled_nodes)
+            reachable_ids = {str(node.get("id")) for node in reachable_nodes}
             inbounds_runtime.seed_full_cache_from_completed_collector_cycle(
-                snapshots, node_service.list_nodes()
+                snapshots,
+                reachable_nodes,
+                excluded_node_ids={
+                    str(node.get("id")) for node in enabled_nodes
+                    if str(node.get("id")) not in reachable_ids
+                },
             )
         except Exception as exc:
             logger.warning("Inbound projection seed skipped: %s", exc)
