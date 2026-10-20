@@ -2,6 +2,7 @@ from typing import Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
+from core.refresh import effective_refresh
 
 
 def build_inbounds_router(
@@ -33,6 +34,7 @@ def build_inbounds_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
 
         nodes = await run_in_threadpool(node_service.list_nodes)
         inbounds = await run_in_threadpool(get_cached_inbounds, nodes, **({"force": True} if refresh else {}))
@@ -53,6 +55,7 @@ def build_inbounds_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
         nodes = await run_in_threadpool(node_service.list_nodes)
         inbounds = await run_in_threadpool(get_cached_inbounds, nodes, **({"force": True} if refresh else {}))
         by_protocol: dict = {}
@@ -78,6 +81,7 @@ def build_inbounds_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
         nodes = await run_in_threadpool(node_service.list_nodes)
         inbounds = await run_in_threadpool(get_cached_slim_inbounds, nodes, **({"force": True} if refresh else {}))
         return ORJSONResponse(
@@ -91,6 +95,7 @@ def build_inbounds_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
         nodes = await run_in_threadpool(node_service.list_nodes)
         options = await run_in_threadpool(get_cached_inbound_options, nodes, **({"force": True} if refresh else {}))
         return ORJSONResponse(

@@ -4,6 +4,7 @@ from typing import Callable, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
+from core.refresh import effective_refresh
 
 from services.client_notes import enrich_clients_with_notes, upsert_client_note
 from services.client_telegram import annotate_clients_with_telegram_link
@@ -204,6 +205,7 @@ def build_clients_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
         import time as _time
         now_ms = int(_time.time() * 1000)
         nodes = await _run(node_service.list_nodes)
@@ -217,6 +219,7 @@ def build_clients_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
         nodes = await _run(node_service.list_nodes)
         clients = await _with_notes(await _run(get_cached_clients, nodes, email_filter=None, **({"force": True} if refresh else {})), nodes)
         depleted = [
@@ -314,6 +317,7 @@ def build_clients_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
 
         nodes = await _run(node_service.list_nodes)
         clients = await _with_notes(await _run(get_cached_clients, nodes, email_filter=email, **({"force": True} if refresh else {})), nodes)

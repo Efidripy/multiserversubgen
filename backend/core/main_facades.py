@@ -109,14 +109,14 @@ def build_cache_facade(
             return live_stats_runtime.get_cached_traffic_stats(nodes, group_by, force=True)
         return live_stats_runtime.get_cached_traffic_stats(nodes, group_by)
 
-    def get_cached_traffic_stats_projection(group_by: str) -> Dict:
-        return live_stats_runtime.get_cached_traffic_stats_projection(group_by)
+    def get_cached_traffic_stats_projection(group_by: str, force: bool = False) -> Dict:
+        return live_stats_runtime.get_cached_traffic_stats_projection(group_by, force=force)
 
     def get_cached_traffic_stats_projection_by_period(
-        group_by: str, period: str
+        group_by: str, period: str, force: bool = False
     ) -> Dict:
         return live_stats_runtime.get_cached_traffic_stats_projection_by_period(
-            group_by, period
+            group_by, period, force=force
         )
 
     def get_cached_clients(

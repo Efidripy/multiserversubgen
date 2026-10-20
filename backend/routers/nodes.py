@@ -18,6 +18,7 @@ from xui_session import (
     make_node_key_for_node,
 )
 from shared.security import redact_url, validate_outbound_url
+from core.refresh import effective_refresh
 
 
 def _serialize_tags(value) -> str:
@@ -68,6 +69,7 @@ def build_nodes_router(
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
+        refresh = effective_refresh(request, refresh)
 
         nodes = await run_in_threadpool(node_service.list_nodes)
         result = []

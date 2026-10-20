@@ -242,7 +242,7 @@ class LiveStatsRuntime:
 
         return timestamp, projections
 
-    def _snapshot_projection(self, group_by: str) -> Optional[Dict]:
+    def _snapshot_projection(self, group_by: str, force: bool = False) -> Optional[Dict]:
         """Return a memoized collector projection, or ``None`` while warming."""
         if group_by not in {"client", "inbound", "node"} or not self.get_latest_snapshot:
             return None
@@ -256,7 +256,7 @@ class LiveStatsRuntime:
         system_client_emails = self._snapshot_system_client_emails(snapshot)
 
         with self._snapshot_projection_lock:
-            if timestamp == self._snapshot_projection_timestamp:
+            if not force and timestamp == self._snapshot_projection_timestamp:
                 projection = self._snapshot_projections.get(group_by, {})
                 return {
                     "stats": projection.get("stats", {}),
@@ -271,7 +271,7 @@ class LiveStatsRuntime:
         with self._snapshot_projection_lock:
             # A concurrently completed request may already have indexed the
             # same collector revision; preserve that reusable projection.
-            if self._snapshot_projection_timestamp is None or timestamp > self._snapshot_projection_timestamp:
+            if force or self._snapshot_projection_timestamp is None or timestamp > self._snapshot_projection_timestamp:
                 self._snapshot_projection_timestamp = timestamp
                 self._snapshot_projections = projections
             projection = self._snapshot_projections.get(group_by, {})
@@ -536,7 +536,7 @@ class LiveStatsRuntime:
             self._store_traffic_cache(group_by, data, generation)
             return data
 
-    def get_cached_traffic_stats_projection(self, group_by: str) -> Dict:
+    def get_cached_traffic_stats_projection(self, group_by: str, force: bool = False) -> Dict:
         """Return an existing traffic projection without triggering a fleet fetch.
 
         Dashboard summary must stay on its lightweight snapshot path.  The
@@ -544,7 +544,15 @@ class LiveStatsRuntime:
         read-model is for surfaces that may show the last known client traffic
         but must never make a remote XUI request just to render.
         """
-        snapshot_projection = self._snapshot_projection(group_by)
+        snapshot_projection = self._snapshot_projection(group_by, force=force)
+        if force and snapshot_projection is not None:
+            generation = self._cache_generation_snapshot()
+            self._store_traffic_cache(group_by, snapshot_projection, generation)
+            cached = self.traffic_stats_cache.get(group_by)
+            if cached and isinstance(cached[1], dict):
+                return cached[1]
+        if force:
+            snapshot_projection = None
         if snapshot_projection is not None:
             return snapshot_projection
 
@@ -603,7 +611,9 @@ class LiveStatsRuntime:
 
         return {"stats": {}, "group_by": group_by, "cache_source": "empty"}
 
-    def get_cached_traffic_stats_projection_by_period(self, group_by: str, period: str = "all_time") -> Dict:
+    def get_cached_traffic_stats_projection_by_period(
+        self, group_by: str, period: str = "all_time", force: bool = False
+    ) -> Dict:
         """Return a period projection without refreshing or cold-loading fleet data.
 
         The Dashboard refreshes frequently, so its read model must use only the
@@ -621,7 +631,7 @@ class LiveStatsRuntime:
         if period not in period_seconds:
             period = "all_time"
 
-        projection = self.get_cached_traffic_stats_projection(group_by)
+        projection = self.get_cached_traffic_stats_projection(group_by, force=force)
         current_stats = projection.get("stats") if isinstance(projection, dict) else {}
         current_stats = current_stats if isinstance(current_stats, dict) else {}
         payload = {

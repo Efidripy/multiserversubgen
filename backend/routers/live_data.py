@@ -5,6 +5,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
+from core.refresh import effective_refresh
 
 
 def build_live_data_router(
@@ -229,11 +230,14 @@ def build_live_data_router(
 
     async def _dashboard_payload(period: str, refresh: bool = False) -> tuple[Dict, list, Dict[str, Dict], Dict[str, Dict]]:
         nodes = await run_in_threadpool(list_nodes)
-        if refresh:
-            await run_in_threadpool(get_cached_traffic_stats, nodes, "client", force=True)
         by_id, by_name, snapshot = _snapshot_by_node(nodes)
         traffic_projection = (
-            await run_in_threadpool(get_cached_traffic_stats_projection_by_period, "client", period)
+            await run_in_threadpool(
+                get_cached_traffic_stats_projection_by_period,
+                "client",
+                period,
+                **({"force": True} if refresh else {}),
+            )
             if get_cached_traffic_stats_projection_by_period
             else await run_in_threadpool(get_cached_traffic_stats_projection, "client")
             if get_cached_traffic_stats_projection
@@ -343,6 +347,7 @@ def build_live_data_router(
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
         if period not in ["day", "week", "month", "all_time"]:
             raise HTTPException(status_code=400, detail="period must be day, week, month, or all_time")
         summary, nodes, by_id, by_name = await _dashboard_payload(period, refresh=refresh)
@@ -444,6 +449,7 @@ def build_live_data_router(
         user = getattr(request.state, "auth_user", None)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
         if group_by not in ["client", "inbound", "node"]:
             raise HTTPException(status_code=400, detail="group_by must be client, inbound, or node")
         if period not in ["day", "week", "month", "year", "all_time"]:
@@ -452,13 +458,15 @@ def build_live_data_router(
         if not projection_period_handler:
             raise HTTPException(status_code=503, detail="Traffic statistics projection is warming up")
 
-        if refresh:
-            nodes = await run_in_threadpool(list_nodes)
-            await run_in_threadpool(get_cached_traffic_stats, nodes, group_by, force=True)
         # Statistics is a read-model: it must never enumerate nodes or invoke
         # the legacy cache helper, because either can trigger a remote 3x-ui
         # fan-out on each Day/Week/Month click.
-        payload = await run_in_threadpool(projection_period_handler, group_by, period)
+        payload = await run_in_threadpool(
+            projection_period_handler,
+            group_by,
+            period,
+            **({"force": True} if refresh else {}),
+        )
         return ORJSONResponse(content=_public_traffic_payload(payload, limit, group_by=group_by), headers={"Cache-Control": "no-store"} if refresh else None)
 
     @router.post("/api/v1/traffic/client-totals")

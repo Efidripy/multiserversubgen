@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 import time
+from threading import Lock
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -17,6 +18,7 @@ from services.clients_runtime import ClientsRuntime
 from services.collector import SnapshotCollector
 from services.db_bootstrap import init_db
 from services.inbounds_runtime import InboundsRuntime
+from services.live_stats_runtime import LiveStatsRuntime
 
 
 def _collector(**kwargs):
@@ -94,6 +96,7 @@ def _nodes_router_client(snapshot_collector):
     @app.middleware("http")
     async def _auth_state(request, call_next):
         request.state.auth_user = "admin"
+        request.state.auth_role = "admin"
         return await call_next(request)
 
     app.include_router(
@@ -192,8 +195,9 @@ def test_inbounds_force_bypasses_fresh_cache_and_honors_snapshot_age():
     assert runtime.get_cached_inbounds(nodes, force=True) == [{"id": "snapshot"}]
 
 
-def _refresh_routes_client(tmp_path):
+def _refresh_routes_client(tmp_path, *, role="admin", client_calls=None):
     nodes = [{"id": 1, "name": "edge-a"}]
+    tmp_path.mkdir(parents=True, exist_ok=True)
     init_db(str(tmp_path / "admin.db"))
 
     class NodeService:
@@ -211,6 +215,7 @@ def _refresh_routes_client(tmp_path):
     @app.middleware("http")
     async def _auth_state(request, call_next):
         request.state.auth_user = "admin"
+        request.state.auth_role = role
         return await call_next(request)
 
     app.include_router(
@@ -218,7 +223,9 @@ def _refresh_routes_client(tmp_path):
             check_auth=lambda _request: "admin",
             client_mgr=SimpleNamespace(),
             db_path=str(tmp_path / "admin.db"),
-            get_cached_clients=lambda _nodes, email_filter=None, **_kwargs: [],
+            get_cached_clients=lambda _nodes, email_filter=None, **kwargs: (
+                client_calls.append(kwargs) if client_calls is not None else None
+            ) or [],
             node_service=NodeService(),
             get_node_or_404=lambda node_id: nodes[0],
             invalidate_live_stats_cache=lambda: None,
@@ -244,8 +251,8 @@ def _refresh_routes_client(tmp_path):
         build_live_data_router(
             get_node_or_404=lambda node_id: nodes[0],
             get_cached_traffic_stats=lambda _nodes, _group_by, **_kwargs: {"stats": {}},
-            get_cached_traffic_stats_projection=lambda _group_by: {"stats": {}},
-            get_cached_traffic_stats_projection_by_period=lambda _group_by, _period: {"stats": {}},
+            get_cached_traffic_stats_projection=lambda _group_by, **_kwargs: {"stats": {}},
+            get_cached_traffic_stats_projection_by_period=lambda _group_by, _period, **_kwargs: {"stats": {}},
             list_nodes=NodeService().list_nodes,
             xui_monitor=SimpleNamespace(),
             get_latest_snapshot=lambda: {"nodes": []},
@@ -276,3 +283,83 @@ def test_refresh_get_routes_return_no_store_and_nodes_keep_default_cache_header(
     nodes_client = _nodes_router_client(SimpleNamespace())
     assert nodes_client.get("/api/v1/nodes?refresh=1").headers["cache-control"] == "no-store"
     assert nodes_client.get("/api/v1/nodes").headers["cache-control"] == "private, max-age=300"
+
+
+def test_refresh_is_ignored_for_viewer_but_forced_for_operator(tmp_path):
+    viewer_calls = []
+    viewer = _refresh_routes_client(tmp_path / "viewer", role="viewer", client_calls=viewer_calls)
+    assert viewer.get("/api/v1/clients?refresh=1").status_code == 200
+    assert viewer_calls == [{}]
+
+    operator_calls = []
+    operator = _refresh_routes_client(tmp_path / "operator", role="operator", client_calls=operator_calls)
+    assert operator.get("/api/v1/clients?refresh=1").status_code == 200
+    assert operator_calls == [{"force": True}]
+
+
+def test_traffic_refresh_rebuilds_from_collector_snapshot_without_live_loader(tmp_path):
+    snapshot = {
+        "timestamp": time.time(),
+        "nodes": [{
+            "node_id": 1,
+            "name": "edge-a",
+            "inbounds_available": True,
+            "inbounds": [{
+                "id": 10,
+                "remark": "main",
+                "up": 2,
+                "down": 3,
+                "clientStats": [{"email": "new@example.test", "up": 2, "down": 3}],
+            }],
+        }],
+    }
+    calls = []
+
+    class ClientManager:
+        def get_traffic_stats(self, *_args, **_kwargs):
+            calls.append(True)
+            raise AssertionError("refresh projection must not perform a live fleet scan")
+
+    redis_store = {}
+    runtime = LiveStatsRuntime(
+        client_mgr=ClientManager(),
+        db_path=str(tmp_path / "stats.db"),
+        traffic_stats_cache={"client": (time.time(), {"stats": {"old@example.test": {"up": 1}}})},
+        cache_refresh_state={"traffic": set()},
+        state_lock=Lock(),
+        redis_get_json=lambda key: redis_store.get(key),
+        redis_set_json=lambda key, value, _ttl: redis_store.__setitem__(key, value),
+        redis_delete=lambda *_keys: None,
+        traffic_stats_cache_ttl=30,
+        traffic_stats_stale_ttl=120,
+        logger=SimpleNamespace(warning=lambda *_args, **_kwargs: None),
+        get_latest_snapshot=lambda: snapshot,
+    )
+    runtime._snapshot_projection_timestamp = snapshot["timestamp"]
+    runtime._snapshot_projections = {"client": {"stats": {"old@example.test": {"up": 1}}}}
+
+    app = FastAPI()
+    @app.middleware("http")
+    async def _auth_state(request, call_next):
+        request.state.auth_user = "operator"
+        request.state.auth_role = "operator"
+        return await call_next(request)
+
+    app.include_router(build_live_data_router(
+        get_node_or_404=lambda node_id: {"id": node_id, "name": "edge-a"},
+        get_cached_traffic_stats=lambda *_args, **_kwargs: {"stats": {}},
+        get_cached_traffic_stats_projection=runtime.get_cached_traffic_stats_projection,
+        get_cached_traffic_stats_projection_by_period=runtime.get_cached_traffic_stats_projection_by_period,
+        list_nodes=lambda: [],
+        xui_monitor=SimpleNamespace(),
+        get_latest_snapshot=lambda: snapshot,
+        get_latest_client_presence=lambda: {},
+    ))
+    client = TestClient(app)
+
+    period = client.get("/api/v1/traffic/stats-by-period?refresh=1")
+    overview = client.get("/api/v1/dashboard/overview?refresh=1")
+    assert period.status_code == overview.status_code == 200
+    assert "new@example.test" in period.json()["stats"]
+    assert "new@example.test" in overview.json()["summary"]["top_clients"][0]["email"]
+    assert calls == []
