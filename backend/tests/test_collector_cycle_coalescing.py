@@ -98,6 +98,22 @@ def test_default_cadence_keeps_active_freshness_and_bounded_idle_polling(monkeyp
     assert collector._node_state[key]["interval"] == 300.0
 
 
+def test_snapshot_publication_replaces_node_mapping_without_mutating_reader_view(monkeypatch):
+    collector = _collector()
+    collector._latest = {"timestamp": 1.0, "nodes": {"id:1": _snapshot(1)}}
+    reader_nodes = collector._latest["nodes"]
+
+    async def fake_run_blocking(_label, _function, node):
+        return _snapshot(node["id"])
+
+    monkeypatch.setattr(collector, "_run_blocking", fake_run_blocking)
+    asyncio.run(collector._poll_node({"id": 2, "name": "beta"}, "id:2"))
+
+    assert reader_nodes == {"id:1": reader_nodes["id:1"]}
+    assert collector._latest["nodes"] is not reader_nodes
+    assert set(collector._latest["nodes"]) == {"id:1", "id:2"}
+
+
 def test_activity_transitions_are_deterministic_and_do_not_infer_mode_from_due_work(
     monkeypatch,
 ):
