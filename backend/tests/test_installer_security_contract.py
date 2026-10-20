@@ -68,7 +68,10 @@ def test_manager_config_activation_is_staged_transactional_and_used_by_all_activ
         assert "config_activation_activate \"$stage_unit\"" in script
 
     assert install.count("activate_manager_config ") >= 2
-    assert update.count("activate_manager_config ") >= 3
+    # Full updates delegate the runtime swap to server-deploy.sh; only the
+    # remaining config paths activate a manager config in this script.
+    assert update.count("activate_manager_config ") >= 2
+    assert "run_atomic_release_update" in update
 
 
 def test_runtime_secret_writer_is_root_only_and_atomic():
@@ -94,17 +97,19 @@ def test_runtime_secret_writer_is_root_only_and_atomic():
 
 
 def test_privileged_runtime_install_uses_only_hashed_production_lock():
-    for relative_path in (
-        "scripts/installer/install.sh",
-        "scripts/installer/update.sh",
-    ):
+    for relative_path in ("scripts/installer/install.sh",):
         script = _read(relative_path)
 
         assert 'source "${INSTALLER_DIR}/lib/source_layout.sh"' in script
         assert 'mssg_resolve_source_layout "$INSTALLER_DIR"' in script
         assert 'install --require-hashes -r "$MSSG_BACKEND_DIR/requirements.txt"' in script
-        assert "backend/requirements-dev.txt" not in script
-        assert "install --upgrade pip" not in script
+
+    update = _read("scripts/installer/update.sh")
+    deploy = _read("scripts/deploy/server-deploy.sh")
+    assert 'bash "$MSSG_DEPLOY_DIR/server-deploy.sh"' in update
+    assert 'install --require-hashes -r "$REPO_DIR/backend/requirements.txt"' in deploy
+    assert "backend/requirements-dev.txt" not in update
+    assert "install --upgrade pip" not in update
 
     smoke = _read("scripts/ops/run-pytest-smoke.sh")
     assert 'pip install --require-hashes -r "$REQ_FILE"' in smoke
@@ -445,4 +450,5 @@ def test_stream_mux_conflicts_fail_closed_without_deleting_unmanaged_sites():
         script = _read(relative_path)
         assert "/etc/nginx/sites-enabled/default.*" not in script
         assert "Refusing to remove unmanaged Nginx site listener(s) on port 443" in script
-        assert script.count("sanitize_nginx_sites_for_stream_443 || exit 1") == 3
+        expected_count = 3 if relative_path.endswith("install.sh") else 2
+        assert script.count("sanitize_nginx_sites_for_stream_443 || exit 1") == expected_count
