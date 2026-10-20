@@ -436,10 +436,18 @@ def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscrip
             "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
             (customer_id, identity.telegram_user_id),
         )
+    projection_calls = 0
+
+    def projection_loader():
+        nonlocal projection_calls
+        projection_calls += 1
+        return {"stats": {"traffic_user": {"total": 4096}}}
+
+    registry.observe_customer_traffic(customer_id=customer_id, observed_bytes=4096)
     service = TelegramRegistrationService(
         registry,
         introduction_max_chars=700,
-        traffic_projection_loader=lambda: {"stats": {"traffic_user": {"total": 4096}}},
+        traffic_projection_loader=projection_loader,
     )
 
     status = service.handle_update(_message(15, "/status"))
@@ -450,6 +458,7 @@ def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscrip
     assert "<b>Последнее обновление данных:</b>" in status[0].text
     assert status[0].parse_mode == "HTML"
     assert registry.get_customer_traffic(customer_id).lifetime_bytes == 4096
+    assert projection_calls == 0
 
 
 def test_approved_status_is_honest_when_no_traffic_projection_has_been_observed(tmp_path):

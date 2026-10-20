@@ -1677,9 +1677,7 @@ class TelegramRegistrationService:
         access = self._registry.get_customer_access(user_id)
         if access.access_status != "approved" or not access.customer_status:
             return TelegramOutboundMessage(chat_id, tr(locale, "status_waiting"))
-        lifetime = None
-        if access.customer_id is not None and access.email_display:
-            lifetime = self._traffic.refresh_for_access(customer_id=access.customer_id, email=access.email_display)
+        lifetime = self._registry.get_customer_traffic(access.customer_id) if access.customer_id is not None else None
         if lifetime is None or not lifetime.last_observed_at:
             traffic_line = tr(locale, "traffic_empty")
         else:
