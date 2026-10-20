@@ -143,9 +143,21 @@ def test_partial_or_stale_collector_cycle_does_not_seed_full_cache():
             "inbounds": [],
         },
     ]
+    inventory_failed = [
+        {**partial[0], "inbounds_available": False},
+        {
+            "node_id": 8,
+            "name": "edge-b",
+            "available": True,
+            "timestamp": time.time(),
+            "inbounds_available": True,
+            "inbounds": [],
+        },
+    ]
 
     assert (
         runtime.seed_full_cache_from_completed_collector_cycle(partial, nodes) is False
     )
     assert runtime.seed_full_cache_from_completed_collector_cycle(stale, nodes) is False
+    assert runtime.seed_full_cache_from_completed_collector_cycle(inventory_failed, nodes) is False
     assert runtime.get_cached_inbounds(nodes) == [{"id": "live"}]

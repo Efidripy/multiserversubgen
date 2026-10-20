@@ -60,6 +60,68 @@ def test_audit_worker_batches_persistence_and_drains_legacy_rows(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM audit_events").fetchone()[0] == 0
 
 
+def test_audit_persistence_failure_retains_one_bounded_batch_for_retry(monkeypatch, tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    runtime = AuditQueueRuntime(
+        db_path=db_path,
+        batch_size=2,
+        idle_sleep_sec=1,
+        active_sleep_sec=0.1,
+        memory_queue_max_size=2,
+        logger=logging.getLogger("test.audit.retry"),
+    )
+    assert runtime.enqueue_event({"request_id": "one"})
+    assert runtime.enqueue_event({"request_id": "two"})
+
+    original_connect = runtime_support.connect
+    attempts = 0
+
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError("sqlite unavailable")
+        return original_connect(*args, **kwargs)
+
+    monkeypatch.setattr(runtime_support, "connect", fail_once)
+    assert runtime.persist_memory_batch(2) == 0
+    assert runtime.pending_count() == 2
+    assert runtime.enqueue_event({"request_id": "three"}) is False
+    assert runtime.persist_memory_batch(2) == 2
+    assert runtime.pending_count() == 0
+    with connect(db_path) as conn:
+        assert [row[0] for row in conn.execute("SELECT payload FROM audit_events ORDER BY id")] == [
+            '{"request_id": "one"}',
+            '{"request_id": "two"}',
+        ]
+
+
+def test_audit_shutdown_flush_records_unpersisted_bounded_batch(monkeypatch, tmp_path, caplog):
+    runtime = AuditQueueRuntime(
+        db_path=str(tmp_path / "admin.db"),
+        batch_size=1,
+        idle_sleep_sec=1,
+        active_sleep_sec=0.1,
+        logger=logging.getLogger("test.audit.shutdown"),
+    )
+    assert runtime.enqueue_event({"request_id": "one"})
+
+    def fail_connect(*_args, **_kwargs):
+        raise OSError("sqlite unavailable")
+
+    monkeypatch.setattr(runtime_support, "connect", fail_connect)
+    runtime.close_admission()
+    with caplog.at_level(logging.ERROR):
+        assert runtime.flush() == {
+            "persisted": 0,
+            "drained": 0,
+            "pending": 1,
+            "dropped": 0,
+        }
+    assert "Audit shutdown flush left 1 unpersisted events" in caplog.text
+
+
 def test_redis_cache_trips_circuit_after_connect_failure():
     clock = [0.0]
     calls = []

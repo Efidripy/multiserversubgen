@@ -40,7 +40,7 @@ resource_guard_export_build_env
 if [[ -n "${FRONTEND_NODE_OPTIONS:-}" ]]; then
   export NODE_OPTIONS="$FRONTEND_NODE_OPTIONS"
 fi
-rm -rf "$FRONTEND_DIR/node_modules" "$FRONTEND_DIR/.vite" "$TMP_BUILD_DIR" "$PREV_BUILD_DIR"
+rm -rf "$FRONTEND_DIR/node_modules" "$FRONTEND_DIR/.vite" "$TMP_BUILD_DIR"
 resource_guard_require_free_mb "${FRONTEND_BUILD_MIN_FREE_MB:-900}" "before frontend dependency install/build" "/"
 
 mkdir -p "$TMP_BUILD_DIR"
@@ -66,18 +66,27 @@ popd >/dev/null
 
 PUBLIC_DOMAIN='' PUBLIC_SCHEME='' bash "$MSSG_VERIFY_FRONTEND_RELEASE_SCRIPT" "$TMP_BUILD_DIR" "$WEB_PATH"
 
+rm -rf "$PREV_BUILD_DIR"
 if [[ -d "$TARGET_BUILD_DIR" ]]; then
   mv "$TARGET_BUILD_DIR" "$PREV_BUILD_DIR"
 fi
 mv "$TMP_BUILD_DIR" "$TARGET_BUILD_DIR"
 find "$TARGET_BUILD_DIR" -type d -exec chmod 0755 {} +
 find "$TARGET_BUILD_DIR" -type f -exec chmod 0644 {} +
-rm -rf "$PREV_BUILD_DIR"
 # Post-build: remove npm deps (not needed at runtime, frees ~120MB)
 rm -rf "$FRONTEND_DIR/node_modules" "$FRONTEND_DIR/.vite"
 
 if [[ "$SKIP_LIVE_VERIFY" == "1" || -z "$PUBLIC_DOMAIN" ]]; then
-  PUBLIC_DOMAIN='' PUBLIC_SCHEME='' bash "$MSSG_VERIFY_FRONTEND_RELEASE_SCRIPT" "$TARGET_BUILD_DIR" "$WEB_PATH"
+  if ! PUBLIC_DOMAIN='' PUBLIC_SCHEME='' bash "$MSSG_VERIFY_FRONTEND_RELEASE_SCRIPT" "$TARGET_BUILD_DIR" "$WEB_PATH"; then
+    rm -rf "$TARGET_BUILD_DIR"
+    [[ ! -d "$PREV_BUILD_DIR" ]] || mv "$PREV_BUILD_DIR" "$TARGET_BUILD_DIR"
+    exit 1
+  fi
 else
-  bash "$MSSG_VERIFY_FRONTEND_RELEASE_SCRIPT" "$TARGET_BUILD_DIR" "$WEB_PATH" "$PUBLIC_SCHEME" "$PUBLIC_DOMAIN"
+  if ! bash "$MSSG_VERIFY_FRONTEND_RELEASE_SCRIPT" "$TARGET_BUILD_DIR" "$WEB_PATH" "$PUBLIC_SCHEME" "$PUBLIC_DOMAIN"; then
+    rm -rf "$TARGET_BUILD_DIR"
+    [[ ! -d "$PREV_BUILD_DIR" ]] || mv "$PREV_BUILD_DIR" "$TARGET_BUILD_DIR"
+    exit 1
+  fi
 fi
+rm -rf "$PREV_BUILD_DIR"

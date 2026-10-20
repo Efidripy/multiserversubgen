@@ -99,7 +99,11 @@ class TelegramTrafficService:
             complete = True
             for binding in customer_bindings:
                 node = nodes_by_id.get(binding.node_id)
-                if not isinstance(node, dict) or not bool(node.get("available")):
+                if (
+                    not isinstance(node, dict)
+                    or not bool(node.get("available"))
+                    or node.get("inbounds_available") is False
+                ):
                     complete = False
                     break
                 inbounds = node.get("inbounds")

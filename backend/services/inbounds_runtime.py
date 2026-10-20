@@ -121,6 +121,7 @@ class InboundsRuntime:
                 or snapshot.get("stale")
                 or snapshot.get("cached_from_db")
                 or snapshot.get("_transient_transport_failure")
+                or snapshot.get("inbounds_available") is False
                 or not isinstance(snapshot.get("inbounds"), list)
             ):
                 return False

@@ -4,7 +4,6 @@
  */
 import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { wsManager } from './webSocketManager';
-import { API_BASE } from '../api';
 import { getAuth } from '../auth';
 import { devLog } from '../utils/devLogger';
 
@@ -22,7 +21,7 @@ export interface TrafficStatsSubscriptionOptions {
   onUpdate: (update: TrafficUpdate) => void;
   onError?: (error: Error) => void;
   fallbackPollIntervalMs?: number; // Fallback если WebSocket недоступен
-  fallbackRun?: () => void | Promise<void>;
+  fallbackRun: () => void | Promise<void>;
 }
 
 const CHANNEL_TO_EVENT: Record<string, TrafficUpdate['type']> = {
@@ -167,20 +166,7 @@ export function useTrafficStatsSubscription({
     devLog('[TrafficStats] Offline/WS недоступен - используем fallback polling');
     fallbackIntervalRef.current = window.setInterval(async () => {
       try {
-        if (fallbackRunRef.current) {
-          await fallbackRunRef.current();
-          return;
-        }
-
-        const response = await fetch(`${API_BASE}/clients/stats/traffic?period=day`);
-        if (!response.ok) return;
-        const data = await response.json();
-        onUpdateRef.current({
-          type: 'traffic_update',
-          data,
-          timestamp: Date.now(),
-          delta: false,
-        });
+        await fallbackRunRef.current?.();
       } catch (err) {
         onErrorRef.current?.(err instanceof Error ? err : new Error(String(err)));
       }

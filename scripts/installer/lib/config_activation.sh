@@ -93,7 +93,7 @@ config_activation_validate_inputs() {
     config_activation_require_route_token "GRAFANA_WEB_PATH" "${GRAFANA_WEB_PATH:-}" || return 1
 
     local boolean_name
-    for boolean_name in MONITORING_ENABLED VERIFY_TLS READ_ONLY_MODE MFA_TOTP_ENABLED MFA_TOTP_WS_STRICT SECURITY_MTLS_ENABLED; do
+    for boolean_name in MONITORING_ENABLED VERIFY_TLS READ_ONLY_MODE MFA_TOTP_ENABLED SECURITY_MTLS_ENABLED; do
         config_activation_require_bool "$boolean_name" "${!boolean_name:-}" || return 1
     done
 
@@ -103,7 +103,7 @@ config_activation_validate_inputs() {
     done
 
     local value_name
-    for value_name in ALLOW_ORIGINS CA_BUNDLE_PATH ROLE_VIEWERS ROLE_OPERATORS; do
+    for value_name in ALLOW_ORIGINS CA_BUNDLE_PATH ROLE_OPERATORS; do
         config_activation_require_safe_value "$value_name" "${!value_name:-}" || return 1
     done
     config_activation_require_allowlist "${SECURITY_IP_ALLOWLIST:-}" || return 1
@@ -252,8 +252,8 @@ config_activation_render_service() {
         "CLIENTS_CACHE_TTL=$CLIENTS_CACHE_TTL" "CLIENTS_CACHE_STALE_TTL=$CLIENTS_CACHE_STALE_TTL" \
         "TRAFFIC_MAX_WORKERS=$TRAFFIC_MAX_WORKERS" "COLLECTOR_BASE_INTERVAL_SEC=$COLLECTOR_BASE_INTERVAL_SEC" \
         "COLLECTOR_MAX_INTERVAL_SEC=$COLLECTOR_MAX_INTERVAL_SEC" "COLLECTOR_MAX_PARALLEL=$COLLECTOR_MAX_PARALLEL" \
-        "AUDIT_QUEUE_BATCH_SIZE=$AUDIT_QUEUE_BATCH_SIZE" "ROLE_VIEWERS=$ROLE_VIEWERS" "ROLE_OPERATORS=$ROLE_OPERATORS" \
-        "MFA_TOTP_ENABLED=$MFA_TOTP_ENABLED" "MFA_TOTP_WS_STRICT=$MFA_TOTP_WS_STRICT" <<'PYTHON'
+        "AUDIT_QUEUE_BATCH_SIZE=$AUDIT_QUEUE_BATCH_SIZE" "ROLE_OPERATORS=$ROLE_OPERATORS" \
+        "MFA_TOTP_ENABLED=$MFA_TOTP_ENABLED" <<'PYTHON'
 from pathlib import Path
 import re
 import sys

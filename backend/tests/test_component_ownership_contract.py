@@ -46,6 +46,31 @@ mssg_ownership_allow_monitoring_mutation
     assert "will not modify it" in result.stderr
 
 
+def test_preexisting_adguard_is_recorded_as_external_and_fail_closed(tmp_path: Path):
+    result = _run(
+        """source \"{LIBRARY}\"
+AdGuardHome() {{ printf 'AdGuardHome, version v0.107.0\\n'; }}
+mssg_ownership_allow_adguard_mutation
+""".format(LIBRARY=LIBRARY),
+        tmp_path / "state",
+    )
+
+    assert result.returncode != 0
+    registry = json.loads((tmp_path / "state/component-ownership.json").read_text())
+    assert registry["components"]["adguard"]["ownership"] == "external"
+    assert "AdGuard Home is not modified" in result.stderr
+
+
+def test_adguard_install_is_gated_before_host_wide_path_changes():
+    script = (REPO / "scripts/installer/install.sh").read_text(encoding="utf-8")
+    function_start = script.index("configure_adguard_home() {")
+    gate = script.index("mssg_ownership_allow_adguard_mutation", function_start)
+    install = script.index("install_adguard_home_binary", gate)
+
+    assert gate < install
+    assert "mssg_ownership_claim_managed adguard upstream-binary" in script[install:]
+
+
 def test_registry_version_drift_is_a_fail_closed_part_of_the_monitoring_gate():
     library = (REPO / LIBRARY).read_text(encoding="utf-8")
     gate = library.split("mssg_ownership_allow_monitoring_mutation() {", 1)[1]

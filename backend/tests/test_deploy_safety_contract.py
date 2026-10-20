@@ -153,6 +153,10 @@ def test_deploy_uses_immutable_local_ref_and_atomic_stage_rollback():
     assert 'export NODE_OPTIONS="$FRONTEND_NODE_OPTIONS"' in frontend_build
     assert 'find "$TARGET_BUILD_DIR" -type d -exec chmod 0755 {} +' in frontend_build
     assert 'find "$TARGET_BUILD_DIR" -type f -exec chmod 0644 {} +' in frontend_build
+    assert frontend_build.rindex('rm -rf "$PREV_BUILD_DIR"') > frontend_build.rindex(
+        'bash "$MSSG_VERIFY_FRONTEND_RELEASE_SCRIPT"'
+    )
+    assert '[[ ! -d "$PREV_BUILD_DIR" ]] || mv "$PREV_BUILD_DIR" "$TARGET_BUILD_DIR"' in frontend_build
     assert "umask 077" in script
 
 
@@ -206,6 +210,19 @@ def test_updater_waits_for_the_application_health_endpoint_after_restart():
     assert "for health_attempt in {1..15}; do" in script
     assert '"http://127.0.0.1:${APP_PORT}/health"' in script
     assert "sleep 2" in script
+
+
+def test_updater_delegates_full_release_to_the_staged_deployer():
+    update = (REPO / "scripts/installer/update.sh").read_text(encoding="utf-8")
+    deploy = (REPO / "scripts/deploy/server-deploy.sh").read_text(encoding="utf-8")
+
+    assert "run_atomic_release_update()" in update
+    assert 'bash "$MSSG_DEPLOY_DIR/server-deploy.sh"' in update
+    assert "Partial updates are disabled" not in update
+    assert "Частичное обновление отключено" in update
+    assert "UPDATE_CHOICE" in update
+    assert 'source archive lacks immutable .deploy-source-commit receipt' in deploy
+    assert '[[ "$DEPLOY_COMMIT" =~ ^[0-9a-f]{40}$ ]]' in deploy
 
 
 def test_runtime_secret_rewrites_preserve_configured_telegram_settings():
@@ -490,11 +507,11 @@ def test_ops_backup_check_uses_consistent_runtime_database_backup():
     assert "\".restore '$BACKUP_FILE'\"" in script
     assert "admin.db.bak" in script
     assert "umask 077" in script
-    assert 'mkdir -p -m 0700 "$OUT_DIR"' in script
+    assert 'mktemp -d "${BACKUP_ROOT}/${PROJECT_NAME}_verify_${STAMP}_XXXXXX"' in script
     assert 'chmod 0600 "$BACKUP_FILE"' in script
     assert 'chmod 0600 "$RESTORE_FILE"' in script
     assert "prune-verify-artifacts --older-than <days> [--apply]" in script
-    assert 'VERIFY_ARTIFACT_GLOB="${PROJECT_NAME}_verify_' in script
+    assert 'VERIFY_ARTIFACT_GLOB="${PROJECT_NAME}_verify_??????????????*"' in script
     assert (
         'find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name "$VERIFY_ARTIFACT_GLOB"'
         in script

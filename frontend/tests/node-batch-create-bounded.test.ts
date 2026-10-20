@@ -41,4 +41,11 @@ describe('bounded batch node creation', () => {
     expect(source).toContain('createNodesBounded(batchPreview, { emitChange: false })');
     expect(source).not.toContain('batchPreview.map((row) => createNode(row, { emitChange: false }))');
   });
+
+  it('does not render typed batch passwords in the preview', () => {
+    const source = read('src/components/NodeManager.tsx');
+
+    expect(source).toContain("{row.bearer_token ? '—' : '••••••••'}");
+    expect(source).not.toContain("{row.bearer_token ? '—' : row.password}");
+  });
 });

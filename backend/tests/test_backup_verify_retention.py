@@ -27,16 +27,19 @@ fi
 root="$(mktemp -d)"
 trap 'rm -rf -- "$root"' EXIT
 mkdir -p "$root/backups/sub-manager_verify_20200101_000000"
+mkdir -p "$root/backups/sub-manager_verify_20200101_000000_ABCDEF"
 mkdir -p "$root/backups/sub-manager_verify_20990101_000000"
 mkdir -p "$root/backups/sub-manager_backup_20200101_000000"
 mkdir -p "$root/backups/other_verify_20200101_000000"
 mkdir -p "$root/backups/sub-manager_verify_invalid"
 touch -d '2020-01-01 00:00:00 UTC' "$root/backups/sub-manager_verify_20200101_000000"
+touch -d '2020-01-01 00:00:00 UTC' "$root/backups/sub-manager_verify_20200101_000000_ABCDEF"
 touch -d '2099-01-01 00:00:00 UTC' "$root/backups/sub-manager_verify_20990101_000000"
 
 BACKUP_ROOT="$root/backups" "$script" list > "$root/list.txt"
-grep -q 'Count: 2' "$root/list.txt"
+grep -q 'Count: 3' "$root/list.txt"
 grep -q 'sub-manager_verify_20200101_000000' "$root/list.txt"
+grep -q 'sub-manager_verify_20200101_000000_ABCDEF' "$root/list.txt"
 grep -q 'sub-manager_verify_20990101_000000' "$root/list.txt"
 if grep -q 'sub-manager_backup_20200101_000000\|other_verify_20200101_000000\|sub-manager_verify_invalid' "$root/list.txt"; then
     exit 1
@@ -57,8 +60,9 @@ fi
 test -d "$root/backups/sub-manager_verify_20200101_000000"
 
 BACKUP_ROOT="$root/backups" "$script" prune-verify-artifacts --older-than 30 --apply > "$root/apply.txt"
-grep -q 'Removed 1 verification artifact' "$root/apply.txt"
+grep -q 'Removed 2 verification artifact' "$root/apply.txt"
 test ! -e "$root/backups/sub-manager_verify_20200101_000000"
+test ! -e "$root/backups/sub-manager_verify_20200101_000000_ABCDEF"
 test -d "$root/backups/sub-manager_verify_20990101_000000"
 test -d "$root/backups/sub-manager_backup_20200101_000000"
 test -d "$root/backups/other_verify_20200101_000000"

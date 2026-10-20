@@ -84,7 +84,6 @@ def register_app_routers(
     grafana_web_path,
     server_monitor,
     check_basic_auth_header,
-    mfa_totp_ws_strict,
     pam_authenticate,
     handle_websocket_message,
     monitoring_enabled=True,
