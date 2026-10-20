@@ -1368,27 +1368,23 @@ class ClientManager:
                         add(key, up, down, legacy_key=legacy_key, identity=identity)
                     continue
 
-                # Compatibility fallback for older/non-standard panels.
-                settings = parse_field_as_dict(
-                    inbound.get("settings"), node_id=node["name"], field_name="settings"
-                )
-                clients = settings.get("clients", [])
-                protocol = inbound.get("protocol", "")
-
-                for client in clients:
-                    client_uuid = client.get("id", "")
-                    client_email = client.get("email", "")
-                    traffic = self.get_client_traffic(node, client_uuid, protocol)
-                    up = traffic.get("up", 0)
-                    down = traffic.get("down", 0)
-
-                    if group_by == "client":
-                        key = client_email
-                        legacy_key = identity = ""
-                    else:  # node/inbound
-                        key, legacy_key, identity = group_keys(inbound)
-
-                    add(key, up, down, legacy_key=legacy_key, identity=identity)
+                # Older panels may omit clientStats. A client-level fallback
+                # used to issue one traffic RPC per configured client, turning
+                # one fleet read into an unbounded N+1 request fan-out. Keep
+                # client rows unknown without an authoritative aggregate. For
+                # node and inbound groupings the inbound counters are already
+                # an explicit aggregate source.
+                if group_by == "client" or (
+                    "up" not in inbound and "down" not in inbound
+                ):
+                    continue
+                try:
+                    up = int(inbound.get("up") or 0)
+                    down = int(inbound.get("down") or 0)
+                except (TypeError, ValueError):
+                    continue
+                key, legacy_key, identity = group_keys(inbound)
+                add(key, up, down, legacy_key=legacy_key, identity=identity)
             except Exception as exc:
                 logger.warning(f"Error processing inbound stats in {node['name']}: {exc}")
 

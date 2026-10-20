@@ -201,7 +201,11 @@ class LiveStatsRuntime:
             node_name = str(node.get("name") or node.get("node_id") or "")
             node_id = str(node.get("node_id") or node.get("id") or "").strip()
             inbounds = node.get("inbounds")
-            if not node_name or not isinstance(inbounds, list):
+            if (
+                not node_name
+                or node.get("inbounds_available") is False
+                or not isinstance(inbounds, list)
+            ):
                 continue
             node_key = node_name if node_name_counts.get(node_name, 0) == 1 else f"{node_name} #{node_id or 'unknown'}"
             node_identity = self._stable_node_key(node_id, node_key)
@@ -375,6 +379,13 @@ class LiveStatsRuntime:
             if self.get_expected_snapshot_nodes and self.get_latest_snapshot:
                 snapshot = self.get_latest_snapshot()
                 nodes = snapshot.get("nodes") if isinstance(snapshot, dict) else []
+                if isinstance(nodes, list) and any(
+                    isinstance(node, dict) and node.get("inbounds_available") is False
+                    for node in nodes
+                ):
+                    # Do not persist a period baseline containing a node whose
+                    # status succeeded but whose inventory is unknown.
+                    return {"incomplete": True}
                 try:
                     expected_nodes = max(0, int(self.get_expected_snapshot_nodes()))
                 except (TypeError, ValueError):
