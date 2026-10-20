@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
     period: 'all_time' as const,
     loading: false,
     stale: false,
-    lastUpdated: new Date('2026-08-25T12:00:00Z'),
+    lastUpdated: new Date('2026-08-25T12:00:00Z') as Date | null,
     setPeriod: vi.fn(),
     refresh: vi.fn(),
   },
@@ -77,5 +77,16 @@ describe('DashboardSummary traffic projection', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
     await waitFor(() => expect(mocks.dashboardData.refresh).toHaveBeenCalledOnce());
+  });
+
+  it('labels stale data and does not invent an update timestamp', () => {
+    mocks.dashboardData.stale = true;
+    mocks.dashboardData.lastUpdated = null;
+    render(<DashboardSummary />);
+
+    expect(screen.getByText(/dashboardSummary\.updatedUnknown/)).toBeTruthy();
+    expect(screen.queryByText('12:00 AM')).toBeNull();
+    mocks.dashboardData.stale = false;
+    mocks.dashboardData.lastUpdated = new Date('2026-08-25T12:00:00Z');
   });
 });
