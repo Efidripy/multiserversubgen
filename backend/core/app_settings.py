@@ -411,7 +411,7 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         read_only_mode=_env_bool("READ_ONLY_MODE", "false"),
         sub_rate_limit_count=int(os.getenv("SUB_RATE_LIMIT_COUNT", "30")),
         sub_rate_limit_window_sec=int(os.getenv("SUB_RATE_LIMIT_WINDOW_SEC", "60")),
-        sub_profile_update_interval_hours=_env_int("SUB_PROFILE_UPDATE_INTERVAL_HOURS", 12),
+        sub_profile_update_interval_hours=_env_int("SUB_PROFILE_UPDATE_INTERVAL_HOURS", 1),
         sub_profile_title=os.getenv("SUB_PROFILE_TITLE", ""),
         traffic_stats_cache_ttl=int(os.getenv("TRAFFIC_STATS_CACHE_TTL", "20")),
         traffic_stats_stale_ttl=int(os.getenv("TRAFFIC_STATS_STALE_TTL", "120")),
