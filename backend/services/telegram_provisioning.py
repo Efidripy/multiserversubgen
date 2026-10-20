@@ -287,25 +287,7 @@ class TelegramExistingDiscoveryWorker:
                 "next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 (binding.remote_client_id, binding.remote_sub_id, binding.remote_email, int(binding.enabled), claimed.target_id),
             )
-            self._grant_partial_access(conn, claimed)
             self._finalize_job(conn, claimed.job_id)
-
-    def _grant_partial_access(self, conn: sqlite3.Connection, claimed: ClaimedExistingDiscoveryTarget) -> None:
-        """Release access only after one exact confirmed binding exists.
-
-        Outstanding snapshot targets remain durable degraded state; they never
-        become lifecycle targets until the full snapshot resolves.
-        """
-        conn.execute(
-            "UPDATE telegram_identities SET remote_snapshot_ready = 1, updated_at = CURRENT_TIMESTAMP "
-            "WHERE telegram_user_id = ? AND customer_id = ? AND access_status = 'approved'",
-            (claimed.telegram_user_id, claimed.customer_id),
-        )
-        conn.execute(
-            "INSERT OR IGNORE INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES "
-            "('user_existing_access_approved', ?, ?)",
-            (str(claimed.telegram_user_id), f"user:existing-access-approved:partial:{claimed.job_id}:{claimed.telegram_user_id}"),
-        )
 
     def _queue_absent_provisioning(self, claimed: ClaimedExistingDiscoveryTarget) -> None:
         """Create one immutable, durable write attempt after a strict empty read."""
@@ -922,6 +904,25 @@ class TelegramProvisioningWorker:
             "row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
             (status, status, discovery_job_id),
         )
+        if status == "succeeded":
+            recipients = conn.execute(
+                "SELECT telegram_user_id FROM telegram_identities "
+                "WHERE customer_id = ? AND access_status = 'approved'",
+                (customer_id,),
+            ).fetchall()
+            conn.execute(
+                "UPDATE telegram_identities SET remote_snapshot_ready = 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE customer_id = ? AND access_status = 'approved'",
+                (customer_id,),
+            )
+            conn.executemany(
+                "INSERT OR IGNORE INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES "
+                "('user_existing_access_approved', ?, ?)",
+                [
+                    (str(int(row[0])), f"user:existing-access-approved:discovery:{discovery_job_id}:{int(row[0])}")
+                    for row in recipients
+                ],
+            )
 
     def _finalize_job(self, conn, job_id: int) -> None:
         counts = {
@@ -967,26 +968,6 @@ class TelegramProvisioningWorker:
                         (int(job[1]),),
                     )
                 if job is not None and job[2] is not None:
-                    # `_confirm_attempt` has just inserted/reconciled the exact
-                    # binding after its post-write strict read. Only now can a
-                    # fully-absent initial snapshot release partial access.
-                    conn.execute(
-                        "UPDATE telegram_identities SET remote_snapshot_ready = 1, updated_at = CURRENT_TIMESTAMP "
-                        "WHERE customer_id = ? AND access_status = 'approved'",
-                        (int(job[1]),),
-                    )
-                    recipients = conn.execute(
-                        "SELECT telegram_user_id FROM telegram_identities "
-                        "WHERE customer_id = ? AND access_status = 'approved'", (int(job[1]),)
-                    ).fetchall()
-                    conn.executemany(
-                        "INSERT OR IGNORE INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES "
-                        "('user_existing_access_approved', ?, ?)",
-                        [
-                            (str(int(row[0])), f"user:existing-access-approved:provisioned:{job_id}:{int(row[0])}")
-                            for row in recipients
-                        ],
-                    )
                     self._finalize_source_existing_discovery(conn, int(job[2]), int(job[1]))
                 recipients = conn.execute(
                     """

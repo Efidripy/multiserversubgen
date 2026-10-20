@@ -180,7 +180,7 @@ def test_deferred_existing_discovery_retries_only_offline_target_then_blocks_aft
         (1, "confirmed_match", 1), (2, "blocked_after_retry_limit", 5),
     ]
     with connect(db_path) as conn:
-        assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities WHERE telegram_user_id = 91").fetchone()[0] == 1
+        assert conn.execute("SELECT remote_snapshot_ready FROM telegram_identities WHERE telegram_user_id = 91").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings WHERE node_id = 1").fetchone()[0] == 1
         assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings WHERE node_id = 2").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
@@ -227,16 +227,15 @@ def test_deferred_existing_discovery_enables_access_only_after_complete_snapshot
     worker = _deferred_discovery_worker(db_path, Manager(), nodes, now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc))
     assert worker.run_once().outcome == "confirmed_match"
     assert worker.run_once().outcome == "provisioning_queued"
-    # The exact binding on the reachable target releases partial access, while
-    # the absent target is handed to the durable write worker instead of being
-    # inferred or written inline by discovery.
-    assert registry.get_customer_access(92).initial_provisioning_ready is True
+    # A matching target must not release access while another immutable target
+    # is still awaiting its durable provisioning result.
+    assert registry.get_customer_access(92).initial_provisioning_ready is False
     port = FakeProvisioningPort()
-    assert registry.get_customer_access(92).initial_provisioning_ready is True
     assert _worker(db_path, port, node={"id": 2, "enabled": 1, "read_only": 0}).run_once().outcome == "succeeded"
     assert len(port.add_calls) == 1
     status = registry.get_existing_discovery_job(queued.discovery_job_id)
     assert status.status == "succeeded"
+    assert registry.get_customer_access(92).initial_provisioning_ready is True
     assert status.targets[1].status == "provisioned"
     with connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings WHERE node_id = 2").fetchone()[0] == 1
