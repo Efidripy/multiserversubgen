@@ -197,6 +197,25 @@ def test_uncertain_lifecycle_write_is_ambiguous_and_not_replayed_immediately(tmp
     assert port.update_calls == [("remote-id", False)]
 
 
+def test_expired_writing_attempt_reconciles_before_replaying_lifecycle_write(tmp_path):
+    db_path, registry, _customer_id, operation_id = _queue(tmp_path, "suspend")
+    expired = datetime(2026, 1, 1, tzinfo=timezone.utc).replace(year=2025).isoformat(sep=" ")
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_customer_operations SET status = 'running', lease_owner = 'dead', lease_until = ? WHERE id = ?",
+            (expired, operation_id),
+        )
+        conn.execute("UPDATE telegram_customer_operation_attempts SET status = 'writing' WHERE operation_id = ?", (operation_id,))
+    port = FakeLifecyclePort()
+    port.clients = [RemoteClient("remote-id", "lifecycle-worker", "remote-sub", "xtls-rprx-vision", False)]
+
+    outcome = _worker(db_path, port).run_once()
+
+    assert outcome.outcome == "succeeded"
+    assert port.update_calls == []
+    assert registry.get_customer_operation(operation_id).status == "succeeded"
+
+
 def test_conflicting_remote_email_never_triggers_lifecycle_write(tmp_path):
     db_path, registry, _customer_id, operation_id = _queue(tmp_path, "suspend")
     port = FakeLifecyclePort()

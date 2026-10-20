@@ -214,7 +214,7 @@ class TelegramExistingDiscoveryWorker:
                 JOIN customers AS c ON c.id = j.customer_id
                 WHERE j.status IN ('queued', 'running', 'partial')
                   AND (j.lease_until IS NULL OR j.lease_until < ?)
-                  AND t.status IN ('pending', 'deferred')
+                  AND t.status IN ('pending', 'deferred', 'reconciling')
                   AND (t.next_attempt_at IS NULL OR t.next_attempt_at <= ?)
                 ORDER BY j.created_at, j.id, t.node_id
                 LIMIT 1
@@ -234,7 +234,7 @@ class TelegramExistingDiscoveryWorker:
             claimed = conn.execute(
                 "UPDATE telegram_existing_discovery_targets SET status = 'reconciling', attempt_count = attempt_count + 1, "
                 "error_code = NULL, error_summary = NULL, last_checked_at = ?, updated_at = CURRENT_TIMESTAMP "
-                "WHERE id = ? AND status IN ('pending', 'deferred')",
+                "WHERE id = ? AND status IN ('pending', 'deferred', 'reconciling')",
                 (current_stamp, target_id),
             )
             if claimed.rowcount != 1:
@@ -662,7 +662,7 @@ class TelegramProvisioningWorker:
                 JOIN customers AS c ON c.id = j.customer_id
                 WHERE j.status IN ('queued', 'partial', 'running')
                   AND (j.lease_until IS NULL OR j.lease_until < ?)
-                  AND a.status IN ('pending', 'ambiguous')
+                  AND a.status IN ('pending', 'ambiguous', 'reconciling', 'creating')
                   AND (a.next_attempt_at IS NULL OR a.next_attempt_at <= ?)
                 ORDER BY j.created_at, j.id, a.id
                 LIMIT 1
@@ -690,7 +690,7 @@ class TelegramProvisioningWorker:
                 SET status = 'reconciling', attempt_count = attempt_count + 1,
                     last_checked_at = ?, error_code = NULL, error_summary = NULL,
                     updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND status IN ('pending', 'ambiguous')
+                WHERE id = ? AND status IN ('pending', 'ambiguous', 'reconciling', 'creating')
                 """,
                 (current_stamp, attempt_id),
             )

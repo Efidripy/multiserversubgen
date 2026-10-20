@@ -227,7 +227,7 @@ class TelegramLifecycleWorker:
                 JOIN telegram_customer_operation_attempts AS a ON a.operation_id = o.id
                 WHERE o.status IN ('queued', 'partial', 'running')
                   AND (o.lease_until IS NULL OR o.lease_until < ?)
-                  AND a.status IN ('pending', 'ambiguous')
+                  AND a.status IN ('pending', 'ambiguous', 'reconciling', 'writing')
                   AND (a.next_attempt_at IS NULL OR a.next_attempt_at <= ?)
                 ORDER BY o.created_at, o.id, a.id
                 LIMIT 1
@@ -254,7 +254,7 @@ class TelegramLifecycleWorker:
                 UPDATE telegram_customer_operation_attempts
                 SET status = 'reconciling', attempt_count = attempt_count + 1, error_code = NULL,
                     error_summary = NULL, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND status IN ('pending', 'ambiguous')
+                WHERE id = ? AND status IN ('pending', 'ambiguous', 'reconciling', 'writing')
                 """,
                 (attempt_id,),
             )
