@@ -233,9 +233,18 @@ class AuthService:
             return "viewer"
         if path.startswith("/api/v1/telegram/"):
             return "admin"
+        if method == "GET" and path.startswith("/api/v1/clients/") and (
+            path.endswith("/links") or path.startswith("/api/v1/clients/sub-links/")
+        ):
+            return "admin"
         if method == "DELETE":
             return "admin"
         if method == "POST":
+            if path in {
+                "/api/v1/clients/del-depleted",
+                "/api/v1/clients/bulk-reset-traffic",
+            }:
+                return "admin"
             admin_paths = (
                 "/restart-xray", "/stop-xray", "/reset-traffic", "/reset-all-traffic",
                 "/reset-all-traffics", "/del-all-clients", "/batch-delete", "/batch-del",
