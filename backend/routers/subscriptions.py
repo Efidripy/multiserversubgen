@@ -24,6 +24,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 
 
+# Apps refetch hourly; a fetch is served from local snapshots, never from nodes.
+DEFAULT_PROFILE_UPDATE_INTERVAL_HOURS = 1
+
+
 def build_subscriptions_router(
     *,
     check_auth,
@@ -48,13 +52,13 @@ def build_subscriptions_router(
     telegram_access_gate = TelegramSubscriptionAccessGate(db_path)
     telegram_registry = TelegramRegistry(db_path)
     try:
-        profile_interval = 12 if subscription_profile_update_interval_hours is None else int(
+        profile_interval = DEFAULT_PROFILE_UPDATE_INTERVAL_HOURS if subscription_profile_update_interval_hours is None else int(
             subscription_profile_update_interval_hours
         )
         if profile_interval < 0:
-            profile_interval = 12
+            profile_interval = DEFAULT_PROFILE_UPDATE_INTERVAL_HOURS
     except (TypeError, ValueError):
-        profile_interval = 12
+        profile_interval = DEFAULT_PROFILE_UPDATE_INTERVAL_HOURS
     profile_update_interval_header = str(profile_interval) if profile_interval else None
     profile_title = (subscription_profile_title or "").replace("\r", "").replace("\n", "")
     if profile_title and not profile_title.isascii():
