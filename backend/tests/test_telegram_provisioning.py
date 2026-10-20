@@ -424,6 +424,27 @@ def test_expired_running_lease_is_recovered_by_a_new_worker_without_blind_add(tm
     assert port.add_calls == []
 
 
+def test_expired_creating_attempt_is_reconciled_before_any_retry_write(tmp_path):
+    db_path, approval, attempt = _queued_job(tmp_path)
+    expired = (datetime(2026, 1, 1) - timedelta(seconds=1)).isoformat(sep=" ")
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_provisioning_jobs SET status = 'running', lease_owner = 'dead', lease_until = ? WHERE id = ?",
+            (expired, approval.job_id),
+        )
+        conn.execute(
+            "UPDATE telegram_provisioning_attempts SET status = 'creating' WHERE id = ?",
+            (attempt[0],),
+        )
+    port = FakeProvisioningPort()
+    port.clients.append(RemoteClient(attempt[1], "worker-user", attempt[2], "xtls-rprx-vision", True))
+
+    outcome = _worker(db_path, port).run_once()
+
+    assert outcome.outcome == "succeeded"
+    assert port.add_calls == []
+
+
 def test_client_manager_port_uses_strict_read_and_preserves_exact_inbound_filter():
     class StrictManager:
         def __init__(self):
