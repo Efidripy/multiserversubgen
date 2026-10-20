@@ -310,6 +310,11 @@ class SnapshotCollector:
             snapshot = snapshots.get(key)
             if isinstance(snapshot, dict) and snapshot.get("available") is False:
                 last_success_at = self._coerce_float(snapshot.get("last_success_at"))
+                if last_success_at <= 0.0:
+                    # Non-timeout failures (e.g. HTTP 500) carry no last_success_at.
+                    last_success = (self._node_state.get(key) or {}).get("last_success_snapshot")
+                    if isinstance(last_success, dict):
+                        last_success_at = self._coerce_float(last_success.get("timestamp"))
                 unavailable_for = now - last_success_at
                 if (
                     not math.isfinite(last_success_at)

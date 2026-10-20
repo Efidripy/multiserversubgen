@@ -261,3 +261,34 @@ def test_collector_cycle_seed_rejects_missing_expected_node_snapshot():
     assert runtime.seed_full_cache_from_completed_collector_cycle(
         [_available_snapshot(1)], nodes
     ) is False
+
+
+def test_filter_reachable_nodes_keeps_grace_for_non_timeout_failures():
+    collector = _collector_with_snapshots(
+        {"node_id": 1, "name": "http-500", "available": False},
+        {"node_id": 2, "name": "long-dead", "available": False},
+    )
+    # A non-timeout failure snapshot has no last_success_at; the collector
+    # state still remembers when the node last answered.
+    collector._node_state = {
+        "id:1": {"last_success_snapshot": {"timestamp": time.time() - 60}},
+        "id:2": {"last_success_snapshot": {"timestamp": time.time() - 2 * 60 * 60}},
+    }
+    nodes = [{"id": 1, "name": "http-500"}, {"id": 2, "name": "long-dead"}]
+
+    assert collector.filter_reachable_nodes(nodes) == [nodes[0]]
+
+
+def test_collector_cycle_seed_ignores_snapshots_of_excluded_nodes():
+    runtime = _seed_runtime()
+    dead_snapshot = {"node_id": 2, "name": "dead", "available": False}
+
+    assert runtime.seed_full_cache_from_completed_collector_cycle(
+        [_available_snapshot(1), dead_snapshot],
+        [{"id": 1, "enabled": True}],
+        excluded_node_ids={"2"},
+    ) is True
+    # Without the exclusion the unexpected snapshot still rejects the cycle.
+    assert _seed_runtime().seed_full_cache_from_completed_collector_cycle(
+        [_available_snapshot(1), dead_snapshot], [{"id": 1, "enabled": True}]
+    ) is False
