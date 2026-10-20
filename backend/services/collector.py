@@ -65,6 +65,8 @@ _UNREACHABLE_AFTER_SEC = 600.0
 _TRANSPORT_FAILURE_BACKOFF_SEC = (300.0, 600.0, 900.0)
 _TRANSPORT_DIAGNOSTIC_INTERVAL_SEC = 900.0
 _INVENTORY_RECHECK_SEC = 60.0
+# Keep route reads bounded while allowing collector snapshots to serve briefly.
+_SNAPSHOT_READ_MAX_AGE_SEC = 600.0
 
 
 def _online_client_emails(payload: Any) -> List[str]:
@@ -324,6 +326,32 @@ class SnapshotCollector:
                     continue
             reachable.append(node)
         return reachable
+
+    def usable_inbounds(
+        self, node: Dict, *, not_before: float = 0.0
+    ) -> Optional[List[Dict]]:
+        """Return a recent, healthy node inbound snapshot when one is usable."""
+        latest = self._latest
+        snapshots = latest["nodes"]
+        key = self._node_key(node if isinstance(node, dict) else {})
+        snapshot = snapshots.get(key)
+        if not isinstance(snapshot, dict):
+            return None
+        if snapshot.get("available") is not True or snapshot.get("stale"):
+            return None
+        if snapshot.get("inbounds_available") is False:
+            return None
+        inbounds = snapshot.get("inbounds")
+        if not isinstance(inbounds, list):
+            return None
+        try:
+            timestamp = float(snapshot.get("timestamp"))
+            threshold = max(time.time() - _SNAPSHOT_READ_MAX_AGE_SEC, float(not_before))
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(timestamp) or timestamp < threshold:
+            return None
+        return inbounds
 
     def latest_dashboard_snapshot(self) -> Dict:
         """Return the bounded, operator-safe projection used by Dashboard.

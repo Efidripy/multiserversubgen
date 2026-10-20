@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import inspect
 import time
 from threading import Lock
 from typing import Callable, Dict, List, Optional, Set
@@ -29,6 +30,7 @@ class InboundsRuntime:
         stale_ttl: int = 300,
         start_cache_refresh,
         filter_reachable_nodes: Optional[Callable[[List[Dict]], List[Dict]]] = None,
+        usable_inbounds: Optional[Callable[[Dict, float], Optional[List[Dict]]]] = None,
     ) -> None:
         self.inbound_mgr = inbound_mgr
         self.inbounds_cache = inbounds_cache
@@ -36,6 +38,8 @@ class InboundsRuntime:
         self.stale_ttl = stale_ttl
         self.start_cache_refresh = start_cache_refresh
         self.filter_reachable_nodes = filter_reachable_nodes or (lambda nodes: nodes)
+        self.usable_inbounds = usable_inbounds
+        self._invalidated_at = 0.0
         self._cold_load_lock = Lock()
         # These projections are deliberately independent from the full DTO
         # cache: a slim/options response must never be returned to an edit
@@ -87,6 +91,7 @@ class InboundsRuntime:
     def invalidate(self) -> None:
         """Invalidate projections without discarding their last valid snapshots."""
         with self._cache_state_lock:
+            self._invalidated_at = time.time()
             for cache_key, cache in (
                 ("inbounds", self.inbounds_cache),
                 ("inbounds_slim", self._slim_cache),
@@ -173,6 +178,38 @@ class InboundsRuntime:
             self.inbounds_cache["invalidated"] = False
         return True
 
+    def _load_projection(
+        self, loader, nodes: List[Dict], *, cached_full: Optional[Dict[str, List[Dict]]] = None
+    ) -> List[Dict]:
+        kwargs = {"cached_full": cached_full}
+        if self.usable_inbounds is not None:
+            kwargs["snapshot_inbounds"] = lambda node: self.usable_inbounds(
+                node, self._invalidated_at
+            )
+        parameters = inspect.signature(loader).parameters
+        if "snapshot_inbounds" not in parameters and not any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
+            kwargs.pop("snapshot_inbounds", None)
+        return loader(nodes, **kwargs)
+
+    def _full_loader_kwargs(self) -> Dict:
+        if self.usable_inbounds is None:
+            return {}
+        loader = self.inbound_mgr.get_all_inbounds
+        parameters = inspect.signature(loader).parameters
+        if "snapshot_inbounds" not in parameters and not any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
+            return {}
+        return {
+            "snapshot_inbounds": lambda node: self.usable_inbounds(
+                node, self._invalidated_at
+            )
+        }
+
     def _cached_full_by_node(self) -> Dict[str, List[Dict]]:
         """Index already-held full cache rows for legacy projection fallback.
 
@@ -203,7 +240,8 @@ class InboundsRuntime:
             record_cache("memory_stale")
 
             def _refresh() -> None:
-                fresh = loader(
+                fresh = self._load_projection(
+                    loader,
                     self._nodes_for_loader(nodes, cache_key),
                     cached_full=self._cached_full_by_node(),
                 )
@@ -221,7 +259,8 @@ class InboundsRuntime:
             record_cache("memory_stale")
 
             def _refresh() -> None:
-                fresh = loader(
+                fresh = self._load_projection(
+                    loader,
                     self._nodes_for_loader(nodes, cache_key),
                     cached_full=self._cached_full_by_node(),
                 )
@@ -244,7 +283,8 @@ class InboundsRuntime:
                 record_cache("memory_fresh")
                 return cached
             record_cache("memory_miss")
-            fresh = loader(
+            fresh = self._load_projection(
+                loader,
                 self._nodes_for_loader(nodes, cache_key),
                 cached_full=self._cached_full_by_node(),
             )
@@ -262,8 +302,9 @@ class InboundsRuntime:
             record_cache("memory_stale")
 
             def _refresh() -> None:
+                kwargs = self._full_loader_kwargs()
                 fresh = self.inbound_mgr.get_all_inbounds(
-                    self._nodes_for_loader(nodes, "inbounds")
+                    self._nodes_for_loader(nodes, "inbounds"), **kwargs
                 )
                 self._store_cache(
                     cache=self.inbounds_cache,
@@ -283,8 +324,9 @@ class InboundsRuntime:
             record_cache("memory_stale")
 
             def _refresh() -> None:
+                kwargs = self._full_loader_kwargs()
                 fresh = self.inbound_mgr.get_all_inbounds(
-                    self._nodes_for_loader(nodes, "inbounds")
+                    self._nodes_for_loader(nodes, "inbounds"), **kwargs
                 )
                 self._store_cache(
                     cache=self.inbounds_cache,
@@ -310,8 +352,9 @@ class InboundsRuntime:
                 record_cache("memory_fresh")
                 return cached
             record_cache("memory_miss")
+            kwargs = self._full_loader_kwargs()
             fresh = self.inbound_mgr.get_all_inbounds(
-                self._nodes_for_loader(nodes, "inbounds")
+                self._nodes_for_loader(nodes, "inbounds"), **kwargs
             )
             self._store_cache(
                 cache=self.inbounds_cache,
