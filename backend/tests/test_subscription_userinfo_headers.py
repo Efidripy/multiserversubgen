@@ -85,7 +85,7 @@ def _build_subscription_app(
     tmp_path,
     *,
     userinfo=None,
-    interval=12,
+    interval=None,
     title="",
     grouped=False,
 ):
@@ -141,7 +141,7 @@ def test_sub_route_returns_userinfo_and_profile_headers(tmp_path):
 
     assert response.status_code == 200
     assert response.headers["subscription-userinfo"] == "upload=1; download=2; total=3; expire=4"
-    assert response.headers["profile-update-interval"] == "12"
+    assert response.headers["profile-update-interval"] == "1"
     assert response.headers["profile-title"] == "base64:" + base64.b64encode("Профиль".encode()).decode()
 
 

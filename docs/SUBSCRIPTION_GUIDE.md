@@ -269,7 +269,7 @@ base64_encode(link1\nlink2\nlink3...)
 
 Успешные ответы подписки содержат `Subscription-Userinfo` с расходом, квотой и
 сроком действия. Клиентам также передаётся `Profile-Update-Interval`: его можно
-задать в часах через `SUB_PROFILE_UPDATE_INTERVAL_HOURS` (по умолчанию `12`,
+задать в часах через `SUB_PROFILE_UPDATE_INTERVAL_HOURS` (по умолчанию `1`,
 значение `0` отключает заголовок). Необязательное имя профиля задаётся через
 `SUB_PROFILE_TITLE`; для не-ASCII значений сервер отправляет поддерживаемую
 клиентами форму `base64:<utf-8 base64>`.
