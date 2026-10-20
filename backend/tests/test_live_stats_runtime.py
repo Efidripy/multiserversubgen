@@ -176,6 +176,48 @@ def test_collector_traffic_projection_keeps_duplicate_node_names_separate(tmp_pa
     assert inbound["identity_stats"]["node:2:inbound:7"]["total"] == 70
 
 
+def test_collector_projection_skips_explicitly_incomplete_inventory(tmp_path):
+    snapshot = {
+        "timestamp": 1000.0,
+        "nodes": [
+            {
+                "node_id": 1,
+                "name": "partial",
+                "inbounds_available": False,
+                "inbounds": [{"id": 1, "remark": "hidden", "up": 900, "down": 100}],
+            },
+            {
+                "node_id": 2,
+                "name": "complete",
+                "inbounds_available": True,
+                "inbounds": [{"id": 2, "remark": "main", "up": 20, "down": 30}],
+            },
+        ],
+    }
+    runtime = _build_runtime(tmp_path, {}, get_latest_snapshot=lambda: snapshot)
+
+    _timestamp, projections = runtime._build_snapshot_traffic_projections()
+
+    assert projections["node"]["stats"] == {
+        "complete": {"up": 20, "down": 30, "total": 50, "count": 1}
+    }
+    assert projections["inbound"]["stats"] == {
+        "complete:main": {"up": 20, "down": 30, "total": 50, "count": 1}
+    }
+    assert projections["client"]["stats"] == {}
+
+
+def test_period_seed_skips_explicitly_incomplete_inventory(monkeypatch, tmp_path):
+    snapshot = {
+        "timestamp": 1000.0,
+        "nodes": [{"node_id": 1, "name": "partial", "inbounds_available": False, "inbounds": []}],
+    }
+    runtime = _build_runtime(tmp_path, {}, get_latest_snapshot=lambda: snapshot)
+    runtime.get_expected_snapshot_nodes = lambda: 1
+
+    assert runtime.seed_period_snapshots_from_collector(now_ts=1000.0) == {"incomplete": True}
+
+
 def test_telegram_quota_usage_requires_a_fresh_exact_collector_snapshot(monkeypatch, tmp_path):
     now = 1000.0
     snapshot = {

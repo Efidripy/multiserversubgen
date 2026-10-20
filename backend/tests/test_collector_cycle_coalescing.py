@@ -309,3 +309,16 @@ def test_history_batch_is_single_transaction_deduplicated_and_retries_after_fail
         ).fetchall()
     assert [(row[0], row[1]) for row in rows] == [(1, 1), (2, 0)]
     assert len({row[2] for row in rows}) == 1
+
+
+def test_partial_inventory_does_not_write_zero_traffic_history(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    state = {"last_by_node": {}, "last_cleanup_ts": time.time()}
+    runtime = _metrics_runtime(db_path, state)
+    partial = {**_snapshot(1), "inbounds_available": False, "online_clients": None, "traffic_total": None}
+
+    runtime.record_node_snapshots([partial])
+
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM node_history").fetchone()[0] == 0

@@ -602,6 +602,40 @@ def test_snapshot_collector_promotes_server_telemetry_to_snapshot():
     assert snapshot["panel_version"] == "2.6.0"
 
 
+def test_snapshot_collector_keeps_status_healthy_when_inbound_inventory_fails():
+    from services.collector import SnapshotCollector
+    from services.snapshot_push import build_snapshot_push_payload
+
+    class PartialMonitor:
+        def get_server_status(self, node):
+            return {"node": node["name"], "available": True, "system": {}, "xray": {}, "network": {}}
+
+        def get_inbounds(self, _node):
+            return {"available": False, "reason": "timeout", "inbounds": []}
+
+        def get_online_clients(self, _node):
+            raise AssertionError("presence must not be published without inventory")
+
+    collector = SnapshotCollector(
+        fetch_nodes=lambda: [],
+        xui_monitor=PartialMonitor(),
+        ws_manager=SimpleNamespace(active_connections=[]),
+    )
+
+    snapshot = collector._collect_node_snapshot({"id": 1, "name": "alpha"})
+
+    assert snapshot["available"] is True
+    assert snapshot["status"] == "online"
+    assert snapshot["inbounds_available"] is False
+    assert snapshot["inbounds"] == []
+    assert snapshot["traffic_total"] is None
+    assert snapshot["online_clients"] is None
+    payload = build_snapshot_push_payload(key="alpha", snapshot=snapshot, changes={})
+    assert payload["has_table_payload"] is False
+    collector._latest["nodes"]["alpha"] = snapshot
+    assert collector.latest_dashboard_snapshot()["nodes"][0]["inbounds_available"] is False
+
+
 def test_snapshot_collector_broadcasts_server_status_telemetry():
     from services.collector import SnapshotCollector
 
