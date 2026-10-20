@@ -55,7 +55,6 @@ class AuthService:
     tests).
 
     Args:
-        role_viewers: Set of usernames that have the ``viewer`` role.
         role_operators: Set of usernames that have the ``operator`` role.
         mfa_totp_enabled: Whether TOTP MFA is globally enabled.
         mfa_totp_users: Mapping of ``username → TOTP_secret``.
@@ -64,14 +63,12 @@ class AuthService:
     def __init__(
         self,
         *,
-        role_viewers: Optional[Set[str]] = None,
         role_operators: Optional[Set[str]] = None,
         role_admins: Optional[Set[str]] = None,
         ws_auth_secret: str = "",
         mfa_totp_enabled: bool = False,
         mfa_totp_users: Optional[Dict[str, str]] = None,
     ) -> None:
-        self.role_viewers: Set[str] = role_viewers or set()
         self.role_operators: Set[str] = role_operators or set()
         self.role_admins: Set[str] = role_admins or set()
         self.ws_auth_secret = ws_auth_secret or secrets.token_urlsafe(32)

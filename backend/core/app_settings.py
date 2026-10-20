@@ -361,7 +361,6 @@ class AppSettings:
     audit_memory_queue_max_size: int
     audit_idle_sleep_sec: float
     audit_active_sleep_sec: float
-    role_viewers: Set[str]
     role_operators: Set[str]
     role_admins: Set[str]
     role_owners: Set[str]
@@ -429,7 +428,6 @@ def load_app_settings(*, parse_mfa_users: Callable[[str], Dict[str, str]]) -> Ap
         audit_memory_queue_max_size=int(os.getenv("AUDIT_MEMORY_QUEUE_MAX", "2000")),
         audit_idle_sleep_sec=float(os.getenv("AUDIT_IDLE_SLEEP_SEC", "2.0")),
         audit_active_sleep_sec=float(os.getenv("AUDIT_ACTIVE_SLEEP_SEC", "0.2")),
-        role_viewers=_env_csv_set("ROLE_VIEWERS"),
         role_operators=_env_csv_set("ROLE_OPERATORS"),
         role_admins=_env_csv_set("ROLE_ADMINS") or {"admin"},
         # Owner deliberately does not inherit every administrator.  Bulk
