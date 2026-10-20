@@ -90,6 +90,9 @@ def register_app_routers(
     telegram_settings=None,
     telegram_token_provider=None,
     is_owner=None,
+    get_subscription_userinfo=None,
+    subscription_profile_update_interval_hours=None,
+    subscription_profile_title=None,
 ):
     app.include_router(
         build_observability_router(
@@ -185,6 +188,9 @@ def register_app_routers(
             check_subscription_rate_limit=check_subscription_rate_limit,
             get_emails=get_emails,
             get_links_filtered=get_links_filtered,
+            get_subscription_userinfo=get_subscription_userinfo,
+            subscription_profile_update_interval_hours=subscription_profile_update_interval_hours,
+            subscription_profile_title=subscription_profile_title,
             register_subscription_response_cache_invalidator=register_subscription_response_cache_invalidator,
             subscription_signing_secret=subscription_signing_secret,
             invalidate_subscription_cache=invalidate_subscription_cache,
