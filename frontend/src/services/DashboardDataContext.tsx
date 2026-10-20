@@ -8,6 +8,7 @@ import {
 } from '../api/dashboard';
 import { NODES_CHANGED_EVENT } from '../api/nodes';
 import { getAuth } from '../auth';
+import { forceNodeRefresh } from './forceRefresh';
 
 const STORAGE_PREFIX = 'sub-manager:dashboard-overview:v1';
 const REFRESH_INTERVAL_MS = 60_000;
@@ -26,7 +27,7 @@ export type DashboardData = {
   stale: boolean;
   lastUpdated: Date | null;
   setPeriod: (period: DashboardTrafficPeriod) => void;
-  refresh: () => Promise<void>;
+  refresh: (force?: boolean) => Promise<void>;
 };
 
 const DashboardDataContext = createContext<DashboardData | null>(null);
@@ -69,15 +70,21 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
     refreshControllerRef.current = null;
   }, []);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = false) => {
     const generation = refreshGenerationRef.current + 1;
     refreshGenerationRef.current = generation;
     refreshControllerRef.current?.abort();
     const controller = new AbortController();
     refreshControllerRef.current = controller;
     setLoading(true);
+    if (force) {
+      setOverview(null);
+      setStale(false);
+      await forceNodeRefresh();
+    }
     try {
-      const next = await getDashboardOverview(period, { signal: controller.signal });
+      // Legacy polling contract: getDashboardOverview(period, { signal: controller.signal })
+      const next = await getDashboardOverview(period, { signal: controller.signal, ...(force ? { force: true } : {}) });
       if (controller.signal.aborted || generation !== refreshGenerationRef.current) return;
       const savedAt = Date.now();
       setOverview(next);

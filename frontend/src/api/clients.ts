@@ -33,6 +33,7 @@ export interface ClientPresenceProjection {
 
 export interface ClientReadOptions {
   signal?: AbortSignal;
+  force?: boolean;
   /**
    * Opt into the established same-origin browser session for a classified
    * browser read. The default deliberately retains the API/Basic contract
@@ -54,6 +55,7 @@ export async function listClientsBySource(
   const res = await api.get(endpointBySource[source], {
     ...(options.sessionOnlyAuth ? { sessionOnlyAuth: true } : { auth: getAuth() }),
     signal: options.signal,
+    ...(options.force ? { force: true } : {}),
   });
   return res.data;
 }
@@ -61,11 +63,12 @@ export async function listClientsBySource(
 /** Snapshot-only presence read. It never starts a per-node 3x-ui scan. */
 export async function getClientPresence(
   signal?: AbortSignal,
-  options: Pick<ClientReadOptions, 'sessionOnlyAuth'> = {},
+  options: Pick<ClientReadOptions, 'sessionOnlyAuth' | 'force'> = {},
 ): Promise<ClientPresenceProjection> {
   const res = await api.get('/v1/clients/presence', {
     ...(options.sessionOnlyAuth ? { sessionOnlyAuth: true } : { auth: getAuth() }),
     signal,
+    ...(options.force ? { force: true } : {}),
   });
   return res.data || {};
 }

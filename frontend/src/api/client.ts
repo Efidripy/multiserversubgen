@@ -10,6 +10,8 @@ declare module 'axios' {
     skipCacheInvalidation?: boolean;
     /** Use the same-origin HttpOnly browser session without a Basic fallback. */
     sessionOnlyAuth?: boolean;
+    /** Bypass the browser cache and request a server-side refresh projection. */
+    force?: boolean;
   }
 }
 
@@ -89,6 +91,15 @@ const ROUTE_TTLS: Array<[string, number]> = [
   ['/v1/emails', CACHE_TTL.EMAILS],
 ];
 
+const supportsServerRefresh = (url: string): boolean => {
+  const path = url.split('?')[0];
+  return /^\/v1\/clients(?:\/expired|\/depleted)?$/.test(path)
+    || /^\/v1\/inbounds(?:\/stats|\/slim|\/options)?$/.test(path)
+    || path === '/v1/traffic/stats-by-period'
+    || path === '/v1/dashboard/overview'
+    || path === '/v1/nodes';
+};
+
 function getTTLForUrl(url: string): number {
   if (url.includes('/generate-')) return 0;
   for (const [pattern, ttl] of ROUTE_TTLS) {
@@ -113,6 +124,14 @@ function buildCacheKey(url: string, params: unknown, identity: string): string {
   const prefix = `GET:${identity || 'anonymous'}:${url}`;
   if (params == null) return prefix;
   return `${prefix}:${stableStringify(params)}`;
+}
+
+function cacheParams(params: unknown): unknown {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return params;
+  const record = params as Record<string, unknown>;
+  const normalized = { ...record };
+  if (normalized.refresh === 1 || normalized.refresh === '1') delete normalized.refresh;
+  return normalized;
 }
 
 function deriveResourceTag(url: string): string {
@@ -210,18 +229,21 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 
   if (config.method?.toLowerCase() === 'get') {
     const url = config.url ?? '';
+    if (config.force && supportsServerRefresh(url)) {
+      config.params = { ...(config.params as Record<string, unknown> | undefined), refresh: 1 };
+    }
     const ttl = getTTLForUrl(url);
     if (ttl > 0) {
       const cacheConfig = config as CacheAwareRequestConfig;
       const requestGeneration = cacheGeneration;
       cacheConfig.__cacheGeneration = requestGeneration;
-      const key = buildCacheKey(url, config.params, auth.username);
-      const cached = cacheService.get(key);
+      const key = buildCacheKey(url, cacheParams(config.params), auth.username);
+      const cached = config.force ? undefined : cacheService.get(key);
       if (cached !== undefined) {
         // Short-circuit the HTTP request by returning the cached response via a
         // custom adapter.  This keeps callers' .then()/.catch() chains intact.
         config.adapter = () => Promise.resolve(cached as any);
-      } else if (!config.signal) {
+      } else if (!config.signal && !config.force) {
         // Cache is populated only after the first response.  Coalesce equal
         // cold requests so a header and a lazily mounted page cannot create a
         // duplicate full-fleet API fetch before that cache entry exists.
@@ -285,9 +307,9 @@ api.interceptors.response.use((response) => {
   if (method === 'get') {
     const ttl = getTTLForUrl(url);
     if (ttl > 0) {
-      const key = buildCacheKey(url, response.config.params, getAuth().username);
+      const key = buildCacheKey(url, cacheParams(response.config.params), getAuth().username);
       const requestGeneration = (response.config as CacheAwareRequestConfig).__cacheGeneration;
-      if (requestGeneration !== cacheGeneration) {
+      if (requestGeneration != null && requestGeneration !== cacheGeneration) {
         return response;
       }
         cacheService.set(key, response, ttl, deriveCacheTags(url));
