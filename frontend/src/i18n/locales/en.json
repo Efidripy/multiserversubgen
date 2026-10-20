@@ -1187,7 +1187,9 @@
     "signalDeckEmptyCopy": "Add your first panel node to start collecting live node health and core state in the signal lane.",
     "ingressMatrixTitle": "Ingress",
     "ingressMatrixCopy": "Track registered panel nodes, access mode and ingress exposure without opening the full manager.",
-    "ingressEmptyCopy": "Add your first panel node to start managing fleet access and client operations."
+    "ingressEmptyCopy": "Add your first panel node to start managing fleet access and client operations.",
+    "stale": "Stale data",
+    "updatedUnknown": "Update time unknown"
   },
   "theme": {
     "light": "Light",
