@@ -677,6 +677,11 @@
   }
 
   .app-topbar__title {
+    /* Flex keeps the activity dot a sized flex item; as a bare inline span it collapses to 0x0. */
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
     margin: 0;
     color: #67e8f9;
     font-family: var(--font-mono);

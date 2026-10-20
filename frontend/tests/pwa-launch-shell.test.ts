@@ -61,6 +61,8 @@ describe('iOS standalone launch shell', () => {
     expect(appCss).toMatch(/\.app-topbar\s*\{[\s\S]*?height: 56px;[\s\S]*?padding: 0 12px;/);
     expect(appCss).toMatch(/\.app-topbar__title-content\s*\{[\s\S]*?min-width: 0;[\s\S]*?overflow: hidden;/);
     expect(appCss).toMatch(/\.app-topbar__activity-dot\s*\{[\s\S]*?flex: 0 0 auto;/);
+    // Desktop title must be a flex container too, or the dot renders 0x0 and disappears.
+    expect(appCss).toMatch(/\.app-topbar__title\s*\{[^}]*display: flex;[^}]*margin: 0;/);
     expect(appCss).toContain('text-overflow: ellipsis;');
     expect(appCss).toContain('right: env(safe-area-inset-right, 0px);');
     expect(appCss).toContain('width: min(420px, calc(100vw - 1rem - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));');
