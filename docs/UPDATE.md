@@ -22,6 +22,16 @@ graceful stop не подтвердился, deploy завершается в с
 checkpoint, backup, замена runtime и автоматический restore/start не запускаются.
 Это сигнал для отдельного incident recovery, а не причина повторять deploy или
 восстанавливать SQLite вручную.
+
+## Remote release через Windows wrapper
+
+Для штатной поставки готового immutable commit используйте режим `update` с
+`UpdateChoice=1` в `scripts/installer/windows/invoke-remote-deploy.ps1`. Он запускает только
+`scripts/deploy/server-deploy.sh`: staged build, backup-first swap и health
+checks сохраняют effective service contract. Этот режим не зависит от legacy
+`/opt/.sub_manager_install.log`. Интерактивный `update.sh` остаётся для
+отдельной конфигурационной миграции с его install-state контрактом.
+
 ## Режимы `update.sh`
 
 1. Полное обновление (backend + frontend)
