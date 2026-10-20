@@ -104,7 +104,9 @@ def build_cache_facade(
         clients_runtime.invalidate()
         inbounds_runtime.invalidate()
 
-    def get_cached_traffic_stats(nodes: List[Dict], group_by: str) -> Dict:
+    def get_cached_traffic_stats(nodes: List[Dict], group_by: str, force: bool = False) -> Dict:
+        if force:
+            return live_stats_runtime.get_cached_traffic_stats(nodes, group_by, force=True)
         return live_stats_runtime.get_cached_traffic_stats(nodes, group_by)
 
     def get_cached_traffic_stats_projection(group_by: str) -> Dict:
@@ -118,8 +120,10 @@ def build_cache_facade(
         )
 
     def get_cached_clients(
-        nodes: List[Dict], email_filter: Optional[str] = None
+        nodes: List[Dict], email_filter: Optional[str] = None, force: bool = False
     ) -> List[Dict]:
+        if force:
+            return clients_runtime.get_cached_clients(nodes, email_filter=email_filter, force=True)
         return clients_runtime.get_cached_clients(nodes, email_filter=email_filter)
 
     def enqueue_audit_event(payload: Dict) -> None:

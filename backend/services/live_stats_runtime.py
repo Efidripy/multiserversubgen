@@ -470,8 +470,14 @@ class LiveStatsRuntime:
 
         Thread(target=_runner, daemon=True).start()
 
-    def get_cached_traffic_stats(self, nodes: List[Dict], group_by: str) -> Dict:
+    def get_cached_traffic_stats(self, nodes: List[Dict], group_by: str, force: bool = False) -> Dict:
         redis_key = f"traffic_stats:{group_by}"
+        if force:
+            with self._get_traffic_cold_load_lock(group_by):
+                generation = self._cache_generation_snapshot()
+                data = self.client_mgr.get_traffic_stats(nodes, group_by)
+                self._store_traffic_cache(group_by, data, generation)
+                return data
         redis_data = self.redis_get_json(redis_key)
         if redis_data is not None:
             record_cache("redis")

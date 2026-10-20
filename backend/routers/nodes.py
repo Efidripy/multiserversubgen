@@ -64,7 +64,7 @@ def build_nodes_router(
     router = APIRouter()
 
     @router.get("/api/v1/nodes")
-    async def list_nodes(request: Request):
+    async def list_nodes(request: Request, refresh: bool = False):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
@@ -74,7 +74,7 @@ def build_nodes_router(
         for node_dict in nodes:
             node_dict.pop("password", None)
             result.append(node_dict)
-        return ORJSONResponse(content=result, headers={"Cache-Control": "private, max-age=300"})
+        return ORJSONResponse(content=result, headers={"Cache-Control": "no-store" if refresh else "private, max-age=300"})
 
     @router.get("/api/v1/nodes/list")
     async def list_nodes_simple(request: Request):
@@ -560,12 +560,23 @@ def build_nodes_router(
         return {"status": "success"}
 
     @router.post("/api/v1/nodes/refresh-now")
-    async def force_refresh_nodes(request: Request):
+    async def force_refresh_nodes(request: Request, wait: bool = False):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
-        await snapshot_collector.force_poll_all()
-        return {"status": "success", "message": "Force poll initiated"}
+        if not wait:
+            await snapshot_collector.force_poll_all()
+            return {"status": "success", "message": "Force poll initiated", "waited": False}
+        started = time.perf_counter()
+        completed = await snapshot_collector.force_poll_all_and_wait()
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        return {
+            "status": "success",
+            "message": "Force poll completed" if completed else "Force poll timed out",
+            "waited": True,
+            "completed": completed,
+            "duration_ms": duration_ms,
+        }
 
     @router.post("/api/v1/nodes/{node_id}/generate-keypair")
     async def generate_reality_keypair(request: Request, node_id: int):
