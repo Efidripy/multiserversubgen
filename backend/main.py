@@ -685,6 +685,8 @@ async def _telegram_polling_worker_loop(worker_tracker) -> None:
         timeout_sec=SETTINGS.telegram.polling_timeout_sec,
         fallback_subscription_message=service.fallback_subscription_message,
         record_outbound_delivery=service.record_outbound_delivery,
+        mark_update_response_delivered=service.mark_update_response_delivered,
+        retry_update_response=service.retry_update_response,
     )
     while worker_tracker.accepting:
         try:

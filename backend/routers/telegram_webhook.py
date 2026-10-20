@@ -65,14 +65,19 @@ def build_telegram_webhook_router(
             raise HTTPException(status_code=403, detail="Forbidden")
         for message in service.handle_update(data):
             try:
-                message_id = await run_in_threadpool(message_sender.send, message)
-            except TelegramMessageEditUnavailableError:
-                fallback = service.fallback_subscription_message(message)
-                if fallback is None:
-                    raise
-                message = fallback
-                message_id = await run_in_threadpool(message_sender.send, message)
-            await run_in_threadpool(service.record_outbound_delivery, message, message_id)
+                try:
+                    message_id = await run_in_threadpool(message_sender.send, message)
+                except TelegramMessageEditUnavailableError:
+                    fallback = service.fallback_subscription_message(message)
+                    if fallback is None:
+                        raise
+                    message = fallback
+                    message_id = await run_in_threadpool(message_sender.send, message)
+                await run_in_threadpool(service.record_outbound_delivery, message, message_id)
+                await run_in_threadpool(service.mark_update_response_delivered, message)
+            except Exception:
+                await run_in_threadpool(service.retry_update_response, message)
+                raise
         return {"ok": True}
 
     return router

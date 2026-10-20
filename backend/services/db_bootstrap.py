@@ -1286,6 +1286,25 @@ def init_db(db_path: str) -> None:
             "ON telegram_updates(status, received_at)"
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS telegram_update_responses
+                     (update_id INTEGER NOT NULL,
+                      response_index INTEGER NOT NULL CHECK(response_index >= 0),
+                      chat_id INTEGER NOT NULL,
+                      text TEXT NOT NULL,
+                      reply_markup_json TEXT DEFAULT NULL,
+                      status TEXT NOT NULL DEFAULT 'prepared'
+                        CHECK(status IN ('prepared', 'queued', 'sent')),
+                      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      sent_at TEXT DEFAULT NULL,
+                      PRIMARY KEY(update_id, response_index),
+                      FOREIGN KEY(update_id) REFERENCES telegram_updates(update_id)
+                        ON DELETE CASCADE)"""
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telegram_update_responses_pending "
+            "ON telegram_update_responses(update_id, status)"
+        )
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_subscription_message_receipts
                      (telegram_user_id INTEGER PRIMARY KEY,
                       token_digest TEXT NOT NULL,
