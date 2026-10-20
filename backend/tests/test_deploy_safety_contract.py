@@ -379,10 +379,10 @@ def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_
     assert r"printf %s\\n $deployCommit" in script
     assert "bash -x" not in script
     assert "sudo bash ./install.sh" in script
-    assert (
-        "sudo NONINTERACTIVE=true UPDATE_CHOICE=$UpdateChoice bash ./update.sh"
-        in script
-    )
+    assert 'if ($Mode -eq "update" -and $UpdateChoice -ne 1)' in script
+    assert "Mode=update supports only the canonical full release" in script
+    assert "sudo ROLLBACK_ON_FAIL=1 bash scripts/deploy/server-deploy.sh" in script
+    assert "sudo NONINTERACTIVE=true UPDATE_CHOICE=$UpdateChoice bash ./update.sh" not in script
 
 
 def test_windows_remote_deploy_skip_sync_uses_explicit_prepared_workdir():
@@ -400,10 +400,7 @@ def test_windows_remote_deploy_skip_sync_uses_explicit_prepared_workdir():
     )
     assert "if (-not $SkipSync)" in script
     assert "cd $remoteWorkDir && sudo bash ./install.sh" in script
-    assert (
-        "cd $remoteWorkDir && sudo NONINTERACTIVE=true UPDATE_CHOICE=$UpdateChoice bash ./update.sh"
-        in script
-    )
+    assert "cd $remoteWorkDir && sudo ROLLBACK_ON_FAIL=1 bash scripts/deploy/server-deploy.sh" in script
     assert "cd $remoteWorkDir && sudo bash scripts/ops/smoke-test.sh" in script
 
 

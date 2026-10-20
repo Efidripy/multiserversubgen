@@ -250,6 +250,9 @@ if ($Password) {
     Set-Acl -LiteralPath $passwordFile -AclObject $acl
 }
 $transport = Get-Transport -Password $Password -PasswordFile $passwordFile -HostKey $HostKey -KeyPath $KeyPath
+if ($Mode -eq "update" -and $UpdateChoice -ne 1) {
+    throw "Mode=update supports only the canonical full release (UpdateChoice=1)."
+}
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $runId = [guid]::NewGuid().ToString("N")
 $archivePath = Join-Path ([IO.Path]::GetTempPath()) "multiserversubgen-remote-$timestamp-$runId.tar.gz"
@@ -283,8 +286,8 @@ $remoteWorkDir = if ($SkipSync) { $RemoteDir } else { "$RemoteDir-$runId" }
             Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $remoteCmd
         }
         "update" {
-            $remoteCmd = "bash -lc 'cd $remoteWorkDir && sudo NONINTERACTIVE=true UPDATE_CHOICE=$UpdateChoice bash ./update.sh 2>&1 | tee $remoteLog; exit `${PIPESTATUS[0]}'"
-            Write-Host "Running remote update..."
+            $remoteCmd = "bash -lc 'cd $remoteWorkDir && sudo ROLLBACK_ON_FAIL=1 bash scripts/deploy/server-deploy.sh 2>&1 | tee $remoteLog; exit `${PIPESTATUS[0]}'"
+            Write-Host "Running canonical staged update..."
             Invoke-RemoteCommand -Transport $transport -UserName $UserName -HostName $HostName -Port $Port -Password $Password -Command $remoteCmd
         }
         "smoke" {
