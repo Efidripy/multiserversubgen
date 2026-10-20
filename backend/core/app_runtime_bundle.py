@@ -220,12 +220,14 @@ def build_app_runtime_bundle(
         clients_cache_ttl=clients_cache_ttl,
         clients_cache_stale_ttl=clients_cache_stale_ttl,
         start_cache_refresh=live_stats_runtime.start_cache_refresh,
+        filter_reachable_nodes=snapshot_collector.filter_reachable_nodes,
     )
 
     inbounds_runtime = InboundsRuntime(
         inbound_mgr=inbound_mgr,
         inbounds_cache=inbounds_cache,
         start_cache_refresh=live_stats_runtime.start_cache_refresh,
+        filter_reachable_nodes=snapshot_collector.filter_reachable_nodes,
     )
 
     metrics_runtime = MetricsRuntime(
