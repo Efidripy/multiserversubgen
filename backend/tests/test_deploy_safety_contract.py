@@ -490,11 +490,11 @@ def test_ops_backup_check_uses_consistent_runtime_database_backup():
     assert "\".restore '$BACKUP_FILE'\"" in script
     assert "admin.db.bak" in script
     assert "umask 077" in script
-    assert 'mkdir -p -m 0700 "$OUT_DIR"' in script
+    assert 'mktemp -d "${BACKUP_ROOT}/${PROJECT_NAME}_verify_${STAMP}_XXXXXX"' in script
     assert 'chmod 0600 "$BACKUP_FILE"' in script
     assert 'chmod 0600 "$RESTORE_FILE"' in script
     assert "prune-verify-artifacts --older-than <days> [--apply]" in script
-    assert 'VERIFY_ARTIFACT_GLOB="${PROJECT_NAME}_verify_' in script
+    assert 'VERIFY_ARTIFACT_GLOB="${PROJECT_NAME}_verify_??????????????*"' in script
     assert (
         'find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name "$VERIFY_ARTIFACT_GLOB"'
         in script
