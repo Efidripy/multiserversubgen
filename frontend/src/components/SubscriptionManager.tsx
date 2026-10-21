@@ -54,7 +54,6 @@ const cn = (...classes: Array<string | false | null | undefined>) => classes.fil
 
 const shellClass = 'min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-2 text-slate-100 sm:p-4 lg:p-6';
 const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]';
-const insetPanelClass = 'min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4';
 const titleClass = 'text-xs font-medium uppercase tracking-[0.14em] text-slate-300';
 const hintClass = 'mt-1 text-xs font-light leading-5 text-slate-500';
 const metricClass = 'font-mono tabular-nums whitespace-nowrap';
@@ -105,7 +104,7 @@ export const SubscriptionManager: React.FC<{
   const [emails, setEmails] = useState<string[]>([]);
   const [emailTokens, setEmailTokens] = useState<Record<string, string>>({});
   const [stats, setStats] = useState<Record<string, Stats>>({});
-  const [nodes, setNodes] = useState<NodeRecord[]>([]);
+  const [, setNodes] = useState<NodeRecord[]>([]);
   const [groups, setGroups] = useState<SubscriptionGroup[]>([]);
   const [emailSearch, setEmailSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -113,16 +112,17 @@ export const SubscriptionManager: React.FC<{
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [nodesLoading, setNodesLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'individual' | 'grouped'>('individual');
-  const [filterProtocol, setFilterProtocol] = useState('');
-  const [selectedNodes, setSelectedNodes] = useState<string[]>([]);
+  // Delivery filters have no UI for now (to be reworked); they keep their defaults.
+  const [filterProtocol] = useState('');
+  const [selectedNodes] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [individualSortField, setIndividualSortField] = useState<SortField>('email');
   const [individualSortDir, setIndividualSortDir] = useState<'asc' | 'desc'>('asc');
   const [groupSortField, setGroupSortField] = useState<GroupSortField>('count');
   const [groupSortDir, setGroupSortDir] = useState<'asc' | 'desc'>('desc');
-  const [deliveryTransport, setDeliveryTransport] = useState<'all' | 'ws' | 'grpc'>('all');
-  const [deliveryFormat, setDeliveryFormat] = useState<'base64' | 'json' | 'raw'>('base64');
+  const [deliveryTransport] = useState<'all' | 'ws' | 'grpc'>('all');
+  const [deliveryFormat] = useState<'base64' | 'json' | 'raw'>('base64');
   const [qrUrl, setQrUrl] = useState('');
   const [qrDataUrl, setQrDataUrl] = useState('');
   const [qrError, setQrError] = useState('');
@@ -325,12 +325,6 @@ export const SubscriptionManager: React.FC<{
     };
   }, []);
 
-  const openCreateGroup = () => {
-    setGroupForm(emptyGroupForm);
-    setGroupEditorOpen(true);
-    setViewMode('grouped');
-  };
-
   const openEditGroup = (group: SubscriptionGroup) => {
     setGroupForm({
       id: group.id,
@@ -475,10 +469,6 @@ export const SubscriptionManager: React.FC<{
   const individualSortIndicator = (field: SortField) =>
     individualSortField === field ? (individualSortDir === 'asc' ? ' ^' : ' v') : '';
 
-  const filtersActive = Boolean(
-    filterProtocol || selectedNodes.length > 0 || deliveryTransport !== 'all' || deliveryFormat !== 'base64',
-  );
-
   const groupSortDirectionLabels = groupSortField === 'name'
     ? { asc: t('subscriptions.sortAZ'), desc: t('subscriptions.sortZA') }
     : { asc: t('subscriptions.sortSmallLarge'), desc: t('subscriptions.sortLargeSmall') };
@@ -610,10 +600,6 @@ export const SubscriptionManager: React.FC<{
               <UIIcon name={totalLoading ? 'spinner' : 'refresh'} size={15} />
               <span className="whitespace-nowrap">{t('subscriptions.refreshEmails')}</span>
             </button>
-            <button type="button" className={secondaryButtonClass} onClick={openCreateGroup} disabled={totalLoading || groupSaving}>
-              <UIIcon name="plus" size={15} />
-              <span className="whitespace-nowrap">{t('subscriptions.addGroup')}</span>
-            </button>
             <button
               type="button"
               className={secondaryButtonClass}
@@ -640,141 +626,6 @@ export const SubscriptionManager: React.FC<{
             {successMessage}
           </div>
         )}
-
-        <div className="grid min-w-0 grid-cols-1 gap-3">
-          <div className={insetPanelClass}>
-            <div className="mb-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <h3 className={titleClass}>{t('subscriptions.deliveryProfile')}</h3>
-              </div>
-              <div className="flex min-w-0 flex-wrap gap-2">
-                <button
-                  type="button"
-                  className={cn(secondaryButtonClass, viewMode === 'individual' && 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200')}
-                  onClick={() => setViewMode('individual')}
-                >
-                  <UIIcon name="user" size={14} />
-                  <span className="whitespace-nowrap">{t('subscriptions.individual')}</span>
-                </button>
-                <button
-                  type="button"
-                  className={cn(secondaryButtonClass, viewMode === 'grouped' && 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200')}
-                  onClick={() => setViewMode('grouped')}
-                >
-                  <UIIcon name="folder" size={14} />
-                  <span className="whitespace-nowrap">{t('subscriptions.grouped')}</span>
-                </button>
-              </div>
-            </div>
-
-            <div className="grid min-w-0 grid-cols-1 gap-x-6 gap-y-3 border-t border-cyan-500/15 pt-3 md:grid-cols-2 xl:grid-cols-3">
-              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-                <label className={cn(titleClass, 'shrink-0')}>{t('subscriptions.subscriptionProfile')}</label>
-                <div className="min-w-0">
-                  <ChoiceChips
-                    options={[
-                      { value: '', label: t('common.all') },
-                      { value: 'vless', label: 'VLESS' },
-                      { value: 'vmess', label: 'VMess' },
-                      { value: 'trojan', label: 'Trojan' },
-                    ]}
-                    value={filterProtocol}
-                    onChange={(value) => setFilterProtocol(value)}
-                  />
-                </div>
-              </div>
-              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-                <label className={cn(titleClass, 'shrink-0')}>{t('subscriptions.transportHint')}</label>
-                <div className="min-w-0">
-                  <ChoiceChips
-                    options={[
-                      { value: 'all', label: t('common.all') },
-                      { value: 'ws', label: 'WS' },
-                      { value: 'grpc', label: 'gRPC' },
-                    ]}
-                    value={deliveryTransport}
-                    onChange={(value) => setDeliveryTransport(value)}
-                  />
-                </div>
-              </div>
-              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-                <label className={cn(titleClass, 'shrink-0')}>{t('subscriptions.outputFormat')}</label>
-                <div className="min-w-0">
-                  <ChoiceChips
-                    options={[
-                      { value: 'base64', label: 'Base64' },
-                      { value: 'json', label: 'JSON' },
-                      { value: 'raw', label: 'Raw' },
-                    ]}
-                    value={deliveryFormat}
-                    onChange={(value) => setDeliveryFormat(value)}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <aside className={insetPanelClass}>
-            <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <h3 className={titleClass}>{t('subscriptions.nodeFilter')}</h3>
-              <div className="relative min-w-0 md:w-80">
-                <UIIcon name="search" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
-                <input
-                  type="text"
-                  className={cn(inputClass, 'pl-10')}
-                  placeholder={t('subscriptions.searchEmailsPlaceholder')}
-                  value={emailSearch}
-                  onChange={(e) => setEmailSearch(e.target.value)}
-                />
-              </div>
-            </div>
-
-            <div className="mt-3 flex min-w-0 flex-wrap gap-1.5">
-              {nodes.map((node) => {
-                const active = selectedNodes.includes(node.name);
-                return (
-                  <button
-                    key={node.id}
-                    type="button"
-                    className={cn(
-                      secondaryButtonClass,
-                      'h-8 px-2.5 text-[11px]',
-                      active && 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200',
-                    )}
-                    onClick={() => {
-                      setSelectedNodes((prev) => (
-                        prev.includes(node.name) ? prev.filter((item) => item !== node.name) : [...prev, node.name]
-                      ));
-                    }}
-                  >
-                    {active && <UIIcon name="check" size={13} />}
-                    <span className="min-w-0 truncate">{node.name}</span>
-                  </button>
-                );
-              })}
-              {selectedNodes.length > 0 && (
-                <button type="button" className={secondaryButtonClass} onClick={() => setSelectedNodes([])}>
-                  <UIIcon name="clear" size={14} />
-                  <span className="whitespace-nowrap">{t('common.clear')}</span>
-                </button>
-              )}
-            </div>
-
-            {filtersActive && (
-              <div className="mt-4 rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-3 text-xs text-slate-300">
-                <span className="block text-[10px] font-medium uppercase tracking-[0.14em] text-cyan-200">
-                  {t('subscriptions.activeFilters')}
-                </span>
-                <div className="mt-2 flex min-w-0 flex-wrap gap-2 text-slate-400">
-                  {filterProtocol && <span className={metricClass}>{t('subscriptions.protocolFilter')}: {filterProtocol.toUpperCase()}</span>}
-                  {selectedNodes.length > 0 && <span className="min-w-0 truncate">{t('subscriptions.nodeFilters')}: {selectedNodes.join(', ')}</span>}
-                  {deliveryTransport !== 'all' && <span className={metricClass}>{t('subscriptions.transportHint')}: {deliveryTransport.toUpperCase()}</span>}
-                  {deliveryFormat !== 'base64' && <span className={metricClass}>{t('subscriptions.outputFormat')}: {deliveryFormat.toUpperCase()}</span>}
-                </div>
-              </div>
-            )}
-          </aside>
-        </div>
       </section>
 
       <section className={panelClass}>
@@ -789,6 +640,18 @@ export const SubscriptionManager: React.FC<{
               {viewMode === 'grouped' ? t('subscriptions.copyGroupLinksTitle') : t('traffic.sortHint')}
             </p>
           </div>
+          {viewMode === 'individual' && (
+            <div className="relative min-w-0 lg:ml-auto lg:w-80">
+              <UIIcon name="search" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
+              <input
+                type="text"
+                className={cn(inputClass, 'pl-10')}
+                placeholder={t('subscriptions.searchEmailsPlaceholder')}
+                value={emailSearch}
+                onChange={(e) => setEmailSearch(e.target.value)}
+              />
+            </div>
+          )}
           {viewMode === 'grouped' && (
             <div className="flex min-w-0 flex-wrap gap-2">
               <ChoiceChips
