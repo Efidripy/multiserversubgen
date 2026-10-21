@@ -178,7 +178,72 @@ def test_emails_endpoint_reports_system_emails_without_changing_tokens(tmp_path)
 
     payload = client.get("/api/v1/emails").json()
     assert payload["system_emails"] == ["svc"]
-    assert set(payload["subscription_tokens"]) == {"D632-IOS", "svc"}
+    assert set(payload["subscription_tokens"]) == {"D632-IOS"}
+
+
+def test_system_email_token_is_purged_and_link_stops_serving(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    old_token = ensure_tokens(db_path, "email", ["svc"])["svc"]
+    client = TestClient(_build_app(db_path, ["D632-IOS", "svc"], system_emails=["svc"]))
+
+    assert client.get(f"/api/v1/sub/{old_token}").status_code == 404
+    payload = client.get("/api/v1/emails").json()
+    assert "svc" not in payload["subscription_tokens"]
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM subscription_tokens WHERE identifier = 'svc'"
+        ).fetchone()[0] == 0
+
+
+def test_toggling_system_marker_reissues_then_removes_subscription(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    system = ["svc"]  # mutated below to emulate the marker being removed/added on the node
+    client = TestClient(_build_app(db_path, ["D632-IOS", "svc"], system_emails=system))
+
+    first = client.get("/api/v1/emails").json()
+    assert "svc" not in first["subscription_tokens"]
+
+    system.clear()  # marker removed: client becomes a normal subscriber
+    second = client.get("/api/v1/emails").json()
+    token = second["subscription_tokens"]["svc"]
+    assert client.get(f"/api/v1/sub/{token}").status_code == 200
+
+    system.append("svc")  # marker added again: token purged and link dead at once
+    assert client.get(f"/api/v1/sub/{token}").status_code == 404
+    third = client.get("/api/v1/emails").json()
+    assert "svc" not in third["subscription_tokens"]
+    assert client.get(f"/api/v1/sub/{token}").status_code == 404
+
+    system.clear()  # marker removed again: a brand-new token, the purged one stays dead
+    fourth = client.get("/api/v1/emails").json()
+    new_token = fourth["subscription_tokens"]["svc"]
+    assert new_token != token
+    assert client.get(f"/api/v1/sub/{token}").status_code == 404
+    assert client.get(f"/api/v1/sub/{new_token}").status_code == 200
+
+
+def test_group_subscription_skips_system_emails(tmp_path):
+    import json
+    import sqlite3
+
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO subscription_groups (name, identifier, email_patterns, node_filters) VALUES (?, ?, ?, ?)",
+            ("Group", "grp", json.dumps(["D632-IOS", "svc"]), json.dumps(["node1"])),
+        )
+        conn.commit()
+    token = ensure_tokens(db_path, "group", ["grp"])["grp"]
+    client = TestClient(_build_app(db_path, ["D632-IOS", "svc"], system_emails=["svc"]))
+
+    response = client.get(f"/api/v1/sub-grouped/{token}")
+    assert response.status_code == 200
+    body = base64.b64decode(response.text).decode()
+    assert "D632-IOS" in body
+    assert "svc" not in body
 
 
 def test_expired_secret_hmac_format_migrates_by_known_identifier(tmp_path):
