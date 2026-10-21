@@ -1673,7 +1673,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
           },
           title: (items: any[]) => {
             const base = items?.[0]?.label || '';
-            return `${base} â€¢ ${trafficModeLabel} â€¢ step ${effectiveTrafficStepSec}s â€¢ ${trafficSourceLabel} â€¢ ${trafficSmoothingLabel}`;
+            return `${base} • ${trafficModeLabel} • step ${effectiveTrafficStepSec}s • ${trafficSourceLabel} • ${trafficSmoothingLabel}`;
           },
         },
       },
@@ -1946,168 +1946,153 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
         </div>
       )}
 
-      <section className="mb-4 grid min-w-0 grid-cols-1 gap-2 sm:gap-4 lg:grid-cols-3">
-        <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
-            <div className={sectionTitleClass}>{t('common.server')}</div>
-          </div>
-          <div className="min-w-0 p-3 sm:p-4">
-            <ChoiceChips
-              className="min-w-0"
-              options={[
-                { value: 'all', label: t('common.all') },
-                ...(!isAllScope && selectedNodeId !== null && !nodes.some((node) => node.id === selectedNodeId)
-                  ? [{ value: selectedScope, label: selectedNodeName }]
-                  : []),
-                ...nodes.map((n) => ({ value: String(n.id), label: n.name })),
-              ]}
-              value={selectedScope}
-              onChange={(value) => setSelectedScope(value)}
-            />
-          </div>
-        </div>
-        <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
-            <div className={sectionTitleClass}>{t('monitoringDashboard.range')}</div>
-          </div>
-          <div className="min-w-0 p-3 sm:p-4">
-            <ChoiceChips
-              className="min-w-0"
-              options={RANGE_OPTIONS.map((range) => ({ value: range.value, label: range.label }))}
-              value={rangeSec}
-              onChange={(value) => setRangeSec(value)}
-            />
-          </div>
-        </div>
-        <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
-            <div className={sectionTitleClass}>{t('traffic.title')}</div>
-          </div>
-          <div className="flex min-w-0 flex-col gap-3 p-3 sm:p-4">
-            <ChoiceChips
-              className="min-w-0"
-              options={[
-                { value: 'MB', label: 'MB' },
-                { value: 'GB', label: 'GB' },
-              ]}
-              value={trafficUnit}
-              onChange={(value) => setTrafficUnit(value as 'MB' | 'GB')}
-            />
-            <button
-              className={secondaryButtonClass}
-              onClick={() => { void (async () => {
-                await forceNodeRefresh();
-                cacheService.invalidate();
-                if (historyRequested) {
-                  loadHistory(selectedScope, rangeSec);
-                }
-                if (!isAllScope && selectedNodeId !== null) {
-                  loadSelectedServerStatus(selectedNodeId);
-                  return;
-                }
-                loadLatestSnapshot();
-                loadDepsHealth();
-                loadServerStatuses();
-                loadCollectorStatus();
-                if (monitoringDetailsRequested) {
-                  loadAdguardSources();
-                  loadAdguardOverview();
-                  loadAdguardHistory();
-                  loadStackStatus();
-                }
-              })(); }}
-              disabled={loadingHistory || resourceLoading}
-            >
-              {loadingHistory || resourceLoading ? t('header.updating') : t('common.refresh')}
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section className="mb-3 sm:mb-6 grid min-w-0 grid-cols-1 gap-2 sm:gap-4 lg:grid-cols-5">
-        <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
-            <div className={sectionTitleClass}>{t('monitoringDashboard.trafficMode')}</div>
-          </div>
-          <div className="min-w-0 p-3 sm:p-4">
-            <ChoiceChips
-              className="min-w-0"
-              options={[
-                { value: 'history', label: 'History' },
-                { value: 'live', label: 'Live' },
-              ]}
-              value={trafficMode}
-              onChange={(value) => setTrafficMode(value as TrafficMode)}
-            />
-          </div>
-        </div>
-        <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
-            <div className={sectionTitleClass}>{t('monitoringDashboard.source')}</div>
-          </div>
-          <div className="min-w-0 p-3 sm:p-4">
-            <ChoiceChips
-              className="min-w-0"
-              options={[
-                { value: 'nodes', label: 'Nodes' },
-                { value: 'people', label: t('monitoringDashboard.people') },
-                { value: 'inbounds', label: t('nav.inbounds') },
-              ]}
-              value={trafficSource}
-              onChange={(value) => setTrafficSource(value as TrafficSource)}
-            />
-          </div>
-        </div>
-        <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
-            <div className={sectionTitleClass}>{t('monitoringDashboard.step')}</div>
-          </div>
-          <div className="min-w-0 p-3 sm:p-4">
-            <ChoiceChips
-              className="min-w-0"
-              options={TRAFFIC_STEP_OPTIONS.map((step) => ({ value: step.value, label: step.label }))}
-              value={trafficStepSec}
-              onChange={(value) => setTrafficStepSec(Number(value))}
-            />
-          </div>
-        </div>
-        <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
-            <div className={sectionTitleClass}>{t('monitoringDashboard.style')}</div>
-          </div>
-          <div className="min-w-0 p-3 sm:p-4">
-            <ChoiceChips
-              className="min-w-0"
-              options={[
-                { value: 'stepped', label: 'Stepped' },
-                { value: 'bars', label: 'Bars' },
-                { value: 'smooth', label: 'Smooth' },
-              ]}
-              value={trafficVisualStyle}
-              onChange={(value) => setTrafficVisualStyle(value as TrafficVisualStyle)}
-            />
-          </div>
-        </div>
-        <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
-            <div className={sectionTitleClass}>{t('monitoringDashboard.smoothing')}</div>
-          </div>
-          <div className="min-w-0 p-3 sm:p-4">
-            <ChoiceChips
-              className="min-w-0"
-              options={[
-                { value: 'raw', label: 'Raw' },
-                { value: 'sma3', label: 'SMA-3' },
-                { value: 'sma5', label: 'SMA-5' },
-              ]}
-              value={trafficSmoothing}
-              onChange={(value) => setTrafficSmoothing(value as TrafficSmoothing)}
-            />
+      <section className="mb-3 sm:mb-6 min-w-0">
+        <div className={cn(panelClass, 'flex flex-col gap-3 p-3 sm:p-4')}>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className={cn(sectionTitleClass, 'w-24 shrink-0')}>{t('common.server')}</span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <ChoiceChips
+                  className="min-w-0"
+                  options={[
+                    { value: 'all', label: t('common.all') },
+                    ...(!isAllScope && selectedNodeId !== null && !nodes.some((node) => node.id === selectedNodeId)
+                      ? [{ value: selectedScope, label: selectedNodeName }]
+                      : []),
+                    ...nodes.map((n) => ({ value: String(n.id), label: n.name })),
+                  ]}
+                  value={selectedScope}
+                  onChange={(value) => setSelectedScope(value)}
+                />
+              </div>
+            </div>
+          <div className="grid min-w-0 grid-cols-1 gap-x-6 gap-y-3 border-t border-cyan-500/15 pt-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className={cn(sectionTitleClass, 'w-24 shrink-0')}>{t('monitoringDashboard.range')}</span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <ChoiceChips
+                  className="min-w-0"
+                  options={RANGE_OPTIONS.map((range) => ({ value: range.value, label: range.label }))}
+                  value={rangeSec}
+                  onChange={(value) => setRangeSec(value)}
+                />
+              </div>
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className={cn(sectionTitleClass, 'w-24 shrink-0')}>{t('traffic.title')}</span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <ChoiceChips
+                  className="min-w-0"
+                  options={[
+                    { value: 'MB', label: 'MB' },
+                    { value: 'GB', label: 'GB' },
+                  ]}
+                  value={trafficUnit}
+                  onChange={(value) => setTrafficUnit(value as 'MB' | 'GB')}
+                />
+                <button
+                  className={secondaryButtonClass}
+                  onClick={() => { void (async () => {
+                    await forceNodeRefresh();
+                    cacheService.invalidate();
+                    if (historyRequested) {
+                      loadHistory(selectedScope, rangeSec);
+                    }
+                    if (!isAllScope && selectedNodeId !== null) {
+                      loadSelectedServerStatus(selectedNodeId);
+                      return;
+                    }
+                    loadLatestSnapshot();
+                    loadDepsHealth();
+                    loadServerStatuses();
+                    loadCollectorStatus();
+                    if (monitoringDetailsRequested) {
+                      loadAdguardSources();
+                      loadAdguardOverview();
+                      loadAdguardHistory();
+                      loadStackStatus();
+                    }
+                  })(); }}
+                  disabled={loadingHistory || resourceLoading}
+                >
+                  {loadingHistory || resourceLoading ? t('header.updating') : t('common.refresh')}
+                </button>
+              </div>
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className={cn(sectionTitleClass, 'w-24 shrink-0')}>{t('monitoringDashboard.trafficMode')}</span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <ChoiceChips
+                  className="min-w-0"
+                  options={[
+                    { value: 'history', label: 'History' },
+                    { value: 'live', label: 'Live' },
+                  ]}
+                  value={trafficMode}
+                  onChange={(value) => setTrafficMode(value as TrafficMode)}
+                />
+              </div>
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className={cn(sectionTitleClass, 'w-24 shrink-0')}>{t('monitoringDashboard.source')}</span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <ChoiceChips
+                  className="min-w-0"
+                  options={[
+                    { value: 'nodes', label: 'Nodes' },
+                    { value: 'people', label: t('monitoringDashboard.people') },
+                    { value: 'inbounds', label: t('nav.inbounds') },
+                  ]}
+                  value={trafficSource}
+                  onChange={(value) => setTrafficSource(value as TrafficSource)}
+                />
+              </div>
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className={cn(sectionTitleClass, 'w-24 shrink-0')}>{t('monitoringDashboard.step')}</span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <ChoiceChips
+                  className="min-w-0"
+                  options={TRAFFIC_STEP_OPTIONS.map((step) => ({ value: step.value, label: step.label }))}
+                  value={trafficStepSec}
+                  onChange={(value) => setTrafficStepSec(Number(value))}
+                />
+              </div>
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className={cn(sectionTitleClass, 'w-24 shrink-0')}>{t('monitoringDashboard.style')}</span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <ChoiceChips
+                  className="min-w-0"
+                  options={[
+                    { value: 'stepped', label: 'Stepped' },
+                    { value: 'bars', label: 'Bars' },
+                    { value: 'smooth', label: 'Smooth' },
+                  ]}
+                  value={trafficVisualStyle}
+                  onChange={(value) => setTrafficVisualStyle(value as TrafficVisualStyle)}
+                />
+              </div>
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span className={cn(sectionTitleClass, 'w-24 shrink-0')}>{t('monitoringDashboard.smoothing')}</span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <ChoiceChips
+                  className="min-w-0"
+                  options={[
+                    { value: 'raw', label: 'Raw' },
+                    { value: 'sma3', label: 'SMA-3' },
+                    { value: 'sma5', label: 'SMA-5' },
+                  ]}
+                  value={trafficSmoothing}
+                  onChange={(value) => setTrafficSmoothing(value as TrafficSmoothing)}
+                />
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
-      <section className="mb-3 sm:mb-6 grid min-w-0 grid-cols-1 gap-2 sm:gap-5 lg:grid-cols-3">
+      <section className="mb-3 sm:mb-6 grid min-w-0 grid-cols-1 gap-2 sm:gap-4 lg:grid-cols-4">
         {usageCards.map((card) => {
           const tone = gaugeTone(card.percent);
           return (

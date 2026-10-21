@@ -283,7 +283,7 @@ const InboundTableSkeleton = () => (
               <span key={chipIndex} className={`${tableSkeletonLineClass} h-7 w-full`} />
             ))}
           </div>
-          <div className="mt-3 grid grid-cols-4 gap-2 sm:grid-cols-8">
+          <div className="mt-3 flex flex-wrap gap-1.5">
             {Array.from({ length: 8 }).map((__, actionIndex) => (
               <span key={actionIndex} className={`${tableSkeletonLineClass} h-8 w-8`} />
             ))}
@@ -586,7 +586,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     setError('');
 
     try {
-      // Single parallel fetch â€” backend returns from cache (30s fresh / 300s stale).
+      // Single parallel fetch — backend returns from cache (30s fresh / 300s stale).
       const inboundStatsPromise = api
         // Legacy cold-read contract: .get('/v1/inbounds/stats', { sessionOnlyAuth: true, signal: controller.signal })
         .get('/v1/inbounds/stats', { sessionOnlyAuth: true, signal: controller.signal, ...(force ? { force: true } : {}) })
@@ -1655,7 +1655,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                     )}
                   </div>
 
-                  <div className="mt-3 grid grid-cols-4 gap-2 sm:grid-cols-8">
+                  <div className="mt-3 flex flex-wrap gap-1.5">
                     <button type="button" className={buttonIconClass} onClick={() => handleEditClick(ib)} title={t('inbounds.editInbound')} aria-label={t('inbounds.editInbound')}><UIIcon name="edit" size={14} /></button>
                     <button type="button" className={buttonIconClass} title={t('inbounds.addClientTitle')} onClick={() => onAddClientToInbound && onAddClientToInbound(ib.id, ib.node_name)} disabled={!onAddClientToInbound} aria-label={t('inbounds.addClientTitle')}><UIIcon name="plus" size={14} /></button>
                     <button type="button" className={buttonIconClass} onClick={() => handleCloneClick(ib)} title={t('inbounds.cloneInbound')} aria-label={t('inbounds.cloneInbound')}><UIIcon name="copy" size={14} /></button>

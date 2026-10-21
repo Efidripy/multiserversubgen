@@ -85,23 +85,23 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('TelegramAdmin typography +4 px', () => {
-  it('renders scoped +4 typography for the section heading, tabs, controls and settings input', async () => {
+describe('TelegramAdmin typography', () => {
+  it('renders section-aligned typography for the section heading, tabs, controls and settings input', async () => {
     render(<TelegramAdmin />);
 
     await waitFor(() => expect(api.listTelegramCustomers).toHaveBeenCalledTimes(1));
     const root = screen.getByTestId('telegram-admin');
     expect(root).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'telegram.tabs.users' }).className).toContain('text-[24px]');
-    expect(screen.getByRole('button', { name: 'telegram.tabs.users' }).className).toContain('text-[16px]');
-    expect(screen.getByRole('button', { name: 'common.refresh' }).className).toContain('text-[15px]');
+    expect(screen.getByRole('heading', { name: 'telegram.tabs.users' }).className).toContain('text-sm');
+    expect(screen.getByRole('button', { name: 'telegram.tabs.users' }).className).toContain('text-[13px]');
+    expect(screen.getByRole('button', { name: 'common.refresh' }).className).toContain('text-[12px]');
     expect(screen.getByRole('button', { name: 'common.refresh' }).className).toContain('h-9');
 
     fireEvent.click(screen.getByRole('button', { name: 'telegram.tabs.settings' }));
 
     const tokenInput = await screen.findByLabelText('telegram.botTokenInputLabel');
-    expect(tokenInput.className).toContain('text-[16px]');
-    expect(screen.getByText('telegram.botTokenTitle').className).toContain('text-[16px]');
+    expect(tokenInput.className).toContain('text-[13px]');
+    expect(screen.getByText('telegram.botTokenTitle').className).toContain('text-[13px]');
   });
 
   it('keeps the enlarged metric cards content-led instead of clipping it at the former fixed height', async () => {
@@ -111,7 +111,7 @@ describe('TelegramAdmin typography +4 px', () => {
     const metric = screen.getByRole('button', { name: /telegram\.customers/ });
     expect(metric.className).toContain('min-h-[66px]');
     expect(metric.className).not.toContain('h-[58px]');
-    expect(metric.querySelector('.text-\\[19px\\]')).toBeTruthy();
-    expect(metric.querySelector('.text-\\[13px\\]')).toBeTruthy();
+    expect(metric.querySelector('.text-\\[16px\\]')).toBeTruthy();
+    expect(metric.querySelector('.text-\\[11px\\]')).toBeTruthy();
   });
 });

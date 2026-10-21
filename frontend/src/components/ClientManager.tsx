@@ -2065,7 +2065,7 @@ export const ClientManager: React.FC = () => {
       <div className="mt-3 grid min-w-0 grid-cols-2 gap-2"><button type="button" className={cn(badgeBaseClass, 'justify-start gap-1.5 bg-[#0f1420] text-slate-200')} onClick={() => setFilterNode((previous) => previous === client.node_name ? '' : client.node_name)}>{isClientOnline(client) && <span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-emerald-300" />}<span className="truncate">{client.node_name}</span></button><button type="button" className={cn(badgeBaseClass, 'bg-cyan-400 text-[#06111f]')} onClick={() => setFilterProtocol((previous) => previous === client.protocol ? '' : client.protocol)}>{client.protocol.toUpperCase()}</button><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{formatBytes(downloadBytes)}</span></span><span className={cn(badgeBaseClass, 'justify-start bg-[#0f1420] font-mono text-slate-300 tabular-nums')}><span className="truncate whitespace-nowrap">{client.total > 0 ? formatBytes(client.total) : t('clients.unlimited')}</span></span></div>
       {client.total > 0 && <div className="mt-3"><div className="h-1 overflow-hidden rounded-full bg-[#0f1420]"><div className={cn('h-full rounded-full', pct >= 90 ? 'bg-rose-400' : pct >= 70 ? 'bg-amber-300' : 'bg-emerald-400')} style={{ width: `${pct}%` }} /></div><div className="mt-1 font-mono text-[11px] tabular-nums text-slate-500 whitespace-nowrap">{(used / 1073741824).toFixed(1)} / {(client.total / 1073741824).toFixed(1)} GB</div></div>}
       <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-500"><div className="min-w-0"><span className="block uppercase tracking-wider">{t('clients.expiryTime')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-200 whitespace-nowrap">{client.expiryTime > 0 ? new Date(client.expiryTime).toLocaleDateString() : t('clients.never')}</span></div><div className="min-w-0 text-right"><span className="block uppercase tracking-wider">{t('clients.lastSeen')}</span><span className="mt-1 block truncate font-mono tabular-nums text-slate-300 whitespace-nowrap">{lastSeen ? new Date(lastSeen).toLocaleString() : '-'}</span></div></div>
-      <div className="mt-3 grid grid-cols-6 gap-2">{renderClientActions(client)}</div>
+      <div className="mt-3 [&>div]:justify-start">{renderClientActions(client)}</div>
     </article>;
   };
   const renderDesktopChild = (client: Client) => {
@@ -2167,8 +2167,8 @@ export const ClientManager: React.FC = () => {
           </div>
         )}
 
-        <div className="panel-grid panel-grid--3col">
-          <div className="panel-block">
+        <div className="panel-grid panel-grid--2col">
+          <div className="panel-block panel-block--wide">
             <div className="panel-block__header">
               <div>
                 <h6 className="panel-block__title">{t('common.actions')}</h6>
@@ -2787,44 +2787,6 @@ export const ClientManager: React.FC = () => {
         </div>
       </div>
       
-      {/* Stats bar */}
-      {clients.length > 0 && (() => {
-        const now = Date.now();
-        const active = clients.filter(c => c.enable && !(c.expiryTime > 0 && c.expiryTime < now) && !(c.total > 0 && c.up + c.down >= c.total)).length;
-        const expired = clients.filter(c => c.expiryTime > 0 && c.expiryTime < now).length;
-        const depleted = clients.filter(c => c.total > 0 && c.up + c.down >= c.total).length;
-        const disabled = clients.filter(c => !c.enable).length;
-        const online = onlineEmails.size;
-        return (
-          <div className="mb-2 flex flex-wrap gap-2">
-            {[
-              { label: 'Total',    value: clients.length, cls: '',          status: '' },
-              { label: 'Active',   value: `${active} (${clients.length ? Math.round(active / clients.length * 100) : 0}%)`, cls: 'text-emerald-300', status: 'active' },
-              { label: 'Online',   value: `${online} (${active ? Math.round(online / active * 100) : 0}%)`, cls: 'text-accent',  status: 'online' },
-              { label: 'Expired',  value: expired,  cls: 'text-rose-300',  status: 'expired' },
-              { label: 'Depleted', value: depleted, cls: 'text-amber-300', status: 'depleted' },
-              { label: 'Disabled', value: disabled, cls: 'text-slate-500',   status: 'disabled' },
-            ].map(s => (
-              <span key={s.label}
-                className={cn(
-                  badgeBaseClass,
-                  'bg-[#0f1420] font-mono tabular-nums whitespace-nowrap text-[0.78rem] font-normal',
-                  s.cls,
-                  s.status && filterStatus === s.status && 'border-current bg-cyan-400/10 ring-1 ring-cyan-300/50'
-                )}
-                style={{
-                  cursor: s.status ? 'pointer' : 'default',
-                }}
-                title={s.status ? (filterStatus === s.status ? 'Click to clear filter' : `Click to filter by ${s.label}`) : undefined}
-                onClick={() => s.status && setFilterStatus(prev => prev === s.status ? '' : s.status)}
-              >
-                {s.label}: <strong>{s.value}</strong>
-              </span>
-            ))}
-          </div>
-        );
-      })()}
-
       {/* Pagination controls */}
       {sortedClientGroups.length > pageSize && (
         <div className="pg-strip pg-strip--bar mb-2">

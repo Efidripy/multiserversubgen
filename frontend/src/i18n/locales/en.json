@@ -539,6 +539,7 @@
     "operationSafeRefresh": "Safely refresh snapshot"
   },
   "traffic": {
+    "rows": "Rows: {{count}}",
     "title": "Traffic Statistics",
     "groupBy": "Group By",
     "groupHint": "Choose how traffic is aggregated.",

@@ -98,7 +98,7 @@ describe('TelegramAdmin read topology', () => {
     render(<TelegramAdmin />);
     await waitFor(() => expect(calls).toHaveLength(1));
     await act(async () => { calls[0].resolve([customer('initial@example.test')]); });
-    await screen.findByText('initial@example.test');
+    await screen.findAllByText('initial@example.test');
     vi.useFakeTimers();
     fireEvent.change(screen.getByPlaceholderText('common.search'), { target: { value: 'alpha' } });
     await act(async () => { await vi.advanceTimersByTimeAsync(300); });
@@ -109,7 +109,7 @@ describe('TelegramAdmin read topology', () => {
     expect(calls).toHaveLength(3); expect(calls[2].query).toBe('beta');
     await act(async () => { calls[1].resolve([customer('stale@example.test', 2)]); calls[2].resolve([customer('fresh@example.test', 3)]); });
     vi.useRealTimers();
-    await screen.findByText('fresh@example.test');
-    expect(screen.queryByText('stale@example.test')).toBeNull();
+    await screen.findAllByText('fresh@example.test');
+    expect(screen.queryAllByText('stale@example.test')).toHaveLength(0);
   });
 });
