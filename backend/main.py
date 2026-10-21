@@ -436,6 +436,7 @@ def check_web_session(request: Request):
     subscription_links_service=subscription_links_service, db_path=DB_PATH
 )
 get_subscription_userinfo = subscription_links_service.get_subscription_userinfo
+get_system_emails = subscription_links_service.get_system_emails
 
 
 app.middleware("http")(
@@ -503,6 +504,7 @@ register_app_routers(
     get_emails=get_emails,
     get_links_filtered=get_links_filtered,
     get_subscription_userinfo=get_subscription_userinfo,
+    get_system_emails=get_system_emails,
     subscription_profile_update_interval_hours=SUB_PROFILE_UPDATE_INTERVAL_HOURS,
     subscription_profile_title=SUB_PROFILE_TITLE,
     register_subscription_response_cache_invalidator=register_subscription_response_cache_invalidator,

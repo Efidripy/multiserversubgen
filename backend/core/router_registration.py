@@ -91,6 +91,7 @@ def register_app_routers(
     telegram_token_provider=None,
     is_owner=None,
     get_subscription_userinfo=None,
+    get_system_emails=None,
     subscription_profile_update_interval_hours=None,
     subscription_profile_title=None,
 ):
@@ -189,6 +190,7 @@ def register_app_routers(
             get_emails=get_emails,
             get_links_filtered=get_links_filtered,
             get_subscription_userinfo=get_subscription_userinfo,
+            get_system_emails=get_system_emails,
             subscription_profile_update_interval_hours=subscription_profile_update_interval_hours,
             subscription_profile_title=subscription_profile_title,
             register_subscription_response_cache_invalidator=register_subscription_response_cache_invalidator,
