@@ -251,14 +251,19 @@ class AuthService:
             )
             if any(p in path for p in admin_paths) or path.endswith("/backup"):
                 return "admin"
+            if path.startswith("/api/v1/subscription-groups"):
+                return "admin"
             return "operator"
         if method == "GET" and (
             any(p in path for p in ("/backup/", "/api-tokens", "/generate-", "/xray-config", "/server-logs", "/xray-logs", "/emails", "/subscription-groups"))
-            or path.endswith("/backup")
+            or path.endswith(("/backup", "/logs"))
         ):
             return "admin"
         if method == "GET" and path in {"/metrics", "/api/v1/metrics"}:
             return "admin"
         if method == "PUT":
+            # Node PUT can repoint panel_url, which makes the collector log in with stored credentials.
+            if path.startswith(("/api/v1/nodes/", "/api/v1/subscription-groups")):
+                return "admin"
             return "operator"
         return "viewer"
