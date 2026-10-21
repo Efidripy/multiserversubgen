@@ -149,6 +149,23 @@ def resolve_token(db_path: str, kind: str, token: str) -> Optional[str]:
     return str(row[0]) if row else None
 
 
+def delete_tokens(db_path: str, kind: str, identifiers: Iterable[str]) -> int:
+    """Remove token rows so their links stop resolving; the event log is kept."""
+    normalized = list(dict.fromkeys(str(value).strip() for value in identifiers if str(value).strip()))
+    if not normalized:
+        return 0
+    with connect(db_path) as conn:
+        ensure_subscription_token_table(conn)
+        removed = 0
+        for identifier in normalized:
+            removed += conn.execute(
+                "DELETE FROM subscription_tokens WHERE kind = ? AND identifier = ?",
+                (kind, identifier),
+            ).rowcount
+        conn.commit()
+    return removed
+
+
 def regenerate_token(
     db_path: str,
     kind: str,
