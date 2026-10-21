@@ -189,6 +189,7 @@ class RequestRuntime:
             or path == "/api/v1/auth/mfa-status"
             or path.startswith("/api/v1/sub/")
             or path.startswith("/api/v1/sub-grouped/")
+            or path.startswith("/api/v1/guest-sub/")
         )
 
     def required_role_for_request(self, method: str, path: str) -> str:

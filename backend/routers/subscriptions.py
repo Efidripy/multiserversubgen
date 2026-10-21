@@ -201,6 +201,17 @@ def build_subscriptions_router(
             ).fetchone()
         return str(row[0]) if row else None
 
+    def _unknown_identifier_response(request: Request) -> PlainTextResponse:
+        # Only failed lookups spend this per-IP budget, so valid clients behind NAT are unaffected.
+        allowed, retry_after = check_subscription_rate_limit(request, "sub-miss")
+        if not allowed:
+            return PlainTextResponse(
+                content=f"Rate limit exceeded. Retry after {retry_after}s",
+                status_code=429,
+                headers={"Retry-After": str(retry_after)},
+            )
+        return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
+
     def _ensure_stats_table(conn: sqlite3.Connection) -> None:
         conn.execute(
             """
@@ -259,7 +270,7 @@ def build_subscriptions_router(
             if not legacy_email:
                 legacy_email = _resolve_legacy_email(email)
             if not legacy_email:
-                return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
+                return _unknown_identifier_response(request)
             if not telegram_access_gate.can_serve_email(legacy_email):
                 return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
             current_token = ensure_tokens(db_path, "email", [legacy_email])[legacy_email]
@@ -357,7 +368,7 @@ def build_subscriptions_router(
             if not legacy_identifier:
                 legacy_identifier = _resolve_legacy_group(identifier)
             if not legacy_identifier:
-                return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
+                return _unknown_identifier_response(request)
             current_token = ensure_tokens(db_path, "group", [legacy_identifier])[legacy_identifier]
             return _redirect_to_current_token(request, current_token)
         allowed, retry_after = check_subscription_rate_limit(request, f"sub-grouped:{hashlib.sha256(identifier.encode()).hexdigest()}")

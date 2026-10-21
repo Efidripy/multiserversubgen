@@ -139,7 +139,15 @@ auth_service = AuthService(
     mfa_totp_users=MFA_TOTP_USERS,
 )
 
-app = FastAPI(title="Multi-Server Sub Manager", version="3.0", root_path=root_path)
+_docs_enabled = os.getenv("ENABLE_API_DOCS", "").strip().lower() in {"1", "true", "yes", "on"}
+app = FastAPI(
+    title="Multi-Server Sub Manager",
+    version="3.0",
+    root_path=root_path,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
+)
 
 # Gzip compression for responses larger than 1 KB
 app.add_middleware(GZipMiddleware, minimum_size=1000)
