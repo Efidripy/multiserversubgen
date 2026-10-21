@@ -14,6 +14,8 @@ export interface InboundOption {
   node_name: string;
   protocol: string;
   remark: string;
+  /** Absent on older backends; treated as enabled. */
+  enable?: boolean;
 }
 
 const asFiniteNumber = (value: unknown): number | undefined => {
@@ -36,6 +38,7 @@ const normalizeInboundOption = (value: unknown): InboundOption | null => {
     node_name: asText(raw.node_name),
     protocol: asText(raw.protocol),
     remark: asText(raw.remark),
+    ...(typeof raw.enable === 'boolean' ? { enable: raw.enable } : {}),
   };
 };
 
