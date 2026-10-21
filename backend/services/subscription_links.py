@@ -10,6 +10,7 @@ from typing import Dict, Iterable, List, Optional
 from services.db_bootstrap import connect
 from utils import parse_field_as_dict
 from services.snapshot_push import _to_int, _traffic_by_email
+from services.system_clients import is_system_client
 
 logger = logging.getLogger("sub_manager")
 
@@ -185,6 +186,22 @@ def get_emails(nodes: List[Dict]) -> List[str]:
         emails_cache["emails"] = emails_list
         emails_cache.setdefault("items", {})[cache_key] = (now, emails_list)
     return emails_list
+
+
+def get_system_emails(nodes: List[Dict]) -> List[str]:
+    """Emails that carry a SYSTEM client marker on any node (listing filter only)."""
+    system = set()
+    for node in nodes:
+        for inbound in fetch_inbounds(node):
+            clients = parse_field_as_dict(
+                inbound.get("settings"),
+                node_id=node["name"],
+                field_name="settings",
+            ).get("clients", [])
+            for client in clients:
+                if client.get("email") and is_system_client(client):
+                    system.add(client["email"])
+    return sorted(system, key=lambda value: value.lower())
 
 
 def get_subscription_userinfo(
