@@ -85,6 +85,101 @@ def test_force_poll_wait_times_out_for_cycle_already_running_before_request():
     asyncio.run(scenario())
 
 
+def test_force_poll_wait_ignores_persistently_unreachable_node_but_cycle_still_polls_it():
+    async def scenario():
+        nodes = [{"id": 1, "name": "edge-a"}, {"id": 2, "name": "edge-b"}]
+        collector = SnapshotCollector(
+            fetch_nodes=lambda: nodes,
+            xui_monitor=SimpleNamespace(),
+            ws_manager=SimpleNamespace(active_connections=[]),
+        )
+        collector._inventory_nodes = [dict(node) for node in nodes]
+        collector._latest = {
+            "timestamp": time.time(),
+            "nodes": {
+                "id:2": {
+                    "available": False,
+                    "last_success_at": time.time() - 1000,
+                }
+            },
+        }
+        collector._node_state = {
+            "id:1": {"next_poll": time.time() + 1000, "circuit_until": 0.0},
+            "id:2": {"next_poll": time.time() + 1000, "circuit_until": 0.0},
+        }
+        dead_started = asyncio.Event()
+        release_dead = asyncio.Event()
+        polled = []
+
+        async def fake_poll(node, key, *, delay):
+            del delay
+            polled.append(key)
+            started = time.monotonic_ns()
+            collector._poll_start_sequence += 1
+            started_sequence = collector._poll_start_sequence
+            if key == "id:2":
+                dead_started.set()
+                await release_dead.wait()
+            collector._mark_force_poll_finished(
+                key,
+                poll_started_at=started,
+                poll_finished_at=time.monotonic_ns(),
+                poll_started_sequence=started_sequence,
+            )
+            return {"node_id": node["id"], "name": node["name"], "available": key == "id:1"}
+
+        collector._poll_node_after_delay = fake_poll
+        await collector.start()
+        try:
+            assert await collector.force_poll_all_and_wait(timeout=0.3) is True
+            await asyncio.wait_for(dead_started.wait(), timeout=1.0)
+            assert polled == ["id:1", "id:2"]
+        finally:
+            release_dead.set()
+            await collector.stop()
+
+    asyncio.run(scenario())
+
+
+def test_force_poll_wait_with_no_reachable_nodes_waits_for_cycle_end():
+    async def scenario():
+        node = {"id": 1, "name": "edge-a"}
+        collector = SnapshotCollector(
+            fetch_nodes=lambda: [node],
+            xui_monitor=SimpleNamespace(),
+            ws_manager=SimpleNamespace(active_connections=[]),
+        )
+        collector._inventory_nodes = [dict(node)]
+        collector._latest = {
+            "timestamp": time.time(),
+            "nodes": {"id:1": {"available": False, "last_success_at": time.time() - 1000}},
+        }
+        collector._node_state = {"id:1": {"next_poll": time.time() + 1000, "circuit_until": 0.0}}
+        release = asyncio.Event()
+        cycle_done = asyncio.Event()
+
+        async def fake_poll_due(due_nodes, *, force_poll):
+            assert force_poll is True
+            assert due_nodes
+            await release.wait()
+            cycle_done.set()
+            return []
+
+        collector._poll_due_nodes = fake_poll_due
+        await collector.start()
+        try:
+            waiter = asyncio.create_task(collector.force_poll_all_and_wait(timeout=1.0))
+            await asyncio.sleep(0.05)
+            assert not waiter.done()
+            release.set()
+            assert await waiter is True
+            assert cycle_done.is_set()
+        finally:
+            await collector.stop()
+
+    asyncio.run(scenario())
+
+
 def _nodes_router_client(snapshot_collector):
     nodes = [{"id": 1, "name": "edge-a", "password": "secret"}]
 
