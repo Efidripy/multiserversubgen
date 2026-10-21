@@ -151,11 +151,11 @@ export function DashboardSummary({
 
   return (
     <section>
-      <h2 className="mb-4 font-mono text-base font-medium uppercase tracking-[0.18em] text-cyan-300">
+      <h2 className="mb-3 font-mono text-sm font-medium uppercase tracking-[0.18em] text-cyan-300 sm:text-base">
         {t('dashboardSummary.missionControl').toUpperCase()}
       </h2>
-      <div className="mb-6 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-5 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)] backdrop-blur-sm">
-        <div className="mt-4 flex flex-wrap gap-x-7 gap-y-4">
+      <div className="mb-4 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:mb-6 sm:p-5 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)] backdrop-blur-sm">
+        <div className="grid grid-cols-3 gap-x-3 gap-y-3 sm:flex sm:flex-wrap sm:gap-x-7 sm:gap-y-4">
           {isInitialLoading ? Array.from({ length: 6 }, (_, index) => (
             <div key={index} className="flex min-w-[72px] flex-col gap-2">
               {skeletonLine('h-2.5 w-16 bg-[#182133]')}
@@ -187,9 +187,9 @@ export function DashboardSummary({
         )}
       </div>
 
-      <div className="mb-6">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="font-mono text-base font-medium uppercase tracking-[0.18em] text-cyan-300">{t('dashboardSummary.fleetOverview').toUpperCase()}</h2>
+      <div className="mb-4 sm:mb-6">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <h2 className="font-mono text-sm sm:text-base font-medium uppercase tracking-[0.18em] text-cyan-300">{t('dashboardSummary.fleetOverview').toUpperCase()}</h2>
           <div className="flex flex-wrap items-center justify-end gap-2">
             <ChoiceChips
               options={[
@@ -223,7 +223,7 @@ export function DashboardSummary({
           </div>
         </div>
 
-        <div className="mb-4 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:mb-4 sm:gap-4 lg:grid-cols-3">
           {isInitialLoading ? Array.from({ length: 6 }, (_, index) => (
             <div key={index} className="min-h-[96px] rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)]">
               <div className="flex h-full items-center justify-between gap-4">
@@ -240,17 +240,17 @@ export function DashboardSummary({
               <button
                 type="button"
                 key={card.label}
-                className="min-h-[96px] rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 text-left shadow-[inset_0_1px_0_rgba(103,232,249,0.05)] transition-colors duration-200 hover:border-cyan-400/30 hover:bg-[#111827]"
+                className="min-h-[72px] rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 text-left sm:min-h-[96px] sm:p-4 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)] transition-colors duration-200 hover:border-cyan-400/30 hover:bg-[#111827]"
                 onClick={() => onNavigate?.(card.tab)}
               >
-                <div className="flex h-full items-center justify-between gap-4">
-                    <div>
-                      <div className="mb-2 font-mono text-xs font-light uppercase tracking-[0.12em] text-gray-400">{card.label}</div>
-                      <div className="font-mono text-3xl font-bold leading-none tabular-nums text-white">{card.value}</div>
+                <div className="flex h-full items-center justify-between gap-2 sm:gap-4">
+                    <div className="min-w-0">
+                      <div className="mb-1.5 font-mono text-[10px] font-light uppercase leading-tight tracking-[0.06em] text-gray-400 sm:mb-2 sm:text-xs sm:tracking-[0.12em]">{card.label}</div>
+                      <div className="whitespace-nowrap font-mono text-lg font-bold leading-none tabular-nums text-white sm:text-3xl">{card.value}</div>
                       {card.detail && <div className="mt-1 font-mono text-[10px] uppercase tracking-wide text-gray-500">{card.detail}</div>}
                   </div>
-                  <div className={`flex h-14 w-14 items-center justify-center rounded-lg border border-white/10 bg-gradient-to-br ${iconTone[card.variant]}`}>
-                    <CardIcon className="h-7 w-7 text-white" />
+                  <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-gradient-to-br sm:h-14 sm:w-14 ${iconTone[card.variant]}`}>
+                    <CardIcon className="h-5 w-5 text-white sm:h-7 sm:w-7" />
                   </div>
                 </div>
               </button>
@@ -288,8 +288,8 @@ export function DashboardSummary({
 
         <div>
           <div className="mb-2 font-mono text-xs font-medium uppercase tracking-widest text-gray-500">{t('dashboardSummary.topByTraffic').toUpperCase()}</div>
-          <div className="scrollbar-none overflow-x-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)]">
-            <div className="space-y-3 scrollbar-none">
+          <div className="scrollbar-none overflow-x-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)] sm:p-4">
+            <div className="space-y-2 scrollbar-none sm:space-y-3">
               {isInitialLoading ? Array.from({ length: 5 }, (_, index) => (
                 <div key={index} className="grid h-5 w-full grid-cols-[18px_minmax(72px,86px)_minmax(90px,1fr)_minmax(5.5rem,5.5rem)] items-center gap-2 sm:grid-cols-[20px_minmax(82px,96px)_minmax(110px,1fr)_minmax(6rem,6rem)]">
                   {skeletonLine('h-3 w-4 bg-[#182133]')}
