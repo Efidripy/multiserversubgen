@@ -42,7 +42,11 @@ def build_realtime_router(
 
         role = get_user_role(user)
 
-        accepted_protocol = f"mssg-ticket.{ticket}"
+        # Prefer a fixed protocol so the ticket is not echoed in the handshake response;
+        # older clients that offer only the ticket protocol keep working.
+        accepted_protocol = (
+            "mssg-ws" if "mssg-ws" in {p.strip() for p in protocols.split(",")} else f"mssg-ticket.{ticket}"
+        )
         await websocket.accept(subprotocol=accepted_protocol)
         await ws_manager.connect(websocket, accept=False, user=user, role=role)
         try:
