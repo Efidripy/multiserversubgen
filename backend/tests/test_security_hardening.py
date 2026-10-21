@@ -402,3 +402,10 @@ def test_repeated_failed_basic_auth_is_rate_limited(monkeypatch):
     codes = [client.get("/api/v1/nodes", headers=headers).status_code for _ in range(12)]
     assert codes[:10] == [401] * 10
     assert codes[10:] == [429, 429]
+
+
+def test_unknown_subscription_lookups_are_rate_limited_per_ip():
+    client = TestClient(main.app, client=("203.0.113.88", 40002))
+    codes = [client.get(f"/api/v1/sub/nope-{i}").status_code for i in range(200)]
+    assert codes[0] == 404
+    assert 429 in codes
