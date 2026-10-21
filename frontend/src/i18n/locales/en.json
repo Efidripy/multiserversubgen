@@ -609,6 +609,7 @@
     "batchRemark": "Batch remark",
     "batchRemarkPlaceholder": "Optional new remark",
     "batchEnableMode": "Enable override",
+    "batchApply": "Apply to selected",
     "batchUpdateEmpty": "Set remark or enable mode first",
     "confirmDeleteSingle": "Delete inbound",
     "confirmBatchDelete": "Delete selected inbounds ({{count}})?",
