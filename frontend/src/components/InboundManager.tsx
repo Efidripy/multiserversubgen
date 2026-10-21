@@ -1315,19 +1315,30 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
             <div className="min-w-0">
               <label className={fieldLabelClass}>{t('inbounds.batchRemark')}</label>
-              <input
-                className={cn(inputClass, 'w-full')}
-                value={batchRemark}
-                onChange={(e) => setBatchRemark(e.target.value)}
-                placeholder={t('inbounds.batchRemarkPlaceholder')}
-              />
+              <div className="flex min-w-0 gap-2">
+                <input
+                  className={cn(inputClass, 'w-full')}
+                  value={batchRemark}
+                  onChange={(e) => setBatchRemark(e.target.value)}
+                  placeholder={t('inbounds.batchRemarkPlaceholder')}
+                />
+                <button
+                  type="button"
+                  className={cn(batchEnableMode === 'delete' ? buttonDangerClass : buttonAccentClass, 'w-8 shrink-0 px-0')}
+                  title={t('inbounds.batchApply')}
+                  aria-label={t('inbounds.batchApply')}
+                  onClick={() => (batchEnableMode === 'delete' ? handleBatchDelete() : handleBatchUpdate())}
+                  disabled={loading || selectedKeys.size === 0}
+                >
+                  <UIIcon name="check" size={14} />
+                </button>
+              </div>
             </div>
 
             <div className="min-w-0">
               <label className={fieldLabelClass}>{t('inbounds.batchEnableMode')}</label>
               <div className="flex min-w-0 flex-wrap gap-1">
                 {[
-                  { value: 'none', label: t('common.no') },
                   { value: 'enable', label: t('inbounds.batchEnable') },
                   { value: 'disable', label: t('inbounds.batchDisable') },
                   { value: 'delete', label: t('inbounds.batchDelete') },
@@ -1336,7 +1347,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                     key={option.value}
                     type="button"
                     className={segmentButtonClass(batchEnableMode === option.value)}
-                    onClick={() => setBatchEnableMode(option.value as 'none' | 'enable' | 'disable' | 'delete')}
+                    onClick={() => setBatchEnableMode((current) => (current === option.value ? 'none' : option.value as 'enable' | 'disable' | 'delete'))}
                   >
                     {option.label}
                   </button>
@@ -1346,14 +1357,6 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
             <div className="min-w-0 md:col-span-2 xl:col-span-4">
               <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-[repeat(9,max-content)]">
-              <button
-                type="button"
-                className={batchEnableMode === 'delete' ? buttonDangerClass : buttonAccentClass}
-                onClick={() => (batchEnableMode === 'delete' ? handleBatchDelete() : handleBatchUpdate())}
-                disabled={loading || selectedKeys.size === 0}
-              >
-                {t('inbounds.batchApply')}
-              </button>
               <button
                 type="button"
                 className={`${buttonBaseClass} border-amber-300/20 bg-amber-400/10 text-amber-300 hover:bg-amber-400/15`}
