@@ -26,8 +26,8 @@ interface BackupManagerProps {
 
 const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
 
-const shellClass = 'min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6';
-const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]';
+const shellClass = 'min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-2 text-slate-100 sm:p-4 lg:p-6';
+const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]';
 const titleClass = 'text-xs font-medium uppercase tracking-[0.14em] text-slate-300';
 const hintClass = 'mt-1 text-xs font-light leading-5 text-slate-500';
 const metricClass = 'font-mono tabular-nums whitespace-nowrap';
@@ -268,7 +268,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ onHeaderProjection
         {error && <div className="mb-4 rounded-md border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</div>}
 
         <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-          <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
+          <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4">
             <h3 className={titleClass}>{t('common.actions')}</h3>
             <div className="mt-4 grid grid-cols-3 gap-2">
               <div className="min-w-0 rounded-md bg-[#0f1420] px-3 py-2">
@@ -285,7 +285,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ onHeaderProjection
               </div>
             </div>
           </div>
-          <div className="min-w-0 rounded-lg border border-cyan-300/20 bg-cyan-300/5 p-4 text-sm text-slate-300">
+          <div className="min-w-0 rounded-lg border border-cyan-300/20 bg-cyan-300/5 p-3 sm:p-4 text-sm text-slate-300">
             <h3 className={titleClass}>{t('backup.notes')}</h3>
             <p className={hintClass}>{t('backup.onDemandHint')}</p>
             <div className="mt-3 text-slate-200"><strong>{t('backup.important')}:</strong> {t('backup.importantText')}</div>
@@ -300,7 +300,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ onHeaderProjection
         </div>
         {nodesLoading ? (
           <div className="grid min-w-0 grid-cols-1 gap-3">
-            {Array.from({ length: 4 }).map((_, index) => <div key={index} className="animate-pulse rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4"><div className="h-3 w-1/3 rounded bg-slate-700/60" /><div className="mt-3 h-3 w-2/3 rounded bg-slate-800" /><div className="mt-3 h-8 rounded bg-slate-900/80" /></div>)}
+            {Array.from({ length: 4 }).map((_, index) => <div key={index} className="animate-pulse rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4"><div className="h-3 w-1/3 rounded bg-slate-700/60" /><div className="mt-3 h-3 w-2/3 rounded bg-slate-800" /><div className="mt-3 h-8 rounded bg-slate-900/80" /></div>)}
           </div>
         ) : nodes.length === 0 ? (
           <div className="rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 py-8 text-center text-sm text-slate-500">
@@ -330,7 +330,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ onHeaderProjection
             <div className="grid min-w-0 grid-cols-1 gap-3 lg:hidden">
               {nodes.map((node) => {
                 const progress = backupProgress[node.id];
-                return <article key={node.id} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4"><div className="flex min-w-0 items-start justify-between gap-3"><div className="min-w-0 flex-1"><strong className="block truncate text-sm text-slate-100" title={node.name}>{node.name}</strong><div className="mt-3 grid min-w-0 grid-cols-2 gap-3"><div className="min-w-0"><span className={metaLabelClass}>{t('backup.connection')}</span><span className={cn(metaValueClass, metricClass)}>{nodeAddress(node)}</span></div><div className="min-w-0 text-right"><span className={metaLabelClass}>{t('backup.status', 'Status')}</span><span className={cn(metaValueClass, metricClass, progress === 'error' ? 'text-rose-200' : 'text-cyan-200')}>{statusLabel(progress)}</span></div></div></div><div className="flex shrink-0 flex-col gap-2"><button type="button" className={cn(actionButtonClass, 'hover:bg-cyan-300/10')} title={t('backup.download')} aria-label={t('backup.download')} onClick={() => void downloadBackup(node.id, node.name)} disabled={isBusy || progress === 'downloading'}><UIIcon name={progress === 'downloading' ? 'spinner' : 'download'} size={15} /></button><button type="button" className={cn(actionButtonClass, 'hover:bg-emerald-300/10')} title={t('backup.telegramNodeTitle')} aria-label={t('backup.telegramNodeTitle')} onClick={() => void sendBackupToTelegram(node.id)} disabled={isBusy}><UIIcon name="backup" size={15} /></button></div></div></article>;
+                return <article key={node.id} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4"><div className="flex min-w-0 items-start justify-between gap-3"><div className="min-w-0 flex-1"><strong className="block truncate text-sm text-slate-100" title={node.name}>{node.name}</strong><div className="mt-3 grid min-w-0 grid-cols-2 gap-3"><div className="min-w-0"><span className={metaLabelClass}>{t('backup.connection')}</span><span className={cn(metaValueClass, metricClass)}>{nodeAddress(node)}</span></div><div className="min-w-0 text-right"><span className={metaLabelClass}>{t('backup.status', 'Status')}</span><span className={cn(metaValueClass, metricClass, progress === 'error' ? 'text-rose-200' : 'text-cyan-200')}>{statusLabel(progress)}</span></div></div></div><div className="flex shrink-0 flex-col gap-2"><button type="button" className={cn(actionButtonClass, 'hover:bg-cyan-300/10')} title={t('backup.download')} aria-label={t('backup.download')} onClick={() => void downloadBackup(node.id, node.name)} disabled={isBusy || progress === 'downloading'}><UIIcon name={progress === 'downloading' ? 'spinner' : 'download'} size={15} /></button><button type="button" className={cn(actionButtonClass, 'hover:bg-emerald-300/10')} title={t('backup.telegramNodeTitle')} aria-label={t('backup.telegramNodeTitle')} onClick={() => void sendBackupToTelegram(node.id)} disabled={isBusy}><UIIcon name="backup" size={15} /></button></div></div></article>;
               })}
             </div>
           </div>
@@ -341,9 +341,9 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ onHeaderProjection
         <h3 className={cn(titleClass, 'flex items-center gap-2')}><UIIcon name="upload" size={14} />{t('backup.restoreFromBackup')}</h3>
         <div className="mt-4 rounded-md border border-amber-300/30 bg-amber-300/10 px-3 py-2 text-sm text-amber-100"><strong>{t('backup.warning')}:</strong> {t('backup.restoreWarning')}</div>
         <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-3">
-          <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4"><h4 className={titleClass}>{t('backup.targetNode')}</h4><p className={hintClass}>{t('backup.targetNodeHint')}</p><div className="mt-4 min-w-0"><ChoiceChips options={[{ value: 0, label: t('backup.chooseNode') }, ...nodes.map((node) => ({ value: node.id, label: `${node.name} (${nodeAddress(node)})` }))]} value={selectedNode || 0} onChange={(value) => setSelectedNode(value || null)} size="md" /></div></div>
-          <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4"><h4 className={titleClass}>{t('backup.backupFile')}</h4><p className={hintClass}>{t('backup.backupFileHint')}</p><input type="file" className={cn(inputClass, 'mt-4')} accept=".db,.sqlite,.sqlite3" onChange={(event) => { if (event.target.files?.[0]) setImportFile(event.target.files[0]); }} /></div>
-          <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4"><h4 className={titleClass}>{t('backup.restore')}</h4><p className={hintClass}>{t('backup.restoreHint')}</p><button type="button" className={cn(primaryButtonClass, 'mt-4 w-full from-amber-300 to-orange-400 hover:from-amber-200 hover:to-orange-300')} onClick={() => void importBackup()} disabled={loading || !selectedNode || !importFile}><UIIcon name="upload" size={14} /><span className="whitespace-nowrap">{t('backup.restoreBackup')}</span></button></div>
+          <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4"><h4 className={titleClass}>{t('backup.targetNode')}</h4><p className={hintClass}>{t('backup.targetNodeHint')}</p><div className="mt-4 min-w-0"><ChoiceChips options={[{ value: 0, label: t('backup.chooseNode') }, ...nodes.map((node) => ({ value: node.id, label: `${node.name} (${nodeAddress(node)})` }))]} value={selectedNode || 0} onChange={(value) => setSelectedNode(value || null)} size="md" /></div></div>
+          <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4"><h4 className={titleClass}>{t('backup.backupFile')}</h4><p className={hintClass}>{t('backup.backupFileHint')}</p><input type="file" className={cn(inputClass, 'mt-4')} accept=".db,.sqlite,.sqlite3" onChange={(event) => { if (event.target.files?.[0]) setImportFile(event.target.files[0]); }} /></div>
+          <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4"><h4 className={titleClass}>{t('backup.restore')}</h4><p className={hintClass}>{t('backup.restoreHint')}</p><button type="button" className={cn(primaryButtonClass, 'mt-4 w-full from-amber-300 to-orange-400 hover:from-amber-200 hover:to-orange-300')} onClick={() => void importBackup()} disabled={loading || !selectedNode || !importFile}><UIIcon name="upload" size={14} /><span className="whitespace-nowrap">{t('backup.restoreBackup')}</span></button></div>
         </div>
         {importFile && <div className="mt-3 flex min-w-0 flex-col gap-1 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 text-xs text-slate-500 sm:flex-row sm:items-center sm:justify-between"><span className="min-w-0 truncate">{t('backup.selectedFile')}: <strong className="text-slate-100" title={importFile.name}>{importFile.name}</strong></span><span className={cn(metricClass, 'text-slate-300')}>{(importFile.size / 1024).toFixed(1)} KB</span></div>}
       </section>
@@ -351,7 +351,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ onHeaderProjection
       <section className={panelClass}>
         <h3 className={cn(titleClass, 'flex items-center gap-2')}><UIIcon name="backup" size={14} />{t('backup.automatedBackups')}</h3>
         <p className={hintClass}>{t('backup.automatedBackupsHint')}</p>
-        <div className="mt-4 min-w-0 overflow-x-auto rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4"><code className="block min-w-max font-mono text-xs text-slate-200">0 3 * * * curl -u username:password https://your-domain/api/v1/backup/all -o /backups/backup_$(date +\%Y\%m\%d).zip</code></div>
+        <div className="mt-4 min-w-0 overflow-x-auto rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4"><code className="block min-w-max font-mono text-xs text-slate-200">0 3 * * * curl -u username:password https://your-domain/api/v1/backup/all -o /backups/backup_$(date +\%Y\%m\%d).zip</code></div>
         <p className={cn(hintClass, 'mb-0')}>{t('backup.automatedBackupsExampleHint')}</p>
       </section>
     </div>

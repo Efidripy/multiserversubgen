@@ -359,9 +359,9 @@ export function RegisteredFleetPanel({
       )}
 
       <aside
-        className={`fleet-panel fixed bottom-0 right-0 top-16 z-40 w-[calc(100vw-1rem)] max-w-[420px] transition-[width,transform] duration-300 ${
+        className={`fleet-panel fixed bottom-0 right-0 top-16 z-40 w-[calc(100vw-1rem)] max-w-[420px] transition-[width,transform,visibility] duration-300 ${
           collapsed
-            ? 'pointer-events-none translate-x-full xl:pointer-events-auto xl:bottom-[25px] xl:top-24 xl:w-8 xl:translate-x-0 xl:pt-0'
+            ? 'invisible pointer-events-none translate-x-full xl:visible xl:pointer-events-auto xl:bottom-[25px] xl:top-24 xl:w-8 xl:translate-x-0 xl:pt-0'
             : 'translate-x-0 xl:bottom-[25px] xl:top-0 xl:w-[420px] xl:pt-24'
         }`}
       >

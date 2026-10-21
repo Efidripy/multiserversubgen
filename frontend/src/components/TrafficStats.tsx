@@ -695,7 +695,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   const filteredTotalDownload = filteredTrafficData.reduce((sum, d) => sum + d.download, 0);
   const filteredTotalTraffic = filteredTrafficData.reduce((sum, d) => sum + d.total, 0);
 
-  const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)]';
+  const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)]';
   const titleClass = 'text-xs font-medium uppercase tracking-[0.14em] text-slate-300';
   const hintClass = 'mt-1 text-xs font-light leading-5 text-slate-500';
   const metricClass = 'min-w-[5.5rem] whitespace-nowrap font-mono tabular-nums';
@@ -750,7 +750,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   );
 
   return (
-    <div className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6">
+    <div className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-2 text-slate-100 sm:p-4 lg:p-6">
       <div className="min-w-0 space-y-4 overflow-hidden">
         {error && <div className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
 
