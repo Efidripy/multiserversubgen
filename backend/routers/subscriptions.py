@@ -41,6 +41,7 @@ def build_subscriptions_router(
     logger,
     register_subscription_response_cache_invalidator=None,
     get_subscription_userinfo=None,
+    get_system_emails=None,
     subscription_profile_update_interval_hours=None,
     subscription_profile_title=None,
 ):
@@ -236,7 +237,9 @@ def build_subscriptions_router(
         with connect(db_path) as conn:
             conn.row_factory = sqlite3.Row
             _ensure_stats_table(conn)
-            emails = get_emails(node_service.list_nodes())
+            nodes = node_service.list_nodes()
+            emails = get_emails(nodes)
+            system_emails = get_system_emails(nodes) if get_system_emails else []
 
             stats = {}
             for row in conn.execute("SELECT * FROM stats").fetchall():
@@ -245,6 +248,7 @@ def build_subscriptions_router(
         return JSONResponse(
             content={
                 "emails": emails,
+                "system_emails": system_emails,
                 "stats": stats,
                 "subscription_tokens": ensure_tokens(db_path, "email", emails),
             },

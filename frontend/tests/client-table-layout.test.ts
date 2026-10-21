@@ -19,7 +19,7 @@ describe('Client Manager desktop table layout', () => {
     expect(source).toContain('const sortButtonWrapClass');
     expect(source).toContain('w-[136px] px-3 py-3 align-top');
     expect(source).toContain('min-w-0 whitespace-normal');
-    expect(source).toContain('w-16 px-3 py-3 align-top');
-    expect(source).toContain('w-[224px] px-3 py-3 align-top');
+    expect(source).toContain('w-24 px-3 py-3 align-top');
+    expect(source).toContain('w-[248px] px-3 py-3 align-top');
   });
 });
