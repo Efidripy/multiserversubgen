@@ -230,12 +230,12 @@ const fieldLabelClass = 'mb-1 block text-[10px] font-medium uppercase tracking-[
 const inputClass = 'box-border min-w-0 rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2 font-mono text-xs font-light text-slate-100 outline-none transition focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10 disabled:cursor-not-allowed disabled:opacity-50 placeholder:text-slate-600';
 const textareaClass = `${inputClass} w-full resize-y leading-relaxed`;
 const checkboxClass = 'h-4 w-4 shrink-0 rounded bg-[#0a0e1a] accent-cyan-300';
-const buttonBaseClass = 'inline-flex h-8 min-w-0 items-center justify-center gap-1 whitespace-nowrap rounded-md border border-transparent px-3 text-xs font-medium leading-none tracking-wide transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-45';
+const buttonBaseClass = 'inline-flex h-8 min-w-0 items-center justify-center gap-1 whitespace-nowrap rounded-md border px-3 text-xs font-medium leading-none tracking-wide transition-colors duration-200 disabled:cursor-not-allowed disabled:opacity-45';
 const buttonNeutralClass = `${buttonBaseClass} border-cyan-500/20 bg-[#0f1420] text-slate-200 hover:bg-[#0a0e1a]`;
 const buttonAccentClass = `${buttonBaseClass} border-cyan-300/25 bg-cyan-400 text-[#06111f] hover:bg-cyan-300`;
-const buttonSuccessClass = `${buttonBaseClass} bg-emerald-500 text-white hover:bg-emerald-400`;
-const buttonWarningClass = `${buttonBaseClass} bg-amber-400 text-[#06111f] hover:bg-amber-300`;
-const buttonDangerClass = `${buttonBaseClass} bg-rose-500 text-white hover:bg-rose-400`;
+const buttonSuccessClass = `${buttonBaseClass} border-emerald-300/25 bg-emerald-500 text-white hover:bg-emerald-400`;
+const buttonWarningClass = `${buttonBaseClass} border-amber-300/25 bg-amber-400 text-[#06111f] hover:bg-amber-300`;
+const buttonDangerClass = `${buttonBaseClass} border-rose-300/25 bg-rose-500 text-white hover:bg-rose-400`;
 const buttonGhostClass = `${buttonBaseClass} border-cyan-300/20 bg-transparent text-cyan-300 hover:bg-cyan-400/10`;
 const buttonIconClass = 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0f1420] text-slate-300 transition-colors hover:bg-[#0a0e1a] hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-45';
 const sortButtonClass = 'inline-flex items-center gap-1 whitespace-nowrap text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500 transition-colors hover:text-cyan-300';
@@ -256,7 +256,7 @@ const segmentButtonClass = (active: boolean) =>
   cn(
     buttonBaseClass,
     'h-7 px-2 text-[11px]',
-    active ? 'bg-cyan-400 text-[#06111f]' : 'bg-[#0a0e1a] text-slate-400 hover:bg-[#0f1420] hover:text-slate-100',
+    active ? 'border-cyan-300/25 bg-cyan-400 text-[#06111f]' : 'border-cyan-500/20 bg-[#0a0e1a] text-slate-400 hover:bg-[#0f1420] hover:text-slate-100',
   );
 
 const nodeCheckClass = (active: boolean) =>
@@ -1083,8 +1083,8 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   const visibleInbounds = filteredInbounds.slice((ibPage - 1) * ibPageSize, ibPage * ibPageSize);
 
   return (
-    <div data-inbound-manager-root className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6">
-      <div className="min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]">
+    <div data-inbound-manager-root className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-2 text-slate-100 sm:p-4 lg:p-6">
+      <div className="min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]">
         <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">
             <UIIcon name="inbounds" size={16} />
@@ -1136,7 +1136,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         )}
 
         {inboundStats && (
-          <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
+          <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4">
             <div className="grid min-w-0 grid-cols-3 gap-2 lg:grid-cols-[repeat(3,minmax(90px,120px))_minmax(0,1fr)_minmax(0,1fr)]">
               {[
                 { label: t('common.total'), value: inboundStats.total, tone: 'text-slate-100' },
@@ -1176,7 +1176,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
           </div>
         )}
 
-        <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
+        <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4">
           <div className="mb-3 flex min-w-0 flex-col gap-1">
             <h3 className={panelTitleClass}>{t('common.filter')}</h3>
             <p className={panelHintClass}>{t('inbounds.filtersHint')}</p>
@@ -1251,7 +1251,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               </div>
               <button
                 type="button"
-                className={cn(buttonBaseClass, filterEmptyOnly ? 'bg-amber-400 text-[#06111f]' : 'bg-[#0f1420] text-slate-200 hover:bg-[#0a0e1a]')}
+                className={cn(buttonBaseClass, filterEmptyOnly ? 'border-amber-300/25 bg-amber-400 text-[#06111f]' : 'border-cyan-500/20 bg-[#0f1420] text-slate-200 hover:bg-[#0a0e1a]')}
                 onClick={() => setFilterEmptyOnly(v => !v)}
                 title={t('inbounds.emptyOnlyTitle')}
               >
@@ -1260,7 +1260,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               </button>
               <button
                 type="button"
-                className={cn(buttonBaseClass, filterDuplicatesOnly ? 'bg-rose-500 text-white' : 'bg-[#0f1420] text-slate-200 hover:bg-[#0a0e1a]')}
+                className={cn(buttonBaseClass, filterDuplicatesOnly ? 'border-rose-300/25 bg-rose-500 text-white' : 'border-cyan-500/20 bg-[#0f1420] text-slate-200 hover:bg-[#0a0e1a]')}
                 onClick={() => setFilterDuplicatesOnly(v => !v)}
                 title={t('inbounds.duplicatesTitle')}
               >
@@ -1285,7 +1285,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
           </div>
         </div>
 
-        <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
+        <div className="mb-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4">
           <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-[minmax(180px,240px)_minmax(220px,280px)_minmax(180px,240px)_minmax(0,1fr)]">
             <div className="min-w-0">
               <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">
@@ -1413,7 +1413,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               </button>
               <button
                 type="button"
-                className={`${buttonBaseClass} bg-amber-400/10 text-amber-300 hover:bg-amber-400/15`}
+                className={`${buttonBaseClass} border-amber-300/20 bg-amber-400/10 text-amber-300 hover:bg-amber-400/15`}
                 title={t('inbounds.resetSelectedTitle')}
                 disabled={loading || selectedKeys.size === 0}
                 onClick={async () => {
@@ -1435,7 +1435,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               </button>
               <button
                 type="button"
-                className={`${buttonBaseClass} bg-rose-500/10 text-rose-300 hover:bg-rose-500/15`}
+                className={`${buttonBaseClass} border-rose-300/20 bg-rose-500/10 text-rose-300 hover:bg-rose-500/15`}
                 title={t('inbounds.resetAllTitle')}
                 onClick={handleResetAllTraffic}
               >

@@ -52,9 +52,9 @@ type GroupSortField = 'name' | 'count';
 
 const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
 
-const shellClass = 'min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6';
-const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]';
-const insetPanelClass = 'min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4';
+const shellClass = 'min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-2 text-slate-100 sm:p-4 lg:p-6';
+const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]';
+const insetPanelClass = 'min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4';
 const titleClass = 'text-xs font-medium uppercase tracking-[0.14em] text-slate-300';
 const hintClass = 'mt-1 text-xs font-light leading-5 text-slate-500';
 const metricClass = 'font-mono tabular-nums whitespace-nowrap';
@@ -482,7 +482,7 @@ export const SubscriptionManager: React.FC<{
     : { asc: t('subscriptions.sortSmallLarge'), desc: t('subscriptions.sortLargeSmall') };
 
   const renderLoadingSkeleton = () => Array.from({ length: 4 }).map((_, index) => (
-    <div key={index} className="animate-pulse rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
+    <div key={index} className="animate-pulse rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4">
       <div className="h-3 w-1/3 rounded bg-slate-700/60" />
       <div className="mt-3 h-3 w-2/3 rounded bg-slate-800" />
       <div className="mt-3 h-8 rounded bg-slate-900/80" />
@@ -667,7 +667,7 @@ export const SubscriptionManager: React.FC<{
             </div>
 
             <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-3">
-              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4">
+              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4">
                 <label className={titleClass}>{t('subscriptions.subscriptionProfile')}</label>
                 <div className="mt-3 min-w-0">
                   <ChoiceChips
@@ -682,7 +682,7 @@ export const SubscriptionManager: React.FC<{
                   />
                 </div>
               </div>
-              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4">
+              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4">
                 <label className={titleClass}>{t('subscriptions.transportHint')}</label>
                 <div className="mt-3 min-w-0">
                   <ChoiceChips
@@ -696,7 +696,7 @@ export const SubscriptionManager: React.FC<{
                   />
                 </div>
               </div>
-              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4">
+              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4">
                 <label className={titleClass}>{t('subscriptions.outputFormat')}</label>
                 <div className="mt-3 min-w-0">
                   <ChoiceChips
@@ -896,7 +896,7 @@ export const SubscriptionManager: React.FC<{
               {sortedEmails.map((email) => {
                 const subscriptionUrl = buildSubscriptionUrl(email);
                 return (
-                  <article key={email} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-4">
+                  <article key={email} className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4">
                     <div className="flex min-w-0 items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <strong className="block truncate text-sm text-slate-100" title={email}>{email}</strong>
@@ -938,7 +938,7 @@ export const SubscriptionManager: React.FC<{
             {sortedGroups.map((group) => (
               <article
                 key={group.id || group.identifier}
-                className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.22)]"
+                className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-5 shadow-[0_18px_50px_rgba(0,0,0,0.22)]"
               >
                 <div className="mb-4 flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -1142,7 +1142,7 @@ export const SubscriptionManager: React.FC<{
               </button>
             </div>
             <div className="space-y-4 px-5 py-5">
-              <div className="flex justify-center rounded-lg border border-cyan-500/20 bg-white p-4">
+              <div className="flex justify-center rounded-lg border border-cyan-500/20 bg-white p-3 sm:p-4">
                 {qrDataUrl ? (
                   <img
                     src={qrDataUrl}

@@ -792,7 +792,7 @@ export const App: React.FC = () => {
         return (
           <DashboardDataProvider>
           <DashboardPullRefreshRegistration onRegister={registerDashboardRefresh}>
-          <div className="dashboard-command-grid min-w-0 overflow-hidden p-6 min-h-screen transition-all duration-300 ease-in-out xl:grid xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start xl:gap-6">
+          <div className="dashboard-command-grid min-w-0 overflow-hidden p-3 sm:p-4 lg:p-6 min-h-screen transition-all duration-300 ease-in-out xl:grid xl:grid-cols-[minmax(0,1fr)_auto] xl:items-start xl:gap-6">
             <div className="dashboard-command-grid__main min-w-0 overflow-hidden">
               <DashboardSummary onNavigate={(tab) => {
                 const t = tab as TabType;

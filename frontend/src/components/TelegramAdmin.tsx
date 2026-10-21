@@ -70,7 +70,7 @@ import {
   unblockTelegramIdentity,
 } from '../api/telegram';
 
-const shellClass = 'min-h-screen min-w-0 bg-[#080c15] p-4 text-slate-100 sm:p-5 lg:p-6';
+const shellClass = 'min-h-screen min-w-0 bg-[#080c15] p-3 text-slate-100 sm:p-4 lg:p-6';
 const panelClass = 'min-w-0 overflow-hidden rounded-[7px] border border-cyan-400/15 bg-[#0d131f] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.025),0_18px_50px_rgba(0,0,0,0.18)]';
 const inputClass = 'w-full rounded-[6px] border border-cyan-400/18 bg-[#0a0f19] px-2.5 py-1.5 text-[16px] text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-300/70 focus:ring-2 focus:ring-cyan-300/15';
 const buttonClass = 'inline-flex h-9 items-center justify-center gap-2 rounded-[6px] border border-cyan-400/18 bg-[#0a0f19] px-3 text-[15px] font-medium uppercase tracking-[0.1em] text-slate-300 transition hover:border-cyan-300/55 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 disabled:cursor-not-allowed disabled:opacity-45';

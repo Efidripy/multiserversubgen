@@ -1813,7 +1813,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
   const subtlePanelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0a0e1a]';
   const metricValueClass = 'font-mono tabular-nums whitespace-nowrap text-sm font-medium text-slate-100';
   const compactMetricClass = 'font-mono tabular-nums whitespace-nowrap text-xs font-medium text-slate-100';
-  const chartCardClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-4';
+  const chartCardClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4';
   const renderChartSkeleton = () => (
     <div className="relative h-full min-w-0 overflow-hidden rounded-lg bg-[#0a0e1a] p-4">
       <div className="absolute inset-x-4 top-10 h-px bg-cyan-500/10" />
@@ -1930,8 +1930,8 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
   ];
 
   return (
-    <div className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-4 text-slate-100 sm:p-5 lg:p-6">
-      <div className="mb-6 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-2 text-slate-100 sm:p-4 lg:p-6">
+      <div className="mb-3 sm:mb-6 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <h2 className="text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">{t('nav.monitoring')}</h2>
         </div>
@@ -1946,12 +1946,12 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
         </div>
       )}
 
-      <section className="mb-4 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-3">
+      <section className="mb-4 grid min-w-0 grid-cols-1 gap-2 sm:gap-4 lg:grid-cols-3">
         <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-4 py-3">
+          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
             <div className={sectionTitleClass}>{t('common.server')}</div>
           </div>
-          <div className="min-w-0 p-4">
+          <div className="min-w-0 p-3 sm:p-4">
             <ChoiceChips
               className="min-w-0"
               options={[
@@ -1967,10 +1967,10 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
           </div>
         </div>
         <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-4 py-3">
+          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
             <div className={sectionTitleClass}>{t('monitoringDashboard.range')}</div>
           </div>
-          <div className="min-w-0 p-4">
+          <div className="min-w-0 p-3 sm:p-4">
             <ChoiceChips
               className="min-w-0"
               options={RANGE_OPTIONS.map((range) => ({ value: range.value, label: range.label }))}
@@ -1980,10 +1980,10 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
           </div>
         </div>
         <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-4 py-3">
+          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
             <div className={sectionTitleClass}>{t('traffic.title')}</div>
           </div>
-          <div className="flex min-w-0 flex-col gap-3 p-4">
+          <div className="flex min-w-0 flex-col gap-3 p-3 sm:p-4">
             <ChoiceChips
               className="min-w-0"
               options={[
@@ -2024,12 +2024,12 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
         </div>
       </section>
 
-      <section className="mb-6 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-5">
+      <section className="mb-3 sm:mb-6 grid min-w-0 grid-cols-1 gap-2 sm:gap-4 lg:grid-cols-5">
         <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-4 py-3">
+          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
             <div className={sectionTitleClass}>{t('monitoringDashboard.trafficMode')}</div>
           </div>
-          <div className="min-w-0 p-4">
+          <div className="min-w-0 p-3 sm:p-4">
             <ChoiceChips
               className="min-w-0"
               options={[
@@ -2042,10 +2042,10 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
           </div>
         </div>
         <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-4 py-3">
+          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
             <div className={sectionTitleClass}>{t('monitoringDashboard.source')}</div>
           </div>
-          <div className="min-w-0 p-4">
+          <div className="min-w-0 p-3 sm:p-4">
             <ChoiceChips
               className="min-w-0"
               options={[
@@ -2059,10 +2059,10 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
           </div>
         </div>
         <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-4 py-3">
+          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
             <div className={sectionTitleClass}>{t('monitoringDashboard.step')}</div>
           </div>
-          <div className="min-w-0 p-4">
+          <div className="min-w-0 p-3 sm:p-4">
             <ChoiceChips
               className="min-w-0"
               options={TRAFFIC_STEP_OPTIONS.map((step) => ({ value: step.value, label: step.label }))}
@@ -2072,10 +2072,10 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
           </div>
         </div>
         <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-4 py-3">
+          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
             <div className={sectionTitleClass}>{t('monitoringDashboard.style')}</div>
           </div>
-          <div className="min-w-0 p-4">
+          <div className="min-w-0 p-3 sm:p-4">
             <ChoiceChips
               className="min-w-0"
               options={[
@@ -2089,10 +2089,10 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
           </div>
         </div>
         <div className={panelClass}>
-          <div className="border-b border-cyan-500/20 px-4 py-3">
+          <div className="border-b border-cyan-500/20 px-3 py-2 sm:px-4 sm:py-3">
             <div className={sectionTitleClass}>{t('monitoringDashboard.smoothing')}</div>
           </div>
-          <div className="min-w-0 p-4">
+          <div className="min-w-0 p-3 sm:p-4">
             <ChoiceChips
               className="min-w-0"
               options={[
@@ -2107,7 +2107,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
         </div>
       </section>
 
-      <section className="mb-6 grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-3">
+      <section className="mb-3 sm:mb-6 grid min-w-0 grid-cols-1 gap-2 sm:gap-5 lg:grid-cols-3">
         {usageCards.map((card) => {
           const tone = gaugeTone(card.percent);
           return (
@@ -2136,7 +2136,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
         </div>
       )}
 
-      <section className="mb-6 grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-4">
+      <section className="mb-3 sm:mb-6 grid min-w-0 grid-cols-1 gap-2 sm:gap-5 lg:grid-cols-4">
         {resourceCards.map((card) => {
           const tone = gaugeTone(card.percent);
           const isSkeleton = resourceLoading && !resourceSummary;
@@ -2223,7 +2223,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
               </div>
             )}
 
-            <div className="mb-5 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
+            <div className="mb-3 sm:mb-5 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6">
               {[
                 { label: t('monitoringDashboard.sources'), value: `${adguardOverview?.summary?.sources_online || 0}/${adguardOverview?.summary?.sources_total || 0}`, tone: 'text-slate-100' },
                 { label: t('monitoringDashboard.queries'), value: Math.round(adguardOverview?.summary?.queries_total || 0).toLocaleString(), tone: stylePreset === '3' ? 'text-slate-100' : 'text-cyan-300' },
@@ -2241,7 +2241,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
               ))}
             </div>
 
-            <div className="mb-5 grid min-w-0 grid-cols-1 gap-5 lg:grid-cols-3">
+            <div className="mb-3 sm:mb-5 grid min-w-0 grid-cols-1 gap-2 sm:gap-5 lg:grid-cols-3">
               {stackCards.map((card) => {
                 const tone = gaugeTone(card.percent);
                 const valueTone = card.ok === undefined ? 'text-slate-400' : toneClass(card.ok);
@@ -2267,7 +2267,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
             </div>
 
             {!!(adguardHistory?.series || []).length && (
-              <div className="mb-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+              <div className="mb-3 sm:mb-5 grid min-w-0 grid-cols-1 gap-2 sm:gap-4 lg:grid-cols-2">
                 <div className="lg:col-span-2">
                   <div className={chartCardClass}>
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
@@ -2357,7 +2357,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
               </div>
             </section>
 
-            <div className="mb-5 grid min-w-0 grid-cols-1 gap-4 lg:grid-cols-2">
+            <div className="mb-3 sm:mb-5 grid min-w-0 grid-cols-1 gap-2 sm:gap-4 lg:grid-cols-2">
               <div className={chartCardClass}>
                 <h6 className="mb-3 text-xs font-medium uppercase tracking-[0.14em] text-slate-300">{t('monitoringDashboard.topBlockedDomains')}</h6>
                 <div className="mb-3 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[180px_minmax(0,1fr)_110px]">

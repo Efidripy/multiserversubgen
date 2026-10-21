@@ -116,6 +116,17 @@
     -ms-overflow-style: none;
   }
 
+  /* Preflight is not loaded, so drop the UA margins; spacing comes from utilities. */
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  p {
+    margin: 0;
+  }
+
   button,
   input,
   select {
@@ -890,8 +901,13 @@
     min-width: 0;
     flex-wrap: wrap;
     align-items: center;
-    justify-content: flex-end;
+    justify-content: flex-start;
     gap: 8px;
+  }
+
+  /* Header-level action groups hug the right edge; body-level groups stay left-aligned when they wrap. */
+  .panel-block__header > .panel-inline-actions {
+    justify-content: flex-end;
   }
 
   .panel-block__stack {
@@ -1652,6 +1668,34 @@
   }
 
   @media (max-width: 640px) {
+    .panel-grid {
+      gap: 10px;
+    }
+
+    .panel-block {
+      padding: 12px;
+    }
+
+    .panel-block__header {
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .panel-block__stack {
+      gap: 10px;
+    }
+
+    .modal {
+      padding: 8px;
+    }
+
+    .modal-header,
+    .modal-footer,
+    .modal-body,
+    .card-body {
+      padding: 12px;
+    }
+
     .drawer__panel {
       width: calc(100% - 16px);
       margin: 8px;
