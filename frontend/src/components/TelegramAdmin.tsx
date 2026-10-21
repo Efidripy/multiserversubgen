@@ -405,11 +405,17 @@ export const TelegramAdmin: React.FC = () => {
   useEffect(() => {
     if (!applicationNoteTooltip) return undefined;
     const closeTooltip = () => setApplicationNoteTooltip(null);
+    // Touch has no hover/blur, so a tap anywhere but on a note badge dismisses the tooltip.
+    const closeOnOutsideTap = (event: PointerEvent) => {
+      if (!(event.target as Element | null)?.closest?.('[data-application-note]')) closeTooltip();
+    };
     window.addEventListener('scroll', closeTooltip, true);
     window.addEventListener('resize', closeTooltip);
+    window.addEventListener('pointerdown', closeOnOutsideTap);
     return () => {
       window.removeEventListener('scroll', closeTooltip, true);
       window.removeEventListener('resize', closeTooltip);
+      window.removeEventListener('pointerdown', closeOnOutsideTap);
     };
   }, [applicationNoteTooltip]);
 
@@ -1008,7 +1014,7 @@ export const TelegramAdmin: React.FC = () => {
                 <span className="flex shrink-0 flex-col items-end gap-0.5 text-right font-mono text-[11px] text-slate-400">
                   <span title={t('telegram.nodes')}>{customer.node_count}</span>
                   <span title={t('telegram.lifetimeTraffic')}>{customer.traffic_observed_at ? formatBytes(customer.lifetime_bytes ?? 0) : t('telegram.trafficNotObserved')}</span>
-                  {customer.application_introduction && <span className="inline-flex size-5 items-center justify-center rounded-full border border-amber-300/45 text-[11px] font-semibold text-amber-200" title={customer.application_introduction}>!</span>}
+                  {customer.application_introduction && <button type="button" data-application-note className="inline-flex size-6 items-center justify-center rounded-full border border-amber-300/45 text-[11px] font-semibold text-amber-200" aria-label={t('telegram.applicationNote', { note: customer.application_introduction })} onClick={(event) => showApplicationNoteTooltip(event.currentTarget, customer.application_introduction!)}>!</button>}
                 </span>
               </li>;
             })}
