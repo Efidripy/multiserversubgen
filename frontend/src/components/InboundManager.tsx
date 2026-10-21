@@ -234,7 +234,6 @@ const buttonBaseClass = 'inline-flex h-8 min-w-0 items-center justify-center gap
 const buttonNeutralClass = `${buttonBaseClass} border-cyan-500/20 bg-[#0f1420] text-slate-200 hover:bg-[#0a0e1a]`;
 const buttonAccentClass = `${buttonBaseClass} border-cyan-300/25 bg-cyan-400 text-[#06111f] hover:bg-cyan-300`;
 const buttonSuccessClass = `${buttonBaseClass} border-emerald-300/25 bg-emerald-500 text-white hover:bg-emerald-400`;
-const buttonWarningClass = `${buttonBaseClass} border-amber-300/25 bg-amber-400 text-[#06111f] hover:bg-amber-300`;
 const buttonDangerClass = `${buttonBaseClass} border-rose-300/25 bg-rose-500 text-white hover:bg-rose-400`;
 const buttonGhostClass = `${buttonBaseClass} border-cyan-300/20 bg-transparent text-cyan-300 hover:bg-cyan-400/10`;
 const buttonIconClass = 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-cyan-500/20 bg-[#0f1420] text-slate-300 transition-colors hover:bg-[#0a0e1a] hover:text-cyan-300 disabled:cursor-not-allowed disabled:opacity-45';
@@ -372,7 +371,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
 
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
   const [batchRemark, setBatchRemark] = useState('');
-  const [batchEnableMode, setBatchEnableMode] = useState<'none' | 'enable' | 'disable'>('none');
+  const [batchEnableMode, setBatchEnableMode] = useState<'none' | 'enable' | 'disable' | 'delete'>('none');
   const requestIdRef = useRef(0);
   const inboundsAbortRef = useRef<AbortController | null>(null);
   const inboundsReconcileTimerRef = useRef<number | null>(null);
@@ -764,7 +763,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     setSortDirection('asc');
   };
   const sortIndicator = (field: 'name' | 'node' | 'protocol' | 'port' | 'status') =>
-    sortField === field ? (sortDirection === 'asc' ? ' â–²' : ' â–¼') : '';
+    sortField === field ? (sortDirection === 'asc' ? ' ▲' : ' ▼') : '';
 
   const handleDelete = async (inbound: Inbound) => {
     if (!window.confirm(`${t('inbounds.confirmDeleteSingle')} \"${inbound.remark || inbound.id}\"?`)) return;
@@ -894,33 +893,6 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     }
   };
 
-  const handleBatchEnable = async (enable: boolean) => {
-    if (selectedInboundIds.length === 0 || selectedNodeIds.length === 0) return;
-
-    setLoading(true);
-    setError('');
-
-    try {
-      await api.post(
-        '/v1/inbounds/batch-enable',
-        {
-          node_ids: selectedNodeIds,
-          inbound_ids: selectedInboundIds,
-          enable,
-        },
-        { auth: getAuth() }
-      );
-
-      clearSelection();
-      reconcileInboundsAfterMutation(beginProjectionOperation('inbounds', t('inbounds.title')));
-      onReload?.();
-    } catch (err: any) {
-      setError(err.response?.data?.detail || t('inbounds.batchEnableFailed'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleBatchUpdate = async () => {
     if (selectedInboundIds.length === 0 || selectedNodeIds.length === 0) return;
 
@@ -978,6 +950,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         { auth: getAuth() }
       );
 
+      setBatchEnableMode('none');
       clearSelection();
       reconcileInboundsAfterMutation(beginProjectionOperation('inbounds', t('inbounds.deleteInbound')));
       onReload?.();
@@ -1364,12 +1337,13 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                   { value: 'none', label: t('common.no') },
                   { value: 'enable', label: t('inbounds.batchEnable') },
                   { value: 'disable', label: t('inbounds.batchDisable') },
+                  { value: 'delete', label: t('inbounds.batchDelete') },
                 ].map((option) => (
                   <button
                     key={option.value}
                     type="button"
                     className={segmentButtonClass(batchEnableMode === option.value)}
-                    onClick={() => setBatchEnableMode(option.value as 'none' | 'enable' | 'disable')}
+                    onClick={() => setBatchEnableMode(option.value as 'none' | 'enable' | 'disable' | 'delete')}
                   >
                     {option.label}
                   </button>
@@ -1381,35 +1355,11 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-[repeat(9,max-content)]">
               <button
                 type="button"
-                className={buttonSuccessClass}
-                onClick={() => handleBatchEnable(true)}
+                className={batchEnableMode === 'delete' ? buttonDangerClass : buttonAccentClass}
+                onClick={() => (batchEnableMode === 'delete' ? handleBatchDelete() : handleBatchUpdate())}
                 disabled={loading || selectedKeys.size === 0}
               >
-                {t('inbounds.batchEnable')}
-              </button>
-              <button
-                type="button"
-                className={buttonWarningClass}
-                onClick={() => handleBatchEnable(false)}
-                disabled={loading || selectedKeys.size === 0}
-              >
-                {t('inbounds.batchDisable')}
-              </button>
-              <button
-                type="button"
-                className={buttonAccentClass}
-                onClick={handleBatchUpdate}
-                disabled={loading || selectedKeys.size === 0}
-              >
-                {t('inbounds.batchUpdate')}
-              </button>
-              <button
-                type="button"
-                className={buttonDangerClass}
-                onClick={handleBatchDelete}
-                disabled={loading || selectedKeys.size === 0}
-              >
-                {t('inbounds.batchDelete')}
+                {t('inbounds.batchApply')}
               </button>
               <button
                 type="button"

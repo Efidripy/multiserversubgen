@@ -609,6 +609,7 @@
     "batchRemark": "Общий remark",
     "batchRemarkPlaceholder": "Опционально: новый remark",
     "batchEnableMode": "Режим enable",
+    "batchApply": "Применить к выбранным",
     "batchUpdateEmpty": "Укажите remark или режим enable",
     "confirmDeleteSingle": "Удалить inbound",
     "confirmBatchDelete": "Удалить выбранные inbound ({{count}})?",
