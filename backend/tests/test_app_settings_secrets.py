@@ -38,8 +38,16 @@ def test_runtime_uses_provisioned_secrets_stably(monkeypatch):
     )
 
 
-def test_development_keeps_explicit_ephemeral_fallback(monkeypatch):
+def test_missing_secrets_fail_closed_by_default(monkeypatch):
     monkeypatch.delenv("REQUIRE_PERSISTENT_SECRETS", raising=False)
+    monkeypatch.delenv("WS_AUTH_SECRET", raising=False)
+
+    with pytest.raises(RuntimeError):
+        load_app_settings(parse_mfa_users=_parse_mfa_users)
+
+
+def test_development_keeps_explicit_ephemeral_fallback(monkeypatch):
+    monkeypatch.setenv("REQUIRE_PERSISTENT_SECRETS", "false")
     monkeypatch.delenv("WS_AUTH_SECRET", raising=False)
     monkeypatch.delenv("SUBSCRIPTION_SIGNING_SECRET", raising=False)
 
