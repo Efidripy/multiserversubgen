@@ -121,7 +121,9 @@ config_activation_begin() {
     config_activation_validate_inputs || return 1
     local runtime_root="${CONFIG_ACTIVATION_RUNTIME_ROOT:-/run}"
     local backup_root="${CONFIG_ACTIVATION_BACKUP_ROOT:-/var/backups}"
-    install -d -m 0700 "$runtime_root" "$backup_root/$PROJECT_NAME/config-activation" || return 1
+    # Never chmod the runtime root itself: with the /run default, 0700 locks every non-root service out of /run.
+    [ -d "$runtime_root" ] || install -d -m 0755 "$runtime_root" || return 1
+    install -d -m 0700 "$backup_root/$PROJECT_NAME/config-activation" || return 1
     CONFIG_ACTIVATION_STAGE_DIR="$(mktemp -d "$runtime_root/${PROJECT_NAME}.config.XXXXXX")" || return 1
     CONFIG_ACTIVATION_BACKUP_DIR="$(mktemp -d "$backup_root/$PROJECT_NAME/config-activation/$(date -u +%Y%m%dT%H%M%SZ).XXXXXX")" || {
         rm -rf -- "$CONFIG_ACTIVATION_STAGE_DIR"
