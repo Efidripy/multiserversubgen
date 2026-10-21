@@ -2787,6 +2787,44 @@ export const ClientManager: React.FC = () => {
         </div>
       </div>
       
+      {/* Stats bar */}
+      {clients.length > 0 && (() => {
+        const now = Date.now();
+        const active = clients.filter(c => c.enable && !(c.expiryTime > 0 && c.expiryTime < now) && !(c.total > 0 && c.up + c.down >= c.total)).length;
+        const expired = clients.filter(c => c.expiryTime > 0 && c.expiryTime < now).length;
+        const depleted = clients.filter(c => c.total > 0 && c.up + c.down >= c.total).length;
+        const disabled = clients.filter(c => !c.enable).length;
+        const online = onlineEmails.size;
+        return (
+          <div className="my-3 flex flex-wrap gap-2">
+            {[
+              { label: 'Total',    value: clients.length, cls: '',          status: '' },
+              { label: 'Active',   value: `${active} (${clients.length ? Math.round(active / clients.length * 100) : 0}%)`, cls: 'text-emerald-300', status: 'active' },
+              { label: 'Online',   value: `${online} (${active ? Math.round(online / active * 100) : 0}%)`, cls: 'text-accent',  status: 'online' },
+              { label: 'Expired',  value: expired,  cls: 'text-rose-300',  status: 'expired' },
+              { label: 'Depleted', value: depleted, cls: 'text-amber-300', status: 'depleted' },
+              { label: 'Disabled', value: disabled, cls: 'text-slate-500',   status: 'disabled' },
+            ].map(s => (
+              <span key={s.label}
+                className={cn(
+                  badgeBaseClass,
+                  'bg-[#0f1420] font-mono tabular-nums whitespace-nowrap text-[0.78rem] font-normal',
+                  s.cls,
+                  s.status && filterStatus === s.status && 'border-current bg-cyan-400/10 ring-1 ring-cyan-300/50'
+                )}
+                style={{
+                  cursor: s.status ? 'pointer' : 'default',
+                }}
+                title={s.status ? (filterStatus === s.status ? 'Click to clear filter' : `Click to filter by ${s.label}`) : undefined}
+                onClick={() => s.status && setFilterStatus(prev => prev === s.status ? '' : s.status)}
+              >
+                {s.label}: <strong>{s.value}</strong>
+              </span>
+            ))}
+          </div>
+        );
+      })()}
+
       {/* Pagination controls */}
       {sortedClientGroups.length > pageSize && (
         <div className="pg-strip pg-strip--bar mb-2">
