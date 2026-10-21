@@ -200,7 +200,9 @@ export const SubscriptionManager: React.FC<{
         force: request.force,
       });
       if (!isCurrentRead(request)) return null;
-      const nextEmails = Array.isArray(res.data?.emails) ? res.data.emails : [];
+      // SYSTEM-marked clients are operational; they are not listed here (links are still generated, see TODO).
+      const systemEmails = new Set<string>((Array.isArray(res.data?.system_emails) ? res.data.system_emails : []).map((email: string) => email.toLowerCase()));
+      const nextEmails: string[] = (Array.isArray(res.data?.emails) ? res.data.emails : []).filter((email: string) => !systemEmails.has(email.toLowerCase()));
       const nextStats = res.data?.stats || {};
       setEmails(nextEmails);
       setEmailTokens(res.data?.subscription_tokens && typeof res.data.subscription_tokens === 'object'
@@ -844,7 +846,7 @@ export const SubscriptionManager: React.FC<{
                       </button>
                     </th>
                     <th className="px-4 py-3">{t('subscriptions.link')}</th>
-                    <th className="w-28 px-4 py-3 text-right">{t('common.actions')}</th>
+                    <th className="w-[11.5rem] px-4 py-3 text-right">{t('common.actions')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60 text-slate-200">

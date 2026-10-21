@@ -23,7 +23,7 @@ class _Nodes:
         return [{"id": 1, "name": "node1"}]
 
 
-def _build_app(db_path, emails, nodes=None):
+def _build_app(db_path, emails, nodes=None, system_emails=None):
     app = FastAPI()
     nodes = nodes or [{"id": 1, "name": "node1"}]
 
@@ -41,6 +41,7 @@ def _build_app(db_path, emails, nodes=None):
             node_service=NodeService(),
             check_subscription_rate_limit=lambda _request, _key: (True, 0),
             get_emails=lambda _nodes: list(emails),
+            get_system_emails=(lambda _nodes: list(system_emails)) if system_emails is not None else None,
             get_links_filtered=get_links,
             subscription_signing_secret="test-subscription-secret",
             invalidate_subscription_cache=lambda: None,
@@ -168,6 +169,16 @@ def test_emails_endpoint_returns_only_stable_tokens(tmp_path):
     payload = response.json()
     assert set(payload["subscription_tokens"]) == {"D632-IOS", "D700-ANDROID"}
     assert all("." not in token for token in payload["subscription_tokens"].values())
+
+
+def test_emails_endpoint_reports_system_emails_without_changing_tokens(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    client = TestClient(_build_app(db_path, ["D632-IOS", "svc"], system_emails=["svc"]))
+
+    payload = client.get("/api/v1/emails").json()
+    assert payload["system_emails"] == ["svc"]
+    assert set(payload["subscription_tokens"]) == {"D632-IOS", "svc"}
 
 
 def test_expired_secret_hmac_format_migrates_by_known_identifier(tmp_path):
