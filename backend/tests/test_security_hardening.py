@@ -409,3 +409,23 @@ def test_unknown_subscription_lookups_are_rate_limited_per_ip():
     codes = [client.get(f"/api/v1/sub/nope-{i}").status_code for i in range(200)]
     assert codes[0] == 404
     assert 429 in codes
+
+
+def test_adguard_pinned_get_accepts_requests_style_kwargs(monkeypatch):
+    from services import adguard_runtime
+    import requests as _requests
+    import xui_session
+
+    seen = {}
+
+    def fake_send(self, request, **kwargs):
+        seen["address"] = self._pinned_address if hasattr(self, "_pinned_address") else "pinned"
+        resp = _requests.Response()
+        resp.status_code = 200
+        return resp
+
+    monkeypatch.setattr(xui_session._PinnedHTTPAdapter, "send", fake_send)
+    resp = adguard_runtime._get_pinned(
+        "https://example.com/x", pinned_address="93.184.216.34", timeout=3, verify=True, auth=None, allow_redirects=False
+    )
+    assert resp.status_code == 200
