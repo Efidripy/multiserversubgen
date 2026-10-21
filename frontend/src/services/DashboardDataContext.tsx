@@ -78,8 +78,6 @@ export function DashboardDataProvider({ children }: { children: ReactNode }) {
     refreshControllerRef.current = controller;
     setLoading(true);
     if (force) {
-      setOverview(null);
-      setStale(false);
       await forceNodeRefresh();
     }
     try {
