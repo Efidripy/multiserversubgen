@@ -42,7 +42,7 @@ def _persistent_secret(name: str) -> str:
     value = os.getenv(name, "").strip()
     if value:
         return value
-    if _env_bool("REQUIRE_PERSISTENT_SECRETS", "false"):
+    if _env_bool("REQUIRE_PERSISTENT_SECRETS", "true"):
         raise RuntimeError(f"{name} must be provisioned before starting the service")
     return os.urandom(32).hex()
 
