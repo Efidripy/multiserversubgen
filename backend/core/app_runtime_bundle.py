@@ -228,6 +228,9 @@ def build_app_runtime_bundle(
         inbounds_cache=inbounds_cache,
         start_cache_refresh=live_stats_runtime.start_cache_refresh,
         filter_reachable_nodes=snapshot_collector.filter_reachable_nodes,
+        usable_inbounds=lambda node, not_before=0.0: snapshot_collector.usable_inbounds(
+            node, not_before=not_before
+        ),
     )
 
     metrics_runtime = MetricsRuntime(

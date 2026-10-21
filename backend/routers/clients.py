@@ -4,6 +4,7 @@ from typing import Callable, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
+from core.refresh import effective_refresh
 
 from services.client_notes import enrich_clients_with_notes, upsert_client_note
 from services.client_telegram import annotate_clients_with_telegram_link
@@ -199,31 +200,33 @@ def build_clients_router(
         return {"count": len(clients), "node_id": node_id}
 
     @router.get("/api/v1/clients/expired")
-    async def list_expired_clients(request: Request):
+    async def list_expired_clients(request: Request, refresh: bool = Query(False)):
         """Return only expired clients (expiryTime > 0 and past)."""
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
         import time as _time
         now_ms = int(_time.time() * 1000)
         nodes = await _run(node_service.list_nodes)
-        clients = await _with_notes(await _run(get_cached_clients, nodes, email_filter=None), nodes)
+        clients = await _with_notes(await _run(get_cached_clients, nodes, email_filter=None, **({"force": True} if refresh else {})), nodes)
         expired = [c for c in clients if c.get("expiryTime", 0) > 0 and c.get("expiryTime", 0) < now_ms]
-        return ORJSONResponse(content={"clients": expired, "count": len(expired)})
+        return ORJSONResponse(content={"clients": expired, "count": len(expired)}, headers={"Cache-Control": "no-store"} if refresh else None)
 
     @router.get("/api/v1/clients/depleted")
-    async def list_depleted_clients(request: Request):
+    async def list_depleted_clients(request: Request, refresh: bool = Query(False)):
         """Return only traffic-depleted clients (used >= total > 0)."""
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
         nodes = await _run(node_service.list_nodes)
-        clients = await _with_notes(await _run(get_cached_clients, nodes, email_filter=None), nodes)
+        clients = await _with_notes(await _run(get_cached_clients, nodes, email_filter=None, **({"force": True} if refresh else {})), nodes)
         depleted = [
             c for c in clients
             if c.get("total", 0) > 0 and (c.get("up", 0) + c.get("down", 0)) >= c.get("total", 0)
         ]
-        return ORJSONResponse(content={"clients": depleted, "count": len(depleted)})
+        return ORJSONResponse(content={"clients": depleted, "count": len(depleted)}, headers={"Cache-Control": "no-store"} if refresh else None)
 
     @router.get("/api/v1/clients/search")
     async def search_clients(
@@ -310,16 +313,17 @@ def build_clients_router(
         )
 
     @router.get("/api/v1/clients")
-    async def list_clients(request: Request, email: Optional[str] = None):
+    async def list_clients(request: Request, email: Optional[str] = None, refresh: bool = Query(False)):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
 
         nodes = await _run(node_service.list_nodes)
-        clients = await _with_notes(await _run(get_cached_clients, nodes, email_filter=email), nodes)
+        clients = await _with_notes(await _run(get_cached_clients, nodes, email_filter=email, **({"force": True} if refresh else {})), nodes)
         return ORJSONResponse(
             content={"clients": clients, "count": len(clients)},
-            headers={"Cache-Control": "private, max-age=180"},
+            headers={"Cache-Control": "no-store" if refresh else "private, max-age=180"},
         )
 
     @router.get("/api/v1/nodes/{node_id}/clients")
