@@ -65,6 +65,9 @@ _UNREACHABLE_AFTER_SEC = 600.0
 _TRANSPORT_FAILURE_BACKOFF_SEC = (300.0, 600.0, 900.0)
 _TRANSPORT_DIAGNOSTIC_INTERVAL_SEC = 900.0
 _INVENTORY_RECHECK_SEC = 60.0
+# Keep route reads bounded while allowing collector snapshots to serve briefly.
+_SNAPSHOT_READ_MAX_AGE_SEC = 600.0
+REFRESH_WAIT_TIMEOUT_SEC = 45.0
 
 
 def _online_client_emails(payload: Any) -> List[str]:
@@ -245,6 +248,9 @@ class SnapshotCollector:
         self._last_ws_activity = 0.0
         self._mode_started_at = time.time()
         self._force_poll_event = asyncio.Event()
+        self._force_generation = 0
+        self._force_completed_generation = 0
+        self._force_waiters: Dict[int, asyncio.Event] = {}
         # The control loop does not need to read the local node inventory every
         # ten seconds while all known node deadlines are in the future. A
         # separate wake keeps activity changes distinct from an operator force
@@ -324,6 +330,32 @@ class SnapshotCollector:
                     continue
             reachable.append(node)
         return reachable
+
+    def usable_inbounds(
+        self, node: Dict, *, not_before: float = 0.0
+    ) -> Optional[List[Dict]]:
+        """Return a recent, healthy node inbound snapshot when one is usable."""
+        latest = self._latest
+        snapshots = latest["nodes"]
+        key = self._node_key(node if isinstance(node, dict) else {})
+        snapshot = snapshots.get(key)
+        if not isinstance(snapshot, dict):
+            return None
+        if snapshot.get("available") is not True or snapshot.get("stale"):
+            return None
+        if snapshot.get("inbounds_available") is False:
+            return None
+        inbounds = snapshot.get("inbounds")
+        if not isinstance(inbounds, list):
+            return None
+        try:
+            timestamp = float(snapshot.get("timestamp"))
+            threshold = max(time.time() - _SNAPSHOT_READ_MAX_AGE_SEC, float(not_before))
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(timestamp) or timestamp < threshold:
+            return None
+        return inbounds
 
     def latest_dashboard_snapshot(self) -> Dict:
         """Return the bounded, operator-safe projection used by Dashboard.
@@ -625,6 +657,24 @@ class SnapshotCollector:
         self._force_poll_event.set()
         self._request_scheduler_wake()
 
+    async def force_poll_all_and_wait(self, timeout: float = REFRESH_WAIT_TIMEOUT_SEC) -> bool:
+        """Request a forced fleet cycle and wait only for that cycle."""
+        self._force_generation += 1
+        generation = self._force_generation
+        waiter = asyncio.Event()
+        if self._force_completed_generation >= generation:
+            return True
+        self._force_waiters[generation] = waiter
+        self._force_poll_event.set()
+        self._request_scheduler_wake()
+        try:
+            await asyncio.wait_for(asyncio.shield(waiter.wait()), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+        finally:
+            self._force_waiters.pop(generation, None)
+
     def _mark_scheduler_wake(self) -> None:
         """Record one control-loop wake on the collector event loop."""
         self._scheduler_wake_generation += 1
@@ -779,6 +829,7 @@ class SnapshotCollector:
 
                 due_nodes = []
                 force_poll = self._force_poll_event.is_set()
+                force_generation = self._force_generation if force_poll else 0
                 if force_poll:
                     # Clear before polling so a later explicit request remains
                     # pending for the next cycle instead of being swallowed.
@@ -846,6 +897,12 @@ class SnapshotCollector:
 
                 if force_poll:
                     logger.info(f"Force poll completed: {len(due_nodes)} nodes polled")
+                    self._force_completed_generation = max(
+                        self._force_completed_generation, force_generation
+                    )
+                    for generation, waiter in list(self._force_waiters.items()):
+                        if generation <= force_generation:
+                            waiter.set()
 
             except LifecycleWorkAdmissionClosed:
                 break

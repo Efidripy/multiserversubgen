@@ -10,7 +10,7 @@ import os
 import copy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import Callable, List, Dict, Optional
 
 sys.path.insert(0, str(Path(__file__).parent))
 from xui_session import (
@@ -162,7 +162,49 @@ class InboundManager:
 
         return payload
     
-    def get_all_inbounds(self, nodes: List[Dict]) -> List[Dict]:
+    @staticmethod
+    def _full_inbound_projection(ib: Dict, node: Dict) -> Dict:
+        stream = parse_field_as_dict(
+            ib.get("streamSettings"),
+            node_id=node["name"],
+            field_name="streamSettings",
+        )
+        raw_settings = parse_field_as_dict(
+            ib.get("settings"),
+            node_id=node["name"],
+            field_name="settings",
+        )
+        # Count clients before stripping them from settings
+        client_count = len(raw_settings.get("clients", []))
+        inbound = {
+            "id": ib.get("id"),
+            "node_id": node.get("id"),
+            "node_name": node["name"],
+            "node_ip": node["ip"],
+            "protocol": ib.get("protocol"),
+            "port": ib.get("port"),
+            "remark": ib.get("remark", ""),
+            "enable": ib.get("enable", True),
+            # Keep these in their panel-provided form.  The edit
+            # UI must not turn an unrelated remark/port change
+            # into an empty bind address or default sniffing.
+            "listen": ib.get("listen", ""),
+            "sniffing": copy.deepcopy(ib.get("sniffing")),
+            "client_count": client_count,
+            "streamSettings": stream,
+            "settings": raw_settings,
+        }
+        security = stream.get("security", "")
+        inbound["security"] = security
+        inbound["is_reality"] = security == "reality"
+        return inbound
+
+    def get_all_inbounds(
+        self,
+        nodes: List[Dict],
+        *,
+        snapshot_inbounds: Optional[Callable[[Dict], Optional[List[Dict]]]] = None,
+    ) -> List[Dict]:
         """Получить все инбаунды со всех узлов
         
         Args:
@@ -174,42 +216,10 @@ class InboundManager:
         def _collect_node_inbounds(node: Dict) -> List[Dict]:
             collected: List[Dict] = []
             try:
-                node_inbounds = self._fetch_inbounds_from_node(node)
-                for ib in node_inbounds:
-                    stream = parse_field_as_dict(
-                        ib.get("streamSettings"),
-                        node_id=node["name"],
-                        field_name="streamSettings",
-                    )
-                    raw_settings = parse_field_as_dict(
-                        ib.get("settings"),
-                        node_id=node["name"],
-                        field_name="settings",
-                    )
-                    # Count clients before stripping them from settings
-                    client_count = len(raw_settings.get("clients", []))
-                    inbound = {
-                        "id": ib.get("id"),
-                        "node_id": node.get("id"),
-                        "node_name": node["name"],
-                        "node_ip": node["ip"],
-                        "protocol": ib.get("protocol"),
-                        "port": ib.get("port"),
-                        "remark": ib.get("remark", ""),
-                        "enable": ib.get("enable", True),
-                        # Keep these in their panel-provided form.  The edit
-                        # UI must not turn an unrelated remark/port change
-                        # into an empty bind address or default sniffing.
-                        "listen": ib.get("listen", ""),
-                        "sniffing": copy.deepcopy(ib.get("sniffing")),
-                        "client_count": client_count,
-                        "streamSettings": stream,
-                        "settings": raw_settings,
-                    }
-                    security = stream.get("security", "")
-                    inbound["security"] = security
-                    inbound["is_reality"] = security == "reality"
-                    collected.append(inbound)
+                node_inbounds = snapshot_inbounds(node) if snapshot_inbounds else None
+                if node_inbounds is None:
+                    node_inbounds = self._fetch_inbounds_from_node(node)
+                collected.extend(self._full_inbound_projection(ib, node) for ib in node_inbounds)
             except Exception as exc:
                 logger.warning(f"Failed to fetch inbounds from {node['name']}: {exc}")
             return collected
@@ -366,10 +376,17 @@ class InboundManager:
         return rows if isinstance(rows, list) else None
 
     def get_all_slim_inbounds(
-        self, nodes: List[Dict], *, cached_full: Optional[Dict[str, List[Dict]]] = None
+        self,
+        nodes: List[Dict],
+        *,
+        cached_full: Optional[Dict[str, List[Dict]]] = None,
+        snapshot_inbounds: Optional[Callable[[Dict], Optional[List[Dict]]]] = None,
     ) -> List[Dict]:
         """Get modern slim inbound rows; use full legacy rows only when proven absent."""
         def _collect(node: Dict) -> List[Dict]:
+            snapshot = snapshot_inbounds(node) if snapshot_inbounds else None
+            if snapshot is not None:
+                return [self._slim_inbound_projection(item, node) for item in snapshot if isinstance(item, dict)]
             state, obj = self._read_v3_projection(node, "/panel/api/inbounds/list/slim")
             if state == "supported" and isinstance(obj, list):
                 return [self._slim_inbound_projection(item, node) for item in obj if isinstance(item, dict)]
@@ -390,10 +407,17 @@ class InboundManager:
         return rows
 
     def get_all_inbound_options(
-        self, nodes: List[Dict], *, cached_full: Optional[Dict[str, List[Dict]]] = None
+        self,
+        nodes: List[Dict],
+        *,
+        cached_full: Optional[Dict[str, List[Dict]]] = None,
+        snapshot_inbounds: Optional[Callable[[Dict], Optional[List[Dict]]]] = None,
     ) -> List[Dict]:
         """Get the v3 picker projection without exposing full inbound settings."""
         def _collect(node: Dict) -> List[Dict]:
+            snapshot = snapshot_inbounds(node) if snapshot_inbounds else None
+            if snapshot is not None:
+                return [self._inbound_option_projection(item, node) for item in snapshot if isinstance(item, dict)]
             state, obj = self._read_v3_projection(node, "/panel/api/inbounds/options")
             if state == "supported" and isinstance(obj, list):
                 return [self._inbound_option_projection(item, node) for item in obj if isinstance(item, dict)]

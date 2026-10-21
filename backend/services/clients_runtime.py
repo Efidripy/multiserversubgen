@@ -70,7 +70,7 @@ class ClientsRuntime:
                 self.clients_cache["invalidated"] = False
 
     def get_cached_clients(
-        self, nodes: List[Dict], email_filter: Optional[str] = None
+        self, nodes: List[Dict], email_filter: Optional[str] = None, force: bool = False
     ) -> List[Dict]:
         now = time.time()
         cached_at, full_list, generation, invalidated = self._snapshot_cache()
@@ -80,6 +80,15 @@ class ClientsRuntime:
                 return items
             needle = email_filter.lower()
             return [c for c in items if needle in str(c.get("email", "")).lower()]
+
+        if force:
+            with self._cold_load_lock:
+                _, _, generation, _ = self._snapshot_cache()
+                fresh = self.client_mgr.get_all_clients(
+                    self._nodes_for_loader(nodes), email_filter=None
+                )
+                self._store_cache(fresh, generation)
+                return _apply_filter(fresh)
 
         if full_list and invalidated:
             record_cache("memory_stale")
