@@ -586,7 +586,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     setError('');
 
     try {
-      // Single parallel fetch â€” backend returns from cache (30s fresh / 300s stale).
+      // Single parallel fetch — backend returns from cache (30s fresh / 300s stale).
       const inboundStatsPromise = api
         // Legacy cold-read contract: .get('/v1/inbounds/stats', { sessionOnlyAuth: true, signal: controller.signal })
         .get('/v1/inbounds/stats', { sessionOnlyAuth: true, signal: controller.signal, ...(force ? { force: true } : {}) })
