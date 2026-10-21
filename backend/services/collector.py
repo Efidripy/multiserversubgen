@@ -214,6 +214,7 @@ class SnapshotCollector:
         self._lock = asyncio.Lock()
         self._snapshot_write_lock = asyncio.Lock()
         self._node_state: Dict[str, Dict] = {}
+        self._inventory_nodes: List[Dict] = []
         self._last_transport_diagnostic_at: Dict[str, float] = {}
         self._latest = {"timestamp": None, "nodes": {}}
         # Observed presence is deliberately internal: Dashboard remains bounded
@@ -251,6 +252,10 @@ class SnapshotCollector:
         self._force_generation = 0
         self._force_completed_generation = 0
         self._force_waiters: Dict[int, asyncio.Event] = {}
+        self._force_waiter_expected: Dict[int, set[str]] = {}
+        self._force_waiter_started_at: Dict[int, float] = {}
+        self._force_waiter_started_sequence: Dict[int, int] = {}
+        self._poll_start_sequence = 0
         # The control loop does not need to read the local node inventory every
         # ten seconds while all known node deadlines are in the future. A
         # separate wake keeps activity changes distinct from an operator force
@@ -658,13 +663,22 @@ class SnapshotCollector:
         self._request_scheduler_wake()
 
     async def force_poll_all_and_wait(self, timeout: float = REFRESH_WAIT_TIMEOUT_SEC) -> bool:
-        """Request a forced fleet cycle and wait only for that cycle."""
+        """Request a forced fleet cycle and wait for reachable nodes in it."""
         self._force_generation += 1
         generation = self._force_generation
         waiter = asyncio.Event()
         if self._force_completed_generation >= generation:
             return True
+        expected = {
+            self._node_key(node)
+            for node in self.filter_reachable_nodes(self._inventory_nodes)
+        }
         self._force_waiters[generation] = waiter
+        self._force_waiter_expected[generation] = expected
+        # Nanosecond precision avoids treating a poll that starts in the same
+        # event-loop turn as pre-requested on platforms with a coarse clock.
+        self._force_waiter_started_at[generation] = time.monotonic_ns()
+        self._force_waiter_started_sequence[generation] = self._poll_start_sequence
         self._force_poll_event.set()
         self._request_scheduler_wake()
         try:
@@ -674,6 +688,34 @@ class SnapshotCollector:
             return False
         finally:
             self._force_waiters.pop(generation, None)
+            self._force_waiter_expected.pop(generation, None)
+            self._force_waiter_started_at.pop(generation, None)
+            self._force_waiter_started_sequence.pop(generation, None)
+
+    def _mark_force_poll_finished(
+        self,
+        key: str,
+        *,
+        poll_started_at: float,
+        poll_finished_at: float,
+        poll_started_sequence: Optional[int] = None,
+    ) -> None:
+        """Wake forced-refresh waiters once their post-request nodes finish."""
+        for generation, expected in list(self._force_waiter_expected.items()):
+            if key not in expected:
+                continue
+            requested_at = self._force_waiter_started_at.get(generation, float("inf"))
+            requested_sequence = self._force_waiter_started_sequence.get(generation, -1)
+            if poll_started_sequence is not None:
+                if poll_started_sequence <= requested_sequence:
+                    continue
+            elif poll_started_at <= requested_at:
+                continue
+            expected.remove(key)
+            if not expected:
+                waiter = self._force_waiters.get(generation)
+                if waiter is not None:
+                    waiter.set()
 
     def _mark_scheduler_wake(self) -> None:
         """Record one control-loop wake on the collector event loop."""
@@ -813,6 +855,7 @@ class SnapshotCollector:
                 cycle_mode = self._mode.value
 
                 nodes = await self._run_blocking("collector.fetch_nodes", self.fetch_nodes)
+                self._inventory_nodes = [dict(node) for node in nodes if isinstance(node, dict)]
                 now = time.time()
                 active_node_keys = {self._node_key(node) for node in nodes}
 
@@ -963,6 +1006,21 @@ class SnapshotCollector:
         self._inflight_polls += 1
         try:
             async with self.semaphore:
+                poll_started_at = time.monotonic_ns()
+                self._poll_start_sequence += 1
+                poll_started_sequence = self._poll_start_sequence
+                state = self._node_state.setdefault(
+                    key,
+                    {
+                        "next_poll": 0.0,
+                        "interval": float(self._get_current_interval()),
+                        "failures": 0,
+                        "stable_cycles": 0,
+                        "last_hash": "",
+                        "circuit_until": 0.0,
+                    },
+                )
+                state["last_poll_started_at"] = poll_started_at
                 started = time.time()
                 snapshot = await self._run_blocking(
                     "collector.poll_node", self._collect_node_snapshot, node
@@ -1060,6 +1118,8 @@ class SnapshotCollector:
 
         state["next_poll"] = time.time() + state["interval"]
         snapshot["poll_ms"] = round(elapsed * 1000, 2)
+        poll_finished_at = time.monotonic_ns()
+        state["last_poll_finished_at"] = poll_finished_at
 
         async with self._lock:
             latest_timestamp = time.time()
@@ -1086,6 +1146,12 @@ class SnapshotCollector:
                 if not node_last_seen:
                     del self._client_last_seen_by_node[node_id]
             self._refresh_client_presence_projection()
+        self._mark_force_poll_finished(
+            key,
+            poll_started_at=poll_started_at,
+            poll_finished_at=poll_finished_at,
+            poll_started_sequence=poll_started_sequence,
+        )
         if should_broadcast:
             # WebSocket consumers display the operator-facing name; the
             # database ID below remains the unambiguous machine identity.
