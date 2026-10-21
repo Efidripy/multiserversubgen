@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { useToast } from './Toast';
+import { cacheService } from '../services/cacheService';
 import { UIIcon } from './UIIcon';
 import {
   approveTelegramRequest,
@@ -875,7 +876,7 @@ export const TelegramAdmin: React.FC = () => {
         <div>
             <h2 className="text-[24px] font-medium tracking-[-0.02em] text-[#eef4fa]">{tabs.find((tab) => tab.id === activeTab)?.label}</h2>
         </div>
-          <button type="button" className={buttonClass} onClick={() => void loadActiveDomain()} disabled={loading || mutating} aria-live="polite"><UIIcon name="refresh" size={14} />{t('common.refresh')}</button>
+          <button type="button" className={buttonClass} onClick={() => { cacheService.invalidate(); void loadActiveDomain(); }} disabled={loading || mutating} aria-live="polite"><UIIcon name="refresh" size={14} />{t('common.refresh')}</button>
         </div>
       </div>
 

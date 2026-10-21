@@ -88,6 +88,7 @@ const csvToList = (value: string) => value
 interface ReadRequest {
   id: number;
   signal: AbortSignal;
+  force?: boolean;
 }
 
 const isCancelledRead = (error: any, signal: AbortSignal) => signal.aborted
@@ -196,6 +197,7 @@ export const SubscriptionManager: React.FC<{
         params: { _ts: Date.now() },
         headers: { 'Cache-Control': 'no-cache' },
         signal: request.signal,
+        force: request.force,
       });
       if (!isCurrentRead(request)) return null;
       const nextEmails = Array.isArray(res.data?.emails) ? res.data.emails : [];
@@ -225,6 +227,7 @@ export const SubscriptionManager: React.FC<{
       const res = await api.get('/v1/subscription-groups', {
         params: { _ts: Date.now() },
         signal: request.signal,
+        force: request.force,
       });
       if (!isCurrentRead(request)) return;
       const rawGroups = Array.isArray(res.data?.groups) ? res.data.groups : [];
@@ -278,7 +281,7 @@ export const SubscriptionManager: React.FC<{
   const loadNodes = async (request: ReadRequest): Promise<NodeRecord[] | null> => {
     setNodesLoading(true);
     try {
-      const nextNodes = await listNodes({ signal: request.signal });
+      const nextNodes = await listNodes({ signal: request.signal, ...(request.force ? { force: true } : {}) });
       if (!isCurrentRead(request)) return null;
       setNodes(nextNodes);
       return nextNodes;
@@ -291,8 +294,9 @@ export const SubscriptionManager: React.FC<{
     }
   };
 
-  const refreshAll = async () => {
+  const refreshAll = async (force = false) => {
     const request = beginRead(true);
+    request.force = force;
     setLoading(true);
     try {
       const [emailProjection, , nodeProjection] = await Promise.all([
@@ -600,7 +604,7 @@ export const SubscriptionManager: React.FC<{
             <p className={hintClass}>{t('subscriptions.controlsHint')}</p>
           </div>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <button type="button" className={primaryButtonClass} onClick={() => void refreshAll()} disabled={totalLoading}>
+            <button type="button" className={primaryButtonClass} onClick={() => void refreshAll(true)} disabled={totalLoading}>
               <UIIcon name={totalLoading ? 'spinner' : 'refresh'} size={15} />
               <span className="whitespace-nowrap">{t('subscriptions.refreshEmails')}</span>
             </button>

@@ -9,6 +9,7 @@ const apiPost = vi.hoisted(() => vi.fn());
 const apiDelete = vi.hoisted(() => vi.fn());
 const listNodes = vi.hoisted(() => vi.fn());
 const getInboundsHeaderSource = vi.hoisted(() => vi.fn());
+const forceNodeRefresh = vi.hoisted(() => vi.fn());
 
 vi.mock('../src/api', () => ({
   default: { get: apiGet, post: apiPost, delete: apiDelete },
@@ -17,6 +18,7 @@ vi.mock('../src/api', () => ({
 vi.mock('../src/api/nodes', () => ({ listNodes }));
 
 vi.mock('../src/api/dashboard', () => ({ getInboundsHeaderSource }));
+vi.mock('../src/services/forceRefresh', () => ({ forceNodeRefresh }));
 
 vi.mock('../src/auth', () => ({
   getAuth: () => ({ username: 'test', password: 'test', role: 'admin' }),
@@ -47,6 +49,8 @@ afterEach(() => {
   apiDelete.mockReset();
   listNodes.mockReset();
   getInboundsHeaderSource.mockReset();
+  forceNodeRefresh.mockReset();
+  forceNodeRefresh.mockResolvedValue(undefined);
   vi.useRealTimers();
 });
 
@@ -105,7 +109,9 @@ describe('client and inbound projection lifecycle contract', () => {
     expect((refreshButton as HTMLButtonElement).disabled).toBe(false);
 
     fireEvent.click(refreshButton);
-    expect(getInboundsHeaderSource).toHaveBeenCalledTimes(2);
+    expect(forceNodeRefresh).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(getInboundsHeaderSource).toHaveBeenCalledTimes(2));
+    expect(getInboundsHeaderSource).toHaveBeenLastCalledWith({ signal: expect.any(AbortSignal), force: true });
     expect(screen.getAllByText('cached inbound').length).toBeGreaterThan(0);
     expect(screen.getByRole('status')).toBeTruthy();
   });

@@ -143,7 +143,7 @@ export function NodeOperationsModal({
     }
   }, [t, toast]);
 
-  const loadTab = useCallback(async (tab: NodeOpsTab) => {
+  const loadTab = useCallback(async (tab: NodeOpsTab, force = false) => {
     const requestId = ++tabRequestIdRef.current;
     const isCurrentRequest = () => requestId === tabRequestIdRef.current;
     tabAbortRef.current?.abort();
@@ -155,31 +155,31 @@ export function NodeOperationsModal({
     setError('');
     try {
       if (tab === 'traffic') {
-        const payload = await getNodeTraffic(nodeId, { signal: controller.signal });
+        const payload = await getNodeTraffic(nodeId, { signal: controller.signal, force });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, traffic: payload }));
       } else if (tab === 'online') {
-        const payload = await getNodeOnlineClients(nodeId, { signal: controller.signal });
+        const payload = await getNodeOnlineClients(nodeId, { signal: controller.signal, force });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, online: payload }));
       } else if (tab === 'metrics') {
-        const payload = await getXrayMetrics(nodeId, { signal: controller.signal });
+        const payload = await getXrayMetrics(nodeId, { signal: controller.signal, force });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, metrics: payload }));
       } else if (tab === 'outbounds') {
-        const payload = await getOutboundsTraffic(nodeId, { signal: controller.signal });
+        const payload = await getOutboundsTraffic(nodeId, { signal: controller.signal, force });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, outbounds: payload }));
       } else if (tab === 'observatory') {
-        const payload = await getXrayObservatory(nodeId, { signal: controller.signal });
+        const payload = await getXrayObservatory(nodeId, { signal: controller.signal, force });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, observatory: payload }));
       } else if (tab === 'config') {
-        const payload = await getXrayConfig(nodeId, { signal: controller.signal });
+        const payload = await getXrayConfig(nodeId, { signal: controller.signal, force });
         if (isCurrentRequest()) setDataByTab((current) => ({ ...current, config: payload }));
       } else if (tab === 'versions') {
-        const payload = await getXrayVersions(nodeId, { signal: controller.signal });
+        const payload = await getXrayVersions(nodeId, { signal: controller.signal, force });
         if (isCurrentRequest()) {
           setVersions(payload);
           setSelectedVersion((current) => current || payload[0] || '');
         }
       } else if (tab === 'tokens') {
-        const payload = await getApiTokens(nodeId, { signal: controller.signal });
+        const payload = await getApiTokens(nodeId, { signal: controller.signal, force });
         if (isCurrentRequest()) setTokens(payload as ApiTokenItem[]);
       }
     } catch (err: any) {
@@ -331,7 +331,7 @@ export function NodeOperationsModal({
             {loadingTab === activeTab ? t('app.loading') : activeTabLabel}
           </span>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <button type="button" className={buttonSecondaryClass} onClick={() => void loadTab(activeTab)} disabled={loadingTab !== null}>
+            <button type="button" className={buttonSecondaryClass} onClick={() => void loadTab(activeTab, true)} disabled={loadingTab !== null}>
               <UIIcon name="refresh" size={14} />
               {t('common.refresh')}
             </button>
@@ -361,7 +361,7 @@ export function NodeOperationsModal({
           <UIIcon name="download" size={14} />
           {t('serverStatus.install')}
         </button>
-        <button type="button" className={buttonSecondaryClass} onClick={() => void loadTab('versions')} disabled={loadingTab !== null}>
+        <button type="button" className={buttonSecondaryClass} onClick={() => void loadTab('versions', true)} disabled={loadingTab !== null}>
           <UIIcon name="refresh" size={14} />
           {t('common.refresh')}
         </button>
@@ -401,7 +401,7 @@ export function NodeOperationsModal({
           <UIIcon name="plus" size={14} />
           {t('serverStatus.createTokenShort')}
         </button>
-        <button type="button" className={buttonSecondaryClass} onClick={() => void loadTab('tokens')} disabled={loadingTab !== null}>
+        <button type="button" className={buttonSecondaryClass} onClick={() => void loadTab('tokens', true)} disabled={loadingTab !== null}>
           <UIIcon name="refresh" size={14} />
           {t('common.refresh')}
         </button>

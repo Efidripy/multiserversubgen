@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react'
 import { useTheme } from '../contexts/ThemeContext';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
+import { forceNodeRefresh } from '../services/forceRefresh';
+import { cacheService } from '../services/cacheService';
 import { getAuth } from '../auth';
 import { ChoiceChips } from './ChoiceChips';
 import { registerPollingTask } from '../services/pollingScheduler';
@@ -1993,7 +1995,9 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
             />
             <button
               className={secondaryButtonClass}
-              onClick={() => {
+              onClick={() => { void (async () => {
+                await forceNodeRefresh();
+                cacheService.invalidate();
                 if (historyRequested) {
                   loadHistory(selectedScope, rangeSec);
                 }
@@ -2011,7 +2015,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
                   loadAdguardHistory();
                   loadStackStatus();
                 }
-              }}
+              })(); }}
               disabled={loadingHistory || resourceLoading}
             >
               {loadingHistory || resourceLoading ? t('header.updating') : t('common.refresh')}

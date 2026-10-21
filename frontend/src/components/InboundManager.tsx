@@ -14,6 +14,7 @@ import {
   useProjectionOperations,
 } from '../services/projectionOperationStore';
 import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
+import { forceNodeRefresh } from '../services/forceRefresh';
 
 interface Inbound {
   id: number;
@@ -575,7 +576,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     sortDirection,
   ]);
 
-  const loadInbounds = async (silent = false) => {
+  const loadInbounds = async (silent = false, force = false) => {
     const requestId = ++requestIdRef.current;
     inboundsAbortRef.current?.abort();
     const controller = new AbortController();
@@ -587,13 +588,16 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     try {
       // Single parallel fetch â€” backend returns from cache (30s fresh / 300s stale).
       const inboundStatsPromise = api
-        .get('/v1/inbounds/stats', { sessionOnlyAuth: true, signal: controller.signal })
+        // Legacy cold-read contract: .get('/v1/inbounds/stats', { sessionOnlyAuth: true, signal: controller.signal })
+        .get('/v1/inbounds/stats', { sessionOnlyAuth: true, signal: controller.signal, ...(force ? { force: true } : {}) })
         .then((res) => normalizeInboundStats(res.data))
         .catch(() => null);
 
       const [nodes, rawInbounds, stats] = await Promise.all([
-        listNodes({ signal: controller.signal, sessionOnlyAuth: true }),
-        getInboundsHeaderSource({ signal: controller.signal }),
+        force
+          ? listNodes({ signal: controller.signal, sessionOnlyAuth: true, force: true })
+          : listNodes({ signal: controller.signal, sessionOnlyAuth: true }),
+        force ? getInboundsHeaderSource({ signal: controller.signal, force: true }) : getInboundsHeaderSource({ signal: controller.signal }),
         inboundStatsPromise,
       ]);
 
@@ -629,6 +633,11 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
         setPageLoading(false);
       }
     }
+  };
+
+  const forceRefreshInbounds = async () => {
+    await forceNodeRefresh();
+    await loadInbounds(false, true);
   };
 
   const reconcileInboundsAfterMutation = (operationId: number) => {
@@ -1316,7 +1325,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
                 <button
                   type="button"
                   className={buttonAccentClass}
-                  onClick={() => { void loadInbounds(); }}
+                  onClick={() => { void forceRefreshInbounds(); }}
                   disabled={loading || pageLoading}
                   aria-busy={loading || pageLoading || projectionRefreshing}
                 >

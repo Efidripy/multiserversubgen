@@ -31,6 +31,7 @@ import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTraff
 import { ClientEditModal } from './ClientEditModal';
 import { groupClientsByEmail, normalizeClientEmail, type ClientEmailGroup } from '../utils/clientGroups';
 import { isSystemClient } from '../utils/systemClients';
+import { forceNodeRefresh } from '../services/forceRefresh';
 
 interface Client {
   id?: string | null;
@@ -587,7 +588,7 @@ export const ClientManager: React.FC = () => {
     }
   };
 
-  const loadClients = async (silent = false, sourceFilter: ClientSourceFilter = clientSourceFilterRef.current) => {
+  const loadClients = async (silent = false, sourceFilter: ClientSourceFilter = clientSourceFilterRef.current, force = false) => {
     const requestId = ++requestIdRef.current;
 
     if (clientsLoadLoadingRequestIdRef.current !== null) {
@@ -615,8 +616,12 @@ export const ClientManager: React.FC = () => {
       // server caches it can trigger a second fleet read, so load it after the
       // page projection is usable.
       const [nodeList, clientsPayload] = await Promise.all([
-        listNodes({ signal: controller.signal, sessionOnlyAuth: true }),
-        listClientsBySource(sourceFilter, { signal: controller.signal, sessionOnlyAuth: true }),
+        force
+          ? listNodes({ signal: controller.signal, sessionOnlyAuth: true, force: true })
+          : listNodes({ signal: controller.signal, sessionOnlyAuth: true }),
+        force
+          ? listClientsBySource(sourceFilter, { signal: controller.signal, sessionOnlyAuth: true, force: true })
+          : listClientsBySource(sourceFilter, { signal: controller.signal, sessionOnlyAuth: true }),
       ]);
 
       if (requestIdRef.current !== requestId) return;
@@ -693,6 +698,11 @@ export const ClientManager: React.FC = () => {
         }
       }
     }
+  };
+
+  const forceRefreshClients = async () => {
+    await forceNodeRefresh();
+    await loadClients(false, clientSourceFilterRef.current, true);
   };
 
   const reconcileClientsAfterMutation = (operationId: number, markAwaiting = true) => {
@@ -2027,7 +2037,7 @@ export const ClientManager: React.FC = () => {
           <UIIcon name={targetStatusIcon(operation, status)} size={13} className={cn((status === 'sending' || isDeleteInFlight) && 'animate-pulse motion-reduce:animate-none')} />
           <span className="sr-only">{label}</span>
         </span>
-        {isUnknown && <button type="button" className={buttonIconClass} onClick={() => void loadClients(true)} title={t('clients.operationSafeRefresh')} aria-label={t('clients.operationSafeRefresh')}><UIIcon name="refresh" size={13} /></button>}
+        {isUnknown && <button type="button" className={buttonIconClass} onClick={() => void forceRefreshClients()} title={t('clients.operationSafeRefresh')} aria-label={t('clients.operationSafeRefresh')}><UIIcon name="refresh" size={13} /></button>}
       </span>
     );
   };
@@ -2220,7 +2230,7 @@ export const ClientManager: React.FC = () => {
               </label>
               <button
                 className={buttonAccentClass}
-                onClick={() => loadClients()}
+                onClick={() => void forceRefreshClients()}
                 disabled={loading}
                 aria-busy={loading || projectionRefreshing}
               >
@@ -3068,7 +3078,7 @@ export const ClientManager: React.FC = () => {
                 </button>
               </div>
               <div className={modalBodyClass}>
-                <AddClientMultiServer onRemoteSuccess={handleMultiServerRemoteSuccess} onSafeReadRefresh={() => void loadClients(true)} />
+                <AddClientMultiServer onRemoteSuccess={handleMultiServerRemoteSuccess} onSafeReadRefresh={() => void forceRefreshClients()} />
               </div>
             </div>
           </div>
