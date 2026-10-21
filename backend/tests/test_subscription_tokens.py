@@ -196,6 +196,34 @@ def test_system_email_token_is_purged_and_link_stops_serving(tmp_path):
         ).fetchone()[0] == 0
 
 
+def test_toggling_system_marker_reissues_then_removes_subscription(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    system = ["svc"]  # mutated below to emulate the marker being removed/added on the node
+    client = TestClient(_build_app(db_path, ["D632-IOS", "svc"], system_emails=system))
+
+    first = client.get("/api/v1/emails").json()
+    assert "svc" not in first["subscription_tokens"]
+
+    system.clear()  # marker removed: client becomes a normal subscriber
+    second = client.get("/api/v1/emails").json()
+    token = second["subscription_tokens"]["svc"]
+    assert client.get(f"/api/v1/sub/{token}").status_code == 200
+
+    system.append("svc")  # marker added again: token purged and link dead at once
+    assert client.get(f"/api/v1/sub/{token}").status_code == 404
+    third = client.get("/api/v1/emails").json()
+    assert "svc" not in third["subscription_tokens"]
+    assert client.get(f"/api/v1/sub/{token}").status_code == 404
+
+    system.clear()  # marker removed again: a brand-new token, the purged one stays dead
+    fourth = client.get("/api/v1/emails").json()
+    new_token = fourth["subscription_tokens"]["svc"]
+    assert new_token != token
+    assert client.get(f"/api/v1/sub/{token}").status_code == 404
+    assert client.get(f"/api/v1/sub/{new_token}").status_code == 200
+
+
 def test_group_subscription_skips_system_emails(tmp_path):
     import json
     import sqlite3
