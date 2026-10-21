@@ -293,14 +293,23 @@ def test_mutation_rejects_cross_origin_browser_request(monkeypatch):
     assert response.status_code == 403
 
 
-def test_mutation_rejects_missing_browser_provenance_for_all_methods(monkeypatch):
+def test_mutation_allows_basic_client_without_origin_but_not_session_cookie(monkeypatch):
     monkeypatch.setattr(main.p, "authenticate", lambda _u, _p: True)
     client = TestClient(main.app)
     headers = {"Authorization": _basic_header("admin", "secret")}
 
     for method in ("post", "put", "patch", "delete"):
         response = getattr(client, method)("/api/v1/nodes/check-connection", headers=headers)
-        assert response.status_code == 403
+        assert response.status_code != 403
+    # No credentials at all still never reaches the handler.
+    assert client.post("/api/v1/nodes/check-connection").status_code == 401
+
+
+def test_public_and_docs_surface(monkeypatch):
+    client = TestClient(main.app)
+    assert main.request_runtime.is_public_endpoint("/api/v1/guest-sub/abc") is True
+    assert client.get("/openapi.json").status_code == 404
+    assert client.get("/docs").status_code == 404
 
 
 def test_mutation_allows_explicit_same_origin_request(monkeypatch):

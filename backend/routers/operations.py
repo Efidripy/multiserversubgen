@@ -3,6 +3,7 @@ import base64
 import datetime
 import io
 import os
+import re
 import sqlite3
 from services.db_bootstrap import connect
 import time
@@ -350,7 +351,7 @@ def build_operations_router(
         mem = io.BytesIO()
         with zipfile.ZipFile(mem, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
             for idx, backup in enumerate(backups, start=1):
-                node_name = (backup.get("node") or f"node_{idx}").replace("/", "_")
+                node_name = re.sub(r"[\\/:]|\.\.", "_", backup.get("node") or f"node_{idx}")
                 if backup.get("error"):
                     zf.writestr(f"{node_name}.error.txt", backup.get("error", "unknown error"))
                     continue
