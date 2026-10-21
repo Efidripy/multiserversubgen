@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import requests
 from core.lifecycle_work import LifecycleWorkAdmissionClosed
-from shared.security import validate_outbound_url
+from shared.security import validate_and_resolve_outbound_url, validate_outbound_url
 
 
 def _is_trusted_loopback_monitoring_url(value: str) -> bool:
@@ -38,6 +38,19 @@ def _is_trusted_loopback_monitoring_url(value: str) -> bool:
         and 1 <= port <= 65535
     )
 
+
+
+def _get_pinned(url: str, *, pinned_address: Optional[str], **kwargs) -> requests.Response:
+    """GET connecting only to the address that validation approved (no second DNS lookup)."""
+    if pinned_address is None:
+        return requests.get(url, **kwargs)
+    from xui_session import _pinned_session_request
+
+    timeout = kwargs.pop("timeout")
+    with requests.Session() as session:
+        return _pinned_session_request(
+            session, "GET", url, pinned_address=pinned_address, timeout=timeout, **kwargs
+        )
 
 class AdGuardRuntime:
     def __init__(
@@ -271,10 +284,10 @@ class AdGuardRuntime:
             trusted_loopback = (
                 allow_trusted_loopback and _is_trusted_loopback_monitoring_url(url)
             )
-            valid, error = (
-                (True, "")
+            valid, error, pinned = (
+                (True, "", None)
                 if trusted_loopback
-                else validate_outbound_url(
+                else validate_and_resolve_outbound_url(
                     url,
                     allow_private=False,
                     require_https=urlparse(url).scheme == "https",
@@ -288,8 +301,9 @@ class AdGuardRuntime:
                     "status_code": None,
                     "error": error,
                 }
-            resp = requests.get(
+            resp = _get_pinned(
                 full,
+                pinned_address=pinned,
                 timeout=timeout,
                 verify=self.requests_verify,
                 auth=basic_auth,
@@ -327,10 +341,10 @@ class AdGuardRuntime:
             trusted_loopback = (
                 allow_trusted_loopback and _is_trusted_loopback_monitoring_url(prom_url)
             )
-            valid, _ = (
-                (True, "")
+            valid, _, pinned = (
+                (True, "", None)
                 if trusted_loopback
-                else validate_outbound_url(
+                else validate_and_resolve_outbound_url(
                     prom_url,
                     allow_private=False,
                     require_https=urlparse(prom_url).scheme == "https",
@@ -338,8 +352,9 @@ class AdGuardRuntime:
             )
             if not valid:
                 return None
-            resp = requests.get(
+            resp = _get_pinned(
                 f"{prom_url.rstrip('/')}/api/v1/query",
+                pinned_address=pinned,
                 params={"query": query},
                 timeout=5,
                 verify=self.requests_verify,

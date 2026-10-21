@@ -393,3 +393,12 @@ def test_pinned_https_connection_connects_to_approved_address(monkeypatch):
     assert connection._new_conn() is not None
     assert calls == [(("93.184.216.34", 443), None)]
     assert connection.server_hostname == "node.example"
+
+
+def test_repeated_failed_basic_auth_is_rate_limited(monkeypatch):
+    monkeypatch.setattr(main.p, "authenticate", lambda _u, _p: False)
+    client = TestClient(main.app, client=("203.0.113.77", 40001))
+    headers = {"Authorization": _basic_header("admin", "wrong")}
+    codes = [client.get("/api/v1/nodes", headers=headers).status_code for _ in range(12)]
+    assert codes[:10] == [401] * 10
+    assert codes[10:] == [429, 429]
