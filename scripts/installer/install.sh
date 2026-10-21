@@ -825,6 +825,11 @@ generate_bootstrap_nginx_cfg() {
 
     if [ "${PUBLIC_SCHEME:-https}" = "https" ]; then
         ensure_tls_material || return 1
+        # HSTS only with a real certificate: on a self-signed one it would lock browsers out.
+        local hsts_header=""
+        case "$NGINX_SSL_CERT" in
+            /etc/letsencrypt/*) hsts_header='    add_header Strict-Transport-Security "max-age=31536000" always;' ;;
+        esac
         cat > "$cfg_path" <<EOF
 server {
     listen 80;
@@ -842,7 +847,7 @@ server {
     ssl_certificate_key ${NGINX_SSL_KEY};
     ssl_protocols TLSv1.2 TLSv1.3;
     server_tokens off;
-    add_header Strict-Transport-Security "max-age=31536000" always;
+${hsts_header}
     port_in_redirect off;
     absolute_redirect off;
 

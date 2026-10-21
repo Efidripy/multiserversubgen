@@ -466,8 +466,8 @@ EOF
 ${UI_CYAN}--- Grafana ---${UI_RESET}
    URL:  ${UI_GREEN}${scheme}://${xui_domain}/${grafana_path}/${UI_RESET}
    Путь: /${grafana_path}/
-    Вход: admin / пароль в файле ${grafana_pw_file:-/etc/${PROJECT_NAME}/grafana-admin-password}
-          (если Grafana уже была установлена раньше — пароль не менялся, смените его вручную)
+    Вход: admin / пароль в /etc/${PROJECT_NAME}/grafana-admin-password
+          (файла нет — Grafana была установлена раньше, пароль не менялся: смените admin/admin вручную)
 
 EOF
     fi

@@ -244,7 +244,7 @@ bind_prometheus_loopback() {
 ' "$flag" > "$f"; return 0; }
     grep -q 'web.listen-address' "$f" && return 0
     if grep -q '^ARGS=' "$f"; then
-        sed -i -E "s|^ARGS=\"(.*)\"|ARGS=\" ${flag}\"|" "$f"
+        sed -i -E "s|^ARGS=\"(.*)\"|ARGS=\"\1 ${flag}\"|" "$f"
     else
         printf 'ARGS="%s"
 ' "$flag" >> "$f"

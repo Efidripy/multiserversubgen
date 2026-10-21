@@ -47,6 +47,7 @@ def _get_pinned(url: str, *, pinned_address: Optional[str], **kwargs) -> request
     from xui_session import _pinned_session_request
 
     timeout = kwargs.pop("timeout")
+    kwargs.pop("allow_redirects", None)  # the pinned adapter never follows redirects
     with requests.Session() as session:
         return _pinned_session_request(
             session, "GET", url, pinned_address=pinned_address, timeout=timeout, **kwargs
