@@ -582,40 +582,19 @@ def build_nodes_router(
 
     @router.post("/api/v1/nodes/{node_id}/generate-keypair")
     async def generate_reality_keypair(request: Request, node_id: int):
-        """Generate a new x25519 keypair for Reality security.
-        Tries the panel API first; falls back to local Python generation."""
+        """Generate a new x25519 keypair for Reality security (local generation)."""
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401, detail="Unauthorized")
-        # Try via the panel API first
-        node = await run_in_threadpool(get_node_or_404, node_id)
-        try:
-            result = await run_in_threadpool(node_service.call_node_api, node, "POST", "/api/node/keypair", {})
-            if result and result.get("privateKey"):
-                return {"privateKey": result["privateKey"], "publicKey": result.get("publicKey", "")}
-        except Exception:
-            pass
-        # Fallback: generate locally using cryptography library if available
-        try:
-            from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
-            import base64
-            private_key = X25519PrivateKey.generate()
-            private_bytes = private_key.private_bytes_raw()
-            public_bytes = private_key.public_key().public_bytes_raw()
-            private_b64 = base64.urlsafe_b64encode(private_bytes).rstrip(b"=").decode()
-            public_b64 = base64.urlsafe_b64encode(public_bytes).rstrip(b"=").decode()
-            return {"privateKey": private_b64, "publicKey": public_b64}
-        except ImportError:
-            pass
-        # Final fallback: random bytes (not a proper keypair, just for UI)
-        import os
-        rnd = os.urandom(32)
-        import base64 as b64m
-        return {
-            "privateKey": b64m.urlsafe_b64encode(rnd).rstrip(b"=").decode(),
-            "publicKey": "",
-            "warning": "cryptography library not installed — install it for proper keypair generation",
-        }
+        await run_in_threadpool(get_node_or_404, node_id)
+        from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+        import base64
+        private_key = X25519PrivateKey.generate()
+        private_bytes = private_key.private_bytes_raw()
+        public_bytes = private_key.public_key().public_bytes_raw()
+        private_b64 = base64.urlsafe_b64encode(private_bytes).rstrip(b"=").decode()
+        public_b64 = base64.urlsafe_b64encode(public_bytes).rstrip(b"=").decode()
+        return {"privateKey": private_b64, "publicKey": public_b64}
 
     @router.get("/api/v1/collector/status")
     def get_collector_status(request: Request):

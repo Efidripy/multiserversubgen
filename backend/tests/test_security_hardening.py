@@ -293,14 +293,23 @@ def test_mutation_rejects_cross_origin_browser_request(monkeypatch):
     assert response.status_code == 403
 
 
-def test_mutation_rejects_missing_browser_provenance_for_all_methods(monkeypatch):
+def test_mutation_allows_basic_client_without_origin_but_not_session_cookie(monkeypatch):
     monkeypatch.setattr(main.p, "authenticate", lambda _u, _p: True)
     client = TestClient(main.app)
     headers = {"Authorization": _basic_header("admin", "secret")}
 
     for method in ("post", "put", "patch", "delete"):
         response = getattr(client, method)("/api/v1/nodes/check-connection", headers=headers)
-        assert response.status_code == 403
+        assert response.status_code != 403
+    # No credentials at all still never reaches the handler.
+    assert client.post("/api/v1/nodes/check-connection").status_code == 401
+
+
+def test_public_and_docs_surface(monkeypatch):
+    client = TestClient(main.app)
+    assert main.request_runtime.is_public_endpoint("/api/v1/guest-sub/abc") is True
+    assert client.get("/openapi.json").status_code == 404
+    assert client.get("/docs").status_code == 404
 
 
 def test_mutation_allows_explicit_same_origin_request(monkeypatch):
@@ -384,3 +393,39 @@ def test_pinned_https_connection_connects_to_approved_address(monkeypatch):
     assert connection._new_conn() is not None
     assert calls == [(("93.184.216.34", 443), None)]
     assert connection.server_hostname == "node.example"
+
+
+def test_repeated_failed_basic_auth_is_rate_limited(monkeypatch):
+    monkeypatch.setattr(main.p, "authenticate", lambda _u, _p: False)
+    client = TestClient(main.app, client=("203.0.113.77", 40001))
+    headers = {"Authorization": _basic_header("admin", "wrong")}
+    codes = [client.get("/api/v1/nodes", headers=headers).status_code for _ in range(12)]
+    assert codes[:10] == [401] * 10
+    assert codes[10:] == [429, 429]
+
+
+def test_unknown_subscription_lookups_are_rate_limited_per_ip():
+    client = TestClient(main.app, client=("203.0.113.88", 40002))
+    codes = [client.get(f"/api/v1/sub/nope-{i}").status_code for i in range(200)]
+    assert codes[0] == 404
+    assert 429 in codes
+
+
+def test_adguard_pinned_get_accepts_requests_style_kwargs(monkeypatch):
+    from services import adguard_runtime
+    import requests as _requests
+    import xui_session
+
+    seen = {}
+
+    def fake_send(self, request, **kwargs):
+        seen["address"] = self._pinned_address if hasattr(self, "_pinned_address") else "pinned"
+        resp = _requests.Response()
+        resp.status_code = 200
+        return resp
+
+    monkeypatch.setattr(xui_session._PinnedHTTPAdapter, "send", fake_send)
+    resp = adguard_runtime._get_pinned(
+        "https://example.com/x", pinned_address="93.184.216.34", timeout=3, verify=True, auth=None, allow_redirects=False
+    )
+    assert resp.status_code == 200

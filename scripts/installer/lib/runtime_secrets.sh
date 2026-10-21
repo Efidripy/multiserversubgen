@@ -216,3 +216,50 @@ runtime_ensure_service_user() {
     install -d -o "$service_user" -g "$service_user" -m 0711 "$service_dir"
     chown -R -- "$service_user:$service_user" "$service_dir"
 }
+
+grafana_admin_password_file() {
+    runtime_require_safe_project_name || return 1
+    printf '/etc/%s/grafana-admin-password
+' "$PROJECT_NAME"
+}
+
+# Grafana reads the admin password from the environment only while creating its
+# database, so an existing install (grafana.db present) is never touched.
+ensure_grafana_admin_password_file() {
+    local f
+    f="$(grafana_admin_password_file)" || return 1
+    [ -f "$f" ] && return 0
+    [ -e /var/lib/grafana/grafana.db ] && return 0
+    install -d -m 0755 "$(dirname "$f")"
+    ( umask 077; runtime_secret_generate | head -c 32 > "$f" ) || return 1
+    chown root:grafana "$f" 2>/dev/null || true
+    chmod 0640 "$f"
+}
+
+# Prometheus from apt listens on all interfaces by default; only nginx/Grafana on
+# this host need it.
+bind_prometheus_loopback() {
+    local f=/etc/default/prometheus flag='--web.listen-address=127.0.0.1:9090'
+    [ -f "$f" ] || { printf 'ARGS="%s"
+' "$flag" > "$f"; return 0; }
+    grep -q 'web.listen-address' "$f" && return 0
+    if grep -q '^ARGS=' "$f"; then
+        sed -i -E "s|^ARGS=\"(.*)\"|ARGS=\"\1 ${flag}\"|" "$f"
+    else
+        printf 'ARGS="%s"
+' "$flag" >> "$f"
+    fi
+}
+
+# Web login goes through PAM as the unprivileged service user, which only works
+# when the setgid-shadow helper is present (default on Debian/Ubuntu).
+warn_install_scheme_and_pam_helper() {
+    if [ "${PUBLIC_SCHEME:-https}" = "http" ]; then
+        echo "⚠️ PUBLIC_SCHEME=http: системные логин и пароль будут передаваться открытым текстом. Используйте https." >&2
+    fi
+    local helper=/usr/sbin/unix_chkpwd
+    [ -e "$helper" ] || helper=/sbin/unix_chkpwd
+    if [ ! -e "$helper" ] || [ $(( 0$(stat -c %a "$helper" 2>/dev/null || echo 0) & 2000 )) -eq 0 ]; then
+        echo "⚠️ unix_chkpwd с setgid-битом не найден: вход в панель через PAM может не работать. См. docs/INSTALL.md." >&2
+    fi
+}

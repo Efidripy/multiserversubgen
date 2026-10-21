@@ -77,7 +77,7 @@ export class WebSocketManager {
           return;
         }
 
-        this.ws = new WebSocket(this.url, [`mssg-ticket.${auth.wsTicket}`]);
+        this.ws = new WebSocket(this.url, ['mssg-ws', `mssg-ticket.${auth.wsTicket}`]);
 
         this.ws.onopen = () => {
           devLog('[WebSocket] Connected');

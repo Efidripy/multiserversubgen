@@ -77,11 +77,23 @@ def build_request_controls_and_audit_middleware(
     enqueue_audit_event,
     allowed_origins=None,
 ):
+    failed_auth: dict[str, list[float]] = {}
+    fail_limit, fail_window_sec = 10, 300
+
+    def _recent_failures(ip: str) -> int:
+        now = time.monotonic()
+        hits = [t for t in failed_auth.get(ip, []) if now - t < fail_window_sec]
+        if hits:
+            failed_auth[ip] = hits
+        else:
+            failed_auth.pop(ip, None)
+        return len(hits)
+
     configured_origins = {
         str(origin).rstrip("/") for origin in (allowed_origins or []) if origin
     }
 
-    def _csrf_origin_ok(request: Request) -> bool:
+    def _csrf_origin_ok(request: Request, basic_auth: bool = False) -> bool:
         if request.method not in {
             "POST",
             "PUT",
@@ -97,7 +109,9 @@ def build_request_controls_and_audit_middleware(
             else ""
         )
         if not candidate:
-            return False
+            # Browsers always send Origin on cross-site writes; a Basic client without
+            # either header (curl, scripts) is not a browser CSRF vector.
+            return basic_auth
         if candidate in configured_origins:
             return True
         request_origin = f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
@@ -128,27 +142,43 @@ def build_request_controls_and_audit_middleware(
                 and not request.state.metrics_loopback_allowed
                 and not is_public_endpoint(path)
             ):
+                client_ip = get_client_ip(request)
+                has_credentials = bool(request.headers.get("Authorization"))
+                auth_blocked = has_credentials and _recent_failures(client_ip) >= fail_limit
                 session_first_read = is_session_first_protected_get(request)
                 if session_first_read:
                     auth_user = check_web_session(request)
                     auth_via = "session" if auth_user else None
                 else:
-                    auth_user = check_basic_auth_header(
-                        request.headers.get("Authorization")
+                    auth_user = (
+                        None
+                        if auth_blocked
+                        else check_basic_auth_header(request.headers.get("Authorization"))
                     )
                     auth_via = "basic" if auth_user else None
                 if not auth_user and session_first_read:
-                    auth_user = check_basic_auth_header(
-                        request.headers.get("Authorization")
+                    auth_user = (
+                        None
+                        if auth_blocked
+                        else check_basic_auth_header(request.headers.get("Authorization"))
                     )
                     auth_via = "basic" if auth_user else None
                 if not auth_user and not session_first_read:
                     auth_user = check_web_session(request)
                     auth_via = "session" if auth_user else None
                 if not auth_user:
-                    response = JSONResponse(
-                        status_code=401, content={"detail": "Unauthorized"}
-                    )
+                    if auth_blocked:
+                        response = JSONResponse(
+                            status_code=429,
+                            content={"detail": "Too many failed attempts"},
+                            headers={"Retry-After": str(fail_window_sec)},
+                        )
+                    else:
+                        if has_credentials:
+                            failed_auth.setdefault(client_ip, []).append(time.monotonic())
+                        response = JSONResponse(
+                            status_code=401, content={"detail": "Unauthorized"}
+                        )
                 else:
                     auth_role = get_user_role(auth_user)
                     request.state.auth_user = auth_user
@@ -173,7 +203,7 @@ def build_request_controls_and_audit_middleware(
                                 "detail": f"Forbidden for role '{auth_role}', requires '{required_role}'"
                             },
                         )
-                    if response is None and not _csrf_origin_ok(request):
+                    if response is None and not _csrf_origin_ok(request, auth_via == "basic"):
                         response = JSONResponse(
                             status_code=403,
                             content={"detail": "CSRF origin check failed"},
