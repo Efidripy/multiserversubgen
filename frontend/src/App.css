@@ -848,6 +848,10 @@
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
+  .panel-grid--2col {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .panel-grid--compact {
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
     gap: 10px;
@@ -915,6 +919,11 @@
     min-width: 0;
     flex-direction: column;
     gap: 12px;
+  }
+
+  /* Loose buttons inside a column stack keep their natural width instead of stretching. */
+  .panel-block__stack > button {
+    align-self: flex-start;
   }
 
   .panel-field-grid {
@@ -1830,6 +1839,7 @@
   }
 
   .panel-grid,
+  .panel-grid--2col,
   .panel-grid--3col {
     grid-template-columns: 1fr;
   }
