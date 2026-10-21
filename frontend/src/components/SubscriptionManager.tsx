@@ -639,12 +639,11 @@ export const SubscriptionManager: React.FC<{
           </div>
         )}
 
-        <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)]">
+        <div className="grid min-w-0 grid-cols-1 gap-3">
           <div className={insetPanelClass}>
-            <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div className="mb-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <h3 className={titleClass}>{t('subscriptions.deliveryProfile')}</h3>
-                <p className={hintClass}>{t('subscriptions.deliveryHint')}</p>
               </div>
               <div className="flex min-w-0 flex-wrap gap-2">
                 <button
@@ -666,10 +665,10 @@ export const SubscriptionManager: React.FC<{
               </div>
             </div>
 
-            <div className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-3">
-              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4">
-                <label className={titleClass}>{t('subscriptions.subscriptionProfile')}</label>
-                <div className="mt-3 min-w-0">
+            <div className="grid min-w-0 grid-cols-1 gap-x-6 gap-y-3 border-t border-cyan-500/15 pt-3 md:grid-cols-2 xl:grid-cols-3">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+                <label className={cn(titleClass, 'shrink-0')}>{t('subscriptions.subscriptionProfile')}</label>
+                <div className="min-w-0">
                   <ChoiceChips
                     options={[
                       { value: '', label: t('common.all') },
@@ -682,9 +681,9 @@ export const SubscriptionManager: React.FC<{
                   />
                 </div>
               </div>
-              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4">
-                <label className={titleClass}>{t('subscriptions.transportHint')}</label>
-                <div className="mt-3 min-w-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+                <label className={cn(titleClass, 'shrink-0')}>{t('subscriptions.transportHint')}</label>
+                <div className="min-w-0">
                   <ChoiceChips
                     options={[
                       { value: 'all', label: t('common.all') },
@@ -696,9 +695,9 @@ export const SubscriptionManager: React.FC<{
                   />
                 </div>
               </div>
-              <div className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4">
-                <label className={titleClass}>{t('subscriptions.outputFormat')}</label>
-                <div className="mt-3 min-w-0">
+              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+                <label className={cn(titleClass, 'shrink-0')}>{t('subscriptions.outputFormat')}</label>
+                <div className="min-w-0">
                   <ChoiceChips
                     options={[
                       { value: 'base64', label: 'Base64' },
@@ -714,13 +713,9 @@ export const SubscriptionManager: React.FC<{
           </div>
 
           <aside className={insetPanelClass}>
-            <div className="min-w-0">
+            <div className="flex min-w-0 flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <h3 className={titleClass}>{t('subscriptions.nodeFilter')}</h3>
-              <p className={hintClass}>{t('subscriptions.searchEmailsPlaceholder')}</p>
-            </div>
-
-            <div className="mt-4">
-              <div className="relative min-w-0">
+              <div className="relative min-w-0 md:w-80">
                 <UIIcon name="search" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
                 <input
                   type="text"
@@ -732,7 +727,7 @@ export const SubscriptionManager: React.FC<{
               </div>
             </div>
 
-            <div className="mt-4 flex min-w-0 flex-wrap gap-2">
+            <div className="mt-3 flex min-w-0 flex-wrap gap-1.5">
               {nodes.map((node) => {
                 const active = selectedNodes.includes(node.name);
                 return (
@@ -741,7 +736,7 @@ export const SubscriptionManager: React.FC<{
                     type="button"
                     className={cn(
                       secondaryButtonClass,
-                      'h-9 px-3 text-[11px]',
+                      'h-8 px-2.5 text-[11px]',
                       active && 'border-cyan-400/40 bg-cyan-400/10 text-cyan-200',
                     )}
                     onClick={() => {
