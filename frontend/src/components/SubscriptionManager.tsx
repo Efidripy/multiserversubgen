@@ -587,7 +587,7 @@ export const SubscriptionManager: React.FC<{
   return (
     <div className={shellClass}>
       <section className={cn(panelClass, 'mb-4')}>
-        <div className="mb-4 flex min-w-0 flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
             <h2 className="flex min-w-0 items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">
               <UIIcon name="subscriptions" size={16} />
@@ -617,12 +617,12 @@ export const SubscriptionManager: React.FC<{
         </div>
 
         {error && (
-          <div className="mb-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+          <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
             {error}
           </div>
         )}
         {successMessage && (
-          <div className="mb-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+          <div className="mt-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
             {successMessage}
           </div>
         )}
@@ -630,15 +630,13 @@ export const SubscriptionManager: React.FC<{
 
       <section className={panelClass}>
         <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
+          <div className="flex min-h-[2.625rem] min-w-0 flex-col justify-center">
             <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-slate-100">
               {viewMode === 'individual'
                 ? t('subscriptions.individualTitle', { count: emails.length })
                 : t('subscriptions.groupedTitle', { count: groups.length })}
             </h3>
-            <p className={hintClass}>
-              {viewMode === 'grouped' ? t('subscriptions.copyGroupLinksTitle') : t('traffic.sortHint')}
-            </p>
+            {viewMode === 'grouped' && <p className={hintClass}>{t('subscriptions.copyGroupLinksTitle')}</p>}
           </div>
           {viewMode === 'individual' && (
             <div className="relative min-w-0 lg:ml-auto lg:w-80">
