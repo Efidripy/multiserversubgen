@@ -484,7 +484,8 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
     }
 
     if (filterSecurity) {
-      filtered = filtered.filter((ib) => ib.security === filterSecurity);
+      // An inbound without a security value is shown (and filtered) as "none".
+      filtered = filtered.filter((ib) => (ib.security || 'none') === filterSecurity);
     }
 
     if (filterNode) {
@@ -1040,7 +1041,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
   };
 
   const protocols = Array.from(new Set(inbounds.map((ib) => ib.protocol)));
-  const securities = Array.from(new Set(inbounds.map((ib) => ib.security)));
+  const securities = Array.from(new Set(inbounds.map((ib) => ib.security || 'none')));
   const nodes = Array.from(new Set(inbounds.map((ib) => ib.node_name)));
 
   // Build set of node+port combos that appear more than once (duplicate ports)
@@ -1178,7 +1179,7 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               </div>
               <div className="min-w-0 overflow-hidden">
                 <div className="flex min-w-0 flex-wrap gap-1">
-                  {[{ value: '', label: t('inbounds.allSecurity') }, ...securities.map((s) => ({ value: s, label: s || 'none' }))].map((option) => (
+                  {[{ value: '', label: t('inbounds.allSecurity') }, ...securities.map((s) => ({ value: s, label: s }))].map((option) => (
                     <button
                       key={option.value || 'all-security'}
                       type="button"
@@ -1264,21 +1265,13 @@ export const InboundManager: React.FC<InboundManagerProps> = ({ onReload, onNavi
               <div className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">
                 {t('inbounds.selectedCount', { count: selectedKeys.size })}
               </div>
-              <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="mt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
                   className={buttonNeutralClass}
                   onClick={toggleSelectAllFiltered}
                 >
                   {allFilteredSelected ? t('common.deselectAll') : t('common.selectAll')}
-                </button>
-                <button
-                  type="button"
-                  className={buttonNeutralClass}
-                  onClick={clearSelection}
-                  disabled={selectedKeys.size === 0}
-                >
-                  {t('common.cancel')}
                 </button>
               </div>
             </div>
