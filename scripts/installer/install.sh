@@ -522,6 +522,7 @@ normalize_public_access_vars() {
     if [ "$PUBLIC_SCHEME" != "http" ] && [ "$PUBLIC_SCHEME" != "https" ]; then
         PUBLIC_SCHEME="https"
     fi
+    warn_install_scheme_and_pam_helper
     if [ -z "${PUBLIC_DOMAIN:-}" ]; then
         PUBLIC_DOMAIN="$(hostname -f)"
     fi
@@ -839,6 +840,9 @@ server {
 
     ssl_certificate ${NGINX_SSL_CERT};
     ssl_certificate_key ${NGINX_SSL_KEY};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    server_tokens off;
+    add_header Strict-Transport-Security "max-age=31536000" always;
     port_in_redirect off;
     absolute_redirect off;
 
@@ -1315,6 +1319,12 @@ configure_grafana_pid_directory() {
     # own settings and some Grafana upgrades preserve it verbatim.
     install -d -o grafana -g grafana -m 0750 /var/lib/grafana
     install -d -m 0755 /etc/systemd/system/grafana-server.service.d
+    ensure_grafana_admin_password_file || return 1
+    local grafana_admin_env="" grafana_pw_file
+    grafana_pw_file="$(grafana_admin_password_file)" || return 1
+    if [ -f "$grafana_pw_file" ]; then
+        grafana_admin_env="Environment=\"GF_SECURITY_ADMIN_PASSWORD__FILE=${grafana_pw_file}\""
+    fi
     cat > /etc/systemd/system/grafana-server.service.d/40-sub-manager.conf <<EOF
 # Managed by Multi-Server Manager. Safe to remove when MSSG monitoring is removed.
 [Service]
@@ -1325,11 +1335,11 @@ Environment="GF_SERVER_ROOT_URL=${PUBLIC_SCHEME}://${PUBLIC_DOMAIN}/${GRAFANA_WE
 Environment="GF_SERVER_SERVE_FROM_SUB_PATH=true"
 Environment="GF_SERVER_HTTP_ADDR=127.0.0.1"
 Environment="GF_SERVER_HTTP_PORT=${GRAFANA_HTTP_PORT}"
-Environment="GF_SECURITY_ALLOW_EMBEDDING=true"
 Environment="GF_SECURITY_COOKIE_SAMESITE=lax"
 Environment="GF_AUTH_ANONYMOUS_ENABLED=false"
 Environment="GF_USERS_ALLOW_SIGN_UP=false"
 Environment="GF_LOG_LEVEL=warn"
+${grafana_admin_env}
 EOF
 }
 
@@ -1480,7 +1490,7 @@ EOF
             fi
             chown -R loki /var/lib/loki >/dev/null 2>&1 || true
             chown -R promtail /var/lib/promtail >/dev/null 2>&1 || true
-            chmod 0755 /var/lib/loki /var/lib/promtail >/dev/null 2>&1 || true
+            chmod 0750 /var/lib/loki /var/lib/promtail >/dev/null 2>&1 || true
             resource_guard_restart_services_sequentially loki promtail
             loki_ready="true"
             mssg_ownership_claim_managed loki || return 1
@@ -1535,6 +1545,7 @@ EOF
     chown -R grafana:grafana /var/lib/grafana/dashboards/sub-manager
 
     configure_grafana_pid_directory || return 1
+    bind_prometheus_loopback
     systemctl daemon-reload
     resource_guard_restart_services_sequentially prometheus grafana-server
 
