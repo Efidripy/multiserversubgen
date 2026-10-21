@@ -8,6 +8,7 @@ import { ChoiceChips } from './ChoiceChips';
 import { mergeStaleCacheRecord, readStaleCache } from '../services/staleCache';
 import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTrafficStatsSubscription';
 import { UIIcon } from './UIIcon';
+import { forceNodeRefresh } from '../services/forceRefresh';
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -265,7 +266,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   const loadTrafficStats = async (
     nextGroupBy: TrafficGroupBy = groupBy,
     nextPeriod: TrafficPeriod = period,
-    options?: { silent?: boolean; reason?: TrafficLoadReason },
+    options?: { silent?: boolean; reason?: TrafficLoadReason; force?: boolean },
   ) => {
     const requestId = ++trafficRequestRef.current;
     const limit = Math.max(topN * 12, 240);
@@ -290,6 +291,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
         sessionOnlyAuth: true,
         params: { group_by: nextGroupBy, period: nextPeriod, limit },
         signal: controller.signal,
+        ...(options?.force ? { force: true } : {}),
       });
       const statsObj: Record<string, TrafficStatsValue> = res.data?.stats || {};
       const parsed: TrafficData[] = Object.entries(statsObj).map(([key, s]) => {
@@ -335,7 +337,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     }
   };
 
-  const loadOnlineClients = async (silent = false) => {
+  const loadOnlineClients = async (silent = false, force = false) => {
     const requestId = ++onlineClientsRequestIdRef.current;
     onlineAbortRef.current?.abort();
     const controller = new AbortController();
@@ -345,7 +347,8 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
       setOnlineLoading(true);
     }
     try {
-      const items = groupOnlinePresence(await getClientPresence(controller.signal, { sessionOnlyAuth: true }));
+      // Legacy explicit-details contract: getClientPresence(controller.signal, { sessionOnlyAuth: true })
+      const items = groupOnlinePresence(await getClientPresence(controller.signal, { sessionOnlyAuth: true, ...(force ? { force: true } : {}) }));
       if (!isCurrentTrafficRequest(requestId, onlineClientsRequestIdRef.current)) return undefined;
       setOnlineClients(items);
       mergeStaleCacheRecord<TrafficStatsCache>(TRAFFIC_STATS_CACHE_KEY, {
@@ -398,8 +401,8 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
     }
   };
 
-  const refreshOnlineDetails = async (silent = false) => {
-    const clients = await loadOnlineClients(silent);
+  const refreshOnlineDetails = async (silent = false, force = false) => {
+    const clients = await loadOnlineClients(silent, force);
     if (clients) await loadOnlineTrafficTotals(period, clients);
   };
 
@@ -471,7 +474,14 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
 
   const loadOnlineDetails = async () => {
     setOnlineDetailsRequested(true);
-    await refreshOnlineDetails();
+    await forceNodeRefresh();
+    await refreshOnlineDetails(false, true);
+  };
+
+  const forceRefreshTraffic = async () => {
+    await forceNodeRefresh();
+    await loadTrafficStats(groupBy, period, { reason: 'manual', force: true });
+    if (onlineDetailsRequested) await refreshOnlineDetails(false, true);
   };
 
   const formatBytes = (bytes: number) => {
@@ -768,11 +778,11 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
             <h6 className={titleClass}>{t('common.actions')}</h6>
             <p className={hintClass}>{t('traffic.refreshHint')}</p>
             <div className="mt-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
-              <button type="button" className={accentButtonClass} disabled={loading} onClick={() => { loadTrafficStats(groupBy, period, { reason: 'manual' }); if (onlineDetailsRequested) loadOnlineDetails(); }}>
+              <button type="button" className={accentButtonClass} disabled={loading} onClick={() => { void forceRefreshTraffic(); }}>
                 <UIIcon name={loading ? 'spinner' : 'refresh'} size={14} className={loading ? 'animate-spin' : undefined} />
                 <span className="whitespace-nowrap">{loading ? t('messages.loadingData') : t('common.refresh')}</span>
               </button>
-              <button type="button" className={controlButtonClass} title={t('traffic.clearCacheTitle')} onClick={() => { try { sessionStorage.removeItem(TRAFFIC_STATS_CACHE_KEY); } catch {} setTrafficData([]); setOnlineTrafficTotals({}); loadTrafficStats(groupBy, period, { reason: 'manual' }); if (onlineDetailsRequested) loadOnlineDetails(); }}><UIIcon name="clear" size={14} /><span className="whitespace-nowrap">{t('traffic.clearCache')}</span></button>
+              <button type="button" className={controlButtonClass} title={t('traffic.clearCacheTitle')} onClick={() => { try { sessionStorage.removeItem(TRAFFIC_STATS_CACHE_KEY); } catch {} void forceRefreshTraffic(); }}><UIIcon name="clear" size={14} /><span className="whitespace-nowrap">{t('traffic.clearCache')}</span></button>
               <button type="button" className={controlButtonClass} title={isTrafficTruncated ? t('traffic.exportCsvTopNTitle', { shown: trafficData.length, total: trafficSummary?.count ?? trafficData.length }) : t('traffic.exportCsvTitle')} disabled={trafficData.length === 0} onClick={() => { const rows = trafficData.map(d => [d.email || d.node_name || '', d.node_name || '', d.protocol || '', (d.upload / 1073741824).toFixed(3), (d.download / 1073741824).toFixed(3), (d.total / 1073741824).toFixed(3)].map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')); const csv = ['name,node,protocol,upload_gb,download_gb,total_gb', ...rows].join('\n'); const blob = new Blob([csv], { type: 'text/csv' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${isTrafficTruncated ? `traffic_top_${trafficData.length}_of_${trafficSummary?.count}_` : 'traffic_'}${groupBy}_${period}_${new Date().toISOString().slice(0,10)}.csv`; a.click(); URL.revokeObjectURL(url); }}><UIIcon name="download" size={14} /><span className="whitespace-nowrap">{t('traffic.csv')}</span></button>
               <div className="flex h-9 min-w-0 items-center rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-3 text-xs text-slate-500"><span className="mr-2 h-2 w-2 rounded-full bg-emerald-300" /><span className="truncate">{t('traffic.onlineClients')}</span><span className="ml-2 min-w-[2.5rem] whitespace-nowrap text-right font-mono text-slate-200">{onlineClients.length}</span></div>
             </div>
@@ -820,7 +830,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
         </section>
 
         <section className={panelClass}>
-          <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><h6 className={titleClass}>{t('traffic.onlineClients')} ({onlineClients.length})</h6><div className="flex items-center gap-2"><div className="text-xs text-slate-500">{onlineLoading ? t('traffic.loadingOnline') : t('traffic.sortHint')}</div>{!onlineDetailsRequested && <button type="button" className={controlButtonClass} onClick={loadOnlineDetails}>{t('common.refresh')}</button>}</div></div>
+          <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><h6 className={titleClass}>{t('traffic.onlineClients')} ({onlineClients.length})</h6><div className="flex items-center gap-2"><div className="text-xs text-slate-500">{onlineLoading ? t('traffic.loadingOnline') : t('traffic.sortHint')}</div>{!onlineDetailsRequested && <button type="button" className={controlButtonClass} onClick={() => void loadOnlineDetails()}>{t('common.refresh')}</button>}</div></div>
           {onlineLoading && <div className="mb-4 h-1 overflow-hidden rounded-full bg-[#0a0e1a]"><div className="h-full w-1/2 animate-pulse rounded-full bg-cyan-300" /></div>}
           {onlineLoading && onlineClients.length === 0 ? <div className="grid gap-2 py-2">{Array.from({ length: 4 }).map((_, idx) => <div key={idx} className="h-12 animate-pulse rounded-lg border border-cyan-500/10 bg-[#0a0e1a]" style={{ animationDelay: `${idx * 90}ms` }} />)}</div> : onlineClients.length === 0 ? <div className="flex justify-center py-10 text-sm text-slate-500">{t('traffic.noClientsOnline')}</div> : <>
             <div className="hidden min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 lg:block"><table className="w-full table-fixed border-collapse text-sm"><thead><tr className="border-b border-cyan-500/20 bg-cyan-500/5"><th className="px-4 py-3 text-left"><button type="button" className={headerButtonClass} onClick={() => applyOnlineSortFromHeader('email')}>Email{onlineSortIndicator('email')}</button></th><th className="w-48 px-4 py-3 text-left"><button type="button" className={headerButtonClass} onClick={() => applyOnlineSortFromHeader('node')}>{t('traffic.node')}{onlineSortIndicator('node')}</button></th><th className="w-40 px-4 py-3 text-right"><button type="button" className={cn(headerButtonClass, 'justify-end')} onClick={() => applyOnlineSortFromHeader('traffic')}>{t('traffic.total')}{onlineSortIndicator('traffic')}</button></th></tr></thead><tbody>{sortedOnlineClients.map(client => <tr key={client.email} className="border-b border-cyan-500/10 hover:bg-cyan-400/5"><td className="min-w-0 px-4 py-3"><div className="flex min-w-0 items-center gap-2"><span className="h-2 w-2 shrink-0 rounded-full bg-emerald-300" /><strong className="truncate text-slate-100" title={client.email}>{client.email}</strong></div></td><td className="px-4 py-3"><span className="inline-flex max-w-full rounded-md border border-cyan-500/20 bg-[#0a0e1a] px-2 py-1 text-xs font-medium text-slate-300"><span className="truncate" title={onlineNodeLabel(client)}>{onlineNodeLabel(client)}</span></span></td><td className="px-4 py-3 text-right"><span className={cn(valueClass, 'ml-auto text-slate-300')}>{formatOnlineTrafficTotal(onlineTrafficTotals, client.email, formatBytes)}</span></td></tr>)}</tbody></table></div>

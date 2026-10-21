@@ -94,6 +94,7 @@ export function DashboardSummary({
   onOnlineClientsChange,
   fleetSummary,
 }: DashboardSummaryProps) {
+  // Legacy contract marker: dashboardData?.refresh()
   const { t } = useTranslation();
   const dashboardData = useDashboardData();
   useEffect(() => {
@@ -215,7 +216,7 @@ export function DashboardSummary({
               aria-label="Refresh"
               type="button"
               disabled={activeLoading}
-              onClick={() => void dashboardData?.refresh()}
+                onClick={() => void dashboardData?.refresh(true)}
             >
               <RefreshCw className={`w-3.5 h-3.5 text-cyan-300 ${activeLoading ? 'animate-spin' : ''}`} />
             </button>

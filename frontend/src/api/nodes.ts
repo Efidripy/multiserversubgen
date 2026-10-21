@@ -131,11 +131,12 @@ const normalizeNodeRecord = (raw: unknown): NodeRecord | null => {
 };
 
 export async function listNodes(
-  options: { signal?: AbortSignal; sessionOnlyAuth?: boolean } = {},
+  options: { signal?: AbortSignal; sessionOnlyAuth?: boolean; force?: boolean } = {},
 ): Promise<NodeRecord[]> {
   const res = await api.get('/v1/nodes', {
     ...(options.sessionOnlyAuth ? { sessionOnlyAuth: true } : { auth: getAuth() }),
     signal: options.signal,
+    ...(options.force ? { force: true } : {}),
   });
   return extractNodeArray(res.data)
     .map(normalizeNodeRecord)
@@ -148,12 +149,12 @@ export async function getNodeServerStatus(nodeId: number, options: { signal?: Ab
 }
 
 export async function refreshNodesNow(): Promise<any> {
-  const res = await api.post('/v1/nodes/refresh-now', {}, { auth: getAuth() });
+  const res = await api.post('/v1/nodes/refresh-now', {}, { auth: getAuth(), params: { wait: true }, timeout: 60_000 });
   return res.data;
 }
 
-export async function getRegisteredFleetOverview(options: { signal?: AbortSignal } = {}): Promise<FleetNode[]> {
-  const nodes = await listNodes({ signal: options.signal });
+export async function getRegisteredFleetOverview(options: { signal?: AbortSignal; force?: boolean } = {}): Promise<FleetNode[]> {
+  const nodes = await listNodes({ signal: options.signal, force: options.force });
   const checks: Array<FleetProbeResult | undefined> = new Array(nodes.length);
   let nextIndex = 0;
   const probe = async () => {

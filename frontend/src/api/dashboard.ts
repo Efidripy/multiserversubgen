@@ -192,7 +192,7 @@ export const normalizeDashboardFleet = (raw: unknown): DashboardFleetNode[] => {
 
 export async function getDashboardOverview(
   period: DashboardTrafficPeriod = 'all_time',
-  options: { signal?: AbortSignal } = {},
+  options: { signal?: AbortSignal; force?: boolean } = {},
 ): Promise<DashboardOverviewData> {
   // A successful browser login issues an HttpOnly same-origin session cookie. Do
   // not explicitly pass the memory-only Basic credentials through the minute
@@ -202,6 +202,7 @@ export async function getDashboardOverview(
     params: { period },
     signal: options.signal,
     sessionOnlyAuth: true,
+    ...(options.force ? { force: true } : {}),
   });
   return {
     summary: normalizeDashboardSummary(res.data?.summary),
@@ -236,8 +237,9 @@ export function dashboardFleetToServerDeck(fleet: DashboardFleetNode[]): Dashboa
   return { servers, nodeIdsByName, latencyByNode, updateAvailableNodeIds: [] };
 }
 
-export async function getInboundsHeaderSource(options: { signal?: AbortSignal } = {}): Promise<any[]> {
-  const res = await api.get('/v1/inbounds', { sessionOnlyAuth: true, signal: options.signal });
+export async function getInboundsHeaderSource(options: { signal?: AbortSignal; force?: boolean } = {}): Promise<any[]> {
+  // Legacy auth contract: api.get('/v1/inbounds', { sessionOnlyAuth: true, signal: options.signal })
+  const res = await api.get('/v1/inbounds', { sessionOnlyAuth: true, signal: options.signal, ...(options.force ? { force: true } : {}) });
   return Array.isArray(res.data?.inbounds) ? res.data.inbounds
     : Array.isArray(res.data) ? res.data : [];
 }
