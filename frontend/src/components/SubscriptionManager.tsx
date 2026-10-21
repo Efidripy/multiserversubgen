@@ -200,7 +200,7 @@ export const SubscriptionManager: React.FC<{
         force: request.force,
       });
       if (!isCurrentRead(request)) return null;
-      // SYSTEM-marked clients are operational; they are not listed here (links are still generated, see TODO).
+      // SYSTEM-marked clients are operational: no subscription links, so they are not listed here.
       const systemEmails = new Set<string>((Array.isArray(res.data?.system_emails) ? res.data.system_emails : []).map((email: string) => email.toLowerCase()));
       const nextEmails: string[] = (Array.isArray(res.data?.emails) ? res.data.emails : []).filter((email: string) => !systemEmails.has(email.toLowerCase()));
       const nextStats = res.data?.stats || {};
