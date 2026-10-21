@@ -914,7 +914,7 @@ export const SubscriptionManager: React.FC<{
                           </div>
                         </div>
                       </div>
-                      <div className="flex shrink-0 flex-col gap-2">
+                      <div className="flex shrink-0 flex-col gap-2 [&>div]:flex-col">
                         {renderIndividualActions(email)}
                       </div>
                     </div>
