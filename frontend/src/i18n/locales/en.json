@@ -815,7 +815,7 @@
     "sortSmallLarge": "Small -> Large",
     "sortLargeSmall": "Large -> Small",
     "controlsTitle": "Subscription controls",
-    "controlsHint": "Refresh source emails, switch delivery mode and narrow output by protocol or node.",
+    "controlsHint": "Refresh the source emails and copy subscription links.",
     "refreshEmails": "Refresh Emails",
     "searchEmailsPlaceholder": "Search emails...",
     "copyAllLinksTitle": "Copy all subscription links to clipboard",
