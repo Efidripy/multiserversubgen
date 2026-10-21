@@ -716,7 +716,7 @@ function ServerCard({
         ))}
       </div>
 
-      <div className="mt-auto h-[73px] overflow-hidden border-t border-cyan-500/10 pt-2">
+      <div className="mt-auto min-h-[73px] border-t border-cyan-500/10 pt-2">
         {isOffline ? (
           <div className="text-center py-1.5">
             <div className="mb-1 font-mono text-sm font-light text-red-400">{server.issue || 'Connection Lost'}</div>
