@@ -2,6 +2,7 @@ from typing import Dict, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
+from core.refresh import effective_refresh
 
 
 def build_inbounds_router(
@@ -29,13 +30,14 @@ def build_inbounds_router(
         return nodes
 
     @router.get("/api/v1/inbounds")
-    async def list_inbounds(request: Request, protocol: Optional[str] = None, security: Optional[str] = None):
+    async def list_inbounds(request: Request, protocol: Optional[str] = None, security: Optional[str] = None, refresh: bool = False):
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
 
         nodes = await run_in_threadpool(node_service.list_nodes)
-        inbounds = await run_in_threadpool(get_cached_inbounds, nodes)
+        inbounds = await run_in_threadpool(get_cached_inbounds, nodes, **({"force": True} if refresh else {}))
 
         if protocol:
             inbounds = [ib for ib in inbounds if ib.get("protocol") == protocol]
@@ -44,17 +46,18 @@ def build_inbounds_router(
 
         return ORJSONResponse(
             content={"inbounds": inbounds, "count": len(inbounds)},
-            headers={"Cache-Control": "private, max-age=30"},
+            headers={"Cache-Control": "no-store" if refresh else "private, max-age=30"},
         )
 
     @router.get("/api/v1/inbounds/stats")
-    async def get_inbound_stats(request: Request):
+    async def get_inbound_stats(request: Request, refresh: bool = False):
         """Return aggregate stats: total count, by protocol, by security, enabled vs disabled."""
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
         nodes = await run_in_threadpool(node_service.list_nodes)
-        inbounds = await run_in_threadpool(get_cached_inbounds, nodes)
+        inbounds = await run_in_threadpool(get_cached_inbounds, nodes, **({"force": True} if refresh else {}))
         by_protocol: dict = {}
         by_security: dict = {}
         enabled = sum(1 for ib in inbounds if ib.get("enable"))
@@ -63,38 +66,41 @@ def build_inbounds_router(
             by_protocol[p] = by_protocol.get(p, 0) + 1
             s = "reality" if ib.get("is_reality") else (ib.get("security") or "none")
             by_security[s] = by_security.get(s, 0) + 1
-        return {
+        response = {
             "total": len(inbounds),
             "enabled": enabled,
             "disabled": len(inbounds) - enabled,
             "by_protocol": by_protocol,
             "by_security": by_security,
         }
+        return ORJSONResponse(content=response, headers={"Cache-Control": "no-store"} if refresh else None)
 
     @router.get("/api/v1/inbounds/slim")
-    async def list_slim_inbounds(request: Request):
+    async def list_slim_inbounds(request: Request, refresh: bool = False):
         """List-only projection; never suitable as an inbound edit payload."""
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
         nodes = await run_in_threadpool(node_service.list_nodes)
-        inbounds = await run_in_threadpool(get_cached_slim_inbounds, nodes)
+        inbounds = await run_in_threadpool(get_cached_slim_inbounds, nodes, **({"force": True} if refresh else {}))
         return ORJSONResponse(
             content={"detail_level": "slim", "inbounds": inbounds, "count": len(inbounds)},
-            headers={"Cache-Control": "private, max-age=30"},
+            headers={"Cache-Control": "no-store" if refresh else "private, max-age=30"},
         )
 
     @router.get("/api/v1/inbounds/options")
-    async def list_inbound_options(request: Request):
+    async def list_inbound_options(request: Request, refresh: bool = False):
         """Small picker projection, intentionally excluding settings/client stats."""
         user = check_auth(request)
         if not user:
             raise HTTPException(status_code=401)
+        refresh = effective_refresh(request, refresh)
         nodes = await run_in_threadpool(node_service.list_nodes)
-        options = await run_in_threadpool(get_cached_inbound_options, nodes)
+        options = await run_in_threadpool(get_cached_inbound_options, nodes, **({"force": True} if refresh else {}))
         return ORJSONResponse(
             content={"detail_level": "option", "inbounds": options, "count": len(options)},
-            headers={"Cache-Control": "private, max-age=30"},
+            headers={"Cache-Control": "no-store" if refresh else "private, max-age=30"},
         )
 
     @router.post("/api/v1/inbounds")
