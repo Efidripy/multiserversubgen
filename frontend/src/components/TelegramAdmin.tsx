@@ -995,7 +995,7 @@ export const TelegramAdmin: React.FC = () => {
               <label className="min-w-[150px] flex-1 sm:flex-none"><span className="sr-only">{t('telegram.status')}</span><select className={inputClass} value={customerStatusFilter} onChange={(event) => { setCustomerStatusFilter(event.target.value); setCustomerPage(1); }} aria-label={t('telegram.status')}><option value="">{t('telegram.allStatuses')}</option>{customerStatusOptions.map((status) => <option key={status} value={status}>{status}</option>)}</select></label>
             </div>
           </div>
-          <ul className="mt-3 divide-y divide-cyan-400/[0.08] md:hidden" data-testid="telegram-customer-cards">
+          <ul className="m-0 mt-3 list-none divide-y divide-cyan-400/[0.08] p-0 md:hidden" data-testid="telegram-customer-cards">
             {visibleCustomers.map((customer) => {
               const telegramName = [customer.telegram_first_name, customer.telegram_last_name].filter(Boolean).join(' ');
               return <li key={customer.customer_id} className={`flex items-center gap-2 px-1 py-2 ${selectedCustomer?.customer_id === customer.customer_id ? 'bg-cyan-400/[0.08]' : ''}`}>
