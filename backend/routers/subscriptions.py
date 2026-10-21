@@ -10,6 +10,7 @@ from threading import Lock
 from urllib.parse import quote
 from services.db_bootstrap import connect
 from services.subscription_tokens import (
+    delete_tokens,
     ensure_tokens,
     get_token,
     regenerate_token,
@@ -183,6 +184,15 @@ def build_subscriptions_router(
             headers=_no_cache_headers(),
         )
 
+    def _is_system_email(email: str) -> bool:
+        """SYSTEM clients never get subscription links; their old links are disabled."""
+        if not get_system_emails:
+            return False
+        try:
+            return email.casefold() in {item.casefold() for item in get_system_emails(node_service.list_nodes())}
+        except Exception:
+            return False
+
     def _resolve_legacy_email(identifier: str) -> Optional[str]:
         try:
             emails = get_emails(node_service.list_nodes())
@@ -240,17 +250,24 @@ def build_subscriptions_router(
             nodes = node_service.list_nodes()
             emails = get_emails(nodes)
             system_emails = get_system_emails(nodes) if get_system_emails else []
+            system_casefolded = {email.casefold() for email in system_emails}
 
             stats = {}
             for row in conn.execute("SELECT * FROM stats").fetchall():
                 stats[row["email"]] = {"count": row["count"], "last": row["last_download"]}
 
+        # SYSTEM clients get no subscription links: drop any previously issued token.
+        delete_tokens(db_path, "email", system_emails)
         return JSONResponse(
             content={
                 "emails": emails,
                 "system_emails": system_emails,
                 "stats": stats,
-                "subscription_tokens": ensure_tokens(db_path, "email", emails),
+                "subscription_tokens": ensure_tokens(
+                    db_path,
+                    "email",
+                    [email for email in emails if email.casefold() not in system_casefolded],
+                ),
             },
             headers=_no_cache_headers(),
         )
@@ -275,11 +292,13 @@ def build_subscriptions_router(
                 legacy_email = _resolve_legacy_email(email)
             if not legacy_email:
                 return _unknown_identifier_response(request)
+            if _is_system_email(legacy_email):
+                return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
             if not telegram_access_gate.can_serve_email(legacy_email):
                 return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
             current_token = ensure_tokens(db_path, "email", [legacy_email])[legacy_email]
             return _redirect_to_current_token(request, current_token)
-        if not telegram_access_gate.can_serve_email(resolved_email):
+        if _is_system_email(resolved_email) or not telegram_access_gate.can_serve_email(resolved_email):
             return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
         allowed, retry_after = check_subscription_rate_limit(request, f"sub:{hashlib.sha256(email.encode()).hexdigest()}")
         if not allowed:
@@ -411,9 +430,15 @@ def build_subscriptions_router(
                     protocol = custom_group["protocol_filter"]
                 email_patterns = json.loads(custom_group.get("email_patterns", "[]"))
                 all_emails = get_emails(all_nodes)
+                system_casefolded = (
+                    {email.casefold() for email in get_system_emails(all_nodes)}
+                    if get_system_emails
+                    else set()
+                )
                 matching_emails = [
                     email for email in all_emails
-                    if any(email.lower() == pattern.lower() for pattern in email_patterns)
+                    if email.casefold() not in system_casefolded
+                    and any(email.lower() == pattern.lower() for pattern in email_patterns)
                 ]
             else:
                 matching_emails = []
