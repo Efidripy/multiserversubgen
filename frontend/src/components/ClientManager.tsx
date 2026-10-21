@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useToast } from './Toast';
 import { useTranslation } from 'react-i18next';
 import api from '../api';
@@ -31,6 +31,7 @@ import { useTrafficStatsSubscription, TrafficUpdate } from '../services/useTraff
 import { ClientEditModal } from './ClientEditModal';
 import { groupClientsByEmail, normalizeClientEmail, type ClientEmailGroup } from '../utils/clientGroups';
 import { isSystemClient } from '../utils/systemClients';
+import { SelectMenu } from './SelectMenu';
 import { forceNodeRefresh } from '../services/forceRefresh';
 
 interface Client {
@@ -353,6 +354,7 @@ export const ClientManager: React.FC = () => {
   const [batchTotalGB, setBatchTotalGB] = useState('50');
   const [batchExpiryDays, setBatchExpiryDays] = useState('30');
   const [inboundOptions, setInboundOptions] = useState<InboundOption[]>([]);
+  const enabledInboundOptions = useMemo(() => inboundOptions.filter((ib) => ib.enable !== false), [inboundOptions]);
   
   // Selection
   const [selectedClientKeys, setSelectedClientKeys] = useState<Set<string>>(new Set());
@@ -361,7 +363,6 @@ export const ClientManager: React.FC = () => {
   const [editingClient, setEditingClient] = useState<Client | null>(null);
 
   // Del Depleted
-  const [delDepletedLoading, setDelDepletedLoading] = useState(false);
 
   // Last collector observation by normalized email, rendered as “Last seen”.
   const [lastOnlineMap, setLastOnlineMap] = useState<Record<string, string>>(() => ({}));
@@ -1196,21 +1197,6 @@ export const ClientManager: React.FC = () => {
     }
   };
 
-  const handleDelDepleted = async () => {
-    if (!window.confirm(t('messages.delDepletedConfirm'))) return;
-    setDelDepletedLoading(true);
-    const { user, password } = getAuth();
-    try {
-      const res = await api.post('/v1/clients/del-depleted', {}, { auth: { username: user, password } });
-      toast(t('messages.delDepletedDone', { count: res.data?.total_deleted ?? 0 }), 'success');
-      loadClients(true);
-    } catch (e: any) {
-      toast(e.response?.data?.detail || t('common.failed'), 'error');
-    } finally {
-      setDelDepletedLoading(false);
-    }
-  };
-
   const handleBulkAdjust = async () => {
     const { user, password } = getAuth();
     const selectedEmails = filteredClients
@@ -1739,26 +1725,6 @@ export const ClientManager: React.FC = () => {
     }
   };
 
-  const exportToCSV = () => {
-    const headers = ['Email', 'Node', 'Protocol', 'Status', 'Download (GB)', 'Total (GB)', 'Expiry Date'];
-    const rows = filteredClients.map(c => [
-      c.email,
-      c.node_name,
-      c.protocol,
-      c.enable ? 'Active' : 'Disabled',
-      (c.down / 1073741824).toFixed(2),
-      c.total > 0 ? (c.total / 1073741824).toFixed(2) : 'Unlimited',
-      c.expiryTime > 0 ? new Date(c.expiryTime).toLocaleDateString() : 'Never'
-    ]);
-    
-    const csv = [headers, ...rows].map(row => row.join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `clients_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-  };
   
   const toggleSelection = (client: Client) => {
     const key = clientKey(client);
@@ -2194,12 +2160,6 @@ export const ClientManager: React.FC = () => {
               >
                 <span className="inline-flex items-center gap-1"><UIIcon name="plus" size={14} />{t('clients.batchAdd')}</span>
               </button>
-              <button
-                className={buttonSuccessClass}
-                onClick={exportToCSV}
-              >
-                <span className="inline-flex items-center gap-1"><UIIcon name="download" size={14} />{t('clients.exportCsv')}</span>
-              </button>
               <label
                 className={cn(buttonNeutralClass, 'mb-0')}
                 title={t('clients.importCsvTitle')}
@@ -2277,15 +2237,6 @@ export const ClientManager: React.FC = () => {
               </div>
             </div>
             <div className="panel-block__stack">
-              <ChoiceChips
-                options={[
-                  { value: 'all', label: t('common.all'), title: 'API v1 clients' },
-                  { value: 'expired', label: t('clients.expired'), title: 'API v1 clients (expired)' },
-                  { value: 'depleted', label: t('clients.depleted'), title: 'API v1 clients (depleted)' },
-                ]}
-                value={clientSourceFilter}
-                onChange={handleClientSourceFilterChange}
-              />
               <input
                 ref={searchInputRef}
                 type="text"
@@ -2302,23 +2253,22 @@ export const ClientManager: React.FC = () => {
                 
               />
               <ChoiceChips
-                options={[{ value: '', label: t('clients.allProtocols') }, ...protocols.map((p) => ({ value: p, label: p.toUpperCase() }))]}
+                options={[{ value: '', label: t('clients.allProtocols') }, ...protocols.filter(Boolean).map((p) => ({ value: p, label: p.toUpperCase() }))]}
                 value={filterProtocol}
                 onChange={(value) => setFilterProtocol(value)}
                 
               />
-              {inboundOptions.length > 0 && (
-                <select
-                  className={selectClass}
+              {enabledInboundOptions.length > 0 && (
+                <SelectMenu
+                  ariaLabel={t('clients.allInbounds')}
+                  className="max-w-[260px]"
                   value={filterInboundId ?? ''}
-                  onChange={e => setFilterInboundId(e.target.value ? Number(e.target.value) : null)}
-                  style={{ maxWidth: '180px', fontSize: '0.75rem' }}
-                >
-                  <option value="">{t('clients.allInbounds')}</option>
-                  {inboundOptions.slice(0, 40).map((ib, i) => (
-                    <option key={`${i}-${ib.id}`} value={ib.id}>{ib.remark || `#${ib.id}`} ({ib.node_name})</option>
-                  ))}
-                </select>
+                  onChange={(value) => setFilterInboundId(value === '' ? null : Number(value))}
+                  options={[
+                    { value: '', label: t('clients.allInbounds') },
+                    ...enabledInboundOptions.map((ib) => ({ value: ib.id, label: `${ib.remark || `#${ib.id}`} (${ib.node_name})` })),
+                  ]}
+                />
               )}
               <ChoiceChips
                 options={[
@@ -2335,7 +2285,7 @@ export const ClientManager: React.FC = () => {
                 onChange={(value) => setFilterStatus(value)}
                 
               />
-              <div className="flex items-center gap-1">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   className={cn(filterExpiringSoon ? buttonWarningClass : buttonNeutralClass)}
                   style={{ fontSize: '0.75rem' }}
@@ -2343,17 +2293,13 @@ export const ClientManager: React.FC = () => {
                 >
                   Expiring {expiringSoonDays}d
                 </button>
-                <select
-                  className={selectClass}
+                <SelectMenu
+                  ariaLabel={t('clients.expiringDays')}
+                  className="w-20"
                   value={expiringSoonDays}
-                  onChange={e => setExpiringSoonDays(Number(e.target.value))}
-                  style={{ padding: '2px 20px 2px 6px' }}
-                >
-                  {[1, 3, 7, 14, 30, 60].map(d => (
-                    <option key={d} value={d}>{d}d</option>
-                  ))}
-                </select>
-              </div>
+                  onChange={(value) => setExpiringSoonDays(Number(value))}
+                  options={[1, 3, 7, 14, 30, 60].map((d) => ({ value: d, label: `${d}d` }))}
+                />
               <button
                 className={cn(onlineFirst ? buttonAccentClass : buttonNeutralClass)}
                 onClick={() => setOnlineFirst(v => !v)}
@@ -2378,6 +2324,7 @@ export const ClientManager: React.FC = () => {
               >
                 {t('clients.duplicates')}
               </button>
+              </div>
               {(clientSourceFilter !== 'all' || searchTerm || filterNode || filterProtocol || filterStatus || filterExpiringSoon || filterInboundId !== null) && (
                 <button
                   className={buttonWarningClass}
@@ -2407,7 +2354,30 @@ export const ClientManager: React.FC = () => {
               </div>
             </div>
             <div className="panel-block__stack">
+              <div className="flex min-w-0 flex-col gap-2">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('clients.bulkSelection')}</span>
+              <div className="flex flex-wrap items-center gap-2">
+                                <button className={buttonDangerClass} style={{ fontSize: '0.75rem' }}
+                  onClick={() => selectAllBy(c => c.expiryTime > 0 && c.expiryTime < Date.now())}>
+                  {t('clients.selectAllExpired')}
+                </button>
+                <button className={buttonWarningClass} style={{ fontSize: '0.75rem' }}
+                  onClick={() => selectAllBy(c => c.total > 0 && c.up + c.down >= c.total)}>
+                  {t('clients.selectAllDepleted')}
+                </button>
+                <button className={buttonNeutralClass} style={{ fontSize: '0.75rem' }}
+                  onClick={() => selectAllBy(c => !c.enable)}>
+                  {t('clients.selectAllDisabled')}
+                </button>
+                <button className={buttonNeutralClass} style={{ fontSize: '0.75rem' }}
+                  onClick={() => setSelectedClientKeys(new Set())}>
+                  {t('clients.clearSelection')}
+                </button>
+              </div>
+              </div>
               {selectedClientKeys.size > 0 && (
+                <div className="flex min-w-0 flex-col gap-2 border-t border-cyan-500/15 pt-3">
+                  <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('clients.bulkSelectedActions')}</span>
                 <div className="selection-bar">
                   <strong className="selection-bar__count">{t('clients.selectedCount', { count: selectedClientKeys.size })}</strong>
                   <button className={buttonNeutralClass}
@@ -2580,27 +2550,11 @@ export const ClientManager: React.FC = () => {
                     <UIIcon name="group" size={13} /> {t('clients.addToGroup')}
                   </button>
                 </div>
+                </div>
               )}
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="text-xs text-slate-500">{t('clients.quickSelect')}</span>
-                <button className={buttonDangerClass} style={{ fontSize: '0.75rem' }}
-                  onClick={() => selectAllBy(c => c.expiryTime > 0 && c.expiryTime < Date.now())}>
-                  {t('clients.selectAllExpired')}
-                </button>
-                <button className={buttonWarningClass} style={{ fontSize: '0.75rem' }}
-                  onClick={() => selectAllBy(c => c.total > 0 && c.up + c.down >= c.total)}>
-                  {t('clients.selectAllDepleted')}
-                </button>
-                <button className={buttonNeutralClass} style={{ fontSize: '0.75rem' }}
-                  onClick={() => selectAllBy(c => !c.enable)}>
-                  {t('clients.selectAllDisabled')}
-                </button>
-                <button className={buttonNeutralClass} style={{ fontSize: '0.75rem' }}
-                  onClick={() => setSelectedClientKeys(new Set())}>
-                  {t('clients.clearSelection')}
-                </button>
-              </div>
-              <div className="panel-inline-actions">
+              <div className="flex min-w-0 flex-col gap-2 border-t border-cyan-500/15 pt-3">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('clients.bulkMaintenance')}</span>
+                <div className="panel-inline-actions">
                 <button
                   className={buttonWarningClass}
                   onClick={() => handleBatchDelete('expired')}
@@ -2618,13 +2572,6 @@ export const ClientManager: React.FC = () => {
                   onClick={() => handleResetTraffic(null)}
                 >
                   <span className="inline-flex items-center gap-1"><UIIcon name="refresh" size={14} />{t('clients.resetAllTraffic')}</span>
-                </button>
-                <button
-                  className={buttonDangerClass}
-                  onClick={handleDelDepleted}
-                  disabled={delDepletedLoading}
-                >
-                  <span className="inline-flex items-center gap-1"><UIIcon name="trash" size={14} />{t('messages.delDepleted')}</span>
                 </button>
                 <button
                   className={buttonWarningClass}
@@ -2696,6 +2643,11 @@ export const ClientManager: React.FC = () => {
                 >
                   <span className="inline-flex items-center gap-1"><UIIcon name="edit" size={14} />{t('messages.bulkAdjustTitle')}</span>
                 </button>
+                </div>
+              </div>
+              <div className="flex min-w-0 flex-col gap-2 border-t border-cyan-500/15 pt-3">
+                <span className="text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('clients.bulkViewExport')}</span>
+                <div className="panel-inline-actions">
                 <button
                   className={buttonNeutralClass}
                   onClick={() => {
@@ -2781,6 +2733,7 @@ export const ClientManager: React.FC = () => {
                 >
                   <span className="inline-flex items-center gap-1"><UIIcon name="download" size={13} /> CSV</span>
                 </button>
+                </div>
               </div>
             </div>
           </div>
