@@ -815,7 +815,7 @@
     "sortSmallLarge": "От меньших к большим",
     "sortLargeSmall": "От больших к меньшим",
     "controlsTitle": "Управление подписками",
-    "controlsHint": "Обновляйте исходные email, выбирайте режим доставки и фильтруйте результат по протоколу или узлу.",
+    "controlsHint": "Обновляйте исходные email и копируйте ссылки подписок.",
     "refreshEmails": "Обновить email",
     "searchEmailsPlaceholder": "Поиск email...",
     "copyAllLinksTitle": "Копировать все ссылки подписок в буфер",
