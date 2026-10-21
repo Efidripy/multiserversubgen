@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import requests
 from core.lifecycle_work import LifecycleWorkAdmissionClosed
-from shared.security import validate_and_resolve_outbound_url, validate_outbound_url
+from shared.security import validate_and_resolve_outbound_url
 
 
 def _is_trusted_loopback_monitoring_url(value: str) -> bool:
