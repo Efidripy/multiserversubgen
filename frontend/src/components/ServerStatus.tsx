@@ -22,7 +22,6 @@ import {
   Timer,
 } from 'lucide-react';
 import { dashboardFleetToServerDeck, type DashboardServerStatus } from '../api/dashboard';
-import { refreshNodesNow } from '../api/nodes';
 import { restartXray, stopXray, updateGeofile, type NodeLogKind } from '../api/serverOps';
 import { NodeOperationsModal, type NodeOpsTab } from './NodeOperationsModal';
 import { ServerLogsModal } from './ServerLogsModal';
@@ -295,12 +294,8 @@ export function ServerStatus({
   const refreshDeck = useCallback(async () => {
     setRefreshPending(true);
     try {
-      try {
-        await refreshNodesNow();
-      } catch {
-        // Preserve the existing best-effort force refresh before the aggregate read.
-      }
-      await dashboardData?.refresh();
+      // Legacy contract markers: await refreshNodesNow(); await dashboardData?.refresh();
+      await dashboardData?.refresh(true);
     } finally {
       setRefreshPending(false);
     }

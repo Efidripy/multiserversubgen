@@ -65,14 +65,14 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ onHeaderProjection
     return node.url || node.panel_url || '-';
   };
 
-  const loadNodes = async () => {
+  const loadNodes = async (force = false) => {
     nodesAbortRef.current?.abort();
     const controller = new AbortController();
     nodesAbortRef.current = controller;
     const requestId = ++nodesRequestIdRef.current;
     setNodesLoading(true);
     try {
-      const nextNodes = await listNodes({ signal: controller.signal });
+      const nextNodes = await listNodes({ signal: controller.signal, ...(force ? { force: true } : {}) });
       if (controller.signal.aborted || requestId !== nodesRequestIdRef.current) return;
       setNodes(nextNodes);
       const readOnlyNodes = nextNodes.filter((node) => Boolean(node.read_only)).length;
@@ -258,7 +258,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ onHeaderProjection
               <UIIcon name="backup" size={15} />
               <span className="whitespace-nowrap">{t('backup.telegramAll')}</span>
             </button>
-            <button type="button" className={secondaryButtonClass} title={t('common.refresh', 'Refresh')} onClick={() => void loadNodes()} disabled={isBusy}>
+            <button type="button" className={secondaryButtonClass} title={t('common.refresh', 'Refresh')} onClick={() => void loadNodes(true)} disabled={isBusy}>
               <UIIcon name="refresh" size={15} />
               <span className="whitespace-nowrap">{t('common.refresh', 'Refresh')}</span>
             </button>

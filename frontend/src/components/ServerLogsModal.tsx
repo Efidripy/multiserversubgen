@@ -37,7 +37,7 @@ export function ServerLogsModal({ open, nodeId, nodeName, kind, onClose }: Serve
 
   onCloseRef.current = onClose;
 
-  const loadLogs = useCallback(async (silent = false) => {
+  const loadLogs = useCallback(async (silent = false, force = false) => {
     if (silent && inFlightRef.current > 0) return;
     abortRef.current?.abort();
     const controller = new AbortController();
@@ -54,7 +54,7 @@ export function ServerLogsModal({ open, nodeId, nodeName, kind, onClose }: Serve
         options.level = level;
         if (syslog !== undefined) options.syslog = syslog;
       }
-      const nextLogs = await getNodeLogs(nodeId, kind, { ...options, signal: controller.signal });
+      const nextLogs = await getNodeLogs(nodeId, kind, { ...options, signal: controller.signal, force });
       if (requestId !== requestRef.current || controller.signal.aborted) return;
       setLogs(nextLogs.slice(-120));
       setLastUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
@@ -161,7 +161,7 @@ export function ServerLogsModal({ open, nodeId, nodeName, kind, onClose }: Serve
             aria-label={t('serverStatus.logsViewerRefresh')}
             title={t('serverStatus.logsViewerRefresh')}
             className="flex h-7 w-7 items-center justify-center rounded border border-cyan-500/25 text-gray-400 hover:text-cyan-200 disabled:opacity-50"
-            onClick={() => void loadLogs()}
+            onClick={() => void loadLogs(false, true)}
             disabled={loading}
           >
             <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />

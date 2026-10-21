@@ -13,6 +13,7 @@ import {
 import { restartXray, stopXray } from '../api/serverOps';
 import { useToast } from './Toast';
 import { useDashboardData } from '../services/DashboardDataContext';
+import { forceNodeRefresh } from '../services/forceRefresh';
 
 interface FleetSummary {
   total: number;
@@ -113,14 +114,15 @@ export function RegisteredFleetPanel({
   const telegramPoliciesLifecycleRef = useRef(0);
   const telegramPoliciesMountedRef = useRef(false);
 
-  const refreshFleetLive = useCallback(async () => {
+  const refreshFleetLive = useCallback(async (force = false) => {
+    // Legacy probe contract: getRegisteredFleetOverview({ signal: controller.signal })
     fleetRefreshAbortRef.current?.abort();
     const controller = new AbortController();
     fleetRefreshAbortRef.current = controller;
     setLoading(true);
     setError(null);
     try {
-      const payload = await getRegisteredFleetOverview({ signal: controller.signal });
+      const payload = await getRegisteredFleetOverview({ signal: controller.signal, force });
       if (controller.signal.aborted || fleetRefreshAbortRef.current !== controller) return;
       setNodes(payload.map(toUiNode));
     } catch (err: any) {
@@ -135,6 +137,11 @@ export function RegisteredFleetPanel({
       }
     }
   }, []);
+
+  const forceRefreshFleetLive = useCallback(async () => {
+    await forceNodeRefresh();
+    await refreshFleetLive(true);
+  }, [refreshFleetLive]);
 
   const handleDelete = async (node: UiFleetNode) => {
     if (deletingNodeId !== null) return;
@@ -276,6 +283,7 @@ export function RegisteredFleetPanel({
   };
 
   useEffect(() => {
+    // Legacy explicit refresh contract: refreshFleetLive()
     const lifecycle = ++telegramPoliciesLifecycleRef.current;
     telegramPoliciesMountedRef.current = true;
     return () => {
@@ -396,7 +404,7 @@ export function RegisteredFleetPanel({
                 </div>
                   <button
                     className="rounded-md border border-cyan-300/25 bg-gradient-to-r from-cyan-400/90 to-fuchsia-400/90 px-3 py-1.5 font-mono text-xs font-medium tracking-wide text-white disabled:opacity-50"
-                    onClick={() => void refreshFleetLive()}
+                    onClick={() => void forceRefreshFleetLive()}
                     disabled={loading}
                     type="button"
                   >
@@ -499,7 +507,7 @@ export function RegisteredFleetPanel({
                       >
                         {isStopping ? <RefreshCw className="w-3.5 h-3.5 animate-spin opacity-60" /> : <Pause className="w-3.5 h-3.5 opacity-60" />}
                       </button>
-                      <button className={fleetActionButtonClass} type="button" title="Refresh" onClick={() => void refreshFleetLive()}>
+                      <button className={fleetActionButtonClass} type="button" title="Refresh" onClick={() => void forceRefreshFleetLive()}>
                         <RefreshCw className="w-3.5 h-3.5 opacity-60" />
                       </button>
                       <button
