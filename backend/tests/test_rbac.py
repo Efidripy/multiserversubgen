@@ -53,3 +53,13 @@ def test_sensitive_client_routes_are_admin_only(method, path):
     assert main.has_min_role("viewer", required_role) is False
     assert main.has_min_role("operator", required_role) is False
     assert main.has_min_role("admin", required_role) is True
+
+
+def test_review_hardened_routes_require_admin():
+    for method, path in (
+        ("POST", "/api/v1/subscription-groups"),
+        ("PUT", "/api/v1/subscription-groups/1"),
+        ("PUT", "/api/v1/nodes/1"),
+        ("GET", "/api/v1/servers/1/logs"),
+    ):
+        assert main._required_role_for_request(method, path) == "admin", (method, path)

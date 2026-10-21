@@ -81,7 +81,7 @@ def build_request_controls_and_audit_middleware(
         str(origin).rstrip("/") for origin in (allowed_origins or []) if origin
     }
 
-    def _csrf_origin_ok(request: Request) -> bool:
+    def _csrf_origin_ok(request: Request, basic_auth: bool = False) -> bool:
         if request.method not in {
             "POST",
             "PUT",
@@ -97,7 +97,9 @@ def build_request_controls_and_audit_middleware(
             else ""
         )
         if not candidate:
-            return False
+            # Browsers always send Origin on cross-site writes; a Basic client without
+            # either header (curl, scripts) is not a browser CSRF vector.
+            return basic_auth
         if candidate in configured_origins:
             return True
         request_origin = f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
@@ -173,7 +175,7 @@ def build_request_controls_and_audit_middleware(
                                 "detail": f"Forbidden for role '{auth_role}', requires '{required_role}'"
                             },
                         )
-                    if response is None and not _csrf_origin_ok(request):
+                    if response is None and not _csrf_origin_ok(request, auth_via == "basic"):
                         response = JSONResponse(
                             status_code=403,
                             content={"detail": "CSRF origin check failed"},
