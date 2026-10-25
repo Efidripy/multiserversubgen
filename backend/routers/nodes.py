@@ -523,6 +523,7 @@ def build_nodes_router(
                 conn.execute("DELETE FROM telegram_customer_operation_attempts WHERE node_id = ?", (node_id,))
                 conn.execute("DELETE FROM telegram_provisioning_attempts WHERE node_id = ?", (node_id,))
                 conn.execute("DELETE FROM customer_node_bindings WHERE node_id = ?", (node_id,))
+                conn.execute("DELETE FROM telegram_existing_discovery_targets WHERE node_id = ?", (node_id,))
 
                 # Preserve jobs that still target other nodes. Delete only the
                 # now-empty local jobs/operations and their bulk references.
