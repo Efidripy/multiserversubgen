@@ -3,6 +3,8 @@
 Содержит функции для управления клиентами: добавление, обновление, удаление, статистика
 """
 import json
+import hashlib
+import hmac
 import logging
 import uuid
 import sys
@@ -33,6 +35,38 @@ _shared_executor = ThreadPoolExecutor(max_workers=TRAFFIC_MAX_WORKERS, thread_na
 def _path_segment(value: object) -> str:
     """Encode one opaque 3x-ui path segment without changing route delimiters."""
     return quote(str(value), safe="")
+
+
+_TROJAN_PUBLIC_ID_PREFIX = "trojan:"
+
+
+def trojan_public_identifier(password: object) -> str:
+    """Return the dashboard-safe stable identifier for a Trojan password."""
+    value = str(password or "")
+    if not value:
+        return ""
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    return f"{_TROJAN_PUBLIC_ID_PREFIX}{digest}"
+
+
+def _is_trojan_public_identifier(identifier: object) -> bool:
+    return str(identifier or "").startswith(_TROJAN_PUBLIC_ID_PREFIX)
+
+
+def _client_matches_identifier(client: Dict, identifier: str) -> bool:
+    """Match native panel IDs and the dashboard's opaque Trojan ID."""
+    if identifier in {
+        str(client.get("uuid") or ""),
+        str(client.get("id") or ""),
+        str(client.get("email") or ""),
+    }:
+        return True
+    password = str(client.get("password") or "")
+    return bool(
+        password
+        and _is_trojan_public_identifier(identifier)
+        and hmac.compare_digest(identifier, trojan_public_identifier(password))
+    )
 
 
 def _requests_verify_value():
@@ -194,8 +228,10 @@ class ClientManager:
             "inbound_id": inbound_ids[0] if inbound_ids else None,
             "inbound_ids": inbound_ids,
             "inbound_remark": "",   # недоступно в v3 list без доп. запроса
-            "protocol": "",         # аналогично
-            "password": "",
+            "protocol": c.get("protocol", ""),
+            # Kept only in the server-side projection so a Trojan client
+            # without a UUID can receive a stable opaque dashboard ID.
+            "password": c.get("password", ""),
             "traffic_up": traffic.get("up", 0),
             "traffic_down": traffic.get("down", 0),
             "traffic_total": traffic.get("total", (traffic.get("up", 0) or 0) + (traffic.get("down", 0) or 0)),
@@ -490,11 +526,7 @@ class ClientManager:
                 (
                     client for client in clients
                     if isinstance(client, dict)
-                    and identifier in {
-                        str(client.get("uuid") or ""),
-                        str(client.get("id") or ""),
-                        str(client.get("email") or ""),
-                    }
+                    and _client_matches_identifier(client, identifier)
                 ),
                 None,
             )
@@ -541,11 +573,7 @@ class ClientManager:
                 (
                     client for client in clients
                     if isinstance(client, dict)
-                    and identifier in {
-                        str(client.get("uuid") or ""),
-                        str(client.get("id") or ""),
-                        str(client.get("email") or ""),
-                    }
+                    and _client_matches_identifier(client, identifier)
                 ),
                 None,
             )
@@ -640,11 +668,7 @@ class ClientManager:
                 (
                     client for client in clients
                     if isinstance(client, dict)
-                    and identifier in {
-                        str(client.get("uuid") or ""),
-                        str(client.get("id") or ""),
-                        str(client.get("email") or ""),
-                    }
+                    and _client_matches_identifier(client, identifier)
                 ),
                 None,
             )
@@ -653,6 +677,55 @@ class ClientManager:
         except Exception as exc:
             logger.debug("v3 client identity resolution failed for %s: %s", base_url, exc)
             return "failed", ""
+
+    def _resolve_legacy_trojan_identifier(
+        self,
+        s,
+        base_url: str,
+        inbound_id: Optional[int],
+        client_identifier: str,
+    ) -> Optional[str]:
+        """Resolve an opaque Trojan ID to its panel password for legacy APIs.
+
+        The password is never returned to callers or logged; it is used only
+        as the path/payload identifier required by the authenticated panel.
+        """
+        if not _is_trojan_public_identifier(client_identifier):
+            return client_identifier
+        try:
+            response = xui_request(
+                s,
+                "GET",
+                f"{base_url}/panel/api/inbounds/list",
+                timeout=XUI_FAST_TIMEOUT_SEC,
+                retries=XUI_FAST_RETRIES,
+            )
+            if response.status_code != 200:
+                return None
+            payload = response.json()
+            inbounds = payload.get("obj") if isinstance(payload, dict) and payload.get("success") else None
+            if not isinstance(inbounds, list):
+                return None
+            for inbound in inbounds:
+                if not isinstance(inbound, dict) or (
+                    inbound_id is not None and inbound.get("id") != inbound_id
+                ):
+                    continue
+                settings = parse_field_as_dict(
+                    inbound.get("settings"),
+                    node_id="legacy-client-resolution",
+                    field_name="settings",
+                )
+                for client in settings.get("clients", []):
+                    if isinstance(client, dict) and _client_matches_identifier(client, client_identifier):
+                        password = str(client.get("password") or "")
+                        if password:
+                            return password
+        except (TypeError, ValueError):
+            return None
+        except Exception:
+            return None
+        return None
 
     def _reset_client_traffic_v3(self, s, base_url: str, email: str) -> Optional[bool]:
         """POST /panel/api/clients/resetTraffic/{email} — v3."""
@@ -733,6 +806,7 @@ class ClientManager:
                                 continue
                             node_clients.append({
                                 "id": client.get("id"),
+                                "password": client.get("password", "") if inbound.get("protocol") == "trojan" else "",
                                 "email": client_email,
                                 "enable": client.get("enable", True),
                                 "expiryTime": client.get("expiryTime", 0),
@@ -750,7 +824,6 @@ class ClientManager:
                                 "inbound_id": inbound.get("id"),
                                 "inbound_remark": inbound.get("remark", ""),
                                 "protocol": inbound.get("protocol"),
-                                "password": client.get("password", "") if inbound.get("protocol") == "trojan" else "",
                             })
                     except (TypeError, ValueError) as exc:
                         logger.warning("Invalid settings for inbound in %s: %s", node["name"], exc)
@@ -1080,12 +1153,17 @@ class ClientManager:
                 s, base_url = retry_session, retry_base_url
 
             # v2 fallback
+            legacy_identifier = self._resolve_legacy_trojan_identifier(
+                s, base_url, inbound_id, str(client_uuid),
+            )
+            if legacy_identifier is None:
+                return False
             payload = {
                 "id": inbound_id,
-                "settings": json.dumps({"clients": [{"id": client_uuid, **updates}]})
+                "settings": json.dumps({"clients": [{"id": legacy_identifier, **updates}]})
             }
             res = xui_request(s, "POST",
-                              f"{base_url}/panel/api/inbounds/updateClient/{_path_segment(client_uuid)}",
+                              f"{base_url}/panel/api/inbounds/updateClient/{_path_segment(legacy_identifier)}",
                               json=payload)
             return self._xui_success(res)
         except Exception as exc:
@@ -1118,8 +1196,13 @@ class ClientManager:
                 s, base_url = retry_session, retry_base_url
 
             # v2 fallback: delete by UUID
+            legacy_identifier = self._resolve_legacy_trojan_identifier(
+                s, base_url, inbound_id, str(client_uuid),
+            )
+            if legacy_identifier is None:
+                return False
             res = xui_request(s, "POST",
-                              f"{base_url}/panel/api/inbounds/{_path_segment(inbound_id)}/delClient/{_path_segment(client_uuid)}")
+                              f"{base_url}/panel/api/inbounds/{_path_segment(inbound_id)}/delClient/{_path_segment(legacy_identifier)}")
             return self._xui_success(res)
         except Exception as exc:
             logger.warning(f"Failed to delete client from {node['name']}: {exc}")
@@ -1163,9 +1246,10 @@ class ClientManager:
                     if depleted_only:
                         traffic = self.get_client_traffic(
                             node,
-                            str(client.get("id") or ""),
+                            str(client.get("id") or client.get("password") or ""),
                             client.get("protocol", ""),
                             v3_email=client_email if "@" in client_email else None,
+                            inbound_id=client.get("inbound_id"),
                         )
                         total_limit = client.get("totalGB", 0)
                         if total_limit > 0:
@@ -1243,7 +1327,7 @@ class ClientManager:
                     if client.get("email") not in emails_to_delete:
                         continue
                     inbound_id = client.get("inbound_id")
-                    client_identifier = client.get("id") or client.get("email") or ""
+                    client_identifier = client.get("id") or client.get("password") or client.get("email") or ""
                     if not inbound_id:
                         errors.append(client.get("email", ""))
                         continue
@@ -1268,6 +1352,7 @@ class ClientManager:
         protocol: str,
         *,
         v3_email: Optional[str] = None,
+        inbound_id: Optional[int] = None,
     ) -> Dict:
         """Получить статистику трафика клиента
         
@@ -1306,10 +1391,15 @@ class ClientManager:
                 return {}
 
             # v2 fallback: endpoint depends on protocol
+            legacy_identifier = self._resolve_legacy_trojan_identifier(
+                s, base_url, inbound_id, str(client_uuid),
+            )
+            if legacy_identifier is None:
+                return {}
             if protocol in ("vless", "vmess"):
-                endpoint = f"{base_url}/panel/api/inbounds/getClientTrafficsById/{_path_segment(client_uuid)}"
+                endpoint = f"{base_url}/panel/api/inbounds/getClientTrafficsById/{_path_segment(legacy_identifier)}"
             else:
-                endpoint = f"{base_url}/panel/api/inbounds/getClientTraffics/{_path_segment(client_uuid)}"
+                endpoint = f"{base_url}/panel/api/inbounds/getClientTraffics/{_path_segment(legacy_identifier)}"
             res = xui_request(s, "GET", endpoint)
             if res.status_code == 200:
                 data = res.json()

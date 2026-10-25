@@ -206,6 +206,19 @@ def test_list_nodes_does_not_return_password(monkeypatch):
     assert "password" not in payload[0]
 
 
+def test_viewer_dashboard_client_dto_omits_credentials():
+    from routers.clients import dashboard_safe_client
+
+    safe = dashboard_safe_client({
+        "email": "client@example.com",
+        "id": "uuid-for-ui",
+        "password": "trojan-secret",
+        "subId": "subscription-secret",
+        "token": "api-token",
+    })
+    assert safe == {"email": "client@example.com", "id": "uuid-for-ui"}
+
+
 def test_websocket_requires_short_lived_ticket_and_never_accepts_password_json(monkeypatch):
     app = FastAPI()
     ticket = main.auth_service.issue_ws_ticket("admin")

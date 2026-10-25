@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 from shared.security import validate_and_resolve_outbound_url
 from services.db_bootstrap import connect
 from core.lifecycle_work import LifecycleWorkAdmissionClosed
-from services.snapshot_push import build_snapshot_push_payload
+from services.snapshot_push import build_snapshot_push_payload, redact_snapshot
 from services.system_clients import normalize_email, system_client_emails_from_inbounds
 from services.xray_compatibility import summarize_node_inbounds
 from xui_session import (
@@ -511,6 +511,7 @@ class SnapshotCollector:
             ).fetchall()
 
         loaded: List[tuple[str, Dict, float]] = []
+        redacted_rows: List[tuple[str, int]] = []
         for row in rows:
             try:
                 snapshot = json.loads(row["status_data"] or "{}")
@@ -519,6 +520,10 @@ class SnapshotCollector:
                 continue
             if not isinstance(snapshot, dict):
                 continue
+
+            durable_snapshot = redact_snapshot(snapshot)
+            if durable_snapshot != snapshot:
+                redacted_rows.append((json.dumps(durable_snapshot, ensure_ascii=False, sort_keys=True), int(row["node_id"])))
 
             node_id = int(row["node_id"])
             node_name = row["node_name"] or snapshot.get("name") or str(node_id)
@@ -537,6 +542,16 @@ class SnapshotCollector:
             ts = self._coerce_snapshot_timestamp(snapshot.get("timestamp"), row["updated_at"])
             snapshot["timestamp"] = ts
             loaded.append((self._node_key({"id": node_id, "name": node_name}), snapshot, ts))
+        if redacted_rows:
+            try:
+                with connect(self.db_path) as conn:
+                    conn.executemany(
+                        "UPDATE node_snapshots SET status_data = ?, updated_at = CURRENT_TIMESTAMP WHERE node_id = ?",
+                        redacted_rows,
+                    )
+                    conn.commit()
+            except Exception as exc:
+                logger.warning("Failed to redact legacy node snapshots: %s", exc)
         return loaded
 
     async def _persist_snapshot(self, snapshot: Dict) -> None:
@@ -564,7 +579,7 @@ class SnapshotCollector:
     @staticmethod
     def _durable_snapshot_payload(snapshot: Dict) -> Dict:
         """Return the SQLite-safe snapshot shape without ephemeral TCP telemetry."""
-        payload = dict(snapshot)
+        payload = redact_snapshot(snapshot)
         for field in ("cached_from_db", "snapshot_updated_at", "tcp_rtt_ms"):
             payload.pop(field, None)
         return payload
