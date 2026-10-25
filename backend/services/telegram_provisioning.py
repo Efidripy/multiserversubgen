@@ -367,7 +367,8 @@ class TelegramExistingDiscoveryWorker:
                 )
             self._finalize_job(conn, claimed.job_id)
 
-    def _finalize_job(self, conn: sqlite3.Connection, job_id: int) -> None:
+    @staticmethod
+    def _finalize_job(conn: sqlite3.Connection, job_id: int) -> None:
         counts = {str(row[0]): int(row[1]) for row in conn.execute(
             "SELECT status, COUNT(*) FROM telegram_existing_discovery_targets WHERE job_id = ? GROUP BY status", (job_id,)
         ).fetchall()}

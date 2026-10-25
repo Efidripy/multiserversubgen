@@ -1,4 +1,5 @@
 from services.db_bootstrap import connect
+from services.telegram_provisioning import TelegramExistingDiscoveryWorker
 import json
 import time
 from typing import Callable, Dict
@@ -523,7 +524,17 @@ def build_nodes_router(
                 conn.execute("DELETE FROM telegram_customer_operation_attempts WHERE node_id = ?", (node_id,))
                 conn.execute("DELETE FROM telegram_provisioning_attempts WHERE node_id = ?", (node_id,))
                 conn.execute("DELETE FROM customer_node_bindings WHERE node_id = ?", (node_id,))
+                discovery_jobs = [row[0] for row in conn.execute(
+                    "SELECT DISTINCT job_id FROM telegram_existing_discovery_targets WHERE node_id = ?", (node_id,)
+                ).fetchall()]
                 conn.execute("DELETE FROM telegram_existing_discovery_targets WHERE node_id = ?", (node_id,))
+                # A job whose last runnable target was on this node would never be picked up again: settle it now.
+                for job_id in discovery_jobs:
+                    if conn.execute(
+                        "SELECT 1 FROM telegram_existing_discovery_jobs WHERE id = ? AND status IN ('queued', 'running', 'partial')",
+                        (job_id,),
+                    ).fetchone():
+                        TelegramExistingDiscoveryWorker._finalize_job(conn, job_id)
 
                 # Preserve jobs that still target other nodes. Delete only the
                 # now-empty local jobs/operations and their bulk references.

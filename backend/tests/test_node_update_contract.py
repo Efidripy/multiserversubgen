@@ -266,6 +266,7 @@ def test_node_delete_removes_all_local_telegram_and_node_references(node_client)
     assert response.status_code == 200
     with connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM telegram_existing_discovery_targets").fetchone()[0] == 0
+        assert conn.execute("SELECT status FROM telegram_existing_discovery_jobs").fetchone()[0] == "failed"
         for table in (
             "nodes", "telegram_node_policies", "customer_node_bindings", "telegram_provisioning_attempts",
             "telegram_provisioning_jobs", "telegram_customer_operation_attempts", "telegram_customer_operations",
