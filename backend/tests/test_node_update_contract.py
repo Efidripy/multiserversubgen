@@ -250,10 +250,22 @@ def test_node_delete_removes_all_local_telegram_and_node_references(node_client)
         )
         conn.execute("INSERT INTO node_snapshots(node_id, status_data, is_online) VALUES (1, '{}', 1)")
 
+    with connect(db_path) as conn:
+        conn.execute("PRAGMA foreign_keys=OFF")  # skip identity setup; only the node FK matters here
+        discovery = conn.execute(
+            "INSERT INTO telegram_existing_discovery_jobs (customer_id, telegram_user_id, application_attempt, "
+            "idempotency_key, target_snapshot_digest, created_by) VALUES (?, 1, 1, 'delete-node-discovery', 'digest', 'test')",
+            (customer_id,),
+        )
+        conn.execute(
+            "INSERT INTO telegram_existing_discovery_targets(job_id, node_id) VALUES (?, 1)", (int(discovery.lastrowid),)
+        )
+
     response = client.delete("/api/v1/nodes/1")
 
     assert response.status_code == 200
     with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM telegram_existing_discovery_targets").fetchone()[0] == 0
         for table in (
             "nodes", "telegram_node_policies", "customer_node_bindings", "telegram_provisioning_attempts",
             "telegram_provisioning_jobs", "telegram_customer_operation_attempts", "telegram_customer_operations",
