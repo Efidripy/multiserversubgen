@@ -376,7 +376,7 @@ def test_windows_remote_deploy_stages_only_clean_committed_source_without_shell_
     assert "& tar.exe -tzf $ArchivePath" in script
     assert "Source archive is incomplete; missing required entries:" in script
     assert ".deploy-source-commit" in script
-    assert r"printf %s\\n $deployCommit" in script
+    assert "echo $deployCommit > $remoteWorkDir/.deploy-source-commit" in script
     assert "bash -x" not in script
     assert "sudo bash ./install.sh" in script
     assert 'if ($Mode -eq "update" -and $UpdateChoice -ne 1)' in script
