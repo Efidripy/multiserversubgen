@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from core.request_middleware import build_request_controls_and_audit_middleware
+from shared.security import anonymize_client_ip
 
 
 class _MetricValue:
@@ -61,6 +62,10 @@ def _app(audit_events):
     def nodes():
         return {"nodes": []}
 
+    @app.get("/api/v1/sub/{token}")
+    def subscription(token: str):
+        return {"token": token}
+
     return app, count_metric, latency_metric
 
 
@@ -99,7 +104,23 @@ def test_trusted_loopback_metrics_scrape_skips_durable_audit_but_keeps_other_acc
         == 200
     )
     assert [(event["path"], event["client_ip"]) for event in audit_events] == [
-        ("/metrics", "127.0.0.1"),
-        ("/metrics", "198.51.100.42"),
-        ("/api/v1/nodes", "127.0.0.1"),
+        ("/metrics", "127.0.0.0/24"),
+        ("/metrics", "198.51.100.0/24"),
+        ("/api/v1/nodes", "127.0.0.0/24"),
     ]
+
+
+def test_subscription_token_is_masked_in_audit_path():
+    audit_events = []
+    app, _, _ = _app(audit_events)
+    response = TestClient(app, client=("203.0.113.7", 39090)).get(
+        "/api/v1/sub/secret-token-value", headers={"Authorization": "Basic admin"}
+    )
+    assert response.status_code == 200
+    assert audit_events[-1]["path"] == "/api/v1/sub/{token}"
+    assert "secret-token-value" not in str(audit_events[-1])
+
+
+def test_audit_client_ip_is_truncated_to_network_prefix():
+    assert anonymize_client_ip("203.0.113.42") == "203.0.113.0/24"
+    assert anonymize_client_ip("2001:db8:abcd:1234:5678::9") == "2001:db8:abcd:1234::/64"

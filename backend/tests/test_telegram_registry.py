@@ -1390,7 +1390,7 @@ def test_customer_admin_note_is_durable_bounded_and_audited_without_plaintext(tm
         email_display="note-user", origin="telegram", email_source="telegram_username", public_code="note-user"
     )
     registry.get_or_create_identity(
-        telegram_user_id=100000001, chat_id=100000001, username="owner", first_name="Owner", last_name=None
+        telegram_user_id=100000001, chat_id=100000001, username="test_owner", first_name="Owner", last_name=None
     )
     draft = registry.set_customer_note_draft(
         admin_telegram_user_id=100000001, customer_id=customer_id, page=3

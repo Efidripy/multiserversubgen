@@ -10,6 +10,7 @@ from typing import Dict
 from services.db_bootstrap import connect
 from core.lifecycle_work import LifecycleWorkAdmissionClosed
 from shared.sql import delete_by_ids_query
+from shared.security import sanitize_audit_payload
 
 
 class RedisJsonCache:
@@ -179,7 +180,7 @@ class AuditQueueRuntime:
                     self.dropped_events,
                 )
                 return False
-            self._memory_queue.put_nowait(dict(payload))
+            self._memory_queue.put_nowait(sanitize_audit_payload(payload))
             self.accepted_events += 1
             self._record_queue_depth()
             return True

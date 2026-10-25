@@ -767,7 +767,8 @@ def test_snapshot_collector_persists_and_loads_sqlite_snapshots(tmp_path):
         "online_clients": 2,
         "traffic_total": 1234,
         "timestamp": time.time(),
-        "server_status": {"node": "alpha", "available": True},
+        "inbounds": [{"settings": {"clients": [{"email": "user@example.com", "password": "secret", "uuid": "uuid-secret", "subId": "sub-secret"}]}}],
+        "server_status": {"token": "status-secret"},
     }
 
     asyncio.run(collector._persist_snapshot(snapshot))
@@ -777,7 +778,11 @@ def test_snapshot_collector_persists_and_loads_sqlite_snapshots(tmp_path):
         row = conn.execute("SELECT * FROM node_snapshots WHERE node_id = 1").fetchone()
     assert row is not None
     assert row["is_online"] == 1
-    assert json.loads(row["status_data"])["traffic_total"] == 1234
+    stored = json.loads(row["status_data"])
+    assert stored["traffic_total"] == 1234
+    serialized = json.dumps(stored)
+    for secret in ("secret", "uuid-secret", "sub-secret", "status-secret"):
+        assert secret not in serialized
 
     loaded = SnapshotCollector(
         fetch_nodes=lambda: [],
