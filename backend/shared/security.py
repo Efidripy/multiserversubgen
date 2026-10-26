@@ -124,14 +124,24 @@ def validate_and_resolve_outbound_url(
     return True, "", None
 
 
+_CLIENT_ID_ROUTES = frozenset({
+    "updateclient", "delclient", "delclientbyemail", "getclienttraffics",
+    "getclienttrafficsbyid", "resetclienttraffic", "clientips", "clearclientips",
+})
+
+
 def redact_url(value: str) -> str:
     """Return a log-safe URL without userinfo, query or fragment material."""
     parsed = urlparse(str(value or ""))
     if not parsed.scheme or not parsed.hostname:
         return "<invalid-url>"
     port = ":" + str(parsed.port) if parsed.port else ""
-    path = parsed.path.rstrip("/")
-    return parsed.scheme + "://" + parsed.hostname + port + path
+    segments = parsed.path.rstrip("/").split("/")
+    # Legacy panel routes carry client ids (Trojan passwords, emails) as the next segment.
+    for index in range(1, len(segments)):
+        if segments[index - 1].lower() in _CLIENT_ID_ROUTES:
+            segments[index] = "***"
+    return parsed.scheme + "://" + parsed.hostname + port + "/".join(segments)
 
 
 def bounded_log_count(value: object, default: int = 100) -> int:
