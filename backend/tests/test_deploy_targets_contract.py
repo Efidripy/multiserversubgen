@@ -218,3 +218,10 @@ def test_deploy_ps1_syntax_valid() -> None:
     assert result.returncode == 0, (
         f"deploy.ps1 has syntax errors:\n{result.stdout}\n{result.stderr}"
     )
+
+
+def test_deploy_ps1_cleanup_only_matches_hex_workdirs() -> None:
+    text = DEPLOY_PS1.read_text(encoding="utf-8-sig")
+    assert "-[0-9a-f]{32}$" in text, "cleanup must match only <RemoteDir>-<32 hex>"
+    assert "[ValidateRange(2, 20)]" in text, "must always keep at least 2 workdirs"
+    assert text.index("Post-check: journalctl") < text.index("Cleanup:"), "cleanup runs only after post-checks"
