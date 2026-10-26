@@ -1,0 +1,26 @@
+#!/usr/bin/env sh
+set -eu
+
+blocked=0
+staged_files=$(git diff --cached --name-only --diff-filter=ACMR)
+
+for file in $staged_files; do
+  # 1234567890:... is the synthetic bot token used by tests
+  content=$(git show ":$file" 2>/dev/null | sed "s/1234567890:[[:alnum:]_-]*//g" || true)
+
+  if printf '%s' "$content" | grep -Eq -- '-----BEGIN (RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----|\b(hf_[[:alnum:]_]{10,}|ghp_[[:alnum:]_]{20,}|xox[baprs]-[[:alnum:]_-]{10,}|AKIA[[:alnum:]]{16}|[0-9]{8,10}:[[:alnum:]_-]{30,})\b|[A-Za-z]:\Users\[^\[:space:]]+|[[:alnum:]._+-]+@kleva\.ru'; then
+    printf '%s\n' "pre-commit: sensitive key, token, personal email, or user path in staged file: $file" >&2
+    blocked=1
+  fi
+
+  case "$file" in
+    .env|.env.*)
+      if [ "$file" != '.env.example' ] && printf '%s' "$content" | grep -Eq '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]#<]'; then
+        printf '%s\n' "pre-commit: populated environment file staged: $file" >&2
+        blocked=1
+      fi
+      ;;
+  esac
+done
+
+[ "$blocked" -eq 0 ]
