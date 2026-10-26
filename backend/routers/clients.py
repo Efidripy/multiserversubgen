@@ -24,7 +24,13 @@ _DASHBOARD_SENSITIVE_CLIENT_FIELDS = frozenset({
 
 
 def dashboard_safe_client(client: Dict) -> Dict:
-    """Strip panel credentials and subscription secrets from GET DTOs."""
+    """Strip panel credentials and subscription secrets from GET DTOs.
+
+    Any client that has a password but no native uuid/id field (e.g. a Trojan
+    client returned by the v3 API) receives a stable opaque identifier so it
+    remains addressable for update and delete operations.  The identifier is
+    derived from non-secret routing data only; the password is never hashed.
+    """
     safe_client = {
         key: value
         for key, value in client.items()
@@ -32,9 +38,13 @@ def dashboard_safe_client(client: Dict) -> Dict:
     }
     if (
         not str(safe_client.get("id") or "").strip()
-        and str(client.get("protocol") or "").lower() == "trojan"
+        and str(client.get("password") or "")
     ):
-        opaque_id = trojan_public_identifier(client.get("password"))
+        opaque_id = trojan_public_identifier(
+            client.get("node_id"),
+            client.get("inbound_id"),
+            client.get("email"),
+        )
         if opaque_id:
             safe_client["id"] = opaque_id
     return safe_client

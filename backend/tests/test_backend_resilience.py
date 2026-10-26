@@ -884,3 +884,75 @@ def test_snapshot_collector_restores_duplicate_node_names_separately(tmp_path):
     assert {snapshot["node_id"] for snapshot in latest["nodes"]} == {1, 2}
     assert {snapshot["traffic_total"] for snapshot in latest["nodes"]} == {100, 200}
     assert set(collector._node_state) == {"id:1", "id:2"}
+
+
+def test_snapshot_load_redacts_secrets_in_memory(tmp_path):
+    """Snapshots with secrets in SQLite must be redacted before entering _latest.
+
+    This guards against the bug where durable_snapshot was computed but the
+    original un-redacted snapshot was loaded into _latest / latest_snapshot().
+    """
+    from services.collector import SnapshotCollector
+    from services.db_bootstrap import connect, init_db
+
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+
+    # Insert node and a raw snapshot that still contains secrets
+    # (simulates a legacy row written before redaction was enforced).
+    raw_snapshot = {
+        "node_id": 1,
+        "name": "alpha",
+        "available": True,
+        "status": "online",
+        "traffic_total": 777,
+        "timestamp": time.time(),
+        "inbounds": [{
+            "id": 10,
+            "settings": {
+                "clients": [{
+                    "email": "user@example.test",
+                    "password": "leaking-trojan-password",
+                    "token": "leaking-token",
+                    "privateKey": "leaking-key",
+                }]
+            },
+        }],
+        "server_status": {"password": "panel-password-should-not-leak"},
+    }
+
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO nodes (id, name, ip, port, user, password) VALUES (?, ?, ?, ?, ?, ?)",
+            (1, "alpha", "127.0.0.1", "443", "root", "encrypted"),
+        )
+        # Bypass the normal persist path so secrets reach the DB row directly.
+        conn.execute(
+            "INSERT INTO node_snapshots (node_id, status_data, is_online) VALUES (?, ?, ?)",
+            (1, json.dumps(raw_snapshot), 1),
+        )
+        conn.commit()
+
+    collector = SnapshotCollector(
+        fetch_nodes=lambda: [],
+        xui_monitor=SimpleNamespace(),
+        ws_manager=SimpleNamespace(active_connections=[]),
+        db_path=db_path,
+    )
+    loaded_count = asyncio.run(collector.load_persisted_snapshots())
+    latest = collector.latest_snapshot()
+
+    assert loaded_count == 1
+    assert latest["count"] == 1
+
+    # The in-memory snapshot must not contain any secret fields.
+    node_snapshot = latest["nodes"][0]
+    assert node_snapshot["traffic_total"] == 777
+    serialized = json.dumps(node_snapshot)
+    assert "leaking-trojan-password" not in serialized, "Trojan password must not appear in _latest"
+    assert "leaking-token" not in serialized, "Token must not appear in _latest"
+    assert "leaking-key" not in serialized, "Private key must not appear in _latest"
+    assert "panel-password-should-not-leak" not in serialized, "Panel password must not appear in _latest"
+    # Non-secret fields must be preserved.
+    assert node_snapshot["name"] == "alpha"
+    assert node_snapshot["cached_from_db"] is True

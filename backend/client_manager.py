@@ -40,12 +40,26 @@ def _path_segment(value: object) -> str:
 _TROJAN_PUBLIC_ID_PREFIX = "trojan:"
 
 
-def trojan_public_identifier(password: object) -> str:
-    """Return the dashboard-safe stable identifier for a Trojan password."""
-    value = str(password or "")
-    if not value:
+def trojan_public_identifier(
+    node_id: object,
+    inbound_id: object,
+    email: object,
+) -> str:
+    """Return the dashboard-safe stable identifier for a Trojan client.
+
+    The identifier is derived exclusively from non-secret routing data so that
+    no credential is ever hashed or stored.  Changing the client password does
+    not affect the identifier; clients in different inbounds get different IDs
+    even when they share an email address.
+    """
+    node_str = str(node_id) if node_id is not None else ""
+    inbound_str = str(inbound_id) if inbound_id is not None else ""
+    email_str = str(email or "")
+    # Require at least one routing component so empty clients get no id.
+    if not (node_str or inbound_str or email_str):
         return ""
-    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+    material = f"{node_str}|{inbound_str}|{email_str}"
+    digest = hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
     return f"{_TROJAN_PUBLIC_ID_PREFIX}{digest}"
 
 
@@ -54,19 +68,30 @@ def _is_trojan_public_identifier(identifier: object) -> bool:
 
 
 def _client_matches_identifier(client: Dict, identifier: str) -> bool:
-    """Match native panel IDs and the dashboard's opaque Trojan ID."""
+    """Match native panel IDs and the dashboard's opaque Trojan ID.
+
+    For the opaque Trojan ID the match is computed from the client's non-secret
+    routing fields (node_id, inbound_id, email) so no credential ever enters a
+    comparison path.  A constant-time compare_digest is kept to prevent timing
+    leaks on the computed hex strings.
+    """
     if identifier in {
         str(client.get("uuid") or ""),
         str(client.get("id") or ""),
         str(client.get("email") or ""),
     }:
         return True
+    if not _is_trojan_public_identifier(identifier):
+        return False
     password = str(client.get("password") or "")
-    return bool(
-        password
-        and _is_trojan_public_identifier(identifier)
-        and hmac.compare_digest(identifier, trojan_public_identifier(password))
+    if not password:
+        return False
+    computed = trojan_public_identifier(
+        client.get("node_id"),
+        client.get("inbound_id"),
+        client.get("email"),
     )
+    return bool(computed and hmac.compare_digest(identifier, computed))
 
 
 def _requests_verify_value():
@@ -684,11 +709,16 @@ class ClientManager:
         base_url: str,
         inbound_id: Optional[int],
         client_identifier: str,
+        *,
+        node_id: object = None,
     ) -> Optional[str]:
         """Resolve an opaque Trojan ID to its panel password for legacy APIs.
 
         The password is never returned to callers or logged; it is used only
         as the path/payload identifier required by the authenticated panel.
+        For opaque trojan identifiers the match is computed from non-secret
+        routing data (node_id, inbound_id, email) and verified with
+        hmac.compare_digest so no credential enters any comparison path.
         """
         if not _is_trojan_public_identifier(client_identifier):
             return client_identifier
@@ -711,16 +741,25 @@ class ClientManager:
                     inbound_id is not None and inbound.get("id") != inbound_id
                 ):
                     continue
+                actual_inbound_id = inbound.get("id")
                 settings = parse_field_as_dict(
                     inbound.get("settings"),
                     node_id="legacy-client-resolution",
                     field_name="settings",
                 )
                 for client in settings.get("clients", []):
-                    if isinstance(client, dict) and _client_matches_identifier(client, client_identifier):
-                        password = str(client.get("password") or "")
-                        if password:
-                            return password
+                    if not isinstance(client, dict):
+                        continue
+                    password = str(client.get("password") or "")
+                    if not password:
+                        continue
+                    # Match by computing the identifier from non-secret routing
+                    # data; the password itself is never hashed or compared.
+                    computed = trojan_public_identifier(
+                        node_id, actual_inbound_id, client.get("email")
+                    )
+                    if computed and hmac.compare_digest(client_identifier, computed):
+                        return password
         except (TypeError, ValueError):
             return None
         except Exception:
@@ -1159,6 +1198,7 @@ class ClientManager:
             # v2 fallback
             legacy_identifier = self._resolve_legacy_trojan_identifier(
                 s, base_url, inbound_id, str(client_uuid),
+                node_id=node.get("id"),
             )
             if legacy_identifier is None:
                 return False
@@ -1202,6 +1242,7 @@ class ClientManager:
             # v2 fallback: delete by UUID
             legacy_identifier = self._resolve_legacy_trojan_identifier(
                 s, base_url, inbound_id, str(client_uuid),
+                node_id=node.get("id"),
             )
             if legacy_identifier is None:
                 return False
@@ -1397,6 +1438,7 @@ class ClientManager:
             # v2 fallback: endpoint depends on protocol
             legacy_identifier = self._resolve_legacy_trojan_identifier(
                 s, base_url, inbound_id, str(client_uuid),
+                node_id=node.get("id"),
             )
             if legacy_identifier is None:
                 return {}
