@@ -442,3 +442,13 @@ def test_adguard_pinned_get_accepts_requests_style_kwargs(monkeypatch):
         "https://example.com/x", pinned_address="93.184.216.34", timeout=3, verify=True, auth=None, allow_redirects=False
     )
     assert resp.status_code == 200
+
+
+def test_redact_url_masks_client_identifier_segments():
+    from shared.security import redact_url
+
+    assert (
+        redact_url("https://n.example.test:2053/panel/api/inbounds/3/updateClient/s3cretTrojanPass?x=1")
+        == "https://n.example.test:2053/panel/api/inbounds/3/updateClient/***"
+    )
+    assert redact_url("https://n.example.test/panel/api/inbounds/list") == "https://n.example.test/panel/api/inbounds/list"
