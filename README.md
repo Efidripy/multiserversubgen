@@ -102,6 +102,7 @@ flowchart LR
 
 - [Установка](./docs/INSTALL.md)
 - [Обновление](./docs/UPDATE.md)
+- [Деплой](./docs/DEPLOY.md)
 - [Эксплуатация (Ops)](./docs/OPS.md)
 - [API](./docs/API.md)
 - [Подписки](./docs/SUBSCRIPTION_GUIDE.md)
