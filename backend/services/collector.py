@@ -533,9 +533,11 @@ class SnapshotCollector:
                 redacted_rows.append((json.dumps(durable_snapshot, ensure_ascii=False, sort_keys=True), int(row["node_id"])))
 
             node_id = int(row["node_id"])
-            node_name = row["node_name"] or snapshot.get("name") or str(node_id)
+            node_name = row["node_name"] or durable_snapshot.get("name") or str(node_id)
             is_online = bool(row["is_online"])
-            snapshot = dict(snapshot)
+            # Use the redacted snapshot so secrets are never stored in _latest
+            # or surfaced through /api/v1/snapshots/latest.
+            snapshot = dict(durable_snapshot)
             # TCP RTT is process-memory telemetry only. Ignore any stale
             # legacy value so a restored SQLite cache reports it as unknown.
             snapshot.pop("tcp_rtt_ms", None)
