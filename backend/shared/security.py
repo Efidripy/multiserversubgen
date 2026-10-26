@@ -6,6 +6,7 @@ import ipaddress
 import os
 import re
 import socket
+import copy
 from collections.abc import Mapping
 from urllib.parse import urlparse
 
@@ -25,6 +26,7 @@ _SQLITE_DATABASE_SIGNATURE = b"SQLite format 3\x00"
 _SQLITE_DUMP_PREFIXES = (b"PRAGMA", b"BEGIN TRANSACTION")
 _SAFE_PATH_SEGMENT = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,96}$")
+_SUBSCRIPTION_PATH = re.compile(r"^(?P<prefix>/api/v1/(?:sub|guest-sub|sub-grouped)/)(?P<token>[^/?#]+)(?P<suffix>/?.*)$")
 
 
 def _is_forbidden_address(address: ipaddress._BaseAddress, *, allow_private: bool) -> bool:
@@ -122,14 +124,24 @@ def validate_and_resolve_outbound_url(
     return True, "", None
 
 
+_CLIENT_ID_ROUTES = frozenset({
+    "updateclient", "delclient", "delclientbyemail", "getclienttraffics",
+    "getclienttrafficsbyid", "resetclienttraffic", "clientips", "clearclientips",
+})
+
+
 def redact_url(value: str) -> str:
     """Return a log-safe URL without userinfo, query or fragment material."""
     parsed = urlparse(str(value or ""))
     if not parsed.scheme or not parsed.hostname:
         return "<invalid-url>"
     port = ":" + str(parsed.port) if parsed.port else ""
-    path = parsed.path.rstrip("/")
-    return parsed.scheme + "://" + parsed.hostname + port + path
+    segments = parsed.path.rstrip("/").split("/")
+    # Legacy panel routes carry client ids (Trojan passwords, emails) as the next segment.
+    for index in range(1, len(segments)):
+        if segments[index - 1].lower() in _CLIENT_ID_ROUTES:
+            segments[index] = "***"
+    return parsed.scheme + "://" + parsed.hostname + port + "/".join(segments)
 
 
 def bounded_log_count(value: object, default: int = 100) -> int:
@@ -150,6 +162,39 @@ def validate_path_segment(value: object, *, field: str = "value") -> str:
 def safe_request_id(value: object) -> str:
     candidate = str(value or "").strip()
     return candidate if _SAFE_REQUEST_ID.fullmatch(candidate) else ""
+
+
+def mask_subscription_path(path: object) -> str:
+    """Mask opaque subscription identifiers in paths used by audit/logging."""
+    value = str(path or "")
+    match = _SUBSCRIPTION_PATH.match(value)
+    if not match:
+        return value
+    token = match.group("token")
+    if token.startswith("{") and token.endswith("}"):
+        return value
+    masked = f"{token[:3]}***" if token else "***"
+    return f"{match.group('prefix')}{masked}{match.group('suffix')}"
+
+
+def sanitize_audit_payload(payload: Mapping) -> dict:
+    """Return an audit event with sensitive URL material removed."""
+    result = copy.deepcopy(dict(payload))
+    if "path" in result:
+        result["path"] = mask_subscription_path(result["path"])
+    if "url" in result:
+        result["url"] = mask_subscription_path(result["url"])
+    return result
+
+
+def anonymize_client_ip(value: object) -> str:
+    """Keep only IPv4 /24 or IPv6 /64 network identity in audit data."""
+    try:
+        address = ipaddress.ip_address(str(value or ""))
+        prefix = 24 if address.version == 4 else 64
+        return f"{ipaddress.ip_network(f'{address}/{prefix}', strict=False).network_address}/{prefix}"
+    except ValueError:
+        return "unknown"
 
 
 def is_supported_sqlite_backup(content: object) -> bool:

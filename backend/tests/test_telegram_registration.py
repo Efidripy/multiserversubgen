@@ -54,7 +54,7 @@ def _admin_message(update_id: int, text: str) -> dict:
         "message": {
             "message_id": update_id,
             "chat": {"id": 100000001, "type": "private"},
-            "from": {"id": 100000001, "username": "owner", "first_name": "Owner"},
+            "from": {"id": 100000001, "username": "test_owner", "first_name": "Owner"},
             "text": text,
         },
     }
@@ -65,7 +65,7 @@ def _admin_callback(update_id: int, data: str) -> dict:
         "update_id": update_id,
         "callback_query": {
             "id": f"admin-{update_id}",
-            "from": {"id": 100000001, "username": "owner", "first_name": "Owner"},
+            "from": {"id": 100000001, "username": "test_owner", "first_name": "Owner"},
             "message": {"chat": {"id": 100000001, "type": "private"}},
             "data": data,
         },

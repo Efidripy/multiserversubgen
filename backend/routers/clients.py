@@ -4,6 +4,7 @@ from typing import Callable, Dict, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
+from client_manager import trojan_public_identifier
 from core.refresh import effective_refresh
 
 from services.client_notes import enrich_clients_with_notes, upsert_client_note
@@ -15,6 +16,38 @@ DEFAULT_CLIENT_LINK_MAX_WORKERS = 8
 MAX_CLIENT_LINK_WORKERS = 32
 DEFAULT_CLIENT_IP_SEARCH_MAX_WORKERS = 8
 MAX_CLIENT_IP_SEARCH_WORKERS = 32
+
+_DASHBOARD_SENSITIVE_CLIENT_FIELDS = frozenset({
+    "password", "passwd", "secret", "token", "api_token",
+    "bearer_token", "privateKey", "private_key", "client_secret", "subId",
+})
+
+
+def dashboard_safe_client(client: Dict) -> Dict:
+    """Strip panel credentials and subscription secrets from GET DTOs.
+
+    Any client that has a password but no native uuid/id field (e.g. a Trojan
+    client returned by the v3 API) receives a stable opaque identifier so it
+    remains addressable for update and delete operations.  The identifier is
+    derived from non-secret routing data only; the password is never hashed.
+    """
+    safe_client = {
+        key: value
+        for key, value in client.items()
+        if key not in _DASHBOARD_SENSITIVE_CLIENT_FIELDS
+    }
+    if (
+        not str(safe_client.get("id") or "").strip()
+        and str(client.get("password") or "")
+    ):
+        opaque_id = trojan_public_identifier(
+            client.get("node_id"),
+            client.get("inbound_id"),
+            client.get("email"),
+        )
+        if opaque_id:
+            safe_client["id"] = opaque_id
+    return safe_client
 
 
 def _client_link_worker_limit() -> int:
@@ -179,9 +212,21 @@ def build_clients_router(
         return await _run(node_service.list_nodes)
 
     async def _with_notes(clients, nodes):
-        enriched = await _run(enrich_clients_with_notes, db_path, clients, nodes=nodes)
+        safe_clients = [
+            dashboard_safe_client(client)
+            for client in clients
+            if isinstance(client, dict)
+        ]
+        enriched = await _run(enrich_clients_with_notes, db_path, safe_clients, nodes=nodes)
         annotated = await _run(annotate_clients_with_telegram_link, db_path, enriched)
-        return await _run(annotate_system_clients, annotated)
+        annotated = await _run(annotate_system_clients, annotated)
+        # Dashboard/read-only DTOs must never expose panel credentials or
+        # subscription secrets to viewer-role callers.
+        return [
+            dashboard_safe_client(client)
+            for client in annotated
+            if isinstance(client, dict)
+        ]
 
     @router.get("/api/v1/clients/count")
     async def count_clients(request: Request, node_id: Optional[int] = None):

@@ -18,6 +18,7 @@ CACHE_TTL = int(os.getenv("CACHE_TTL", "30"))
 LINKS_CACHE_MAX_ENTRIES = int(os.getenv("SUBSCRIPTION_LINKS_CACHE_MAX_ENTRIES", "2048"))
 
 _SNAPSHOT_DB_PATH: Optional[str] = None
+_CLIENT_MANAGER = None
 _cache_lock = Lock()
 
 emails_cache = {"ts": 0.0, "emails": [], "items": {}}
@@ -28,6 +29,12 @@ _inbounds_cache = {}
 def configure_snapshot_db(db_path: str) -> None:
     global _SNAPSHOT_DB_PATH
     _SNAPSHOT_DB_PATH = db_path
+
+
+def configure_client_manager(client_manager) -> None:
+    """Configure the live XUI client reader used for Trojan subscriptions."""
+    global _CLIENT_MANAGER
+    _CLIENT_MANAGER = client_manager
 
 
 def invalidate_subscription_cache() -> None:
@@ -314,6 +321,59 @@ def get_links_filtered(
 
     links = []
     for node in nodes:
+        live_trojan_passwords = {}
+        if not protocol_filter or protocol_filter == "trojan":
+            has_matching_trojan = False
+            for inbound in fetch_inbounds(node):
+                if inbound.get("protocol") != "trojan":
+                    continue
+                settings = parse_field_as_dict(
+                    inbound.get("settings"),
+                    node_id=node.get("name"),
+                    field_name="settings",
+                )
+                if any(
+                    isinstance(client, dict)
+                    and client.get("email") == email
+                    for client in settings.get("clients", [])
+                ):
+                    has_matching_trojan = True
+                    break
+            if has_matching_trojan:
+                if _CLIENT_MANAGER is None:
+                    logger.warning(
+                        "Live Trojan client reader is unavailable for node %s",
+                        node.get("name"),
+                    )
+                else:
+                    try:
+                        live_clients = _CLIENT_MANAGER.get_node_clients_strict(node)
+                    except Exception:
+                        logger.warning(
+                            "Live Trojan client read failed for node %s; skipping Trojan links",
+                            node.get("name"),
+                        )
+                    else:
+                        passwords_by_email = {}
+                        for live_client in live_clients:
+                            if not isinstance(live_client, dict):
+                                continue
+                            if str(live_client.get("email") or "") != str(email):
+                                continue
+                            password = str(live_client.get("password") or "")
+                            if not password:
+                                continue
+                            passwords_by_email.setdefault(str(email), set()).add(password)
+                            inbound_ids = live_client.get("inbound_ids") or []
+                            inbound_id = live_client.get("inbound_id")
+                            if inbound_id is not None:
+                                inbound_ids = [*inbound_ids, inbound_id]
+                            for inbound_id in inbound_ids:
+                                live_trojan_passwords[(str(email), inbound_id)] = password
+                        for client_email, passwords in passwords_by_email.items():
+                            if len(passwords) == 1:
+                                live_trojan_passwords[(client_email, None)] = next(iter(passwords))
+
         for inbound in fetch_inbounds(node):
             protocol = inbound.get("protocol", "")
             if protocol_filter and protocol != protocol_filter:
@@ -392,7 +452,20 @@ def get_links_filtered(
                     continue
 
                 if protocol == "trojan":
-                    password = client.get("password", "")
+                    inbound_id = inbound.get("id")
+                    password = live_trojan_passwords.get((str(email), inbound_id))
+                    if not password:
+                        password = live_trojan_passwords.get((str(email), None), "")
+                    # Keep compatibility with pre-redaction snapshots only;
+                    # current durable snapshots never contain this field.
+                    if not password:
+                        password = str(client.get("password") or "")
+                    if not password:
+                        logger.warning(
+                            "Trojan password unavailable for node %s; skipping Trojan link",
+                            node.get("name"),
+                        )
+                        continue
                     if security == "reality":
                         links.append(
                             f"trojan://{password}@{node['ip']}:{subscription_port}?security=reality"
