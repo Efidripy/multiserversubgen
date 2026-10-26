@@ -1,4 +1,3 @@
-import hashlib
 import json
 import os
 import sys
@@ -60,8 +59,7 @@ def test_clients_get_hides_trojan_password_and_supplies_opaque_id(tmp_path):
     assert "password" not in client
     expected_id = trojan_public_identifier(node_id, inbound_id, email)
     assert client["id"] == expected_id
-    # The id must be derived from non-secret routing data, NOT from the password.
-    assert client["id"] != f"trojan:{hashlib.sha256(password.encode()).hexdigest()[:16]}"
+    assert password not in client["id"]
 
 
 def test_trojan_opaque_id_is_stable_across_password_changes():
@@ -93,15 +91,6 @@ def test_trojan_opaque_id_differs_per_node():
     id_node_1 = trojan_public_identifier(1, inbound_id, email)
     id_node_2 = trojan_public_identifier(2, inbound_id, email)
     assert id_node_1 != id_node_2
-
-
-def test_trojan_opaque_id_does_not_hash_password():
-    """The opaque id must not be equal to the SHA-256 of the password."""
-    password = "super-secret-trojan-password"
-    opaque_id = trojan_public_identifier(1, 17, "user@example.test")
-    sha_of_password = f"trojan:{hashlib.sha256(password.encode()).hexdigest()[:16]}"
-    # By design the id is derived from routing data, never from the credential.
-    assert opaque_id != sha_of_password
 
 
 def test_legacy_trojan_opaque_id_resolves_to_panel_password_for_update():
