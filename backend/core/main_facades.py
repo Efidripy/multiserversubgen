@@ -144,8 +144,10 @@ def build_cache_facade(
     )
 
 
-def build_subscription_links_facade(*, subscription_links_service, db_path: str):
+def build_subscription_links_facade(*, subscription_links_service, db_path: str, client_manager=None):
     subscription_links_service.configure_snapshot_db(db_path)
+    if client_manager is not None:
+        subscription_links_service.configure_client_manager(client_manager)
     response_cache_invalidators: List[Callable[[], None]] = []
     response_cache_invalidators_lock = Lock()
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any, Dict, List
+import re
 
 from services.system_clients import is_system_client
 from utils import parse_field_as_dict
@@ -11,8 +12,8 @@ def _as_list(value: Any) -> List[Any]:
 
 
 _SENSITIVE_KEYS = {
-    "password", "passwd", "secret", "token", "api_token", "bearer_token",
-    "authorization", "cookie", "ws_ticket", "private_key", "client_secret",
+    "password", "passwd", "secret", "token", "apitoken", "bearertoken",
+    "authorization", "cookie", "wsticket", "privatekey", "clientsecret",
 }
 
 
@@ -21,11 +22,16 @@ def _redact_snapshot(value: Any) -> Any:
         return {
             key: _redact_snapshot(item)
             for key, item in value.items()
-            if str(key).lower() not in _SENSITIVE_KEYS
+            if re.sub(r"[^a-z0-9]", "", str(key).lower()) not in _SENSITIVE_KEYS
         }
     if isinstance(value, list):
         return [_redact_snapshot(item) for item in value]
     return value
+
+
+def redact_snapshot(value: Any) -> Any:
+    """Public redaction helper for durable collector snapshots."""
+    return _redact_snapshot(value)
 
 
 def _to_int(value: Any, default: int = 0) -> int:

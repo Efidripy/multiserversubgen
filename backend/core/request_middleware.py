@@ -14,6 +14,7 @@ from shared.observability import (
     server_timing,
 )
 from shared.security import safe_request_id
+from shared.security import anonymize_client_ip, mask_subscription_path
 
 
 def is_session_first_protected_get(request: Request) -> bool:
@@ -260,10 +261,12 @@ def build_request_controls_and_audit_middleware(
                     "event": "http_access",
                     "request_id": request_id,
                     "method": request.method,
-                    "path": path,
+                    "path": mask_subscription_path(
+                        getattr(request.scope.get("route"), "path", None) or path
+                    ),
                     "status_code": response.status_code,
                     "duration_ms": duration_ms,
-                    "client_ip": get_client_ip(request),
+                    "client_ip": anonymize_client_ip(get_client_ip(request)),
                     "user_hint": request.state.auth_user
                     or extract_basic_auth_username(request.headers.get("Authorization"))
                     or "anonymous",

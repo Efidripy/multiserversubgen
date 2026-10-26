@@ -433,7 +433,9 @@ def check_web_session(request: Request):
     get_links_filtered,
     register_subscription_response_cache_invalidator,
 ) = build_subscription_links_facade(
-    subscription_links_service=subscription_links_service, db_path=DB_PATH
+    subscription_links_service=subscription_links_service,
+    db_path=DB_PATH,
+    client_manager=client_mgr,
 )
 get_subscription_userinfo = subscription_links_service.get_subscription_userinfo
 get_system_emails = subscription_links_service.get_system_emails
