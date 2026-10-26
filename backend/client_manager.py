@@ -909,7 +909,7 @@ class ClientManager:
             for client in settings.get("clients", []):
                 if not isinstance(client, dict):
                     continue
-                result.append({
+                mapped_client = {
                     "id": client.get("id"),
                     "email": client.get("email", ""),
                     "enable": client.get("enable", True),
@@ -919,7 +919,11 @@ class ClientManager:
                     "flow": client.get("flow", ""),
                     "inbound_id": inbound.get("id"),
                     "inbound_ids": [inbound.get("id")] if isinstance(inbound.get("id"), int) else [],
-                })
+                }
+                if inbound.get("protocol") == "trojan":
+                    mapped_client["password"] = client.get("password", "")
+                    mapped_client["protocol"] = "trojan"
+                result.append(mapped_client)
         return result
 
     def inbound_supports_telegram_contract_strict(self, node: Dict, inbound_id: int) -> bool:
