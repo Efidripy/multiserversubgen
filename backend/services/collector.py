@@ -348,6 +348,13 @@ class SnapshotCollector:
             return None
         if snapshot.get("available") is not True or snapshot.get("stale"):
             return None
+        # SQLite restores contain a redacted inventory.  It is suitable for
+        # status/traffic display and subscription identifiers, but not for
+        # full inbound edit DTOs (passwords, tokens and private keys are
+        # intentionally absent).  Force the normal live-XUI loader after a
+        # restart instead of serving incomplete credentials to edit flows.
+        if snapshot.get("cached_from_db"):
+            return None
         if snapshot.get("inbounds_available") is False:
             return None
         inbounds = snapshot.get("inbounds")

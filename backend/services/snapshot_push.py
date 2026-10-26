@@ -14,7 +14,6 @@ def _as_list(value: Any) -> List[Any]:
 _SENSITIVE_KEYS = {
     "password", "passwd", "secret", "token", "apitoken", "bearertoken",
     "authorization", "cookie", "wsticket", "privatekey", "clientsecret",
-    "uuid", "subid",
 }
 
 
