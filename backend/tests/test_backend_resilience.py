@@ -781,8 +781,11 @@ def test_snapshot_collector_persists_and_loads_sqlite_snapshots(tmp_path):
     stored = json.loads(row["status_data"])
     assert stored["traffic_total"] == 1234
     serialized = json.dumps(stored)
-    for secret in ("secret", "uuid-secret", "sub-secret", "status-secret"):
-        assert secret not in serialized
+    assert '"password"' not in serialized
+    assert '"token"' not in serialized
+    assert "status-secret" not in serialized
+    assert stored["inbounds"][0]["settings"]["clients"][0]["uuid"] == "uuid-secret"
+    assert stored["inbounds"][0]["settings"]["clients"][0]["subId"] == "sub-secret"
 
     loaded = SnapshotCollector(
         fetch_nodes=lambda: [],
@@ -798,6 +801,7 @@ def test_snapshot_collector_persists_and_loads_sqlite_snapshots(tmp_path):
     assert latest["nodes"][0]["name"] == "alpha"
     assert latest["nodes"][0]["traffic_total"] == 1234
     assert latest["nodes"][0]["cached_from_db"] is True
+    assert loaded.usable_inbounds({"id": 1, "name": "alpha"}) is None
 
 
 def test_snapshot_collector_keeps_duplicate_node_names_separate():
