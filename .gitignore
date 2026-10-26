@@ -61,3 +61,16 @@ admin.db
 *.db-shm
 *.db-wal
 .sub_manager_install.log
+
+# Local deployment and test artifacts
+scripts/deploy/targets.local.psd1
+.playwright-cli/
+.tmp/
+*.bundle
+.local_project_docs/
+frontend/.env
+.env
+.env.*
+!.env.example
+*.har
+*.trace

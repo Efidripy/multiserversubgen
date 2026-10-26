@@ -1,6 +1,16 @@
 import { defineConfig, devices } from '@playwright/test';
 
-const baseURL = process.env.PLAYWRIGHT_BASE_URL || 'https://example.invalid/<panel-base-path>/';
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
+const baseURL = requiredEnv('PLAYWRIGHT_BASE_URL');
+const authUser = requiredEnv('PLAYWRIGHT_AUTH_USER');
+const authPass = requiredEnv('PLAYWRIGHT_AUTH_PASS');
 
 export default defineConfig({
   testDir: './tests',
@@ -14,6 +24,10 @@ export default defineConfig({
   reporter: 'list',
   use: {
     baseURL,
+    httpCredentials: {
+      username: authUser,
+      password: authPass,
+    },
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

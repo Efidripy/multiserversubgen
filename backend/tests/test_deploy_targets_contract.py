@@ -1,10 +1,6 @@
 """
-Контракт таблицы деплой-целей (scripts/deploy/targets.psd1) и
+Контракт шаблона деплой-целей (scripts/deploy/targets.psd1) и
 синтаксическая проверка deploy.ps1.
-
-Запуск:
-    pytest backend/tests/test_deploy_targets_contract.py -v \
-        --basetemp=$env:TEMP/pytest-codex-deploytool
 """
 from __future__ import annotations
 
@@ -17,100 +13,42 @@ TARGETS_PSD1 = REPO / "scripts" / "deploy" / "targets.psd1"
 DEPLOY_PS1 = REPO / "scripts" / "deploy" / "deploy.ps1"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _read_targets() -> str:
     return TARGETS_PSD1.read_text(encoding="utf-8")
 
 
-# ---------------------------------------------------------------------------
-# targets.psd1 contract
-# ---------------------------------------------------------------------------
+def _target_block(name: str) -> str:
+    match = re.search(rf"{name}\s*=\s*@\{{([^}}]+)\}}", _read_targets(), re.DOTALL)
+    assert match, f"{name} block not found in targets.psd1"
+    return match.group(1)
+
 
 def test_targets_psd1_exists() -> None:
     assert TARGETS_PSD1.exists(), f"targets.psd1 not found: {TARGETS_PSD1}"
 
 
-def test_prod_target_has_correct_hostname() -> None:
-    text = _read_targets()
-    # prod block must contain example.invalid
-    prod_block = re.search(r"prod\s*=\s*@\{([^}]+)\}", text, re.DOTALL)
-    assert prod_block, "prod block not found in targets.psd1"
-    assert "example.invalid" in prod_block.group(1), (
-        "prod target must point to example.invalid"
-    )
+def test_prod_target_is_a_safe_template() -> None:
+    prod_block = _target_block("prod")
+    assert "HostName    = 'example.invalid'" in prod_block
+    assert "Port        = '<ssh-port>'" in prod_block
+    assert "User        = '<ssh-user>'" in prod_block
+    assert "KeyPath     = '<path-to-ssh-key>'" in prod_block
+    assert "RemoteDir   = '<user-home>/multiserversubgen-live'" in prod_block
+    assert "UiUrlPath   = '/<panel-base-path>/'" in prod_block
 
 
-def test_prod_target_has_correct_port() -> None:
-    text = _read_targets()
-    prod_block = re.search(r"prod\s*=\s*@\{([^}]+)\}", text, re.DOTALL)
-    assert prod_block, "prod block not found"
-    # Port must be 1452
-    assert re.search(r"Port\s*=\s*1452", prod_block.group(1)), (
-        "prod target must use port 1452"
-    )
+def test_vm3_target_is_a_safe_template_and_marked_local() -> None:
+    vm3_block = _target_block("vm3")
+    assert "HostName    = 'host-a.example.invalid'" in vm3_block
+    assert "HostName    = 'example.invalid'" not in vm3_block
+    assert re.search(r"LocalTest\s*=\s*\$true", vm3_block)
 
 
-def test_vm3_is_marked_local_test() -> None:
-    text = _read_targets()
-    vm3_block = re.search(r"vm3\s*=\s*@\{([^}]+)\}", text, re.DOTALL)
-    assert vm3_block, "vm3 block not found in targets.psd1"
-    # LocalTest must be $true
-    assert re.search(r"LocalTest\s*=\s*\$true", vm3_block.group(1)), (
-        "vm3 target must have LocalTest = $true"
-    )
-
-
-def test_vm3_hostname_is_not_prod() -> None:
-    text = _read_targets()
-    vm3_block = re.search(r"vm3\s*=\s*@\{([^}]+)\}", text, re.DOTALL)
-    assert vm3_block, "vm3 block not found"
-    assert "example.invalid" not in vm3_block.group(1), (
-        "vm3 block must NOT reference the prod hostname example.invalid"
-    )
-
-
-def test_no_secrets_or_passwords_in_targets() -> None:
+def test_targets_template_has_no_password_or_api_material() -> None:
     text = _read_targets().lower()
     forbidden = ("password", "secret", "token", "passwd", "apikey", "api_key")
-    found = [w for w in forbidden if w in text]
-    assert not found, (
-        f"targets.psd1 must not contain secrets; found keywords: {found}"
-    )
+    assert not [word for word in forbidden if word in text]
 
-
-def test_prod_has_correct_remote_dir() -> None:
-    text = _read_targets()
-    prod_block = re.search(r"prod\s*=\s*@\{([^}]+)\}", text, re.DOTALL)
-    assert prod_block
-    assert "<user-home>/multiserversubgen-live" in prod_block.group(1), (
-        "prod RemoteDir must be <user-home>/multiserversubgen-live"
-    )
-
-
-def test_prod_health_url() -> None:
-    text = _read_targets()
-    prod_block = re.search(r"prod\s*=\s*@\{([^}]+)\}", text, re.DOTALL)
-    assert prod_block
-    assert "http://127.0.0.1:666/health" in prod_block.group(1), (
-        "prod HealthUrl must be http://127.0.0.1:666/health"
-    )
-
-
-def test_prod_ui_url_path() -> None:
-    text = _read_targets()
-    prod_block = re.search(r"prod\s*=\s*@\{([^}]+)\}", text, re.DOTALL)
-    assert prod_block
-    assert "/<panel-base-path>/" in prod_block.group(1), (
-        "prod UiUrlPath must be /<panel-base-path>/"
-    )
-
-
-# ---------------------------------------------------------------------------
-# deploy.ps1 static checks
-# ---------------------------------------------------------------------------
 
 def test_deploy_ps1_exists() -> None:
     assert DEPLOY_PS1.exists(), f"deploy.ps1 not found: {DEPLOY_PS1}"
@@ -118,88 +56,61 @@ def test_deploy_ps1_exists() -> None:
 
 def test_deploy_ps1_has_utf8_bom() -> None:
     """deploy.ps1 contains Cyrillic — must be saved with UTF-8 BOM."""
-    raw = DEPLOY_PS1.read_bytes()
-    assert raw[:3] == b"\xef\xbb\xbf", (
-        "deploy.ps1 must start with UTF-8 BOM (EF BB BF) because it contains Cyrillic"
-    )
+    assert DEPLOY_PS1.read_bytes()[:3] == b"\xef\xbb\xbf"
 
 
-def test_deploy_ps1_references_targets_psd1() -> None:
+def test_deploy_ps1_loads_only_local_targets() -> None:
     text = DEPLOY_PS1.read_text(encoding="utf-8-sig")
-    assert "targets.psd1" in text, "deploy.ps1 must reference targets.psd1"
+    assert "targets.local.psd1" in text
+    assert "Copy targets.psd1 to targets.local.psd1" in text
 
 
 def test_deploy_ps1_requires_clean_worktree() -> None:
-    text = DEPLOY_PS1.read_text(encoding="utf-8-sig")
-    assert "porcelain" in text, "deploy.ps1 must check for a clean working tree"
+    assert "porcelain" in DEPLOY_PS1.read_text(encoding="utf-8-sig")
 
 
 def test_deploy_ps1_prod_requires_main_branch() -> None:
     text = DEPLOY_PS1.read_text(encoding="utf-8-sig")
-    assert "'main'" in text or '"main"' in text, (
-        "deploy.ps1 must enforce main branch for prod"
-    )
+    assert "'main'" in text or '"main"' in text
 
 
-def test_deploy_ps1_has_dry_run_flag() -> None:
+def test_deploy_ps1_has_dry_run_and_yes_flags() -> None:
     text = DEPLOY_PS1.read_text(encoding="utf-8-sig")
-    assert "DryRun" in text, "deploy.ps1 must support -DryRun flag"
-
-
-def test_deploy_ps1_has_yes_flag() -> None:
-    text = DEPLOY_PS1.read_text(encoding="utf-8-sig")
-    assert "Yes" in text, "deploy.ps1 must support -Yes flag to skip confirmation"
+    assert "DryRun" in text
+    assert "Yes" in text
 
 
 def test_deploy_ps1_deploys_head_only() -> None:
     text = DEPLOY_PS1.read_text(encoding="utf-8-sig")
-    # invoke-remote-deploy.ps1 always archives HEAD, so a -Ref switch would only mislead.
     assert "[string]$Ref" not in text
-    assert "tar -xzf" not in text, "no raw restore-over-/ example in rollback hints"
+    assert "tar -xzf" not in text
 
 
 def test_deploy_ps1_invokes_remote_deploy() -> None:
     text = DEPLOY_PS1.read_text(encoding="utf-8-sig")
-    assert "invoke-remote-deploy.ps1" in text, (
-        "deploy.ps1 must call invoke-remote-deploy.ps1"
-    )
-    assert "-Mode update" in text or "'-Mode', 'update'" in text or "'update'" in text, (
-        "deploy.ps1 must invoke with -Mode update"
-    )
+    assert "invoke-remote-deploy.ps1" in text
+    assert "-Mode update" in text or "'-Mode', 'update'" in text or "'update'" in text
 
 
 def test_deploy_ps1_git_bin_path_added_to_end_of_path() -> None:
-    """SSH tools from E:\\Git\\usr\\bin must be appended (not prepended) to PATH."""
     text = DEPLOY_PS1.read_text(encoding="utf-8-sig")
-    assert r"E:\Git\usr\bin" in text, (
-        r"deploy.ps1 must add E:\Git\usr\bin to PATH for ssh/scp"
-    )
-    # Must concatenate at the END to not override Windows tar.exe
+    assert r"E:\Git\usr\bin" in text
     assert r"$env:PATH;$GitBin" in text or r'"$currentPath;$GitBin"' in text or (
         "currentPath" in text and "$GitBin" in text
-    ), (
-        "E:\\Git\\usr\\bin must be appended to the END of PATH (not prepended)"
     )
 
 
 def test_deploy_ps1_post_check_health_three_times() -> None:
     text = DEPLOY_PS1.read_text(encoding="utf-8-sig")
-    assert "-le 3" in text or "3/3" in text or "le 3" in text, (
-        "deploy.ps1 must check health 3 times in post-check"
-    )
+    assert "-le 3" in text or "3/3" in text or "le 3" in text
 
 
 def test_deploy_ps1_no_auto_rollback_in_post_check() -> None:
-    """Rollback is server-side; deploy.ps1 must NOT attempt its own rollback."""
     text = DEPLOY_PS1.read_text(encoding="utf-8-sig")
-    # Should mention that server does rollback, but not call it itself
-    assert "ROLLBACK_ON_FAIL" in text or "rollback" in text.lower(), (
-        "deploy.ps1 must explain rollback mechanism"
-    )
+    assert "ROLLBACK_ON_FAIL" in text or "rollback" in text.lower()
 
 
 def test_deploy_ps1_syntax_valid() -> None:
-    """Parse deploy.ps1 with PowerShell's own parser — must have zero errors."""
     pwsh = "pwsh"
     check_cmd = (
         f'$errors = $null; '
@@ -222,6 +133,6 @@ def test_deploy_ps1_syntax_valid() -> None:
 
 def test_deploy_ps1_cleanup_only_matches_hex_workdirs() -> None:
     text = DEPLOY_PS1.read_text(encoding="utf-8-sig")
-    assert "-[0-9a-f]{32}$" in text, "cleanup must match only <RemoteDir>-<32 hex>"
-    assert "[ValidateRange(2, 20)]" in text, "must always keep at least 2 workdirs"
-    assert text.index("Post-check: journalctl") < text.index("Cleanup:"), "cleanup runs only after post-checks"
+    assert "-[0-9a-f]{32}$" in text
+    assert "[ValidateRange(2, 20)]" in text
+    assert text.index("Post-check: journalctl") < text.index("Cleanup:")

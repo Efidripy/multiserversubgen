@@ -6,7 +6,7 @@
     Выполняет полный цикл: preflight-проверки, pre-check на сервере,
     вызов invoke-remote-deploy.ps1 и post-check после деплоя.
     Производственный сервер: example.invalid (алиас prod).
-    Тестовая машина: host-a.example.invalid/192.0.2.10 (алиас vm3, НЕ прод).
+    Тестовая машина: host-a.example.invalid/192.0.2.130 (алиас vm3, НЕ прод).
 
 .PARAMETER Target
     Цель деплоя: prod или vm3.
@@ -21,7 +21,7 @@
     Сколько последних рабочих каталогов деплоя (<RemoteDir>-<id>) оставить на сервере
     после успешного деплоя (по умолчанию 2: текущий и предыдущий). Остальные удаляются.
 .PARAMETER KeyPath
-    Путь к SSH-ключу. Если не указан — берётся из targets.psd1.
+    Путь к SSH-ключу. Если не указан — берётся из targets.local.psd1.
 
 .EXAMPLE
     pwsh scripts/deploy/deploy.ps1 -Target prod
@@ -66,10 +66,10 @@ function Fail {
 # ---------------------------------------------------------------------------
 $ScriptDir  = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RepoRoot   = (Resolve-Path (Join-Path $ScriptDir '..\..')).Path
-$TargetsFile = Join-Path $ScriptDir 'targets.psd1'
+$TargetsFile = Join-Path $ScriptDir 'targets.local.psd1'
 
 if (-not (Test-Path $TargetsFile)) {
-    Fail "targets.psd1 not found at $TargetsFile"
+    Fail "Local deployment configuration not found: $TargetsFile. Copy targets.psd1 to targets.local.psd1 and fill in the local connection values."
 }
 $Targets = Import-PowerShellDataFile $TargetsFile
 if (-not $Targets.ContainsKey($Target)) {
@@ -77,11 +77,11 @@ if (-not $Targets.ContainsKey($Target)) {
 }
 $T = $Targets[$Target]
 
-# Разворачиваем KeyPath из targets: подставляем $env:USERPROFILE
+# Разворачиваем KeyPath из local targets: подставляем $env:USERPROFILE
 $ResolvedKeyPath = if ($KeyPath) {
     $KeyPath
 } elseif ($T.KeyPath) {
-    # targets.psd1 хранит строку с $env:USERPROFILE — раскрываем её
+    # targets.local.psd1 может хранить строку с $env:USERPROFILE — раскрываем её
     $T.KeyPath -replace '\$env:USERPROFILE', $env:USERPROFILE
 } else {
     ''
@@ -210,7 +210,7 @@ Write-Info "  Тема:       $DeploySubject"
 if ($IsProd -and -not $Yes -and -not $DryRun) {
     Write-Host ''
     Write-Host '  ┌─────────────────────────────────────────────────────┐' -ForegroundColor Red
-    Write-Host '  │  ВНИМАНИЕ: деплой на PRODUCTION (example.invalid)      │' -ForegroundColor Red
+    Write-Host '  │  ВНИМАНИЕ: деплой на PRODUCTION                    │' -ForegroundColor Red
     Write-Host '  │  Введите  yes  для подтверждения                    │' -ForegroundColor Red
     Write-Host '  └─────────────────────────────────────────────────────┘' -ForegroundColor Red
     Write-Host ''
