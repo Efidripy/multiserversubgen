@@ -123,6 +123,44 @@ const customerStatusDotClass = (status: string) => {
   return 'bg-amber-400';
 };
 
+export type CustomerNodeStateCounts = {
+  active: number;
+  suspended: number;
+  available_to_add: number;
+  problem: number;
+};
+
+export const groupCustomerNodes = (nodes: CustomerNode[]): CustomerNode[] => {
+  const stateOrder: CustomerNode['state'][] = ['active', 'suspended', 'problem', 'available_to_add'];
+  return [
+    ...stateOrder.flatMap((state) => nodes.filter((node) => node.state === state)),
+    ...nodes.filter((node) => !stateOrder.includes(node.state)),
+  ];
+};
+
+export const countCustomerNodes = (nodes: CustomerNode[]): CustomerNodeStateCounts => nodes.reduce<CustomerNodeStateCounts>(
+  (counts, node) => {
+    if (node.state === 'active' || node.state === 'suspended' || node.state === 'available_to_add' || node.state === 'problem') {
+      counts[node.state] += 1;
+    }
+    return counts;
+  },
+  { active: 0, suspended: 0, available_to_add: 0, problem: 0 },
+);
+
+const NodeStateCounters: React.FC<{ counts: CustomerNodeStateCounts }> = ({ counts }) => {
+  const { t } = useTranslation();
+  const items = [
+    { key: 'active' as const, value: counts.active, className: 'text-emerald-300', label: t('telegram.nodesActive', { count: counts.active }) },
+    { key: 'suspended' as const, value: counts.suspended, className: 'text-rose-300', label: t('telegram.nodesSuspended', { count: counts.suspended }) },
+    { key: 'available_to_add' as const, value: counts.available_to_add, className: 'text-slate-300', label: t('telegram.nodesAvailable', { count: counts.available_to_add }) },
+    { key: 'problem' as const, value: counts.problem, className: 'text-amber-300', label: t('telegram.nodesProblem', { count: counts.problem }) },
+  ];
+  return <span className="inline-flex items-center gap-1.5 font-mono text-[11px]" aria-label={t('telegram.nodesSummary')}>
+    {items.filter((item) => item.key !== 'problem' || item.value > 0).map((item) => <span key={item.key} role="img" title={item.label} aria-label={item.label} className={item.className}>{item.value}</span>)}
+  </span>;
+};
+
 export const TelegramAdmin: React.FC = () => {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -843,6 +881,8 @@ export const TelegramAdmin: React.FC = () => {
   };
 
   const selectedTitle = useMemo(() => selectedCustomer?.email_display ?? t('telegram.selectCustomer'), [selectedCustomer, t]);
+  const groupedNodes = useMemo(() => groupCustomerNodes(nodes), [nodes]);
+  const selectedNodeCounts = useMemo(() => countCustomerNodes(nodes), [nodes]);
   const pendingNodeIds = useMemo(() => new Set(
     jobs
       .filter((job) => job.customer_id === selectedCustomer?.customer_id && ['queued', 'running', 'partial'].includes(job.status))
@@ -1019,7 +1059,7 @@ export const TelegramAdmin: React.FC = () => {
                   <span className="block truncate font-mono text-[11px] text-slate-500">{[telegramName, customer.telegram_user_id ? String(customer.telegram_user_id) : null].filter(Boolean).join(' · ') || '—'}</span>
                 </button>
                 <span className="flex shrink-0 flex-col items-end gap-0.5 text-right font-mono text-[11px] text-slate-400">
-                  <span title={t('telegram.nodes')}>{customer.node_count}</span>
+                  <NodeStateCounters counts={{ active: customer.nodes_active, suspended: customer.nodes_suspended, available_to_add: customer.nodes_available, problem: customer.nodes_problem }} />
                   <span title={t('telegram.lifetimeTraffic')}>{customer.traffic_observed_at ? formatBytes(customer.lifetime_bytes ?? 0) : t('telegram.trafficNotObserved')}</span>
                   {customer.application_introduction && <button type="button" data-application-note className="inline-flex size-6 items-center justify-center rounded-full border border-amber-300/45 text-[11px] font-semibold text-amber-200" aria-label={t('telegram.applicationNote', { note: customer.application_introduction })} onClick={(event) => showApplicationNoteTooltip(event.currentTarget, customer.application_introduction!)}>!</button>}
                 </span>
@@ -1036,7 +1076,7 @@ export const TelegramAdmin: React.FC = () => {
                   <td className="px-2 py-1.5"><input type="checkbox" aria-label={t('telegram.bulkSelectCustomer', { email: customer.email_display })} checked={selectedCustomerIds.includes(customer.customer_id)} onClick={(event) => event.stopPropagation()} onChange={(event) => setSelectedCustomerIds((current) => event.target.checked ? [...current, customer.customer_id] : current.filter((customerId) => customerId !== customer.customer_id))} /></td>
                   <td className="p-0"><button type="button" className="flex h-[49px] w-full items-center gap-2 px-2 text-left text-[12px] text-slate-200 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={open} aria-label={t('telegram.openCustomer', { email: customer.email_display })}><span className={`size-[6px] shrink-0 rounded-full ${customerStatusDotClass(customer.status)}`} aria-label={customer.status} /><span className="truncate">{customer.email_display}</span></button></td>
                   <td className="p-0"><button type="button" className="flex h-[49px] w-full flex-col justify-center px-2 text-left leading-[17px] hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={open} aria-label={t('telegram.openCustomer', { email: customer.email_display })}><span className="truncate text-[12px] text-slate-300">{customer.telegram_username ? `@${customer.telegram_username}` : telegramName || '—'}</span><span className="truncate font-mono text-[11px] text-slate-500">{[telegramName, customer.telegram_user_id ? String(customer.telegram_user_id) : null].filter(Boolean).join(' · ') || '—'}</span></button></td>
-                  <td className="p-0"><button type="button" className="h-[49px] w-full px-2 text-left font-mono text-[12px] text-slate-400 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={open} aria-label={t('telegram.openCustomer', { email: customer.email_display })}>{customer.node_count}</button></td>
+                  <td className="p-0"><button type="button" className="h-[49px] w-full px-2 text-left font-mono text-[12px] text-slate-400 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={open} aria-label={t('telegram.openCustomer', { email: customer.email_display })}><NodeStateCounters counts={{ active: customer.nodes_active, suspended: customer.nodes_suspended, available_to_add: customer.nodes_available, problem: customer.nodes_problem }} /></button></td>
                   <td className="p-0"><button type="button" className="h-[49px] w-full px-2 text-left font-mono text-[12px] text-slate-400 hover:text-cyan-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-cyan-300/70" onClick={open} aria-label={t('telegram.openCustomer', { email: customer.email_display })}>{customer.traffic_observed_at ? formatBytes(customer.lifetime_bytes ?? 0) : t('telegram.trafficNotObserved')}</button></td>
                   <td className="px-2 py-1.5">{customer.application_introduction && <span className="inline-flex size-5 cursor-help items-center justify-center rounded-full border border-amber-300/45 text-[12px] font-semibold text-amber-200" tabIndex={0} aria-label={t('telegram.applicationNote', { note: customer.application_introduction })} onMouseEnter={(event) => showApplicationNoteTooltip(event.currentTarget, customer.application_introduction!)} onMouseLeave={() => setApplicationNoteTooltip(null)} onFocus={(event) => showApplicationNoteTooltip(event.currentTarget, customer.application_introduction!)} onBlur={() => setApplicationNoteTooltip(null)}>!</span>}</td>
                 </tr>;
@@ -1110,12 +1150,13 @@ export const TelegramAdmin: React.FC = () => {
               <div className="rounded border border-cyan-500/10 p-3"><div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-[12px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.tagsTitle')}</h4><button type="button" className={buttonClass} disabled={mutating} onClick={() => void saveTags()}>{t('common.save')}</button></div><input className={`${inputClass} mt-2`} value={tagInput} onChange={(event) => setTagInput(event.target.value)} placeholder={t('telegram.tagsPlaceholder')} />{tags.length > 0 && <p className="mt-1 text-[12px] text-slate-500">{tags.map((tag) => tag.tag).join(' · ')}</p>}</div>
               {selectedCustomer.application_introduction && <div className="rounded border border-amber-400/15 bg-amber-400/[0.03] p-3"><h4 className="text-[12px] font-medium uppercase tracking-[0.14em] text-amber-200">{t('telegram.applicationNote')}</h4><p className="mt-2 whitespace-pre-wrap text-[13px] leading-5 text-slate-300">{selectedCustomer.application_introduction}</p></div>}
             </div>
-            <h4 className="mt-5 text-[12px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.nodes')}</h4><div className="mt-2 space-y-1">{nodes.map((node) => {
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2"><h4 className="text-[12px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.nodes')}</h4><NodeStateCounters counts={selectedNodeCounts} /></div><div className="mt-2 space-y-1">{groupedNodes.map((node) => {
               const isPending = pendingNodeIds.has(node.node_id);
               const isActive = node.state === 'active';
               const isSuspended = node.state === 'suspended';
               const canAdd = node.state === 'available_to_add' && !isPending;
-              return <div key={node.node_id} className="flex items-center justify-between gap-2 rounded border border-cyan-500/10 px-2 py-1.5 text-[13px]"><span className="flex min-w-0 items-center gap-2 truncate text-slate-300"><span className={`size-[7px] shrink-0 rounded-full ${isActive ? 'bg-emerald-400' : 'bg-rose-400'}`} aria-label={isActive ? t('telegram.nodeReady') : t('telegram.nodeNotReady')} />{node.node_name}</span><div className="flex shrink-0 items-center gap-2">{isPending && <span className="text-[12px] text-amber-200">{t('telegram.nodeQueued')}</span>}{canAdd && <button type="button" className={buttonClass} disabled={mutating || selectedCustomer.status !== 'active'} onClick={() => setNodeAddConfirmation(node)}>{t('telegram.addNode')}</button>}{isActive && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void makeNodePreview(node, 'suspend_node')}>{t('telegram.suspendNode')}</button>}{isSuspended && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void makeNodePreview(node, 'resume_node')}>{t('telegram.resumeNode')}</button>}</div></div>;
+              const statusDotClass = isActive ? 'bg-emerald-400' : node.state === 'problem' ? 'bg-amber-400' : 'bg-rose-400';
+              return <div key={node.node_id} className="flex items-center justify-between gap-2 rounded border border-cyan-500/10 px-2 py-1.5 text-[13px]"><span className="flex min-w-0 items-center gap-2 truncate text-slate-300"><span className={`size-[7px] shrink-0 rounded-full ${statusDotClass}`} aria-label={isActive ? t('telegram.nodeReady') : t('telegram.nodeNotReady')} />{node.node_name}</span><div className="flex shrink-0 items-center gap-2">{isPending && <span className="text-[12px] text-amber-200">{t('telegram.nodeQueued')}</span>}{canAdd && <button type="button" className={buttonClass} disabled={mutating || selectedCustomer.status !== 'active'} onClick={() => setNodeAddConfirmation(node)}>{t('telegram.addNode')}</button>}{isActive && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void makeNodePreview(node, 'suspend_node')}>{t('telegram.suspendNode')}</button>}{isSuspended && <button type="button" className={buttonClass} disabled={mutating} onClick={() => void makeNodePreview(node, 'resume_node')}>{t('telegram.resumeNode')}</button>}</div></div>;
             })}</div>
             <h4 className="mt-5 text-[12px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.operations')}</h4><div className="mt-2 space-y-2">{operations.map((operation) => <div key={operation.operation_id} className="flex flex-wrap items-center justify-between gap-2 rounded border border-cyan-500/15 px-2 py-2 text-[13px]"><span className="text-slate-300">{operation.operation_type} · {operation.status}</span>{operation.status === 'partial' && <button type="button" className={buttonClass} disabled={mutating} onClick={async () => { setMutating(true); try { await retryCustomerOperation(operation); toast(t('telegram.operationQueued'), 'success'); await selectCustomer(selectedCustomer); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reconcile')}</button>}</div>)}</div>
             <h4 className="mt-5 text-[12px] font-medium uppercase tracking-[0.14em] text-slate-500">{t('telegram.timelineTitle')}</h4><div className="mt-2 max-h-44 space-y-1 overflow-auto">{timeline.length === 0 ? <p className="text-[13px] text-slate-500">{t('telegram.timelineEmpty')}</p> : timeline.map((event, index) => <div key={`${event.entity_type}-${event.entity_id}-${event.created_at}-${index}`} className="flex flex-wrap justify-between gap-2 text-[12px] text-slate-400"><span>{event.event_type} · {event.status ?? '—'}</span><span className="font-mono text-slate-500">{formatDate(event.created_at)}</span></div>)}</div>
