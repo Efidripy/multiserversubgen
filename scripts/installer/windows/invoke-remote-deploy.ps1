@@ -5,7 +5,7 @@ param(
 
     [string]$UserName = "root",
 
-    [int]$Port = <ssh-port>,
+    [int]$Port = 22,
 
     [ValidateSet("install", "update", "smoke")]
     [string]$Mode = "install",
