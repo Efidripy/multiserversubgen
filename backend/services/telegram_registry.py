@@ -2211,6 +2211,33 @@ class TelegramRegistry:
             initial_provisioning_ready=initial_provisioning_ready,
         )
 
+    def get_interface_window(self, telegram_user_id: int) -> tuple[int, bool] | None:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                "SELECT interface_message_id, interface_message_has_text "
+                "FROM telegram_identities WHERE telegram_user_id = ?",
+                (user_id,),
+            ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return int(row[0]), bool(row[1])
+
+    def set_interface_window(
+        self, *, telegram_user_id: int, message_id: int, has_text: bool
+    ) -> None:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        normalized_message_id = _positive_int(message_id, "message_id")
+        if not isinstance(has_text, bool):
+            raise TelegramRegistryError("has_text must be a boolean")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                "UPDATE telegram_identities "
+                "SET interface_message_id = ?, interface_message_has_text = ? "
+                "WHERE telegram_user_id = ?",
+                (normalized_message_id, int(has_text), user_id),
+            )
+
     def get_notification_preferences(self, telegram_user_id: int) -> TelegramNotificationPreferences:
         user_id = _positive_int(telegram_user_id, "telegram_user_id")
         with connect(self._db_path) as conn:
@@ -3421,6 +3448,11 @@ class TelegramRegistry:
             row_version=int(row[7]), created_at=str(row[8]), updated_at=str(row[9]),
             admin_response=str(row[10]) if row[10] is not None else None,
         )
+
+    def clear_support_draft(self, telegram_user_id: int) -> None:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            conn.execute("DELETE FROM telegram_user_drafts WHERE telegram_user_id = ?", (user_id,))
 
     def list_support_requests(self, *, status: str = "open", limit: int = 100) -> list[TelegramSupportRequest]:
         if status not in {"open", "read", "resolved", "all"}:

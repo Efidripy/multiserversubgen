@@ -183,6 +183,43 @@ def test_notification_preferences_migrate_traffic_reminders_as_opt_in(tmp_path):
     assert columns["traffic_reminder_thresholds"] == "'[80,95,100]'"
 
 
+def test_telegram_identity_window_columns_migrate_from_legacy_schema(tmp_path):
+    db_path = str(tmp_path / "legacy-identities.db")
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            """CREATE TABLE telegram_identities
+                (telegram_user_id INTEGER PRIMARY KEY,
+                 chat_id INTEGER NOT NULL,
+                 customer_id INTEGER DEFAULT NULL,
+                 username TEXT DEFAULT NULL,
+                 first_name TEXT DEFAULT NULL,
+                 last_name TEXT DEFAULT NULL,
+                 phone_number TEXT DEFAULT NULL,
+                 locale TEXT NOT NULL DEFAULT 'ru',
+                 access_status TEXT NOT NULL DEFAULT 'eligible',
+                 request_code TEXT DEFAULT NULL UNIQUE,
+                 application_attempt INTEGER NOT NULL DEFAULT 0,
+                 introduction_requested_at TEXT DEFAULT NULL,
+                 requested_at TEXT DEFAULT NULL,
+                 approved_at TEXT DEFAULT NULL,
+                 rejected_at TEXT DEFAULT NULL,
+                 blocked_at TEXT DEFAULT NULL,
+                 unblocked_at TEXT DEFAULT NULL,
+                 approved_by TEXT DEFAULT NULL,
+                 decision_reason TEXT DEFAULT NULL,
+                 blocked_from_status TEXT DEFAULT NULL,
+                 row_version INTEGER NOT NULL DEFAULT 1,
+                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)"""
+        )
+    init_db(db_path)
+    with connect(db_path) as conn:
+        columns = {row[1]: row for row in conn.execute("PRAGMA table_info(telegram_identities)")}
+    assert "interface_message_id" in columns
+    assert "interface_message_has_text" in columns
+    assert columns["interface_message_has_text"][4] == "1"
+
+
 def test_traffic_reminder_receipts_copy_into_additive_v2_without_dropping_legacy_data(tmp_path):
     db_path = str(tmp_path / "legacy-traffic-receipts.db")
     init_db(db_path)

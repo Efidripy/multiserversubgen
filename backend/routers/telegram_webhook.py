@@ -63,12 +63,20 @@ def build_telegram_webhook_router(
         supplied_secret = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
         if not secrets.compare_digest(supplied_secret, telegram_settings.webhook_secret):
             raise HTTPException(status_code=403, detail="Forbidden")
+        callback = data.get("callback_query")
+        callback_id = callback.get("id") if isinstance(callback, dict) else None
+        answer_callback_query = getattr(message_sender, "answer_callback_query", None)
+        if isinstance(callback_id, str) and answer_callback_query is not None:
+            try:
+                await run_in_threadpool(answer_callback_query, callback_id)
+            except Exception:
+                pass
         for message in service.handle_update(data):
             try:
                 try:
                     message_id = await run_in_threadpool(message_sender.send, message)
                 except TelegramMessageEditUnavailableError:
-                    fallback = service.fallback_subscription_message(message)
+                    fallback = service.fallback_message(message)
                     if fallback is None:
                         raise
                     message = fallback

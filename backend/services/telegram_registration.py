@@ -43,6 +43,10 @@ class TelegramOutboundMessage:
     photo_filename: str | None = None
     edit_message_id: int | None = None
     delete_message_id: int | None = None
+    window_user_id: int | None = None
+    keep_user_message: bool = False
+    best_effort: bool = False
+    keep_source_message: bool = False
     subscription_delivery: TelegramSubscriptionDelivery | None = None
     update_response_update_id: int | None = None
     update_response_index: int | None = None
@@ -795,6 +799,7 @@ class TelegramRegistrationService:
                 if customer.row_version != draft.expected_row_version or text.strip() != customer.email_display:
                     return [TelegramOutboundMessage(
                         chat_id, "Значение не совпало. Введите точный service username/email ещё раз.",
+                        keep_user_message=True,
                     )]
                 preview = self._registry.preview_customer_operation(customer_id=customer.customer_id, operation_type="delete")
                 if preview.expected_customer_version != draft.expected_row_version:
@@ -812,7 +817,11 @@ class TelegramRegistrationService:
                     ]},
                 )]
         except TelegramRegistryError:
-            return [TelegramOutboundMessage(chat_id, "Не удалось принять значение. Проверьте его и попробуйте ещё раз.")]
+            return [TelegramOutboundMessage(
+                chat_id,
+                "Не удалось принять значение. Проверьте его и попробуйте ещё раз.",
+                keep_user_message=True,
+            )]
         return None
 
     def _handle_customer_note_draft(
@@ -830,9 +839,14 @@ class TelegramRegistrationService:
                 updated_by_telegram_user_id=user_id,
             )
         except TelegramRegistryError:
-            return [TelegramOutboundMessage(chat_id, "Заметка не принята. Допустимо от 1 до 1000 символов.")]
+            return [TelegramOutboundMessage(
+                chat_id,
+                "Заметка не принята. Допустимо от 1 до 1000 символов.",
+                keep_user_message=True,
+            )]
         self._registry.clear_customer_note_draft(user_id)
-        return [self._admin_customer_message(chat_id, draft.customer_id, draft.page)]
+        result = self._admin_customer_message(chat_id, draft.customer_id, draft.page)
+        return [replace(result, text=f"{result.text}\n\n«{self._support_preview(text)}»")]
 
     def _handle_support_reply_draft(
         self, *, user_id: int, chat_id: int, text: str | None
@@ -852,7 +866,11 @@ class TelegramRegistrationService:
                 body=text,
             )
         except TelegramRegistryError:
-            return [TelegramOutboundMessage(chat_id, "Ответ не принят. Допустимо от 1 до 1000 символов.")]
+            return [TelegramOutboundMessage(
+                chat_id,
+                "Ответ не принят. Допустимо от 1 до 1000 символов.",
+                keep_user_message=True,
+            )]
         assert saved.body is not None
         customer = self._registry.get_customer(saved.customer_id)
         return [TelegramOutboundMessage(
@@ -881,7 +899,11 @@ class TelegramRegistrationService:
                 body=text,
             )
         except TelegramRegistryError:
-            return [TelegramOutboundMessage(chat_id, "Текст не принят. Допустимо от 1 до 2000 символов.")]
+            return [TelegramOutboundMessage(
+                chat_id,
+                "Текст не принят. Допустимо от 1 до 2000 символов.",
+                keep_user_message=True,
+            )]
         assert saved.body is not None
         if saved.mode == "direct" and saved.customer_id is not None:
             customer = self._registry.get_customer(saved.customer_id)
@@ -924,6 +946,7 @@ class TelegramRegistrationService:
                 chat_id,
                 "Сообщение не принято: допустимо от 1 до 1000 символов, либо оно уже изменилось.",
                 self._admin_home_menu(),
+                keep_user_message=True,
             )]
         self._registry.clear_service_notice_draft(user_id)
         return [self._admin_service_notice_message(chat_id)]
@@ -1559,15 +1582,9 @@ class TelegramRegistrationService:
         subscription_device_id: int | None = None,
         rotate: bool = False,
         rotate_all: bool = False,
-        edit_message_id: int | None = None,
         locale: str = "ru",
     ) -> TelegramOutboundMessage:
-        """Prepare a subscription URL for the current user interaction.
-
-        A URL requested via an inline callback replaces that callback's own
-        access-choice card.  A historical receipt is deliberately not used as
-        an edit target: it is delivery/audit data, not navigation state.
-        """
+        """Prepare a subscription URL; historical receipts are audit data, not edit targets."""
         url, unavailable = self._subscription_url(
             user_id=user_id,
             chat_id=chat_id,
@@ -1585,14 +1602,13 @@ class TelegramRegistrationService:
             chat_id,
             f"{tr(locale, 'subscription_prefix')}\n{url}",
             self._approved_menu(locale),
-            edit_message_id=None if rotate else edit_message_id,
             subscription_delivery=delivery,
         )
 
-    def fallback_subscription_message(self, message: TelegramOutboundMessage) -> TelegramOutboundMessage | None:
-        """Use a new message only when Telegram cannot edit the current card anymore."""
+    def fallback_message(self, message: TelegramOutboundMessage) -> TelegramOutboundMessage | None:
+        """Retry an uneditable response as a new message."""
 
-        if message.edit_message_id is None or message.subscription_delivery is None:
+        if message.edit_message_id is None:
             return None
         return replace(
             message,
@@ -1602,15 +1618,22 @@ class TelegramRegistrationService:
     def record_outbound_delivery(self, message: TelegramOutboundMessage, message_id: int | None) -> None:
         """Record delivery coordinates after Telegram confirms the send or edit."""
 
-        delivery = message.subscription_delivery
-        if delivery is None or isinstance(message_id, bool) or not isinstance(message_id, int) or message_id <= 0:
+        if isinstance(message_id, bool) or not isinstance(message_id, int) or message_id <= 0:
             return
-        self._registry.record_subscription_message_delivery(
-            telegram_user_id=delivery.telegram_user_id,
-            token_digest=delivery.token_digest,
-            chat_id=message.chat_id,
-            message_id=message_id,
-        )
+        if message.window_user_id is not None:
+            self._registry.set_interface_window(
+                telegram_user_id=message.window_user_id,
+                message_id=message_id,
+                has_text=message.photo_png is None,
+            )
+        delivery = message.subscription_delivery
+        if delivery is not None:
+            self._registry.record_subscription_message_delivery(
+                telegram_user_id=delivery.telegram_user_id,
+                token_digest=delivery.token_digest,
+                chat_id=message.chat_id,
+                message_id=message_id,
+            )
 
     @staticmethod
     def _setup_menu(chat_id: int, locale: str = "ru") -> TelegramOutboundMessage:
@@ -2026,6 +2049,28 @@ class TelegramRegistrationService:
             {"inline_keyboard": rows},
         )
 
+    def _take_over_window(
+        self, messages: list[TelegramOutboundMessage], update: dict[str, Any]
+    ) -> list[TelegramOutboundMessage]:
+        """A retry always arrives as a new message, so it must replace the window."""
+
+        actor = _private_actor(update)
+        if actor is None:
+            return messages
+        target_index = next((i for i, message in enumerate(messages) if message.chat_id == actor[1]), None)
+        if target_index is None:
+            return messages
+        messages[target_index] = replace(messages[target_index], window_user_id=actor[0])
+        window = self._registry.get_interface_window(actor[0])
+        stale = {window[0]} if window is not None else set()
+        # A typed message is left alone: its keep_user_message flag is not stored for retries.
+        if isinstance(update.get("callback_query"), dict) and actor[6] is not None:
+            stale.add(actor[6])
+        return messages + [
+            TelegramOutboundMessage(actor[1], "", delete_message_id=message_id, best_effort=True)
+            for message_id in sorted(stale)
+        ]
+
     def handle_update(self, update: dict[str, Any]) -> list[TelegramOutboundMessage]:
         """Return the durable retry response before handling an update again."""
 
@@ -2034,7 +2079,7 @@ class TelegramRegistrationService:
             return []
         pending = self._registry.pending_update_responses(update_id)
         if pending:
-            return [
+            return self._take_over_window([
                 TelegramOutboundMessage(
                     chat_id=chat_id,
                     text=text,
@@ -2043,7 +2088,7 @@ class TelegramRegistrationService:
                     update_response_index=index,
                 )
                 for index, chat_id, text, markup in pending
-            ]
+            ], update)
 
         messages = self._handle_new_update(update)
         if not messages:
@@ -2051,33 +2096,132 @@ class TelegramRegistrationService:
         actor = _private_actor(update)
         language_code = actor[2].get("language_code") if actor is not None else None
         locale = normalize_telegram_locale(language_code) if isinstance(language_code, str) else "ru"
-        retry_messages = [self._retry_safe_message(message, locale) for message in messages]
-        self._registry.store_update_responses(
-            update_id=update_id,
-            responses=[
-                (message.chat_id, message.text, message.reply_markup)
-                for message in retry_messages
-            ],
-        )
-        return [
-            replace(
+        messages = self._apply_window(messages, update, actor, locale)
+        retry_messages = [
+            self._retry_safe_message(message, locale)
+            for message in messages
+            if not message.best_effort
+        ]
+        if retry_messages:
+            self._registry.store_update_responses(
+                update_id=update_id,
+                responses=[
+                    (message.chat_id, message.text, message.reply_markup)
+                    for message in retry_messages
+                ],
+            )
+        result: list[TelegramOutboundMessage] = []
+        response_index = 0
+        for message in messages:
+            if message.best_effort:
+                result.append(replace(message, update_response_update_id=None, update_response_index=None))
+                continue
+            result.append(replace(
                 message,
                 update_response_update_id=update_id,
-                update_response_index=index,
-            )
-            for index, message in enumerate(messages)
-        ]
+                update_response_index=response_index,
+            ))
+            response_index += 1
+        return result
+
+    def _apply_window(
+        self,
+        messages: list[TelegramOutboundMessage],
+        update: dict[str, Any],
+        actor: tuple[int, int, dict[str, Any], str | None, str | None, str | None, int | None] | None,
+        locale: str,
+    ) -> list[TelegramOutboundMessage]:
+        if actor is None or not messages:
+            return messages
+        target_index = next(
+            (
+                index
+                for index, message in enumerate(messages)
+                if message.chat_id == actor[1] and message.delete_message_id is None
+            ),
+            None,
+        )
+        if target_index is None:
+            return messages
+        user_id, chat_id, _, text, callback_data, _, source_message_id = actor
+        window = self._registry.get_interface_window(user_id)
+        target = messages[target_index]
+        delete_ids = {
+            message.delete_message_id
+            for message in messages
+            if message.chat_id == chat_id and message.delete_message_id is not None
+        }
+
+        def append_delete(message_id: int | None) -> None:
+            if message_id is None or message_id in delete_ids:
+                return
+            messages.append(TelegramOutboundMessage(
+                chat_id=chat_id,
+                text="",
+                delete_message_id=message_id,
+                best_effort=True,
+            ))
+            delete_ids.add(message_id)
+
+        callback = update.get("callback_query")
+        if isinstance(callback, dict):
+            source = callback.get("message") if isinstance(callback.get("message"), dict) else {}
+            source_has_text = isinstance(source.get("text"), str) and bool(source.get("text"))
+            source_already_deleted = source_message_id is not None and source_message_id in delete_ids
+            if source_message_id is not None and not source_already_deleted:
+                if source_has_text and target.photo_png is None:
+                    messages[target_index] = replace(target, edit_message_id=source_message_id)
+                else:
+                    messages[target_index] = replace(target, edit_message_id=None)
+                    if not target.keep_source_message:
+                        append_delete(source_message_id)
+            else:
+                messages[target_index] = replace(target, edit_message_id=None)
+            if window is not None and window[0] != source_message_id:
+                append_delete(window[0])
+        else:
+            command = isinstance(text, str) and text.strip().startswith("/")
+            if command or target.keep_user_message:
+                messages[target_index] = replace(target, edit_message_id=None)
+                if window is not None:
+                    append_delete(window[0])
+                if source_message_id is not None and not target.keep_user_message:
+                    append_delete(source_message_id)
+            elif window is not None and window[1] and target.photo_png is None:
+                messages[target_index] = replace(target, edit_message_id=window[0])
+                append_delete(source_message_id)
+            else:
+                messages[target_index] = replace(target, edit_message_id=None)
+                if window is not None:
+                    append_delete(window[0])
+                append_delete(source_message_id)
+
+        target = replace(messages[target_index], window_user_id=user_id)
+        callback_data = callback_data or ""
+        if target.reply_markup is None and target.delete_message_id is None:
+            if callback_data.startswith("admin:") or (callback is None and user_id == self._primary_admin_id):
+                navigation_markup = {"inline_keyboard": [[{"text": "← Назад", "callback_data": "admin:home"}]]}
+            else:
+                try:
+                    access_status = self._registry.get_customer_access(user_id).access_status
+                except TelegramRegistryError:
+                    access_status = None
+                navigation_markup = (
+                    {"inline_keyboard": [[{"text": button(locale, "menu"), "callback_data": "menu:home"}]]}
+                    if access_status == "approved" else None
+                )
+            if navigation_markup is not None:
+                target = replace(target, reply_markup=navigation_markup)
+        messages[target_index] = target
+        return messages
 
     @staticmethod
     def _retry_safe_message(message: TelegramOutboundMessage, locale: str) -> TelegramOutboundMessage:
         """Never persist subscription URLs, QR bytes or mutable edit targets."""
 
-        if (
-            message.subscription_delivery is None
-            and message.photo_png is None
-            and message.edit_message_id is None
-            and message.delete_message_id is None
-        ):
+        if message.subscription_delivery is None and message.photo_png is None and message.delete_message_id is None:
+            if message.edit_message_id is not None:
+                return replace(message, edit_message_id=None)
             return message
         text = (
             "We could not deliver that response. Open the menu and request it again."
@@ -2143,6 +2287,13 @@ class TelegramRegistrationService:
             payload_digest=digest,
         ):
             return []
+        # Closing a notice must not alter drafts or be blocked by access checks.
+        if callback_data == "notice:close":
+            if source_message_id is None:
+                return []
+            return [TelegramOutboundMessage(
+                chat_id, "", delete_message_id=source_message_id, best_effort=True
+            )]
         admin_response = self._handle_admin(
             user_id=user_id,
             chat_id=chat_id,
@@ -2200,7 +2351,9 @@ class TelegramRegistrationService:
                         label=text,
                     )
                 except TelegramRegistryError:
-                    return [TelegramOutboundMessage(chat_id, tr(locale, "device_rename_invalid"))]
+                    return [TelegramOutboundMessage(
+                        chat_id, tr(locale, "device_rename_invalid"), keep_user_message=True
+                    )]
                 self._registry.clear_subscription_device_draft(user_id)
                 return [self._devices_message(user_id, chat_id, locale)]
             if text and device_draft_id is not None and not text.strip().startswith("/"):
@@ -2209,7 +2362,9 @@ class TelegramRegistrationService:
                         telegram_user_id=user_id, device_id=device_draft_id, label=text
                     )
                 except TelegramRegistryError:
-                    return [TelegramOutboundMessage(chat_id, tr(locale, "device_rename_invalid"))]
+                    return [TelegramOutboundMessage(
+                        chat_id, tr(locale, "device_rename_invalid"), keep_user_message=True
+                    )]
                 self._registry.clear_logical_device_draft(user_id)
                 return [self._devices_message(user_id, chat_id, locale)]
             if callback_data is not None and callback_data != "device:rename":
@@ -2230,7 +2385,7 @@ class TelegramRegistrationService:
                 return [self._subscription_link_choice_message(user_id=user_id, chat_id=chat_id, locale=locale)]
             if callback_data == "subscription:link:primary":
                 return [self._subscription_message(
-                    user_id=user_id, chat_id=chat_id, edit_message_id=source_message_id, locale=locale,
+                    user_id=user_id, chat_id=chat_id, locale=locale,
                 )]
             if callback_data == "subscription:qr:primary":
                 return [self._setup_qr_message(
@@ -2250,7 +2405,6 @@ class TelegramRegistrationService:
                     user_id=user_id,
                     chat_id=chat_id,
                     subscription_device_id=device.device_id,
-                    edit_message_id=source_message_id,
                     locale=locale,
                 )]
             if callback_data and callback_data.startswith("subscription:link:device:"):
@@ -2262,7 +2416,6 @@ class TelegramRegistrationService:
                     user_id=user_id,
                     chat_id=chat_id,
                     subscription_device_id=device_id,
-                    edit_message_id=source_message_id,
                     locale=locale,
                 )]
             if callback_data and callback_data.startswith("subscription:qr:device:"):
@@ -2446,6 +2599,16 @@ class TelegramRegistrationService:
             if callback_data == "qr:delete":
                 if source_message_id is None:
                     return [TelegramOutboundMessage(chat_id, tr(locale, "qr_unknown"), self._approved_menu(locale))]
+                callback_message = update.get("callback_query", {}).get("message", {}) if isinstance(update.get("callback_query"), dict) else {}
+                message_date = callback_message.get("date")
+                if isinstance(message_date, int) and not isinstance(message_date, bool):
+                    if datetime.now(timezone.utc).timestamp() - message_date >= 48 * 60 * 60:
+                        return [TelegramOutboundMessage(
+                            chat_id,
+                            tr(locale, "qr_too_old"),
+                            self._approved_menu(locale),
+                            keep_source_message=True,
+                        )]
                 return [
                     TelegramOutboundMessage(chat_id, "", delete_message_id=source_message_id),
                     TelegramOutboundMessage(chat_id, tr(locale, "qr_deleted"), self._approved_menu(locale)),
@@ -2477,6 +2640,7 @@ class TelegramRegistrationService:
                     return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
                 return [self._traffic_thresholds_message(user_id, chat_id, locale)]
             if callback_data == "menu:home":
+                self._registry.clear_support_draft(user_id)
                 return [self._approved_status(user_id, chat_id, locale)]
             if callback_data == "help":
                 return [self._help_message(chat_id, locale)]
@@ -2497,13 +2661,14 @@ class TelegramRegistrationService:
                             chat_id,
                             tr(locale, "support_invalid"),
                             self._approved_menu(locale),
+                            keep_user_message=True,
                         )
                     ]
                 if support_request is not None:
                     return [
                         TelegramOutboundMessage(
                             chat_id,
-                            tr(locale, "support_sent"),
+                            f"{tr(locale, 'support_sent')}\n\n«{self._support_preview(text)}»",
                             self._approved_menu(locale),
                         )
                     ]
@@ -2519,8 +2684,14 @@ class TelegramRegistrationService:
                 try:
                     self._registry.submit_suspended_appeal(telegram_user_id=user_id, body=text)
                 except TelegramRegistryError:
-                    return [TelegramOutboundMessage(chat_id, tr(locale, "appeal_invalid"))]
-                return [TelegramOutboundMessage(chat_id, tr(locale, "appeal_sent"), self._approved_menu(locale, suspended=True))]
+                    return [TelegramOutboundMessage(
+                        chat_id, tr(locale, "appeal_invalid"), keep_user_message=True
+                    )]
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    f"{tr(locale, 'appeal_sent')}\n\n«{self._support_preview(text)}»",
+                    self._approved_menu(locale, suspended=True),
+                )]
             return no_op(self._approved_status(user_id, chat_id))
 
         if text and identity.access_status == "pending":
@@ -2529,10 +2700,17 @@ class TelegramRegistrationService:
                     user_id, text, maximum_chars=self._introduction_max_chars
                 )
             except TelegramRegistryError:
-                return [TelegramOutboundMessage(chat_id, tr(locale, "appeal_invalid"))]
+                return [TelegramOutboundMessage(
+                    chat_id, tr(locale, "introduction_invalid"), keep_user_message=True
+                )]
             if saved:
-                return [TelegramOutboundMessage(chat_id, tr(locale, "introduction_saved"))]
-            return no_op(TelegramOutboundMessage(chat_id, tr(locale, "pending_wait")))
+                return [TelegramOutboundMessage(
+                    chat_id,
+                    f"{tr(locale, 'introduction_saved')}\n\n«{self._support_preview(text)}»",
+                )]
+            return no_op(TelegramOutboundMessage(
+                chat_id, tr(locale, "pending_wait"), keep_user_message=True
+            ))
 
         if text and not text.strip().startswith("/") and identity.access_status in {"eligible", "rejected"}:
             try:
@@ -2544,19 +2722,21 @@ class TelegramRegistrationService:
                     TelegramOutboundMessage(
                         chat_id,
                         tr(locale, "introduction_invalid"),
+                        keep_user_message=True,
                     )
                 ]
             if pending.created:
                 return [
                     TelegramOutboundMessage(
                         chat_id,
-                        tr(locale, "application_sent"),
+                        f"{tr(locale, 'application_sent')}\n\n«{self._support_preview(text)}»",
                     )
                 ]
             return no_op(
                 TelegramOutboundMessage(
                     chat_id,
                     tr(locale, "intro_required"),
+                    keep_user_message=True,
                 )
             )
 

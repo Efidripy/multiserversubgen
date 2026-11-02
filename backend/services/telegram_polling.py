@@ -84,7 +84,7 @@ class TelegramPollingWorker:
         handle_update: Callable[[dict[str, Any]], list[TelegramOutboundMessage]],
         sender: TelegramMessagePort,
         timeout_sec: int,
-        fallback_subscription_message: Callable[[TelegramOutboundMessage], TelegramOutboundMessage | None] | None = None,
+        fallback_message: Callable[[TelegramOutboundMessage], TelegramOutboundMessage | None] | None = None,
         record_outbound_delivery: Callable[[TelegramOutboundMessage, int | None], None] | None = None,
         mark_update_response_delivered: Callable[[TelegramOutboundMessage], None] | None = None,
         retry_update_response: Callable[[TelegramOutboundMessage], None] | None = None,
@@ -95,7 +95,7 @@ class TelegramPollingWorker:
         self._handle_update = handle_update
         self._sender = sender
         self._timeout_sec = timeout_sec
-        self._fallback_subscription_message = fallback_subscription_message
+        self._fallback_message = fallback_message
         self._record_outbound_delivery = record_outbound_delivery
         self._mark_update_response_delivered = mark_update_response_delivered
         self._retry_update_response = retry_update_response
@@ -113,13 +113,21 @@ class TelegramPollingWorker:
             update_id = update.get("update_id")
             if isinstance(update_id, bool) or not isinstance(update_id, int) or update_id <= 0:
                 continue
+            callback = update.get("callback_query")
+            callback_id = callback.get("id") if isinstance(callback, dict) else None
+            answer_callback_query = getattr(self._sender, "answer_callback_query", None)
+            if isinstance(callback_id, str) and answer_callback_query is not None:
+                try:
+                    answer_callback_query(callback_id)
+                except Exception:
+                    pass
             messages = self._handle_update(update)
             for message in messages:
                 try:
                     try:
                         message_id = self._sender.send(message)
                     except TelegramMessageEditUnavailableError:
-                        fallback = self._fallback_subscription_message(message) if self._fallback_subscription_message else None
+                        fallback = self._fallback_message(message) if self._fallback_message else None
                         if fallback is None:
                             raise
                         message = fallback
