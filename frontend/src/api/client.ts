@@ -223,6 +223,11 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
     config.headers = config.headers ?? {};
     config.headers['X-TOTP-Code'] = auth.totpCode;
   }
+  // After login the password is cleared, so `auth: getAuth()` would send an empty
+  // Basic header, which fails PAM on every mutation before the session is checked.
+  if (config.auth && !config.auth.password) {
+    delete config.auth;
+  }
   if (!config.sessionOnlyAuth && !config.auth && auth.username && auth.password) {
     config.auth = { username: auth.username, password: auth.password };
   }
