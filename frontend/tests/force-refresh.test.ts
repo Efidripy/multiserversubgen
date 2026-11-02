@@ -4,7 +4,7 @@ const post = vi.hoisted(() => vi.fn());
 vi.mock('../src/api/client', () => ({ default: { post } }));
 vi.mock('../src/auth', () => ({ getAuth: () => ({ username: 'u', password: 'p' }) }));
 
-import { forceNodeRefresh } from '../src/services/forceRefresh';
+import { forceNodeRefresh, NODE_REFRESH_INCOMPLETE_EVENT } from '../src/services/forceRefresh';
 
 describe('forceNodeRefresh', () => {
   afterEach(() => { post.mockReset(); });
@@ -23,5 +23,18 @@ describe('forceNodeRefresh', () => {
   it('swallows errors so callers can continue reading', async () => {
     post.mockRejectedValueOnce(new Error('timeout'));
     await expect(forceNodeRefresh()).resolves.toBeUndefined();
+  });
+
+  it.each([
+    ['the server wait timed out', () => post.mockResolvedValueOnce({ data: { completed: false } }), 1],
+    ['the request failed', () => post.mockRejectedValueOnce(new Error('timeout')), 1],
+    ['every node refreshed', () => post.mockResolvedValueOnce({ data: { completed: true } }), 0],
+  ])('reports an incomplete refresh when %s', async (_name, arrange, expected) => {
+    const listener = vi.fn();
+    window.addEventListener(NODE_REFRESH_INCOMPLETE_EVENT, listener);
+    arrange();
+    await forceNodeRefresh();
+    window.removeEventListener(NODE_REFRESH_INCOMPLETE_EVENT, listener);
+    expect(listener).toHaveBeenCalledTimes(expected);
   });
 });
