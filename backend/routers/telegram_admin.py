@@ -601,6 +601,21 @@ def build_telegram_admin_router(
             raise translate_registry_error(exc) from exc
         return {"job": asdict(result), "remote_io": "not_started"}
 
+    @router.post("/api/v1/telegram/jobs/{job_id}/dismiss")
+    def dismiss_provisioning_job(job_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.reschedule_provisioning_job(
+                job_id=job_id,
+                expected_job_version=data.get("expected_job_version"),
+                idempotency_key=data.get("idempotency_key"),
+                requested_by=username,
+                action="dismiss",
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"job": asdict(result), "remote_io": "not_started"}
+
     @router.get("/api/v1/telegram/customers")
     def list_customers(
         request: Request,
