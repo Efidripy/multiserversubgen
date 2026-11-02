@@ -117,6 +117,7 @@ _MESSAGES: dict[str, dict[str, str]] = {
     "help": {"ru": "⊞ Приложения — инструкции для Android, iPhone / iPad и компьютера.\n⌁ Самодиагностика — подсказки при проблемах с подключением.\n⚙ Уведомления — включает или выключает фоновые сообщения.\n\nЗдесь же доступны оценка подключения и статус сервиса. Если доступ приостановлен, в меню появится кнопка для сообщения администратору.", "en": "⊞ Apps — guides for Android, iPhone / iPad and computers.\n⌁ Self-check — guidance when a connection has a problem.\n⚙ Notifications — turn background messages on or off.\n\nConnection rating and service status are also available here. If access is suspended, the menu shows a button to message the administrator."},
     "support_menu": {"ru": "Поддержка\n\nВыберите тему обращения. Затем отправьте одно сообщение с описанием проблемы.", "en": "Support\n\nChoose a topic, then send one message describing the issue."},
     "qr_deleted": {"ru": "QR-код удалён из чата.", "en": "The QR code was removed from the chat."},
+    "qr_too_old": {"ru": "Telegram не даёт боту удалять сообщения старше 48 часов. Удалите этот QR-код вручную: зажмите сообщение и выберите «Удалить».", "en": "Telegram does not let bots delete messages older than 48 hours. Please delete this QR code manually: press and hold the message and choose Delete."},
     "qr_unknown": {"ru": "Не удалось определить QR-сообщение. Откройте новый QR-код при необходимости.", "en": "The QR message could not be identified. Open a new QR code if needed."},
 }
 

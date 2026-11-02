@@ -356,7 +356,8 @@ def test_english_telegram_onboarding_uses_english_without_russian_fallback(tmp_p
             "chat": {"id": 42, "type": "private"},
         },
     })
-    assert len(reply) == 1
+    assert len(reply) == 2
+    assert reply[1].best_effort
     assert "To send a request" in reply[0].text
     assert "Чтобы отправить заявку" not in reply[0].text
 
