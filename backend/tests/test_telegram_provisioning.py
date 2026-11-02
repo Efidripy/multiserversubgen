@@ -514,3 +514,19 @@ def test_admin_reconcile_reschedules_failed_attempt_without_remote_io_and_requir
     refreshed = registry.get_provisioning_job(approval.job_id)
     assert refreshed.row_version == queued.row_version
     assert refreshed.attempts[0].status == "pending"
+
+
+def test_admin_dismiss_cancels_failed_job_so_it_leaves_attention_list(tmp_path):
+    db_path, approval, _attempt = _queued_job(tmp_path)
+    assert _worker(db_path, FakeProvisioningPort(compatible=False)).run_once().outcome == "skipped"
+    registry = TelegramRegistry(db_path)
+    failed = registry.get_provisioning_job(approval.job_id)
+
+    result = registry.reschedule_provisioning_job(
+        job_id=approval.job_id, expected_job_version=failed.row_version,
+        idempotency_key="dismiss-failed-job", requested_by="admin", action="dismiss",
+    )
+
+    assert result.status == "cancelled"
+    assert registry.get_provisioning_job(approval.job_id).status == "cancelled"
+    assert registry.list_attention_items()["provisioning"] == []

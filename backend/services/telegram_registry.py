@@ -5641,8 +5641,9 @@ class TelegramRegistry:
         expected_version = _positive_int(expected_job_version, "expected_job_version")
         key = _nonempty(idempotency_key, "idempotency_key")
         actor = _nonempty(requested_by, "requested_by")
-        if action not in {"retry", "reconcile"}:
+        if action not in {"retry", "reconcile", "dismiss"}:
             raise TelegramRegistryError("unsupported provisioning action")
+        dismiss = action == "dismiss"
         payload = {"job_id": normalized_job_id, "expected_job_version": expected_version}
         digest = _payload_digest(payload)
         scope = f"provisioning_{action}"
@@ -5665,30 +5666,33 @@ class TelegramRegistry:
                 raise VersionConflictError("provisioning job was updated by another worker or administrator")
             if str(job[0]) not in {"queued", "partial", "failed"} or job[2] is not None:
                 raise VersionConflictError("provisioning job cannot be rescheduled in its current state")
-            changed = conn.execute(
-                """
-                UPDATE telegram_provisioning_attempts
-                SET status = 'pending', error_code = NULL, error_summary = NULL, next_attempt_at = NULL,
-                    finished_at = NULL, updated_at = CURRENT_TIMESTAMP
-                WHERE job_id = ? AND status IN ('failed', 'skipped', 'ambiguous')
-                """,
-                (normalized_job_id,),
-            )
-            if changed.rowcount == 0:
-                raise VersionConflictError("provisioning job has no retryable attempts")
+            if not dismiss:
+                changed = conn.execute(
+                    """
+                    UPDATE telegram_provisioning_attempts
+                    SET status = 'pending', error_code = NULL, error_summary = NULL, next_attempt_at = NULL,
+                        finished_at = NULL, updated_at = CURRENT_TIMESTAMP
+                    WHERE job_id = ? AND status IN ('failed', 'skipped', 'ambiguous')
+                    """,
+                    (normalized_job_id,),
+                )
+                if changed.rowcount == 0:
+                    raise VersionConflictError("provisioning job has no retryable attempts")
+            new_status = "cancelled" if dismiss else "queued"
             update = conn.execute(
                 """
                 UPDATE telegram_provisioning_jobs
-                SET status = 'queued', next_attempt_at = NULL, finished_at = NULL,
+                SET status = ?, next_attempt_at = NULL,
+                    finished_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END,
                     row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND row_version = ? AND lease_until IS NULL
                 """,
-                (normalized_job_id, expected_version),
+                (new_status, dismiss, normalized_job_id, expected_version),
             )
             if update.rowcount != 1:
                 raise VersionConflictError("provisioning job was updated by another worker or administrator")
             result = ProvisioningRescheduleResult(
-                job_id=normalized_job_id, status="queued", row_version=expected_version + 1
+                job_id=normalized_job_id, status=new_status, row_version=expected_version + 1
             )
             conn.execute(
                 """
@@ -5696,7 +5700,7 @@ class TelegramRegistry:
                     (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
                 VALUES (?, 'admin', ?, 'telegram_provisioning_job', ?, ?)
                 """,
-                (f"provisioning_{action}_queued", actor, str(normalized_job_id), digest),
+                ("provisioning_dismissed" if dismiss else f"provisioning_{action}_queued", actor, str(normalized_job_id), digest),
             )
             conn.execute(
                 """

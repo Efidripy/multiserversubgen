@@ -483,6 +483,14 @@ export async function reconcileTelegramJob(job: ProvisioningJob): Promise<void> 
   );
 }
 
+export async function dismissTelegramJob(job: ProvisioningJob): Promise<void> {
+  await api.post(
+    `/v1/telegram/jobs/${job.job_id}/dismiss`,
+    { expected_job_version: job.row_version, idempotency_key: newIdempotencyKey() },
+    { auth: getAuth() },
+  );
+}
+
 export async function listTelegramAppeals(signal?: AbortSignal): Promise<TelegramAppeal[]> {
   const response = await api.get('/v1/telegram/appeals', { auth: getAuth(), signal, params: { status: 'open' } });
   return Array.isArray(response.data?.items) ? response.data.items : [];

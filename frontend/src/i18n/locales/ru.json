@@ -116,6 +116,8 @@
     "operations": "Операции",
     "attentionTitle": "Требуют внимания",
     "attentionItems": "проблем в очереди",
+    "attentionDismiss": "Закрыть",
+    "attentionDismissed": "Задача закрыта",
     "attentionTruncated": "Показано {{shown}} из {{total}}; остальные появятся после обработки этих.",
     "attentionEmpty": "проблем не обнаружено",
     "suspend": "Приостановить",
