@@ -92,6 +92,16 @@ class TelegramApiSender:
             )
         return self._send_request(request)
 
+    def answer_callback_query(self, callback_query_id: str) -> None:
+        payload = {"callback_query_id": callback_query_id}
+        request = UrlRequest(
+            f"{self._endpoint()}/answerCallbackQuery",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        self._send_request(request)
+
     def _edit_message(self, message: TelegramOutboundMessage) -> int:
         payload: dict[str, Any] = {
             "chat_id": message.chat_id,
@@ -118,10 +128,16 @@ class TelegramApiSender:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        self._send_request(request)
+        self._send_request(request, deleting_message=True)
         return None
 
-    def _send_request(self, request: UrlRequest, *, edited_message_id: int | None = None) -> int | None:
+    def _send_request(
+        self,
+        request: UrlRequest,
+        *,
+        edited_message_id: int | None = None,
+        deleting_message: bool = False,
+    ) -> int | None:
         try:
             with self._transport.open(request, timeout=10) as response:
                 if response.status < 200 or response.status >= 300:
@@ -129,6 +145,8 @@ class TelegramApiSender:
                 body = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             description = self._error_description(exc)
+            if deleting_message and self._is_undeletable_message(description):
+                return None
             if edited_message_id is not None and "message is not modified" in description:
                 return edited_message_id
             if edited_message_id is not None and self._is_uneditable_message(description):
@@ -161,4 +179,12 @@ class TelegramApiSender:
             "message can't be edited",
             "message cannot be edited",
             "message is too old",
+            "there is no text in the message to edit",
+        ))
+
+    @staticmethod
+    def _is_undeletable_message(description: str) -> bool:
+        return any(marker in description for marker in (
+            "message to delete not found",
+            "message can't be deleted",
         ))

@@ -3422,6 +3422,11 @@ class TelegramRegistry:
             admin_response=str(row[10]) if row[10] is not None else None,
         )
 
+    def clear_support_draft(self, telegram_user_id: int) -> None:
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        with connect(self._db_path) as conn:
+            conn.execute("DELETE FROM telegram_user_drafts WHERE telegram_user_id = ?", (user_id,))
+
     def list_support_requests(self, *, status: str = "open", limit: int = 100) -> list[TelegramSupportRequest]:
         if status not in {"open", "read", "resolved", "all"}:
             raise TelegramRegistryError("support request status is invalid")

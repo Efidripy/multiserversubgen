@@ -1559,15 +1559,9 @@ class TelegramRegistrationService:
         subscription_device_id: int | None = None,
         rotate: bool = False,
         rotate_all: bool = False,
-        edit_message_id: int | None = None,
         locale: str = "ru",
     ) -> TelegramOutboundMessage:
-        """Prepare a subscription URL for the current user interaction.
-
-        A URL requested via an inline callback replaces that callback's own
-        access-choice card.  A historical receipt is deliberately not used as
-        an edit target: it is delivery/audit data, not navigation state.
-        """
+        """Prepare a subscription URL; historical receipts are audit data, not edit targets."""
         url, unavailable = self._subscription_url(
             user_id=user_id,
             chat_id=chat_id,
@@ -1585,14 +1579,13 @@ class TelegramRegistrationService:
             chat_id,
             f"{tr(locale, 'subscription_prefix')}\n{url}",
             self._approved_menu(locale),
-            edit_message_id=None if rotate else edit_message_id,
             subscription_delivery=delivery,
         )
 
-    def fallback_subscription_message(self, message: TelegramOutboundMessage) -> TelegramOutboundMessage | None:
-        """Use a new message only when Telegram cannot edit the current card anymore."""
+    def fallback_message(self, message: TelegramOutboundMessage) -> TelegramOutboundMessage | None:
+        """Retry an uneditable response as a new message."""
 
-        if message.edit_message_id is None or message.subscription_delivery is None:
+        if message.edit_message_id is None:
             return None
         return replace(
             message,
@@ -2051,6 +2044,7 @@ class TelegramRegistrationService:
         actor = _private_actor(update)
         language_code = actor[2].get("language_code") if actor is not None else None
         locale = normalize_telegram_locale(language_code) if isinstance(language_code, str) else "ru"
+        messages = self._apply_callback_window(messages, update, actor, locale)
         retry_messages = [self._retry_safe_message(message, locale) for message in messages]
         self._registry.store_update_responses(
             update_id=update_id,
@@ -2068,16 +2062,69 @@ class TelegramRegistrationService:
             for index, message in enumerate(messages)
         ]
 
+    def _apply_callback_window(
+        self,
+        messages: list[TelegramOutboundMessage],
+        update: dict[str, Any],
+        actor: tuple[int, int, dict[str, Any], str | None, str | None, str | None, int | None] | None,
+        locale: str,
+    ) -> list[TelegramOutboundMessage]:
+        if actor is None or not isinstance(update.get("callback_query"), dict):
+            return messages
+        callback = update["callback_query"]
+        source = callback.get("message") if isinstance(callback.get("message"), dict) else {}
+        source_message_id = actor[6]
+        if source_message_id is None or any(message.delete_message_id == source_message_id for message in messages):
+            return messages
+        target_index = next(
+            (index for index, message in enumerate(messages) if message.chat_id == actor[1]),
+            None,
+        )
+        if target_index is None:
+            return messages
+        source_has_text = isinstance(source.get("text"), str) and bool(source.get("text"))
+        message = messages[target_index]
+        if message.photo_png is not None or not source_has_text:
+            messages = [*messages, TelegramOutboundMessage(actor[1], "", delete_message_id=source_message_id)]
+        else:
+            messages[target_index] = replace(message, edit_message_id=source_message_id)
+
+        callback_data = callback.get("data") if isinstance(callback.get("data"), str) else ""
+        candidate_without_keyboard = any(
+            item.chat_id == actor[1]
+            and item.reply_markup is None
+            and item.delete_message_id is None
+            for item in messages
+        )
+        if not candidate_without_keyboard:
+            return messages
+        if callback_data.startswith("admin:"):
+            navigation_markup = {"inline_keyboard": [[{"text": "← Назад", "callback_data": "admin:home"}]]}
+        else:
+            try:
+                access_status = self._registry.get_customer_access(actor[0]).access_status
+            except TelegramRegistryError:
+                access_status = None
+            navigation_markup = (
+                {"inline_keyboard": [[{"text": button(locale, "menu"), "callback_data": "menu:home"}]]}
+                if access_status == "approved" else None
+            )
+        if navigation_markup is None:
+            return messages
+        return [
+            replace(item, reply_markup=navigation_markup)
+            if item.chat_id == actor[1] and item.reply_markup is None and item.delete_message_id is None and item.photo_png is None
+            else item
+            for item in messages
+        ]
+
     @staticmethod
     def _retry_safe_message(message: TelegramOutboundMessage, locale: str) -> TelegramOutboundMessage:
         """Never persist subscription URLs, QR bytes or mutable edit targets."""
 
-        if (
-            message.subscription_delivery is None
-            and message.photo_png is None
-            and message.edit_message_id is None
-            and message.delete_message_id is None
-        ):
+        if message.subscription_delivery is None and message.photo_png is None and message.delete_message_id is None:
+            if message.edit_message_id is not None:
+                return replace(message, edit_message_id=None)
             return message
         text = (
             "We could not deliver that response. Open the menu and request it again."
@@ -2230,7 +2277,7 @@ class TelegramRegistrationService:
                 return [self._subscription_link_choice_message(user_id=user_id, chat_id=chat_id, locale=locale)]
             if callback_data == "subscription:link:primary":
                 return [self._subscription_message(
-                    user_id=user_id, chat_id=chat_id, edit_message_id=source_message_id, locale=locale,
+                    user_id=user_id, chat_id=chat_id, locale=locale,
                 )]
             if callback_data == "subscription:qr:primary":
                 return [self._setup_qr_message(
@@ -2250,7 +2297,6 @@ class TelegramRegistrationService:
                     user_id=user_id,
                     chat_id=chat_id,
                     subscription_device_id=device.device_id,
-                    edit_message_id=source_message_id,
                     locale=locale,
                 )]
             if callback_data and callback_data.startswith("subscription:link:device:"):
@@ -2262,7 +2308,6 @@ class TelegramRegistrationService:
                     user_id=user_id,
                     chat_id=chat_id,
                     subscription_device_id=device_id,
-                    edit_message_id=source_message_id,
                     locale=locale,
                 )]
             if callback_data and callback_data.startswith("subscription:qr:device:"):
@@ -2477,6 +2522,7 @@ class TelegramRegistrationService:
                     return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
                 return [self._traffic_thresholds_message(user_id, chat_id, locale)]
             if callback_data == "menu:home":
+                self._registry.clear_support_draft(user_id)
                 return [self._approved_status(user_id, chat_id, locale)]
             if callback_data == "help":
                 return [self._help_message(chat_id, locale)]

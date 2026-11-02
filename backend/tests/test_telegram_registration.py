@@ -72,9 +72,11 @@ def _admin_callback(update_id: int, data: str) -> dict:
     }
 
 
-def _callback_with_message_id(update_id: int, data: str, message_id: int) -> dict:
+def _callback_with_message_id(update_id: int, data: str, message_id: int, *, text: str | None = None) -> dict:
     update = _callback(update_id, data)
     update["callback_query"]["message"]["message_id"] = message_id
+    if text is not None:
+        update["callback_query"]["message"]["text"] = text
     return update
 
 
@@ -339,11 +341,11 @@ def test_subscription_link_edits_its_own_callback_message_and_never_stores_raw_t
         get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
     )
 
-    choice = service.handle_update(_callback_with_message_id(11, "subscription:link", 101))[0]
+    choice = service.handle_update(_callback_with_message_id(11, "subscription:link", 101, text="Меню"))[0]
     assert "Выберите уже созданное устройство" in choice.text
-    first = service.handle_update(_callback_with_message_id(12, "subscription:link:primary", 101))[0]
+    first = service.handle_update(_callback_with_message_id(12, "subscription:link:primary", 101, text="Меню"))[0]
     service.record_outbound_delivery(first, 101)
-    repeated = service.handle_update(_callback_with_message_id(13, "subscription:link:primary", 202))[0]
+    repeated = service.handle_update(_callback_with_message_id(13, "subscription:link:primary", 202, text="Меню"))[0]
     service.record_outbound_delivery(repeated, 202)
 
     assert first.edit_message_id == 101
@@ -393,7 +395,7 @@ def test_subscription_command_sends_a_new_visible_message_instead_of_editing_a_h
     assert command.subscription_delivery.token_digest == previous.subscription_delivery.token_digest
 
 
-def test_rotated_subscription_always_creates_a_new_message_instead_of_editing_the_old_link(tmp_path):
+def test_rotated_subscription_edits_callback_message(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -418,11 +420,362 @@ def test_rotated_subscription_always_creates_a_new_message_instead_of_editing_th
 
     first = service.handle_update(_message(11, "/subscription"))[0]
     service.record_outbound_delivery(first, 101)
-    rotated = service.handle_update(_callback(12, "subscription:rotate:confirm"))[0]
+    rotated = service.handle_update(_callback_with_message_id(12, "subscription:rotate:confirm", 101, text="Подтверждение"))[0]
 
-    assert rotated.edit_message_id is None
+    assert rotated.edit_message_id == 101
     assert rotated.subscription_delivery is not None
     assert rotated.subscription_delivery.token_digest != first.subscription_delivery.token_digest
+
+
+def test_callback_with_source_text_edits_message_while_plain_text_and_command_do_not(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="card_user", first_name="Card", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="card_user", origin="telegram", email_source="telegram_username", public_code="card-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    help_resp = service.handle_update(_callback_with_message_id(1, "help", 101, text="Статус"))
+    assert len(help_resp) == 1
+    assert help_resp[0].edit_message_id == 101
+
+    devices_resp = service.handle_update(_callback_with_message_id(2, "devices:menu", 102, text="Статус"))
+    assert len(devices_resp) == 1
+    assert devices_resp[0].edit_message_id == 102
+
+    registry.get_or_create_identity(
+        telegram_user_id=55, chat_id=55, username="intro_user", first_name="Intro", last_name=None
+    )
+    registry.request_required_introduction(55)
+    intro_resp = service.handle_update({
+        "update_id": 3,
+        "message": {
+            "message_id": 3,
+            "chat": {"id": 55, "type": "private"},
+            "from": {"id": 55, "username": "intro_user", "first_name": "Intro"},
+            "text": "Заявка на доступ к сервису",
+        },
+    })
+    assert len(intro_resp) == 1
+    assert intro_resp[0].edit_message_id is None
+
+    cmd_resp = service.handle_update(_message(4, "/start"))
+    assert len(cmd_resp) == 1
+    assert cmd_resp[0].edit_message_id is None
+
+
+def test_callback_qr_from_text_message_sends_photo_then_deletes_source(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="qr_user", first_name="QR", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="qr_user", origin="telegram", email_source="telegram_username", public_code="qr-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    messages = service.handle_update(
+        _callback_with_message_id(20, "subscription:qr:primary", 105, text="Меню доступа")
+    )
+    assert len(messages) == 2
+    assert messages[0].photo_png is not None
+    assert messages[0].photo_png.startswith(b"\x89PNG")
+    assert messages[0].edit_message_id is None
+    assert messages[1].delete_message_id == 105
+
+
+def test_callback_from_qr_screen_without_text_sends_new_message_then_deletes_source(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="qr_user", first_name="QR", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="qr_user", origin="telegram", email_source="telegram_username", public_code="qr-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    messages = service.handle_update(
+        _callback_with_message_id(21, "help", 106, text=None)
+    )
+    assert len(messages) == 2
+    assert messages[0].text is not None and len(messages[0].text) > 0
+    assert messages[0].edit_message_id is None
+    assert messages[0].photo_png is None
+    assert messages[1].delete_message_id == 106
+
+
+def test_callback_qr_delete_deletes_source_first_then_sends_text_without_extra_delete(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="qr_user", first_name="QR", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="qr_user", origin="telegram", email_source="telegram_username", public_code="qr-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    messages = service.handle_update(
+        _callback_with_message_id(22, "qr:delete", 107)
+    )
+    assert len(messages) == 2
+    assert messages[0].delete_message_id == 107
+    assert messages[1].text is not None and len(messages[1].text) > 0
+    assert messages[1].edit_message_id is None
+    assert messages[1].delete_message_id is None
+
+
+def test_screen_without_keyboard_adds_navigation_markup_according_to_role_and_prefix(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity_approved = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="approved_user", first_name="Approved", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="approved_user", origin="telegram", email_source="telegram_username", public_code="approved-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity_approved.telegram_user_id),
+        )
+    registry.get_or_create_identity(
+        telegram_user_id=43, chat_id=43, username="pending_user", first_name="Pending", last_name=None
+    )
+    admin_customer_id = registry.create_customer(
+        email_display="admin_user", origin="telegram", email_source="telegram_username", public_code="admin-user"
+    )
+    admin_identity = registry.get_or_create_identity(
+        telegram_user_id=1, chat_id=1, username="admin_user", first_name="Admin", last_name=None
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (admin_customer_id, admin_identity.telegram_user_id),
+        )
+
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=1)
+
+    # 1. Approved user on client button -> gets menu:home
+    actor_approved = (42, 42, {"id": 42}, None, "support:appeal", None, 201)
+    update_approved = _callback_with_message_id(51, "support:appeal", 201, text="Меню")
+    out_approved = service._apply_callback_window(
+        [TelegramOutboundMessage(chat_id=42, text="Обращение", reply_markup=None)],
+        update_approved,
+        actor_approved,
+        "ru",
+    )
+    assert out_approved[0].reply_markup is not None
+    assert out_approved[0].reply_markup["inline_keyboard"][0][0]["callback_data"] == "menu:home"
+
+    # 2. Unapproved user on client button -> reply_markup remains None
+    actor_unapproved = (43, 43, {"id": 43}, None, "registration:intro", None, 202)
+    update_unapproved = _callback_with_message_id(52, "registration:intro", 202, text="Меню")
+    update_unapproved["callback_query"]["from"]["id"] = 43
+    update_unapproved["callback_query"]["message"]["chat"]["id"] = 43
+    out_unapproved = service._apply_callback_window(
+        [TelegramOutboundMessage(chat_id=43, text="Вводный текст", reply_markup=None)],
+        update_unapproved,
+        actor_unapproved,
+        "ru",
+    )
+    assert out_unapproved[0].reply_markup is None
+
+    # 3. Primary admin with callback_data starting with admin: -> gets admin:home
+    actor_admin = (1, 1, {"id": 1}, None, "admin:custom_action", None, 203)
+    update_admin = _admin_callback(53, "admin:custom_action")
+    update_admin["callback_query"]["message"]["message_id"] = 203
+    update_admin["callback_query"]["message"]["text"] = "Панель"
+    out_admin = service._apply_callback_window(
+        [TelegramOutboundMessage(chat_id=1, text="Инфо", reply_markup=None)],
+        update_admin,
+        actor_admin,
+        "ru",
+    )
+    assert out_admin[0].reply_markup is not None
+    assert out_admin[0].reply_markup["inline_keyboard"][0][0]["callback_data"] == "admin:home"
+
+    # 4. Primary admin on client button -> does NOT get admin:home
+    actor_admin_client = (1, 1, {"id": 1}, None, "help", None, 204)
+    update_admin_client = _callback_with_message_id(54, "help", 204, text="Меню")
+    update_admin_client["callback_query"]["from"]["id"] = 1
+    update_admin_client["callback_query"]["message"]["chat"]["id"] = 1
+    out_admin_client = service._apply_callback_window(
+        [TelegramOutboundMessage(chat_id=1, text="Помощь", reply_markup=None)],
+        update_admin_client,
+        actor_admin_client,
+        "ru",
+    )
+    assert out_admin_client[0].reply_markup is not None
+    callbacks = [btn["callback_data"] for row in out_admin_client[0].reply_markup["inline_keyboard"] for btn in row]
+    assert "admin:home" not in callbacks
+    assert "menu:home" in callbacks
+
+
+def test_apply_callback_window_does_not_modify_messages_for_different_chat_id(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    actor = (42, 42, {"id": 42}, None, "help", None, 101)
+    update = _callback_with_message_id(61, "help", 101, text="Исходный текст")
+    other_msg = TelegramOutboundMessage(chat_id=999, text="Уведомление для чата 999", reply_markup=None)
+    actor_msg = TelegramOutboundMessage(chat_id=42, text="Ответ для чата 42", reply_markup=None)
+
+    res_only_other = service._apply_callback_window([other_msg], update, actor, "ru")
+    assert res_only_other[0].chat_id == 999
+    assert res_only_other[0].edit_message_id is None
+    assert res_only_other[0].reply_markup is None
+
+    res_mixed = service._apply_callback_window([actor_msg, other_msg], update, actor, "ru")
+    assert res_mixed[0].chat_id == 42
+    assert res_mixed[0].edit_message_id == 101
+    assert res_mixed[1].chat_id == 999
+    assert res_mixed[1].edit_message_id is None
+    assert res_mixed[1].reply_markup is None
+
+
+def test_fallback_message_clears_edit_message_id_and_returns_none_when_no_edit_target(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    card = TelegramOutboundMessage(
+        chat_id=42,
+        text="Содержимое карточки",
+        reply_markup={"inline_keyboard": [[{"text": "Кнопка", "callback_data": "btn"}]]},
+        edit_message_id=101,
+    )
+    fallback = service.fallback_message(card)
+    assert fallback is not None
+    assert fallback.chat_id == 42
+    assert fallback.text == "Содержимое карточки"
+    assert fallback.reply_markup == card.reply_markup
+    assert fallback.edit_message_id is None
+
+    no_edit = TelegramOutboundMessage(
+        chat_id=42,
+        text="Обычное сообщение",
+        reply_markup=None,
+        edit_message_id=None,
+    )
+    assert service.fallback_message(no_edit) is None
+
+
+def test_retry_safe_message_preserves_plain_screen_and_sanitizes_subscription():
+    plain = TelegramOutboundMessage(
+        chat_id=42,
+        text="Меню управления устройствами",
+        reply_markup={"inline_keyboard": [[{"text": "Назад", "callback_data": "menu:home"}]]},
+        edit_message_id=101,
+    )
+    safe_plain = TelegramRegistrationService._retry_safe_message(plain, "ru")
+    assert safe_plain.text == plain.text
+    assert safe_plain.reply_markup == plain.reply_markup
+    assert safe_plain.edit_message_id is None
+
+    sub_url = "https://bot.example.test/sub/secret_opaque_token_value"
+    sub_msg = TelegramOutboundMessage(
+        chat_id=42,
+        text=f"Персональная ссылка доступа:\n{sub_url}",
+        reply_markup={"inline_keyboard": [[{"text": "Обновить", "callback_data": "subscription:rotate"}]]},
+        edit_message_id=101,
+        subscription_delivery=TelegramSubscriptionDelivery(telegram_user_id=42, token_digest="sha256_digest"),
+    )
+    safe_sub = TelegramRegistrationService._retry_safe_message(sub_msg, "ru")
+    assert safe_sub.edit_message_id is None
+    assert safe_sub.subscription_delivery is None
+    assert "https://" not in safe_sub.text
+    assert "secret_opaque_token_value" not in safe_sub.text
+    assert "Не удалось доставить ответ" in safe_sub.text
+    assert safe_sub.text != sub_msg.text
+    assert safe_sub.reply_markup is None
+
+
+def test_menu_home_clears_support_draft_so_subsequent_text_does_not_create_ticket(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="support_user", first_name="Support", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="support_user", origin="telegram", email_source="telegram_username", public_code="support-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    service.handle_update(_callback_with_message_id(91, "support:category:connection", 101, text="Поддержка"))
+    with connect(db_path) as conn:
+        draft = conn.execute(
+            "SELECT category FROM telegram_user_drafts WHERE telegram_user_id = 42 AND action = 'support_request'"
+        ).fetchone()
+        assert draft is not None
+        assert draft[0] == "connection"
+
+    service.handle_update(_callback_with_message_id(92, "menu:home", 102, text="Главное меню"))
+    with connect(db_path) as conn:
+        draft_after = conn.execute(
+            "SELECT 1 FROM telegram_user_drafts WHERE telegram_user_id = 42"
+        ).fetchone()
+        assert draft_after is None
+
+    service.handle_update(_message(93, "У меня пропал интернет!"))
+    assert len(registry.list_support_requests(status="all")) == 0
 
 
 def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscription_token(tmp_path):
@@ -2035,12 +2388,12 @@ def test_webhook_subscription_link_falls_back_to_a_new_message_if_the_current_ca
     assert client.post(
         "/telegram/webhook/private-path",
         headers=headers,
-        json=_callback_with_message_id(31, "subscription:link", 401),
+        json=_callback_with_message_id(31, "subscription:link", 401, text="Ссылка"),
     ).status_code == 200
     assert client.post(
         "/telegram/webhook/private-path",
         headers=headers,
-        json=_callback_with_message_id(32, "subscription:link:primary", 401),
+        json=_callback_with_message_id(32, "subscription:link:primary", 401, text="Выбор ссылки"),
     ).status_code == 200
 
     assert len(sender.messages) == 3
@@ -2048,6 +2401,7 @@ def test_webhook_subscription_link_falls_back_to_a_new_message_if_the_current_ca
     assert sender.messages[1].edit_message_id is None
     assert "Выберите уже созданное устройство" in sender.messages[1].text
     assert "Персональная ссылка доступа" in sender.messages[2].text
+    assert sender.messages[2].edit_message_id is None
 
 
 def test_webhook_admin_can_adopt_a_discovered_legacy_customer_without_remote_write(tmp_path):
@@ -2116,3 +2470,90 @@ def test_webhook_admin_can_adopt_a_discovered_legacy_customer_without_remote_wri
         assert conn.execute("SELECT email_display, origin FROM customers").fetchone() == ("legacy-user", "existing")
         assert conn.execute("SELECT remote_client_id FROM customer_node_bindings").fetchone()[0] == "legacy-client"
         assert conn.execute("SELECT COUNT(*) FROM telegram_provisioning_jobs").fetchone()[0] == 0
+
+
+class _WebhookAnswerSender(_Sender):
+    def __init__(self):
+        super().__init__()
+        self.answers: list[str] = []
+
+    def answer_callback_query(self, callback_query_id: str) -> None:
+        self.answers.append(callback_query_id)
+
+
+class _FailingWebhookAnswerSender(_Sender):
+    def __init__(self):
+        super().__init__()
+        self.answers: list[str] = []
+
+    def answer_callback_query(self, callback_query_id: str) -> None:
+        self.answers.append(callback_query_id)
+        raise OSError("Telegram network error in answerCallbackQuery")
+
+
+def test_webhook_answers_callback_query_and_handles_failures_and_missing_method(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    identity = registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="wb_user", first_name="WB", last_name=None
+    )
+    customer_id = registry.create_customer(
+        email_display="wb_user", origin="telegram", email_source="telegram_username", public_code="wb-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = ?",
+            (customer_id, identity.telegram_user_id),
+        )
+    settings = SimpleNamespace(
+        enabled=True,
+        bot_token="not-used-by-test-sender",
+        webhook_path_suffix="private-path",
+        webhook_secret="private-header-secret",
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+    )
+    headers = {"X-Telegram-Bot-Api-Secret-Token": "private-header-secret"}
+
+    # 1. Sender with answer_callback_query
+    sender_answer = _WebhookAnswerSender()
+    app1 = FastAPI()
+    app1.include_router(build_telegram_webhook_router(telegram_settings=settings, db_path=db_path, sender=sender_answer))
+    client1 = TestClient(app1)
+    res1 = client1.post(
+        "/telegram/webhook/private-path",
+        headers=headers,
+        json=_callback_with_message_id(71, "help", 101, text="Меню"),
+    )
+    assert res1.status_code == 200
+    assert sender_answer.answers == ["callback-71"]
+    assert len(sender_answer.messages) == 1
+
+    # 2. Sender whose answer_callback_query raises an exception
+    sender_failing = _FailingWebhookAnswerSender()
+    app2 = FastAPI()
+    app2.include_router(build_telegram_webhook_router(telegram_settings=settings, db_path=db_path, sender=sender_failing))
+    client2 = TestClient(app2)
+    res2 = client2.post(
+        "/telegram/webhook/private-path",
+        headers=headers,
+        json=_callback_with_message_id(72, "help", 102, text="Меню"),
+    )
+    assert res2.status_code == 200
+    assert sender_failing.answers == ["callback-72"]
+    assert len(sender_failing.messages) == 1
+
+    # 3. Sender without answer_callback_query method (standard _Sender)
+    sender_plain = _Sender()
+    assert not hasattr(sender_plain, "answer_callback_query")
+    app3 = FastAPI()
+    app3.include_router(build_telegram_webhook_router(telegram_settings=settings, db_path=db_path, sender=sender_plain))
+    client3 = TestClient(app3)
+    res3 = client3.post(
+        "/telegram/webhook/private-path",
+        headers=headers,
+        json=_callback_with_message_id(73, "help", 103, text="Меню"),
+    )
+    assert res3.status_code == 200
+    assert len(sender_plain.messages) == 1

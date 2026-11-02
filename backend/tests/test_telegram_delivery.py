@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import io
+import json
 import os
 import sys
-import json
+from urllib.error import HTTPError
 
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from services.telegram_delivery import TelegramApiSender
+from services.telegram_delivery import (
+    TelegramApiSender,
+    TelegramDeliveryError,
+    TelegramMessageEditUnavailableError,
+)
 from services.telegram_registration import TelegramOutboundMessage
 
 
@@ -121,3 +128,45 @@ def test_sender_deletes_qr_message_without_sending_its_text():
     assert b"ignored" not in request.data
     assert timeout == 10
     assert result is None
+
+
+class _ErrorTransport:
+    def __init__(self, description: str, status: int = 400):
+        self.description = description
+        self.status = status
+
+    def open(self, request, *, timeout):
+        body = json.dumps({"ok": False, "error_code": self.status, "description": self.description}).encode("utf-8")
+        raise HTTPError(request.full_url, self.status, "Bad Request", {}, io.BytesIO(body))
+
+
+def test_sender_edit_raises_edit_unavailable_on_no_text_in_message_error():
+    transport = _ErrorTransport("Bad Request: there is no text in the message to edit")
+    sender = TelegramApiSender("test-token", transport=transport)
+    msg = TelegramOutboundMessage(chat_id=42, text="New text", edit_message_id=77)
+    with pytest.raises(TelegramMessageEditUnavailableError):
+        sender.send(msg)
+
+
+def test_sender_delete_ignores_not_found_and_cant_be_deleted_but_raises_other_errors():
+    sender1 = TelegramApiSender("test-token", transport=_ErrorTransport("Bad Request: message to delete not found"))
+    assert sender1.send(TelegramOutboundMessage(chat_id=42, text="", delete_message_id=77)) is None
+
+    sender2 = TelegramApiSender("test-token", transport=_ErrorTransport("Bad Request: message can't be deleted"))
+    assert sender2.send(TelegramOutboundMessage(chat_id=42, text="", delete_message_id=77)) is None
+
+    sender3 = TelegramApiSender("test-token", transport=_ErrorTransport("Bad Request: chat not found"))
+    with pytest.raises(TelegramDeliveryError):
+        sender3.send(TelegramOutboundMessage(chat_id=42, text="", delete_message_id=77))
+
+
+def test_sender_answer_callback_query_sends_correct_payload():
+    transport = _Transport()
+    TelegramApiSender("test-token", transport=transport).answer_callback_query("cb_query_123")
+
+    assert len(transport.requests) == 1
+    request, timeout = transport.requests[0]
+    assert request.full_url.endswith("/answerCallbackQuery")
+    assert request.get_header("Content-type") == "application/json"
+    assert json.loads(request.data) == {"callback_query_id": "cb_query_123"}
+    assert timeout == 10
