@@ -239,16 +239,34 @@ ensure_grafana_admin_password_file() {
 # Prometheus from apt listens on all interfaces by default; only nginx/Grafana on
 # this host need it.
 bind_prometheus_loopback() {
-    local f=/etc/default/prometheus flag='--web.listen-address=127.0.0.1:9090'
-    [ -f "$f" ] || { printf 'ARGS="%s"
-' "$flag" > "$f"; return 0; }
-    grep -q 'web.listen-address' "$f" && return 0
-    if grep -q '^ARGS=' "$f"; then
-        sed -i -E "s|^ARGS=\"(.*)\"|ARGS=\"\1 ${flag}\"|" "$f"
-    else
+    local f="${MSSG_PROMETHEUS_DEFAULTS:-/etc/default/prometheus}" flag='--web.listen-address=127.0.0.1:9090'
+    local dropin_dir="${MSSG_PROMETHEUS_DROPIN_DIR:-/etc/systemd/system/prometheus.service.d}" exec_line
+    if [ ! -f "$f" ]; then
         printf 'ARGS="%s"
+' "$flag" > "$f"
+    elif ! grep -q 'web.listen-address' "$f"; then
+        if grep -q '^ARGS=' "$f"; then
+            sed -i -E "s|^ARGS=\"(.*)\"|ARGS=\"\1 ${flag}\"|" "$f"
+        else
+            printf 'ARGS="%s"
 ' "$flag" >> "$f"
+        fi
     fi
+
+    # Another application's drop-in may replace ExecStart without $ARGS, which
+    # silently ignores the file above. Only extend a command line that does not
+    # read $ARGS and lacks the flag: Prometheus refuses to start when the same
+    # address is listed twice.
+    exec_line="$(systemctl cat prometheus 2>/dev/null | grep -E '^ExecStart=.+' | tail -n 1)"
+    case "$exec_line" in
+        ''|*'$ARGS'*|*'${ARGS}'*|*web.listen-address*) return 0 ;;
+    esac
+    # shortcut: this copies the current override, so if its owner later changes
+    # ExecStart, delete 90-sub-manager-loopback.conf and rerun the installer.
+    install -d -m 0755 "$dropin_dir" || return 1
+    printf '[Service]\nExecStart=\n%s %s\n' "$exec_line" "$flag" \
+        > "$dropin_dir/90-sub-manager-loopback.conf" || return 1
+    systemctl daemon-reload
 }
 
 # Web login goes through PAM as the unprivileged service user, which only works

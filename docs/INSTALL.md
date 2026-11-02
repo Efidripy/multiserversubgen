@@ -89,4 +89,4 @@ curl -fsSL -o /dev/null -w '%{http_code}\n' https://<your-domain>/<web-path>/
 
 ## Вход через PAM
 
-Сервис работает от непривилегированного пользователя `sub-manager`, поэтому вход в панель через PAM требует setgid-хелпера `/usr/sbin/unix_chkpwd` (есть по умолчанию в Debian/Ubuntu). Инсталлятор выводит предупреждение, если его нет. После установки проверьте вход вручную. Grafana получает случайный пароль администратора в `/etc/<project>/grafana-admin-password` (только для новой БД Grafana), Prometheus слушает только `127.0.0.1:9090`.
+Сервис работает от непривилегированного пользователя `sub-manager`, поэтому вход в панель через PAM требует setgid-хелпера `/usr/sbin/unix_chkpwd` (есть по умолчанию в Debian/Ubuntu). Инсталлятор выводит предупреждение, если его нет. После установки проверьте вход вручную. Grafana получает случайный пароль администратора в `/etc/<project>/grafana-admin-password` (только для новой БД Grafana), Prometheus и Loki слушают только loopback (`127.0.0.1:9090`, `127.0.0.1:3100`, `127.0.0.1:9096`); если чужой drop-in переопределяет `ExecStart` Prometheus без `$ARGS`, установщик добавляет `90-sub-manager-loopback.conf`.

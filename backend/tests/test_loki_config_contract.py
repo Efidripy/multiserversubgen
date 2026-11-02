@@ -58,6 +58,17 @@ def test_loki_template_uses_server_log_level_and_tsdb_retention_contract():
     assert "table_manager" not in config
 
 
+def test_loki_template_listens_on_loopback_only():
+    config = yaml.safe_load(
+        (REPO / "monitoring/loki/loki-config.yml").read_text(encoding="utf-8")
+    )
+
+    assert config["server"]["http_listen_address"] == "127.0.0.1"
+    assert config["server"]["grpc_listen_address"] == "127.0.0.1"
+    # Queries hang if Loki's workers are sent to an address nothing listens on.
+    assert config["common"]["instance_addr"] == "127.0.0.1"
+
+
 def test_install_and_update_validate_loki_candidate_before_service_restart():
     for relative_path in ("scripts/installer/install.sh", "scripts/installer/update.sh"):
         script = (REPO / relative_path).read_text(encoding="utf-8")
