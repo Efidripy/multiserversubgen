@@ -240,11 +240,14 @@ ensure_grafana_admin_password_file() {
 # this host need it.
 bind_prometheus_loopback() {
     local f="${MSSG_PROMETHEUS_DEFAULTS:-/etc/default/prometheus}" flag='--web.listen-address=127.0.0.1:9090'
-    local dropin_dir="${MSSG_PROMETHEUS_DROPIN_DIR:-/etc/systemd/system/prometheus.service.d}" exec_line
+    local dropin_dir="${MSSG_PROMETHEUS_DROPIN_DIR:-/etc/systemd/system/prometheus.service.d}"
+    local exec_line stripped suffix=" $flag"
     if [ ! -f "$f" ]; then
         printf 'ARGS="%s"
 ' "$flag" > "$f"
-    elif ! grep -q 'web.listen-address' "$f"; then
+    elif [ "$(grep -oE -- '--web\.listen-address[= ][^ "]+' "$f")" != "$flag" ]; then
+        # Any other address would keep the service reachable beside loopback.
+        sed -i -E 's/ ?--web\.listen-address[= ][^ "]+//g' "$f"
         if grep -q '^ARGS=' "$f"; then
             sed -i -E "s|^ARGS=\"(.*)\"|ARGS=\"\1 ${flag}\"|" "$f"
         else
@@ -254,17 +257,21 @@ bind_prometheus_loopback() {
     fi
 
     # Another application's drop-in may replace ExecStart without $ARGS, which
-    # silently ignores the file above. Only extend a command line that does not
-    # read $ARGS and lacks the flag: Prometheus refuses to start when the same
-    # address is listed twice.
+    # silently ignores the file above, or hardcode another address. Prometheus
+    # refuses to start when the same address is listed twice, so a command line
+    # reading $ARGS must not get the flag again.
     exec_line="$(systemctl cat prometheus 2>/dev/null | grep -E '^ExecStart=.+' | tail -n 1)"
+    stripped="$(printf '%s' "$exec_line" | sed -E 's/ --web\.listen-address[= ][^ ]+//g')"
     case "$exec_line" in
-        ''|*'$ARGS'*|*'${ARGS}'*|*web.listen-address*) return 0 ;;
+        *'$ARGS'*|*'${ARGS}'*) suffix='' ;;
     esac
+    if [ -z "$exec_line" ] || [ "$exec_line" = "$stripped$suffix" ]; then
+        return 0
+    fi
     # shortcut: this copies the current override, so if its owner later changes
     # ExecStart, delete 90-sub-manager-loopback.conf and rerun the installer.
     install -d -m 0755 "$dropin_dir" || return 1
-    printf '[Service]\nExecStart=\n%s %s\n' "$exec_line" "$flag" \
+    printf '[Service]\nExecStart=\n%s\n' "$stripped$suffix" \
         > "$dropin_dir/90-sub-manager-loopback.conf" || return 1
     systemctl daemon-reload
 }
