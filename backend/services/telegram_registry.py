@@ -27,6 +27,27 @@ BOT_CLIENT_FLOW = "xtls-rprx-vision"
 SUPPORT_CATEGORIES = frozenset({"link", "connection", "device", "directions", "other"})
 TRAFFIC_REMINDER_THRESHOLDS = frozenset({50, 80, 95, 100})
 GUEST_LINK_DURATIONS_HOURS = frozenset({1, 3, 6, 12, 24})
+NODE_STATES = ("active", "suspended", "available_to_add", "problem")
+
+
+def _classify_customer_node_state(
+    *,
+    binding_present: bool,
+    management_state: str | None,
+    enabled: bool,
+    read_only: bool,
+    desired_enabled: bool | None,
+    eligible: bool,
+) -> str:
+    """Classify one bound or unbound node using the customer node rules."""
+
+    if not binding_present:
+        return "available_to_add" if eligible else "problem"
+    if management_state == "missing" and eligible:
+        return "available_to_add"
+    if management_state != "confirmed" or not enabled or read_only:
+        return "problem"
+    return "active" if bool(desired_enabled) else "suspended"
 
 
 def _normalize_traffic_thresholds(value: object) -> tuple[int, ...]:
@@ -518,6 +539,10 @@ class CustomerListItem:
     telegram_first_name: str | None
     telegram_last_name: str | None
     node_count: int
+    nodes_active: int
+    nodes_suspended: int
+    nodes_available: int
+    nodes_problem: int
     lifetime_bytes: int | None
     traffic_observed_at: str | None
     application_introduction: str | None
@@ -6160,6 +6185,67 @@ class TelegramRegistry:
             )
         return result
 
+    @staticmethod
+    def _customer_node_state_counts(conn: sqlite3.Connection, customer_ids: Iterable[int]) -> dict[int, dict[str, int]]:
+        """Count customer node states with local data for a set of customers."""
+
+        normalized_customer_ids = tuple(sorted({int(customer_id) for customer_id in customer_ids}))
+        if not normalized_customer_ids:
+            return {}
+        placeholders = ", ".join("?" for _ in normalized_customer_ids)
+        eligible_rows = conn.execute(
+            """
+            SELECT n.id
+            FROM telegram_node_policies AS p
+            JOIN nodes AS n ON n.id = p.node_id
+            WHERE p.provisioning_enabled = 1 AND n.enabled = 1 AND n.read_only = 0
+            """
+        ).fetchall()
+        eligible_node_ids = {int(row[0]) for row in eligible_rows}
+        counts = {
+            customer_id: {state: 0 for state in NODE_STATES}
+            for customer_id in normalized_customer_ids
+        }
+        bound_eligible_node_ids: dict[int, set[int]] = {
+            customer_id: set() for customer_id in normalized_customer_ids
+        }
+        bound_rows = conn.execute(
+            f"""
+            SELECT b.customer_id, b.node_id, n.enabled, n.read_only,
+                   b.desired_enabled, b.management_state
+            FROM customer_node_bindings AS b
+            JOIN nodes AS n ON n.id = b.node_id
+            WHERE b.customer_id IN ({placeholders})
+            """,
+            normalized_customer_ids,
+        ).fetchall()
+        for customer_id, node_id, enabled, read_only, desired_enabled, management_state in bound_rows:
+            local_customer_id = int(customer_id)
+            local_node_id = int(node_id)
+            state = _classify_customer_node_state(
+                binding_present=True,
+                management_state=str(management_state) if management_state is not None else None,
+                enabled=bool(enabled),
+                read_only=bool(read_only),
+                desired_enabled=bool(desired_enabled) if desired_enabled is not None else None,
+                eligible=local_node_id in eligible_node_ids,
+            )
+            counts[local_customer_id][state] += 1
+            if local_node_id in eligible_node_ids:
+                bound_eligible_node_ids[local_customer_id].add(local_node_id)
+        for customer_id in normalized_customer_ids:
+            state = _classify_customer_node_state(
+                binding_present=False,
+                management_state=None,
+                enabled=True,
+                read_only=False,
+                desired_enabled=None,
+                eligible=True,
+            )
+            if state == "available_to_add":
+                counts[customer_id][state] += len(eligible_node_ids) - len(bound_eligible_node_ids[customer_id])
+        return counts
+
     def customer_node_matrix(self, customer_id: int) -> list[CustomerNodeMatrixRow]:
         """Return only bindings plus genuine Telegram-enabled add targets."""
 
@@ -6189,14 +6275,14 @@ class TelegramRegistry:
 
         result: list[CustomerNodeMatrixRow] = []
         for binding_id, node_id, name, enabled, read_only, desired_enabled, management_state in bound_rows:
-            if str(management_state) == "missing" and int(node_id) in eligible_node_ids:
-                state = "available_to_add"
-            elif str(management_state) != "confirmed" or not bool(enabled) or bool(read_only):
-                state = "problem"
-            elif bool(desired_enabled):
-                state = "active"
-            else:
-                state = "suspended"
+            state = _classify_customer_node_state(
+                binding_present=True,
+                management_state=str(management_state) if management_state is not None else None,
+                enabled=bool(enabled),
+                read_only=bool(read_only),
+                desired_enabled=bool(desired_enabled) if desired_enabled is not None else None,
+                eligible=int(node_id) in eligible_node_ids,
+            )
             result.append(
                 CustomerNodeMatrixRow(
                     node_id=int(node_id),
@@ -6207,8 +6293,17 @@ class TelegramRegistry:
                     management_state=str(management_state),
                 )
             )
+        bound_node_ids = {int(bound[1]) for bound in bound_rows}
         for node_id, name in available_rows:
-            if not any(int(bound[1]) == int(node_id) for bound in bound_rows):
+            state = _classify_customer_node_state(
+                binding_present=False,
+                management_state=None,
+                enabled=True,
+                read_only=False,
+                desired_enabled=None,
+                eligible=True,
+            )
+            if state == "available_to_add" and int(node_id) not in bound_node_ids:
                 result.append(
                     CustomerNodeMatrixRow(
                         node_id=int(node_id),
@@ -6442,6 +6537,7 @@ class TelegramRegistry:
                 + " ORDER BY c.updated_at DESC, c.id DESC LIMIT ? OFFSET ?",
                 params + [page_size, (page - 1) * page_size],
             ).fetchall()
+            node_state_counts = self._customer_node_state_counts(conn, [int(row[0]) for row in rows])
         return CustomerPage(
             items=tuple(
                 CustomerListItem(
@@ -6451,7 +6547,12 @@ class TelegramRegistry:
                     telegram_username=str(row[6]) if row[6] is not None else None,
                     telegram_first_name=str(row[7]) if row[7] is not None else None,
                     telegram_last_name=str(row[8]) if row[8] is not None else None,
-                    node_count=int(row[9]), lifetime_bytes=int(row[10]) if row[10] is not None else None,
+                    node_count=int(row[9]),
+                    nodes_active=node_state_counts[int(row[0])]["active"],
+                    nodes_suspended=node_state_counts[int(row[0])]["suspended"],
+                    nodes_available=node_state_counts[int(row[0])]["available_to_add"],
+                    nodes_problem=node_state_counts[int(row[0])]["problem"],
+                    lifetime_bytes=int(row[10]) if row[10] is not None else None,
                     traffic_observed_at=str(row[11]) if row[11] is not None else None,
                     application_introduction=str(row[12]) if row[12] is not None else None,
                     created_at=str(row[13]), updated_at=str(row[14]), open_support_count=int(row[15]),
@@ -6502,13 +6603,21 @@ class TelegramRegistry:
             ).fetchone()
         if row is None:
             raise TelegramRegistryError("customer was not found")
+        with connect(self._db_path) as conn:
+            node_state_counts = self._customer_node_state_counts(conn, [normalized_customer_id])
+        customer_counts = node_state_counts[normalized_customer_id]
         return CustomerListItem(
             customer_id=int(row[0]), email_display=str(row[1]), origin=str(row[2]), status=str(row[3]),
             row_version=int(row[4]), telegram_user_id=int(row[5]) if row[5] is not None else None,
             telegram_username=str(row[6]) if row[6] is not None else None,
             telegram_first_name=str(row[7]) if row[7] is not None else None,
             telegram_last_name=str(row[8]) if row[8] is not None else None,
-            node_count=int(row[9]), lifetime_bytes=int(row[10]) if row[10] is not None else None,
+            node_count=int(row[9]),
+            nodes_active=customer_counts["active"],
+            nodes_suspended=customer_counts["suspended"],
+            nodes_available=customer_counts["available_to_add"],
+            nodes_problem=customer_counts["problem"],
+            lifetime_bytes=int(row[10]) if row[10] is not None else None,
             traffic_observed_at=str(row[11]) if row[11] is not None else None,
             application_introduction=str(row[12]) if row[12] is not None else None,
             created_at=str(row[13]), updated_at=str(row[14]), open_support_count=int(row[15]),

@@ -794,6 +794,48 @@ def test_customer_node_matrix_hides_technical_nodes_but_keeps_problem_bindings(t
     assert rows[1].binding_id is None
 
 
+def test_customer_list_node_state_counts_match_matrix_and_keep_binding_count(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "active")
+    _insert_node(db_path, 2, "suspended")
+    _insert_node(db_path, 3, "problem", read_only=1)
+    _insert_node(db_path, 4, "missing")
+    _insert_node(db_path, 5, "unbound")
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="state-counts", origin="telegram", email_source="admin", public_code="state-counts"
+    )
+    with connect(db_path) as conn:
+        conn.executemany(
+            "INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (?, 1)",
+            [(1,), (2,), (4,), (5,)],
+        )
+        conn.executemany(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, remote_email, source, desired_enabled, management_state)
+            VALUES (?, ?, 'state-counts', 'admin_confirmed', ?, ?)
+            """,
+            [
+                (customer_id, 1, 1, "confirmed"),
+                (customer_id, 2, 0, "confirmed"),
+                (customer_id, 3, 1, "confirmed"),
+                (customer_id, 4, 1, "missing"),
+            ],
+        )
+
+    matrix = registry.customer_node_matrix(customer_id)
+    expected = {state: sum(row.state == state for row in matrix) for state in ("active", "suspended", "available_to_add", "problem")}
+    item = registry.list_customers(query="state-counts", page=1, page_size=10).items[0]
+
+    assert expected == {"active": 1, "suspended": 1, "available_to_add": 2, "problem": 1}
+    assert (item.nodes_active, item.nodes_suspended, item.nodes_available, item.nodes_problem) == (
+        expected["active"], expected["suspended"], expected["available_to_add"], expected["problem"]
+    )
+    assert item.node_count == 4
+
+
 def test_customer_page_searches_only_local_authority_and_matrix_remains_filtered(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
