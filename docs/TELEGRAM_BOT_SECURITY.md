@@ -82,7 +82,10 @@ match оставляют этот gate закрытым. Эта очередь �
 
 Notification delivery is separately opt-in. The outbox leases one event at a
 time, records transient delivery failures with bounded retry/backoff and moves
-malformed or exhausted events to `dead_letter`. Delivery is at-least-once:
+malformed or exhausted events to `dead_letter`. The retry budget lasts about
+24 hours, so a route outage does not exhaust it. A Bot API 400 or 403 goes to
+`dead_letter` at once as `telegram_rejected_<code>`, because repeating it cannot
+help. Delivery is at-least-once:
 after a transport timeout the Bot API outcome is unknowable, so a later retry
 may duplicate a notification but never repeats a customer or node mutation.
 Approved users can disable background delivery in the bot settings. This only

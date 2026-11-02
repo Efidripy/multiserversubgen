@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.error import HTTPError, URLError
+
+import pytest
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.db_bootstrap import connect, init_db
-from services.telegram_outbox import TelegramOutboxWorker
+from services.telegram_outbox import TelegramApiOutboxPort, TelegramOutboxWorker
 from services.telegram_registry import TelegramRegistry
 
 
@@ -90,6 +93,83 @@ def test_uncertain_delivery_retries_with_backoff_and_dead_letters_after_bound(tm
     assert first.outcome == "retry"
     with connect(db_path) as conn:
         assert conn.execute("SELECT status, last_error_code FROM telegram_outbox").fetchone() == ("dead_letter", "delivery_uncertain")
+
+
+class FailingTransport:
+    def __init__(self, error: Exception):
+        self.error = error
+
+    def open(self, request, *, timeout):
+        raise self.error
+
+
+def _http_error(code: int) -> HTTPError:
+    return HTTPError("https://telegram.invalid", code, "rejected", None, None)
+
+
+def _queue_admin_event(db_path: str) -> None:
+    init_db(db_path)
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES ('admin_identity_auto_blocked', '42', 'one')"
+        )
+
+
+@pytest.mark.parametrize("code", [400, 403])
+def test_recipient_rejection_dead_letters_without_retry_and_keeps_the_http_code(tmp_path, code):
+    db_path = str(tmp_path / "admin.db")
+    _queue_admin_event(db_path)
+    port = TelegramApiOutboxPort("token", transport=FailingTransport(_http_error(code)))
+
+    result = _worker(db_path, port).run_once()
+
+    assert result.outcome == "dead_letter"
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT status, attempt_count, last_error_code FROM telegram_outbox").fetchone() == (
+            "dead_letter", 1, f"telegram_rejected_{code}",
+        )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [_http_error(401), _http_error(429), _http_error(500), URLError("Tunnel connection failed: 403 Forbidden")],
+)
+def test_bot_wide_and_temporary_failures_stay_retryable(tmp_path, error):
+    db_path = str(tmp_path / "admin.db")
+    _queue_admin_event(db_path)
+    port = TelegramApiOutboxPort("token", transport=FailingTransport(error))
+
+    result = _worker(db_path, port).run_once()
+
+    assert result.outcome == "retry"
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT status, last_error_code FROM telegram_outbox").fetchone() == (
+            "retry", "delivery_uncertain",
+        )
+
+
+def test_default_retry_budget_outlasts_a_day_long_outage(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    _queue_admin_event(db_path)
+    start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    clock = [start]
+    worker = TelegramOutboxWorker(
+        db_path=db_path,
+        primary_admin_id=100000001,
+        port=FakeOutboxPort(RuntimeError("timeout")),
+        worker_id="outbox-test-worker",
+        now=lambda: clock[0],
+    )
+
+    while True:
+        assert worker.run_once().processed is True
+        with connect(db_path) as conn:
+            status, next_attempt = conn.execute("SELECT status, next_attempt_at FROM telegram_outbox").fetchone()
+        if status == "dead_letter":
+            break
+        clock[0] = datetime.fromisoformat(next_attempt).replace(tzinfo=timezone.utc)
+
+    assert clock[0] - start >= timedelta(hours=24)
 
 
 def test_user_approval_event_resolves_chat_id_only_from_numeric_identity(tmp_path):
