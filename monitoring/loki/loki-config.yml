@@ -1,11 +1,17 @@
 auth_enabled: false
 
 server:
+  # Grafana, promtail, the panel and Loki's own query workers are all local.
+  http_listen_address: 127.0.0.1
   http_listen_port: 3100
+  grpc_listen_address: 127.0.0.1
   grpc_listen_port: 9096
   log_level: warn
 
 common:
+  # Without this Loki advertises the host's interface address to its own query
+  # workers, which cannot connect to a gRPC server bound to loopback.
+  instance_addr: 127.0.0.1
   path_prefix: /var/lib/loki
   storage:
     filesystem:
