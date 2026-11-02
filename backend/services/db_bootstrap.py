@@ -272,6 +272,9 @@ def init_db(db_path: str) -> None:
             """CREATE TABLE IF NOT EXISTS telegram_identities
                      (telegram_user_id INTEGER PRIMARY KEY,
                       chat_id INTEGER NOT NULL,
+                      interface_message_id INTEGER DEFAULT NULL,
+                      interface_message_has_text INTEGER NOT NULL DEFAULT 1
+                        CHECK(interface_message_has_text IN (0, 1)),
                       customer_id INTEGER DEFAULT NULL,
                       username TEXT DEFAULT NULL,
                       first_name TEXT DEFAULT NULL,
@@ -315,6 +318,17 @@ def init_db(db_path: str) -> None:
             conn.execute(
                 "ALTER TABLE telegram_identities "
                 "ADD COLUMN introduction_requested_at TEXT DEFAULT NULL"
+            )
+        if "interface_message_id" not in identity_columns:
+            conn.execute(
+                "ALTER TABLE telegram_identities "
+                "ADD COLUMN interface_message_id INTEGER DEFAULT NULL"
+            )
+        if "interface_message_has_text" not in identity_columns:
+            conn.execute(
+                "ALTER TABLE telegram_identities "
+                "ADD COLUMN interface_message_has_text INTEGER NOT NULL DEFAULT 1 "
+                "CHECK(interface_message_has_text IN (0, 1))"
             )
         # A Telegram identity can be locally linked before a complete remote
         # snapshot is known.  Keep that state explicit and fail closed on both

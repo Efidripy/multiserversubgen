@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -104,14 +105,16 @@ def test_first_start_requires_an_introduction_before_creating_a_pending_request(
     duplicate = service.handle_update(_message(1, "/start"))
     repeated_start = service.handle_update(_message(2, "/start"))
 
-    assert len(first) == 1
+    assert len(first) == 2
+    assert first[1].delete_message_id == 1
     assert first[0].reply_markup is None
     assert "⚠️ ВНИМАНИЕ" in first[0].text
     assert "не будет отправлена" in first[0].text
     lowered = first[0].text.lower()
     assert not any(term in lowered for term in ("vpn", "proxy", "подписк", "сервер", "инбаунд"))
     assert duplicate == []
-    assert len(repeated_start) == 1
+    assert len(repeated_start) == 2
+    assert repeated_start[1].best_effort
     with connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM telegram_outbox").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM telegram_applications").fetchone()[0] == 0
@@ -471,11 +474,13 @@ def test_callback_with_source_text_edits_message_while_plain_text_and_command_do
             "text": "Заявка на доступ к сервису",
         },
     })
-    assert len(intro_resp) == 1
+    assert len(intro_resp) == 2
+    assert intro_resp[1].delete_message_id == 3
     assert intro_resp[0].edit_message_id is None
 
     cmd_resp = service.handle_update(_message(4, "/start"))
-    assert len(cmd_resp) == 1
+    assert len(cmd_resp) == 2
+    assert cmd_resp[1].best_effort
     assert cmd_resp[0].edit_message_id is None
 
 
@@ -569,7 +574,17 @@ def test_callback_qr_delete_deletes_source_first_then_sends_text_without_extra_d
     assert messages[0].delete_message_id == 107
     assert messages[1].text is not None and len(messages[1].text) > 0
     assert messages[1].edit_message_id is None
-    assert messages[1].delete_message_id is None
+
+    recent = _callback_with_message_id(23, "qr:delete", 108)
+    recent["callback_query"]["message"]["date"] = int(datetime.now(timezone.utc).timestamp()) - 3600
+    assert service.handle_update(recent)[0].delete_message_id == 108
+
+    # Telegram refuses deletes after 48 hours, so the bot must not claim the QR is gone.
+    old = _callback_with_message_id(24, "qr:delete", 109)
+    old["callback_query"]["message"]["date"] = int(datetime.now(timezone.utc).timestamp()) - 49 * 3600
+    answered = service.handle_update(old)
+    assert "48" in answered[0].text
+    assert 109 not in {message.delete_message_id for message in answered}
 
 
 def test_screen_without_keyboard_adds_navigation_markup_according_to_role_and_prefix(tmp_path):
@@ -607,7 +622,7 @@ def test_screen_without_keyboard_adds_navigation_markup_according_to_role_and_pr
     # 1. Approved user on client button -> gets menu:home
     actor_approved = (42, 42, {"id": 42}, None, "support:appeal", None, 201)
     update_approved = _callback_with_message_id(51, "support:appeal", 201, text="Меню")
-    out_approved = service._apply_callback_window(
+    out_approved = service._apply_window(
         [TelegramOutboundMessage(chat_id=42, text="Обращение", reply_markup=None)],
         update_approved,
         actor_approved,
@@ -621,7 +636,7 @@ def test_screen_without_keyboard_adds_navigation_markup_according_to_role_and_pr
     update_unapproved = _callback_with_message_id(52, "registration:intro", 202, text="Меню")
     update_unapproved["callback_query"]["from"]["id"] = 43
     update_unapproved["callback_query"]["message"]["chat"]["id"] = 43
-    out_unapproved = service._apply_callback_window(
+    out_unapproved = service._apply_window(
         [TelegramOutboundMessage(chat_id=43, text="Вводный текст", reply_markup=None)],
         update_unapproved,
         actor_unapproved,
@@ -634,7 +649,7 @@ def test_screen_without_keyboard_adds_navigation_markup_according_to_role_and_pr
     update_admin = _admin_callback(53, "admin:custom_action")
     update_admin["callback_query"]["message"]["message_id"] = 203
     update_admin["callback_query"]["message"]["text"] = "Панель"
-    out_admin = service._apply_callback_window(
+    out_admin = service._apply_window(
         [TelegramOutboundMessage(chat_id=1, text="Инфо", reply_markup=None)],
         update_admin,
         actor_admin,
@@ -648,7 +663,7 @@ def test_screen_without_keyboard_adds_navigation_markup_according_to_role_and_pr
     update_admin_client = _callback_with_message_id(54, "help", 204, text="Меню")
     update_admin_client["callback_query"]["from"]["id"] = 1
     update_admin_client["callback_query"]["message"]["chat"]["id"] = 1
-    out_admin_client = service._apply_callback_window(
+    out_admin_client = service._apply_window(
         [TelegramOutboundMessage(chat_id=1, text="Помощь", reply_markup=None)],
         update_admin_client,
         actor_admin_client,
@@ -671,12 +686,12 @@ def test_apply_callback_window_does_not_modify_messages_for_different_chat_id(tm
     other_msg = TelegramOutboundMessage(chat_id=999, text="Уведомление для чата 999", reply_markup=None)
     actor_msg = TelegramOutboundMessage(chat_id=42, text="Ответ для чата 42", reply_markup=None)
 
-    res_only_other = service._apply_callback_window([other_msg], update, actor, "ru")
+    res_only_other = service._apply_window([other_msg], update, actor, "ru")
     assert res_only_other[0].chat_id == 999
     assert res_only_other[0].edit_message_id is None
     assert res_only_other[0].reply_markup is None
 
-    res_mixed = service._apply_callback_window([actor_msg, other_msg], update, actor, "ru")
+    res_mixed = service._apply_window([actor_msg, other_msg], update, actor, "ru")
     assert res_mixed[0].chat_id == 42
     assert res_mixed[0].edit_message_id == 101
     assert res_mixed[1].chat_id == 999
@@ -1191,6 +1206,7 @@ def test_qr_can_be_explicitly_deleted_from_the_chat(tmp_path):
 
     assert delete_button["text"] == "⌫ Удалить QR"
     assert deleted[0].delete_message_id == 777
+    assert deleted[1].delete_message_id is None
     assert deleted[1].text == "QR-код удалён из чата."
 
 
@@ -2210,7 +2226,7 @@ def test_webhook_requires_exact_suffix_and_secret_then_dispatches_private_update
 
     assert accepted.status_code == 200
     assert accepted.json() == {"ok": True}
-    assert len(sender.messages) == 1
+    assert len(sender.messages) == 2
 
 
 def test_webhook_retries_a_durable_response_without_replaying_the_update(tmp_path):
@@ -2396,12 +2412,13 @@ def test_webhook_subscription_link_falls_back_to_a_new_message_if_the_current_ca
         json=_callback_with_message_id(32, "subscription:link:primary", 401, text="Выбор ссылки"),
     ).status_code == 200
 
-    assert len(sender.messages) == 3
-    assert sender.messages[0].edit_message_id is None
-    assert sender.messages[1].edit_message_id is None
-    assert "Выберите уже созданное устройство" in sender.messages[1].text
-    assert "Персональная ссылка доступа" in sender.messages[2].text
-    assert sender.messages[2].edit_message_id is None
+    visible = [message for message in sender.messages if not message.best_effort]
+    assert len(visible) == 3
+    assert visible[0].edit_message_id is None
+    assert visible[1].edit_message_id is None
+    assert "Выберите уже созданное устройство" in visible[1].text
+    assert "Персональная ссылка доступа" in visible[2].text
+    assert visible[2].edit_message_id is None
 
 
 def test_webhook_admin_can_adopt_a_discovered_legacy_customer_without_remote_write(tmp_path):
@@ -2542,7 +2559,7 @@ def test_webhook_answers_callback_query_and_handles_failures_and_missing_method(
     )
     assert res2.status_code == 200
     assert sender_failing.answers == ["callback-72"]
-    assert len(sender_failing.messages) == 1
+    assert len(sender_failing.messages) == 2
 
     # 3. Sender without answer_callback_query method (standard _Sender)
     sender_plain = _Sender()
@@ -2556,4 +2573,234 @@ def test_webhook_answers_callback_query_and_handles_failures_and_missing_method(
         json=_callback_with_message_id(73, "help", 103, text="Меню"),
     )
     assert res3.status_code == 200
-    assert len(sender_plain.messages) == 1
+    assert len([message for message in sender_plain.messages if not message.best_effort]) == 1
+
+
+def test_interface_window_is_recorded_for_text_and_photo_deliveries(tmp_path):
+    db_path = str(tmp_path / "window.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(telegram_user_id=42, chat_id=42, username="window", first_name="Window", last_name=None)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    service.record_outbound_delivery(TelegramOutboundMessage(42, "card", window_user_id=42), 101)
+    assert registry.get_interface_window(42) == (101, True)
+    service.record_outbound_delivery(TelegramOutboundMessage(42, "", photo_png=b"png", window_user_id=42), 102)
+    assert registry.get_interface_window(42) == (102, False)
+
+
+def test_text_window_replacement_and_command_deletions_are_ordered(tmp_path):
+    db_path = str(tmp_path / "window-flow.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="window_flow")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    registry.set_interface_window(telegram_user_id=42, message_id=200, has_text=True)
+    registry.begin_support_request(telegram_user_id=42, category="other")
+
+    ordinary = service.handle_update(_message(1, "hello"))
+    assert ordinary[0].edit_message_id == 200
+    assert [m.delete_message_id for m in ordinary[1:]] == [1]
+    assert all(m.best_effort for m in ordinary[1:])
+
+    command = service.handle_update(_message(2, "/status"))
+    assert command[0].edit_message_id is None
+    assert [m.delete_message_id for m in command[1:]] == [200, 2]
+    assert all(m.best_effort for m in command[1:])
+
+
+def test_text_without_window_and_photo_window_use_new_message_and_cleanup(tmp_path):
+    db_path = str(tmp_path / "window-fallback.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="window_fallback")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    registry.begin_support_request(telegram_user_id=42, category="other")
+    unknown = service.handle_update(_message(1, "hello"))
+    assert unknown[0].edit_message_id is None
+    assert [m.delete_message_id for m in unknown[1:]] == [1]
+
+    registry.set_interface_window(telegram_user_id=42, message_id=300, has_text=False)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_support_requests SET status = 'resolved'")
+    registry.begin_support_request(telegram_user_id=42, category="other")
+    photo = service.handle_update(_message(2, "hello again"))
+    assert photo[0].edit_message_id is None
+    assert [m.delete_message_id for m in photo[1:]] == [300, 2]
+
+
+def test_callback_replaces_old_window_and_qr_delete_does_not_duplicate_ids(tmp_path):
+    db_path = str(tmp_path / "callback-window.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="callback_window")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+
+    registry.set_interface_window(telegram_user_id=42, message_id=200, has_text=True)
+    moved = service.handle_update(_callback_with_message_id(1, "help", 101, text="old card"))
+    assert moved[0].edit_message_id == 101
+    assert [m.delete_message_id for m in moved[1:]] == [200]
+
+    registry.set_interface_window(telegram_user_id=42, message_id=101, has_text=True)
+    same = service.handle_update(_callback_with_message_id(2, "help", 101, text="old card"))
+    assert same[0].edit_message_id == 101
+    assert not any(m.delete_message_id is not None for m in same[1:])
+
+    registry.set_interface_window(telegram_user_id=42, message_id=200, has_text=False)
+    qr = service.handle_update(_callback_with_message_id(3, "qr:delete", 101))
+    assert qr[0].delete_message_id == 101
+    assert {m.delete_message_id for m in qr[1:]} == {200, None}
+    assert len([m for m in qr if m.delete_message_id == 101]) == 1
+
+
+def test_invalid_user_text_is_kept_while_window_is_replaced(tmp_path):
+    db_path = str(tmp_path / "invalid-text.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="invalid_text")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    registry.set_interface_window(telegram_user_id=42, message_id=500, has_text=True)
+    service.handle_update(_callback(1, "support:category:other"))
+
+    invalid = service.handle_update(_message(2, "x" * 1001))
+    assert invalid[0].keep_user_message
+    assert invalid[0].edit_message_id is None
+    assert [m.delete_message_id for m in invalid[1:]] == [500]
+    assert 2 not in [m.delete_message_id for m in invalid]
+
+    service.handle_update(_callback(3, "subscription:link:new"))
+    device = registry.list_subscription_devices(42)[0]
+    service.handle_update(_callback(4, f"subscription-device:rename:{device.device_id}"))
+    registry.set_interface_window(telegram_user_id=42, message_id=600, has_text=True)
+    rename_invalid = service.handle_update(_message(5, "y" * 300))
+    assert rename_invalid[0].keep_user_message
+    assert 5 not in [m.delete_message_id for m in rename_invalid]
+
+
+def test_accepted_support_text_is_shown_in_confirmation(tmp_path):
+    db_path = str(tmp_path / "support-preview.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="support_preview")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    service.handle_update(_callback(1, "support:category:other"))
+    text = "a" * 500
+    response = service.handle_update(_message(2, text))[0]
+    assert f"«{service._support_preview(text)}»" in response.text
+
+
+def test_suppressed_response_does_not_delete_user_message_or_window(tmp_path):
+    db_path = str(tmp_path / "suppressed.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    service.handle_update(_message(1, "/start"))
+    service.handle_update(_message(2, "intro"))
+    from services.telegram_registry import AbuseNoopResult
+    registry.record_unapproved_noop = lambda _user_id: AbuseNoopResult(
+        auto_blocked=False, suppress_response=True, noop_count=11
+    )
+    assert service.handle_update(_message(3, "/start")) == []
+
+
+def test_best_effort_deletions_are_excluded_from_retry_responses(tmp_path):
+    db_path = str(tmp_path / "retry-window.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="retry_window")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    registry.set_interface_window(telegram_user_id=42, message_id=800, has_text=True)
+    first = service.handle_update(_message(1, "/status"))
+    assert [m.update_response_index for m in first if not m.best_effort] == [0]
+    assert all(m.update_response_index is None for m in first if m.best_effort)
+    service.retry_update_response(first[0])
+    repeated = service.handle_update(_message(1, "/status"))
+    assert [m.update_response_index for m in repeated if not m.best_effort] == [0]
+
+    # The retried message takes over the window, and the old window is cleaned up.
+    assert [m.delete_message_id for m in repeated if m.best_effort] == [800]
+    service.record_outbound_delivery(repeated[0], 900)
+    assert registry.get_interface_window(42) == (900, True)
+
+
+def test_outbound_message_for_another_chat_does_not_become_a_window(tmp_path):
+    db_path = str(tmp_path / "other-chat.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    update = _message(1, "hello")
+    actor = (42, 42, update["message"]["from"], "hello", None, None, 1)
+    messages = [TelegramOutboundMessage(99, "other chat")]
+    assert service._apply_window(messages, update, actor, "ru") == messages
+
+
+def test_notice_close_returns_only_best_effort_deletion(tmp_path):
+    db_path = str(tmp_path / "notice-close.db")
+    init_db(db_path)
+    service = TelegramRegistrationService(TelegramRegistry(db_path), introduction_max_chars=700)
+    response = service.handle_update(_callback_with_message_id(1, "notice:close", 901))
+    assert len(response) == 1
+    assert response[0].delete_message_id == 901
+    assert response[0].best_effort
+    assert response[0].text == ""
+
+
+def test_notice_close_preserves_support_draft_for_followup_text(tmp_path):
+    db_path = str(tmp_path / "notice-support.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="notice_support")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    service.handle_update(_callback(1, "support:category:other"))
+    service.handle_update(_callback_with_message_id(2, "notice:close", 902))
+    preview = service.handle_update(_message(3, "После закрытия"))
+    assert preview and "После закрытия" in preview[0].text
+    assert registry.list_support_requests(status="open")
+
+
+def test_notice_close_bypasses_block_and_unapproved_noop_accounting(tmp_path):
+    db_path = str(tmp_path / "notice-access.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    blocked = registry.get_or_create_identity(telegram_user_id=42, chat_id=42, username="blocked", first_name="Blocked", last_name=None)
+    registry.block_identity(telegram_user_id=42, expected_identity_version=blocked.row_version, idempotency_key="block-notice", blocked_by="test")
+    assert service.handle_update(_callback_with_message_id(1, "notice:close", 903))[0].delete_message_id == 903
+    registry.get_or_create_identity(telegram_user_id=43, chat_id=43, username="unapproved", first_name="User", last_name=None)
+    unapproved_update = _callback_with_message_id(2, "notice:close", 904)
+    unapproved_update["callback_query"]["from"]["id"] = 43
+    unapproved_update["callback_query"]["message"]["chat"]["id"] = 43
+    assert service.handle_update(unapproved_update)[0].delete_message_id == 904
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT consecutive_noop_count FROM telegram_abuse_state WHERE telegram_user_id = 43").fetchone() is None
+
+
+def test_primary_admin_notice_close_preserves_admin_draft(tmp_path):
+    db_path = str(tmp_path / "notice-admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(email_display="target", origin="telegram", email_source="telegram_username", public_code="target")
+    registry.get_or_create_identity(telegram_user_id=42, chat_id=42, username="target", first_name="Target", last_name=None)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42", (customer_id,))
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=100000001)
+    service.handle_update(_admin_callback(1, f"admin:message:{customer_id}:0"))
+    deleted = _admin_callback(2, "notice:close")
+    deleted["callback_query"]["message"]["message_id"] = 905
+    deleted = service.handle_update(deleted)
+    assert deleted[0].best_effort
+    preview = service.handle_update(_admin_message(3, "Черновик сохранился"))
+    assert preview and "Черновик сохранился" in preview[0].text
+
+
+def test_notice_close_does_not_change_interface_window(tmp_path):
+    db_path = str(tmp_path / "notice-window.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="notice_window")
+    registry.set_interface_window(telegram_user_id=42, message_id=777, has_text=True)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    response = service.handle_update(_callback_with_message_id(1, "notice:close", 906))
+    assert response[0].delete_message_id == 906
+    assert registry.get_interface_window(42) == (777, True)

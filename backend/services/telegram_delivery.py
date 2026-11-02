@@ -128,8 +128,36 @@ class TelegramApiSender:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        self._send_request(request, deleting_message=True)
+        delete_error_description: list[str] = []
+        try:
+            self._send_request(
+                request,
+                deleting_message=True,
+                delete_error_description=delete_error_description,
+            )
+            if message.best_effort and delete_error_description and "message can't be deleted" in delete_error_description[0]:
+                try:
+                    self._edit_message_reply_markup(message)
+                except Exception:
+                    pass
+        except Exception:
+            if not message.best_effort:
+                raise
         return None
+
+    def _edit_message_reply_markup(self, message: TelegramOutboundMessage) -> None:
+        payload = {
+            "chat_id": message.chat_id,
+            "message_id": message.delete_message_id,
+            "reply_markup": {"inline_keyboard": []},
+        }
+        request = UrlRequest(
+            f"{self._endpoint()}/editMessageReplyMarkup",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        self._send_request(request)
 
     def _send_request(
         self,
@@ -137,6 +165,7 @@ class TelegramApiSender:
         *,
         edited_message_id: int | None = None,
         deleting_message: bool = False,
+        delete_error_description: list[str] | None = None,
     ) -> int | None:
         try:
             with self._transport.open(request, timeout=10) as response:
@@ -145,6 +174,8 @@ class TelegramApiSender:
                 body = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
             description = self._error_description(exc)
+            if delete_error_description is not None:
+                delete_error_description.append(description)
             if deleting_message and self._is_undeletable_message(description):
                 return None
             if edited_message_id is not None and "message is not modified" in description:

@@ -160,6 +160,60 @@ def test_sender_delete_ignores_not_found_and_cant_be_deleted_but_raises_other_er
         sender3.send(TelegramOutboundMessage(chat_id=42, text="", delete_message_id=77))
 
 
+class _SequenceTransport:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.requests = []
+
+    def open(self, request, *, timeout):
+        self.requests.append(request)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+def test_best_effort_delete_swallows_network_and_bad_request_errors():
+    network = _SequenceTransport([OSError("offline")])
+    assert TelegramApiSender("token", transport=network).send(
+        TelegramOutboundMessage(42, "", delete_message_id=77, best_effort=True)
+    ) is None
+    bad_request = TelegramApiSender("token", transport=_ErrorTransport("Bad Request: chat not found"))
+    assert bad_request.send(
+        TelegramOutboundMessage(42, "", delete_message_id=77, best_effort=True)
+    ) is None
+
+
+def test_best_effort_cant_delete_clears_markup_and_swallows_markup_failure():
+    # The first response must be a Telegram HTTP error; the second is the
+    # swallowed editMessageReplyMarkup failure.
+    class _FirstCantDeleteThenFail:
+        def __init__(self):
+            self.requests = []
+
+        def open(self, request, *, timeout):
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                raise HTTPError(request.full_url, 400, "Bad Request", {}, io.BytesIO(
+                    b'{"ok":false,"description":"Bad Request: message can\'t be deleted"}'
+                ))
+            raise OSError("markup failure")
+
+    transport = _FirstCantDeleteThenFail()
+    assert TelegramApiSender("token", transport=transport).send(
+        TelegramOutboundMessage(42, "", delete_message_id=77, best_effort=True)
+    ) is None
+    assert len(transport.requests) == 2
+    assert transport.requests[1].full_url.endswith("/editMessageReplyMarkup")
+    assert json.loads(transport.requests[1].data)["reply_markup"] == {"inline_keyboard": []}
+
+
+def test_best_effort_not_found_does_not_clear_markup():
+    transport = _ErrorTransport("Bad Request: message to delete not found")
+    sender = TelegramApiSender("token", transport=transport)
+    assert sender.send(TelegramOutboundMessage(42, "", delete_message_id=77, best_effort=True)) is None
+
+
 def test_sender_answer_callback_query_sends_correct_payload():
     transport = _Transport()
     TelegramApiSender("test-token", transport=transport).answer_callback_query("cb_query_123")
