@@ -491,6 +491,14 @@ export async function dismissTelegramJob(job: ProvisioningJob): Promise<void> {
   );
 }
 
+export async function dismissCustomerOperation(operation: CustomerOperation): Promise<void> {
+  await api.post(
+    `/v1/telegram/customer-operations/${operation.operation_id}/dismiss`,
+    { expected_operation_version: operation.row_version, idempotency_key: newIdempotencyKey() },
+    { auth: getAuth() },
+  );
+}
+
 export async function listTelegramAppeals(signal?: AbortSignal): Promise<TelegramAppeal[]> {
   const response = await api.get('/v1/telegram/appeals', { auth: getAuth(), signal, params: { status: 'open' } });
   return Array.isArray(response.data?.items) ? response.data.items : [];

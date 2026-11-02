@@ -7365,8 +7365,9 @@ class TelegramRegistry:
         expected_version = _positive_int(expected_operation_version, "expected_operation_version")
         key = _nonempty(idempotency_key, "idempotency_key")
         actor = _nonempty(requested_by, "requested_by")
-        if action not in {"retry", "reconcile"}:
+        if action not in {"retry", "reconcile", "dismiss"}:
             raise TelegramRegistryError("unsupported customer operation action")
+        dismiss = action == "dismiss"
         payload = {
             "operation_id": normalized_operation_id,
             "expected_operation_version": expected_version,
@@ -7393,31 +7394,43 @@ class TelegramRegistry:
                 raise VersionConflictError("customer operation was updated by another worker or administrator")
             if str(operation[0]) not in {"partial", "failed"} or operation[2] is not None:
                 raise VersionConflictError("customer operation cannot be rescheduled in its current state")
-            changed = conn.execute(
-                """
-                UPDATE telegram_customer_operation_attempts
-                SET status = 'pending', error_code = NULL, error_summary = NULL, next_attempt_at = NULL,
-                    finished_at = NULL, updated_at = CURRENT_TIMESTAMP
-                WHERE operation_id = ? AND status IN ('failed', 'blocked', 'ambiguous', 'missing')
-                """,
-                (normalized_operation_id,),
-            )
-            if changed.rowcount == 0:
-                raise LifecycleUnavailableError("customer operation has no safe retryable attempts")
-            update = conn.execute(
-                """
-                UPDATE telegram_customer_operations
-                SET status = 'queued', next_attempt_at = NULL, finished_at = NULL,
-                    row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND row_version = ? AND lease_until IS NULL
-                """,
-                (normalized_operation_id, expected_version),
-            )
+            if dismiss:
+                # No status means "abandoned"; hide it from the attention list but keep the history.
+                update = conn.execute(
+                    """
+                    UPDATE telegram_customer_operations
+                    SET dismissed_at = CURRENT_TIMESTAMP, row_version = row_version + 1,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND row_version = ? AND lease_until IS NULL
+                    """,
+                    (normalized_operation_id, expected_version),
+                )
+            else:
+                changed = conn.execute(
+                    """
+                    UPDATE telegram_customer_operation_attempts
+                    SET status = 'pending', error_code = NULL, error_summary = NULL, next_attempt_at = NULL,
+                        finished_at = NULL, updated_at = CURRENT_TIMESTAMP
+                    WHERE operation_id = ? AND status IN ('failed', 'blocked', 'ambiguous', 'missing')
+                    """,
+                    (normalized_operation_id,),
+                )
+                if changed.rowcount == 0:
+                    raise LifecycleUnavailableError("customer operation has no safe retryable attempts")
+                update = conn.execute(
+                    """
+                    UPDATE telegram_customer_operations
+                    SET status = 'queued', next_attempt_at = NULL, finished_at = NULL,
+                        row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ? AND row_version = ? AND lease_until IS NULL
+                    """,
+                    (normalized_operation_id, expected_version),
+                )
             if update.rowcount != 1:
                 raise VersionConflictError("customer operation was updated by another worker or administrator")
             result = CustomerOperationRescheduleResult(
                 operation_id=normalized_operation_id,
-                status="queued",
+                status=str(operation[0]) if dismiss else "queued",
                 row_version=expected_version + 1,
             )
             conn.execute(
@@ -7433,7 +7446,8 @@ class TelegramRegistry:
                     (event_type, actor_type, actor_id, entity_type, entity_id, payload_digest)
                 VALUES (?, 'admin', ?, 'customer_operation', ?, ?)
                 """,
-                (f"customer_operation_{action}_queued", actor, str(normalized_operation_id), digest),
+                ("customer_operation_dismissed" if dismiss else f"customer_operation_{action}_queued",
+                 actor, str(normalized_operation_id), digest),
             )
         return result
 
@@ -7451,7 +7465,7 @@ class TelegramRegistry:
                 suspended_customers=count("SELECT COUNT(*) FROM customers WHERE status = 'suspended' AND deleted_at IS NULL"),
                 lifecycle_attention=count(
                     "SELECT COUNT(*) FROM telegram_customer_operations "
-                    "WHERE status IN ('partial', 'failed', 'running')"
+                    "WHERE status IN ('partial', 'failed', 'running') AND dismissed_at IS NULL"
                 ),
                 provisioning_attention=count(
                     "SELECT COUNT(*) FROM telegram_provisioning_jobs "
@@ -7473,12 +7487,12 @@ class TelegramRegistry:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
             raise TelegramRegistryError("limit must be an integer from 1 to 200")
         with connect(self._db_path) as conn:
-            def ids(table: str) -> list[int]:
+            def ids(table: str, extra: str = "") -> list[int]:
                 return [int(row[0]) for row in conn.execute(
-                    f"SELECT id FROM {table} WHERE status IN ('partial', 'failed', 'running') "
+                    f"SELECT id FROM {table} WHERE status IN ('partial', 'failed', 'running'){extra} "
                     "ORDER BY id DESC LIMIT ?", (limit,)
                 ).fetchall()]
-            operation_ids = ids("telegram_customer_operations")
+            operation_ids = ids("telegram_customer_operations", " AND dismissed_at IS NULL")
             lifecycle = [self._get_customer_operation_from_conn(conn, i) for i in operation_ids]
             job_ids = ids("telegram_provisioning_jobs")
         return {

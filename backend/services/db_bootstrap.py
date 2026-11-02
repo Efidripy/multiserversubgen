@@ -1113,6 +1113,7 @@ def init_db(db_path: str) -> None:
                 "ALTER TABLE telegram_customer_operations "
                 "ADD COLUMN row_version INTEGER NOT NULL DEFAULT 1",
             ),
+            ("dismissed_at", "ALTER TABLE telegram_customer_operations ADD COLUMN dismissed_at TEXT DEFAULT NULL"),
         ]
         for column_name, statement in operation_migrations:
             if column_name not in operation_columns:
