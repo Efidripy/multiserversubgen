@@ -209,6 +209,15 @@ def build_telegram_admin_router(
         require_admin(request)
         return {"dashboard": asdict(registry.get_admin_dashboard())}
 
+    @router.get("/api/v1/telegram/attention")
+    def get_telegram_attention(request: Request):
+        require_admin(request)
+        try:
+            items = registry.list_attention_items()
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {key: [asdict(item) for item in value] for key, value in items.items()}
+
     @router.get("/api/v1/telegram/preapprovals/{telegram_user_id}")
     def get_telegram_preapproval(telegram_user_id: int, request: Request):
         require_admin(request)

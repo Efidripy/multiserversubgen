@@ -116,6 +116,7 @@
     "operations": "Операции",
     "attentionTitle": "Требуют внимания",
     "attentionItems": "проблем в очереди",
+    "attentionTruncated": "Показано {{shown}} из {{total}}; остальные появятся после обработки этих.",
     "attentionEmpty": "проблем не обнаружено",
     "suspend": "Приостановить",
     "resume": "Возобновить",

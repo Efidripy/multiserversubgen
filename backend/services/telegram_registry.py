@@ -7463,6 +7463,25 @@ class TelegramRegistry:
                 ),
             )
 
+    def list_attention_items(self, *, limit: int = 100) -> dict[str, list[Any]]:
+        """Jobs and lifecycle operations counted by get_admin_dashboard, so the UI can act on them."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
+            raise TelegramRegistryError("limit must be an integer from 1 to 200")
+        with connect(self._db_path) as conn:
+            def ids(table: str) -> list[int]:
+                return [int(row[0]) for row in conn.execute(
+                    f"SELECT id FROM {table} WHERE status IN ('partial', 'failed', 'running') "
+                    "ORDER BY id DESC LIMIT ?", (limit,)
+                ).fetchall()]
+            operation_ids = ids("telegram_customer_operations")
+            lifecycle = [self._get_customer_operation_from_conn(conn, i) for i in operation_ids]
+            job_ids = ids("telegram_provisioning_jobs")
+        return {
+            "provisioning": [self.get_provisioning_job(i) for i in job_ids],
+            "lifecycle": lifecycle,
+        }
+
     def list_customer_tags(self, customer_id: int) -> tuple[CustomerTag, ...]:
         local_customer_id = _positive_int(customer_id, "customer_id")
         with connect(self._db_path) as conn:

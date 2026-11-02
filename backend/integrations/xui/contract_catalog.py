@@ -21,7 +21,7 @@ V3_SPEC_PATH = Path(__file__).with_name("openapi") / "3x-ui-3.x.openapi.json"
 V2_LEGACY_MANIFEST_PATH = (
     Path(__file__).resolve().parents[3] / "docs" / "contracts" / "3x-ui-v2-legacy-manifest.json"
 )
-V3_SPEC_SHA256 = "3eeca204fe9191d495d7c455d30001b3727a41f7ba0976c93eecab4152dc9a7c"
+V3_SPEC_SHA256 = "574e124e4524f238f224cbf7a6e2061c81bd51b963aec15fc859a97706719d0f"
 V3_EXPECTED_OPENAPI_VERSION = "3.0.3"
 V3_EXPECTED_TITLE = "3X-UI Panel API"
 V3_EXPECTED_API_VERSION = "3.x"

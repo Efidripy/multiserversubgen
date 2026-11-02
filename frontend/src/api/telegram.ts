@@ -299,6 +299,14 @@ export async function getTelegramDashboard(signal?: AbortSignal): Promise<Telegr
   return response.data?.dashboard as TelegramAdminDashboard;
 }
 
+export async function getTelegramAttention(signal?: AbortSignal): Promise<{ provisioning: ProvisioningJob[]; lifecycle: CustomerOperation[] }> {
+  const response = await api.get('/v1/telegram/attention', { auth: getAuth(), signal });
+  return {
+    provisioning: Array.isArray(response.data?.provisioning) ? response.data.provisioning : [],
+    lifecycle: Array.isArray(response.data?.lifecycle) ? response.data.lifecycle : [],
+  };
+}
+
 export async function getCustomerTags(customerId: number, refreshToken?: number, signal?: AbortSignal): Promise<CustomerTag[]> {
   const response = await api.get(`/v1/telegram/customers/${customerId}/tags`, { auth: getAuth(), signal, params: refreshToken ? { _refresh: refreshToken } : undefined });
   return Array.isArray(response.data?.items) ? response.data.items : [];

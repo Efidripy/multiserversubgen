@@ -28,6 +28,7 @@ import {
   getCustomerTags,
   getCustomerTimeline,
   getTelegramDashboard,
+  getTelegramAttention,
   getTelegramBotConfiguration,
   getTelegramTransport,
   clearTelegramJobHistory,
@@ -166,6 +167,7 @@ export const TelegramAdmin: React.FC = () => {
   const [supportMessageBody, setSupportMessageBody] = useState('');
   const [supportMessageConfirmation, setSupportMessageConfirmation] = useState<string | null>(null);
   const [dashboard, setDashboard] = useState<Record<string, number> | null>(null);
+  const [attention, setAttention] = useState<{ provisioning: ProvisioningJob[]; lifecycle: CustomerOperation[] }>({ provisioning: [], lifecycle: [] });
   const [schedules, setSchedules] = useState<LifecycleSchedule[]>([]);
   const [driftFindings, setDriftFindings] = useState<DriftFinding[]>([]);
   const [selectedCustomerIds, setSelectedCustomerIds] = useState<number[]>([]);
@@ -330,8 +332,9 @@ export const TelegramAdmin: React.FC = () => {
 
   const loadOperations = useCallback(async () => {
     await runDomainRead('operations',
-      async (signal) => Promise.all([listTelegramJobsPage(5, 0, signal), getTelegramDashboard(signal), listLifecycleSchedules(undefined, signal), listDriftFindings(signal)]),
-      ([nextJobsPage, nextDashboard, nextSchedules, nextDrift]) => {
+      async (signal) => Promise.all([listTelegramJobsPage(5, 0, signal), getTelegramDashboard(signal), listLifecycleSchedules(undefined, signal), listDriftFindings(signal), getTelegramAttention(signal)]),
+      ([nextJobsPage, nextDashboard, nextSchedules, nextDrift, nextAttention]) => {
+        setAttention(nextAttention);
         setJobs(nextJobsPage.items);
         setJobsTotal(nextJobsPage.total);
         setDashboard(nextDashboard);
@@ -868,7 +871,7 @@ export const TelegramAdmin: React.FC = () => {
   }, [customerRefreshDeadline, hasPendingCustomerWork, isCustomerDialogOpen, refreshCustomerDetails, selectedCustomer]);
 
   const usersAttention = requests.length + appeals.length + openSupportRequests.length;
-  const operationsAttention = jobs.filter((job) => ['partial', 'failed', 'ambiguous', 'blocked'].includes(job.status)).length + driftFindings.length;
+  const operationsAttention = (dashboard?.provisioning_attention ?? 0) + (dashboard?.lifecycle_attention ?? 0) + (dashboard?.open_drift_findings ?? driftFindings.length);
   const tabs: Array<{ id: TelegramAdminTab; icon: React.ComponentProps<typeof UIIcon>['name']; label: string; attention?: number }> = [
     { id: 'users', icon: 'clients', label: t('telegram.tabs.users'), attention: usersAttention },
     { id: 'operations', icon: 'monitoring', label: t('telegram.tabs.operations'), attention: operationsAttention },
@@ -917,6 +920,8 @@ export const TelegramAdmin: React.FC = () => {
           <h3 className="text-[13px] font-semibold uppercase tracking-[0.14em] text-slate-200">{t('telegram.attentionTitle')}</h3>
           <div className={`mt-3 rounded border p-3 ${operationsAttention > 0 ? 'border-amber-400/25 bg-amber-400/[0.055]' : 'border-emerald-400/20 bg-emerald-400/[0.04]'}`}><span className="block font-mono text-[18px] text-[#e9f1f8]">{operationsAttention}</span><span className="mt-1 block text-[12px] uppercase tracking-[0.12em] text-slate-500">{operationsAttention > 0 ? t('telegram.attentionItems') : t('telegram.attentionEmpty')}</span></div>
           <div className="mt-3 grid grid-cols-3 gap-2">{[['provisioning_attention', 'telegram.dashboardProvisioning'], ['lifecycle_attention', 'telegram.dashboardLifecycle'], ['open_drift_findings', 'telegram.dashboardDrift']].map(([key, label]) => <div key={key} className="rounded border border-cyan-400/10 bg-[#0a0f19] px-2 py-2"><span className="block font-mono text-[14px] text-cyan-100">{dashboard[key] ?? 0}</span><span className="mt-1 block text-[11px] uppercase tracking-[0.08em] text-slate-500">{t(label)}</span></div>)}</div>
+          {(() => { const shown = attention.provisioning.length + attention.lifecycle.length; const total = (dashboard?.provisioning_attention ?? 0) + (dashboard?.lifecycle_attention ?? 0); return total > shown ? <p className="mt-3 text-[12px] text-amber-200">{t('telegram.attentionTruncated', { shown, total })}</p> : null; })()}
+          {(attention.provisioning.length > 0 || attention.lifecycle.length > 0) && <div className="mt-3 space-y-2">{[...attention.provisioning.map((job) => ({ key: `p${job.job_id}`, email: job.customer_email, label: `${job.trigger} · ${job.status}`, detail: job.attempts.filter((a) => a.status !== 'succeeded').map((a) => `${a.node_name}: ${a.error_code ?? a.status}`).join(', '), retryable: ['partial', 'failed'].includes(job.status), run: () => reconcileTelegramJob(job) })), ...attention.lifecycle.map((operation) => ({ key: `o${operation.operation_id}`, email: operation.customer_email, label: `${operation.operation_type} · ${operation.status}`, detail: operation.attempts.filter((a) => a.status !== 'succeeded').map((a) => `${a.node_name}: ${a.error_code ?? a.status}`).join(', '), retryable: ['partial', 'failed'].includes(operation.status), run: () => retryCustomerOperation(operation) }))].map((item) => <div key={item.key} className="rounded border border-amber-400/20 bg-[#0a0f19] px-2 py-2"><p className="truncate text-[13px] text-slate-200">{item.email}</p><p className="mt-1 font-mono text-[11px] text-amber-200">{item.label}</p>{item.detail && <p className="mt-1 break-words text-[11px] text-slate-500">{item.detail}</p>}{item.retryable && <button type="button" className={`${buttonClass} mt-2`} disabled={mutating} onClick={async () => { setMutating(true); try { await item.run(); toast(t('telegram.operationQueued'), 'success'); await loadOperations(); } catch { toast(t('telegram.actionFailed'), 'error'); } finally { setMutating(false); } }}>{t('telegram.reconcile')}</button>}</div>)}</div>}
         </aside>
       </div>}
 

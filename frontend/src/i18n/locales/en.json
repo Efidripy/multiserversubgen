@@ -116,6 +116,7 @@
     "operations": "Operations",
     "attentionTitle": "Needs attention",
     "attentionItems": "items in queue",
+    "attentionTruncated": "Showing {{shown}} of {{total}}; the rest appear once these are handled.",
     "attentionEmpty": "no issues found",
     "suspend": "Suspend",
     "resume": "Resume",
