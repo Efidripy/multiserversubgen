@@ -17,7 +17,7 @@ from urllib.error import URLError
 from urllib.request import Request as UrlRequest
 
 from services.db_bootstrap import connect
-from services.telegram_locale import normalize_telegram_locale
+from services.telegram_locale import button, normalize_telegram_locale
 from services.telegram_transport import TelegramApiTransport, TelegramTransportError
 
 
@@ -118,6 +118,7 @@ class TelegramOutboxWorker:
         except OutboxPermanentError as exc:
             self._dead_letter(claimed, str(exc))
             return OutboxRunResult(True, claimed.event_id, "dead_letter")
+        markup = self._with_close_button(chat_id, markup)
         try:
             self._port.send(chat_id=chat_id, text=text, reply_markup=markup)
         except Exception:
@@ -125,6 +126,24 @@ class TelegramOutboxWorker:
             return OutboxRunResult(True, claimed.event_id, "retry")
         self._mark_sent(claimed)
         return OutboxRunResult(True, claimed.event_id, "sent")
+
+    def _with_close_button(self, chat_id: int, markup: dict[str, Any] | None) -> dict[str, Any]:
+        try:
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    "SELECT locale FROM telegram_identities WHERE chat_id = ? LIMIT 1",
+                    (chat_id,),
+                ).fetchone()
+            locale = normalize_telegram_locale(row[0] if row is not None else None)
+        except Exception:
+            locale = normalize_telegram_locale(None)
+        rows = []
+        if isinstance(markup, dict) and isinstance(markup.get("inline_keyboard"), list):
+            rows = [list(row) if isinstance(row, list) else row for row in markup["inline_keyboard"]]
+        rows.append([{"text": button(locale, "close"), "callback_data": "notice:close"}])
+        result = dict(markup) if isinstance(markup, dict) else {}
+        result["inline_keyboard"] = rows
+        return result
 
     def _claim_next(self) -> ClaimedOutboxEvent | None:
         current = self._now()
