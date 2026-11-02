@@ -130,6 +130,14 @@ def test_attention_items_match_dashboard_counts(tmp_path):
     assert [op.status for op in items["lifecycle"]] == ["partial"]
     assert registry.get_admin_dashboard().lifecycle_attention == len(items["lifecycle"])
 
+    operation = items["lifecycle"][0]
+    registry.reschedule_customer_operation(
+        operation_id=operation.operation_id, expected_operation_version=operation.row_version,
+        idempotency_key="attn-dismiss", requested_by="admin", action="dismiss",
+    )
+    assert registry.list_attention_items()["lifecycle"] == []
+    assert registry.get_admin_dashboard().lifecycle_attention == 0
+
 
 def test_drift_scanner_does_not_report_intentional_subset_and_persists_only_real_findings(tmp_path):
     db_path, registry, customer_id = _customer_with_binding(tmp_path)

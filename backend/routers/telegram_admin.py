@@ -971,6 +971,21 @@ def build_telegram_admin_router(
             raise translate_registry_error(exc) from exc
         return {"operation": asdict(result), "remote_io": "not_started"}
 
+    @router.post("/api/v1/telegram/customer-operations/{operation_id}/dismiss")
+    def dismiss_customer_lifecycle_operation(operation_id: int, request: Request, data: Dict):
+        username = require_admin(request)
+        try:
+            result = registry.reschedule_customer_operation(
+                operation_id=operation_id,
+                expected_operation_version=data.get("expected_operation_version"),
+                idempotency_key=data.get("idempotency_key"),
+                requested_by=username,
+                action="dismiss",
+            )
+        except TelegramRegistryError as exc:
+            raise translate_registry_error(exc) from exc
+        return {"operation": asdict(result), "remote_io": "not_started"}
+
     @router.get("/api/v1/telegram/node-policies")
     def list_node_policies(request: Request):
         require_admin(request)
