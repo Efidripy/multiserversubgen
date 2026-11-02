@@ -4,6 +4,9 @@ from dataclasses import dataclass
 
 from prometheus_client import Counter, Gauge, Histogram
 
+# Forced node refreshes run far past the default 10s ceiling, which pins p95 at 10.
+LONG_OPERATION_BUCKETS = (*Histogram.DEFAULT_BUCKETS[:-1], 15.0, 30.0, 45.0, 60.0, float("inf"))
+
 
 @dataclass
 class MetricsRegistry:
@@ -41,6 +44,7 @@ def build_metrics_registry() -> MetricsRegistry:
             "sub_manager_http_request_duration_seconds",
             "HTTP request latency",
             ["method", "path"],
+            buckets=LONG_OPERATION_BUCKETS,
         ),
         node_availability=Gauge(
             "sub_manager_node_available",
@@ -110,6 +114,7 @@ def build_metrics_registry() -> MetricsRegistry:
         collector_poll_cycle_duration_seconds=Histogram(
             "sub_manager_collector_poll_cycle_duration_seconds",
             "Completed collector poll cycle duration for cycles with due nodes",
+            buckets=LONG_OPERATION_BUCKETS,
         ),
         collector_poll_cycles_total=Counter(
             "sub_manager_collector_poll_cycles_total",
