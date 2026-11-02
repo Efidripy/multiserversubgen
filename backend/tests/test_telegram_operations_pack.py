@@ -116,6 +116,21 @@ def test_tags_filters_dashboard_and_read_only_view_do_not_expose_a_token(tmp_pat
     assert dashboard.active_customers == 1
 
 
+def test_attention_items_match_dashboard_counts(tmp_path):
+    db_path, registry, customer_id = _customer_with_binding(tmp_path)
+    assert registry.list_attention_items() == {"provisioning": [], "lifecycle": []}
+    preview = registry.preview_customer_operation(customer_id=customer_id, operation_type="suspend")
+    registry.queue_customer_operation(
+        customer_id=customer_id, operation_type="suspend", expected_customer_version=preview.expected_customer_version,
+        target_snapshot_digest=preview.target_snapshot_digest, idempotency_key="attn-suspend", created_by="admin",
+    )
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_customer_operations SET status = 'partial'")
+    items = registry.list_attention_items()
+    assert [op.status for op in items["lifecycle"]] == ["partial"]
+    assert registry.get_admin_dashboard().lifecycle_attention == len(items["lifecycle"])
+
+
 def test_drift_scanner_does_not_report_intentional_subset_and_persists_only_real_findings(tmp_path):
     db_path, registry, customer_id = _customer_with_binding(tmp_path)
 
