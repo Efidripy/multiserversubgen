@@ -2733,3 +2733,74 @@ def test_outbound_message_for_another_chat_does_not_become_a_window(tmp_path):
     actor = (42, 42, update["message"]["from"], "hello", None, None, 1)
     messages = [TelegramOutboundMessage(99, "other chat")]
     assert service._apply_window(messages, update, actor, "ru") == messages
+
+
+def test_notice_close_returns_only_best_effort_deletion(tmp_path):
+    db_path = str(tmp_path / "notice-close.db")
+    init_db(db_path)
+    service = TelegramRegistrationService(TelegramRegistry(db_path), introduction_max_chars=700)
+    response = service.handle_update(_callback_with_message_id(1, "notice:close", 901))
+    assert len(response) == 1
+    assert response[0].delete_message_id == 901
+    assert response[0].best_effort
+    assert response[0].text == ""
+
+
+def test_notice_close_preserves_support_draft_for_followup_text(tmp_path):
+    db_path = str(tmp_path / "notice-support.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="notice_support")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    service.handle_update(_callback(1, "support:category:other"))
+    service.handle_update(_callback_with_message_id(2, "notice:close", 902))
+    preview = service.handle_update(_message(3, "После закрытия"))
+    assert preview and "После закрытия" in preview[0].text
+    assert registry.list_support_requests(status="open")
+
+
+def test_notice_close_bypasses_block_and_unapproved_noop_accounting(tmp_path):
+    db_path = str(tmp_path / "notice-access.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    blocked = registry.get_or_create_identity(telegram_user_id=42, chat_id=42, username="blocked", first_name="Blocked", last_name=None)
+    registry.block_identity(telegram_user_id=42, expected_identity_version=blocked.row_version, idempotency_key="block-notice", blocked_by="test")
+    assert service.handle_update(_callback_with_message_id(1, "notice:close", 903))[0].delete_message_id == 903
+    registry.get_or_create_identity(telegram_user_id=43, chat_id=43, username="unapproved", first_name="User", last_name=None)
+    unapproved_update = _callback_with_message_id(2, "notice:close", 904)
+    unapproved_update["callback_query"]["from"]["id"] = 43
+    unapproved_update["callback_query"]["message"]["chat"]["id"] = 43
+    assert service.handle_update(unapproved_update)[0].delete_message_id == 904
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT consecutive_noop_count FROM telegram_abuse_state WHERE telegram_user_id = 43").fetchone() is None
+
+
+def test_primary_admin_notice_close_preserves_admin_draft(tmp_path):
+    db_path = str(tmp_path / "notice-admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(email_display="target", origin="telegram", email_source="telegram_username", public_code="target")
+    registry.get_or_create_identity(telegram_user_id=42, chat_id=42, username="target", first_name="Target", last_name=None)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42", (customer_id,))
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=100000001)
+    service.handle_update(_admin_callback(1, f"admin:message:{customer_id}:0"))
+    deleted = _admin_callback(2, "notice:close")
+    deleted["callback_query"]["message"]["message_id"] = 905
+    deleted = service.handle_update(deleted)
+    assert deleted[0].best_effort
+    preview = service.handle_update(_admin_message(3, "Черновик сохранился"))
+    assert preview and "Черновик сохранился" in preview[0].text
+
+
+def test_notice_close_does_not_change_interface_window(tmp_path):
+    db_path = str(tmp_path / "notice-window.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="notice_window")
+    registry.set_interface_window(telegram_user_id=42, message_id=777, has_text=True)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700)
+    response = service.handle_update(_callback_with_message_id(1, "notice:close", 906))
+    assert response[0].delete_message_id == 906
+    assert registry.get_interface_window(42) == (777, True)

@@ -12,6 +12,13 @@ from services.telegram_outbox import TelegramOutboxWorker
 from services.telegram_registry import TelegramRegistry
 
 
+def _close_markup(locale="ru", rows=None):
+    return {"inline_keyboard": list(rows or []) + [[{
+        "text": "✕ Close" if locale == "en" else "✕ Закрыть",
+        "callback_data": "notice:close",
+    }]]}
+
+
 class FakeOutboxPort:
     def __init__(self, error: Exception | None = None):
         self.error = error
@@ -54,6 +61,47 @@ def test_admin_request_event_is_delivered_once_after_a_durable_lease(tmp_path):
     assert _worker(db_path, port).run_once().processed is False
 
 
+def test_notification_without_keyboard_gets_close_row(tmp_path):
+    db_path = str(tmp_path / "close-only.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(telegram_user_id=42, chat_id=777, username="user", first_name="User", last_name=None)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES ('user_provisioning_queued', '42', 'close-only')")
+    port = FakeOutboxPort()
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert port.messages[0][2] == _close_markup()
+
+
+def test_notification_action_keyboard_keeps_action_before_close_row(tmp_path):
+    db_path = str(tmp_path / "close-action.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(telegram_user_id=42, chat_id=777, username="user", first_name="User", last_name=None)
+    registry.create_pending_application(42)
+    registry.submit_introduction(42, "Представление", maximum_chars=700)
+    port = FakeOutboxPort()
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    markup = port.messages[0][2]
+    assert markup["inline_keyboard"][-1] == [{"text": "✕ Закрыть", "callback_data": "notice:close"}]
+    assert markup["inline_keyboard"][0] == [{"text": "Заявки", "callback_data": "admin:requests:0"}]
+
+
+def test_notification_close_button_uses_recipient_locale(tmp_path):
+    db_path = str(tmp_path / "close-locale.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    for user_id, locale in ((42, "ru"), (43, "en")):
+        registry.get_or_create_identity(telegram_user_id=user_id, chat_id=user_id, username=f"user{user_id}", first_name="User", last_name=None, locale=locale)
+        with connect(db_path) as conn:
+            conn.execute("INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key) VALUES ('user_provisioning_queued', ?, ?)", (str(user_id), f"locale-{user_id}"))
+    port = FakeOutboxPort()
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert _worker(db_path, port).run_once().outcome == "sent"
+    assert port.messages[0][2]["inline_keyboard"][-1][0]["text"] == "✕ Закрыть"
+    assert port.messages[1][2]["inline_keyboard"][-1][0]["text"] == "✕ Close"
+
+
 def test_admin_receives_the_voluntary_introduction_for_the_exact_application_attempt(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
@@ -73,7 +121,7 @@ def test_admin_receives_the_voluntary_introduction_for_the_exact_application_att
     assert "@requester" in port.messages[1][1]
     assert "Хочу коротко представиться." in port.messages[1][1]
     assert port.messages[1][2] == {
-        "inline_keyboard": [[{"text": "Заявки", "callback_data": "admin:requests:0"}]]
+        "inline_keyboard": [[{"text": "Заявки", "callback_data": "admin:requests:0"}], [{"text": "✕ Закрыть", "callback_data": "notice:close"}]]
     }
 
 
@@ -152,7 +200,7 @@ def test_user_node_added_notification_is_localized_and_requires_a_node_name(tmp_
         "Another server was added to your access: edge-eu.\n\n"
         "Enjoy using it.\n\n"
         "Tap \"Update subscription\" in your client app.",
-        None,
+        _close_markup("en"),
     )]
     with connect(db_path) as conn:
         conn.execute("UPDATE telegram_identities SET locale = 'ru' WHERE telegram_user_id = 42")
@@ -169,7 +217,7 @@ def test_user_node_added_notification_is_localized_and_requires_a_node_name(tmp_
         "Вам добавили ещё один сервер: edge-ru.\n\n"
         "Приятного использования.\n\n"
         "Нажмите кнопку «Обновить подписку» в клиенте.",
-        None,
+        _close_markup(),
     )
 
 
@@ -223,7 +271,7 @@ def test_admin_direct_message_is_delivered_to_the_approved_live_customer(tmp_pat
     result = _worker(db_path, port).run_once()
 
     assert result.outcome == "sent"
-    assert port.messages == [(777, "Сообщение от администратора.", None)]
+    assert port.messages == [(777, "Сообщение от администратора.", _close_markup())]
 
 
 def test_registered_broadcast_is_cancelled_when_recipient_opts_out_after_queueing(tmp_path):
@@ -282,9 +330,9 @@ def test_user_result_notifications_cover_provisioning_rejection_and_lifecycle(tm
 
     assert outcomes == ["sent", "sent", "sent"]
     assert port.messages == [
-        (777, "Доступ готов. Откройте меню и получите персональную ссылку.", None),
-        (777, "Заявка отклонена. Если хотите подать новую, отправьте /start.", None),
-        (777, "Доступ восстановлен. Откройте меню, чтобы продолжить.", None),
+        (777, "Доступ готов. Откройте меню и получите персональную ссылку.", _close_markup()),
+        (777, "Заявка отклонена. Если хотите подать новую, отправьте /start.", _close_markup()),
+        (777, "Доступ восстановлен. Откройте меню, чтобы продолжить.", _close_markup()),
     ]
 
 
@@ -312,7 +360,7 @@ def test_support_events_notify_only_admin_then_the_linked_user_when_resolved(tmp
 
     assert _worker(db_path, port).run_once().outcome == "sent"
     assert port.messages == [
-        (100000001, "Обращение в поддержку от support-target (#42).\nТема: Подключение не работает\n\nНе получается подключиться.", None)
+        (100000001, "Обращение в поддержку от support-target (#42).\nТема: Подключение не работает\n\nНе получается подключиться.", _close_markup())
     ]
 
     registry.resolve_support_request(
@@ -327,7 +375,7 @@ def test_support_events_notify_only_admin_then_the_linked_user_when_resolved(tmp
     assert port.messages[-1] == (
         777,
         "Обращение рассмотрено администратором.\n\nОтвет:\nПроверьте настройки приложения и попробуйте ещё раз.",
-        None,
+        _close_markup(),
     )
 
 
@@ -359,9 +407,9 @@ def test_suspending_customer_appeal_notifies_admin_and_opens_customer_card(tmp_p
         (
             100000001,
             "Обращение от appeal-target (#42):\nПожалуйста, рассмотрите моё обращение.",
-            {"inline_keyboard": [[{
+            _close_markup(rows=[[{
                 "text": "Пользователь", "callback_data": f"admin:customer:{customer_id}:0"
-            }]]},
+            }]]),
         )
     ]
     with connect(db_path) as conn:
@@ -392,7 +440,7 @@ def test_expiry_reminder_delivery_respects_its_specific_user_preference(tmp_path
     port = FakeOutboxPort()
 
     assert _worker(db_path, port).run_once().outcome == "sent"
-    assert port.messages == [(777, "Напоминание: срок доступа истекает примерно через 3 дня.", None)]
+    assert port.messages == [(777, "Напоминание: срок доступа истекает примерно через 3 дня.", _close_markup())]
 
     registry.toggle_expiry_reminders(42)
     with connect(db_path) as conn:
@@ -432,4 +480,4 @@ def test_traffic_reminder_delivery_is_opt_in_and_uses_its_specific_preference(tm
                VALUES ('user_traffic_reminder', '42', 'traffic-delivery', '{\"percent\":95}')"""
         )
     assert _worker(db_path, port).run_once().outcome == "sent"
-    assert port.messages == [(777, "Напоминание: использовано примерно 95% доступного трафика.", None)]
+    assert port.messages == [(777, "Напоминание: использовано примерно 95% доступного трафика.", _close_markup())]

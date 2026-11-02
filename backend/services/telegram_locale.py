@@ -122,6 +122,7 @@ _MESSAGES: dict[str, dict[str, str]] = {
 }
 
 _BUTTONS: dict[str, dict[str, str]] = {
+    "close": {"ru": "✕ Закрыть", "en": "✕ Close"},
     "get_access": {"ru": "◎ Получить доступ", "en": "◎ Get access"},
     "get_link": {"ru": "⊙ Получить ссылку", "en": "⊙ Get link"},
     "show_link": {"ru": "⊙ Показать ссылку", "en": "⊙ Show link"},

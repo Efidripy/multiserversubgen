@@ -2102,13 +2102,14 @@ class TelegramRegistrationService:
             for message in messages
             if not message.best_effort
         ]
-        self._registry.store_update_responses(
-            update_id=update_id,
-            responses=[
-                (message.chat_id, message.text, message.reply_markup)
-                for message in retry_messages
-            ],
-        )
+        if retry_messages:
+            self._registry.store_update_responses(
+                update_id=update_id,
+                responses=[
+                    (message.chat_id, message.text, message.reply_markup)
+                    for message in retry_messages
+                ],
+            )
         result: list[TelegramOutboundMessage] = []
         response_index = 0
         for message in messages:
@@ -2286,6 +2287,13 @@ class TelegramRegistrationService:
             payload_digest=digest,
         ):
             return []
+        # Closing a notice must not alter drafts or be blocked by access checks.
+        if callback_data == "notice:close":
+            if source_message_id is None:
+                return []
+            return [TelegramOutboundMessage(
+                chat_id, "", delete_message_id=source_message_id, best_effort=True
+            )]
         admin_response = self._handle_admin(
             user_id=user_id,
             chat_id=chat_id,
