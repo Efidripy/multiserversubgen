@@ -338,3 +338,19 @@ def test_partial_inventory_does_not_write_zero_traffic_history(tmp_path):
 
     with connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM node_history").fetchone()[0] == 0
+
+
+def test_slowest_polls_summary_ranks_by_poll_time_and_tolerates_missing_values():
+    snapshots = [_snapshot(1), _snapshot(3), _snapshot(2), {"node_id": 9}]
+
+    assert SnapshotCollector._slowest_polls_summary(snapshots, limit=2) == (
+        "node_id=3:30ms, node_id=2:20ms"
+    )
+    assert SnapshotCollector._slowest_polls_summary([]) == ""
+
+
+def test_long_operation_buckets_cover_forced_refresh_wait():
+    from shared.metrics_registry import LONG_OPERATION_BUCKETS
+
+    assert list(LONG_OPERATION_BUCKETS) == sorted(LONG_OPERATION_BUCKETS)
+    assert {10.0, 45.0, 60.0, float("inf")} <= set(LONG_OPERATION_BUCKETS)

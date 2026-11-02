@@ -251,6 +251,7 @@
     "activityClear": "Clear activity log",
     "activityClose": "Close activity log",
     "dismissNotification": "Dismiss notification",
+    "nodeRefreshIncomplete": "Not all nodes refreshed in time, data may be stale",
     "confirm": "Confirm",
     "search": "Search",
     "sort": "Sort",

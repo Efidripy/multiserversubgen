@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { useTheme } from '../contexts/ThemeContext';
 import { useTranslation } from 'react-i18next';
+import { NODE_REFRESH_INCOMPLETE_EVENT } from '../services/forceRefresh';
 
 export type ToastLevel = 'success' | 'error' | 'warning' | 'info';
 
@@ -152,6 +153,7 @@ function ToastItem({ item, onDismiss, colors }: {
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const [items, setItems] = useState<ToastItem[]>([]);
   const timerRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
@@ -164,6 +166,12 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       delete timerRef.current[id];
     }, duration + 250);
   }, []);
+
+  useEffect(() => {
+    const handleIncomplete = () => toast(t('common.nodeRefreshIncomplete'), 'warning');
+    window.addEventListener(NODE_REFRESH_INCOMPLETE_EVENT, handleIncomplete);
+    return () => window.removeEventListener(NODE_REFRESH_INCOMPLETE_EVENT, handleIncomplete);
+  }, [toast, t]);
 
   const dismiss = (id: string) => {
     clearTimeout(timerRef.current[id]);

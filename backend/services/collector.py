@@ -963,7 +963,12 @@ class SnapshotCollector:
                     )
 
                 if force_poll:
-                    logger.info(f"Force poll completed: {len(due_nodes)} nodes polled")
+                    logger.info(
+                        "Force poll completed: %d nodes polled in %.1fs; slowest: %s",
+                        len(due_nodes),
+                        max(0.0, self._cycle_clock() - cycle_started_monotonic),
+                        self._slowest_polls_summary(completed_snapshots),
+                    )
                     self._force_completed_generation = max(
                         self._force_completed_generation, force_generation
                     )
@@ -987,6 +992,15 @@ class SnapshotCollector:
                 self._next_control_loop_timeout(),
                 observed_generation=observed_wake_generation,
             )
+
+    @staticmethod
+    def _slowest_polls_summary(snapshots: List[Dict], limit: int = 5) -> str:
+        """Name the nodes that held a forced cycle back, by ID to keep logs redacted."""
+        ranked = sorted(snapshots, key=lambda snapshot: snapshot.get("poll_ms") or 0, reverse=True)
+        return ", ".join(
+            f"node_id={snapshot.get('node_id')}:{round(snapshot.get('poll_ms') or 0)}ms"
+            for snapshot in ranked[:limit]
+        )
 
     def _poll_delay_for_position(self, position: int, total: int, *, force_poll: bool) -> float:
         """Return a deterministic, bounded ordinary-cycle start delay."""
