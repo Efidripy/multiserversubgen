@@ -2716,8 +2716,12 @@ def test_best_effort_deletions_are_excluded_from_retry_responses(tmp_path):
     assert all(m.update_response_index is None for m in first if m.best_effort)
     service.retry_update_response(first[0])
     repeated = service.handle_update(_message(1, "/status"))
-    assert len(repeated) == 1
-    assert repeated[0].update_response_index == 0
+    assert [m.update_response_index for m in repeated if not m.best_effort] == [0]
+
+    # The retried message takes over the window, and the old window is cleaned up.
+    assert [m.delete_message_id for m in repeated if m.best_effort] == [800]
+    service.record_outbound_delivery(repeated[0], 900)
+    assert registry.get_interface_window(42) == (900, True)
 
 
 def test_outbound_message_for_another_chat_does_not_become_a_window(tmp_path):

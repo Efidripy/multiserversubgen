@@ -2049,6 +2049,28 @@ class TelegramRegistrationService:
             {"inline_keyboard": rows},
         )
 
+    def _take_over_window(
+        self, messages: list[TelegramOutboundMessage], update: dict[str, Any]
+    ) -> list[TelegramOutboundMessage]:
+        """A retry always arrives as a new message, so it must replace the window."""
+
+        actor = _private_actor(update)
+        if actor is None:
+            return messages
+        target_index = next((i for i, message in enumerate(messages) if message.chat_id == actor[1]), None)
+        if target_index is None:
+            return messages
+        messages[target_index] = replace(messages[target_index], window_user_id=actor[0])
+        window = self._registry.get_interface_window(actor[0])
+        stale = {window[0]} if window is not None else set()
+        # A typed message is left alone: its keep_user_message flag is not stored for retries.
+        if isinstance(update.get("callback_query"), dict) and actor[6] is not None:
+            stale.add(actor[6])
+        return messages + [
+            TelegramOutboundMessage(actor[1], "", delete_message_id=message_id, best_effort=True)
+            for message_id in sorted(stale)
+        ]
+
     def handle_update(self, update: dict[str, Any]) -> list[TelegramOutboundMessage]:
         """Return the durable retry response before handling an update again."""
 
@@ -2057,7 +2079,7 @@ class TelegramRegistrationService:
             return []
         pending = self._registry.pending_update_responses(update_id)
         if pending:
-            return [
+            return self._take_over_window([
                 TelegramOutboundMessage(
                     chat_id=chat_id,
                     text=text,
@@ -2066,7 +2088,7 @@ class TelegramRegistrationService:
                     update_response_index=index,
                 )
                 for index, chat_id, text, markup in pending
-            ]
+            ], update)
 
         messages = self._handle_new_update(update)
         if not messages:
