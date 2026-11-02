@@ -784,4 +784,4 @@ app.router.lifespan_context = build_lifespan(
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host="127.0.0.1", port=int(os.getenv("APP_PORT", "666")))
+    uvicorn.run(app, host="127.0.0.1", port=int(os.getenv("APP_PORT", "666")), proxy_headers=False)
