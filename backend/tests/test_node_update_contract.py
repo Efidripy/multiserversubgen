@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from routers import nodes as nodes_router
 from routers.nodes import build_nodes_router
 from services.db_bootstrap import connect, init_db
+from services.telegram_drift import TelegramDriftScanner
 from services.telegram_registry import TelegramRegistry
 
 
@@ -83,6 +84,13 @@ def node_client(tmp_path, monkeypatch):
         invalidations["capability"].append,
     )
 
+    def reconcile(*, node_ids):
+        invalidations["reconcile"].extend(node_ids)
+
+    return _client_for(db_path, reconcile), db_path, invalidations
+
+
+def _client_for(db_path: str, reconcile_telegram_node) -> TestClient:
     app = FastAPI()
     app.include_router(
         build_nodes_router(
@@ -101,10 +109,10 @@ def node_client(tmp_path, monkeypatch):
             snapshot_collector=_SnapshotCollectorStub(),
             ws_manager=_WsManagerStub(),
             logger=logging.getLogger(__name__),
-            reconcile_telegram_node=invalidations["reconcile"].append,
+            reconcile_telegram_node=reconcile_telegram_node,
         )
     )
-    return TestClient(app), db_path, invalidations
+    return TestClient(app)
 
 
 def _node_row(db_path: str) -> dict[str, object]:
@@ -152,6 +160,49 @@ def test_node_edit_updates_panel_url_and_password_without_overwriting_username(n
         ],
         "reconcile": [1],
     }
+
+
+def test_node_endpoint_edit_runs_real_drift_scan_for_that_node_only(node_client, caplog):
+    _client, db_path, _invalidations = node_client
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="scan-user", origin="manual", email_source="admin", public_code="scan-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO nodes (id, name, panel_url, username, user, password, ip, port, base_path, access_path, scheme) "
+            "VALUES (2, 'edge-2', 'https://other.example.test:8443/p', 'root', 'root', 'x', 'other.example.test', '8443', 'p', 'p', 'https')"
+        )
+        conn.execute("INSERT INTO telegram_node_policies(node_id, provisioning_enabled) VALUES (1, 1), (2, 1)")
+        conn.execute(
+            "INSERT INTO customer_node_bindings "
+            "(customer_id, node_id, remote_client_id, remote_sub_id, remote_email, source, management_state) "
+            "VALUES (?, 1, 'gone-client', 'gone-sub', 'scan-user', 'admin_confirmed', 'confirmed')",
+            (customer_id,),
+        )
+
+    scanned: list[int] = []
+
+    class _ClientManagerStub:
+        def get_node_clients_strict(self, node):
+            scanned.append(node["id"])
+            return []  # a freshly installed panel has none of the bound clients
+
+    scanner = TelegramDriftScanner(
+        registry=registry,
+        list_nodes=lambda: [{"id": 1}, {"id": 2}],
+        client_manager=_ClientManagerStub(),
+    )
+
+    response = _client_for(db_path, scanner.scan).put(
+        "/api/v1/nodes/1", json={"url": "https://edge.example.test:8443/new-panel/"}
+    )
+
+    assert response.status_code == 200
+    assert "binding scan after node endpoint update failed" not in caplog.text
+    assert scanned == [1]
+    findings = registry.list_drift_findings(status="open", limit=10)
+    assert [(item.kind, item.node_id) for item in findings] == [("binding_missing", 1)]
 
 
 def test_node_edit_allows_password_only_and_preserves_username(node_client):
