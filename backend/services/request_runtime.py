@@ -144,17 +144,17 @@ class RequestRuntime:
     def get_client_ip(request: Request) -> str:
         """Получить реальный IP клиента.
 
-        X-Forwarded-For доверяем только когда запрос пришёл с loopback/private-адреса
-        (т.е. через реальный reverse proxy на том же хосте или в той же сети).
-        Если запрос пришёл напрямую из интернета — не доверяем заголовку.
+        Единственный доверенный прокси — nginx на том же хосте: он дописывает
+        адрес клиента в конец X-Forwarded-For, а всё левее присылает сам клиент.
+        Поэтому берём только последнее значение и только от loopback-пира.
+        request.client должен быть настоящим пиром: uvicorn запускается с
+        --no-proxy-headers, иначе он подставит сюда значение из заголовка.
         """
         direct_ip = request.client.host if request.client else ""
-        # Доверяем X-Forwarded-For только от loopback или private-адресов
-        is_from_proxy = direct_ip in {"127.0.0.1", "::1"}
-        if is_from_proxy:
-            forwarded_for = request.headers.get("X-Forwarded-For", "")
-            if forwarded_for:
-                return forwarded_for.split(",")[0].strip()
+        if direct_ip in {"127.0.0.1", "::1"}:
+            last_hop = request.headers.get("X-Forwarded-For", "").rsplit(",", 1)[-1].strip()
+            if last_hop:
+                return last_hop
         return direct_ip or "unknown"
 
     def check_subscription_rate_limit(self, request: Request, resource_key: str) -> Tuple[bool, int]:

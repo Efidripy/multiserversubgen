@@ -17,6 +17,11 @@ from shared.security import safe_request_id
 from shared.security import anonymize_client_ip, mask_subscription_path
 
 
+def _has_loopback_peer(request: Request) -> bool:
+    peer_host = getattr(request.client, "host", "") if request.client else ""
+    return peer_host in {"127.0.0.1", "::1"}
+
+
 def is_session_first_protected_get(request: Request) -> bool:
     """Return whether a protected, non-public request can prefer web session.
 
@@ -40,10 +45,9 @@ def is_trusted_loopback_metrics_scrape(request: Request) -> bool:
     header. This keeps metrics unavailable to anonymous browser traffic while
     avoiding credentials in the Prometheus configuration.
     """
-    peer_host = getattr(request.client, "host", "") if request.client else ""
     return (
         request.url.path == "/metrics"
-        and peer_host in {"127.0.0.1", "::1"}
+        and _has_loopback_peer(request)
         and not request.headers.get("X-Forwarded-For", "").strip()
     )
 
@@ -79,7 +83,7 @@ def build_request_controls_and_audit_middleware(
     allowed_origins=None,
 ):
     failed_auth: dict[str, list[float]] = {}
-    fail_limit, fail_window_sec = 10, 300
+    fail_limit, fail_window_sec, fail_max_keys = 10, 300, 8192
 
     def _recent_failures(ip: str) -> int:
         now = time.monotonic()
@@ -115,7 +119,13 @@ def build_request_controls_and_audit_middleware(
             return basic_auth
         if candidate in configured_origins:
             return True
-        request_origin = f"{request.url.scheme}://{request.url.netloc}".rstrip("/")
+        # uvicorn runs with --no-proxy-headers, so nginx states the public scheme.
+        scheme = request.url.scheme
+        if _has_loopback_peer(request):
+            forwarded_proto = request.headers.get("X-Forwarded-Proto", "").strip()
+            if forwarded_proto in {"http", "https"}:
+                scheme = forwarded_proto
+        request_origin = f"{scheme}://{request.url.netloc}".rstrip("/")
         return candidate == request_origin
 
     async def request_controls_and_audit_middleware(request: Request, call_next):
@@ -176,6 +186,8 @@ def build_request_controls_and_audit_middleware(
                         )
                     else:
                         if has_credentials:
+                            if client_ip not in failed_auth and len(failed_auth) >= fail_max_keys:
+                                failed_auth.pop(next(iter(failed_auth)))
                             failed_auth.setdefault(client_ip, []).append(time.monotonic())
                         response = JSONResponse(
                             status_code=401, content={"detail": "Unauthorized"}

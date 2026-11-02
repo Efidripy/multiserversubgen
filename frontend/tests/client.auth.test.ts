@@ -2,7 +2,7 @@ import axios, { AxiosError } from 'axios';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import api, { AUTH_REQUIRED_EVENT, resetAuthRequiredEventGuard } from '../src/api/client';
 import { createBrowserSession, verifyCurrentAuth } from '../src/api/authService';
-import { setAuthCredentials, clearAuthCredentials } from '../src/auth';
+import { setAuthCredentials, clearAuthCredentials, getAuth } from '../src/auth';
 import { getDashboardOverview } from '../src/api/dashboard';
 
 const unauthorizedAdapter = async (config: any) => {
@@ -84,6 +84,20 @@ describe('API authentication lifecycle', () => {
     await expect(verifyCurrentAuth()).resolves.toMatchObject({ user: 'admin' });
     expect(captured.auth).toBeUndefined();
     expect(captured.withCredentials).toBe(true);
+  });
+
+  it('drops an explicit empty-password Basic so mutations use the browser session', async () => {
+    let captured: any;
+    setAuthCredentials('admin', '', '', 'ticket', 'admin');
+    api.defaults.adapter = async (config: any) => {
+      captured = config;
+      return { data: {}, status: 200, statusText: 'OK', headers: {}, config };
+    };
+
+    await api.post('/v1/nodes/refresh-now', {}, { auth: getAuth() });
+    expect(captured.auth).toBeUndefined();
+    expect(captured.withCredentials).toBe(true);
+    clearAuthCredentials();
   });
 
   it('keeps explicit Basic authentication for browser-session bootstrap', async () => {

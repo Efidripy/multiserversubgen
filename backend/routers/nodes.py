@@ -61,7 +61,7 @@ def build_nodes_router(
     snapshot_collector,
     ws_manager,
     logger,
-    reconcile_telegram_node: Callable[[int], None] | None = None,
+    reconcile_telegram_node: Callable[..., object] | None = None,
 ):
     router = APIRouter()
 
@@ -484,7 +484,7 @@ def build_nodes_router(
             # its TG bindings before the bot presents local history as remote state.
             # The reconciler does read-only XUI I/O; failure preserves local state.
             try:
-                reconcile_telegram_node(node_id)
+                reconcile_telegram_node(node_ids=[node_id])
             except Exception as exc:
                 logger.warning("Telegram binding scan after node endpoint update failed for %s: %s", node_id, type(exc).__name__)
 

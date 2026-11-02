@@ -58,7 +58,9 @@ ProtectControlGroups=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 ReadWritePaths=/opt/sub-manager
 ExecStartPre=/bin/sh -ec 'if /usr/bin/ss -ltnH "sport = :666" | /usr/bin/grep -q .; then echo "Refusing to start: APP_PORT 666 is already in use" >&2; exit 1; fi'
-ExecStart=/opt/sub-manager/venv/bin/uvicorn main:app --host 127.0.0.1 --port 666 --log-level warning
+# --no-proxy-headers keeps the real peer in request.client: X-Forwarded-For is
+# parsed once by get_client_ip, and the /metrics loopback gate needs the peer.
+ExecStart=/opt/sub-manager/venv/bin/uvicorn main:app --host 127.0.0.1 --port 666 --log-level warning --no-proxy-headers
 Restart=always
 RestartSec=5
 # Lifespan drains registered executor work before it exits. Preserve enough

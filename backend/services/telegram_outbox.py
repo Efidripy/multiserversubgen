@@ -13,7 +13,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request as UrlRequest
 
 from services.db_bootstrap import connect
@@ -54,6 +54,12 @@ class TelegramApiOutboxPort:
             with self._transport.open(request, timeout=10) as response:
                 if response.status < 200 or response.status >= 300:
                     raise RuntimeError("Telegram delivery was rejected")
+        except HTTPError as exc:
+            # 400/403 is a verdict on this recipient or message, so a repeat cannot help.
+            # 401, 429 and 5xx are bot-wide or temporary; proxy failures arrive as URLError.
+            if exc.code in {400, 403}:
+                raise OutboxPermanentError(f"telegram_rejected_{exc.code}") from exc
+            raise RuntimeError("Telegram delivery failed") from exc
         except (URLError, OSError, RuntimeError, TelegramTransportError) as exc:
             raise RuntimeError("Telegram delivery failed") from exc
 
@@ -94,7 +100,8 @@ class TelegramOutboxWorker:
         worker_id: str,
         now: Callable[[], datetime] = _utc_now,
         lease_seconds: int = 60,
-        max_attempts: int = 8,
+        # With the backoff below this is about 24 hours, enough to outlast a route outage.
+        max_attempts: int = 177,
     ):
         if primary_admin_id <= 0 or not worker_id.strip() or lease_seconds <= 0 or max_attempts < 1:
             raise ValueError("outbox worker configuration is invalid")
@@ -121,6 +128,9 @@ class TelegramOutboxWorker:
         markup = self._with_close_button(chat_id, markup)
         try:
             self._port.send(chat_id=chat_id, text=text, reply_markup=markup)
+        except OutboxPermanentError as exc:
+            self._dead_letter(claimed, str(exc))
+            return OutboxRunResult(True, claimed.event_id, "dead_letter")
         except Exception:
             self._retry_or_dead_letter(claimed, "delivery_uncertain")
             return OutboxRunResult(True, claimed.event_id, "retry")
