@@ -1495,7 +1495,6 @@ def test_subscription_links_expose_matching_qr_callbacks_and_rotated_qr_uses_cur
     rotated_device = service.handle_update(
         _callback(5, f"subscription:rotate:device:{device.device_id}:confirm")
     )[0]
-    new_device = rotated_device.text.rsplit("/", 1)[-1]
     assert rotated_device.reply_markup["inline_keyboard"][0][0]["callback_data"] == f"subscription:qr:device:{device.device_id}"
     device_qr = service.handle_update(_callback(6, f"subscription:qr:device:{device.device_id}"))[0]
     assert device_qr.photo_png == b"subscription-qr"
