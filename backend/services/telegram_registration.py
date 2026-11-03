@@ -18,6 +18,7 @@ from services.telegram_registry import (
     LifecycleUnavailableError,
     NodePolicyUnavailableError,
     TelegramRegistry,
+    TelegramGuestSubscriptionLink,
     TelegramRegistryError,
     VersionConflictError,
 )
@@ -1598,10 +1599,13 @@ class TelegramRegistrationService:
         assert url is not None
         token_digest = hashlib.sha256(url.rsplit("/", 1)[-1].encode("utf-8")).hexdigest()
         delivery = TelegramSubscriptionDelivery(user_id, token_digest)
+        callback = "subscription:qr:primary" if subscription_device_id is None else f"subscription:qr:device:{subscription_device_id}"
+        markup = self._approved_menu(locale)
+        markup["inline_keyboard"].insert(0, [{"text": button(locale, "show_qr"), "callback_data": callback}])
         return TelegramOutboundMessage(
             chat_id,
             f"{tr(locale, 'subscription_prefix')}\n{url}",
-            self._approved_menu(locale),
+            markup,
             subscription_delivery=delivery,
         )
 
@@ -1683,13 +1687,24 @@ class TelegramRegistrationService:
         if unavailable is not None:
             return unavailable
         assert url is not None
+        return self._qr_message_from_url(
+            chat_id=chat_id,
+            url=url,
+            caption=tr(locale, "qr_caption"),
+            return_callback=return_callback,
+            locale=locale,
+        )
+
+    def _qr_message_from_url(
+        self, *, chat_id: int, url: str, caption: str, return_callback: str, locale: str
+    ) -> TelegramOutboundMessage:
         try:
             png = build_subscription_qr_png(url)
         except TelegramQrError:
             return TelegramOutboundMessage(chat_id, tr(locale, "qr_failed"), self._approved_menu(locale))
         return TelegramOutboundMessage(
             chat_id,
-            tr(locale, "qr_caption"),
+            caption,
             {"inline_keyboard": [
                 [{"text": button(locale, "delete_qr"), "callback_data": "qr:delete"}],
                 [{"text": button(locale, "menu"), "callback_data": return_callback}],
@@ -1833,6 +1848,23 @@ class TelegramRegistrationService:
             )},
         )
 
+    def _guest_link_ready_message(
+        self, *, chat_id: int, guest: TelegramGuestSubscriptionLink, locale: str
+    ) -> TelegramOutboundMessage:
+        assert guest.token is not None
+        expires_at = datetime.fromtimestamp(guest.expires_at, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
+        url = f"{self._public_base_url}/api/v1/guest-sub/{guest.token}"
+        return TelegramOutboundMessage(
+            chat_id,
+            tr(locale, "guest_link_ready", expires_at=expires_at, url=url),
+            {"inline_keyboard": [
+                [{"text": button(locale, "show_qr"), "callback_data": f"guest:qr:{guest.guest_link_id}"}],
+                [{"text": button(locale, "revoke"), "callback_data": f"guest:revoke:{guest.guest_link_id}"}],
+                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
+                [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
+            ]},
+        )
+
     def _guest_link_message(
         self, *, user_id: int, chat_id: int, duration_hours: int, locale: str
     ) -> TelegramOutboundMessage:
@@ -1841,17 +1873,28 @@ class TelegramRegistrationService:
         guest = self._registry.create_guest_subscription_link(
             telegram_user_id=user_id, duration_hours=duration_hours
         )
+        return self._guest_link_ready_message(chat_id=chat_id, guest=guest, locale=locale)
+
+    def _guest_qr_message(
+        self, *, user_id: int, chat_id: int, guest_link_id: int, locale: str
+    ) -> TelegramOutboundMessage:
+        try:
+            guest = self._registry.get_guest_subscription_link(
+                telegram_user_id=user_id, guest_link_id=guest_link_id
+            )
+        except (ValueError, TelegramRegistryError):
+            return TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))
+        if not self._public_base_url:
+            return TelegramOutboundMessage(chat_id, tr(locale, "link_later"), self._approved_menu(locale))
         assert guest.token is not None
         expires_at = datetime.fromtimestamp(guest.expires_at, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
         url = f"{self._public_base_url}/api/v1/guest-sub/{guest.token}"
-        return TelegramOutboundMessage(
-            chat_id,
-            tr(locale, "guest_link_ready", expires_at=expires_at, url=url),
-            {"inline_keyboard": [
-                [{"text": button(locale, "revoke"), "callback_data": f"guest:revoke:{guest.guest_link_id}"}],
-                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
-                [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
-            ]},
+        return self._qr_message_from_url(
+            chat_id=chat_id,
+            url=url,
+            caption=tr(locale, "guest_qr_caption", expires_at=expires_at),
+            return_callback="devices:menu",
+            locale=locale,
         )
 
     def _subscription_link_choice_message(
@@ -1916,6 +1959,14 @@ class TelegramRegistrationService:
                     "callback_data": f"device:rename:{item.device_id}",
                 }])
             if item.kind == "guest" and item.status == "active" and item.guest_link_id is not None:
+                buttons.append([{
+                    "text": f"{button(locale, 'show_link')} · {item.label[:26]}",
+                    "callback_data": f"guest:link:{item.guest_link_id}",
+                }])
+                buttons.append([{
+                    "text": f"{button(locale, 'show_qr')} · {item.label[:26]}",
+                    "callback_data": f"guest:qr:{item.guest_link_id}",
+                }])
                 buttons.append([{
                     "text": f"{button(locale, 'revoke')} · {item.label[:26]}",
                     "callback_data": f"guest:revoke:{item.guest_link_id}",
@@ -2476,6 +2527,25 @@ class TelegramRegistrationService:
                     )]
                 except (ValueError, TelegramRegistryError):
                     return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+            if callback_data and callback_data.startswith("guest:link:"):
+                try:
+                    guest_link_id = int(callback_data.rsplit(":", 1)[-1])
+                    guest = self._registry.get_guest_subscription_link(
+                        telegram_user_id=user_id, guest_link_id=guest_link_id
+                    )
+                    if not self._public_base_url:
+                        return [TelegramOutboundMessage(chat_id, tr(locale, "link_later"), self._approved_menu(locale))]
+                    return [self._guest_link_ready_message(chat_id=chat_id, guest=guest, locale=locale)]
+                except (ValueError, TelegramRegistryError):
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+            if callback_data and callback_data.startswith("guest:qr:"):
+                try:
+                    guest_link_id = int(callback_data.rsplit(":", 1)[-1])
+                except ValueError:
+                    return [TelegramOutboundMessage(chat_id, tr(locale, "unavailable"), self._approved_menu(locale))]
+                return [self._guest_qr_message(
+                    user_id=user_id, chat_id=chat_id, guest_link_id=guest_link_id, locale=locale
+                )]
             if callback_data == "devices:menu":
                 return [self._devices_message(user_id, chat_id, locale)]
             if callback_data == "subscription-primary:menu":

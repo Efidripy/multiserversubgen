@@ -281,6 +281,50 @@ def test_subscription_message_receipt_contains_only_a_token_digest_and_message_c
         assert conn.execute("SELECT COUNT(*) FROM telegram_node_policies").fetchone()[0] == 0
 
 
+def test_get_guest_subscription_link_requires_owned_live_link(tmp_path):
+    db_path = str(tmp_path / "guest-link-lookup.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    registry.get_or_create_identity(
+        telegram_user_id=42, chat_id=42, username="guest_owner", first_name="Guest", last_name="Owner"
+    )
+    owner_customer_id = registry.create_customer(
+        email_display="guest_owner", origin="telegram", email_source="telegram_username", public_code="guest-owner"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42",
+            (owner_customer_id,),
+        )
+    owner_link = registry.create_guest_subscription_link(telegram_user_id=42, duration_hours=1)
+
+    registry.get_or_create_identity(
+        telegram_user_id=43, chat_id=43, username="other_owner", first_name="Other", last_name="Owner"
+    )
+    other_customer_id = registry.create_customer(
+        email_display="other_owner", origin="telegram", email_source="telegram_username", public_code="other-owner"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 43",
+            (other_customer_id,),
+        )
+
+    with pytest.raises(TelegramRegistryError):
+        registry.get_guest_subscription_link(telegram_user_id=43, guest_link_id=owner_link.guest_link_id)
+    registry.revoke_guest_subscription_link(telegram_user_id=42, guest_link_id=owner_link.guest_link_id)
+    with pytest.raises(TelegramRegistryError):
+        registry.get_guest_subscription_link(telegram_user_id=42, guest_link_id=owner_link.guest_link_id)
+
+    expired = registry.create_guest_subscription_link(telegram_user_id=42, duration_hours=1)
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_guest_subscription_links SET expires_at = 1 WHERE id = ?", (expired.guest_link_id,)
+        )
+    with pytest.raises(TelegramRegistryError):
+        registry.get_guest_subscription_link(telegram_user_id=42, guest_link_id=expired.guest_link_id)
+
+
 def test_telegram_lifecycle_schema_migrates_legacy_operation_table_before_creating_schedule_index(tmp_path):
     db_path = str(tmp_path / "legacy.db")
     with connect(db_path) as conn:
