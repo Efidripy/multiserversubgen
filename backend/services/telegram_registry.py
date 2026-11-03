@@ -188,7 +188,7 @@ class CustomerTrafficQuotaCandidate:
 
 @dataclass(frozen=True)
 class TelegramGuestSubscriptionLink:
-    """A short-lived guest bearer link. Its token is returned only at creation."""
+    """A short-lived guest bearer link, including its token when retrieved internally."""
 
     guest_link_id: int
     customer_id: int
@@ -2512,6 +2512,35 @@ class TelegramRegistry:
         return TelegramGuestSubscriptionLink(
             guest_link_id=int(row[0]), customer_id=int(row[1]), email_display=str(row[2]),
             expires_at=int(row[3]), status="active",
+        )
+
+    def get_guest_subscription_link(
+        self, *, telegram_user_id: int, guest_link_id: int
+    ) -> TelegramGuestSubscriptionLink:
+        """Return one live guest link owned by the Telegram user's customer."""
+
+        user_id = _positive_int(telegram_user_id, "telegram_user_id")
+        link_id = _positive_int(guest_link_id, "guest_link_id")
+        current_epoch = int(datetime.now(timezone.utc).timestamp())
+        with connect(self._db_path) as conn:
+            customer_id, _email_display = self._active_telegram_customer(conn, user_id)
+            row = conn.execute(
+                """
+                SELECT id, customer_id, email_display, expires_at, token
+                FROM telegram_guest_subscription_links
+                WHERE id = ? AND customer_id = ? AND revoked_at IS NULL AND expires_at > ?
+                """,
+                (link_id, customer_id, current_epoch),
+            ).fetchone()
+        if row is None:
+            raise TelegramRegistryError("guest link was not found")
+        return TelegramGuestSubscriptionLink(
+            guest_link_id=int(row[0]),
+            customer_id=int(row[1]),
+            email_display=str(row[2]),
+            expires_at=int(row[3]),
+            status="active",
+            token=str(row[4]),
         )
 
     def _ensure_primary_logical_device(self, conn: sqlite3.Connection, customer_id: int) -> None:

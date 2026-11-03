@@ -23,6 +23,7 @@ from services.telegram_registration import (
 )
 from services.telegram_registry import TelegramRegistry
 from services.telegram_provisioning import ExistingRemoteBinding, ProvisioningRemoteError
+from services.telegram_qr import TelegramQrError
 
 
 def _message(update_id: int, text: str) -> dict:
@@ -1325,6 +1326,50 @@ def test_approved_user_can_create_and_revoke_a_guest_link_and_send_quality_feedb
     assert "отозвана" in revoked.text
 
 
+def test_guest_link_can_be_reopened_and_rendered_as_qr_without_issuing_another_link(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "guest-qr-flow.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="guest_qr_flow")
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    created = service.handle_update(_callback(110, "subscription:guest:6"))[0]
+    with connect(db_path) as conn:
+        guest_id = conn.execute("SELECT id FROM telegram_guest_subscription_links").fetchone()[0]
+        link_count = conn.execute("SELECT COUNT(*) FROM telegram_guest_subscription_links").fetchone()[0]
+    shown = service.handle_update(_callback(111, f"guest:link:{guest_id}"))[0]
+
+    assert shown.text == created.text
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM telegram_guest_subscription_links").fetchone()[0] == link_count == 1
+        assert conn.execute(
+            "SELECT revoked_at IS NULL FROM telegram_guest_subscription_links WHERE id = ?", (guest_id,)
+        ).fetchone() == (1,)
+
+    captured: list[str] = []
+
+    def fake_qr(url: str) -> bytes:
+        captured.append(url)
+        return b"guest-qr"
+
+    monkeypatch.setattr("services.telegram_registration.build_subscription_qr_png", fake_qr)
+    qr = service.handle_update(_callback(112, f"guest:qr:{guest_id}"))[0]
+
+    assert qr.photo_png == b"guest-qr"
+    assert captured == [created.text.split("\n")[-1]]
+    assert "гостевой" in qr.text.lower()
+    assert any(
+        item["callback_data"] == "devices:menu"
+        for row in qr.reply_markup["inline_keyboard"] for item in row
+    )
+
+
 def test_devices_hide_revoked_guest_links_and_keep_compact_rename_controls(tmp_path):
     db_path = str(tmp_path / "devices-hide-revoked.db")
     init_db(db_path)
@@ -1407,6 +1452,166 @@ def test_customer_can_issue_rotate_one_or_rotate_all_independent_device_links(tm
             "SELECT token_digest FROM subscription_token_events WHERE kind = 'telegram_device'"
         ).fetchall()
     assert all(old_device not in digest and new_device not in digest for (digest,) in payloads)
+
+
+def test_subscription_links_expose_matching_qr_callbacks_and_rotated_qr_uses_current_token(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "subscription-qr-buttons.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="subscription_qr_buttons")
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    primary = service.handle_update(_callback(1, "subscription:link:primary"))[0]
+    assert primary.reply_markup["inline_keyboard"][0][0]["callback_data"] == "subscription:qr:primary"
+
+    created = service.handle_update(_callback(2, "subscription:link:new"))[0]
+    device = registry.list_subscription_devices(42)[0]
+    assert created.reply_markup["inline_keyboard"][0][0]["callback_data"] == f"subscription:qr:device:{device.device_id}"
+
+    captured: list[str] = []
+
+    def fake_qr(url: str) -> bytes:
+        captured.append(url)
+        return b"subscription-qr"
+
+    monkeypatch.setattr("services.telegram_registration.build_subscription_qr_png", fake_qr)
+
+    old_primary = primary.text.rsplit("/", 1)[-1]
+    rotated_primary = service.handle_update(_callback(3, "subscription:rotate:primary:confirm"))[0]
+    new_primary = rotated_primary.text.rsplit("/", 1)[-1]
+    assert rotated_primary.reply_markup["inline_keyboard"][0][0]["callback_data"] == "subscription:qr:primary"
+    primary_qr = service.handle_update(_callback(4, "subscription:qr:primary"))[0]
+    assert primary_qr.photo_png == b"subscription-qr"
+    assert captured[-1] == rotated_primary.text.rsplit("\n", 1)[-1]
+    assert old_primary not in captured[-1]
+
+    old_device = created.text.rsplit("/", 1)[-1]
+    rotated_device = service.handle_update(
+        _callback(5, f"subscription:rotate:device:{device.device_id}:confirm")
+    )[0]
+    new_device = rotated_device.text.rsplit("/", 1)[-1]
+    assert rotated_device.reply_markup["inline_keyboard"][0][0]["callback_data"] == f"subscription:qr:device:{device.device_id}"
+    device_qr = service.handle_update(_callback(6, f"subscription:qr:device:{device.device_id}"))[0]
+    assert device_qr.photo_png == b"subscription-qr"
+    assert captured[-1] == rotated_device.text.rsplit("\n", 1)[-1]
+    assert old_device not in captured[-1]
+
+    rotated_all = service.handle_update(_callback(7, "subscription:rotate:all:confirm"))[0]
+    all_primary = rotated_all.text.rsplit("/", 1)[-1]
+    assert all_primary not in {new_primary, old_primary}
+    assert rotated_all.reply_markup["inline_keyboard"][0][0]["callback_data"] == "subscription:qr:primary"
+    repeated_qr = service.handle_update(_callback(8, "subscription:qr:primary"))[0]
+    repeated_qr_again = service.handle_update(_callback(9, "subscription:qr:primary"))[0]
+    assert repeated_qr.photo_png == repeated_qr_again.photo_png == b"subscription-qr"
+    assert captured[-2:] == [rotated_all.text.rsplit("\n", 1)[-1]] * 2
+
+
+def test_guest_devices_show_link_and_qr_callbacks_only_while_guest_is_active(tmp_path):
+    db_path = str(tmp_path / "guest-device-buttons.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="guest_device_buttons")
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    created = service.handle_update(_callback(1, "subscription:guest:6"))[0]
+    with connect(db_path) as conn:
+        guest_id = conn.execute("SELECT id FROM telegram_guest_subscription_links").fetchone()[0]
+    assert created.reply_markup["inline_keyboard"][0][0]["callback_data"] == f"guest:qr:{guest_id}"
+
+    devices = service.handle_update(_callback(2, "devices:menu"))[0]
+    callbacks = {
+        item["callback_data"]
+        for row in devices.reply_markup["inline_keyboard"]
+        for item in row
+        if "callback_data" in item
+    }
+    assert {f"guest:link:{guest_id}", f"guest:qr:{guest_id}", f"guest:revoke:{guest_id}"}.issubset(callbacks)
+
+    revoked = service.handle_update(_callback(3, f"guest:revoke:{guest_id}"))[0]
+    revoked_callbacks = {
+        item["callback_data"]
+        for row in revoked.reply_markup["inline_keyboard"]
+        for item in row
+        if "callback_data" in item
+    }
+    assert f"guest:link:{guest_id}" not in revoked_callbacks
+    assert f"guest:qr:{guest_id}" not in revoked_callbacks
+    assert f"guest:revoke:{guest_id}" not in revoked_callbacks
+
+
+def test_guest_link_and_qr_reject_invalid_expired_revoked_or_foreign_ids(tmp_path):
+    db_path = str(tmp_path / "guest-invalid-callbacks.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="guest_invalid_owner")
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    revoked = registry.create_guest_subscription_link(telegram_user_id=42, duration_hours=1)
+    registry.revoke_guest_subscription_link(telegram_user_id=42, guest_link_id=revoked.guest_link_id)
+    expired = registry.create_guest_subscription_link(telegram_user_id=42, duration_hours=1)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_guest_subscription_links SET expires_at = 1 WHERE id = ?", (expired.guest_link_id,))
+
+    registry.get_or_create_identity(telegram_user_id=43, chat_id=43, username="guest_foreign", first_name="Foreign", last_name=None)
+    foreign_customer = registry.create_customer(
+        email_display="guest_foreign", origin="telegram", email_source="telegram_username", public_code="guest-foreign"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 43",
+            (foreign_customer,),
+        )
+    foreign = registry.create_guest_subscription_link(telegram_user_id=43, duration_hours=1)
+
+    invalid_ids = ["abc", str(revoked.guest_link_id), str(expired.guest_link_id), str(foreign.guest_link_id)]
+    for prefix_index, callback_prefix in enumerate(("guest:link:", "guest:qr:")):
+        for index, guest_id in enumerate(invalid_ids, start=1):
+            response = service.handle_update(_callback(100 + prefix_index * 10 + index, f"{callback_prefix}{guest_id}"))[0]
+            assert response.text == "Сейчас это действие недоступно."
+            assert response.photo_png is None
+            assert "guest-sub" not in response.text
+
+
+def test_guest_qr_returns_qr_failed_when_builder_raises(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "guest-qr-failure.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="guest_qr_failure")
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+    registry_link = registry.create_guest_subscription_link(telegram_user_id=42, duration_hours=1)
+
+    def fail_qr(_url: str) -> bytes:
+        raise TelegramQrError("builder failed")
+
+    monkeypatch.setattr("services.telegram_registration.build_subscription_qr_png", fail_qr)
+    response = service.handle_update(_callback(1, f"guest:qr:{registry_link.guest_link_id}"))[0]
+
+    assert response.text == "QR пока не удалось подготовить. Попробуйте ещё раз позже."
+    assert response.photo_png is None
 
 
 def test_subscription_device_actions_show_rename_and_soft_revoke_only_that_link(tmp_path):

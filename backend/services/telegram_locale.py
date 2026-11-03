@@ -41,6 +41,7 @@ _MESSAGES: dict[str, dict[str, str]] = {
     },
     "qr_failed": {"ru": "QR пока не удалось подготовить. Попробуйте ещё раз позже.", "en": "The QR code could not be prepared yet. Please try again later."},
     "qr_caption": {"ru": "Ваш QR-код доступа. Не пересылайте его другим людям.", "en": "Your access QR code. Do not forward it to anyone."},
+    "guest_qr_caption": {"ru": "QR-код гостевой ссылки действует до {expires_at}. Им можно поделиться, но после этого срока он перестанет работать.", "en": "The guest link QR code works until {expires_at}. You can share it, but it will stop working after that time."},
     "status_access": {"ru": "<b>Статус доступа:</b> {status}.{traffic}", "en": "<b>Access status:</b> {status}.{traffic}"},
     "traffic_empty": {"ru": "\nДанные о трафике пока не поступали.", "en": "\nTraffic data has not arrived yet."},
     "traffic_known": {"ru": "\n<b>Трафик за всё время:</b> {traffic}.\n<b>Последнее обновление данных:</b> {updated}.", "en": "\n<b>Lifetime traffic:</b> {traffic}.\n<b>Last data update:</b> {updated}."},
