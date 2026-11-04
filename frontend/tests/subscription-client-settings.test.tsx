@@ -34,6 +34,7 @@ vi.mock('../src/components/Toast', () => ({
 }));
 
 import { SubscriptionClientSettings } from '../src/components/SubscriptionClientSettings';
+import { SubscriptionUaTest } from '../src/components/SubscriptionUaTest';
 
 const mockSchema = {
   happ: [
@@ -324,7 +325,7 @@ describe('SubscriptionClientSettings', () => {
     expect(screen.getByText('user_agent_regex is invalid: bad escape')).toBeTruthy();
   });
 
-  it('проверка User-Agent показывает результат', async () => {
+  it('проверка User-Agent показывает результат в SubscriptionUaTest', async () => {
     apiPost.mockResolvedValueOnce({
       data: {
         matched: true,
@@ -338,11 +339,9 @@ describe('SubscriptionClientSettings', () => {
       },
     });
 
-    render(<SubscriptionClientSettings />);
+    render(<SubscriptionUaTest />);
 
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('subscriptionClients.test.userAgentPlaceholder')).toBeTruthy();
-    });
+    expect(screen.getByPlaceholderText('subscriptionClients.test.userAgentPlaceholder')).toBeTruthy();
 
     const uaInput = screen.getByPlaceholderText('subscriptionClients.test.userAgentPlaceholder');
     fireEvent.change(uaInput, { target: { value: 'Happ/1.2.3 (Android)' } });
@@ -364,6 +363,75 @@ describe('SubscriptionClientSettings', () => {
     expect(screen.getByText('base64')).toBeTruthy();
     expect(screen.getByText('Routing-Enable:')).toBeTruthy();
     expect(screen.getByText('Profile-Title:')).toBeTruthy();
+  });
+
+  it('порядок вкладок: содержимое перед клиентами, вкладки encryption нет', async () => {
+    apiGet.mockImplementation((url: string) => {
+      if (url === '/v1/subscription-client-settings') {
+        return Promise.resolve({
+          data: {
+            settings: JSON.parse(JSON.stringify(mockSettings)),
+            schema: JSON.parse(JSON.stringify(mockSchema)),
+            section_schema: {
+              content: [{ key: 'remark_template', type: 'text', group: 'body' }],
+              remote_rules: [{ key: 'refresh_minutes', type: 'number', group: 'general' }],
+              encryption: [{ key: 'happ_links', type: 'bool', group: 'general' }],
+            },
+            formats: mockFormats,
+          },
+        });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    render(<SubscriptionClientSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('subscriptionClients.tabs.content')).toBeTruthy();
+    });
+
+    const tabButtons = screen.getAllByRole('button', { name: /^subscriptionClients\.tabs\./ });
+    const tabLabels = tabButtons.map((b) => b.textContent?.trim());
+
+    expect(tabLabels).toEqual([
+      'subscriptionClients.tabs.profile',
+      'subscriptionClients.tabs.content',
+      'subscriptionClients.tabs.clients',
+      'subscriptionClients.tabs.remote_rules',
+    ]);
+
+    expect(screen.queryByText('subscriptionClients.tabs.encryption')).toBeNull();
+  });
+
+  it('у клиента Happ переключатель шифрования есть и меняет значение, у другого клиента его нет', async () => {
+    render(<SubscriptionClientSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('subscriptionClients.tabs.clients')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
+
+    expect(screen.getByText('subscriptionClients.sections.encryption.title')).toBeTruthy();
+    const happSwitch = screen.getByRole('switch', {
+      name: 'subscriptionClients.sections.encryption.happ_links',
+    });
+    expect(happSwitch).toBeTruthy();
+    expect(happSwitch.getAttribute('aria-checked')).toBe('false');
+
+    fireEvent.click(happSwitch);
+    expect(happSwitch.getAttribute('aria-checked')).toBe('true');
+
+    // Switch to Mihomo
+    const mihomoTab = screen.getByRole('button', { name: /Mihomo/ });
+    fireEvent.click(mihomoTab);
+
+    expect(
+      screen.queryByRole('switch', {
+        name: 'subscriptionClients.sections.encryption.happ_links',
+      }),
+    ).toBeNull();
+    expect(screen.queryByText('subscriptionClients.sections.encryption.title')).toBeNull();
   });
 
   it('секции сохраняются в PUT без потерь (тот самый баг)', async () => {

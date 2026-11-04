@@ -804,7 +804,8 @@
     "tabs": {
       "label": "Subscription sections",
       "links": "Links and groups",
-      "settings": "Per-client settings"
+      "settings": "Per-client settings",
+      "uaTest": "User-Agent check"
     },
     "title": "Subscription Manager",
     "groups": "Custom Groups",
@@ -936,8 +937,8 @@
         "enabledHint": "Show web page when accessed in a browser",
         "brand_title": "Brand Title",
         "brand_titleHint": "Displayed in the web page title",
-        "theme_dir": "Theme Directory",
-        "theme_dirHint": "Theme directory name (up to 64 chars)",
+        "theme": "Page theme",
+        "themeHint": "How the subscription page looks in a browser",
         "profile_mode": "Profile Mode",
         "profile_modeHint": "Built-in profile or custom URL",
         "profile_url": "Profile URL",
@@ -1070,6 +1071,8 @@
     },
     "notSet": "Not set",
     "options": {
+      "remnawave": "Remnawave",
+      "3xui": "3x-ui",
       "on": "On",
       "off": "Off",
       "none": "None",

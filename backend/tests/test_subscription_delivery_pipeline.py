@@ -781,10 +781,12 @@ def test_put_settings_422_on_malformed_rules_balancers_and_path_traversal(env):
     s2["xray_json"]["balancers"] = json.dumps([{"tag": "b1", "selector": ["proxy-"], "strategy": {"type": "invalidStrategy"}}])
     assert env.client.put("/api/v1/subscription-client-settings", json=s2).status_code == 422
 
-    # 3. page.theme_dir with "../x"
+    # 3. legacy page.theme_dir is ignored and dropped
     s3 = default_settings()
     s3["page"]["theme_dir"] = "../x"
-    assert env.client.put("/api/v1/subscription-client-settings", json=s3).status_code == 422
+    response = env.client.put("/api/v1/subscription-client-settings", json=s3)
+    assert response.status_code == 200
+    assert "theme_dir" not in response.json()["settings"]["page"]
 
 
 # 14. Роль: required_role_for_request для GET и DELETE /api/v1/subscription-client-settings/devices возвращает admin; 401 без авторизации на DELETE; удаление устройства работает, повторное 404.

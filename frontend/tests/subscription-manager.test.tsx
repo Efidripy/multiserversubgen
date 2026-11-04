@@ -1,4 +1,4 @@
-import { cleanup, render, waitFor, fireEvent } from '@testing-library/react';
+import { cleanup, render, waitFor, fireEvent, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const apiGet = vi.hoisted(() => vi.fn());
@@ -133,5 +133,77 @@ describe('SubscriptionManager read lifecycle', () => {
     await Promise.resolve();
 
     expect(onHeaderProjectionChange).not.toHaveBeenCalled();
+  });
+
+  it('в разделе есть вкладка проверки User-Agent и в ней работает запрос', async () => {
+    localStorage.removeItem('sub_manager_subscriptions_tab_v1');
+    apiGet.mockImplementation((path: string) => {
+      if (path === '/v1/emails') return Promise.resolve({ data: { emails: [], stats: {} } });
+      return Promise.resolve({ data: { groups: [] } });
+    });
+    listNodes.mockResolvedValue([]);
+    apiPost.mockResolvedValueOnce({
+      data: {
+        matched: true,
+        client_id: 'happ',
+        name: 'Happ',
+        format: 'base64',
+        headers: {
+          'Routing-Enable': 'true',
+        },
+      },
+    });
+
+    const { container } = render(<SubscriptionManager apiUrl="https://example.test" />);
+    const tab = (id: string) => container.querySelector(`#subscriptions-tab-${id}`) as HTMLButtonElement;
+
+    expect(tab('uaTest')).toBeTruthy();
+    expect(tab('uaTest').textContent).toContain('subscriptions.tabs.uaTest');
+
+    // Click uaTest tab
+    fireEvent.click(tab('uaTest'));
+    expect(tab('uaTest').getAttribute('aria-pressed')).toBe('true');
+    expect(localStorage.getItem('sub_manager_subscriptions_tab_v1')).toBe('uaTest');
+
+    const uaInput = screen.getByPlaceholderText('subscriptionClients.test.userAgentPlaceholder');
+    fireEvent.change(uaInput, { target: { value: 'Happ/1.2.3' } });
+
+    const testBtn = screen.getByRole('button', { name: 'subscriptionClients.test.testButton' });
+    fireEvent.click(testBtn);
+
+    await waitFor(() => {
+      expect(apiPost).toHaveBeenCalledWith('/v1/subscription-client-settings/test', {
+        user_agent: 'Happ/1.2.3',
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('subscriptionClients.test.resultTitle')).toBeTruthy();
+    });
+    expect(screen.getByText('Happ')).toBeTruthy();
+    expect(screen.getByText('base64')).toBeTruthy();
+
+    // Switch to links and back to uaTest; result stays visible
+    fireEvent.click(tab('links'));
+    expect(tab('links').getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(tab('uaTest'));
+    expect(screen.getByText('subscriptionClients.test.resultTitle')).toBeTruthy();
+
+    localStorage.removeItem('sub_manager_subscriptions_tab_v1');
+  });
+
+  it('readSubscriptionTab восстанавливает вкладку uaTest', async () => {
+    localStorage.setItem('sub_manager_subscriptions_tab_v1', 'uaTest');
+    apiGet.mockImplementation((path: string) => {
+      if (path === '/v1/emails') return Promise.resolve({ data: { emails: [], stats: {} } });
+      return Promise.resolve({ data: { groups: [] } });
+    });
+    listNodes.mockResolvedValue([]);
+
+    const { container } = render(<SubscriptionManager apiUrl="https://example.test" />);
+    const tab = (id: string) => container.querySelector(`#subscriptions-tab-${id}`) as HTMLButtonElement;
+
+    expect(tab('uaTest').getAttribute('aria-pressed')).toBe('true');
+    localStorage.removeItem('sub_manager_subscriptions_tab_v1');
   });
 });

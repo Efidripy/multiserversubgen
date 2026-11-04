@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const apiGet = vi.hoisted(() => vi.fn());
@@ -555,5 +555,47 @@ describe('SubscriptionSettingsSections and Client Subscriptions Stage 2', () => 
     fireEvent.click(emailTokenBtn);
 
     expect(remarkInput.value).toBe('Server - {{NODE}}{{EMAIL}}');
+  });
+
+  it('для page.theme нет пункта «не задано» и пустое значение показывает первый вариант', () => {
+    const pageFields: SectionFieldSchema[] = [
+      { key: 'theme', type: 'enum', group: 'appearance', options: ['remnawave', '3xui'] },
+    ];
+
+    const handleChange = vi.fn();
+
+    const { rerender } = render(
+      <SubscriptionSettingsSections
+        sectionKey="page"
+        fields={pageFields}
+        values={{ theme: '' }}
+        onChange={handleChange}
+      />,
+    );
+
+    const selectButton = screen.getByRole('button', {
+      name: 'subscriptionClients.sections.page.theme',
+    });
+    expect(selectButton.textContent).toBe('subscriptionClients.options.remnawave');
+
+    fireEvent.click(selectButton);
+
+    const listbox = screen.getByRole('listbox');
+    expect(within(listbox).queryByText('subscriptionClients.notSet')).toBeNull();
+    expect(within(listbox).getByText('subscriptionClients.options.remnawave')).toBeTruthy();
+    expect(within(listbox).getByText('subscriptionClients.options.3xui')).toBeTruthy();
+
+    fireEvent.click(within(listbox).getByText('subscriptionClients.options.3xui'));
+    expect(handleChange).toHaveBeenCalledWith('theme', '3xui');
+
+    rerender(
+      <SubscriptionSettingsSections
+        sectionKey="page"
+        fields={pageFields}
+        values={{ theme: '3xui' }}
+        onChange={handleChange}
+      />,
+    );
+    expect(selectButton.textContent).toBe('subscriptionClients.options.3xui');
   });
 });

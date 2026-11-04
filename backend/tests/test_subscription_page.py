@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import base64
 import json
-import os
 from urllib.parse import quote
 
 import pytest
@@ -21,8 +20,8 @@ def test_validate_page_section_valid_cases():
     validate_page_section({})
     validate_page_section({"enabled": True})
     validate_page_section({"enabled": False, "brand_title": "My Service"})
-    validate_page_section({"theme_dir": ""})
-    validate_page_section({"theme_dir": "theme-1_dark"})
+    validate_page_section({"theme": ""})
+    validate_page_section({"theme": "3xui"})
     validate_page_section({"profile_mode": ""})
     validate_page_section({"profile_mode": "builtin"})
     validate_page_section({
@@ -35,15 +34,15 @@ def test_validate_page_section_valid_cases():
     })
 
 
-def test_validate_page_section_theme_dir_mask():
+def test_validate_page_section_theme_mask():
     for bad in ("../bad", "theme/dir", "theme space", "theme!", "a" * 65):
         with pytest.raises(ValueError) as exc:
-            validate_page_section({"theme_dir": bad})
-        assert str(exc.value) == "theme_dir"
+            validate_page_section({"theme": bad})
+        assert str(exc.value) == "theme"
 
     with pytest.raises(ValueError) as exc:
-        validate_page_section({"theme_dir": 123})
-    assert str(exc.value) == "theme_dir"
+        validate_page_section({"theme": 123})
+    assert str(exc.value) == "theme"
 
 
 def test_validate_page_section_profile_mode_and_url():
@@ -300,9 +299,9 @@ def test_render_page_import_buttons():
     escaped_sub = quote(sub_url, safe="")
     assert 'href="happ://add/https://vpn.example.com/sub/tok?test=1&amp;foo=bar"' in html
     assert 'href="incy://import/https://vpn.example.com/sub/tok?test=1&amp;foo=bar"' in html
-    assert f'href="clash://install-config?url={escaped_sub}"' in html
-    assert f'href="sing-box://import-remote-profile?url={escaped_sub}#My%20Config"' in html
-    assert f'href="v2rayng://install-config?url={escaped_sub}"' in html
+    assert f'href="flclashx://install-config?url={escaped_sub}"' in html
+    assert f'&amp;url={escaped_sub}"' in html
+    assert "{{" not in html
 
     # With custom happ_link
     custom_happ = "happ://crypt5/abc123xyz"
@@ -315,6 +314,18 @@ def test_render_page_import_buttons():
         happ_link=custom_happ,
     )
     assert f'href="{custom_happ}"' in html_custom_happ
+    # The encrypted link replaces the plain one everywhere, not only on the button.
+    assert 'href="happ://add/' not in html_custom_happ
+    html_3xui = render_page(
+        {},
+        {"theme": "3xui"},
+        profile={},
+        sub_url=sub_url,
+        links=[],
+        happ_link=custom_happ,
+    )
+    assert f'href="{custom_happ}"' in html_3xui
+    assert 'href="happ://add/' not in html_3xui
 
 
 def test_render_page_links_list_and_copy():
@@ -329,7 +340,7 @@ def test_render_page_links_list_and_copy():
     links = [vless_link, trojan_link, vmess_link]
     html = render_page(
         {},
-        {},
+        {"theme": "3xui"},
         profile={},
         sub_url="https://vpn.example.com/sub",
         links=links,
@@ -379,128 +390,38 @@ def test_render_page_security_offline_and_data_attributes():
     assert "https://" not in html.split("<style")[0]
 
 
-def test_render_page_theme_replacements(tmp_path):
-    themes_root = str(tmp_path / "themes")
-    theme_dir_path = os.path.join(themes_root, "custom_dark")
-    os.makedirs(theme_dir_path, exist_ok=True)
-
-    template = (
-        "<html><head><style nonce=\"{{NONCE}}\"></style></head>"
-        "<body>{{TITLE}}|{{SUB_URL}}|{{USED}}|{{TOTAL}}|{{EXPIRE}}|{{STATUS}}|{{QR}}|"
-        "{{LINKS_HTML}}|{{IMPORT_BUTTONS_HTML}}</body></html>"
-    )
-    with open(os.path.join(theme_dir_path, "page.html"), "w", encoding="utf-8") as f:
-        f.write(template)
-
-    ctx = {
-        "upload": 1024 * 1024,
-        "download": 2 * 1024 * 1024,
-        "total": 100 * 1024 * 1024,
-        "expire": 1762281600,
-        "now": 1700000000,
-    }
-    rendered = render_page(
-        ctx,
-        {"theme_dir": "custom_dark"},
-        profile={"title": "Custom Title"},
-        sub_url="https://vpn.example.com/sub/tok",
-        links=["vless://test#Node%201"],
-        qr_data_url="data:image/png;base64,123",
-        themes_root=themes_root,
-        nonce="my-nonce",
-    )
-
-    assert "Custom Title" in rendered
-    assert "https://vpn.example.com/sub/tok" in rendered
-    assert "3 MB" in rendered
-    assert "100 MB" in rendered
-    assert "active" in rendered
-    assert "data:image/png;base64,123" in rendered
-    assert "my-nonce" in rendered
-    assert 'class="links-list"' in rendered
-    assert 'class="import-buttons"' in rendered
-
-
-def test_render_page_theme_fallbacks(tmp_path):
-    themes_root = str(tmp_path / "themes")
-    os.makedirs(themes_root, exist_ok=True)
-
-    # 1. Missing themes_root
-    h1 = render_page({}, {"theme_dir": "any"}, profile={}, sub_url="https://sub", links=[], themes_root=None)
-    assert "<!DOCTYPE html>" in h1
-
-    # 2. Non-existent theme_dir
-    h2 = render_page({}, {"theme_dir": "non_existent"}, profile={}, sub_url="https://sub", links=[], themes_root=themes_root)
-    assert "<!DOCTYPE html>" in h2
-
-    # 3. Missing page.html inside theme_dir
-    empty_theme = os.path.join(themes_root, "empty_theme")
-    os.makedirs(empty_theme, exist_ok=True)
-    h3 = render_page({}, {"theme_dir": "empty_theme"}, profile={}, sub_url="https://sub", links=[], themes_root=themes_root)
-    assert "<!DOCTYPE html>" in h3
-
-    # 4. File too large (> 256 KB)
-    huge_theme = os.path.join(themes_root, "huge_theme")
-    os.makedirs(huge_theme, exist_ok=True)
-    with open(os.path.join(huge_theme, "page.html"), "w", encoding="utf-8") as f:
-        f.write("A" * (257 * 1024))
-    h4 = render_page({}, {"theme_dir": "huge_theme"}, profile={}, sub_url="https://sub", links=[], themes_root=themes_root)
-    assert "<!DOCTYPE html>" in h4
-
-    # 5. Invalid theme_dir regex (traversal attempt)
-    h5 = render_page({}, {"theme_dir": "../evil"}, profile={}, sub_url="https://sub", links=[], themes_root=themes_root)
-    assert "<!DOCTYPE html>" in h5
-
-    # 6. Symlink escaping themes_root
-    outside_dir = str(tmp_path / "outside")
-    os.makedirs(outside_dir, exist_ok=True)
-    with open(os.path.join(outside_dir, "page.html"), "w", encoding="utf-8") as f:
-        f.write("OUTSIDE PAGE")
-    symlink_target = os.path.join(themes_root, "sym_theme")
-    try:
-        os.symlink(outside_dir, symlink_target)
-        h6 = render_page({}, {"theme_dir": "sym_theme"}, profile={}, sub_url="https://sub", links=[], themes_root=themes_root)
-        assert "<!DOCTYPE html>" in h6
-        assert "OUTSIDE PAGE" not in h6
-    except (OSError, NotImplementedError):
-        pass
-
-
 def test_render_page_localization_russian_and_english():
-    ctx_ru = {"lang": "ru"}
-    html_ru = render_page(ctx_ru, {}, profile={}, sub_url="https://vpn/sub", links=[])
+    html_ru = render_page({"lang": "ru"}, {}, profile={}, sub_url="https://vpn/sub", links=[])
     assert 'lang="ru"' in html_ru
-    assert "Использовано" in html_ru
-    assert "Всего" in html_ru
-    assert "Срок действия" in html_ru
-    assert "Адрес подписки" in html_ru
-    assert "Копировать" in html_ru
-    assert "Список узлов" in html_ru
+    for label in ("Установка", "Статус", "Срок действия", "Копировать", "Добавить подписку"):
+        assert label in html_ru
 
-    ctx_en = {"lang": "en"}
-    html_en = render_page(ctx_en, {}, profile={}, sub_url="https://vpn/sub", links=[])
+    html_en = render_page({"lang": "en"}, {}, profile={}, sub_url="https://vpn/sub", links=[])
     assert 'lang="en"' in html_en
-    assert "Used" in html_en
-    assert "Total" in html_en
-    assert "Expires" in html_en
-    assert "Subscription URL" in html_en
-    assert "Copy" in html_en
-    assert "Server Nodes" in html_en
+    for label in ("Installation", "Status", "Expires", "Copy", "Add Subscription"):
+        assert label in html_en
+    assert "Добавить подписку" not in html_en
 
 
-def test_render_page_empty_links_message():
-    html_empty = render_page({}, {}, profile={}, sub_url="https://vpn/sub", links=[])
-    assert "Список узлов пуст" in html_empty
-    assert "links-empty" in html_empty
+def test_remnawave_page_does_not_list_nodes():
+    link = "vless://uuid-1@1.1.1.1:443#NL%20Server"
+    html = render_page({}, {}, profile={}, sub_url="https://vpn/sub", links=[link])
+    assert "uuid-1" not in html
+    assert "NL Server" not in html
 
-    html_empty_en = render_page({"lang": "en"}, {}, profile={}, sub_url="https://vpn/sub", links=[])
-    assert "No nodes available" in html_empty_en
+
+def test_3xui_page_empty_links_message():
+    section = {"theme": "3xui"}
+    html_ru = render_page({}, section, profile={}, sub_url="https://vpn/sub", links=[])
+    assert "Список узлов пуст" in html_ru
+    html_en = render_page({"lang": "en"}, section, profile={}, sub_url="https://vpn/sub", links=[])
+    assert "No nodes available" in html_en
 
 
 def test_render_page_node_parsing_formats():
     # shadowsocks without fragment
     ss_link = "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@1.2.3.4:8388"
-    html = render_page({}, {}, profile={}, sub_url="https://sub", links=[ss_link])
+    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://sub", links=[ss_link])
     assert "SS #1" in html
     assert "SS" in html
 
@@ -526,16 +447,31 @@ def test_builtin_page_has_no_inline_style_attributes_blocked_by_csp():
     assert 'data-width="50.0%"' in page
 
 
-def test_theme_substitution_does_not_expand_tokens_inside_values(tmp_path):
-    (tmp_path / "t").mkdir()
-    (tmp_path / "t" / "page.html").write_text("{{TITLE}}|{{NONCE}}", encoding="utf-8")
-    page = render_page(
-        {},
-        {"theme_dir": "t", "brand_title": "{{NONCE}}"},
-        profile={},
-        sub_url="https://example.com/s",
-        links=[],
-        themes_root=str(tmp_path),
-        nonce="secret-nonce",
-    )
-    assert page == "{{NONCE}}|secret-nonce"
+def test_builtin_themes_security_and_fallback():
+    for theme in ("remnawave", "3xui", "unknown"):
+        page = render_page(
+            {"email": '<img src=x onerror=1>', "upload": 1, "download": 2, "total": 10},
+            {"theme": theme, "brand_title": '<script>alert(1)</script>'},
+            profile={}, sub_url="https://example.com/sub", links=["vless://x#<bad>"], nonce="preview",
+        )
+        assert "<script>alert(1)</script>" not in page
+        assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
+        assert ' style="' not in page
+        assert " onerror=\"" not in page
+        assert "<style nonce=\"preview\">" in page
+        assert "<script nonce=\"preview\">" in page
+        assert "<script>alert" not in page
+
+
+def test_3xui_apps_tab_shows_app_names():
+    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub", links=[])
+    assert '<span>Happ</span>' in html
+
+
+def test_active_status_label_is_translated():
+    for theme in ("remnawave", "3xui"):
+        section = {"theme": theme}
+        html_en = render_page({"lang": "en"}, section, profile={}, sub_url="https://vpn/sub", links=[])
+        assert ">Active<" in html_en
+        html_ru = render_page({"lang": "ru"}, section, profile={}, sub_url="https://vpn/sub", links=[])
+        assert ">Активна<" in html_ru
