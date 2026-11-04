@@ -868,7 +868,145 @@
     "title": "Настройки подписок по клиентам",
     "tabs": {
       "profile": "Профиль",
-      "clients": "Клиенты"
+      "clients": "Клиенты",
+      "content": "Содержимое",
+      "remote_rules": "Правила по URL",
+      "xray_json": "Xray JSON",
+      "response_rules": "Правила ответа",
+      "page": "Страница",
+      "devices": "Устройства",
+      "encryption": "Шифрование"
+    },
+    "sections": {
+      "invalidJson": "Некорректный JSON",
+      "fixJsonErrors": "Исправьте ошибки в полях JSON перед сохранением",
+      "content": {
+        "title": "Содержимое",
+        "encode": "Кодировать в Base64",
+        "encodeHint": "Кодировать выдачу подписки в Base64",
+        "remark_template": "Шаблон имени узла",
+        "remark_templateHint": "Шаблон имени узлов подписки, например {{NODE}} | {{EMAIL}}",
+        "show_identity_on_all_links": "Email во всех ссылках",
+        "show_identity_on_all_linksHint": "Дописывать | email к имени каждой ссылки",
+        "info_node": "Информационный узел",
+        "info_nodeHint": "Первой ссылкой ставить узел с остатком трафика и дней",
+        "expired_template": "Шаблон при истечении срока",
+        "expired_templateHint": "Текст информационной ссылки при истечении срока",
+        "depleted_template": "Шаблон при исчерпании трафика",
+        "depleted_templateHint": "Текст информационной ссылки при исчерпании лимита",
+        "host_order": "Порядок узлов",
+        "host_orderHint": "Порядок следования узлов в подписке"
+      },
+      "remote_rules": {
+        "title": "Правила по URL",
+        "refresh_minutes": "Интервал обновления (минуты)",
+        "refresh_minutesHint": "Как часто обновлять удалённые правила в фоне",
+        "user_agent": "User-Agent для запросов",
+        "user_agentHint": "User-Agent при скачивании удалённых правил",
+        "use_remote_dns": "Использовать удалённый DNS",
+        "use_remote_dnsHint": "Разрешать DNS через удалённые серверы"
+      },
+      "xray_json": {
+        "title": "Xray JSON",
+        "always_array": "Всегда массив",
+        "always_arrayHint": "Всегда оборачивать конфигурацию в массив JSON",
+        "mux": "Mux (JSON)",
+        "muxHint": "Конфигурация мультиплексирования",
+        "dns": "DNS (JSON)",
+        "dnsHint": "Конфигурация DNS-серверов",
+        "routing": "Routing (JSON)",
+        "routingHint": "Конфигурация объекта routing",
+        "rules": "Rules (JSON)",
+        "rulesHint": "Массив правил маршрутизации",
+        "final_mask": "Final mask (JSON)",
+        "final_maskHint": "Конфигурация streamSettings.finalmask",
+        "observatory": "Observatory (JSON)",
+        "observatoryHint": "Конфигурация модуля observatory",
+        "balancers": "Balancers (JSON)",
+        "balancersHint": "Массив балансировщиков"
+      },
+      "response_rules": {
+        "title": "Правила ответа",
+        "rules": "Правила обработки ответа (JSON)",
+        "rulesHint": "Массив правил формата и модификации ответа"
+      },
+      "page": {
+        "title": "Страница подписки",
+        "enabled": "Включить веб-страницу",
+        "enabledHint": "Отображать веб-страницу при переходе в браузере",
+        "brand_title": "Заголовок бренда",
+        "brand_titleHint": "Отображается в заголовке страницы",
+        "theme_dir": "Папка темы",
+        "theme_dirHint": "Имя папки темы оформления (до 64 символов)",
+        "profile_mode": "Режим профиля",
+        "profile_modeHint": "Встроенный профиль или кастомный URL",
+        "profile_url": "URL профиля",
+        "profile_urlHint": "URL профиля при кастомном режиме"
+      },
+      "devices": {
+        "title": "Лимит устройств",
+        "enabled": "Включить лимит устройств",
+        "enabledHint": "Ограничивать доступ по заголовку HWID",
+        "max_devices": "Максимум устройств",
+        "max_devicesHint": "0 — без ограничения количества",
+        "block_unsupported": "Блокировать без HWID",
+        "block_unsupportedHint": "Блокировать клиентов, не передающих HWID",
+        "limit_announce": "Сообщение при превышении лимита",
+        "limit_announceHint": "Текст заголовка Announce при достижении лимита"
+      },
+      "encryption": {
+        "title": "Шифрование",
+        "happ_links": "Шифровать ссылки Happ",
+        "happ_linksHint": "Шифровать ссылки подписки для Happ по протоколу crypt5"
+      }
+    },
+    "content": {
+      "tokensTitle": "Токены шаблона имени",
+      "tokensHint": "Нажмите на токен для вставки в шаблон имени",
+      "insertToken": "Вставить"
+    },
+    "happRouting": {
+      "openEditor": "Редактор маршрутизации Happ",
+      "closeEditor": "Закрыть редактор",
+      "presetsTitle": "Пресеты",
+      "presets": {
+        "global": "Глобальный (весь трафик)",
+        "lan": "Обход LAN",
+        "russia": "Обход РФ и LAN",
+        "china": "Обход Китая и LAN",
+        "off": "Выключить маршрутизацию"
+      },
+      "name": "Имя правила",
+      "globalProxy": "Глобальный прокси",
+      "directSites": "Прямые домены (DirectSites)",
+      "directIp": "Прямые IP (DirectIp)",
+      "proxySites": "Проксируемые домены (ProxySites)",
+      "proxyIp": "Проксируемые IP (ProxyIp)",
+      "blockSites": "Блокируемые домены (BlockSites)",
+      "blockIp": "Блокируемые IP (BlockIp)",
+      "onePerLine": "По одной записи в строке",
+      "apply": "Применить маршрутизацию",
+      "parseError": "Ошибка разбора строки маршрутизации",
+      "invalidString": "Некорректный формат строки маршрутизации Happ"
+    },
+    "devices": {
+      "title": "Зарегистрированные устройства",
+      "hint": "Список устройств, авторизованных по заголовку HWID.",
+      "loading": "Загрузка устройств...",
+      "refresh": "Обновить",
+      "retry": "Повторить",
+      "empty": "Нет зарегистрированных устройств",
+      "subject": "Подписка / Email",
+      "os": "ОС",
+      "version": "Версия",
+      "model": "Модель",
+      "firstSeen": "Первый вход",
+      "lastSeen": "Последний вход",
+      "actions": "Действия",
+      "delete": "Удалить устройство",
+      "deleted": "Устройство удалено",
+      "deleteFailed": "Не удалось удалить устройство",
+      "failed": "Не удалось загрузить список устройств"
     },
     "save": "Сохранить",
     "saving": "Сохранение...",
@@ -959,12 +1097,15 @@
       "disable": "Отключено",
       "rand": "Случайный",
       "str": "Строка",
-      "hex": "HEX"
+      "hex": "HEX",
+      "builtin": "Встроенный",
+      "custom": "Пользовательский"
     },
     "fields": {
       "happ": {
         "routing_enable": "Включить маршрутизацию",
         "routing": "Правило маршрутизации",
+        "routing_url": "URL правил маршрутизации",
         "no_limit": "Безлимитный режим",
         "hide_settings": "Скрыть настройки серверов",
         "color_profile": "Цветовой профиль",
@@ -1018,11 +1159,13 @@
         "server_address_resolve_dns_domain": "DNS-домен резолва",
         "server_address_resolve_dns_ip": "DNS IP резолва",
         "routing_enable": "Включить маршрутизацию",
-        "routing": "Правило маршрутизации"
+        "routing": "Правило маршрутизации",
+        "routing_url": "URL правил маршрутизации"
       },
       "mihomo": {
         "enable_routing": "Включить маршрутизацию",
-        "rules": "Правила маршрутизации"
+        "rules": "Правила маршрутизации",
+        "rules_url": "URL правил маршрутизации"
       },
       "generic": {}
     }
