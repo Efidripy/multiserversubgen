@@ -2037,6 +2037,7 @@ class TelegramRegistrationService:
                 "callback_data": f"subscription-device:menu:{item.device_id}",
             }])
         buttons.extend((
+            [{"text": button(locale, "new_device"), "callback_data": "subscription:link:new"}],
             [{"text": button(locale, "guest_link"), "callback_data": "subscription:guest"}],
             [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
         ))
