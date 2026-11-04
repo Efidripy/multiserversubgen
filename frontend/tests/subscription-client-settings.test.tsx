@@ -367,4 +367,129 @@ describe('SubscriptionClientSettings', () => {
     expect(screen.getByText('Routing-Enable:')).toBeTruthy();
     expect(screen.getByText('Profile-Title:')).toBeTruthy();
   });
+
+  it('секции сохраняются в PUT без потерь (тот самый баг)', async () => {
+    const settingsWithSections = {
+      profile: mockSettings.profile,
+      clients: mockSettings.clients,
+      content: { encode: true, remark_template: '{{NODE}}' },
+      remote_rules: { refresh_minutes: 45, user_agent: 'MihomoBot' },
+      xray_json: { always_array: true, mux: '{"enabled": true}' },
+      response_rules: { rules: '[]' },
+      page: { enabled: true, brand_title: 'MyBrand' },
+      devices: { enabled: true, max_devices: 5 },
+      encryption: { happ_links: true },
+      custom_unknown_section: { custom_key: 'custom_value' },
+    };
+
+    apiGet.mockImplementation((url: string) => {
+      if (url === '/v1/subscription-client-settings') {
+        return Promise.resolve({
+          data: {
+            settings: JSON.parse(JSON.stringify(settingsWithSections)),
+            schema: JSON.parse(JSON.stringify(mockSchema)),
+            section_schema: {
+              content: [{ key: 'remark_template', type: 'text', group: 'body' }],
+            },
+            formats: mockFormats,
+          },
+        });
+      }
+      return Promise.resolve({ data: {} });
+    });
+
+    apiPut.mockResolvedValueOnce({
+      data: {
+        settings: {
+          ...settingsWithSections,
+          profile: { ...settingsWithSections.profile, title: 'Updated Profile' },
+        },
+      },
+    });
+
+    render(<SubscriptionClientSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('subscriptionClients.profile.title')).toBeTruthy();
+    });
+
+    // Modify profile title
+    const titleInput = screen.getByPlaceholderText('subscriptionClients.profile.title');
+    fireEvent.change(titleInput, { target: { value: 'Updated Profile' } });
+
+    // Click Save
+    const saveButton = screen.getByRole('button', { name: 'subscriptionClients.save' });
+    fireEvent.click(saveButton);
+
+    await waitFor(() => {
+      expect(apiPut).toHaveBeenCalledTimes(1);
+    });
+
+    expect(apiPut).toHaveBeenCalledWith('/v1/subscription-client-settings', {
+      profile: {
+        ...mockSettings.profile,
+        title: 'Updated Profile',
+      },
+      clients: mockSettings.clients,
+      content: { encode: true, remark_template: '{{NODE}}' },
+      remote_rules: { refresh_minutes: 45, user_agent: 'MihomoBot' },
+      xray_json: { always_array: true, mux: '{"enabled": true}' },
+      response_rules: { rules: '[]' },
+      page: { enabled: true, brand_title: 'MyBrand' },
+      devices: { enabled: true, max_devices: 5 },
+      encryption: { happ_links: true },
+      custom_unknown_section: { custom_key: 'custom_value' },
+    });
+
+    expect(toastMock).toHaveBeenCalledWith('subscriptionClients.saveSuccess', 'success');
+  });
+
+  it('кнопка редактора Happ в карточке клиента применяет маршрут и включает routing_enable', async () => {
+    render(<SubscriptionClientSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('subscriptionClients.tabs.clients')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
+
+    // Expand Happ client
+    const expandButtons = screen.getAllByText('subscriptionClients.clients.expandSettings');
+    fireEvent.click(expandButtons[0]);
+
+    // Button to open Happ routing editor should be visible next to routing input
+    const openEditorBtn = screen.getByRole('button', {
+      name: 'subscriptionClients.happRouting.openEditor',
+    });
+    expect(openEditorBtn).toBeTruthy();
+
+    fireEvent.click(openEditorBtn);
+
+    // HappRoutingEditor is rendered
+    expect(screen.getByText('subscriptionClients.happRouting.presetsTitle')).toBeTruthy();
+
+    // Select russia preset
+    const russiaPresetBtn = screen.getByRole('button', {
+      name: 'subscriptionClients.happRouting.presets.russia',
+    });
+    fireEvent.click(russiaPresetBtn);
+
+    // Click Apply
+    const applyBtn = screen.getByRole('button', {
+      name: 'subscriptionClients.happRouting.apply',
+    });
+    fireEvent.click(applyBtn);
+
+    // Happ routing input should now have happ://routing/onadd/...
+    const routingInput = screen.getByLabelText(
+      'subscriptionClients.fields.happ.routing',
+    ) as HTMLInputElement;
+    expect(routingInput.value.startsWith('happ://routing/onadd/')).toBe(true);
+
+    // Routing-Enable switch should be turned on
+    const routingSwitch = screen.getByRole('switch', {
+      name: 'subscriptionClients.fields.happ.routing_enable',
+    });
+    expect(routingSwitch.getAttribute('aria-checked')).toBe('true');
+  });
 });

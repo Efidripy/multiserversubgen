@@ -17,6 +17,12 @@ import {
   iconButtonClass,
   metaLabelClass,
 } from './SubscriptionManager';
+import {
+  SubscriptionSettingsSections,
+  SectionSchemaMap,
+} from './SubscriptionSettingsSections';
+import { HappRoutingEditor } from './HappRoutingEditor';
+import { SubscriptionDevicesPanel } from './SubscriptionDevicesPanel';
 
 export interface SubscriptionProfile {
   title: string;
@@ -46,6 +52,7 @@ export interface SubscriptionClientRule {
 export interface SubscriptionClientSettingsModel {
   profile: SubscriptionProfile;
   clients: SubscriptionClientRule[];
+  [sectionKey: string]: any;
 }
 
 export interface SchemaField {
@@ -61,6 +68,7 @@ export type ClientSchemaMap = Record<string, SchemaField[]>;
 export interface SubscriptionClientSettingsApiResponse {
   settings: SubscriptionClientSettingsModel;
   schema: ClientSchemaMap;
+  section_schema?: SectionSchemaMap;
   formats: string[];
 }
 
@@ -82,26 +90,47 @@ const emptyProfile: SubscriptionProfile = {
 
 const defaultFormats = ['base64', 'mihomo', 'clash', 'singbox'];
 
-const normalizeSettings = (settings?: SubscriptionClientSettingsModel): SubscriptionClientSettingsModel => ({
-  profile: { ...emptyProfile, ...settings?.profile },
-  clients: (settings?.clients ?? []).map((client) => ({
-    ...client,
-    name: client.name || client.id,
-    kind: client.kind || 'generic',
-    builtin: Boolean(client.builtin),
-    enabled: Boolean(client.enabled),
-    user_agent_regex: client.user_agent_regex || '',
-    format: client.format || 'base64',
-    settings: client.settings || {},
-    headers: (client.headers ?? []).map((h) => ({ key: h.key || '', value: h.value || '' })),
-  })),
-});
+export const CONTENT_TOKENS = [
+  '{{EMAIL}}',
+  '{{USERNAME}}',
+  '{{SUB_ID}}',
+  '{{NODE}}',
+  '{{PROTOCOL}}',
+  '{{INBOUND}}',
+  '{{TRAFFIC_USED}}',
+  '{{TRAFFIC_LEFT}}',
+  '{{TRAFFIC_TOTAL}}',
+  '{{DAYS_LEFT}}',
+  '{{EXPIRE_DATE}}',
+  '{{STATUS}}',
+  '{{STATUS_EMOJI}}',
+];
+
+export const normalizeSettings = (raw?: any): SubscriptionClientSettingsModel => {
+  const settings = raw || {};
+  const normalized: SubscriptionClientSettingsModel = {
+    ...settings,
+    profile: { ...emptyProfile, ...settings.profile },
+    clients: (settings.clients ?? []).map((client: any) => ({
+      ...client,
+      name: client.name || client.id,
+      kind: client.kind || 'generic',
+      builtin: Boolean(client.builtin),
+      enabled: Boolean(client.enabled),
+      user_agent_regex: client.user_agent_regex || '',
+      format: client.format || 'base64',
+      settings: client.settings || {},
+      headers: (client.headers ?? []).map((h: any) => ({ key: h.key || '', value: h.value || '' })),
+    })),
+  };
+  return normalized;
+};
 
 export const SubscriptionClientSettings: React.FC = () => {
   const { t } = useTranslation();
   const { toast } = useToast();
 
-  const [activeTab, setActiveTab] = useState<'profile' | 'clients'>('profile');
+  const [activeTab, setActiveTab] = useState<string>('profile');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -113,13 +142,20 @@ export const SubscriptionClientSettings: React.FC = () => {
   });
   const [savedBaseline, setSavedBaseline] = useState<string>('');
   const [schema, setSchema] = useState<ClientSchemaMap>({});
+  const [sectionSchema, setSectionSchema] = useState<SectionSchemaMap>({});
   const [formats, setFormats] = useState<string[]>(defaultFormats);
 
   const [expandedClients, setExpandedClients] = useState<Record<string, boolean>>({});
+  const [openHappRouting, setOpenHappRouting] = useState<Record<string, boolean>>({});
+  const [invalidSections, setInvalidSections] = useState<Record<string, boolean>>({});
 
   const [testUa, setTestUa] = useState('');
   const [testLoading, setTestLoading] = useState(false);
   const [testResult, setTestResult] = useState<SubscriptionClientTestResponse | null>(null);
+
+  const hasInvalidJson = useMemo(() => {
+    return Object.values(invalidSections).some(Boolean);
+  }, [invalidSections]);
 
   const hasChanges = useMemo(() => {
     return JSON.stringify(settings) !== savedBaseline;
@@ -136,6 +172,7 @@ export const SubscriptionClientSettings: React.FC = () => {
       setSettings(loadedSettings);
       setSavedBaseline(JSON.stringify(loadedSettings));
       if (data.schema) setSchema(data.schema);
+      if (data.section_schema) setSectionSchema(data.section_schema);
       if (Array.isArray(data.formats) && data.formats.length > 0) {
         setFormats(data.formats);
       }
@@ -159,7 +196,7 @@ export const SubscriptionClientSettings: React.FC = () => {
   }, []);
 
   const handleSave = async () => {
-    if (!hasChanges || saving) return;
+    if (!hasChanges || saving || hasInvalidJson) return;
     setSaving(true);
     setError('');
     setSuccessMessage('');
@@ -174,6 +211,7 @@ export const SubscriptionClientSettings: React.FC = () => {
         setSavedBaseline(JSON.stringify(settings));
       }
       if (data?.schema) setSchema(data.schema);
+      if (data?.section_schema) setSectionSchema(data.section_schema);
       if (Array.isArray(data?.formats)) setFormats(data.formats);
 
       setSuccessMessage(t('subscriptionClients.saveSuccess'));
@@ -232,6 +270,30 @@ export const SubscriptionClientSettings: React.FC = () => {
         },
       };
       return { ...prev, clients: nextClients };
+    });
+  };
+
+  const updateSectionField = (sectionKey: string, fieldKey: string, value: any) => {
+    setSettings((prev) => ({
+      ...prev,
+      [sectionKey]: {
+        ...(prev[sectionKey] || {}),
+        [fieldKey]: value,
+      },
+    }));
+  };
+
+  const handleSectionValidityChange = (sectionKey: string, isValid: boolean) => {
+    setInvalidSections((prev) => {
+      if (isValid && prev[sectionKey]) {
+        const next = { ...prev };
+        delete next[sectionKey];
+        return next;
+      }
+      if (!isValid && !prev[sectionKey]) {
+        return { ...prev, [sectionKey]: true };
+      }
+      return prev;
     });
   };
 
@@ -342,6 +404,21 @@ export const SubscriptionClientSettings: React.FC = () => {
     }
   };
 
+  const tabOptions = useMemo(() => {
+    const baseTabs = [
+      { value: 'profile', label: t('subscriptionClients.tabs.profile') },
+      { value: 'clients', label: t('subscriptionClients.tabs.clients') },
+    ];
+    const sectionTabs = Object.keys(sectionSchema).map((secKey) => ({
+      value: secKey,
+      label: t(
+        `subscriptionClients.tabs.${secKey}`,
+        t(`subscriptionClients.sections.${secKey}.title`, secKey),
+      ),
+    }));
+    return [...baseTabs, ...sectionTabs];
+  }, [sectionSchema, t]);
+
   if (loading) {
     return (
       <section className={panelClass}>
@@ -361,22 +438,12 @@ export const SubscriptionClientSettings: React.FC = () => {
             <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-cyan-300">
               {t('subscriptionClients.title')}
             </h3>
-            <div className="mt-2 min-w-0">
-              <ChoiceChips
-                options={[
-                  { value: 'profile', label: t('subscriptionClients.tabs.profile') },
-                  { value: 'clients', label: t('subscriptionClients.tabs.clients') },
-                ]}
-                value={activeTab}
-                onChange={(val) => setActiveTab(val as 'profile' | 'clients')}
-              />
-            </div>
           </div>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <button
               type="button"
               className={primaryButtonClass}
-              disabled={saving || !hasChanges}
+              disabled={saving || !hasChanges || hasInvalidJson}
               onClick={() => void handleSave()}
             >
               <UIIcon name={saving ? 'spinner' : 'check'} size={15} />
@@ -386,6 +453,20 @@ export const SubscriptionClientSettings: React.FC = () => {
             </button>
           </div>
         </div>
+
+        <div className="mt-3 min-w-0">
+          <ChoiceChips
+            options={tabOptions}
+            value={activeTab}
+            onChange={(val) => setActiveTab(String(val))}
+          />
+        </div>
+
+        {hasInvalidJson && (
+          <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
+            {t('subscriptionClients.sections.fixJsonErrors')}
+          </div>
+        )}
 
         {error && (
           <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
@@ -634,20 +715,67 @@ export const SubscriptionClientSettings: React.FC = () => {
                             {fields.map((field) => {
                               const fieldLabel = t(`subscriptionClients.fields.${client.kind}.${field.key}`);
                               const currentValue = client.settings?.[field.key];
+                              const isHappRouting = client.kind === 'happ' && field.key === 'routing';
 
                               return (
-                                <div key={field.key} className="min-w-0">
+                                <div key={field.key} className={cn('min-w-0', isHappRouting ? 'sm:col-span-2' : '')}>
                                   <label className={cn(titleClass, 'text-[11px]')}>{fieldLabel}</label>
                                   <div className="mt-1 min-w-0">
                                     {(field.type === 'text' || field.type === 'url') && (
-                                      <input
-                                        type={field.type === 'url' ? 'url' : 'text'}
-                                        className={inputClass}
-                                        value={currentValue ?? ''}
-                                        aria-label={fieldLabel}
-                                        placeholder={fieldLabel}
-                                        onChange={(e) => updateClientSetting(index, field.key, e.target.value)}
-                                      />
+                                      <>
+                                        {isHappRouting ? (
+                                          <div>
+                                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                                              <input
+                                                type="text"
+                                                className={cn(inputClass, 'flex-1')}
+                                                value={currentValue ?? ''}
+                                                aria-label={fieldLabel}
+                                                placeholder={fieldLabel}
+                                                onChange={(e) => updateClientSetting(index, field.key, e.target.value)}
+                                              />
+                                              <button
+                                                type="button"
+                                                className={cn(secondaryButtonClass, 'h-9 px-3 text-xs whitespace-nowrap')}
+                                                onClick={() =>
+                                                  setOpenHappRouting((prev) => ({
+                                                    ...prev,
+                                                    [client.id]: !prev[client.id],
+                                                  }))
+                                                }
+                                              >
+                                                {openHappRouting[client.id]
+                                                  ? t('subscriptionClients.happRouting.closeEditor')
+                                                  : t('subscriptionClients.happRouting.openEditor')}
+                                              </button>
+                                            </div>
+                                            {openHappRouting[client.id] && (
+                                              <HappRoutingEditor
+                                                routingValue={currentValue || ''}
+                                                onApply={(val) => {
+                                                  updateClientSetting(index, 'routing', val);
+                                                  updateClientSetting(index, 'routing_enable', true);
+                                                }}
+                                                onClose={() =>
+                                                  setOpenHappRouting((prev) => ({
+                                                    ...prev,
+                                                    [client.id]: false,
+                                                  }))
+                                                }
+                                              />
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <input
+                                            type={field.type === 'url' ? 'url' : 'text'}
+                                            className={inputClass}
+                                            value={currentValue ?? ''}
+                                            aria-label={fieldLabel}
+                                            placeholder={fieldLabel}
+                                            onChange={(e) => updateClientSetting(index, field.key, e.target.value)}
+                                          />
+                                        )}
+                                      </>
                                     )}
 
                                     {field.type === 'lines' && (
@@ -782,6 +910,53 @@ export const SubscriptionClientSettings: React.FC = () => {
               );
             })}
           </div>
+        </section>
+      )}
+
+      {/* Sections dynamically rendered from section_schema */}
+      {activeTab !== 'profile' && activeTab !== 'clients' && sectionSchema[activeTab] && (
+        <section className={panelClass}>
+          <SubscriptionSettingsSections
+            sectionKey={activeTab}
+            fields={sectionSchema[activeTab] || []}
+            values={settings[activeTab] || {}}
+            onChange={(fieldKey, val) => updateSectionField(activeTab, fieldKey, val)}
+            onValidityChange={(isValid) => handleSectionValidityChange(activeTab, isValid)}
+          >
+            {activeTab === 'content' && (
+              <div className="mt-6 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4">
+                <h4 className={cn(titleClass, 'text-cyan-300')}>
+                  {t('subscriptionClients.content.tokensTitle')}
+                </h4>
+                <p className={hintClass}>
+                  {t('subscriptionClients.content.tokensHint')}
+                </p>
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {CONTENT_TOKENS.map((token) => (
+                    <button
+                      key={token}
+                      type="button"
+                      className={cn(
+                        secondaryButtonClass,
+                        'h-7 px-2 font-mono text-xs text-cyan-200 hover:border-cyan-400',
+                      )}
+                      title={t('subscriptionClients.content.insertToken')}
+                      aria-label={`${t('subscriptionClients.content.insertToken')} ${token}`}
+                      onClick={() => {
+                        const current = (settings.content?.remark_template as string) || '';
+                        updateSectionField('content', 'remark_template', current + token);
+                      }}
+                    >
+                      <span>+</span>
+                      <span>{token}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'devices' && <SubscriptionDevicesPanel />}
+          </SubscriptionSettingsSections>
         </section>
       )}
 

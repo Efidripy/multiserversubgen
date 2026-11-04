@@ -868,7 +868,145 @@
     "title": "Client Subscription Settings",
     "tabs": {
       "profile": "Profile",
-      "clients": "Clients"
+      "clients": "Clients",
+      "content": "Content",
+      "remote_rules": "Remote Rules",
+      "xray_json": "Xray JSON",
+      "response_rules": "Response Rules",
+      "page": "Page",
+      "devices": "Devices",
+      "encryption": "Encryption"
+    },
+    "sections": {
+      "invalidJson": "Invalid JSON",
+      "fixJsonErrors": "Fix errors in JSON fields before saving",
+      "content": {
+        "title": "Content",
+        "encode": "Encode Base64",
+        "encodeHint": "Encode subscription output in Base64",
+        "remark_template": "Remark Template",
+        "remark_templateHint": "Template for subscription node remarks, e.g. {{NODE}} | {{EMAIL}}",
+        "show_identity_on_all_links": "Show Email On All Links",
+        "show_identity_on_all_linksHint": "Append | email to each link remark",
+        "info_node": "Info Node",
+        "info_nodeHint": "Prepend an info node with remaining traffic and days",
+        "expired_template": "Expired Template",
+        "expired_templateHint": "Text for info link when subscription has expired",
+        "depleted_template": "Depleted Template",
+        "depleted_templateHint": "Text for info link when traffic limit is reached",
+        "host_order": "Host Order",
+        "host_orderHint": "Order of nodes in subscription output"
+      },
+      "remote_rules": {
+        "title": "Remote Rules",
+        "refresh_minutes": "Refresh Interval (minutes)",
+        "refresh_minutesHint": "How often to background-refresh remote rules",
+        "user_agent": "User-Agent for Requests",
+        "user_agentHint": "User-Agent header when fetching remote rules",
+        "use_remote_dns": "Use Remote DNS",
+        "use_remote_dnsHint": "Resolve DNS via remote servers"
+      },
+      "xray_json": {
+        "title": "Xray JSON",
+        "always_array": "Always Array",
+        "always_arrayHint": "Always wrap configuration in a JSON array",
+        "mux": "Mux (JSON)",
+        "muxHint": "Multiplexing configuration",
+        "dns": "DNS (JSON)",
+        "dnsHint": "DNS servers configuration",
+        "routing": "Routing (JSON)",
+        "routingHint": "Routing object configuration",
+        "rules": "Rules (JSON)",
+        "rulesHint": "Array of routing rules",
+        "final_mask": "Final Mask (JSON)",
+        "final_maskHint": "Configuration for streamSettings.finalmask",
+        "observatory": "Observatory (JSON)",
+        "observatoryHint": "Observatory module configuration",
+        "balancers": "Balancers (JSON)",
+        "balancersHint": "Array of balancers"
+      },
+      "response_rules": {
+        "title": "Response Rules",
+        "rules": "Response Rules (JSON)",
+        "rulesHint": "Array of rules for response format and modification"
+      },
+      "page": {
+        "title": "Subscription Page",
+        "enabled": "Enable Web Page",
+        "enabledHint": "Show web page when accessed in a browser",
+        "brand_title": "Brand Title",
+        "brand_titleHint": "Displayed in the web page title",
+        "theme_dir": "Theme Directory",
+        "theme_dirHint": "Theme directory name (up to 64 chars)",
+        "profile_mode": "Profile Mode",
+        "profile_modeHint": "Built-in profile or custom URL",
+        "profile_url": "Profile URL",
+        "profile_urlHint": "Profile URL for custom mode"
+      },
+      "devices": {
+        "title": "Device Limit",
+        "enabled": "Enable Device Limit",
+        "enabledHint": "Limit access by HWID header",
+        "max_devices": "Max Devices",
+        "max_devicesHint": "0 = unlimited devices",
+        "block_unsupported": "Block Unsupported",
+        "block_unsupportedHint": "Block clients that do not send HWID",
+        "limit_announce": "Limit Announce Message",
+        "limit_announceHint": "Announce header text when device limit is reached"
+      },
+      "encryption": {
+        "title": "Encryption",
+        "happ_links": "Encrypt Happ Links",
+        "happ_linksHint": "Encrypt subscription links for Happ using crypt5 protocol"
+      }
+    },
+    "content": {
+      "tokensTitle": "Remark Template Tokens",
+      "tokensHint": "Click a token to append it to the remark template",
+      "insertToken": "Insert"
+    },
+    "happRouting": {
+      "openEditor": "Happ Routing Editor",
+      "closeEditor": "Close Editor",
+      "presetsTitle": "Presets",
+      "presets": {
+        "global": "Global (all traffic)",
+        "lan": "LAN Bypass",
+        "russia": "Russia & LAN Bypass",
+        "china": "China & LAN Bypass",
+        "off": "Disable Routing"
+      },
+      "name": "Rule Name",
+      "globalProxy": "Global Proxy",
+      "directSites": "Direct Sites (DirectSites)",
+      "directIp": "Direct IP (DirectIp)",
+      "proxySites": "Proxy Sites (ProxySites)",
+      "proxyIp": "Proxy IP (ProxyIp)",
+      "blockSites": "Block Sites (BlockSites)",
+      "blockIp": "Block IP (BlockIp)",
+      "onePerLine": "One entry per line",
+      "apply": "Apply Routing",
+      "parseError": "Failed to parse routing string",
+      "invalidString": "Invalid Happ routing string format"
+    },
+    "devices": {
+      "title": "Registered Devices",
+      "hint": "List of devices authorized by HWID header.",
+      "loading": "Loading devices...",
+      "refresh": "Refresh",
+      "retry": "Retry",
+      "empty": "No registered devices",
+      "subject": "Subscription / Email",
+      "os": "OS",
+      "version": "Version",
+      "model": "Model",
+      "firstSeen": "First seen",
+      "lastSeen": "Last seen",
+      "actions": "Actions",
+      "delete": "Delete device",
+      "deleted": "Device deleted",
+      "deleteFailed": "Failed to delete device",
+      "failed": "Failed to load device list"
     },
     "save": "Save",
     "saving": "Saving...",
@@ -959,12 +1097,15 @@
       "disable": "Disable",
       "rand": "Random",
       "str": "String",
-      "hex": "HEX"
+      "hex": "HEX",
+      "builtin": "Built-in",
+      "custom": "Custom"
     },
     "fields": {
       "happ": {
         "routing_enable": "Enable Routing",
         "routing": "Routing Rule",
+        "routing_url": "Routing Rules URL",
         "no_limit": "Unlimited Mode",
         "hide_settings": "Hide Server Settings",
         "color_profile": "Color Profile",
@@ -1018,11 +1159,13 @@
         "server_address_resolve_dns_domain": "Resolve DNS Domain",
         "server_address_resolve_dns_ip": "Resolve DNS IP",
         "routing_enable": "Enable Routing",
-        "routing": "Routing Rule"
+        "routing": "Routing Rule",
+        "routing_url": "Routing Rules URL"
       },
       "mihomo": {
         "enable_routing": "Enable Routing",
-        "rules": "Routing Rules"
+        "rules": "Routing Rules",
+        "rules_url": "Routing Rules URL"
       },
       "generic": {}
     }
