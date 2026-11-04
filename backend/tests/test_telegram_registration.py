@@ -949,7 +949,7 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
         for button in row
     ]
     assert access_button_texts[:5] == [
-        "🔗 Получить ссылку", "📷 Показать QR-код", "👋 Ссылка для гостя", "📱 Мои устройства", "🔄 Заменить ссылку",
+        "🔗 Получить ссылку", "🔳 Показать QR-код", "👋 Ссылка для гостя", "📱 Мои устройства", "🔄 Заменить ссылку",
     ]
     assert access_choice[0].reply_markup["inline_keyboard"][-1][0]["text"] == "⬅️ Назад"
 
@@ -1658,7 +1658,7 @@ def test_subscription_device_actions_show_rename_and_soft_revoke_only_that_link(
         f"subscription-device:rename:{device.device_id}",
         f"subscription-device:revoke:{device.device_id}",
     }.issubset(action_callbacks)
-    assert {"🔗 Показать ссылку", "📷 Показать QR-код", "✏️ Переименовать", "🚫 Отключить ссылку", "⬅️ Назад"}.issubset(action_texts)
+    assert {"🔗 Показать ссылку", "🔳 Показать QR-код", "✏️ Переименовать", "🚫 Отключить ссылку", "⬅️ Назад"}.issubset(action_texts)
     assert "/api/v1/sub/" in shown.text
     assert qr.photo_png is not None
     assert qr.reply_markup["inline_keyboard"][1] == [{"text": "⬅️ Назад", "callback_data": f"subscription-device:menu:{device.device_id}"}]
@@ -1710,8 +1710,36 @@ def test_primary_device_actions_show_link_rename_and_primary_only_rotation(tmp_p
 
     assert {"subscription:link:primary", "subscription:qr:primary", "subscription:rotate:primary"}.issubset(action_callbacks)
     assert any(callback.startswith("device:rename:") for callback in action_callbacks)
-    assert {"🔗 Показать ссылку", "📷 Показать QR-код", "✏️ Переименовать", "🔄 Заменить ссылку", "⬅️ Назад"}.issubset(action_texts)
+    assert {"🔗 Показать ссылку", "🔳 Показать QR-код", "✏️ Переименовать", "🔄 Заменить ссылку", "⬅️ Назад"}.issubset(action_texts)
     assert not any(callback.startswith("subscription-device:revoke:") for callback in action_callbacks)
+
+
+def test_devices_menu_new_device_button_creates_device_and_lists_it(tmp_path):
+    db_path = str(tmp_path / "devices-new-button.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="devices_new_button")
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: [{"id": 1, "name": "edge-a"}],
+        get_links_filtered=lambda _nodes, _email, _protocol: ["vless://opaque-link"],
+    )
+
+    def callbacks(message):
+        return [item.get("callback_data") for row in message.reply_markup["inline_keyboard"] for item in row]
+
+    before = service.handle_update(_callback(1, "devices:menu"))[0]
+    assert "subscription:link:new" in callbacks(before)
+    assert not any(str(item).startswith("subscription-device:menu:") for item in callbacks(before))
+
+    created = service.handle_update(_callback(2, "subscription:link:new"))[0]
+    assert "bot.example.test" in created.text
+
+    after = service.handle_update(_callback(3, "devices:menu"))[0]
+    assert "Новое устройство" in after.text
+    assert any(str(item).startswith("subscription-device:menu:") for item in callbacks(after))
 
 
 def test_admin_customer_card_shows_issued_link_metadata_without_bearer_urls(tmp_path):
