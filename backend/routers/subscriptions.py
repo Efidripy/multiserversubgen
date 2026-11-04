@@ -22,6 +22,7 @@ from services.subscription_client_settings import (
     match_client,
     save_settings as save_client_settings,
     schema as client_settings_schema,
+    section_schema as client_settings_section_schema,
 )
 from services.subscription_formats import convert_links
 from services.telegram_access import TelegramSubscriptionAccessGate
@@ -550,7 +551,12 @@ def build_subscriptions_router(
         return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
 
     def _settings_payload(value):
-        return {"settings": value, "schema": client_settings_schema(), "formats": ["base64", "mihomo", "clash", "singbox"]}
+        return {
+            "settings": value,
+            "schema": client_settings_schema(),
+            "section_schema": client_settings_section_schema(),
+            "formats": ["base64", "mihomo", "clash", "singbox"],
+        }
 
     @router.get("/api/v1/subscription-client-settings")
     def get_subscription_client_settings(request: Request):

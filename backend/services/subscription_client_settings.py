@@ -54,6 +54,55 @@ FIELD_SPECS = {
 }
 
 
+# Panel-wide sections, one per feature. (key, type, group, options, default)
+SECTION_SPECS = {
+    "content": [
+        ("encode", "bool", "body", None, True),
+        ("remark_template", "text", "body", None, ""),
+        ("show_identity_on_all_links", "bool", "body", None, False),
+        ("info_node", "bool", "body", None, False),
+        ("expired_template", "text", "status", None, ""),
+        ("depleted_template", "text", "status", None, ""),
+        ("month_end_expiry", "bool", "status", None, False),
+        ("host_order", "enum", "body", ["name", "random"], ""),
+    ],
+    "remote_rules": [
+        ("refresh_minutes", "number", "fetch", None, 60),
+        ("user_agent", "text", "fetch", None, ""),
+        ("use_remote_dns", "bool", "fetch", None, False),
+    ],
+    "xray_json": [
+        ("always_array", "bool", "format", None, False),
+        ("mux", "json", "format", None, ""),
+        ("dns", "json", "format", None, ""),
+        ("routing", "json", "format", None, ""),
+        ("rules", "json", "format", None, ""),
+        ("final_mask", "json", "format", None, ""),
+        ("observatory", "json", "format", None, ""),
+        ("balancers", "json", "format", None, ""),
+    ],
+    "response_rules": [
+        ("rules", "json", "rules", None, ""),
+    ],
+    "page": [
+        ("enabled", "bool", "page", None, False),
+        ("brand_title", "text", "page", None, ""),
+        ("theme_dir", "text", "page", None, ""),
+        ("profile_mode", "enum", "page", ["builtin", "custom"], ""),
+        ("profile_url", "url", "page", None, ""),
+    ],
+    "devices": [
+        ("enabled", "bool", "limit", None, False),
+        ("max_devices", "number", "limit", None, 0),
+        ("block_unsupported", "bool", "limit", None, False),
+        ("limit_announce", "text", "limit", None, ""),
+    ],
+    "encryption": [
+        ("happ_links", "bool", "links", None, False),
+    ],
+}
+
+
 def ensure_subscription_client_settings_table(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE TABLE IF NOT EXISTS subscription_client_settings (id INTEGER PRIMARY KEY CHECK (id = 1), settings_json TEXT NOT NULL, updated_at TEXT DEFAULT CURRENT_TIMESTAMP)"
@@ -70,6 +119,10 @@ def default_settings() -> Dict[str, Any]:
             "update_interval_hours": None,
         },
         "clients": [copy.deepcopy(client) for client in DEFAULT_CLIENTS],
+        **{
+            section: {key: default for key, _type, _group, _options, default in specs}
+            for section, specs in SECTION_SPECS.items()
+        },
     }
 
 
@@ -154,6 +207,39 @@ def _validate_profile(raw: Any, result: Dict[str, Any]) -> None:
         result["profile"][key] = value
 
 
+def _validate_section_value(key: str, value: Any, field_type: str, options: Any) -> Any:
+    if field_type == "bool":
+        if not isinstance(value, bool):
+            raise ValueError(key)
+    elif field_type == "number":
+        if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 1000000:
+            raise ValueError(key)
+    elif not isinstance(value, str):
+        raise ValueError(key)
+    elif len(value) > 65536:
+        raise ValueError(key)
+    elif field_type == "url" and not _validate_url(value):
+        raise ValueError(key)
+    elif field_type == "enum" and value and value not in options:
+        raise ValueError(key)
+    elif field_type == "json" and value:
+        try:
+            json.loads(value)
+        except ValueError as exc:
+            raise ValueError(key) from exc
+    return value
+
+
+def _validate_sections(raw: Dict[str, Any], result: Dict[str, Any]) -> None:
+    for section, specs in SECTION_SPECS.items():
+        values = raw.get(section, {})
+        if not isinstance(values, dict):
+            raise ValueError(section)
+        for key, field_type, _group, options, _default in specs:
+            if key in values:
+                result[section][key] = _validate_section_value(key, values[key], field_type, options)
+
+
 def _validate_headers(headers: Any) -> list[dict[str, str]]:
     if not isinstance(headers, list) or len(headers) > 16:
         raise ValueError("headers")
@@ -235,6 +321,7 @@ def validate_settings(raw: Any) -> Dict[str, Any]:
         raise ValueError("settings")
     result = default_settings()
     _validate_profile(raw.get("profile", {}), result)
+    _validate_sections(raw, result)
     clients = raw.get("clients", [])
     if not isinstance(clients, list) or len(clients) > 32:
         raise ValueError("clients")
@@ -386,3 +473,13 @@ def schema() -> Dict[str, Any]:
             for key, header, field_type, group, options in specs
         ]
     return result
+
+
+def section_schema() -> Dict[str, Any]:
+    return {
+        section: [
+            {"key": key, "type": field_type, "group": group, **({"options": options} if options else {})}
+            for key, field_type, group, options, _default in specs
+        ]
+        for section, specs in SECTION_SPECS.items()
+    }
