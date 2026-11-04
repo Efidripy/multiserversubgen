@@ -276,15 +276,16 @@ bind_prometheus_loopback() {
     systemctl daemon-reload
 }
 
-# Web login goes through PAM as the unprivileged service user, which only works
-# when the setgid-shadow helper is present (default on Debian/Ubuntu).
+# Web login goes through PAM as the unprivileged service user: pam_unix may call
+# unix_chkpwd, and the service needs group shadow to check other users' passwords.
 warn_install_scheme_and_pam_helper() {
     if [ "${PUBLIC_SCHEME:-https}" = "http" ]; then
         echo "⚠️ PUBLIC_SCHEME=http: системные логин и пароль будут передаваться открытым текстом. Используйте https." >&2
     fi
-    local helper=/usr/sbin/unix_chkpwd
-    [ -e "$helper" ] || helper=/sbin/unix_chkpwd
-    if [ ! -e "$helper" ] || [ $(( 0$(stat -c %a "$helper" 2>/dev/null || echo 0) & 2000 )) -eq 0 ]; then
-        echo "⚠️ unix_chkpwd с setgid-битом не найден: вход в панель через PAM может не работать. См. docs/INSTALL.md." >&2
+    if [ ! -e /usr/sbin/unix_chkpwd ] && [ ! -e /sbin/unix_chkpwd ]; then
+        echo "⚠️ unix_chkpwd не найден (пакет libpam-modules-bin): вход в панель через PAM может не работать. См. docs/INSTALL.md." >&2
+    fi
+    if ! getent group shadow >/dev/null 2>&1; then
+        echo "⚠️ Группа shadow не найдена: сервис не запустится и вход в панель через PAM не будет работать. См. docs/INSTALL.md." >&2
     fi
 }

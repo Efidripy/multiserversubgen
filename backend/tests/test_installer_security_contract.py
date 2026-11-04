@@ -17,6 +17,7 @@ def test_systemd_template_uses_external_secret_file():
     assert "fuser -k" not in unit
     assert "User=root" not in unit
     assert "User=__PROJECT_NAME__" in unit
+    assert "SupplementaryGroups=shadow" in unit
     assert "NoNewPrivileges=yes" in unit
     assert "ProtectSystem=full" in unit
     assert "ExecStartPre=" in unit

@@ -5,6 +5,8 @@ After=network.target
 [Service]
 User=__PROJECT_NAME__
 Group=__PROJECT_NAME__
+# PAM login: the setgid unix_chkpwd helper only checks the caller's own password.
+SupplementaryGroups=shadow
 UMask=0077
 WorkingDirectory=/opt/sub-manager
 EnvironmentFile=/etc/__PROJECT_NAME__/runtime-secrets.env
