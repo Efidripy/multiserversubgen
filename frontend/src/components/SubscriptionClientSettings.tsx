@@ -15,7 +15,6 @@ import {
   primaryButtonClass,
   secondaryButtonClass,
   iconButtonClass,
-  metaLabelClass,
 } from './SubscriptionManager';
 import {
   SubscriptionSettingsSections,
@@ -72,13 +71,7 @@ export interface SubscriptionClientSettingsApiResponse {
   formats: string[];
 }
 
-export interface SubscriptionClientTestResponse {
-  matched: boolean;
-  client_id: string | null;
-  name: string | null;
-  format: string;
-  headers: Record<string, string>;
-}
+export type { SubscriptionClientTestResponse } from './SubscriptionUaTest';
 
 const emptyProfile: SubscriptionProfile = {
   title: '',
@@ -148,10 +141,6 @@ export const SubscriptionClientSettings: React.FC = () => {
   const [selectedClientId, setSelectedClientId] = useState<string>('');
   const [openHappRouting, setOpenHappRouting] = useState<Record<string, boolean>>({});
   const [invalidSections, setInvalidSections] = useState<Record<string, boolean>>({});
-
-  const [testUa, setTestUa] = useState('');
-  const [testLoading, setTestLoading] = useState(false);
-  const [testResult, setTestResult] = useState<SubscriptionClientTestResponse | null>(null);
 
   const hasInvalidJson = useMemo(() => {
     return Object.values(invalidSections).some(Boolean);
@@ -403,22 +392,6 @@ export const SubscriptionClientSettings: React.FC = () => {
     });
   };
 
-  const runTest = async () => {
-    setTestLoading(true);
-    setTestResult(null);
-    try {
-      const res = await api.post('/v1/subscription-client-settings/test', {
-        user_agent: testUa,
-      });
-      setTestResult(res.data);
-    } catch (err: any) {
-      const detail = err.response?.data?.detail || err.message || t('subscriptionClients.test.failed');
-      toast(typeof detail === 'string' ? detail : JSON.stringify(detail), 'error');
-    } finally {
-      setTestLoading(false);
-    }
-  };
-
   const selectedIndex = useMemo(() => {
     if (settings.clients.length === 0) return -1;
     const idx = settings.clients.findIndex((c) => c.id === selectedClientId);
@@ -442,18 +415,31 @@ export const SubscriptionClientSettings: React.FC = () => {
   }, [settings.clients, t]);
 
   const tabOptions = useMemo(() => {
-    const baseTabs = [
+    const tabs: Array<{ value: string; label: string }> = [
       { value: 'profile', label: t('subscriptionClients.tabs.profile') },
-      { value: 'clients', label: t('subscriptionClients.tabs.clients') },
     ];
-    const sectionTabs = Object.keys(sectionSchema).map((secKey) => ({
-      value: secKey,
-      label: t(
-        `subscriptionClients.tabs.${secKey}`,
-        t(`subscriptionClients.sections.${secKey}.title`, secKey),
-      ),
-    }));
-    return [...baseTabs, ...sectionTabs];
+    if ('content' in sectionSchema) {
+      tabs.push({
+        value: 'content',
+        label: t(
+          'subscriptionClients.tabs.content',
+          t('subscriptionClients.sections.content.title', 'content'),
+        ),
+      });
+    }
+    tabs.push({ value: 'clients', label: t('subscriptionClients.tabs.clients') });
+
+    for (const secKey of Object.keys(sectionSchema)) {
+      if (secKey === 'content' || secKey === 'encryption') continue;
+      tabs.push({
+        value: secKey,
+        label: t(
+          `subscriptionClients.tabs.${secKey}`,
+          t(`subscriptionClients.sections.${secKey}.title`, secKey),
+        ),
+      });
+    }
+    return tabs;
   }, [sectionSchema, t]);
 
   if (loading) {
@@ -865,6 +851,38 @@ export const SubscriptionClientSettings: React.FC = () => {
                         </div>
                       ))}
 
+                      {selectedClient.kind === 'happ' && (
+                        <div className="min-w-0 border-t border-cyan-500/10 pt-3">
+                          <h4 className={cn(titleClass, 'text-cyan-300')}>
+                            {t('subscriptionClients.sections.encryption.title')}
+                          </h4>
+                          <div className="mt-2 min-w-0">
+                            <label className={cn(titleClass, 'text-xs text-slate-300')}>
+                              {t('subscriptionClients.sections.encryption.happ_links')}
+                            </label>
+                            <div className="mt-1 min-w-0">
+                              <div className="flex items-center pt-1">
+                                <input
+                                  className="form-check-input"
+                                  type="checkbox"
+                                  role="switch"
+                                  checked={Boolean(settings.encryption?.happ_links)}
+                                  aria-checked={Boolean(settings.encryption?.happ_links)}
+                                  aria-label={t('subscriptionClients.sections.encryption.happ_links')}
+                                  title={t('subscriptionClients.sections.encryption.happ_links')}
+                                  onChange={(e) =>
+                                    updateSectionField('encryption', 'happ_links', e.target.checked)
+                                  }
+                                />
+                              </div>
+                              <p className={cn(hintClass, 'mt-1 text-[11px] text-slate-400')}>
+                                {t('subscriptionClients.sections.encryption.happ_linksHint')}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Custom headers editor */}
                       <div className="min-w-0 border-t border-cyan-500/10 pt-3">
                         <div className="flex min-w-0 items-center justify-between gap-2">
@@ -973,69 +991,6 @@ export const SubscriptionClientSettings: React.FC = () => {
           </SubscriptionSettingsSections>
         </section>
       )}
-
-      {/* Test User-Agent block */}
-      <section className={panelClass}>
-        <h4 className={titleClass}>{t('subscriptionClients.test.title')}</h4>
-        <p className={hintClass}>{t('subscriptionClients.test.hint')}</p>
-        <div className="mt-3 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-          <input
-            type="text"
-            className={cn(codeInputClass, 'flex-1')}
-            placeholder={t('subscriptionClients.test.userAgentPlaceholder')}
-            aria-label={t('subscriptionClients.test.title')}
-            value={testUa}
-            onChange={(e) => setTestUa(e.target.value)}
-          />
-          <button
-            type="button"
-            className={primaryButtonClass}
-            disabled={testLoading}
-            onClick={() => void runTest()}
-          >
-            <UIIcon name={testLoading ? 'spinner' : 'check'} size={15} />
-            <span className="whitespace-nowrap">
-              {testLoading ? t('subscriptionClients.test.testing') : t('subscriptionClients.test.testButton')}
-            </span>
-          </button>
-        </div>
-
-        {testResult && (
-          <div className="mt-3 min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 text-xs">
-            <h5 className={titleClass}>{t('subscriptionClients.test.resultTitle')}</h5>
-            <div className="mt-2 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 text-slate-300">
-              <div className="min-w-0">
-                <span className={metaLabelClass}>{t('subscriptionClients.test.matchedRule')}: </span>
-                <span className="font-semibold text-cyan-200">
-                  {testResult.matched
-                    ? testResult.name || testResult.client_id || t('subscriptionClients.test.matchedRule')
-                    : t('subscriptionClients.test.noMatch')}
-                </span>
-              </div>
-              <div className="min-w-0">
-                <span className={metaLabelClass}>{t('subscriptionClients.test.format')}: </span>
-                <span className="font-mono text-cyan-200">{testResult.format}</span>
-              </div>
-            </div>
-
-            <div className="mt-3 min-w-0">
-              <span className={metaLabelClass}>{t('subscriptionClients.test.headers')}:</span>
-              {Object.keys(testResult.headers || {}).length === 0 ? (
-                <p className="mt-1 italic text-slate-500">{t('subscriptionClients.test.noHeaders')}</p>
-              ) : (
-                <div className="mt-2 space-y-1 font-mono text-xs text-slate-200">
-                  {Object.entries(testResult.headers).map(([k, v]) => (
-                    <div key={k} className="flex min-w-0 flex-wrap gap-1">
-                      <span className="text-cyan-400">{k}:</span>
-                      <span className="break-all text-slate-300">{v}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </section>
     </div>
   );
 };

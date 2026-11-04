@@ -7,6 +7,7 @@ import { listNodes, type NodeRecord } from '../api/nodes';
 import { ChoiceChips } from './ChoiceChips';
 import { UIIcon } from './UIIcon';
 import { SubscriptionClientSettings } from './SubscriptionClientSettings';
+import { SubscriptionUaTest } from './SubscriptionUaTest';
 
 interface Stats {
   count: number;
@@ -68,17 +69,22 @@ export const metaLabelClass = 'text-[10px] font-medium uppercase tracking-[0.14e
 const metaValueClass = 'mt-1 block min-w-0 truncate text-xs font-light text-slate-200';
 const cardMetaValueClass = 'mt-1 block min-w-0 truncate text-right text-xs font-light text-slate-200';
 
-type SubscriptionTab = 'links' | 'settings';
+type SubscriptionTab = 'links' | 'settings' | 'uaTest';
 
 const SUBSCRIPTION_TAB_CACHE_KEY = 'sub_manager_subscriptions_tab_v1';
 const subscriptionTabs: Array<{ id: SubscriptionTab; icon: React.ComponentProps<typeof UIIcon>['name']; labelKey: string }> = [
   { id: 'links', icon: 'subscriptions', labelKey: 'subscriptions.tabs.links' },
   { id: 'settings', icon: 'servers', labelKey: 'subscriptions.tabs.settings' },
+  { id: 'uaTest', icon: 'search', labelKey: 'subscriptions.tabs.uaTest' },
 ];
 
 const readSubscriptionTab = (): SubscriptionTab => {
   try {
-    return localStorage.getItem(SUBSCRIPTION_TAB_CACHE_KEY) === 'settings' ? 'settings' : 'links';
+    const cached = localStorage.getItem(SUBSCRIPTION_TAB_CACHE_KEY);
+    if (cached === 'settings' || cached === 'uaTest') {
+      return cached;
+    }
+    return 'links';
   } catch {
     return 'links';
   }
@@ -640,6 +646,10 @@ export const SubscriptionManager: React.FC<{
           <SubscriptionClientSettings />
         </div>
       )}
+
+      <div hidden={activeTab !== 'uaTest'}>
+        <SubscriptionUaTest />
+      </div>
 
       {activeTab === 'links' && <>
       <section className={cn(panelClass, 'mb-4')}>

@@ -164,22 +164,30 @@ export const SubscriptionSettingsSections: React.FC<SubscriptionSettingsSections
                       />
                     )}
 
-                    {field.type === 'enum' && (
-                      <SelectMenu
-                        ariaLabel={fieldLabel}
-                        value={currentValue ?? ''}
-                        options={[
-                          { value: '', label: t('subscriptionClients.notSet') },
-                          ...(field.options && field.options.length > 0
-                            ? field.options.map((opt) => ({
-                                value: opt,
-                                label: t(`subscriptionClients.options.${opt}`, opt),
-                              }))
-                            : []),
-                        ]}
-                        onChange={(val) => onChange(field.key, String(val))}
-                      />
-                    )}
+                    {field.type === 'enum' && (() => {
+                      const isPageTheme = sectionKey === 'page' && field.key === 'theme';
+                      const enumOptions = (field.options && field.options.length > 0
+                        ? field.options.map((opt) => ({
+                            value: opt,
+                            label: t(`subscriptionClients.options.${opt}`, opt),
+                          }))
+                        : []);
+                      const options = isPageTheme
+                        ? enumOptions
+                        : [{ value: '', label: t('subscriptionClients.notSet') }, ...enumOptions];
+                      const displayValue = isPageTheme && (currentValue === undefined || currentValue === null || currentValue === '')
+                        ? (field.options?.[0] ?? '')
+                        : (currentValue ?? '');
+
+                      return (
+                        <SelectMenu
+                          ariaLabel={fieldLabel}
+                          value={displayValue}
+                          options={options}
+                          onChange={(val) => onChange(field.key, String(val))}
+                        />
+                      );
+                    })()}
 
                     {field.type === 'json' && (
                       <div>
