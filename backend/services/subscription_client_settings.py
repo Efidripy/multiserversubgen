@@ -87,7 +87,7 @@ SECTION_SPECS = {
     "page": [
         ("enabled", "bool", "page", None, False),
         ("brand_title", "text", "page", None, ""),
-        ("theme_dir", "text", "page", None, ""),
+        ("theme", "enum", "page", ["remnawave", "3xui"], "remnawave"),
         ("profile_mode", "enum", "page", ["builtin", "custom"], ""),
         ("profile_url", "url", "page", None, ""),
     ],
