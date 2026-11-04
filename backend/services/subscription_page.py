@@ -249,6 +249,7 @@ def render_page(
     qr_data_url: str = "",
     happ_link: str = "",
     nonce: str = "",
+    query: Sequence[tuple[str, str]] = (),
 ) -> str:
     """Render one of the built-in subscription page themes."""
     from services.subscription_page_themes import render_theme
@@ -337,6 +338,7 @@ def render_page(
             pass
     data = {
         "nonce": nonce,
+        "query": query,
         "lang": lang,
         "title": title,
         "status": status,

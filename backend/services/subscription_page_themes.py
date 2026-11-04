@@ -7,7 +7,7 @@ import json
 import re
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 
 def _e(value: object, quote_attr: bool = True) -> str:
@@ -452,12 +452,17 @@ def _theme_init_script(nonce: str) -> str:
 
 def _lang_switch(data: dict[str, object]) -> str:
     current = str(data.get("lang") or "ru")
+    # Keep the visitor's filters such as ?protocol= and ?nodes= when the language changes.
+    kept = [
+        (key, value)
+        for key, value in data.get("query") or ()
+        if key.lower() not in {"html", "view", "lang"}
+    ]
     links = []
     for code in ("ru", "en"):
         state = ' class="active" aria-current="true"' if code == current else ""
-        links.append(
-            f'<a href="?html=1&amp;lang={code}" data-lang="{code}"{state}>{code.upper()}</a>'
-        )
+        href = _e("?" + urlencode([*kept, ("html", "1"), ("lang", code)]))
+        links.append(f'<a href="{href}" data-lang="{code}"{state}>{code.upper()}</a>')
     return f'<nav class="lang-switch" aria-label="Language">{"".join(links)}</nav>'
 
 
