@@ -145,7 +145,7 @@ export const SubscriptionClientSettings: React.FC = () => {
   const [sectionSchema, setSectionSchema] = useState<SectionSchemaMap>({});
   const [formats, setFormats] = useState<string[]>(defaultFormats);
 
-  const [expandedClients, setExpandedClients] = useState<Record<string, boolean>>({});
+  const [selectedClientId, setSelectedClientId] = useState<string>('');
   const [openHappRouting, setOpenHappRouting] = useState<Record<string, boolean>>({});
   const [invalidSections, setInvalidSections] = useState<Record<string, boolean>>({});
 
@@ -171,6 +171,12 @@ export const SubscriptionClientSettings: React.FC = () => {
 
       setSettings(loadedSettings);
       setSavedBaseline(JSON.stringify(loadedSettings));
+      setSelectedClientId((prevId) => {
+        if (prevId && loadedSettings.clients.some((c) => c.id === prevId)) {
+          return prevId;
+        }
+        return loadedSettings.clients[0]?.id || '';
+      });
       if (data.schema) setSchema(data.schema);
       if (data.section_schema) setSectionSchema(data.section_schema);
       if (Array.isArray(data.formats) && data.formats.length > 0) {
@@ -207,6 +213,12 @@ export const SubscriptionClientSettings: React.FC = () => {
         const updated = normalizeSettings(data.settings);
         setSettings(updated);
         setSavedBaseline(JSON.stringify(updated));
+        setSelectedClientId((prevId) => {
+          if (prevId && updated.clients.some((c) => c.id === prevId)) {
+            return prevId;
+          }
+          return updated.clients[0]?.id || '';
+        });
       } else {
         setSavedBaseline(JSON.stringify(settings));
       }
@@ -336,18 +348,21 @@ export const SubscriptionClientSettings: React.FC = () => {
       ...prev,
       clients: [...prev.clients, newRule],
     }));
-    setExpandedClients((prev) => ({ ...prev, [newRule.id]: true }));
+    setSelectedClientId(newRule.id);
   };
 
   const handleDeleteClient = (index: number) => {
-    setSettings((prev) => {
-      const nextClients = prev.clients.filter((_, i) => i !== index);
-      return { ...prev, clients: nextClients };
-    });
-  };
-
-  const toggleExpanded = (id: string) => {
-    setExpandedClients((prev) => ({ ...prev, [id]: !prev[id] }));
+    const nextClients = settings.clients.filter((_, i) => i !== index);
+    if (nextClients.length === 0) {
+      setSelectedClientId('');
+    } else {
+      const nextIndex = Math.min(index, nextClients.length - 1);
+      setSelectedClientId(nextClients[nextIndex].id);
+    }
+    setSettings((prev) => ({
+      ...prev,
+      clients: prev.clients.filter((_, i) => i !== index),
+    }));
   };
 
   const addClientHeader = (clientIndex: number) => {
@@ -403,6 +418,28 @@ export const SubscriptionClientSettings: React.FC = () => {
       setTestLoading(false);
     }
   };
+
+  const selectedIndex = useMemo(() => {
+    if (settings.clients.length === 0) return -1;
+    const idx = settings.clients.findIndex((c) => c.id === selectedClientId);
+    return idx >= 0 ? idx : 0;
+  }, [settings.clients, selectedClientId]);
+
+  const selectedClient = selectedIndex >= 0 ? settings.clients[selectedIndex] : null;
+
+  const clientTabOptions = useMemo(() => {
+    return settings.clients.map((client) => {
+      const baseName = client.name || client.id;
+      const label = client.enabled
+        ? baseName
+        : `${baseName} (${t('subscriptionClients.clients.disabled')})`;
+      return {
+        value: client.id,
+        label,
+        title: baseName,
+      };
+    });
+  }, [settings.clients, t]);
 
   const tabOptions = useMemo(() => {
     const baseTabs = [
@@ -563,148 +600,133 @@ export const SubscriptionClientSettings: React.FC = () => {
             </button>
           </div>
 
-          <div className="space-y-4">
-            {settings.clients.map((client, index) => {
-              const isExpanded = Boolean(expandedClients[client.id]);
-              const clientSchema = schema[client.kind] || [];
+          {settings.clients.length > 0 && selectedClient && (
+            <>
+              <div className="mb-4 min-w-0">
+                <ChoiceChips
+                  options={clientTabOptions}
+                  value={selectedClient.id}
+                  onChange={(val) => setSelectedClientId(String(val))}
+                />
+              </div>
 
-              // Group schema fields
-              const schemaGroups: Array<[string, SchemaField[]]> = [];
-              const groupMap = new Map<string, SchemaField[]>();
-              for (const f of clientSchema) {
-                const grp = f.group || 'default';
-                const list = groupMap.get(grp) || [];
-                list.push(f);
-                groupMap.set(grp, list);
-              }
-              for (const entry of groupMap.entries()) {
-                schemaGroups.push(entry);
-              }
+              {(() => {
+                const clientSchema = schema[selectedClient.kind] || [];
 
-              return (
-                <article
-                  key={client.id}
-                  className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4 shadow-sm"
-                >
-                  <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          className={cn(iconButtonClass, 'h-8 w-8')}
-                          disabled={index === 0}
-                          aria-label={t('subscriptionClients.clients.moveUp')}
-                          title={t('subscriptionClients.clients.moveUp')}
-                          onClick={() => handleMoveUp(index)}
-                        >
-                          <span className="text-xs">▲</span>
-                        </button>
-                        <button
-                          type="button"
-                          className={cn(iconButtonClass, 'h-8 w-8')}
-                          disabled={index === settings.clients.length - 1}
-                          aria-label={t('subscriptionClients.clients.moveDown')}
-                          title={t('subscriptionClients.clients.moveDown')}
-                          onClick={() => handleMoveDown(index)}
-                        >
-                          <span className="text-xs">▼</span>
-                        </button>
-                      </div>
+                // Group schema fields
+                const schemaGroups: Array<[string, SchemaField[]]> = [];
+                const groupMap = new Map<string, SchemaField[]>();
+                for (const f of clientSchema) {
+                  const grp = f.group || 'default';
+                  const list = groupMap.get(grp) || [];
+                  list.push(f);
+                  groupMap.set(grp, list);
+                }
+                for (const entry of groupMap.entries()) {
+                  schemaGroups.push(entry);
+                }
 
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={client.enabled}
-                        aria-label={t('subscriptionClients.clients.enabled')}
-                        title={t('subscriptionClients.clients.enabled')}
-                        onClick={() => updateClient(index, { enabled: !client.enabled })}
-                        className={cn(
-                          'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-cyan-400',
-                          client.enabled ? 'bg-cyan-400' : 'bg-slate-700',
+                return (
+                  <article
+                    key={selectedClient.id}
+                    className="min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4 shadow-sm"
+                  >
+                    <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            className={cn(iconButtonClass, 'h-8 w-8')}
+                            disabled={selectedIndex === 0}
+                            aria-label={t('subscriptionClients.clients.moveUp')}
+                            title={t('subscriptionClients.clients.moveUp')}
+                            onClick={() => handleMoveUp(selectedIndex)}
+                          >
+                            <span className="text-xs">▲</span>
+                          </button>
+                          <button
+                            type="button"
+                            className={cn(iconButtonClass, 'h-8 w-8')}
+                            disabled={selectedIndex === settings.clients.length - 1}
+                            aria-label={t('subscriptionClients.clients.moveDown')}
+                            title={t('subscriptionClients.clients.moveDown')}
+                            onClick={() => handleMoveDown(selectedIndex)}
+                          >
+                            <span className="text-xs">▼</span>
+                          </button>
+                        </div>
+
+                        <input
+                          className="form-check-input"
+                          type="checkbox"
+                          role="switch"
+                          checked={selectedClient.enabled}
+                          aria-checked={selectedClient.enabled}
+                          aria-label={t('subscriptionClients.clients.enabled')}
+                          title={t('subscriptionClients.clients.enabled')}
+                          onChange={(e) => updateClient(selectedIndex, { enabled: e.target.checked })}
+                        />
+
+                        {selectedClient.builtin ? (
+                          <div className="flex items-center gap-2">
+                            <span className="font-semibold text-slate-100">{selectedClient.name}</span>
+                            <span className="rounded border border-cyan-400/20 bg-cyan-400/10 px-2 py-0.5 font-mono text-[10px] text-cyan-200 uppercase">
+                              {t('subscriptionClients.clients.builtin')}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="text"
+                              className={cn(inputClass, 'h-8 w-40 text-xs')}
+                              value={selectedClient.name}
+                              aria-label={t('subscriptionClients.clients.ruleName')}
+                              placeholder={t('subscriptionClients.clients.ruleName')}
+                              onChange={(e) => updateClient(selectedIndex, { name: e.target.value })}
+                            />
+                            <span className="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 font-mono text-[10px] text-slate-400">
+                              {selectedClient.id}
+                            </span>
+                          </div>
                         )}
-                      >
-                        <span
-                          aria-hidden="true"
-                          className={cn(
-                            'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-[#0a0e1a] shadow ring-0 transition duration-200 ease-in-out',
-                            client.enabled ? 'translate-x-5' : 'translate-x-0',
-                          )}
-                        />
-                      </button>
-
-                      {client.builtin ? (
-                        <div className="flex items-center gap-2">
-                          <span className="font-semibold text-slate-100">{client.name}</span>
-                          <span className="rounded border border-cyan-400/20 bg-cyan-400/10 px-2 py-0.5 font-mono text-[10px] text-cyan-200 uppercase">
-                            {t('subscriptionClients.clients.builtin')}
-                          </span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="text"
-                            className={cn(inputClass, 'h-8 w-40 text-xs')}
-                            value={client.name}
-                            aria-label={t('subscriptionClients.clients.ruleName')}
-                            placeholder={t('subscriptionClients.clients.ruleName')}
-                            onChange={(e) => updateClient(index, { name: e.target.value })}
-                          />
-                          <span className="rounded border border-slate-700 bg-slate-800/60 px-2 py-0.5 font-mono text-[10px] text-slate-400">
-                            {client.id}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <div className="w-32">
-                        <SelectMenu
-                          ariaLabel={t('subscriptionClients.clients.format')}
-                          value={client.format}
-                          options={formats.map((f) => ({ value: f, label: f }))}
-                          onChange={(val) => updateClient(index, { format: String(val) })}
-                        />
                       </div>
 
-                      <button
-                        type="button"
-                        className={secondaryButtonClass}
-                        onClick={() => toggleExpanded(client.id)}
-                      >
-                        <span className="whitespace-nowrap">
-                          {isExpanded
-                            ? t('subscriptionClients.clients.collapseSettings')
-                            : t('subscriptionClients.clients.expandSettings')}
-                        </span>
-                      </button>
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <div className="w-32">
+                          <SelectMenu
+                            ariaLabel={t('subscriptionClients.clients.format')}
+                            value={selectedClient.format}
+                            options={formats.map((f) => ({ value: f, label: f }))}
+                            onChange={(val) => updateClient(selectedIndex, { format: String(val) })}
+                          />
+                        </div>
 
-                      {!client.builtin && (
-                        <button
-                          type="button"
-                          className={cn(iconButtonClass, 'text-rose-400 hover:text-rose-300')}
-                          aria-label={t('subscriptionClients.clients.deleteClient')}
-                          title={t('subscriptionClients.clients.deleteClient')}
-                          onClick={() => handleDeleteClient(index)}
-                        >
-                          <UIIcon name="trash" size={15} />
-                        </button>
-                      )}
+                        {!selectedClient.builtin && (
+                          <button
+                            type="button"
+                            className={cn(iconButtonClass, 'text-rose-400 hover:text-rose-300')}
+                            aria-label={t('subscriptionClients.clients.deleteClient')}
+                            title={t('subscriptionClients.clients.deleteClient')}
+                            onClick={() => handleDeleteClient(selectedIndex)}
+                          >
+                            <UIIcon name="trash" size={15} />
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
 
-                  <div className="mt-3 min-w-0">
-                    <label className={titleClass}>{t('subscriptionClients.clients.userAgentRegex')}</label>
-                    <input
-                      type="text"
-                      className={cn(codeInputClass, 'mt-1')}
-                      value={client.user_agent_regex}
-                      aria-label={t('subscriptionClients.clients.userAgentRegex')}
-                      placeholder={t('subscriptionClients.clients.userAgentRegex')}
-                      onChange={(e) => updateClient(index, { user_agent_regex: e.target.value })}
-                    />
-                  </div>
+                    <div className="mt-3 min-w-0">
+                      <label className={titleClass}>{t('subscriptionClients.clients.userAgentRegex')}</label>
+                      <input
+                        type="text"
+                        className={cn(codeInputClass, 'mt-1')}
+                        value={selectedClient.user_agent_regex}
+                        aria-label={t('subscriptionClients.clients.userAgentRegex')}
+                        placeholder={t('subscriptionClients.clients.userAgentRegex')}
+                        onChange={(e) => updateClient(selectedIndex, { user_agent_regex: e.target.value })}
+                      />
+                    </div>
 
-                  {isExpanded && (
                     <div className="mt-4 space-y-4 border-t border-cyan-500/20 pt-4">
                       {schemaGroups.map(([groupKey, fields]) => (
                         <div key={groupKey} className="min-w-0">
@@ -713,9 +735,9 @@ export const SubscriptionClientSettings: React.FC = () => {
                           </h4>
                           <div className="mt-2 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
                             {fields.map((field) => {
-                              const fieldLabel = t(`subscriptionClients.fields.${client.kind}.${field.key}`);
-                              const currentValue = client.settings?.[field.key];
-                              const isHappRouting = client.kind === 'happ' && field.key === 'routing';
+                              const fieldLabel = t(`subscriptionClients.fields.${selectedClient.kind}.${field.key}`);
+                              const currentValue = selectedClient.settings?.[field.key];
+                              const isHappRouting = selectedClient.kind === 'happ' && field.key === 'routing';
 
                               return (
                                 <div key={field.key} className={cn('min-w-0', isHappRouting ? 'sm:col-span-2' : '')}>
@@ -732,7 +754,7 @@ export const SubscriptionClientSettings: React.FC = () => {
                                                 value={currentValue ?? ''}
                                                 aria-label={fieldLabel}
                                                 placeholder={fieldLabel}
-                                                onChange={(e) => updateClientSetting(index, field.key, e.target.value)}
+                                                onChange={(e) => updateClientSetting(selectedIndex, field.key, e.target.value)}
                                               />
                                               <button
                                                 type="button"
@@ -740,26 +762,26 @@ export const SubscriptionClientSettings: React.FC = () => {
                                                 onClick={() =>
                                                   setOpenHappRouting((prev) => ({
                                                     ...prev,
-                                                    [client.id]: !prev[client.id],
+                                                    [selectedClient.id]: !prev[selectedClient.id],
                                                   }))
                                                 }
                                               >
-                                                {openHappRouting[client.id]
+                                                {openHappRouting[selectedClient.id]
                                                   ? t('subscriptionClients.happRouting.closeEditor')
                                                   : t('subscriptionClients.happRouting.openEditor')}
                                               </button>
                                             </div>
-                                            {openHappRouting[client.id] && (
+                                            {openHappRouting[selectedClient.id] && (
                                               <HappRoutingEditor
                                                 routingValue={currentValue || ''}
                                                 onApply={(val) => {
-                                                  updateClientSetting(index, 'routing', val);
-                                                  updateClientSetting(index, 'routing_enable', true);
+                                                  updateClientSetting(selectedIndex, 'routing', val);
+                                                  updateClientSetting(selectedIndex, 'routing_enable', true);
                                                 }}
                                                 onClose={() =>
                                                   setOpenHappRouting((prev) => ({
                                                     ...prev,
-                                                    [client.id]: false,
+                                                    [selectedClient.id]: false,
                                                   }))
                                                 }
                                               />
@@ -772,7 +794,7 @@ export const SubscriptionClientSettings: React.FC = () => {
                                             value={currentValue ?? ''}
                                             aria-label={fieldLabel}
                                             placeholder={fieldLabel}
-                                            onChange={(e) => updateClientSetting(index, field.key, e.target.value)}
+                                            onChange={(e) => updateClientSetting(selectedIndex, field.key, e.target.value)}
                                           />
                                         )}
                                       </>
@@ -785,32 +807,24 @@ export const SubscriptionClientSettings: React.FC = () => {
                                         value={currentValue ?? ''}
                                         aria-label={fieldLabel}
                                         placeholder={fieldLabel}
-                                        onChange={(e) => updateClientSetting(index, field.key, e.target.value)}
+                                        onChange={(e) => updateClientSetting(selectedIndex, field.key, e.target.value)}
                                       />
                                     )}
 
                                     {field.type === 'bool' && (
                                       <div className="flex items-center pt-1">
-                                        <button
-                                          type="button"
+                                        <input
+                                          className="form-check-input"
+                                          type="checkbox"
                                           role="switch"
+                                          checked={Boolean(currentValue)}
                                           aria-checked={Boolean(currentValue)}
                                           aria-label={fieldLabel}
                                           title={fieldLabel}
-                                          onClick={() => updateClientSetting(index, field.key, !currentValue)}
-                                          className={cn(
-                                            'relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-cyan-400',
-                                            currentValue ? 'bg-cyan-400' : 'bg-slate-700',
-                                          )}
-                                        >
-                                          <span
-                                            aria-hidden="true"
-                                            className={cn(
-                                              'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-[#0a0e1a] shadow ring-0 transition duration-200 ease-in-out',
-                                              currentValue ? 'translate-x-5' : 'translate-x-0',
-                                            )}
-                                          />
-                                        </button>
+                                          onChange={(e) =>
+                                            updateClientSetting(selectedIndex, field.key, e.target.checked)
+                                          }
+                                        />
                                       </div>
                                     )}
 
@@ -832,7 +846,7 @@ export const SubscriptionClientSettings: React.FC = () => {
                                                 ]
                                               : []),
                                         ]}
-                                        onChange={(val) => updateClientSetting(index, field.key, String(val))}
+                                        onChange={(val) => updateClientSetting(selectedIndex, field.key, String(val))}
                                       />
                                     )}
                                   </div>
@@ -860,16 +874,16 @@ export const SubscriptionClientSettings: React.FC = () => {
                           <button
                             type="button"
                             className={cn(secondaryButtonClass, 'h-8 px-3 text-xs')}
-                            onClick={() => addClientHeader(index)}
+                            onClick={() => addClientHeader(selectedIndex)}
                           >
                             <UIIcon name="plus" size={13} />
                             <span className="whitespace-nowrap">{t('subscriptionClients.clients.addHeader')}</span>
                           </button>
                         </div>
 
-                        {client.headers.length > 0 && (
+                        {selectedClient.headers.length > 0 && (
                           <div className="mt-2 space-y-2">
-                            {client.headers.map((header, hIdx) => (
+                            {selectedClient.headers.map((header, hIdx) => (
                               <div
                                 key={hIdx}
                                 className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center"
@@ -880,7 +894,7 @@ export const SubscriptionClientSettings: React.FC = () => {
                                   value={header.key}
                                   aria-label={t('subscriptionClients.clients.headerKey')}
                                   placeholder={t('subscriptionClients.clients.headerKey')}
-                                  onChange={(e) => updateClientHeader(index, hIdx, e.target.value, header.value)}
+                                  onChange={(e) => updateClientHeader(selectedIndex, hIdx, e.target.value, header.value)}
                                 />
                                 <input
                                   type="text"
@@ -888,14 +902,14 @@ export const SubscriptionClientSettings: React.FC = () => {
                                   value={header.value}
                                   aria-label={t('subscriptionClients.clients.headerValue')}
                                   placeholder={t('subscriptionClients.clients.headerValue')}
-                                  onChange={(e) => updateClientHeader(index, hIdx, header.key, e.target.value)}
+                                  onChange={(e) => updateClientHeader(selectedIndex, hIdx, header.key, e.target.value)}
                                 />
                                 <button
                                   type="button"
                                   className={cn(iconButtonClass, 'h-9 w-9 text-rose-400 hover:text-rose-300')}
                                   aria-label={t('subscriptionClients.clients.deleteHeader')}
                                   title={t('subscriptionClients.clients.deleteHeader')}
-                                  onClick={() => deleteClientHeader(index, hIdx)}
+                                  onClick={() => deleteClientHeader(selectedIndex, hIdx)}
                                 >
                                   <UIIcon name="trash" size={14} />
                                 </button>
@@ -905,11 +919,11 @@ export const SubscriptionClientSettings: React.FC = () => {
                         )}
                       </div>
                     </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
+                  </article>
+                );
+              })()}
+            </>
+          )}
         </section>
       )}
 

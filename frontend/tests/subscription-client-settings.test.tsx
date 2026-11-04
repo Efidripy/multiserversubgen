@@ -134,10 +134,7 @@ describe('SubscriptionClientSettings', () => {
     // Switch to Clients tab
     fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
 
-    // Expand Happ client
-    const expandButtons = screen.getAllByText('subscriptionClients.clients.expandSettings');
-    fireEvent.click(expandButtons[0]);
-
+    // Happ client is selected by default and its fields are immediately visible
     // Check bool field constructed from schema
     const switchControl = screen.getByRole('switch', {
       name: 'subscriptionClients.fields.happ.routing_enable',
@@ -155,8 +152,9 @@ describe('SubscriptionClientSettings', () => {
     expect(screen.getByText('Routing')).toBeTruthy();
     expect(screen.getByText('Tun-Mode')).toBeTruthy();
 
-    // Expand Mihomo client
-    fireEvent.click(expandButtons[1]);
+    // Switch to Mihomo client tab
+    const mihomoTab = screen.getByRole('button', { name: /Mihomo/ });
+    fireEvent.click(mihomoTab);
     const linesInput = screen.getByLabelText('subscriptionClients.fields.mihomo.rules');
     expect(linesInput).toBeTruthy();
     expect((linesInput as HTMLTextAreaElement).value).toBe('MATCH,DIRECT');
@@ -181,16 +179,14 @@ describe('SubscriptionClientSettings', () => {
     fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
 
     // Toggle Happ client enabled switch
-    const enabledSwitches = screen.getAllByRole('switch', {
+    const enabledSwitch = screen.getByRole('switch', {
       name: 'subscriptionClients.clients.enabled',
     });
-    expect(enabledSwitches[0].getAttribute('aria-checked')).toBe('true');
-    fireEvent.click(enabledSwitches[0]);
-    expect(enabledSwitches[0].getAttribute('aria-checked')).toBe('false');
+    expect(enabledSwitch.getAttribute('aria-checked')).toBe('true');
+    fireEvent.click(enabledSwitch);
+    expect(enabledSwitch.getAttribute('aria-checked')).toBe('false');
 
-    // Expand Happ settings and change routing text
-    const expandButtons = screen.getAllByText('subscriptionClients.clients.expandSettings');
-    fireEvent.click(expandButtons[0]);
+    // Happ fields are already visible; change routing text
     const textInput = screen.getByLabelText('subscriptionClients.fields.happ.routing');
     fireEvent.change(textInput, { target: { value: 'happ://new-rule' } });
 
@@ -238,17 +234,19 @@ describe('SubscriptionClientSettings', () => {
 
     fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
 
-    const moveUpButtons = screen.getAllByRole('button', { name: 'subscriptionClients.clients.moveUp' });
-    const moveDownButtons = screen.getAllByRole('button', { name: 'subscriptionClients.clients.moveDown' });
+    const moveUpButton = screen.getByRole('button', { name: 'subscriptionClients.clients.moveUp' });
+    const moveDownButton = screen.getByRole('button', { name: 'subscriptionClients.clients.moveDown' });
 
-    // First item cannot move up, second cannot move down
-    expect((moveUpButtons[0] as HTMLButtonElement).disabled).toBe(true);
-    expect((moveDownButtons[0] as HTMLButtonElement).disabled).toBe(false);
-    expect((moveUpButtons[1] as HTMLButtonElement).disabled).toBe(false);
-    expect((moveDownButtons[1] as HTMLButtonElement).disabled).toBe(true);
+    // Happ is first item: cannot move up, can move down
+    expect((moveUpButton as HTMLButtonElement).disabled).toBe(true);
+    expect((moveDownButton as HTMLButtonElement).disabled).toBe(false);
 
     // Click move down on Happ
-    fireEvent.click(moveDownButtons[0]);
+    fireEvent.click(moveDownButton);
+
+    // Happ is now at index 1: can move up, cannot move down
+    expect((moveUpButton as HTMLButtonElement).disabled).toBe(false);
+    expect((moveDownButton as HTMLButtonElement).disabled).toBe(true);
 
     // Save changes
     const saveButton = screen.getByRole('button', { name: 'subscriptionClients.save' });
@@ -453,11 +451,7 @@ describe('SubscriptionClientSettings', () => {
 
     fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
 
-    // Expand Happ client
-    const expandButtons = screen.getAllByText('subscriptionClients.clients.expandSettings');
-    fireEvent.click(expandButtons[0]);
-
-    // Button to open Happ routing editor should be visible next to routing input
+    // Button to open Happ routing editor is visible next to routing input immediately
     const openEditorBtn = screen.getByRole('button', {
       name: 'subscriptionClients.happRouting.openEditor',
     });
@@ -491,5 +485,135 @@ describe('SubscriptionClientSettings', () => {
       name: 'subscriptionClients.fields.happ.routing_enable',
     });
     expect(routingSwitch.getAttribute('aria-checked')).toBe('true');
+  });
+
+  it('показаны поля только выбранного клиента', async () => {
+    render(<SubscriptionClientSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('subscriptionClients.tabs.clients')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
+
+    // Happ is selected by default: Happ's fields exist, Mihomo's do not
+    expect(screen.getByLabelText('subscriptionClients.fields.happ.routing')).toBeTruthy();
+    expect(screen.getByLabelText('subscriptionClients.fields.happ.tun_mode')).toBeTruthy();
+    expect(screen.queryByLabelText('subscriptionClients.fields.mihomo.rules')).toBeNull();
+  });
+
+  it('переключение вкладки меняет клиента', async () => {
+    render(<SubscriptionClientSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('subscriptionClients.tabs.clients')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
+
+    // Switch to Mihomo tab
+    const mihomoTab = screen.getByRole('button', { name: /Mihomo/ });
+    fireEvent.click(mihomoTab);
+
+    // Mihomo fields are visible, Happ fields are not
+    expect(screen.getByLabelText('subscriptionClients.fields.mihomo.rules')).toBeTruthy();
+    expect(screen.queryByLabelText('subscriptionClients.fields.happ.routing')).toBeNull();
+    expect(mihomoTab.getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('выбор сохраняется после перемещения', async () => {
+    render(<SubscriptionClientSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('subscriptionClients.tabs.clients')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
+
+    // Switch to Mihomo
+    const mihomoTab = screen.getByRole('button', { name: /Mihomo/ });
+    fireEvent.click(mihomoTab);
+    expect(screen.getByLabelText('subscriptionClients.fields.mihomo.rules')).toBeTruthy();
+
+    // Move Mihomo up to index 0
+    const moveUpBtn = screen.getByRole('button', { name: 'subscriptionClients.clients.moveUp' });
+    expect((moveUpBtn as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(moveUpBtn);
+
+    // Mihomo is still selected: its fields are still visible, now moveUp is disabled
+    expect(screen.getByLabelText('subscriptionClients.fields.mihomo.rules')).toBeTruthy();
+    expect(screen.queryByLabelText('subscriptionClients.fields.happ.routing')).toBeNull();
+    expect((moveUpBtn as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('новый клиент становится выбранным', async () => {
+    render(<SubscriptionClientSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('subscriptionClients.tabs.clients')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
+
+    const addButton = screen.getByRole('button', { name: 'subscriptionClients.clients.addClient' });
+    fireEvent.click(addButton);
+
+    // New custom client should be selected: ruleName input and delete button are present
+    const nameInput = screen.getByLabelText('subscriptionClients.clients.ruleName') as HTMLInputElement;
+    expect(nameInput).toBeTruthy();
+    expect(nameInput.value).toContain('subscriptionClients.clients.custom');
+    expect(screen.getByRole('button', { name: 'subscriptionClients.clients.deleteClient' })).toBeTruthy();
+    // Unique fields from Happ and Mihomo are not present
+    expect(screen.queryByLabelText('subscriptionClients.fields.happ.routing')).toBeNull();
+    expect(screen.queryByLabelText('subscriptionClients.fields.mihomo.rules')).toBeNull();
+  });
+
+  it('переключатель клиента меняет состояние и имеет role="switch"', async () => {
+    render(<SubscriptionClientSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('subscriptionClients.tabs.clients')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
+
+    const enabledSwitch = screen.getByRole('switch', {
+      name: 'subscriptionClients.clients.enabled',
+    });
+    expect(enabledSwitch.tagName).toBe('INPUT');
+    expect(enabledSwitch.getAttribute('type')).toBe('checkbox');
+    expect(enabledSwitch.getAttribute('role')).toBe('switch');
+    expect(enabledSwitch.getAttribute('aria-checked')).toBe('true');
+    expect((enabledSwitch as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(enabledSwitch);
+
+    expect(enabledSwitch.getAttribute('aria-checked')).toBe('false');
+    expect((enabledSwitch as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(enabledSwitch);
+
+    expect(enabledSwitch.getAttribute('aria-checked')).toBe('true');
+    expect((enabledSwitch as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('после удаления выбирается соседний клиент; если клиентов нет, показана только кнопка добавления', async () => {
+    render(<SubscriptionClientSettings />);
+
+    await waitFor(() => {
+      expect(screen.getByText('subscriptionClients.tabs.clients')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByText('subscriptionClients.tabs.clients'));
+
+    // Add a custom client (it will be index 2)
+    const addButton = screen.getByRole('button', { name: 'subscriptionClients.clients.addClient' });
+    fireEvent.click(addButton);
+    const deleteBtn = screen.getByRole('button', { name: 'subscriptionClients.clients.deleteClient' });
+    expect(deleteBtn).toBeTruthy();
+
+    // Delete custom client -> neighbor (Mihomo, index 1) is selected
+    fireEvent.click(deleteBtn);
+    expect(screen.getByLabelText('subscriptionClients.fields.mihomo.rules')).toBeTruthy();
   });
 });
