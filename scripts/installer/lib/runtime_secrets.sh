@@ -282,9 +282,7 @@ warn_install_scheme_and_pam_helper() {
     if [ "${PUBLIC_SCHEME:-https}" = "http" ]; then
         echo "⚠️ PUBLIC_SCHEME=http: системные логин и пароль будут передаваться открытым текстом. Используйте https." >&2
     fi
-    local helper=/usr/sbin/unix_chkpwd
-    [ -e "$helper" ] || helper=/sbin/unix_chkpwd
-    if [ ! -e "$helper" ] || [ $(( 0$(stat -c %a "$helper" 2>/dev/null || echo 0) & 2000 )) -eq 0 ]; then
-        echo "⚠️ unix_chkpwd с setgid-битом не найден: вход в панель через PAM может не работать. См. docs/INSTALL.md." >&2
+    if ! getent group shadow >/dev/null 2>&1; then
+        echo "⚠️ Группа shadow не найдена: сервис не запустится и вход в панель через PAM не будет работать. См. docs/INSTALL.md." >&2
     fi
 }
