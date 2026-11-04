@@ -497,6 +497,74 @@ def test_expired_and_depleted_templates_replace_list_and_info_node_placed_first(
     assert lines_info[2] == env.links[1]
 
 
+def test_sub_grouped_cache_bypassed_when_expired_template_status_changes(env):
+    settings = default_settings()
+    settings["content"]["expired_template"] = "Expired: {{EXPIRE_DATE}}"
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+
+    env.userinfo = {"upload": 0, "download": 0, "total": 1000, "expire": 0}
+    active = sub_grouped(env, "curl/1")
+    assert active.status_code == 200
+    assert active.headers.get("x-subscription-cache") == "miss"
+
+    env.userinfo = {"upload": 0, "download": 0, "total": 1000, "expire": 10}
+    expired = sub_grouped(env, "curl/1")
+    assert expired.status_code == 200
+    assert expired.headers.get("x-subscription-cache") == "miss"
+    decoded = base64.b64decode(expired.content).decode()
+    assert "Expired:" in urllib.parse.unquote(decoded)
+
+
+def test_sub_grouped_cache_bypassed_when_depleted_template_status_changes(env):
+    settings = default_settings()
+    settings["content"]["depleted_template"] = "Depleted: {{TRAFFIC_USED}}"
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+
+    env.userinfo = {"upload": 0, "download": 0, "total": 1000, "expire": 0}
+    active = sub_grouped(env, "curl/1")
+    assert active.status_code == 200
+    assert active.headers.get("x-subscription-cache") == "miss"
+
+    env.userinfo = {"upload": 600, "download": 500, "total": 1000, "expire": 0}
+    depleted = sub_grouped(env, "curl/1")
+    assert depleted.status_code == 200
+    assert depleted.headers.get("x-subscription-cache") == "miss"
+    decoded = base64.b64decode(depleted.content).decode()
+    assert "Depleted:" in urllib.parse.unquote(decoded)
+
+
+def test_sub_grouped_cache_bypassed_when_remark_template_uses_traffic(env):
+    settings = default_settings()
+    settings["content"]["remark_template"] = "Node-{{TRAFFIC_USED}}"
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+
+    env.userinfo = {"upload": 1, "download": 2, "total": 1000, "expire": 0}
+    first = sub_grouped(env, "curl/1")
+    assert first.status_code == 200
+    assert first.headers.get("x-subscription-cache") == "miss"
+    first_decoded = base64.b64decode(first.content).decode()
+    assert "Node-3%20B" in first_decoded
+
+    env.userinfo = {"upload": 5, "download": 7, "total": 1000, "expire": 0}
+    second = sub_grouped(env, "curl/1")
+    assert second.status_code == 200
+    assert second.headers.get("x-subscription-cache") == "miss"
+    second_decoded = base64.b64decode(second.content).decode()
+    assert "Node-12%20B" in second_decoded
+    assert second_decoded != first_decoded
+
+
+def test_sub_grouped_cache_hit_without_status_dependent_content(env):
+    env.userinfo = {"upload": 0, "download": 0, "total": 1000, "expire": 0}
+    first = sub_grouped(env, "curl/1")
+    assert first.status_code == 200
+    assert first.headers.get("x-subscription-cache") == "miss"
+
+    second = sub_grouped(env, "curl/1")
+    assert second.status_code == 200
+    assert second.headers.get("x-subscription-cache") == "hit"
+
+
 # 8. host_order=random вызывает random.shuffle (подмена через monkeypatch на функцию, переворачивающую список); host_order=name сортирует.
 def test_host_order_random_calls_shuffle_and_name_sorts_alphabetically(env, monkeypatch):
     env.userinfo = {"upload": 0, "download": 0, "total": 0, "expire": 0}

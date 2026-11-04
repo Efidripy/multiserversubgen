@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from services.subscription_client_settings import _FORBIDDEN_HEADERS, _HEADER_NAME
+from services.subscription_regex import validate_admin_regex
 
 MAX_RULES = 64
 MAX_CONDITIONS = 16
@@ -65,8 +66,8 @@ def _validate_condition(cond: Any) -> dict[str, Any]:
             raise ValueError("value")
         if op in ("regex", "not_regex"):
             try:
-                re.compile(val)
-            except re.error as exc:
+                validate_admin_regex(val)
+            except ValueError as exc:
                 raise ValueError("value") from exc
 
     case_sensitive = cond.get("case_sensitive", False)
@@ -246,13 +247,13 @@ def _eval_condition(cond: dict[str, Any], headers: Any) -> bool:
     if op == "regex":
         flags = 0 if case_sensitive else re.IGNORECASE
         try:
-            return bool(re.search(expected, actual, flags=flags))
+            return bool(re.search(expected, actual[:MAX_VALUE_LEN], flags=flags))
         except re.error:
             return False
     if op == "not_regex":
         flags = 0 if case_sensitive else re.IGNORECASE
         try:
-            return not bool(re.search(expected, actual, flags=flags))
+            return not bool(re.search(expected, actual[:MAX_VALUE_LEN], flags=flags))
         except re.error:
             return True
 

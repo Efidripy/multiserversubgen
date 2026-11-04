@@ -11,6 +11,7 @@ from services.db_bootstrap import connect
 
 
 from services.subscription_formats import FORMATS
+from services.subscription_regex import validate_admin_regex
 _HEADER_NAME = re.compile(r"^[!#$%&'*+\-.0-9A-Za-z^_`|~]+$")
 _FORBIDDEN_HEADERS = {
     "content-type", "content-length", "content-encoding", "transfer-encoding", "connection",
@@ -297,8 +298,8 @@ def _validate_client(item: Any, builtins: dict[str, dict[str, Any]]) -> dict[str
     if not isinstance(base["user_agent_regex"], str) or len(base["user_agent_regex"]) > 300:
         raise ValueError("user_agent_regex")
     try:
-        re.compile(base["user_agent_regex"])
-    except re.error as exc:
+        validate_admin_regex(base["user_agent_regex"])
+    except ValueError as exc:
         raise ValueError("user_agent_regex") from exc
     if base["format"] not in FORMATS:
         raise ValueError("format")
@@ -318,7 +319,8 @@ def _validate_client(item: Any, builtins: dict[str, dict[str, Any]]) -> dict[str
 
 
 def _headers_for_limit(settings: Dict[str, Any], client: Dict[str, Any]) -> Dict[str, str]:
-    _client, headers = build_headers(settings, None, fallback_title="", fallback_interval=1)
+    profile_only = {"profile": settings.get("profile", {})}
+    _client, headers = build_headers(profile_only, None, fallback_title="", fallback_interval=1)
     for name, value in _field_headers(client).items():
         _put_header(headers, name, value)
     return headers

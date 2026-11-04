@@ -660,7 +660,12 @@ def build_subscriptions_router(
             return pre_state
         cache_key = _subscription_cache_key(request, resolved_identifier) + ":" + str((rule_for_group or {}).get("rule", "")) + ":" + str((rule_for_group or {}).get("response", "default"))
         page_requested = wants_page(request.headers, request.query_params, settings_for_group.get("page", {}), client_matched=bool(match_client(settings_for_group, request.headers.get("user-agent")))) or (rule_for_group and rule_for_group.get("response") == "page" and settings_for_group.get("page", {}).get("enabled"))
-        cached_response = None if page_requested else _get_subscription_response_cache(cache_key)
+        content_settings = settings_for_group.get("content", {})
+        status_dependent_content = any(
+            content_settings.get(key)
+            for key in ("expired_template", "depleted_template", "remark_template", "info_node")
+        ) or bool((rule_for_group or {}).get("remark_template"))
+        cached_response = None if page_requested or status_dependent_content else _get_subscription_response_cache(cache_key)
         if cached_response is not None:
             cached_content, cached_userinfo, cached_format = cached_response
             settings = settings_for_group
@@ -766,7 +771,8 @@ def build_subscriptions_router(
                     as_details=True,
                 )
                 content, final_format, _headers = details
-                _set_subscription_response_cache(cache_key, content, state[4], final_format)
+                if not status_dependent_content:
+                    _set_subscription_response_cache(cache_key, content, state[4], final_format)
                 return _response_from_details(details)
 
         return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
