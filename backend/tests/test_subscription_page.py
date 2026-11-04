@@ -466,3 +466,12 @@ def test_builtin_themes_security_and_fallback():
 def test_3xui_apps_tab_shows_app_names():
     html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub", links=[])
     assert '<span>Happ</span>' in html
+
+
+def test_active_status_label_is_translated():
+    for theme in ("remnawave", "3xui"):
+        section = {"theme": theme}
+        html_en = render_page({"lang": "en"}, section, profile={}, sub_url="https://vpn/sub", links=[])
+        assert ">Active<" in html_en
+        html_ru = render_page({"lang": "ru"}, section, profile={}, sub_url="https://vpn/sub", links=[])
+        assert ">Активна<" in html_ru

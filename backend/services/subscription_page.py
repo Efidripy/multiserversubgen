@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import base64
 from datetime import datetime, timezone
-import html
 import json
 import re
 import time
 from typing import Any, Mapping, Sequence
-from urllib.parse import parse_qsl, quote, unquote
+from urllib.parse import parse_qsl, unquote
 
 
 def validate_page_section(section: dict[str, Any]) -> None:
@@ -240,56 +239,6 @@ def _link_name_and_proto(link: str, index: int) -> tuple[str, str]:
     return name, proto
 
 
-def _render_import_buttons(sub_url: str, title: str, happ_link: str = "") -> str:
-    quoted_sub = quote(sub_url, safe="")
-    quoted_title = quote(title, safe="")
-    happ_url = happ_link if happ_link else f"happ://add/{sub_url}"
-    incy_url = f"incy://import/{sub_url}"
-    clash_url = f"clash://install-config?url={quoted_sub}"
-    singbox_url = f"sing-box://import-remote-profile?url={quoted_sub}#{quoted_title}"
-    v2rayng_url = f"v2rayng://install-config?url={quoted_sub}"
-
-    apps = [
-        ("Happ", happ_url),
-        ("Incy", incy_url),
-        ("Clash", clash_url),
-        ("sing-box", singbox_url),
-        ("v2rayNG", v2rayng_url),
-    ]
-    parts = ['<div class="import-buttons">']
-    for name, url in apps:
-        escaped_url = html.escape(url, quote=True)
-        escaped_name = html.escape(name)
-        parts.append(
-            f'  <a href="{escaped_url}" class="btn import-btn" role="button">{escaped_name}</a>'
-        )
-    parts.append("</div>")
-    return "\n".join(parts)
-
-
-def _render_links_html(links: list[str], copy_label: str, empty_label: str) -> str:
-    if not links:
-        return f'<div class="links-empty">{html.escape(empty_label)}</div>'
-    parts = ['<ul class="links-list">']
-    for idx, link in enumerate(links):
-        name, proto = _link_name_and_proto(link, idx)
-        escaped_name = html.escape(name)
-        escaped_proto = html.escape(proto)
-        escaped_link = html.escape(link, quote=True)
-        escaped_copy = html.escape(copy_label)
-        parts.append(
-            f'  <li class="link-item">'
-            f'<div class="link-info">'
-            f'<span class="link-name">{escaped_name}</span>'
-            f'<span class="link-proto">{escaped_proto}</span>'
-            f"</div>"
-            f'<button type="button" class="btn btn-sm copy-btn" data-copy="{escaped_link}">{escaped_copy}</button>'
-            f"</li>"
-        )
-    parts.append("</ul>")
-    return "\n".join(parts)
-
-
 def render_page(
     ctx: dict[str, Any],
     section: dict[str, Any],
@@ -360,42 +309,18 @@ def render_page(
         "configurations": "Configurations" if is_en else "Конфигурации",
         "nodes": "Nodes" if is_en else "Узлы",
         "info_title": "Subscription information" if is_en else "Информация о подписке",
-        "no_nodes": "No nodes available (Server Nodes)"
-        if is_en
-        else "Список узлов пуст",
+        "no_nodes": "No nodes available" if is_en else "Список узлов пуст",
         "update": "Auto-update" if is_en else "Автообновление",
         "hours": "hours" if is_en else "ч",
     }
     status_label = {
-        "active": labels["status"] if is_en else "Активна",
+        "active": "Active" if is_en else "Активна",
         "expired": "Expired" if is_en else "Истекла",
         "depleted": "Traffic depleted" if is_en else "Лимит исчерпан",
     }[status]
     username = ctx.get("username") or ctx.get("user") or ctx.get("email") or title
     support_url = str((profile or {}).get("support_url") or "")
     announce = str((profile or {}).get("announce") or "")
-    apps = [
-        ("Happ", happ_link or f"happ://add/{sub_url}", "https://www.happ.su/", True),
-        ("Incy", f"incy://import/{sub_url}", "", False),
-        (
-            "Clash",
-            f"clash://install-config?url={quote(sub_url, safe='')}",
-            "https://github.com/chen08209/FlClash/releases",
-            True,
-        ),
-        (
-            "sing-box",
-            f"sing-box://import-remote-profile?url={quote(sub_url, safe='')}#{quote(title, safe='')}",
-            "https://github.com/SagerNet/sing-box/releases",
-            True,
-        ),
-        (
-            "v2rayNG",
-            f"v2rayng://install-config?url={quote(sub_url, safe='')}",
-            "https://github.com/2dust/v2rayNG/releases",
-            True,
-        ),
-    ]
     node_data = []
     for index, link in enumerate(links):
         name, proto = _link_name_and_proto(link, index)
@@ -432,7 +357,6 @@ def render_page(
         "ring_offset": f"{301.6 * (1 - percent / 100):.1f}",
         "remaining": remaining,
         "identifier": ctx.get("sub_id") or ctx.get("email") or "",
-        "apps": apps,
         "links": node_data,
         "happ_link": happ_link,
         "update_interval": (profile or {}).get("update_interval_hours"),
