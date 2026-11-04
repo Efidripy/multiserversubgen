@@ -891,6 +891,16 @@ def init_db(db_path: str) -> None:
                       row_version INTEGER NOT NULL DEFAULT 1 CHECK(row_version > 0),
                       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT)"""
         )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS customer_traffic_binding_ledger
+                     (customer_id INTEGER NOT NULL,
+                      node_id INTEGER NOT NULL,
+                      inbound_id INTEGER NOT NULL,
+                      last_observed_bytes INTEGER NOT NULL DEFAULT 0 CHECK(last_observed_bytes >= 0),
+                      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                      PRIMARY KEY(customer_id, node_id, inbound_id),
+                      FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE RESTRICT)"""
+        )
         binding_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(customer_node_bindings)").fetchall()
         }

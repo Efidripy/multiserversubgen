@@ -3190,55 +3190,153 @@ class TelegramRegistry:
             if customer_id not in unsafe_customers and bindings
         }
 
-    def observe_customer_traffic_batch(self, observations: dict[int, int]) -> tuple[CustomerTrafficLedger, ...]:
-        """Persist one bounded collector observation batch in one transaction."""
+    def observe_customer_traffic_bindings(
+        self, observations: dict[int, dict[tuple[int, int], int]]
+    ) -> tuple[CustomerTrafficLedger, ...]:
+        """Persist one complete collector observation batch by exact binding."""
 
-        normalized: dict[int, int] = {}
-        for customer_id, observed_bytes in observations.items():
-            normalized[_positive_int(customer_id, "customer_id")] = observed_bytes
-            if isinstance(observed_bytes, bool) or not isinstance(observed_bytes, int) or observed_bytes < 0:
-                raise TelegramRegistryError("observed_bytes must be a non-negative integer")
+        normalized: dict[int, dict[tuple[int, int], int]] = {}
+        for raw_customer_id, raw_bindings in observations.items():
+            customer_id = _positive_int(raw_customer_id, "customer_id")
+            if not isinstance(raw_bindings, dict) or not raw_bindings:
+                raise TelegramRegistryError("observations must contain at least one binding")
+            customer_bindings: dict[tuple[int, int], int] = {}
+            for raw_binding, observed_bytes in raw_bindings.items():
+                if (
+                    not isinstance(raw_binding, tuple)
+                    or len(raw_binding) != 2
+                    or any(isinstance(value, bool) or not isinstance(value, int) for value in raw_binding)
+                ):
+                    raise TelegramRegistryError("binding must be a (node_id, inbound_id) tuple")
+                node_id = _positive_int(raw_binding[0], "node_id")
+                inbound_id = _positive_int(raw_binding[1], "inbound_id")
+                if (
+                    isinstance(observed_bytes, bool)
+                    or not isinstance(observed_bytes, int)
+                    or observed_bytes < 0
+                ):
+                    raise TelegramRegistryError("observed_bytes must be a non-negative integer")
+                customer_bindings[(node_id, inbound_id)] = observed_bytes
+            normalized[customer_id] = customer_bindings
+
         with connect(self._db_path) as conn:
             result: list[CustomerTrafficLedger] = []
-            for customer_id, observed_bytes in sorted(normalized.items()):
+            for customer_id, customer_bindings in sorted(normalized.items()):
                 if conn.execute("SELECT 1 FROM customers WHERE id = ?", (customer_id,)).fetchone() is None:
                     raise TelegramRegistryError("customer was not found")
-                row = conn.execute(
-                    "SELECT lifetime_bytes, last_observed_bytes FROM customer_traffic_ledger WHERE customer_id = ?",
+
+                observed_bytes = sum(customer_bindings.values())
+                binding_rows = conn.execute(
+                    """
+                    SELECT node_id, inbound_id, last_observed_bytes
+                    FROM customer_traffic_binding_ledger
+                    WHERE customer_id = ?
+                    """,
                     (customer_id,),
-                ).fetchone()
-                if row is None:
-                    lifetime, previous = observed_bytes, observed_bytes
-                    conn.execute(
-                        "INSERT INTO customer_traffic_ledger (customer_id, lifetime_bytes, last_observed_bytes) VALUES (?, ?, ?)",
-                        (customer_id, lifetime, previous),
-                    )
+                ).fetchall()
+                has_binding_ledger = bool(binding_rows)
+                lifetime_delta = 0
+
+                if not has_binding_ledger:
+                    ledger_row = conn.execute(
+                        "SELECT lifetime_bytes FROM customer_traffic_ledger WHERE customer_id = ?",
+                        (customer_id,),
+                    ).fetchone()
+                    if ledger_row is None:
+                        conn.execute(
+                            """
+                            INSERT INTO customer_traffic_ledger
+                                (customer_id, lifetime_bytes, last_observed_bytes)
+                            VALUES (?, ?, ?)
+                            """,
+                            (customer_id, observed_bytes, observed_bytes),
+                        )
+                    else:
+                        conn.execute(
+                            """
+                            UPDATE customer_traffic_ledger
+                            SET lifetime_bytes = ?, last_observed_bytes = ?,
+                                last_observed_at = CURRENT_TIMESTAMP,
+                                row_version = row_version + 1
+                            WHERE customer_id = ?
+                            """,
+                            (observed_bytes, observed_bytes, customer_id),
+                        )
+                    for (node_id, inbound_id), value in customer_bindings.items():
+                        conn.execute(
+                            """
+                            INSERT INTO customer_traffic_binding_ledger
+                                (customer_id, node_id, inbound_id, last_observed_bytes)
+                            VALUES (?, ?, ?, ?)
+                            """,
+                            (customer_id, node_id, inbound_id, value),
+                        )
                 else:
-                    lifetime, previous = int(row[0]), int(row[1])
-                    lifetime += observed_bytes - previous if observed_bytes >= previous else observed_bytes
-                    conn.execute(
-                        "UPDATE customer_traffic_ledger SET lifetime_bytes = ?, last_observed_bytes = ?, "
-                        "last_observed_at = CURRENT_TIMESTAMP, row_version = row_version + 1 WHERE customer_id = ?",
-                        (lifetime, observed_bytes, customer_id),
-                    )
+                    previous_by_binding = {
+                        (int(row[0]), int(row[1])): int(row[2]) for row in binding_rows
+                    }
+                    for (node_id, inbound_id), value in customer_bindings.items():
+                        previous = previous_by_binding.get((node_id, inbound_id))
+                        if previous is None:
+                            lifetime_delta += value
+                            conn.execute(
+                                """
+                                INSERT INTO customer_traffic_binding_ledger
+                                    (customer_id, node_id, inbound_id, last_observed_bytes)
+                                VALUES (?, ?, ?, ?)
+                                """,
+                                (customer_id, node_id, inbound_id, value),
+                            )
+                        else:
+                            lifetime_delta += value - previous if value >= previous else value
+                            conn.execute(
+                                """
+                                UPDATE customer_traffic_binding_ledger
+                                SET last_observed_bytes = ?, updated_at = CURRENT_TIMESTAMP
+                                WHERE customer_id = ? AND node_id = ? AND inbound_id = ?
+                                """,
+                                (value, customer_id, node_id, inbound_id),
+                            )
+
+                    ledger_row = conn.execute(
+                        "SELECT lifetime_bytes FROM customer_traffic_ledger WHERE customer_id = ?",
+                        (customer_id,),
+                    ).fetchone()
+                    if ledger_row is None:
+                        conn.execute(
+                            """
+                            INSERT INTO customer_traffic_ledger
+                                (customer_id, lifetime_bytes, last_observed_bytes)
+                            VALUES (?, ?, ?)
+                            """,
+                            (customer_id, lifetime_delta, observed_bytes),
+                        )
+                    else:
+                        conn.execute(
+                            """
+                            UPDATE customer_traffic_ledger
+                            SET lifetime_bytes = lifetime_bytes + ?, last_observed_bytes = ?,
+                                last_observed_at = CURRENT_TIMESTAMP,
+                                row_version = row_version + 1
+                            WHERE customer_id = ?
+                            """,
+                            (lifetime_delta, observed_bytes, customer_id),
+                        )
+
                 stored = conn.execute(
-                    "SELECT customer_id, lifetime_bytes, last_observed_bytes, last_observed_at "
-                    "FROM customer_traffic_ledger WHERE customer_id = ?",
+                    """
+                    SELECT customer_id, lifetime_bytes, last_observed_bytes, last_observed_at
+                    FROM customer_traffic_ledger WHERE customer_id = ?
+                    """,
                     (customer_id,),
                 ).fetchone()
                 assert stored is not None
-                result.append(CustomerTrafficLedger(int(stored[0]), int(stored[1]), int(stored[2]), str(stored[3])))
-        return tuple(result)
-
-    def observe_customer_traffic(self, *, customer_id: int, observed_bytes: int) -> CustomerTrafficLedger:
-        """Accumulate a customer lifetime counter independent of subscription tokens.
-
-        The source is an aggregate client counter. A lower next observation is
-        treated as a panel-side counter reset and starts a fresh epoch without
-        subtracting historical usage already recorded for this customer.
-        """
-
-        return self.observe_customer_traffic_batch({customer_id: observed_bytes})[0]
+                result.append(
+                    CustomerTrafficLedger(
+                        int(stored[0]), int(stored[1]), int(stored[2]), str(stored[3])
+                    )
+                )
+            return tuple(result)
 
     def get_customer_traffic(self, customer_id: int) -> CustomerTrafficLedger:
         local_customer_id = _positive_int(customer_id, "customer_id")

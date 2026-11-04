@@ -122,6 +122,7 @@ def test_telegram_schema_is_idempotent_and_foreign_keys_are_enforced(tmp_path):
             "telegram_node_policies",
             "telegram_node_bulk_action_previews",
             "customer_node_bindings",
+            "customer_traffic_binding_ledger",
             "telegram_provisioning_jobs",
             "telegram_provisioning_attempts",
             "telegram_customer_operations",
@@ -378,7 +379,7 @@ def test_customer_live_email_is_unique_but_deleted_tombstone_allows_new_registra
         )
 
 
-def test_customer_traffic_ledger_survives_counter_reset_and_uses_customer_not_token_identity(tmp_path):
+def test_customer_traffic_bindings_recalculate_inflated_ledger_and_preserve_first_observed_at(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
     registry = TelegramRegistry(db_path)
@@ -386,21 +387,87 @@ def test_customer_traffic_ledger_survives_counter_reset_and_uses_customer_not_to
         email_display="traffic-user", origin="telegram", email_source="telegram_username", public_code="traffic-user"
     )
 
-    first = registry.observe_customer_traffic(customer_id=customer_id, observed_bytes=100)
-    next_value = registry.observe_customer_traffic(customer_id=customer_id, observed_bytes=180)
-    after_reset = registry.observe_customer_traffic(customer_id=customer_id, observed_bytes=20)
-    after_more = registry.observe_customer_traffic(customer_id=customer_id, observed_bytes=50)
+    with connect(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO customer_traffic_ledger
+                (customer_id, lifetime_bytes, last_observed_bytes, first_observed_at)
+            VALUES (?, 9999, 9999, '2000-01-01 00:00:00')
+            """,
+            (customer_id,),
+        )
 
-    assert first.lifetime_bytes == 100
-    assert next_value.lifetime_bytes == 180
-    assert after_reset.lifetime_bytes == 200
-    assert after_more.lifetime_bytes == 230
-    assert registry.get_customer_traffic(customer_id).lifetime_bytes == 230
+    first = registry.observe_customer_traffic_bindings(
+        {customer_id: {(1, 1): 100, (2, 1): 200}}
+    )
+    second = registry.observe_customer_traffic_bindings(
+        {customer_id: {(1, 1): 100, (2, 1): 200}}
+    )
+
+    assert first[0].lifetime_bytes == 300
+    assert second[0].lifetime_bytes == 300
+    with connect(db_path) as conn:
+        ledger = conn.execute(
+            "SELECT lifetime_bytes, first_observed_at FROM customer_traffic_ledger WHERE customer_id = ?",
+            (customer_id,),
+        ).fetchone()
+        bindings = conn.execute(
+            """
+            SELECT node_id, inbound_id, last_observed_bytes
+            FROM customer_traffic_binding_ledger
+            WHERE customer_id = ? ORDER BY node_id, inbound_id
+            """,
+            (customer_id,),
+        ).fetchall()
+    assert tuple(ledger) == (300, "2000-01-01 00:00:00")
+    assert [tuple(row) for row in bindings] == [(1, 1, 100), (2, 1, 200)]
+
+
+def test_customer_traffic_bindings_apply_per_binding_deltas_and_resets(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="traffic-user", origin="manual", email_source="admin", public_code="traffic-user"
+    )
+
+    assert registry.observe_customer_traffic_bindings({customer_id: {(1, 1): 100, (2, 1): 200}})[0].lifetime_bytes == 300
+    assert registry.observe_customer_traffic_bindings({customer_id: {(1, 1): 140, (2, 1): 200}})[0].lifetime_bytes == 340
+    assert registry.observe_customer_traffic_bindings({customer_id: {(1, 1): 20, (2, 1): 200}})[0].lifetime_bytes == 360
+    assert registry.observe_customer_traffic_bindings({customer_id: {(1, 1): 50, (2, 1): 200}})[0].lifetime_bytes == 390
+
+
+def test_customer_traffic_bindings_keep_missing_rows_and_count_new_bindings(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="traffic-user", origin="manual", email_source="admin", public_code="traffic-user"
+    )
+
+    assert registry.observe_customer_traffic_bindings({customer_id: {(1, 1): 100, (2, 1): 200}})[0].lifetime_bytes == 300
+    assert registry.observe_customer_traffic_bindings({customer_id: {(1, 1): 100}})[0].lifetime_bytes == 300
+    assert registry.observe_customer_traffic_bindings({customer_id: {(1, 1): 100, (2, 1): 200}})[0].lifetime_bytes == 300
+    assert registry.observe_customer_traffic_bindings({customer_id: {(1, 1): 100, (2, 1): 250}})[0].lifetime_bytes == 350
+    assert registry.observe_customer_traffic_bindings({customer_id: {(1, 1): 100, (2, 1): 250, (3, 1): 40}})[0].lifetime_bytes == 390
+    assert registry.get_customer_traffic(customer_id).last_observed_bytes == 390
+
+
+def test_customer_traffic_bindings_use_customer_identity(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    first = registry.create_customer(
+        email_display="traffic-user", origin="telegram", email_source="telegram_username", public_code="traffic-user"
+    )
     second = registry.create_customer(
         email_display="Alice", origin="telegram", email_source="telegram_name", public_code="second"
     )
-    assert second != first
 
+    assert registry.observe_customer_traffic_bindings({first: {(1, 1): 100}})[0].lifetime_bytes == 100
+    assert registry.observe_customer_traffic_bindings({second: {(1, 1): 40}})[0].lifetime_bytes == 40
+    assert registry.get_customer_traffic(first).lifetime_bytes == 100
+    assert registry.get_customer_traffic(second).lifetime_bytes == 40
 
 def test_identity_uses_numeric_id_and_updates_only_display_metadata(tmp_path):
     db_path = str(tmp_path / "admin.db")
