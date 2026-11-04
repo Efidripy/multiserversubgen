@@ -16,13 +16,21 @@ from services.subscription_tokens import (
     regenerate_token,
     resolve_token,
 )
+from services.subscription_client_settings import (
+    build_headers as build_client_headers,
+    load_settings as load_client_settings,
+    match_client,
+    save_settings as save_client_settings,
+    schema as client_settings_schema,
+)
+from services.subscription_formats import convert_links
 from services.telegram_access import TelegramSubscriptionAccessGate
 from services.telegram_registry import TelegramRegistry
 from shared.sql import update_by_id_query
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 
 
 # Apps refetch hourly; a fetch is served from local snapshots, never from nodes.
@@ -47,7 +55,7 @@ def build_subscriptions_router(
     subscription_profile_title=None,
 ):
     router = APIRouter()
-    subscription_response_cache: Dict[str, tuple[float, str, Optional[Dict[str, int]]]] = {}
+    subscription_response_cache: Dict[str, tuple[float, str, Optional[Dict[str, int]], str]] = {}
     subscription_response_cache_lock = Lock()
     subscription_response_cache_ttl = 300
     subscription_response_cache_max_size = 1024
@@ -61,7 +69,6 @@ def build_subscriptions_router(
             profile_interval = DEFAULT_PROFILE_UPDATE_INTERVAL_HOURS
     except (TypeError, ValueError):
         profile_interval = DEFAULT_PROFILE_UPDATE_INTERVAL_HOURS
-    profile_update_interval_header = str(profile_interval) if profile_interval else None
     profile_title = (subscription_profile_title or "").replace("\r", "").replace("\n", "")
     if profile_title and not profile_title.isascii():
         profile_title = "base64:" + base64.b64encode(profile_title.encode("utf-8")).decode("ascii")
@@ -87,16 +94,75 @@ def build_subscriptions_router(
                 f"{key}={userinfo[key]}" for key in ("upload", "download", "total", "expire")
             )
 
-        if profile_update_interval_header is not None:
-            headers["Profile-Update-Interval"] = profile_update_interval_header
-        if profile_title_header is not None:
-            headers["Profile-Title"] = profile_title_header
+        headers["Vary"] = "User-Agent"
         return headers
+
+    def _client_output_details(links, request: Request, *, userinfo=None, nodes=None, emails=None, cache_headers=None):
+        settings = load_client_settings(db_path)
+        selected = match_client(settings, request.headers.get("user-agent"))
+        output_format = request.query_params.get("format")
+        if output_format not in {"base64", "mihomo", "clash", "singbox"}:
+            output_format = selected.get("format") if selected else "base64"
+        selected_settings = selected.get("settings", {}) if selected else {}
+        extra_text = None
+        if selected and selected.get("kind") == "incy" and output_format == "base64":
+            if selected_settings.get("routing_enable") and selected_settings.get("routing"):
+                extra_text = str(selected_settings["routing"])
+        body = convert_links(
+            links,
+            output_format,
+            enable_routing=bool(selected_settings.get("enable_routing")),
+            rules=selected_settings.get("rules", []),
+            extra_text=extra_text,
+        )
+        if output_format != "base64" and not body:
+            output_format = "base64"
+            body = convert_links(links, output_format, extra_text=extra_text)
+        headers = cache_headers or _no_cache_headers()
+        headers = _with_subscription_headers(headers, nodes, emails, userinfo)
+        _, client_headers = build_client_headers(
+            settings,
+            request.headers.get("user-agent"),
+            fallback_title=profile_title_header or "",
+            fallback_interval=profile_interval,
+        )
+        for name, value in client_headers.items():
+            for existing in list(headers):
+                if existing.lower() == name.lower():
+                    del headers[existing]
+            headers[name] = value
+        return body, output_format, headers
+
+    def _response_from_details(details):
+        body, output_format, headers = details
+        content_type = {
+            "base64": "text/plain",
+            "mihomo": "text/yaml",
+            "clash": "text/yaml",
+            "singbox": "application/json",
+        }[output_format]
+        return Response(content=body, media_type=content_type, headers=headers)
+
+    def _client_output(links, request: Request, *, userinfo=None, nodes=None, emails=None, cache_headers=None):
+        return _response_from_details(
+            _client_output_details(
+                links,
+                request,
+                userinfo=userinfo,
+                nodes=nodes,
+                emails=emails,
+                cache_headers=cache_headers,
+            )
+        )
 
     def _subscription_cache_key(request: Request, identifier: str) -> str:
         query_items = sorted((key, value) for key, value in request.query_params.multi_items())
+        settings = load_client_settings(db_path)
+        selected = match_client(settings, request.headers.get("user-agent"))
+        requested_format = request.query_params.get("format")
+        final_format = requested_format if requested_format in {"base64", "mihomo", "clash", "singbox"} else (selected.get("format") if selected else "base64")
         raw_key = json.dumps(
-            {"identifier": identifier, "query": query_items},
+            {"identifier": identifier, "query": query_items, "client_id": selected.get("id") if selected else None, "format": final_format},
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -109,18 +175,18 @@ def build_subscriptions_router(
             cached = subscription_response_cache.get(cache_key)
             if not cached:
                 return None
-            ts, content, userinfo = cached
+            ts, content, userinfo, final_format = cached
             if now - ts > subscription_response_cache_ttl:
                 subscription_response_cache.pop(cache_key, None)
                 return None
-            return content, userinfo
+            return content, userinfo, final_format
 
-    def _set_subscription_response_cache(cache_key: str, content: str, userinfo=None) -> None:
+    def _set_subscription_response_cache(cache_key: str, content: str, userinfo=None, final_format: str = "base64") -> None:
         with subscription_response_cache_lock:
             if len(subscription_response_cache) >= subscription_response_cache_max_size and cache_key not in subscription_response_cache:
                 oldest_key = min(subscription_response_cache, key=lambda item: subscription_response_cache[item][0])
                 subscription_response_cache.pop(oldest_key, None)
-            subscription_response_cache[cache_key] = (time.time(), content, userinfo)
+            subscription_response_cache[cache_key] = (time.time(), content, userinfo, final_format)
 
     def _clear_subscription_response_cache() -> None:
         with subscription_response_cache_lock:
@@ -330,10 +396,7 @@ def build_subscriptions_router(
                         (resolved_email, now, now),
                     )
                     db.commit()
-                return PlainTextResponse(
-                    content=base64.b64encode("\n".join(links).encode()).decode(),
-                    headers=_with_subscription_headers(no_cache_headers, all_nodes, [resolved_email]),
-                )
+                return _client_output(links, request, nodes=all_nodes, emails=[resolved_email])
 
         return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
 
@@ -370,10 +433,7 @@ def build_subscriptions_router(
                         (guest_link.email_display, now, now),
                     )
                     db.commit()
-                return PlainTextResponse(
-                    content=base64.b64encode("\n".join(links).encode()).decode(),
-                    headers=_with_subscription_headers(_no_cache_headers(), all_nodes, [guest_link.email_display]),
-                )
+                return _client_output(links, request, nodes=all_nodes, emails=[guest_link.email_display])
         return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
 
     @router.get("/api/v1/sub-grouped/{identifier}")
@@ -405,11 +465,21 @@ def build_subscriptions_router(
         cache_key = _subscription_cache_key(request, resolved_identifier)
         cached_response = _get_subscription_response_cache(cache_key)
         if cached_response is not None:
-            cached_content, cached_userinfo = cached_response
-            return PlainTextResponse(
-                content=cached_content,
-                headers=_with_subscription_headers(_subscription_headers("hit"), userinfo=cached_userinfo),
+            cached_content, cached_userinfo, cached_format = cached_response
+            settings = load_client_settings(db_path)
+            headers = _with_subscription_headers(_subscription_headers("hit"), userinfo=cached_userinfo)
+            _, selected_headers = build_client_headers(
+                settings,
+                request.headers.get("user-agent"),
+                fallback_title=profile_title_header or "",
+                fallback_interval=profile_interval,
             )
+            for name, value in selected_headers.items():
+                for existing in list(headers):
+                    if existing.lower() == name.lower():
+                        del headers[existing]
+                headers[name] = value
+            return _response_from_details((cached_content, cached_format, headers))
 
         no_cache_headers = _subscription_headers("miss")
         with connect(db_path) as conn:
@@ -456,7 +526,6 @@ def build_subscriptions_router(
 
             if all_links:
                 now = datetime.datetime.now().strftime("%d.%m %H:%M")
-                content = base64.b64encode("\n".join(all_links).encode()).decode()
                 with connect(db_path) as db:
                     for matched_email in matching_emails:
                         db.execute(
@@ -466,13 +535,57 @@ def build_subscriptions_router(
                         )
                     db.commit()
                 userinfo = get_subscription_userinfo(all_nodes, matching_emails) if get_subscription_userinfo else None
-                _set_subscription_response_cache(cache_key, content, userinfo)
-                return PlainTextResponse(
-                    content=content,
-                    headers=_with_subscription_headers(no_cache_headers, userinfo=userinfo),
+                details = _client_output_details(
+                    all_links,
+                    request,
+                    userinfo=userinfo,
+                    nodes=all_nodes,
+                    emails=matching_emails,
+                    cache_headers=no_cache_headers,
                 )
+                content, final_format, _headers = details
+                _set_subscription_response_cache(cache_key, content, userinfo, final_format)
+                return _response_from_details(details)
 
         return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
+
+    def _settings_payload(value):
+        return {"settings": value, "schema": client_settings_schema(), "formats": ["base64", "mihomo", "clash", "singbox"]}
+
+    @router.get("/api/v1/subscription-client-settings")
+    def get_subscription_client_settings(request: Request):
+        if not check_auth(request):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        return _settings_payload(load_client_settings(db_path))
+
+    @router.put("/api/v1/subscription-client-settings")
+    def put_subscription_client_settings(request: Request, body: dict):
+        if not check_auth(request):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        try:
+            value = save_client_settings(db_path, body)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        invalidate_subscription_cache()
+        _clear_subscription_response_cache()
+        return _settings_payload(value)
+
+    @router.post("/api/v1/subscription-client-settings/test")
+    def test_subscription_client_settings(request: Request, body: dict):
+        if not check_auth(request):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        ua = body.get("user_agent", "") if isinstance(body, dict) else ""
+        if not isinstance(ua, str) or len(ua) > 512:
+            raise HTTPException(status_code=422, detail="user_agent")
+        settings = load_client_settings(db_path)
+        client = match_client(settings, ua)
+        _, headers = build_client_headers(
+            settings,
+            ua,
+            fallback_title=profile_title_header or "",
+            fallback_interval=profile_interval,
+        )
+        return {"matched": bool(client), "client_id": client.get("id") if client else None, "name": client.get("name") if client else None, "format": client.get("format") if client else "base64", "headers": headers}
 
     @router.get("/api/v1/subscription-groups")
     def list_subscription_groups(request: Request):

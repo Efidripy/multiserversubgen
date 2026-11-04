@@ -226,6 +226,8 @@ class AuthService:
         """
         method = method.upper()
         path = path.lower()
+        if path.startswith("/api/v1/subscription-client-settings"):
+            return "admin"
         if path in {"/api/v1/auth/session", "/api/v1/auth/logout"}:
             return "viewer"
         if path.startswith("/api/v1/telegram/"):
