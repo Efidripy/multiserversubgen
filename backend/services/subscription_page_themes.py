@@ -7,7 +7,7 @@ import json
 import re
 from functools import lru_cache
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 
 def _e(value: object, quote_attr: bool = True) -> str:
@@ -184,6 +184,9 @@ border-radius:16px;
 background:var(--card);
 color:var(--text)}
 .letter-icon{display:inline-grid;place-items:center;width:24px;height:24px;font-weight:700}
+.lang-switch{display:flex;flex:0 0 auto;align-items:center;gap:2px;padding:3px;border:1px solid var(--border);border-radius:10px}
+.lang-switch a{padding:5px 7px;border-radius:7px;color:var(--muted);font-size:13px;font-weight:600;line-height:1.2;text-decoration:none}
+.lang-switch a.active{background:var(--border);color:var(--text)}
 """
 
 
@@ -261,11 +264,11 @@ background:transparent;
 color:var(--text);
 text-align:left}
 .platform-option:hover{background:#263548}
-.app-tabs{display:flex;gap:8px;overflow-x:auto;padding:14px 0;scrollbar-width:none}
+.app-tabs{display:grid;grid-template-columns:repeat(auto-fill,minmax(126px,1fr));gap:8px;padding:14px 0}
 .app-tab{display:flex;
 align-items:center;
 gap:8px;
-min-width:126px;
+min-width:0;
 border:1px solid var(--border);
 border-radius:12px;
 padding:10px;
@@ -299,7 +302,6 @@ text-decoration:none}
 @media(max-width:420px){.wrap{padding:14px 10px 28px}
 .card{padding:14px}
 .grid{gap:8px}
-.app-tab{min-width:112px}
 }
 """
 
@@ -333,7 +335,7 @@ color:var(--text)}
 .tile b{display:block;margin-bottom:3px;color:var(--muted);font-size:11px}
 .tile span{overflow-wrap:anywhere}
 .badge{display:inline-block;padding:3px 7px;border-radius:7px;background:#236b3a;color:#b6f2c6;font-size:12px}
-.tabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin:-2px -16px 14px;padding:0 16px;border-bottom:1px solid var(--border)}
+.tabs{display:flex;flex-wrap:wrap;gap:6px;margin:-2px -16px 14px;padding:0 16px;border-bottom:1px solid var(--border)}
 .tab{border:0;border-bottom:2px solid transparent;padding:10px 8px;background:none;color:var(--muted);white-space:nowrap}
 .tab.active{border-color:var(--accent);color:var(--accent)}
 .format-list,.nodes{display:grid;gap:8px;margin:0;padding:0;list-style:none}
@@ -353,17 +355,20 @@ background:transparent;
 color:var(--text);
 text-decoration:none;
 white-space:nowrap}
-.platform-segments{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin-bottom:10px}
+.platform-segments{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
 .platform-segments .btn.selected{border-color:var(--accent);color:var(--accent)}
 .apps{display:grid;gap:8px}
 .app-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:8px;padding:9px;border:1px solid var(--border);border-radius:10px}
-.app-row .app-name{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
+.app-row .app-name{flex:1 1 140px;display:flex;align-items:center;gap:8px;min-width:0}
 .app-name span{overflow:hidden;text-overflow:ellipsis}
 .app-row .app-action{font-size:13px}
 .qr-card{text-align:center}
 .qr-card p{color:var(--muted)}
 .update{color:var(--muted);font-size:12px;text-align:center}
-@media(max-width:520px){.stats{gap:12px}
+@media(max-width:520px){.top{gap:8px}
+.logo{display:none}
+.headtext h1{font-size:17px;overflow-wrap:normal}
+.stats{gap:12px}
 .ring{width:88px;height:88px}
 .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
@@ -374,6 +379,9 @@ COMMON_SCRIPT = """
 (function(){
   function get(k,d){try{return localStorage.getItem(k)||d}catch(e){return d}}
   function set(k,v){try{localStorage.setItem(k,v)}catch(e){}}
+  var savedLang=get('sub-page-lang',''),pageUrl=new URL(location.href);
+  if(savedLang&&savedLang!==document.documentElement.lang&&!pageUrl.searchParams.get('lang')){
+    pageUrl.searchParams.set('lang',savedLang);location.replace(pageUrl);return}
   function fallback(text,done){try{var t=document.createElement('textarea');t.value=text;
     t.setAttribute('readonly','');t.style.position='fixed';t.style.left='-9999px';
     document.body.appendChild(t);t.select();document.execCommand('copy');t.remove();done()
@@ -397,6 +405,7 @@ COMMON_SCRIPT = """
       x.classList.toggle('active',x.dataset.appIndex===index)});
     set('sub-page-app-'+platform,index)}
   document.addEventListener('click',function(e){
+    var l=e.target.closest('[data-lang]');if(l)set('sub-page-lang',l.dataset.lang);
     var b=e.target.closest('[data-copy]');if(b)copy(b.getAttribute('data-copy'),b);
     var toggle=e.target.closest('[data-platform-toggle]');
     if(toggle){var menu=toggle.parentNode.querySelector('.platform-menu');if(menu)menu.hidden=!menu.hidden}
@@ -439,6 +448,22 @@ def _script(nonce: str) -> str:
 def _theme_init_script(nonce: str) -> str:
     code = "try{if(localStorage.getItem('sub-page-3x-theme')==='light')document.documentElement.classList.add('light')}catch(e){}"
     return f'<script nonce="{_e(nonce)}">{code}</script>'
+
+
+def _lang_switch(data: dict[str, object]) -> str:
+    current = str(data.get("lang") or "ru")
+    # Keep the visitor's filters such as ?protocol= and ?nodes= when the language changes.
+    kept = [
+        (key, value)
+        for key, value in data.get("query") or ()
+        if key.lower() not in {"html", "view", "lang"}
+    ]
+    links = []
+    for code in ("ru", "en"):
+        state = ' class="active" aria-current="true"' if code == current else ""
+        href = _e("?" + urlencode([*kept, ("html", "1"), ("lang", code)]))
+        links.append(f'<a href="{href}" data-lang="{code}"{state}>{code.upper()}</a>')
+    return f'<nav class="lang-switch" aria-label="Language">{"".join(links)}</nav>'
 
 
 def _qr_dialog(data: dict[str, object], include_qr: bool = True) -> str:
@@ -493,7 +518,7 @@ def render_remnawave(data: dict[str, object]) -> str:
         f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>'
         f'<style nonce="{nonce}">{BASE_CSS}{REMNAWAVE_CSS}</style></head><body class="status-{_e(status)}">'
         f'<main class="wrap"><header class="top"><div class="brand"><h1>{title}</h1></div><div class="actions">'
-        f'<button type="button" class="icon-btn" data-open-qr aria-label="QR">{_ui_icon("qr")}</button>{support_button}'
+        f'{_lang_switch(data)}<button type="button" class="icon-btn" data-open-qr aria-label="QR">{_ui_icon("qr")}</button>{support_button}'
         f'</div></header><section class="card{bad}"><div class="user-head"><div class="avatar">{"!" if bad else "✓"}</div>'
         f'<div><div class="username">{username}</div><div class="muted">{_e(data.get("expire_label"))}: '
         f'{_e(data.get("expire"))}</div></div></div><div class="grid">{tiles}</div>'
@@ -509,11 +534,12 @@ def render_remnawave(data: dict[str, object]) -> str:
 def _format_rows(data: dict[str, object]) -> str:
     sub_url = str(data.get("sub_url") or "")
     labels = data
+    separator = "&" if "?" in sub_url else "?"
     formats = [
         ("SUB", sub_url, False),
-        ("JSON", sub_url + "?format=xray_json", True),
-        ("CLASH", sub_url + "?format=clash", True),
-        ("SING-BOX", sub_url + "?format=singbox", True),
+        ("JSON", f"{sub_url}{separator}format=xray_json", True),
+        ("CLASH", f"{sub_url}{separator}format=clash", True),
+        ("SING-BOX", f"{sub_url}{separator}format=singbox", True),
     ]
     rows = []
     for name, url, downloadable in formats:
@@ -603,7 +629,7 @@ def render_3xui(data: dict[str, object]) -> str:
         f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>'
         f'{_theme_init_script(str(data.get("nonce", "")))}<style nonce="{nonce}">{BASE_CSS}{THREEXUI_CSS}</style></head><body><main class="wrap">'
         f'<header class="top"><div class="logo">3X</div><div class="headtext"><h1>{_e(data.get("info_title"))}</h1>'
-        f'<small>{identifier}</small></div><button type="button" class="icon-btn" data-open-qr aria-label="QR">{_ui_icon("qr")}</button>'
+        f'<small>{identifier}</small></div>{_lang_switch(data)}<button type="button" class="icon-btn" data-open-qr aria-label="QR">{_ui_icon("qr")}</button>'
         f'<button type="button" class="icon-btn" data-theme-toggle aria-label="Theme">{_ui_icon("moon")}</button></header>'
         f'<section class="card stats"><svg class="ring" viewBox="0 0 120 120">'
         f'<circle cx="60" cy="60" r="48" fill="none" stroke="var(--border)" stroke-width="10"/>'

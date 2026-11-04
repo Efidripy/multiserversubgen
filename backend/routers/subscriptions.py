@@ -10,7 +10,7 @@ import secrets
 import copy
 import random
 from threading import Lock
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from services.db_bootstrap import connect
 from services.subscription_tokens import (
     delete_tokens,
@@ -209,7 +209,7 @@ def build_subscriptions_router(
             "total": info.get("total", 0) if info else 0,
             "expire": info.get("expire", 0) if info else 0,
             "now": time.time(),
-            "lang": request.headers.get("accept-language", ""),
+            "lang": request.query_params.get("lang") or request.headers.get("accept-language", ""),
         }
 
     def _apply_rule_headers(headers, rule):
@@ -283,6 +283,10 @@ def build_subscriptions_router(
             forwarded_proto = request.headers.get("x-forwarded-proto")
             scheme = forwarded_proto if forwarded_proto in {"http", "https"} else request.url.scheme
             sub_url = str(request.base_url.replace(scheme=scheme)).rstrip("/") + request.url.path
+            # QR, Happ and the page buttons must return the same filtered subscription.
+            filters = [(key, value) for key, value in request.query_params.multi_items() if key in {"protocol", "nodes"}]
+            if filters:
+                sub_url += "?" + urlencode(filters)
             qr = ""
             try:
                 qr = "data:image/png;base64," + base64.b64encode(build_subscription_qr_png(sub_url)).decode()
@@ -298,7 +302,7 @@ def build_subscriptions_router(
             page_profile = copy.deepcopy(settings.get("profile", {}))
             for key in ("title", "support_url", "announce"):
                 page_profile[key] = render_tokens(page_profile.get(key, ""), ctx)
-            html = render_page(ctx, page_section, profile=page_profile, sub_url=sub_url, links=links, qr_data_url=qr, happ_link=happ, nonce=nonce)
+            html = render_page(ctx, page_section, profile=page_profile, sub_url=sub_url, links=links, qr_data_url=qr, happ_link=happ, nonce=nonce, query=request.query_params.multi_items())
             headers = page_headers(nonce)
             headers.update(decision.headers)
             _apply_rule_headers(headers, rule)

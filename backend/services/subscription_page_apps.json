@@ -439,6 +439,102 @@
    "icon": "Ubuntu",
    "apps": [
     {
+     "name": "v2rayN",
+     "icon": "VRayNG",
+     "featured": false,
+     "blocks": [
+      {
+       "icon": "DownloadIcon",
+       "color": "cyan",
+       "title": {
+        "ru": "Установка приложения",
+        "en": "App Installation"
+       },
+       "description": {
+        "ru": "Скачайте пакет для своего дистрибутива и процессора и установите его.",
+        "en": "Download the package for your distribution and processor and install it."
+       },
+       "buttons": [
+        {
+         "type": "external",
+         "link": "https://github.com/2dust/v2rayN/releases/latest/download/v2rayN-linux-64.deb",
+         "icon": "ExternalLink",
+         "text": {
+          "ru": "amd64 (.deb)",
+          "en": "amd64 (.deb)"
+         }
+        },
+        {
+         "type": "external",
+         "link": "https://github.com/2dust/v2rayN/releases/latest/download/v2rayN-linux-rhel-64.rpm",
+         "icon": "ExternalLink",
+         "text": {
+          "ru": "amd64 (.rpm)",
+          "en": "amd64 (.rpm)"
+         }
+        },
+        {
+         "type": "external",
+         "link": "https://github.com/2dust/v2rayN/releases/latest/download/v2rayN-linux-arm64.deb",
+         "icon": "ExternalLink",
+         "text": {
+          "ru": "arm64 (.deb)",
+          "en": "arm64 (.deb)"
+         }
+        },
+        {
+         "type": "external",
+         "link": "https://github.com/2dust/v2rayN/releases/latest/download/v2rayN-linux-rhel-arm64.rpm",
+         "icon": "ExternalLink",
+         "text": {
+          "ru": "arm64 (.rpm)",
+          "en": "arm64 (.rpm)"
+         }
+        }
+       ]
+      },
+      {
+       "icon": "CloudDownload",
+       "color": "cyan",
+       "title": {
+        "ru": "Добавление подписки",
+        "en": "Add Subscription"
+       },
+       "description": {
+        "ru": "Нажмите кнопку QR-кода вверху этой страницы и скопируйте ссылку. В v2rayN откройте «Группа подписки» → «Настройки групп подписки» → «Добавить» и вставьте ссылку в поле адреса.",
+        "en": "Click the QR code button at the top of this page and copy the link. In v2rayN open Subscription Group → Subscription group settings → Add and paste the link into the URL field."
+       },
+       "buttons": []
+      },
+      {
+       "icon": "Gear",
+       "color": "cyan",
+       "title": {
+        "ru": "Обновление подписки",
+        "en": "Update subscriptions"
+       },
+       "description": {
+        "ru": "Откройте «Группа подписки» и выберите «Обновить все подписки без прокси». После этого в списке появятся доступные серверы.",
+        "en": "Open Subscription Group and select Update subscriptions without proxy. After that, the available servers will appear in the list."
+       },
+       "buttons": []
+      },
+      {
+       "icon": "Check",
+       "color": "teal",
+       "title": {
+        "ru": "Подключение и использование",
+        "en": "Connect and use"
+       },
+       "description": {
+        "ru": "Выберите сервер в списке, нажмите Enter, чтобы сделать его активным, и включите системный прокси внизу окна.",
+        "en": "Select a server in the list, press Enter to make it active and turn on the system proxy at the bottom of the window."
+       },
+       "buttons": []
+      }
+     ]
+    },
+    {
      "name": "FlClashX",
      "icon": "FlClashX",
      "featured": false,
@@ -858,6 +954,84 @@
      ]
     },
     {
+     "name": "v2rayN",
+     "icon": "VRayNG",
+     "featured": false,
+     "blocks": [
+      {
+       "icon": "DownloadIcon",
+       "color": "cyan",
+       "title": {
+        "ru": "Установка приложения",
+        "en": "App Installation"
+       },
+       "description": {
+        "ru": "Скачайте образ для своего процессора и перенесите приложение в папку «Программы».",
+        "en": "Download the image for your processor and move the app to the Applications folder."
+       },
+       "buttons": [
+        {
+         "type": "external",
+         "link": "https://github.com/2dust/v2rayN/releases/latest/download/v2rayN-macos-arm64.dmg",
+         "icon": "ExternalLink",
+         "text": {
+          "ru": "Apple Silicon (.dmg)",
+          "en": "Apple Silicon (.dmg)"
+         }
+        },
+        {
+         "type": "external",
+         "link": "https://github.com/2dust/v2rayN/releases/latest/download/v2rayN-macos-64.dmg",
+         "icon": "ExternalLink",
+         "text": {
+          "ru": "Intel (.dmg)",
+          "en": "Intel (.dmg)"
+         }
+        }
+       ]
+      },
+      {
+       "icon": "CloudDownload",
+       "color": "cyan",
+       "title": {
+        "ru": "Добавление подписки",
+        "en": "Add Subscription"
+       },
+       "description": {
+        "ru": "Нажмите кнопку QR-кода вверху этой страницы и скопируйте ссылку. В v2rayN откройте «Группа подписки» → «Настройки групп подписки» → «Добавить» и вставьте ссылку в поле адреса.",
+        "en": "Click the QR code button at the top of this page and copy the link. In v2rayN open Subscription Group → Subscription group settings → Add and paste the link into the URL field."
+       },
+       "buttons": []
+      },
+      {
+       "icon": "Gear",
+       "color": "cyan",
+       "title": {
+        "ru": "Обновление подписки",
+        "en": "Update subscriptions"
+       },
+       "description": {
+        "ru": "Откройте «Группа подписки» и выберите «Обновить все подписки без прокси». После этого в списке появятся доступные серверы.",
+        "en": "Open Subscription Group and select Update subscriptions without proxy. After that, the available servers will appear in the list."
+       },
+       "buttons": []
+      },
+      {
+       "icon": "Check",
+       "color": "teal",
+       "title": {
+        "ru": "Подключение и использование",
+        "en": "Connect and use"
+       },
+       "description": {
+        "ru": "Выберите сервер в списке, нажмите Enter, чтобы сделать его активным, и включите системный прокси внизу окна.",
+        "en": "Select a server in the list, press Enter to make it active and turn on the system proxy at the bottom of the window."
+       },
+       "buttons": []
+      }
+     ]
+    },
+    {
      "name": "FlClashX",
      "icon": "FlClashX",
      "featured": true,
@@ -1211,6 +1385,85 @@
      ]
     },
     {
+     "name": "v2rayNG",
+     "icon": "VRayNG",
+     "featured": false,
+     "blocks": [
+      {
+       "icon": "DownloadIcon",
+       "color": "cyan",
+       "title": {
+        "ru": "Установка приложения",
+        "en": "App Installation"
+       },
+       "description": {
+        "ru": "Скачайте и установите v2rayNG APK",
+        "en": "Download and install v2rayNG APK"
+       },
+       "buttons": [
+        {
+         "type": "external",
+         "link": "https://github.com/2dust/v2rayNG/releases/latest",
+         "icon": "ExternalLink",
+         "text": {
+          "ru": "Скачать APK",
+          "en": "Download APK"
+         }
+        }
+       ]
+      },
+      {
+       "icon": "CloudDownload",
+       "color": "cyan",
+       "title": {
+        "ru": "Добавление подписки",
+        "en": "Add Subscription"
+       },
+       "description": {
+        "ru": "Нажмите кнопку ниже — приложение откроется, и подписка добавится автоматически.",
+        "en": "Click the button below — the app will open and the subscription will be added automatically"
+       },
+       "buttons": [
+        {
+         "type": "subscriptionLink",
+         "link": "v2rayng://install-config?name={{USERNAME}}&url={{SUBSCRIPTION_LINK_ENC}}",
+         "icon": "Plus",
+         "text": {
+          "ru": "Добавить подписку",
+          "en": "Add Subscription"
+         }
+        }
+       ]
+      },
+      {
+       "icon": "Gear",
+       "color": "cyan",
+       "title": {
+        "ru": "Обновление подписки",
+        "en": "Update subscriptions"
+       },
+       "description": {
+        "ru": "Нажмите на три точечки справа сверху и выберите Обновить подписку. После этого в списке появятся доступные серверы",
+        "en": "Tap the three dots in the top-right corner and select Update subscription. After that, the available servers will appear in the list."
+       },
+       "buttons": []
+      },
+      {
+       "icon": "Check",
+       "color": "teal",
+       "title": {
+        "ru": "Подключение и использование",
+        "en": "Connect and use"
+       },
+       "description": {
+        "ru": "Выберите требуемый сервер и нажмите кнопку Включить в правом нижнем углу",
+        "en": "Select the required server and click the Enable button in the bottom right corner."
+       },
+       "buttons": []
+      }
+     ]
+    },
+    {
      "name": "V2Box",
      "icon": "VTwoBox",
      "featured": false,
@@ -1438,85 +1691,6 @@
        "description": {
         "ru": "Перейди в пункт Профили и выбери созданный профиль, затем вернись на главную страницу. Теперь ты можешь подключиться, нажав на кнопку Остановлен",
         "en": "Go to the Profiles section and select the created profile, then return to the main page. Now you can connect by clicking the Stopped button."
-       },
-       "buttons": []
-      }
-     ]
-    },
-    {
-     "name": "v2rayNG",
-     "icon": "VRayNG",
-     "featured": false,
-     "blocks": [
-      {
-       "icon": "DownloadIcon",
-       "color": "cyan",
-       "title": {
-        "ru": "Установка приложения",
-        "en": "App Installation"
-       },
-       "description": {
-        "ru": "Скачайте и установите v2rayNG APK",
-        "en": "Download and install v2rayNG APK"
-       },
-       "buttons": [
-        {
-         "type": "external",
-         "link": "https://github.com/2dust/v2rayNG/releases/latest",
-         "icon": "ExternalLink",
-         "text": {
-          "ru": "Скачать APK",
-          "en": "Download APK"
-         }
-        }
-       ]
-      },
-      {
-       "icon": "CloudDownload",
-       "color": "cyan",
-       "title": {
-        "ru": "Добавление подписки",
-        "en": "Add Subscription"
-       },
-       "description": {
-        "ru": "Нажмите кнопку ниже — приложение откроется, и подписка добавится автоматически.",
-        "en": "Click the button below — the app will open and the subscription will be added automatically"
-       },
-       "buttons": [
-        {
-         "type": "subscriptionLink",
-         "link": "v2rayng://install-config?name={{USERNAME}}&url={{SUBSCRIPTION_LINK_ENC}}",
-         "icon": "Plus",
-         "text": {
-          "ru": "Добавить подписку",
-          "en": "Add Subscription"
-         }
-        }
-       ]
-      },
-      {
-       "icon": "Gear",
-       "color": "cyan",
-       "title": {
-        "ru": "Обновление подписки",
-        "en": "Update subscriptions"
-       },
-       "description": {
-        "ru": "Нажмите на три точечки справа сверху и выберите Обновить подписку. После этого в списке появятся доступные серверы",
-        "en": "Tap the three dots in the top-right corner and select Update subscription. After that, the available servers will appear in the list."
-       },
-       "buttons": []
-      },
-      {
-       "icon": "Check",
-       "color": "teal",
-       "title": {
-        "ru": "Подключение и использование",
-        "en": "Connect and use"
-       },
-       "description": {
-        "ru": "Выберите требуемый сервер и нажмите кнопку Включить в правом нижнем углу",
-        "en": "Select the required server and click the Enable button in the bottom right corner."
        },
        "buttons": []
       }
@@ -2004,6 +2178,84 @@
      ]
     },
     {
+     "name": "v2rayN",
+     "icon": "VRayNG",
+     "featured": false,
+     "blocks": [
+      {
+       "icon": "DownloadIcon",
+       "color": "cyan",
+       "title": {
+        "ru": "Установка приложения",
+        "en": "App Installation"
+       },
+       "description": {
+        "ru": "Скачайте архив для своего процессора, распакуйте его и запустите v2rayN.exe.",
+        "en": "Download the archive for your processor, unpack it and run v2rayN.exe."
+       },
+       "buttons": [
+        {
+         "type": "external",
+         "link": "https://github.com/2dust/v2rayN/releases/latest/download/v2rayN-windows-64.zip",
+         "icon": "ExternalLink",
+         "text": {
+          "ru": "x64 (.zip)",
+          "en": "x64 (.zip)"
+         }
+        },
+        {
+         "type": "external",
+         "link": "https://github.com/2dust/v2rayN/releases/latest/download/v2rayN-windows-arm64.zip",
+         "icon": "ExternalLink",
+         "text": {
+          "ru": "arm64 (.zip)",
+          "en": "arm64 (.zip)"
+         }
+        }
+       ]
+      },
+      {
+       "icon": "CloudDownload",
+       "color": "cyan",
+       "title": {
+        "ru": "Добавление подписки",
+        "en": "Add Subscription"
+       },
+       "description": {
+        "ru": "Нажмите кнопку QR-кода вверху этой страницы и скопируйте ссылку. В v2rayN откройте «Группа подписки» → «Настройки групп подписки» → «Добавить» и вставьте ссылку в поле адреса.",
+        "en": "Click the QR code button at the top of this page and copy the link. In v2rayN open Subscription Group → Subscription group settings → Add and paste the link into the URL field."
+       },
+       "buttons": []
+      },
+      {
+       "icon": "Gear",
+       "color": "cyan",
+       "title": {
+        "ru": "Обновление подписки",
+        "en": "Update subscriptions"
+       },
+       "description": {
+        "ru": "Откройте «Группа подписки» и выберите «Обновить все подписки без прокси». После этого в списке появятся доступные серверы.",
+        "en": "Open Subscription Group and select Update subscriptions without proxy. After that, the available servers will appear in the list."
+       },
+       "buttons": []
+      },
+      {
+       "icon": "Check",
+       "color": "teal",
+       "title": {
+        "ru": "Подключение и использование",
+        "en": "Connect and use"
+       },
+       "description": {
+        "ru": "Выберите сервер в списке, нажмите Enter, чтобы сделать его активным, и включите системный прокси внизу окна.",
+        "en": "Select a server in the list, press Enter to make it active and turn on the system proxy at the bottom of the window."
+       },
+       "buttons": []
+      }
+     ]
+    },
+    {
      "name": "FlClashX",
      "icon": "FlClashX",
      "featured": true,
@@ -2386,6 +2638,85 @@
        "description": {
         "ru": "Откройте приложение и подключитесь к серверу",
         "en": "Open the app and connect to the server"
+       },
+       "buttons": []
+      }
+     ]
+    },
+    {
+     "name": "v2rayNG",
+     "icon": "VRayNG",
+     "featured": false,
+     "blocks": [
+      {
+       "icon": "DownloadIcon",
+       "color": "cyan",
+       "title": {
+        "ru": "Установка приложения",
+        "en": "App Installation"
+       },
+       "description": {
+        "ru": "Скачайте и установите v2rayNG APK",
+        "en": "Download and install v2rayNG APK"
+       },
+       "buttons": [
+        {
+         "type": "external",
+         "link": "https://github.com/2dust/v2rayNG/releases/latest",
+         "icon": "ExternalLink",
+         "text": {
+          "ru": "Скачать APK",
+          "en": "Download APK"
+         }
+        }
+       ]
+      },
+      {
+       "icon": "CloudDownload",
+       "color": "cyan",
+       "title": {
+        "ru": "Добавление подписки",
+        "en": "Add Subscription"
+       },
+       "description": {
+        "ru": "Нажмите кнопку ниже — приложение откроется, и подписка добавится автоматически.",
+        "en": "Click the button below — the app will open and the subscription will be added automatically"
+       },
+       "buttons": [
+        {
+         "type": "subscriptionLink",
+         "link": "v2rayng://install-config?name={{USERNAME}}&url={{SUBSCRIPTION_LINK_ENC}}",
+         "icon": "Plus",
+         "text": {
+          "ru": "Добавить подписку",
+          "en": "Add Subscription"
+         }
+        }
+       ]
+      },
+      {
+       "icon": "Gear",
+       "color": "cyan",
+       "title": {
+        "ru": "Обновление подписки",
+        "en": "Update subscriptions"
+       },
+       "description": {
+        "ru": "Нажмите на три точечки справа сверху и выберите Обновить подписку. После этого в списке появятся доступные серверы",
+        "en": "Tap the three dots in the top-right corner and select Update subscription. After that, the available servers will appear in the list."
+       },
+       "buttons": []
+      },
+      {
+       "icon": "Check",
+       "color": "teal",
+       "title": {
+        "ru": "Подключение и использование",
+        "en": "Connect and use"
+       },
+       "description": {
+        "ru": "Выберите требуемый сервер и нажмите кнопку Включить в правом нижнем углу",
+        "en": "Select the required server and click the Enable button in the bottom right corner."
        },
        "buttons": []
       }

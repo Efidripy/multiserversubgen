@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -401,6 +402,36 @@ def test_render_page_localization_russian_and_english():
     for label in ("Installation", "Status", "Expires", "Copy", "Add Subscription"):
         assert label in html_en
     assert "Добавить подписку" not in html_en
+
+
+def test_pages_offer_language_switch_and_multi_row_app_tabs():
+    for theme in ("remnawave", "3xui"):
+        page = render_page({"lang": "en"}, {"theme": theme}, profile={}, sub_url="https://vpn/sub", links=[])
+        assert 'href="?html=1&amp;lang=ru" data-lang="ru">RU</a>' in page
+        assert 'href="?html=1&amp;lang=en" data-lang="en" class="active"' in page
+    query = [("protocol", "vless"), ("nodes", "a,b"), ("view", "html"), ("lang", "en"), ("x", '"><script>')]
+    page = render_page({}, {}, profile={}, sub_url="https://vpn/sub", links=[], query=query)
+    assert 'href="?protocol=vless&amp;nodes=a%2Cb&amp;x=%22%3E%3Cscript%3E&amp;html=1&amp;lang=en"' in page
+    assert "repeat(auto-fill,minmax(126px,1fr))" in page
+    assert ".app-tabs{display:flex" not in page
+
+
+def test_3xui_format_links_keep_subscription_filters():
+    page = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub?protocol=vless", links=[])
+    assert 'data-copy="https://vpn/sub?protocol=vless&amp;format=clash"' in page
+    page = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub", links=[])
+    assert 'data-copy="https://vpn/sub?format=clash"' in page
+
+
+def test_catalog_lists_main_apps_first():
+    path = Path(__file__).parents[1] / "services" / "subscription_page_apps.json"
+    catalog = json.loads(path.read_text(encoding="utf-8"))["platforms"]
+    names = {key: [app["name"] for app in platform["apps"]] for key, platform in catalog.items()}
+    assert names["android"][:4] == ["Happ", "Incy", "v2rayNG", "V2Box"]
+    assert names["androidTV"][:2] == ["Happ", "v2rayNG"]
+    assert names["windows"][:2] == ["Happ", "v2rayN"]
+    assert names["macos"][:2] == ["Happ", "v2rayN"]
+    assert names["linux"][0] == "v2rayN"
 
 
 def test_remnawave_page_does_not_list_nodes():
