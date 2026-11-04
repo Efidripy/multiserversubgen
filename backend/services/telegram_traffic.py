@@ -7,7 +7,7 @@ import json
 from threading import Lock
 from typing import Any, Callable
 
-from services.telegram_registry import CustomerTrafficLedger, TelegramRegistry
+from services.telegram_registry import TelegramRegistry
 
 
 def _nonnegative_int(value: Any) -> int:
@@ -42,30 +42,6 @@ class TelegramTrafficService:
         self._reconcile_lock = Lock()
         self._last_observation_digest = ""
 
-    def refresh_for_access(
-        self, *, customer_id: int, email: str
-    ) -> CustomerTrafficLedger:
-        if not self._projection_loader:
-            return self._registry.get_customer_traffic(customer_id)
-        try:
-            projection = self._projection_loader()
-            stats = projection.get("stats") if isinstance(projection, dict) else None
-            entry = stats.get(email.casefold()) if isinstance(stats, dict) else None
-            if not isinstance(entry, dict):
-                entry = stats.get(email) if isinstance(stats, dict) else None
-            if not isinstance(entry, dict):
-                return self._registry.get_customer_traffic(customer_id)
-            total = _nonnegative_int(entry.get("total"))
-            if total == 0:
-                total = _nonnegative_int(entry.get("up")) + _nonnegative_int(
-                    entry.get("down")
-                )
-            return self._registry.observe_customer_traffic(
-                customer_id=customer_id, observed_bytes=total
-            )
-        except Exception:
-            return self._registry.get_customer_traffic(customer_id)
-
     def reconcile_collector_snapshot(self, snapshot: dict[str, Any]) -> int:
         """Observe complete exact bindings from an already collected snapshot.
 
@@ -93,9 +69,9 @@ class TelegramTrafficService:
                 return 0
             nodes_by_id[node_id] = node
 
-        observed: dict[int, int] = {}
+        observed: dict[int, dict[tuple[int, int], int]] = {}
         for customer_id, customer_bindings in bindings.items():
-            total = 0
+            customer_observed: dict[tuple[int, int], int] = {}
             complete = True
             for binding in customer_bindings:
                 node = nodes_by_id.get(binding.node_id)
@@ -134,23 +110,31 @@ class TelegramTrafficService:
                     complete = False
                     break
                 client = matching_clients[0]
-                value = _nonnegative_int(client.get("total"))
-                if value == 0:
-                    value = _nonnegative_int(client.get("up")) + _nonnegative_int(
-                        client.get("down")
-                    )
-                total += value
+                value = _nonnegative_int(client.get("up")) + _nonnegative_int(
+                    client.get("down")
+                )
+                customer_observed[(binding.node_id, binding.inbound_id)] = value
             if complete:
-                observed[customer_id] = total
+                observed[customer_id] = customer_observed
 
         if not observed:
             return 0
+        digest_payload = sorted(
+            (
+                customer_id,
+                sorted(
+                    (node_id, inbound_id, value)
+                    for (node_id, inbound_id), value in customer_observed.items()
+                ),
+            )
+            for customer_id, customer_observed in observed.items()
+        )
         digest = hashlib.sha256(
-            json.dumps(sorted(observed.items()), separators=(",", ":")).encode("utf-8")
+            json.dumps(digest_payload, separators=(",", ":")).encode("utf-8")
         ).hexdigest()
         with self._reconcile_lock:
             if digest == self._last_observation_digest:
                 return 0
-            updated = self._registry.observe_customer_traffic_batch(observed)
+            updated = self._registry.observe_customer_traffic_bindings(observed)
             self._last_observation_digest = digest
             return len(updated)

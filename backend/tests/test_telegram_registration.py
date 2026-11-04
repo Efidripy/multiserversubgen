@@ -816,7 +816,7 @@ def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscrip
         projection_calls += 1
         return {"stats": {"traffic_user": {"total": 4096}}}
 
-    registry.observe_customer_traffic(customer_id=customer_id, observed_bytes=4096)
+    registry.observe_customer_traffic_bindings({customer_id: {(1, 1): 4096}})
     service = TelegramRegistrationService(
         registry,
         introduction_max_chars=700,
