@@ -34,7 +34,6 @@ vi.mock('../src/components/Toast', () => ({
 }));
 
 import { SubscriptionClientSettings } from '../src/components/SubscriptionClientSettings';
-import { SubscriptionManager } from '../src/components/SubscriptionManager';
 
 const mockSchema = {
   happ: [
@@ -367,21 +366,5 @@ describe('SubscriptionClientSettings', () => {
     expect(screen.getByText('base64')).toBeTruthy();
     expect(screen.getByText('Routing-Enable:')).toBeTruthy();
     expect(screen.getByText('Profile-Title:')).toBeTruthy();
-  });
-
-  it('SubscriptionManager switches to clients mode and renders SubscriptionClientSettings', async () => {
-    render(<SubscriptionManager apiUrl="https://example.test" />);
-
-    await waitFor(() => {
-      expect(screen.getByText('subscriptions.clients')).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getByText('subscriptions.clients'));
-
-    await waitFor(() => {
-      expect(apiGet).toHaveBeenCalledWith('/v1/subscription-client-settings', expect.anything());
-    });
-
-    expect(screen.getByText('subscriptionClients.title')).toBeTruthy();
   });
 });

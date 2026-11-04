@@ -801,6 +801,11 @@
     "projectionOperationUnknown": "Operation outcome is unknown; refresh the snapshot"
   },
   "subscriptions": {
+    "tabs": {
+      "label": "Subscription sections",
+      "links": "Links and groups",
+      "settings": "Per-client settings"
+    },
     "title": "Subscription Manager",
     "groups": "Custom Groups",
     "addGroup": "Add Group",
@@ -814,7 +819,6 @@
     "viewMode": "View Mode",
     "individual": "Individual",
     "grouped": "Grouped",
-    "clients": "Clients",
     "generateUrl": "Generate URL",
     "copyUrl": "Copy URL",
     "emailsRefreshed": "Emails refreshed successfully",
@@ -862,7 +866,6 @@
   },
   "subscriptionClients": {
     "title": "Client Subscription Settings",
-    "modeTitle": "Clients",
     "tabs": {
       "profile": "Profile",
       "clients": "Clients"

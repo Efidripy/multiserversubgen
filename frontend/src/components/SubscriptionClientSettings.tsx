@@ -82,6 +82,21 @@ const emptyProfile: SubscriptionProfile = {
 
 const defaultFormats = ['base64', 'mihomo', 'clash', 'singbox'];
 
+const normalizeSettings = (settings?: SubscriptionClientSettingsModel): SubscriptionClientSettingsModel => ({
+  profile: { ...emptyProfile, ...settings?.profile },
+  clients: (settings?.clients ?? []).map((client) => ({
+    ...client,
+    name: client.name || client.id,
+    kind: client.kind || 'generic',
+    builtin: Boolean(client.builtin),
+    enabled: Boolean(client.enabled),
+    user_agent_regex: client.user_agent_regex || '',
+    format: client.format || 'base64',
+    settings: client.settings || {},
+    headers: (client.headers ?? []).map((h) => ({ key: h.key || '', value: h.value || '' })),
+  })),
+});
+
 export const SubscriptionClientSettings: React.FC = () => {
   const { t } = useTranslation();
   const { toast } = useToast();
@@ -116,28 +131,7 @@ export const SubscriptionClientSettings: React.FC = () => {
     try {
       const res = await api.get('/v1/subscription-client-settings', { signal });
       const data: SubscriptionClientSettingsApiResponse = res.data;
-      const loadedSettings: SubscriptionClientSettingsModel = {
-        profile: {
-          title: data.settings?.profile?.title ?? '',
-          support_url: data.settings?.profile?.support_url ?? '',
-          web_page_url: data.settings?.profile?.web_page_url ?? '',
-          announce: data.settings?.profile?.announce ?? '',
-          update_interval_hours: data.settings?.profile?.update_interval_hours ?? null,
-        },
-        clients: (data.settings?.clients ?? []).map((client) => ({
-          id: client.id,
-          name: client.name || client.id,
-          kind: client.kind || 'generic',
-          builtin: Boolean(client.builtin),
-          enabled: Boolean(client.enabled),
-          user_agent_regex: client.user_agent_regex || '',
-          format: client.format || 'base64',
-          settings: client.settings || {},
-          headers: Array.isArray(client.headers)
-            ? client.headers.map((h) => ({ key: h.key || '', value: h.value || '' }))
-            : [],
-        })),
-      };
+      const loadedSettings = normalizeSettings(data.settings);
 
       setSettings(loadedSettings);
       setSavedBaseline(JSON.stringify(loadedSettings));
@@ -173,28 +167,7 @@ export const SubscriptionClientSettings: React.FC = () => {
       const res = await api.put('/v1/subscription-client-settings', settings);
       const data = res.data;
       if (data?.settings) {
-        const updated: SubscriptionClientSettingsModel = {
-          profile: {
-            title: data.settings?.profile?.title ?? '',
-            support_url: data.settings?.profile?.support_url ?? '',
-            web_page_url: data.settings?.profile?.web_page_url ?? '',
-            announce: data.settings?.profile?.announce ?? '',
-            update_interval_hours: data.settings?.profile?.update_interval_hours ?? null,
-          },
-          clients: (data.settings?.clients ?? []).map((client: SubscriptionClientRule) => ({
-            id: client.id,
-            name: client.name || client.id,
-            kind: client.kind || 'generic',
-            builtin: Boolean(client.builtin),
-            enabled: Boolean(client.enabled),
-            user_agent_regex: client.user_agent_regex || '',
-            format: client.format || 'base64',
-            settings: client.settings || {},
-            headers: Array.isArray(client.headers)
-              ? client.headers.map((h) => ({ key: h.key || '', value: h.value || '' }))
-              : [],
-          })),
-        };
+        const updated = normalizeSettings(data.settings);
         setSettings(updated);
         setSavedBaseline(JSON.stringify(updated));
       } else {

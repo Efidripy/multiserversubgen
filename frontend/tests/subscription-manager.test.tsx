@@ -1,4 +1,4 @@
-import { cleanup, render, waitFor } from '@testing-library/react';
+import { cleanup, render, waitFor, fireEvent } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const apiGet = vi.hoisted(() => vi.fn());
@@ -84,6 +84,33 @@ describe('SubscriptionManager read lifecycle', () => {
       stats: { 'owner@example.test': { count: 0, last: '' } },
       nodes: [{ id: 1, name: 'node-a' }],
     }));
+  });
+
+  it('opens per-client settings in a second tab and keeps them loaded', async () => {
+    localStorage.removeItem('sub_manager_subscriptions_tab_v1');
+    apiGet.mockImplementation((path: string) => {
+      if (path === '/v1/emails') return Promise.resolve({ data: { emails: [], stats: {} } });
+      if (path === '/v1/subscription-client-settings') {
+        return Promise.resolve({ data: { settings: { profile: {}, clients: [] }, schema: {}, formats: ['base64'] } });
+      }
+      return Promise.resolve({ data: { groups: [] } });
+    });
+    listNodes.mockResolvedValue([]);
+    const settingsReads = () => apiGet.mock.calls.filter(([path]) => path === '/v1/subscription-client-settings');
+
+    const { container } = render(<SubscriptionManager apiUrl="https://example.test" />);
+    const tab = (id: string) => container.querySelector(`#subscriptions-tab-${id}`) as HTMLButtonElement;
+    await waitFor(() => expect(apiGet.mock.calls.some(([path]) => path === '/v1/emails')).toBe(true));
+    expect(settingsReads()).toHaveLength(0);
+
+    fireEvent.click(tab('settings'));
+    await waitFor(() => expect(settingsReads()).toHaveLength(1));
+    expect(tab('settings').getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(tab('links'));
+    fireEvent.click(tab('settings'));
+    expect(settingsReads()).toHaveLength(1);
+    localStorage.removeItem('sub_manager_subscriptions_tab_v1');
   });
 
   it('does not publish a stale header projection after the route unmounts', async () => {

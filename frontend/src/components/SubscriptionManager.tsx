@@ -53,20 +53,36 @@ type GroupSortField = 'name' | 'count';
 
 export const cn = (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(' ');
 
-export const shellClass = 'min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-2 text-slate-100 sm:p-4 lg:p-6';
+const shellClass = 'min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-2 text-slate-100 sm:p-4 lg:p-6';
 export const panelClass = 'min-w-0 overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 sm:p-4 shadow-[inset_0_1px_0_rgba(148,163,184,0.04),0_18px_50px_rgba(0,0,0,0.18)]';
 export const titleClass = 'text-xs font-medium uppercase tracking-[0.14em] text-slate-300';
 export const hintClass = 'mt-1 text-xs font-light leading-5 text-slate-500';
-export const metricClass = 'font-mono tabular-nums whitespace-nowrap';
-export const headerButtonClass = 'inline-flex whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500 transition hover:text-cyan-300';
+const metricClass = 'font-mono tabular-nums whitespace-nowrap';
+const headerButtonClass = 'inline-flex whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.14em] text-slate-500 transition hover:text-cyan-300';
 export const primaryButtonClass = 'inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-lg border border-cyan-300/25 bg-gradient-to-r from-cyan-400 to-emerald-300 px-5 text-xs font-medium uppercase tracking-[0.14em] text-[#06111f] shadow-[0_14px_38px_rgba(34,211,238,0.18)] transition hover:from-cyan-300 hover:to-emerald-200 disabled:cursor-not-allowed disabled:opacity-45';
 export const secondaryButtonClass = 'inline-flex h-10 min-w-0 items-center justify-center gap-2 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-4 text-xs font-medium uppercase tracking-[0.14em] text-slate-300 transition hover:bg-[#0f1420] hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-45';
 export const iconButtonClass = 'inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-cyan-500/20 bg-[#0a0e1a] text-slate-300 transition hover:bg-[#0f1420] hover:text-cyan-200 disabled:cursor-not-allowed disabled:opacity-45';
 export const inputClass = 'block w-full min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2.5 text-sm font-light text-slate-100 outline-none placeholder:text-slate-600 focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10';
 export const codeInputClass = 'block w-full min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] px-3 py-2.5 font-mono text-xs font-light text-slate-200 outline-none focus:border-cyan-300/60 focus:ring-2 focus:ring-cyan-300/10';
 export const metaLabelClass = 'text-[10px] font-medium uppercase tracking-[0.14em] text-slate-500';
-export const metaValueClass = 'mt-1 block min-w-0 truncate text-xs font-light text-slate-200';
-export const cardMetaValueClass = 'mt-1 block min-w-0 truncate text-right text-xs font-light text-slate-200';
+const metaValueClass = 'mt-1 block min-w-0 truncate text-xs font-light text-slate-200';
+const cardMetaValueClass = 'mt-1 block min-w-0 truncate text-right text-xs font-light text-slate-200';
+
+type SubscriptionTab = 'links' | 'settings';
+
+const SUBSCRIPTION_TAB_CACHE_KEY = 'sub_manager_subscriptions_tab_v1';
+const subscriptionTabs: Array<{ id: SubscriptionTab; icon: React.ComponentProps<typeof UIIcon>['name']; labelKey: string }> = [
+  { id: 'links', icon: 'subscriptions', labelKey: 'subscriptions.tabs.links' },
+  { id: 'settings', icon: 'servers', labelKey: 'subscriptions.tabs.settings' },
+];
+
+const readSubscriptionTab = (): SubscriptionTab => {
+  try {
+    return localStorage.getItem(SUBSCRIPTION_TAB_CACHE_KEY) === 'settings' ? 'settings' : 'links';
+  } catch {
+    return 'links';
+  }
+};
 
 const emptyGroupForm: SubscriptionGroupForm = {
   id: null,
@@ -112,7 +128,9 @@ export const SubscriptionManager: React.FC<{
   const [emailsLoading, setEmailsLoading] = useState(false);
   const [groupsLoading, setGroupsLoading] = useState(false);
   const [nodesLoading, setNodesLoading] = useState(false);
-  const [viewMode, setViewMode] = useState<'individual' | 'grouped' | 'clients'>('individual');
+  const [activeTab, setActiveTab] = useState<SubscriptionTab>(readSubscriptionTab);
+  const [settingsOpened, setSettingsOpened] = useState(activeTab === 'settings');
+  const [viewMode, setViewMode] = useState<'individual' | 'grouped'>('individual');
   // Delivery filters have no UI for now (to be reworked); they keep their defaults.
   const [filterProtocol] = useState('');
   const [selectedNodes] = useState<string[]>([]);
@@ -583,10 +601,47 @@ export const SubscriptionManager: React.FC<{
     </p>
   );
 
+  const selectTab = (tab: SubscriptionTab) => {
+    setActiveTab(tab);
+    if (tab === 'settings') setSettingsOpened(true);
+    try {
+      localStorage.setItem(SUBSCRIPTION_TAB_CACHE_KEY, tab);
+    } catch {
+      // Storage may be unavailable; the tab just won't be remembered.
+    }
+  };
+
   const totalLoading = loading || emailsLoading || groupsLoading || nodesLoading;
 
   return (
     <div className={shellClass}>
+      <nav className="mb-4 overflow-x-auto border-b border-cyan-400/14" aria-label={t('subscriptions.tabs.label')}>
+        <div className="flex min-w-max gap-6">
+          {subscriptionTabs.map((tab) => {
+            const selected = activeTab === tab.id;
+            return <button
+              key={tab.id}
+              id={`subscriptions-tab-${tab.id}`}
+              type="button"
+              aria-pressed={selected}
+              className={`inline-flex items-center gap-2 border-b-2 px-0 pb-3 text-[13px] font-medium tracking-[0.03em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300/70 focus-visible:ring-offset-2 focus-visible:ring-offset-[#080c15] ${selected ? 'border-cyan-300 text-cyan-100 shadow-[0_8px_12px_-9px_rgba(34,211,238,0.9)]' : 'border-transparent text-slate-500 hover:border-cyan-400/35 hover:text-slate-300'}`}
+              onClick={() => selectTab(tab.id)}
+            >
+              <UIIcon name={tab.icon} size={15} />
+              {t(tab.labelKey)}
+            </button>;
+          })}
+        </div>
+      </nav>
+
+      {/* Stays mounted once opened so unsaved edits survive switching tabs. */}
+      {settingsOpened && (
+        <div hidden={activeTab !== 'settings'}>
+          <SubscriptionClientSettings />
+        </div>
+      )}
+
+      {activeTab === 'links' && <>
       <section className={cn(panelClass, 'mb-4')}>
         <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
           <div className="min-w-0">
@@ -597,36 +652,23 @@ export const SubscriptionManager: React.FC<{
             <p className={hintClass}>{t('subscriptions.controlsHint')}</p>
           </div>
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <ChoiceChips
-              options={[
-                { value: 'individual', label: t('subscriptions.individual') },
-                { value: 'grouped', label: t('subscriptions.grouped') },
-                { value: 'clients', label: t('subscriptions.clients') },
-              ]}
-              value={viewMode}
-              onChange={(value) => setViewMode(value as 'individual' | 'grouped' | 'clients')}
-            />
-            {viewMode !== 'clients' && (
-              <>
-                <button type="button" className={primaryButtonClass} onClick={() => void refreshAll(true)} disabled={totalLoading}>
-                  <UIIcon name={totalLoading ? 'spinner' : 'refresh'} size={15} />
-                  <span className="whitespace-nowrap">{t('subscriptions.refreshEmails')}</span>
-                </button>
-                <button
-                  type="button"
-                  className={secondaryButtonClass}
-                  title={t('subscriptions.copyAllLinksTitle')}
-                  onClick={async () => {
-                    const allLinks = filteredEmails.map((email) => buildSubscriptionUrl(email));
-                    await copyToClipboard(allLinks.join('\n'));
-                  }}
-                  disabled={filteredEmails.length === 0 || totalLoading}
-                >
-                  <UIIcon name="copy" size={15} />
-                  <span className="whitespace-nowrap">{t('subscriptions.copyAllLinks', { count: filteredEmails.length })}</span>
-                </button>
-              </>
-            )}
+            <button type="button" className={primaryButtonClass} onClick={() => void refreshAll(true)} disabled={totalLoading}>
+              <UIIcon name={totalLoading ? 'spinner' : 'refresh'} size={15} />
+              <span className="whitespace-nowrap">{t('subscriptions.refreshEmails')}</span>
+            </button>
+            <button
+              type="button"
+              className={secondaryButtonClass}
+              title={t('subscriptions.copyAllLinksTitle')}
+              onClick={async () => {
+                const allLinks = filteredEmails.map((email) => buildSubscriptionUrl(email));
+                await copyToClipboard(allLinks.join('\n'));
+              }}
+              disabled={filteredEmails.length === 0 || totalLoading}
+            >
+              <UIIcon name="copy" size={15} />
+              <span className="whitespace-nowrap">{t('subscriptions.copyAllLinks', { count: filteredEmails.length })}</span>
+            </button>
           </div>
         </div>
 
@@ -642,10 +684,7 @@ export const SubscriptionManager: React.FC<{
         )}
       </section>
 
-      {viewMode === 'clients' ? (
-        <SubscriptionClientSettings />
-      ) : (
-        <section className={panelClass}>
+      <section className={panelClass}>
         <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex min-h-[2.625rem] min-w-0 flex-col justify-center">
             <h3 className="text-sm font-medium uppercase tracking-[0.14em] text-slate-100">
@@ -897,7 +936,7 @@ export const SubscriptionManager: React.FC<{
           </div>
         )}
       </section>
-      )}
+      </>}
 
       {groupEditorOpen && (
         <div

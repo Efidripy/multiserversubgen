@@ -801,6 +801,11 @@
     "projectionOperationUnknown": "Результат операции неизвестен; обновите снимок"
   },
   "subscriptions": {
+    "tabs": {
+      "label": "Разделы подписок",
+      "links": "Ссылки и группы",
+      "settings": "Настройки по клиентам"
+    },
     "title": "Управление подписками",
     "groups": "Пользовательские группы",
     "addGroup": "Добавить группу",
@@ -814,7 +819,6 @@
     "viewMode": "Режим просмотра",
     "individual": "Индивидуальный",
     "grouped": "Групповой",
-    "clients": "Клиенты",
     "generateUrl": "Сгенерировать URL",
     "copyUrl": "Копировать URL",
     "emailsRefreshed": "Email успешно обновлены",
@@ -862,7 +866,6 @@
   },
   "subscriptionClients": {
     "title": "Настройки подписок по клиентам",
-    "modeTitle": "Клиенты",
     "tabs": {
       "profile": "Профиль",
       "clients": "Клиенты"
