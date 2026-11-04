@@ -6,6 +6,7 @@ import sqlite3
 import time
 from threading import Lock
 from typing import Dict, Iterable, List, Optional
+from urllib.parse import quote
 
 from services.db_bootstrap import connect
 from utils import parse_field_as_dict
@@ -24,6 +25,7 @@ _cache_lock = Lock()
 emails_cache = {"ts": 0.0, "emails": [], "items": {}}
 links_cache = {}
 _inbounds_cache = {}
+_link_inbound_remarks = {}
 
 
 def configure_snapshot_db(db_path: str) -> None:
@@ -44,6 +46,13 @@ def invalidate_subscription_cache() -> None:
         emails_cache["items"] = {}
         links_cache.clear()
         _inbounds_cache.clear()
+        _link_inbound_remarks.clear()
+
+
+def get_link_inbound_remark(link: str) -> str:
+    """Return the inbound remark associated with a generated link."""
+    with _cache_lock:
+        return _link_inbound_remarks.get(link, "")
 
 
 def _prune_links_cache(now: float) -> None:
@@ -402,6 +411,7 @@ def get_links_filtered(
             sni = _first_server_name(stream_settings)
             fingerprint = _fingerprint_from_stream_settings(stream_settings)
             network = stream_settings.get("network", "tcp")
+            transport = _transport_values(network, stream_settings)
             subscription_port = _subscription_port(inbound)
 
             for client in settings.get("clients", []):
@@ -412,16 +422,19 @@ def get_links_filtered(
                     flow = client.get("flow", "")
                     flow_param = f"&flow={flow}" if flow else ""
                     if security == "reality":
-                        links.append(
+                        link = (
                             f"vless://{client['id']}@{node['ip']}:{subscription_port}?encryption=none&security=reality"
                             f"&sni={sni}&fp={fingerprint}&pbk={public_key}&sid={short_id}"
                             f"{flow_param}&type={network}#{node['name']}"
                         )
                     else:
-                        links.append(
+                        link = (
                             f"vless://{client['id']}@{node['ip']}:{subscription_port}?encryption=none&security=tls"
                             f"&sni={sni}&fp={fingerprint}{flow_param}&type={network}#{node['name']}"
                         )
+                    link = _append_transport_query(link, network, transport)
+                    links.append(link)
+                    _link_inbound_remarks[link] = str(inbound.get("remark") or "")
                     continue
 
                 if protocol == "vmess":
@@ -446,9 +459,18 @@ def get_links_filtered(
                                 "fp": fingerprint,
                             }
                         )
-                    links.append(
-                        "vmess://" + base64.b64encode(json.dumps(link_obj).encode()).decode()
-                    )
+                    if network != "tcp":
+                        if transport.get("path"):
+                            link_obj["path"] = transport["path"]
+                        if transport.get("host") and security != "reality":
+                            link_obj["host"] = transport["host"]
+                        if network == "grpc" and transport.get("service_name"):
+                            link_obj["path"] = transport["service_name"]
+                        if transport.get("mode"):
+                            link_obj["mode"] = transport["mode"]
+                    link = "vmess://" + base64.b64encode(json.dumps(link_obj).encode()).decode()
+                    links.append(link)
+                    _link_inbound_remarks[link] = str(inbound.get("remark") or "")
                     continue
 
                 if protocol == "trojan":
@@ -467,18 +489,72 @@ def get_links_filtered(
                         )
                         continue
                     if security == "reality":
-                        links.append(
+                        link = (
                             f"trojan://{password}@{node['ip']}:{subscription_port}?security=reality"
                             f"&sni={sni}&fp={fingerprint}&pbk={public_key}&sid={short_id}"
                             f"&type={network}#{node['name']}"
                         )
                     else:
-                        links.append(
+                        link = (
                             f"trojan://{password}@{node['ip']}:{subscription_port}?security=tls"
                             f"&sni={sni}&type={network}#{node['name']}"
                         )
+                    link = _append_transport_query(link, network, transport)
+                    links.append(link)
+                    _link_inbound_remarks[link] = str(inbound.get("remark") or "")
 
     with _cache_lock:
         _prune_links_cache(now_link)
         links_cache[cache_key] = (now_link, links)
+        if len(_link_inbound_remarks) > LINKS_CACHE_MAX_ENTRIES:
+            # Keep the auxiliary mapping bounded alongside the link cache.
+            for key in list(_link_inbound_remarks)[: len(_link_inbound_remarks) - LINKS_CACHE_MAX_ENTRIES]:
+                _link_inbound_remarks.pop(key, None)
     return links
+
+
+def _transport_values(network: str, stream_settings: Dict) -> Dict[str, str]:
+    """Extract transport-specific values from an inbound stream settings object."""
+    settings = stream_settings.get(f"{network}Settings") or {}
+    if not isinstance(settings, dict):
+        settings = {}
+    values: Dict[str, str] = {}
+    if network in {"ws", "httpupgrade", "xhttp", "http", "h2"}:
+        values["path"] = str(settings.get("path") or "")
+        hosts = settings.get("host")
+        if isinstance(hosts, list):
+            hosts = hosts[0] if hosts else ""
+        if not hosts and isinstance(settings.get("headers"), dict):
+            hosts = settings["headers"].get("Host", "")
+        values["host"] = str(hosts or "")
+        if network == "xhttp":
+            values["mode"] = str(settings.get("mode") or "")
+    elif network == "grpc":
+        values["service_name"] = str(settings.get("serviceName") or "")
+        values["mode"] = "multi" if settings.get("multiMode") else "gun"
+    return values
+
+
+def _append_transport_query(link: str, network: str, values: Dict[str, str]) -> str:
+    if network == "tcp":
+        return link
+    additions = []
+    if network in {"ws", "httpupgrade", "xhttp", "http", "h2"}:
+        if values.get("path"):
+            additions.append("path=" + quote(values["path"], safe=""))
+        if values.get("host"):
+            additions.append("host=" + quote(values["host"], safe=""))
+    if network == "grpc":
+        if values.get("service_name"):
+            additions.append("serviceName=" + quote(values["service_name"], safe=""))
+        additions.append("mode=" + quote(values.get("mode", "gun"), safe=""))
+    if network == "xhttp":
+        if values.get("mode"):
+            additions.append("mode=" + quote(values["mode"], safe=""))
+    if not additions:
+        return link
+    marker = "#"
+    position = link.find(marker)
+    if position < 0:
+        return link + "&" + "&".join(additions)
+    return link[:position] + "&" + "&".join(additions) + link[position:]
