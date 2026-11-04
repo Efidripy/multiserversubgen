@@ -11,6 +11,7 @@ from services.subscription_devices import (
     device_status,
     list_devices,
 )
+from services.db_bootstrap import connect
 
 
 def _section(**overrides):
@@ -144,6 +145,21 @@ def test_status_listing_limit_and_delete(tmp_path):
 def test_concurrent_new_devices_never_exceed_limit(tmp_path):
     path = str(tmp_path / "devices.sqlite")
     section = _section(max_devices=2)
+    with connect(path) as conn:
+        conn.execute(
+            """CREATE TABLE subscription_devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL,
+                hwid_hash TEXT NOT NULL,
+                device_os TEXT NOT NULL DEFAULT '',
+                os_version TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                first_seen REAL NOT NULL,
+                last_seen REAL NOT NULL,
+                UNIQUE(subject, hwid_hash)
+            )"""
+        )
+        conn.commit()
 
     def register(index):
         return check_device(path, "alice", {"X-HWID": f"device-{index}"}, section, now=index)

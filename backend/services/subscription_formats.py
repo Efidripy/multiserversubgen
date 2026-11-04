@@ -347,7 +347,10 @@ def to_singbox(links):
     return json.dumps(body, ensure_ascii=False, indent=2)
 
 
-def convert_links(links, format="base64", *, enable_routing=False, rules=None, extra_text=None, customize=None, encode=True):
+FORMATS = ("base64", "mihomo", "clash", "singbox", "xray_json")
+
+
+def convert_links(links, format="base64", *, enable_routing=False, rules=None, extra_text=None, customize=None, encode=True, xray_json=None):
     if format in {"mihomo", "clash"}:
         return to_mihomo(
             links,
@@ -358,6 +361,9 @@ def convert_links(links, format="base64", *, enable_routing=False, rules=None, e
         )
     if format == "singbox":
         return to_singbox(links)
+    if format == "xray_json":
+        from services.subscription_xray_json import to_xray_json
+        return to_xray_json(links, xray_json or {})
     lines = list(links or [])
     if extra_text:
         lines.append(extra_text)

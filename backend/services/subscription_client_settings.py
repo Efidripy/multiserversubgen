@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 from services.db_bootstrap import connect
 
 
-FORMATS = ["base64", "mihomo", "clash", "singbox"]
+from services.subscription_formats import FORMATS
 _HEADER_NAME = re.compile(r"^[!#$%&'*+\-.0-9A-Za-z^_`|~]+$")
 _FORBIDDEN_HEADERS = {
     "content-type", "content-length", "content-encoding", "transfer-encoding", "connection",
@@ -237,6 +237,15 @@ def _validate_sections(raw: Dict[str, Any], result: Dict[str, Any]) -> None:
         for key, field_type, _group, options, _default in specs:
             if key in values:
                 result[section][key] = _validate_section_value(key, values[key], field_type, options)
+    # Feature validators are imported lazily to avoid the intentional dependency
+    # from the feature modules back to this module's header/rule helpers.
+    from services.subscription_xray_json import validate_xray_json_section
+    from services.subscription_response_rules import validate_response_rules
+    from services.subscription_page import validate_page_section
+
+    validate_xray_json_section(result.get("xray_json", {}))
+    validate_response_rules(result.get("response_rules", {}).get("rules", ""))
+    validate_page_section(result.get("page", {}))
 
 
 def _validate_headers(headers: Any) -> list[dict[str, str]]:
@@ -343,6 +352,21 @@ def validate_settings(raw: Any) -> Dict[str, Any]:
         headers = _headers_for_limit(result, client)
         if sum(len(name.encode()) + len(value.encode()) for name, value in headers.items()) > 3072:
             raise ValueError("headers")
+    try:
+        rules = json.loads(result.get("response_rules", {}).get("rules", "") or "[]")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        rules = []
+    if isinstance(rules, list):
+        for rule in rules:
+            rule_total = sum(
+                len(str(item.get("key", "")).encode()) + len(str(item.get("value", "")).encode())
+                for item in (rule.get("modifications", {}).get("headers", []) if isinstance(rule, dict) else [])
+            )
+            if rule_total > 3072:
+                raise ValueError("headers")
+            for client in ordered:
+                if rule_total + sum(len(k.encode()) + len(v.encode()) for k, v in _headers_for_limit(result, client).items()) > 3072:
+                    raise ValueError("headers")
     return result
 
 
