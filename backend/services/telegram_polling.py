@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
+import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 from urllib.error import URLError
@@ -11,6 +15,9 @@ from urllib.request import Request as UrlRequest
 from services.telegram_delivery import TelegramMessageEditUnavailableError
 from services.telegram_registration import TelegramOutboundMessage
 from services.telegram_transport import TelegramApiTransport, TelegramTransportError
+
+
+logger = logging.getLogger("sub_manager")
 
 
 class TelegramPollingError(RuntimeError):
@@ -87,6 +94,7 @@ class TelegramPollingWorker:
         fallback_message: Callable[[TelegramOutboundMessage], TelegramOutboundMessage | None] | None = None,
         record_outbound_delivery: Callable[[TelegramOutboundMessage, int | None], None] | None = None,
         mark_update_response_delivered: Callable[[TelegramOutboundMessage], None] | None = None,
+        mark_update_processed: Callable[[int], None] | None = None,
         retry_update_response: Callable[[TelegramOutboundMessage], None] | None = None,
     ):
         if not 1 <= timeout_sec <= 50:
@@ -98,9 +106,16 @@ class TelegramPollingWorker:
         self._fallback_message = fallback_message
         self._record_outbound_delivery = record_outbound_delivery
         self._mark_update_response_delivered = mark_update_response_delivered
+        self._mark_update_processed = mark_update_processed
         self._retry_update_response = retry_update_response
         self._started = False
         self._next_offset: int | None = None
+        self._answer_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="telegram-callback")
+
+    def close(self) -> None:
+        """Stop accepting callback answers without waiting for in-flight calls."""
+
+        self._answer_executor.shutdown(wait=False, cancel_futures=True)
 
     def run_once(self) -> TelegramPollingRunResult:
         if not self._started:
@@ -113,32 +128,62 @@ class TelegramPollingWorker:
             update_id = update.get("update_id")
             if isinstance(update_id, bool) or not isinstance(update_id, int) or update_id <= 0:
                 continue
+            started_at = time.monotonic()
+            handle_ms = 0.0
+            send_started_at = started_at
+            send_ms = 0.0
             callback = update.get("callback_query")
             callback_id = callback.get("id") if isinstance(callback, dict) else None
             answer_callback_query = getattr(self._sender, "answer_callback_query", None)
             if isinstance(callback_id, str) and answer_callback_query is not None:
-                try:
-                    answer_callback_query(callback_id)
-                except Exception:
-                    pass
-            messages = self._handle_update(update)
-            for message in messages:
-                try:
+                self._answer_executor.submit(self._answer_callback_query, answer_callback_query, callback_id)
+            try:
+                handle_started_at = time.monotonic()
+                messages = self._handle_update(update)
+                handle_ms = (time.monotonic() - handle_started_at) * 1000
+                send_started_at = time.monotonic()
+                for message in messages:
                     try:
-                        message_id = self._sender.send(message)
-                    except TelegramMessageEditUnavailableError:
-                        fallback = self._fallback_message(message) if self._fallback_message else None
-                        if fallback is None:
-                            raise
-                        message = fallback
-                        message_id = self._sender.send(message)
-                    if self._record_outbound_delivery:
-                        self._record_outbound_delivery(message, message_id)
-                    if self._mark_update_response_delivered:
-                        self._mark_update_response_delivered(message)
-                except Exception:
-                    if self._retry_update_response:
-                        self._retry_update_response(message)
-                    raise
-            self._next_offset = update_id + 1
+                        try:
+                            message_id = self._sender.send(message)
+                        except TelegramMessageEditUnavailableError:
+                            fallback = self._fallback_message(message) if self._fallback_message else None
+                            if fallback is None:
+                                raise
+                            message = fallback
+                            message_id = self._sender.send(message)
+                        if self._record_outbound_delivery:
+                            self._record_outbound_delivery(message, message_id)
+                        if self._mark_update_response_delivered:
+                            self._mark_update_response_delivered(message)
+                    except Exception:
+                        if self._retry_update_response:
+                            self._retry_update_response(message)
+                        raise
+                send_ms = (time.monotonic() - send_started_at) * 1000
+                if self._mark_update_processed:
+                    try:
+                        self._mark_update_processed(update_id)
+                    except Exception:
+                        pass
+                self._next_offset = update_id + 1
+            finally:
+                if send_started_at != started_at and send_ms == 0.0:
+                    send_ms = (time.monotonic() - send_started_at) * 1000
+                update_kind = "callback" if isinstance(callback, dict) else "message" if isinstance(update.get("message"), dict) else "other"
+                if update_kind == "callback":
+                    callback_data = callback.get("data") if isinstance(callback, dict) else None
+                    callback_head = callback_data.split(":", 1)[0] if isinstance(callback_data, str) else ""
+                    if re.fullmatch(r"[a-z][a-z_-]{0,31}", callback_head):
+                        update_kind = f"callback:{callback_head}"
+                    else:
+                        update_kind = "callback:other"
+                logger.info("telegram update type=%s handle_ms=%.2f send_ms=%.2f", update_kind, handle_ms, send_ms)
         return TelegramPollingRunResult(processed=bool(updates), update_count=len(updates))
+
+    @staticmethod
+    def _answer_callback_query(answer_callback_query: Callable[[str], None], callback_id: str) -> None:
+        try:
+            answer_callback_query(callback_id)
+        except Exception:
+            pass

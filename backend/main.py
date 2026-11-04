@@ -685,8 +685,9 @@ async def _telegram_polling_worker_loop(worker_tracker) -> None:
     transport = TelegramApiTransport(
         db_path=DB_PATH, local_proxy_url=SETTINGS.telegram.local_proxy_url
     )
+    registry = TelegramRegistry(DB_PATH)
     service = TelegramRegistrationService(
-        TelegramRegistry(DB_PATH),
+        registry,
         introduction_max_chars=SETTINGS.telegram.introduction_max_chars,
         public_base_url=SETTINGS.telegram.public_base_url,
         list_nodes=node_service.list_nodes,
@@ -712,27 +713,31 @@ async def _telegram_polling_worker_loop(worker_tracker) -> None:
         fallback_message=service.fallback_message,
         record_outbound_delivery=service.record_outbound_delivery,
         mark_update_response_delivered=service.mark_update_response_delivered,
+        mark_update_processed=registry.mark_update_processed,
         retry_update_response=service.retry_update_response,
     )
-    while worker_tracker.accepting:
-        try:
-            await worker_tracker.run("telegram.polling.run_once", worker.run_once)
-        except LifecycleWorkAdmissionClosed:
-            return
-        except Exception as exc:
-            # Keep the application healthy if the selected Bot API route is
-            # temporarily unavailable. The next run retries through the same
-            # fail-closed transport without changing global proxy settings.
-            # Log only the class name: the exception text can contain the bot token URL.
-            logger.warning(
-                "Telegram polling request failed; retrying through configured transport: %s",
-                type(exc.__cause__ or exc).__name__,
-            )
-            if not await worker_tracker.wait_or_stop(5):
+    try:
+        while worker_tracker.accepting:
+            try:
+                await worker_tracker.run("telegram.polling.run_once", worker.run_once)
+            except LifecycleWorkAdmissionClosed:
                 return
-            continue
-        if not await worker_tracker.wait_or_stop(0.1):
-            return
+            except Exception as exc:
+                # Keep the application healthy if the selected Bot API route is
+                # temporarily unavailable. The next run retries through the same
+                # fail-closed transport without changing global proxy settings.
+                # Log only the class name: the exception text can contain the bot token URL.
+                logger.warning(
+                    "Telegram polling request failed; retrying through configured transport: %s",
+                    type(exc.__cause__ or exc).__name__,
+                )
+                if not await worker_tracker.wait_or_stop(5):
+                    return
+                continue
+            if not await worker_tracker.wait_or_stop(0.1):
+                return
+    finally:
+        worker.close()
 
 
 app.router.lifespan_context = build_lifespan(

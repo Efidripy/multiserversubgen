@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
@@ -7,6 +8,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from services.telegram_delivery import TelegramMessageEditUnavailableError
 from services.telegram_polling import TelegramPollingWorker
 from services.telegram_registration import TelegramOutboundMessage
+from services.db_bootstrap import connect, init_db
+from services.telegram_registry import TelegramRegistry
 
 
 class _Api:
@@ -200,3 +203,109 @@ def test_polling_falls_back_to_fallback_message_on_edit_unavailable():
     assert len(sender.messages) == 1
     assert sender.messages[0].edit_message_id is None
     assert sender.messages[0].text == "Card content"
+
+
+def test_polling_starts_handling_before_callback_answer_finishes_and_marks_processed():
+    answer_started = threading.Event()
+    release_answer = threading.Event()
+    handling_started = threading.Event()
+    processed = []
+
+    class _BlockedAnswerSender(_Sender):
+        def answer_callback_query(self, callback_query_id):
+            answer_started.set()
+            release_answer.wait(timeout=2)
+
+    sender = _BlockedAnswerSender()
+    api = _Api([{"update_id": 25, "callback_query": {"id": "cb-25", "data": "help"}}])
+
+    def handle(_update):
+        handling_started.set()
+        return [TelegramOutboundMessage(chat_id=42, text="handled")]
+
+    worker = TelegramPollingWorker(
+        api=api,
+        handle_update=handle,
+        sender=sender,
+        timeout_sec=25,
+        mark_update_processed=processed.append,
+    )
+    try:
+        result_holder = []
+        run_thread = threading.Thread(target=lambda: result_holder.append(worker.run_once()))
+        run_thread.start()
+        assert answer_started.wait(timeout=1)
+        assert handling_started.wait(timeout=1)
+        release_answer.set()
+        run_thread.join(timeout=1)
+        assert not run_thread.is_alive()
+        assert result_holder[0].processed is True
+        assert processed == [25]
+    finally:
+        release_answer.set()
+        worker.close()
+
+
+def test_polling_processed_marker_failure_does_not_break_handling():
+    sender = _Sender()
+    api = _Api([{"update_id": 26, "message": {}}])
+
+    def mark_processed(_update_id):
+        raise OSError("database unavailable")
+
+    worker = TelegramPollingWorker(
+        api=api,
+        handle_update=lambda _update: [TelegramOutboundMessage(chat_id=42, text="handled")],
+        sender=sender,
+        timeout_sec=25,
+        mark_update_processed=mark_processed,
+    )
+
+    result = worker.run_once()
+
+    assert result.processed is True
+    assert len(sender.messages) == 1
+
+
+def test_polling_records_processed_at_through_registry_callback(tmp_path):
+    db_path = str(tmp_path / "processed-at.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO telegram_updates (update_id, update_type, payload_digest, status) "
+            "VALUES (28, 'message', 'digest', 'received')"
+        )
+    worker = TelegramPollingWorker(
+        api=_Api([{"update_id": 28, "message": {}}]),
+        handle_update=lambda _update: [TelegramOutboundMessage(chat_id=42, text="handled")],
+        sender=_Sender(),
+        timeout_sec=25,
+        mark_update_processed=registry.mark_update_processed,
+    )
+
+    worker.run_once()
+
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT processed_at FROM telegram_updates WHERE update_id = 28").fetchone()[0]
+
+
+def test_polling_log_sanitizes_untrusted_callback_data(caplog):
+    callback_data = "bad\nuser=42:" + ("x" * 100)
+    api = _Api([{"update_id": 27, "callback_query": {"id": "cb-27", "data": callback_data}}])
+    sender = _Sender()
+    worker = TelegramPollingWorker(
+        api=api,
+        handle_update=lambda _update: [TelegramOutboundMessage(chat_id=42, text="handled")],
+        sender=sender,
+        timeout_sec=25,
+    )
+
+    with caplog.at_level("INFO", logger="sub_manager"):
+        worker.run_once()
+
+    assert len(caplog.records) == 1
+    rendered = caplog.records[0].getMessage()
+    assert "callback:other" in rendered
+    assert "42" not in rendered
+    assert callback_data not in rendered

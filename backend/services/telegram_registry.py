@@ -2193,6 +2193,34 @@ class TelegramRegistry:
             ).fetchall()
         return frozenset(int(row[0]) for row in rows)
 
+    def enabled_node_ids(self) -> frozenset[int]:
+        """Return enabled node ids from the local database only."""
+
+        with connect(self._db_path) as conn:
+            rows = conn.execute("SELECT id FROM nodes WHERE enabled = 1").fetchall()
+        return frozenset(int(row[0]) for row in rows)
+
+    def has_confirmed_enabled_subscription_binding(self, email: str) -> bool:
+        """Return whether an older customer has a locally usable subscription target."""
+
+        canonical = canonicalize_email(email)
+        with connect(self._db_path) as conn:
+            row = conn.execute(
+                """
+                SELECT 1
+                FROM customers AS c
+                JOIN customer_node_bindings AS b ON b.customer_id = c.id
+                JOIN nodes AS n ON n.id = b.node_id
+                WHERE c.email_canonical = ? AND c.deleted_at IS NULL
+                  AND b.management_state = 'confirmed'
+                  AND b.desired_enabled = 1
+                  AND n.enabled = 1
+                LIMIT 1
+                """,
+                (canonical,),
+            ).fetchone()
+        return row is not None
+
     def get_customer_access(self, telegram_user_id: int) -> TelegramCustomerAccess:
         """Resolve approved access strictly from the numeric Telegram identity."""
 
@@ -5351,6 +5379,16 @@ class TelegramRegistry:
                 WHERE update_id = ? AND response_index = ? AND status IN ('prepared', 'queued')
                 """,
                 (normalized_update_id, response_index),
+            )
+
+    def mark_update_processed(self, update_id: int) -> None:
+        """Record completion time without changing the durable update status."""
+
+        normalized_update_id = _positive_int(update_id, "update_id")
+        with connect(self._db_path) as conn:
+            conn.execute(
+                "UPDATE telegram_updates SET processed_at = CURRENT_TIMESTAMP WHERE update_id = ?",
+                (normalized_update_id,),
             )
 
     def retry_update_response(self, *, update_id: int, response_index: int) -> None:
