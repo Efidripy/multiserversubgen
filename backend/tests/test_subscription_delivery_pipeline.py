@@ -362,7 +362,10 @@ def test_html_delivery_restrictions_custom_redirect_and_cache_exclusion(env):
     assert "content-security-policy" in page_res.headers
     assert 'lang="en"' in sub(env, "curl/1", html="1", lang="en").text
     assert 'lang="ru"' in sub(env, "curl/1", html="1", lang="ru").text
-    assert 'href="?protocol=vless&amp;html=1&amp;lang=en"' in sub(env, "curl/1", html="1", protocol="vless").text
+    filtered_page = sub(env, "curl/1", html="1", protocol="vless", lang="ru").text
+    assert 'href="?protocol=vless&amp;html=1&amp;lang=en"' in filtered_page
+    assert "protocol%3Dvless" in filtered_page
+    assert "lang%3D" not in filtered_page and "html%3D" not in filtered_page
 
     # 2. When page section disabled, ?html=1 does not give page
     settings["page"]["enabled"] = False

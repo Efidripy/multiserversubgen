@@ -10,7 +10,7 @@ import secrets
 import copy
 import random
 from threading import Lock
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from services.db_bootstrap import connect
 from services.subscription_tokens import (
     delete_tokens,
@@ -283,6 +283,10 @@ def build_subscriptions_router(
             forwarded_proto = request.headers.get("x-forwarded-proto")
             scheme = forwarded_proto if forwarded_proto in {"http", "https"} else request.url.scheme
             sub_url = str(request.base_url.replace(scheme=scheme)).rstrip("/") + request.url.path
+            # QR, Happ and the page buttons must return the same filtered subscription.
+            filters = [(key, value) for key, value in request.query_params.multi_items() if key in {"protocol", "nodes"}]
+            if filters:
+                sub_url += "?" + urlencode(filters)
             qr = ""
             try:
                 qr = "data:image/png;base64," + base64.b64encode(build_subscription_qr_png(sub_url)).decode()

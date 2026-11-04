@@ -416,6 +416,13 @@ def test_pages_offer_language_switch_and_multi_row_app_tabs():
     assert ".app-tabs{display:flex" not in page
 
 
+def test_3xui_format_links_keep_subscription_filters():
+    page = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub?protocol=vless", links=[])
+    assert 'data-copy="https://vpn/sub?protocol=vless&amp;format=clash"' in page
+    page = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub", links=[])
+    assert 'data-copy="https://vpn/sub?format=clash"' in page
+
+
 def test_catalog_lists_main_apps_first():
     path = Path(__file__).parents[1] / "services" / "subscription_page_apps.json"
     catalog = json.loads(path.read_text(encoding="utf-8"))["platforms"]

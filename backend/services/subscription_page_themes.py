@@ -534,11 +534,12 @@ def render_remnawave(data: dict[str, object]) -> str:
 def _format_rows(data: dict[str, object]) -> str:
     sub_url = str(data.get("sub_url") or "")
     labels = data
+    separator = "&" if "?" in sub_url else "?"
     formats = [
         ("SUB", sub_url, False),
-        ("JSON", sub_url + "?format=xray_json", True),
-        ("CLASH", sub_url + "?format=clash", True),
-        ("SING-BOX", sub_url + "?format=singbox", True),
+        ("JSON", f"{sub_url}{separator}format=xray_json", True),
+        ("CLASH", f"{sub_url}{separator}format=clash", True),
+        ("SING-BOX", f"{sub_url}{separator}format=singbox", True),
     ]
     rows = []
     for name, url, downloadable in formats:
