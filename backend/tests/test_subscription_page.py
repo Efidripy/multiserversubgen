@@ -299,9 +299,9 @@ def test_render_page_import_buttons():
     escaped_sub = quote(sub_url, safe="")
     assert 'href="happ://add/https://vpn.example.com/sub/tok?test=1&amp;foo=bar"' in html
     assert 'href="incy://import/https://vpn.example.com/sub/tok?test=1&amp;foo=bar"' in html
-    assert f'href="clash://install-config?url={escaped_sub}"' in html
-    assert f'href="sing-box://import-remote-profile?url={escaped_sub}#My%20Config"' in html
-    assert f'href="v2rayng://install-config?url={escaped_sub}"' in html
+    assert f'href="flclashx://install-config?url={escaped_sub}"' in html
+    assert f'&amp;url={escaped_sub}"' in html
+    assert "{{" not in html
 
     # With custom happ_link
     custom_happ = "happ://crypt5/abc123xyz"
@@ -314,6 +314,18 @@ def test_render_page_import_buttons():
         happ_link=custom_happ,
     )
     assert f'href="{custom_happ}"' in html_custom_happ
+    # The encrypted link replaces the plain one everywhere, not only on the button.
+    assert 'href="happ://add/' not in html_custom_happ
+    html_3xui = render_page(
+        {},
+        {"theme": "3xui"},
+        profile={},
+        sub_url=sub_url,
+        links=[],
+        happ_link=custom_happ,
+    )
+    assert f'href="{custom_happ}"' in html_3xui
+    assert 'href="happ://add/' not in html_3xui
 
 
 def test_render_page_links_list_and_copy():
@@ -328,7 +340,7 @@ def test_render_page_links_list_and_copy():
     links = [vless_link, trojan_link, vmess_link]
     html = render_page(
         {},
-        {},
+        {"theme": "3xui"},
         profile={},
         sub_url="https://vpn.example.com/sub",
         links=links,
@@ -379,40 +391,37 @@ def test_render_page_security_offline_and_data_attributes():
 
 
 def test_render_page_localization_russian_and_english():
-    ctx_ru = {"lang": "ru"}
-    html_ru = render_page(ctx_ru, {}, profile={}, sub_url="https://vpn/sub", links=[])
+    html_ru = render_page({"lang": "ru"}, {}, profile={}, sub_url="https://vpn/sub", links=[])
     assert 'lang="ru"' in html_ru
-    assert "Использовано" in html_ru
-    assert "Всего" in html_ru
-    assert "Срок действия" in html_ru
-    assert "Адрес подписки" in html_ru
-    assert "Копировать" in html_ru
-    assert "Список узлов" in html_ru
+    for label in ("Установка", "Статус", "Срок действия", "Копировать", "Добавить подписку"):
+        assert label in html_ru
 
-    ctx_en = {"lang": "en"}
-    html_en = render_page(ctx_en, {}, profile={}, sub_url="https://vpn/sub", links=[])
+    html_en = render_page({"lang": "en"}, {}, profile={}, sub_url="https://vpn/sub", links=[])
     assert 'lang="en"' in html_en
-    assert "Used" in html_en
-    assert "Total" in html_en
-    assert "Expires" in html_en
-    assert "Subscription URL" in html_en
-    assert "Copy" in html_en
-    assert "Server Nodes" in html_en
+    for label in ("Installation", "Status", "Expires", "Copy", "Add Subscription"):
+        assert label in html_en
+    assert "Добавить подписку" not in html_en
 
 
-def test_render_page_empty_links_message():
-    html_empty = render_page({}, {}, profile={}, sub_url="https://vpn/sub", links=[])
-    assert "Список узлов пуст" in html_empty
-    assert "links-empty" in html_empty
+def test_remnawave_page_does_not_list_nodes():
+    link = "vless://uuid-1@1.1.1.1:443#NL%20Server"
+    html = render_page({}, {}, profile={}, sub_url="https://vpn/sub", links=[link])
+    assert "uuid-1" not in html
+    assert "NL Server" not in html
 
-    html_empty_en = render_page({"lang": "en"}, {}, profile={}, sub_url="https://vpn/sub", links=[])
-    assert "No nodes available" in html_empty_en
+
+def test_3xui_page_empty_links_message():
+    section = {"theme": "3xui"}
+    html_ru = render_page({}, section, profile={}, sub_url="https://vpn/sub", links=[])
+    assert "Список узлов пуст" in html_ru
+    html_en = render_page({"lang": "en"}, section, profile={}, sub_url="https://vpn/sub", links=[])
+    assert "No nodes available" in html_en
 
 
 def test_render_page_node_parsing_formats():
     # shadowsocks without fragment
     ss_link = "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@1.2.3.4:8388"
-    html = render_page({}, {}, profile={}, sub_url="https://sub", links=[ss_link])
+    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://sub", links=[ss_link])
     assert "SS #1" in html
     assert "SS" in html
 
@@ -454,3 +463,6 @@ def test_builtin_themes_security_and_fallback():
         assert "<script>alert" not in page
 
 
+def test_3xui_apps_tab_shows_app_names():
+    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub", links=[])
+    assert '<span>Happ</span>' in html

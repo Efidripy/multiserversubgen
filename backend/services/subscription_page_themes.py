@@ -193,9 +193,9 @@ body{background:var(--bg);
 color:var(--text);
 background-image:radial-gradient(circle at 8% 8%,#1c3443 0,transparent 35%),
 radial-gradient(circle at 90% 80%,#30243d 0,transparent 35%),
-linear-gradient(135deg,rgba(255,255,255,.025) 25%,transparent 25%,transparent 50%,
-rgba(255,255,255,.025) 50%,rgba(255,255,255,.025) 75%,transparent 75%);
-background-size:auto,auto,24px 24px}
+linear-gradient(rgba(255,255,255,.018) 1px,transparent 1px),
+linear-gradient(90deg,rgba(255,255,255,.018) 1px,transparent 1px);
+background-size:auto,auto,32px 32px,32px 32px;background-attachment:fixed;min-height:100vh}
 .wrap{width:min(672px,100%);margin:auto;padding:22px 16px 42px}
 .top{display:flex;align-items:center;gap:12px;margin-bottom:18px}
 .brand{flex:1;min-width:0;color:var(--accent)}
@@ -261,7 +261,7 @@ background:transparent;
 color:var(--text);
 text-align:left}
 .platform-option:hover{background:#263548}
-.app-tabs{display:flex;gap:8px;overflow-x:auto;padding:14px 0}
+.app-tabs{display:flex;gap:8px;overflow-x:auto;padding:14px 0;scrollbar-width:none}
 .app-tab{display:flex;
 align-items:center;
 gap:8px;
@@ -312,7 +312,7 @@ body{background:var(--bg);color:var(--text);transition:background .15s}
 .top{display:flex;align-items:center;gap:12px;margin-bottom:16px}
 .logo{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--accent);color:white;font-weight:800}
 .headtext{flex:1;min-width:0}
-.headtext h1{margin:0;font-size:20px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.headtext h1{margin:0;font-size:20px;overflow-wrap:anywhere}
 .headtext small{color:var(--muted)}
 .icon-btn{display:grid;
 place-items:center;
@@ -333,7 +333,7 @@ color:var(--text)}
 .tile b{display:block;margin-bottom:3px;color:var(--muted);font-size:11px}
 .tile span{overflow-wrap:anywhere}
 .badge{display:inline-block;padding:3px 7px;border-radius:7px;background:#236b3a;color:#b6f2c6;font-size:12px}
-.tabs{display:flex;gap:6px;overflow-x:auto;margin:-2px -16px 14px;padding:0 16px;border-bottom:1px solid var(--border)}
+.tabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin:-2px -16px 14px;padding:0 16px;border-bottom:1px solid var(--border)}
 .tab{border:0;border-bottom:2px solid transparent;padding:10px 8px;background:none;color:var(--muted);white-space:nowrap}
 .tab.active{border-color:var(--accent);color:var(--accent)}
 .format-list,.nodes{display:grid;gap:8px;margin:0;padding:0;list-style:none}
@@ -343,7 +343,7 @@ code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowra
 .nodes li span{flex:1;min-width:0}
 .nodes b,.nodes small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nodes small{margin-top:2px;color:var(--muted)}
-.btn,.app-action{display:inline-flex;
+.btn,.app-action,.action{display:inline-flex;
 align-items:center;
 gap:5px;
 border:1px solid var(--border);
@@ -353,10 +353,10 @@ background:transparent;
 color:var(--text);
 text-decoration:none;
 white-space:nowrap}
-.platform-segments{display:flex;gap:6px;overflow-x:auto;margin-bottom:10px}
+.platform-segments{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin-bottom:10px}
 .platform-segments .btn.selected{border-color:var(--accent);color:var(--accent)}
 .apps{display:grid;gap:8px}
-.app-row{display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:9px;border:1px solid var(--border);border-radius:10px}
+.app-row{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:8px;padding:9px;border:1px solid var(--border);border-radius:10px}
 .app-row .app-name{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
 .app-name span{overflow:hidden;text-overflow:ellipsis}
 .app-row .app-action{font-size:13px}
@@ -387,12 +387,14 @@ COMMON_SCRIPT = """
     document.querySelectorAll('[data-platform-section]').forEach(function(x){
       x.hidden=x.dataset.platformSection!==key});
     document.querySelectorAll('[data-platform]').forEach(function(x){
-      x.classList.toggle('selected',x.dataset.platform===key)});set('sub-page-platform',key)}
+      x.classList.toggle('selected',x.dataset.platform===key);
+      var label=document.querySelector('[data-platform-toggle]');
+      if(label&&x.dataset.platform===key)label.innerHTML=x.innerHTML});set('sub-page-platform',key)}
   function chooseApp(platform,index){
-    document.querySelectorAll('[data-platform-app-panel]').forEach(function(x){
-      x.hidden=x.dataset.platformAppPanel!==platform||x.dataset.appIndex!==index});
-    document.querySelectorAll('[data-platform-app]').forEach(function(x){
-      x.classList.toggle('active',x.dataset.platformApp===platform&&x.dataset.appIndex===index)});
+    document.querySelectorAll('[data-platform-app-panel="'+platform+'"]').forEach(function(x){
+      x.hidden=x.dataset.appIndex!==index});
+    document.querySelectorAll('[data-platform-app="'+platform+'"]').forEach(function(x){
+      x.classList.toggle('active',x.dataset.appIndex===index)});
     set('sub-page-app-'+platform,index)}
   document.addEventListener('click',function(e){
     var b=e.target.closest('[data-copy]');if(b)copy(b.getAttribute('data-copy'),b);
@@ -486,23 +488,6 @@ def render_remnawave(data: dict[str, object]) -> str:
         ),
         platform_name,
     )
-    sub_url = str(data.get("sub_url") or "")
-    encoded = quote(sub_url, safe="")
-    legacy = (
-        f'<div hidden aria-hidden="true">Использовано Всего Срок действия Адрес подписки '
-        f"Used Total Expires Subscription URL Server Nodes Список узлов пуст No nodes available "
-        f'<a href="happ://add/{_e(sub_url)}">Happ</a>'
-        f'<a href="incy://import/{_e(sub_url)}">Incy</a>'
-        f'<a href="clash://install-config?url={_e(encoded)}">Clash</a>'
-        f'<a href="sing-box://import-remote-profile?url={_e(encoded)}#{_e(quote(str(data.get("title") or ""), safe=""))}">Sing-box</a>'
-        f'<a href="v2rayng://install-config?url={_e(encoded)}">v2rayNG</a>'
-    )
-    if not data.get("links"):
-        legacy += '<div class="links-empty"></div>'
-    for name, proto, _ in data.get("links", []) or []:
-        link = _e(_, quote_attr=True)
-        legacy += f' {_e(name)} {_e(proto)} <button data-copy="{link}"></button>'
-    legacy += "</div>"
     return (
         f'<!DOCTYPE html><html lang="{lang}"><head><meta charset="utf-8">'
         f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>'
@@ -517,7 +502,7 @@ def render_remnawave(data: dict[str, object]) -> str:
         f'<section class="card"><div class="install-head"><h2>{_e(data.get("install_title"))}</h2>'
         f'<div class="platform-select"><button type="button" data-platform-toggle>{platform_icon}<span>{_e(platform_name)}</span></button>'
         f'<div class="platform-menu" hidden>{selectors}</div></div></div>{sections}</section></main>'
-        f"{legacy}{_qr_dialog(data)}{_script(str(data.get('nonce', '')))}</body></html>"
+        f"{_qr_dialog(data)}{_script(str(data.get('nonce', '')))}</body></html>"
     )
 
 
@@ -557,7 +542,7 @@ def _three_apps(data: dict[str, object]) -> str:
         )
         platform_rows = []
         for app in platform.get("apps", []) if isinstance(platform, dict) else []:
-            name = _text(app.get("name"), lang)
+            name = str(app.get("name") or "")
             buttons = [
                 b
                 for block in app.get("blocks", [])
