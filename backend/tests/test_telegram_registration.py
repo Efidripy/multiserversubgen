@@ -109,8 +109,8 @@ def test_first_start_requires_an_introduction_before_creating_a_pending_request(
     assert len(first) == 2
     assert first[1].delete_message_id == 1
     assert first[0].reply_markup is None
-    assert "⚠️ ВНИМАНИЕ" in first[0].text
-    assert "не будет отправлена" in first[0].text
+    assert "Чтобы получить доступ" in first[0].text
+    assert "ответ придёт сюда" in first[0].text
     lowered = first[0].text.lower()
     assert not any(term in lowered for term in ("vpn", "proxy", "подписк", "сервер", "инбаунд"))
     assert duplicate == []
@@ -137,10 +137,10 @@ def test_prompted_user_must_submit_nonempty_introduction_before_the_request_is_c
     accepted = service.handle_update(_message(3, "Привет"))
     repeated = service.handle_update(_message(4, "Ещё раз"))
 
-    assert "⚠️ ВНИМАНИЕ" in blank[0].text
-    assert "непустое" in blank[0].text.lower()
+    assert "кто вы и зачем вам доступ" in blank[0].text
+    assert "не подошло" in blank[0].text.lower()
     assert "отправлена" in accepted[0].text.lower()
-    assert "ожидает" in repeated[0].text.lower()
+    assert "у администратора" in repeated[0].text.lower()
     with connect(db_path) as conn:
         assert conn.execute(
             "SELECT access_status, application_attempt FROM telegram_identities WHERE telegram_user_id = 42"
@@ -187,7 +187,7 @@ def test_first_start_activates_existing_customer_preapproval_without_creating_an
 
     activated = service.handle_update(_message(10, "/start"))
 
-    assert "Статус доступа" in activated[0].text
+    assert "Доступ работает" in activated[0].text
     with connect(db_path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM telegram_applications").fetchone()[0] == 0
         assert conn.execute("SELECT customer_id, access_status FROM telegram_identities WHERE telegram_user_id = 42").fetchone() == (
@@ -311,15 +311,15 @@ def test_approved_user_gets_opaque_subscription_link_and_rotation_invalidates_pr
     )
     new_token = rotated[0].text.rsplit("/", 1)[-1]
 
-    assert "активен" in status[0].text
-    assert "Персональная ссылка доступа, скопируйте и вставьте её в ваше приложение-клиент" in link[0].text
+    assert "Доступ работает" in status[0].text
+    assert "🔑 Ваша личная ссылка" in link[0].text
     assert "https://bot.example.test/api/v1/sub/" in link[0].text
     assert old_token != new_token
     assert resolve_token(db_path, "email", old_token) is None
     assert resolve_token(db_path, "email", new_token) == "new_user"
-    assert "Выберите ссылку" in rotate_choice[0].text
-    assert "⚠️ ВНИМАНИЕ" in confirm_prompt[0].text
-    assert "подтвердить" in confirm_prompt[0].text.lower()
+    assert "Какую ссылку заменить?" in rotate_choice[0].text
+    assert "🔄 Заменить ссылку?" in confirm_prompt[0].text
+    assert "старая ссылка" in confirm_prompt[0].text.lower()
 
 
 def test_subscription_link_edits_its_own_callback_message_and_never_stores_raw_token(tmp_path):
@@ -346,7 +346,7 @@ def test_subscription_link_edits_its_own_callback_message_and_never_stores_raw_t
     )
 
     choice = service.handle_update(_callback_with_message_id(11, "subscription:link", 101, text="Меню"))[0]
-    assert "Выберите уже созданное устройство" in choice.text
+    assert "Для какого устройства нужна ссылка?" in choice.text
     first = service.handle_update(_callback_with_message_id(12, "subscription:link:primary", 101, text="Меню"))[0]
     service.record_outbound_delivery(first, 101)
     repeated = service.handle_update(_callback_with_message_id(13, "subscription:link:primary", 202, text="Меню"))[0]
@@ -355,8 +355,8 @@ def test_subscription_link_edits_its_own_callback_message_and_never_stores_raw_t
     assert first.edit_message_id == 101
     assert repeated.edit_message_id == 202
     assert repeated.subscription_delivery is not None
-    assert "Персональная ссылка доступа" in repeated.text
-    assert "скопируйте" in repeated.text
+    assert "🔑 Ваша личная ссылка" in repeated.text
+    assert "Скопировать ссылку" in repeated.text
     assert repeated.text.rsplit("/", 1)[-1] == first.text.rsplit("/", 1)[-1]
     with connect(db_path) as conn:
         stored_digest = conn.execute(
@@ -826,9 +826,9 @@ def test_approved_status_shows_customer_lifetime_traffic_independent_of_subscrip
     status = service.handle_update(_message(15, "/status"))
 
     assert "4.0 КБ" in status[0].text
-    assert "<b>Статус доступа:</b>" in status[0].text
-    assert "<b>Трафик за всё время:</b>" in status[0].text
-    assert "<b>Последнее обновление данных:</b>" in status[0].text
+    assert "✅ <b>Доступ работает</b>" in status[0].text
+    assert "📊 Использовано за всё время" in status[0].text
+    assert "обновлено" in status[0].text
     assert status[0].parse_mode == "HTML"
     assert registry.get_customer_traffic(customer_id).lifetime_bytes == 4096
     assert projection_calls == 0
@@ -843,7 +843,7 @@ def test_approved_status_is_honest_when_no_traffic_projection_has_been_observed(
 
     status = service.handle_update(_message(16, "/status"))
 
-    assert "Данные о трафике пока не поступали." in status[0].text
+    assert "Данных о трафике пока нет" in status[0].text
 
 
 def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_path):
@@ -884,19 +884,19 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
     access_choice = service.handle_update(_callback(22, "subscription:get"))
     qr = service.handle_update(_callback(23, "subscription:qr"))
 
-    assert any(button[0]["text"] == "⊙ Мои ссылки" for button in home[0].reply_markup["inline_keyboard"])
-    assert assistant[0].text.startswith("Выберите устройство")
+    assert any(button[0]["text"] == "📱 Мои устройства" for button in home[0].reply_markup["inline_keyboard"])
+    assert assistant[0].text.startswith("📖 Как подключить")
     assert not assistant[0].text.startswith("Подключение")
-    assert access_choice[0].text.startswith("Выберите удобное действие")
+    assert access_choice[0].text.startswith("🔑 Мой доступ")
     assert not access_choice[0].text.startswith("Получить доступ")
-    assert "выберите устройство" in assistant[0].text.lower()
-    assert "выберите удобное действие" in access_choice[0].text.lower()
+    assert "каком устройстве" in assistant[0].text.lower()
+    assert "здесь ваша ссылка" in access_choice[0].text.lower()
     diagnostics = service.handle_update(_callback(24, "setup:diagnostics"))[0]
-    assert diagnostics.text.startswith("Доступ готов")
+    assert diagnostics.text.startswith("✅ Доступ готов")
     assert not diagnostics.text.startswith("Проверка готовности")
     for offset, platform in enumerate(("android", "ios", "desktop"), start=25):
         guide = service.handle_update(_callback(offset, f"setup:{platform}"))[0]
-        assert guide.text.startswith("1.")
+        assert guide.text.startswith("📖 Инструкция")
         assert not guide.text.startswith("Подключение")
 
     home_actions = {
@@ -920,9 +920,9 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
         for button in row
         if "callback_data" in button
     }
-    assert {"subscription:rotate", "setup:diagnostics", "setup:menu"}.isdisjoint(home_actions)
+    assert {"subscription:rotate", "setup:diagnostics"}.isdisjoint(home_actions)
     assert {"quality:menu", "service:status"}.isdisjoint(home_actions)
-    assert home_action_order[:2] == ["subscription:get", "devices:menu"]
+    assert home_action_order[:3] == ["subscription:get", "setup:menu", "devices:menu"]
     assert {"subscription:link", "subscription:qr", "subscription:guest", "devices:menu", "subscription:rotate"}.issubset(access_actions)
     assert {"setup:diagnostics", "diagnostics:menu"}.isdisjoint(access_actions)
     assert "setup:diagnostics" not in guide_actions
@@ -949,15 +949,15 @@ def test_approved_user_can_open_connection_assistant_and_receive_local_qr(tmp_pa
         for button in row
     ]
     assert access_button_texts[:5] == [
-        "⊙ Получить ссылку", "⊞ Показать QR-код", "↗ Гостевая ссылка", "⊙ Мои ссылки", "↻ Сменить ссылку",
+        "🔗 Получить ссылку", "📷 Показать QR-код", "👋 Ссылка для гостя", "📱 Мои устройства", "🔄 Заменить ссылку",
     ]
-    assert access_choice[0].reply_markup["inline_keyboard"][-1][0]["text"] == "← Назад"
+    assert access_choice[0].reply_markup["inline_keyboard"][-1][0]["text"] == "⬅️ Назад"
 
 
 def test_approved_menu_uses_my_links_in_english():
     rows = TelegramRegistrationService._approved_menu("en")["inline_keyboard"]
 
-    assert any(row[0]["text"] == "⊙ My links" for row in rows)
+    assert any(row[0]["text"] == "📱 My devices" for row in rows)
 
 
 def test_suspended_user_cannot_receive_qr(tmp_path):
@@ -1048,8 +1048,8 @@ def test_approved_user_can_toggle_only_background_notification_preference(tmp_pa
 
     assert "включены" in menu[0].text
     assert "выключены" in toggled[0].text
-    assert "Напоминания о сроке: выключены" in expiry_toggled[0].text
-    assert "Напоминания о трафике: включены" in traffic_toggled[0].text
+    assert "Скоро закончится срок: выключены" in expiry_toggled[0].text
+    assert "Использовано много трафика: включены" in traffic_toggled[0].text
     assert registry.get_notification_preferences(42).background_notifications_enabled is False
     assert registry.get_notification_preferences(42).expiry_reminders_enabled is False
     assert registry.get_notification_preferences(42).traffic_reminders_enabled is True
@@ -1091,7 +1091,7 @@ def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path)
         },
     })
 
-    assert help_screen[0].text.startswith("⊞ Приложения")
+    assert help_screen[0].text.startswith("🆘 Помощь")
     assert not help_screen[0].text.startswith("Помощь")
     assert "Проводим краткие технические работы." in help_screen[0].text
     help_callbacks = {
@@ -1101,7 +1101,7 @@ def test_help_is_a_separate_screen_and_can_return_to_the_approved_menu(tmp_path)
     }
     assert {"menu:home", "setup:menu", "diagnostics:menu", "quality:menu", "service:status"} <= help_callbacks
     assert "subscription:get" not in help_callbacks
-    assert "Статус доступа" in home[0].text
+    assert "Доступ работает" in home[0].text
 
 
 def test_initial_provisioning_blocks_link_and_qr_until_the_entire_snapshot_succeeds(tmp_path):
@@ -1132,10 +1132,10 @@ def test_initial_provisioning_blocks_link_and_qr_until_the_entire_snapshot_succe
     link_while_partial = service.handle_update(_message(30, "/subscription"))
     qr_while_partial = service.handle_update(_callback(31, "subscription:qr"))
 
-    assert "готовится" in link_while_partial[0].text.lower()
+    assert "готовим ваш доступ" in link_while_partial[0].text.lower()
     assert "https://" not in link_while_partial[0].text
     assert qr_while_partial[0].photo_png is None
-    assert "готовится" in qr_while_partial[0].text.lower()
+    assert "готовим ваш доступ" in qr_while_partial[0].text.lower()
     assert TelegramSubscriptionAccessGate(db_path).can_serve_email("waiting_user") is False
     assert any(
         button.get("callback_data") == "setup:diagnostics"
@@ -1205,10 +1205,10 @@ def test_qr_can_be_explicitly_deleted_from_the_chat(tmp_path):
     delete_button = qr.reply_markup["inline_keyboard"][0][0]
     deleted = service.handle_update(_callback_with_message_id(51, delete_button["callback_data"], 777))
 
-    assert delete_button["text"] == "⌫ Удалить QR"
+    assert delete_button["text"] == "🗑 Удалить QR-код"
     assert deleted[0].delete_message_id == 777
     assert deleted[1].delete_message_id is None
-    assert deleted[1].text == "QR-код удалён из чата."
+    assert deleted[1].text == "✅ QR-код удалён."
 
 
 def test_readiness_diagnostics_hide_internal_provisioning_details(tmp_path):
@@ -1229,7 +1229,7 @@ def test_readiness_diagnostics_hide_internal_provisioning_details(tmp_path):
 
     diagnostics = service.handle_update(_callback(60, "setup:diagnostics"))[0]
 
-    assert "на всех назначенных нодах" in diagnostics.text.lower()
+    assert "доступ ещё готовится" in diagnostics.text.lower()
     assert not any(value in diagnostics.text for value in ("edge-a", "secret-snapshot", "vless://", "token"))
 
 
@@ -1312,18 +1312,18 @@ def test_approved_user_can_create_and_revoke_a_guest_link_and_send_quality_feedb
     quality_platform = service.handle_update(_callback(104, "quality:kind:slow"))[0]
     quality_sent = service.handle_update(_callback(105, "quality:platform:slow:ios"))[0]
 
-    assert "ВНИМАНИЕ" in choice.text
+    assert "👋 Ссылка для гостя" in choice.text
     assert "/api/v1/guest-sub/" in created.text
-    assert devices.text.startswith("Мои ссылки")
+    assert devices.text.startswith("📱 Мои устройства")
     assert "Гостевая ссылка" in devices.text
-    assert "Как сейчас работает" in quality_kind.text
+    assert "Как сейчас работает связь" in quality_kind.text
     assert "устройстве" in quality_platform.text
-    assert "сигнал отправлен" in quality_sent.text
+    assert "получили вашу оценку" in quality_sent.text
     with connect(db_path) as conn:
         guest_link_id = conn.execute("SELECT id FROM telegram_guest_subscription_links").fetchone()[0]
     revoked = service.handle_update(_callback(106, f"guest:revoke:{guest_link_id}"))[0]
 
-    assert "отозвана" in revoked.text
+    assert "Ссылка для гостя отключена" in revoked.text
 
 
 def test_guest_link_can_be_reopened_and_rendered_as_qr_without_issuing_another_link(tmp_path, monkeypatch):
@@ -1363,7 +1363,7 @@ def test_guest_link_can_be_reopened_and_rendered_as_qr_without_issuing_another_l
 
     assert qr.photo_png == b"guest-qr"
     assert captured == [created.text.split("\n")[-1]]
-    assert "гостевой" in qr.text.lower()
+    assert "гостя" in qr.text.lower()
     assert any(
         item["callback_data"] == "devices:menu"
         for row in qr.reply_markup["inline_keyboard"] for item in row
@@ -1394,7 +1394,7 @@ def test_devices_hide_revoked_guest_links_and_keep_compact_rename_controls(tmp_p
         if item.get("callback_data", "").startswith("device:rename:")
     ]
     assert "Гостевая ссылка" in before.text
-    assert button_texts and all(text.startswith("✎ ") and "Переименовать" not in text for text in button_texts)
+    assert button_texts and all(text.startswith("✏️ ") and "Переименовать" not in text for text in button_texts)
     revoked_callbacks = [
         item.get("callback_data", "")
         for row in revoked.reply_markup["inline_keyboard"] for item in row
@@ -1441,9 +1441,9 @@ def test_customer_can_issue_rotate_one_or_rotate_all_independent_device_links(tm
 
     actions = {item.get("callback_data") for row in choice.reply_markup["inline_keyboard"] for item in row}
     assert {"subscription:link:primary", "subscription:link:new"}.issubset(actions)
-    assert "Выберите ссылку" in rotate_choice.text
-    assert "⚠️ ВНИМАНИЕ" in confirm_one.text
-    assert "⚠️ ВНИМАНИЕ" in all_confirm.text
+    assert "Какую ссылку заменить?" in rotate_choice.text
+    assert "🔄 Заменить ссылку?" in confirm_one.text
+    assert "🔄 Заменить все ссылки?" in all_confirm.text
     assert resolve_token(db_path, "email", old_primary) is None
     assert resolve_token(db_path, "email", new_primary) == "device_links"
     assert resolve_token(db_path, "telegram_device", new_device) is None
@@ -1468,11 +1468,11 @@ def test_subscription_links_expose_matching_qr_callbacks_and_rotated_qr_uses_cur
     )
 
     primary = service.handle_update(_callback(1, "subscription:link:primary"))[0]
-    assert primary.reply_markup["inline_keyboard"][0][0]["callback_data"] == "subscription:qr:primary"
+    assert primary.reply_markup["inline_keyboard"][1][0]["callback_data"] == "subscription:qr:primary"
 
     created = service.handle_update(_callback(2, "subscription:link:new"))[0]
     device = registry.list_subscription_devices(42)[0]
-    assert created.reply_markup["inline_keyboard"][0][0]["callback_data"] == f"subscription:qr:device:{device.device_id}"
+    assert created.reply_markup["inline_keyboard"][1][0]["callback_data"] == f"subscription:qr:device:{device.device_id}"
 
     captured: list[str] = []
 
@@ -1485,7 +1485,7 @@ def test_subscription_links_expose_matching_qr_callbacks_and_rotated_qr_uses_cur
     old_primary = primary.text.rsplit("/", 1)[-1]
     rotated_primary = service.handle_update(_callback(3, "subscription:rotate:primary:confirm"))[0]
     new_primary = rotated_primary.text.rsplit("/", 1)[-1]
-    assert rotated_primary.reply_markup["inline_keyboard"][0][0]["callback_data"] == "subscription:qr:primary"
+    assert rotated_primary.reply_markup["inline_keyboard"][1][0]["callback_data"] == "subscription:qr:primary"
     primary_qr = service.handle_update(_callback(4, "subscription:qr:primary"))[0]
     assert primary_qr.photo_png == b"subscription-qr"
     assert captured[-1] == rotated_primary.text.rsplit("\n", 1)[-1]
@@ -1495,7 +1495,7 @@ def test_subscription_links_expose_matching_qr_callbacks_and_rotated_qr_uses_cur
     rotated_device = service.handle_update(
         _callback(5, f"subscription:rotate:device:{device.device_id}:confirm")
     )[0]
-    assert rotated_device.reply_markup["inline_keyboard"][0][0]["callback_data"] == f"subscription:qr:device:{device.device_id}"
+    assert rotated_device.reply_markup["inline_keyboard"][1][0]["callback_data"] == f"subscription:qr:device:{device.device_id}"
     device_qr = service.handle_update(_callback(6, f"subscription:qr:device:{device.device_id}"))[0]
     assert device_qr.photo_png == b"subscription-qr"
     assert captured[-1] == rotated_device.text.rsplit("\n", 1)[-1]
@@ -1504,7 +1504,7 @@ def test_subscription_links_expose_matching_qr_callbacks_and_rotated_qr_uses_cur
     rotated_all = service.handle_update(_callback(7, "subscription:rotate:all:confirm"))[0]
     all_primary = rotated_all.text.rsplit("/", 1)[-1]
     assert all_primary not in {new_primary, old_primary}
-    assert rotated_all.reply_markup["inline_keyboard"][0][0]["callback_data"] == "subscription:qr:primary"
+    assert rotated_all.reply_markup["inline_keyboard"][1][0]["callback_data"] == "subscription:qr:primary"
     repeated_qr = service.handle_update(_callback(8, "subscription:qr:primary"))[0]
     repeated_qr_again = service.handle_update(_callback(9, "subscription:qr:primary"))[0]
     assert repeated_qr.photo_png == repeated_qr_again.photo_png == b"subscription-qr"
@@ -1527,7 +1527,7 @@ def test_guest_devices_show_link_and_qr_callbacks_only_while_guest_is_active(tmp
     created = service.handle_update(_callback(1, "subscription:guest:6"))[0]
     with connect(db_path) as conn:
         guest_id = conn.execute("SELECT id FROM telegram_guest_subscription_links").fetchone()[0]
-    assert created.reply_markup["inline_keyboard"][0][0]["callback_data"] == f"guest:qr:{guest_id}"
+    assert created.reply_markup["inline_keyboard"][1][0]["callback_data"] == f"guest:qr:{guest_id}"
 
     devices = service.handle_update(_callback(2, "devices:menu"))[0]
     callbacks = {
@@ -1584,7 +1584,7 @@ def test_guest_link_and_qr_reject_invalid_expired_revoked_or_foreign_ids(tmp_pat
     for prefix_index, callback_prefix in enumerate(("guest:link:", "guest:qr:")):
         for index, guest_id in enumerate(invalid_ids, start=1):
             response = service.handle_update(_callback(100 + prefix_index * 10 + index, f"{callback_prefix}{guest_id}"))[0]
-            assert response.text == "Сейчас это действие недоступно."
+            assert response.text.startswith("😕 Сейчас это не получилось")
             assert response.photo_png is None
             assert "guest-sub" not in response.text
 
@@ -1609,7 +1609,7 @@ def test_guest_qr_returns_qr_failed_when_builder_raises(tmp_path, monkeypatch):
     monkeypatch.setattr("services.telegram_registration.build_subscription_qr_png", fail_qr)
     response = service.handle_update(_callback(1, f"guest:qr:{registry_link.guest_link_id}"))[0]
 
-    assert response.text == "QR пока не удалось подготовить. Попробуйте ещё раз позже."
+    assert response.text == "😕 QR-код сейчас не получился. Попробуйте ещё раз через минуту."
     assert response.photo_png is None
 
 
@@ -1651,19 +1651,19 @@ def test_subscription_device_actions_show_rename_and_soft_revoke_only_that_link(
     confirm = service.handle_update(_callback(6, f"subscription-device:revoke:{device.device_id}"))[0]
     revoked = service.handle_update(_callback(7, f"subscription-device:revoke:{device.device_id}:confirm"))[0]
 
-    assert f"Устройство: {device.label}" in actions.text
+    assert f"📱 {device.label}" in actions.text
     assert {
         f"subscription:link:device:{device.device_id}",
         f"subscription:qr:device:{device.device_id}",
         f"subscription-device:rename:{device.device_id}",
         f"subscription-device:revoke:{device.device_id}",
     }.issubset(action_callbacks)
-    assert {"⊙ Показать ссылку", "⊞ Показать QR-код", "✎ Переименовать", "⌫ Отозвать", "← Назад"}.issubset(action_texts)
+    assert {"🔗 Показать ссылку", "📷 Показать QR-код", "✏️ Переименовать", "🚫 Отключить ссылку", "⬅️ Назад"}.issubset(action_texts)
     assert "/api/v1/sub/" in shown.text
     assert qr.photo_png is not None
-    assert qr.reply_markup["inline_keyboard"][1] == [{"text": "← Назад", "callback_data": f"subscription-device:menu:{device.device_id}"}]
-    assert "ВНИМАНИЕ" in confirm.text
-    assert "отозвана" in revoked.text
+    assert qr.reply_markup["inline_keyboard"][1] == [{"text": "⬅️ Назад", "callback_data": f"subscription-device:menu:{device.device_id}"}]
+    assert "Отключить ссылку" in confirm.text
+    assert "Ссылка отключена" in revoked.text
     assert registry.list_subscription_devices(42) == ()
     assert registry.resolve_subscription_device_email(device.token_identifier) is None
     with connect(db_path) as conn:
@@ -1710,7 +1710,7 @@ def test_primary_device_actions_show_link_rename_and_primary_only_rotation(tmp_p
 
     assert {"subscription:link:primary", "subscription:qr:primary", "subscription:rotate:primary"}.issubset(action_callbacks)
     assert any(callback.startswith("device:rename:") for callback in action_callbacks)
-    assert {"⊙ Показать ссылку", "⊞ Показать QR-код", "✎ Переименовать", "↻ Сменить ссылку", "← Назад"}.issubset(action_texts)
+    assert {"🔗 Показать ссылку", "📷 Показать QR-код", "✏️ Переименовать", "🔄 Заменить ссылку", "⬅️ Назад"}.issubset(action_texts)
     assert not any(callback.startswith("subscription-device:revoke:") for callback in action_callbacks)
 
 
@@ -2037,8 +2037,8 @@ def test_suspending_user_can_send_one_bounded_appeal_without_automatic_resume(tm
     )
     sent = service.handle_update(_message(21, "Я всё понял и больше не буду нарушать."))
 
-    assert "администратору" in prompt[0].text.lower()
-    assert "принято" in sent[0].text.lower()
+    assert "администратор" in prompt[0].text.lower()
+    assert "отправлено" in sent[0].text.lower()
     with connect(db_path) as conn:
         assert conn.execute("SELECT status FROM customers WHERE id = ?", (customer_id,)).fetchone()[0] == "suspending"
         assert conn.execute("SELECT COUNT(*) FROM telegram_appeals WHERE customer_id = ?", (customer_id,)).fetchone()[0] == 1
@@ -2065,9 +2065,9 @@ def test_active_user_can_submit_one_categorized_support_request_without_affectin
     assert menu[0].reply_markup["inline_keyboard"][1][0] == {
         "text": "Подключение не работает", "callback_data": "support:category:connection"
     }
-    assert "максимум 1000" in prompt[0].text.lower()
-    assert "принято" in accepted[0].text.lower()
-    assert "открытое обращение" in duplicate[0].text.lower()
+    assert "до 1000" in prompt[0].text.lower()
+    assert "отправлено" in accepted[0].text.lower()
+    assert "прошлый вопрос" in duplicate[0].text.lower()
     with connect(db_path) as conn:
         assert conn.execute("SELECT category, body FROM telegram_support_requests").fetchone() == (
             "connection", "Приложение не подключается."
@@ -2115,8 +2115,8 @@ def test_primary_admin_can_review_and_reply_to_customer_support_from_the_bot(tmp
     assert registry.list_customer_support_requests(customer_id)[0].status == "resolved"
     next_prompt = service.handle_update(_callback(15, "support:category:other"))[0]
     next_request = service.handle_update(_message(16, "Появился новый вопрос."))[0]
-    assert "ещё не отправлено" in next_prompt.text
-    assert "принято" in next_request.text.lower()
+    assert "мы ничего не получим" in next_prompt.text
+    assert "отправлено" in next_request.text.lower()
     assert len(registry.list_customer_support_requests(customer_id)) == 2
     with connect(db_path) as conn:
         assert conn.execute(
@@ -2620,8 +2620,8 @@ def test_webhook_subscription_link_falls_back_to_a_new_message_if_the_current_ca
     assert len(visible) == 3
     assert visible[0].edit_message_id is None
     assert visible[1].edit_message_id is None
-    assert "Выберите уже созданное устройство" in visible[1].text
-    assert "Персональная ссылка доступа" in visible[2].text
+    assert "Для какого устройства нужна ссылка?" in visible[1].text
+    assert "🔑 Ваша личная ссылка" in visible[2].text
     assert visible[2].edit_message_id is None
 
 

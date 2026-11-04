@@ -17,7 +17,7 @@ from services.telegram_registry import TelegramRegistry
 
 def _close_markup(locale="ru", rows=None):
     return {"inline_keyboard": list(rows or []) + [[{
-        "text": "✕ Close" if locale == "en" else "✕ Закрыть",
+        "text": "✖️ Close" if locale == "en" else "✖️ Закрыть",
         "callback_data": "notice:close",
     }]]}
 
@@ -86,7 +86,7 @@ def test_notification_action_keyboard_keeps_action_before_close_row(tmp_path):
     port = FakeOutboxPort()
     assert _worker(db_path, port).run_once().outcome == "sent"
     markup = port.messages[0][2]
-    assert markup["inline_keyboard"][-1] == [{"text": "✕ Закрыть", "callback_data": "notice:close"}]
+    assert markup["inline_keyboard"][-1] == [{"text": "✖️ Закрыть", "callback_data": "notice:close"}]
     assert markup["inline_keyboard"][0] == [{"text": "Заявки", "callback_data": "admin:requests:0"}]
 
 
@@ -101,8 +101,8 @@ def test_notification_close_button_uses_recipient_locale(tmp_path):
     port = FakeOutboxPort()
     assert _worker(db_path, port).run_once().outcome == "sent"
     assert _worker(db_path, port).run_once().outcome == "sent"
-    assert port.messages[0][2]["inline_keyboard"][-1][0]["text"] == "✕ Закрыть"
-    assert port.messages[1][2]["inline_keyboard"][-1][0]["text"] == "✕ Close"
+    assert port.messages[0][2]["inline_keyboard"][-1][0]["text"] == "✖️ Закрыть"
+    assert port.messages[1][2]["inline_keyboard"][-1][0]["text"] == "✖️ Close"
 
 
 def test_admin_receives_the_voluntary_introduction_for_the_exact_application_attempt(tmp_path):
@@ -124,7 +124,7 @@ def test_admin_receives_the_voluntary_introduction_for_the_exact_application_att
     assert "@requester" in port.messages[1][1]
     assert "Хочу коротко представиться." in port.messages[1][1]
     assert port.messages[1][2] == {
-        "inline_keyboard": [[{"text": "Заявки", "callback_data": "admin:requests:0"}], [{"text": "✕ Закрыть", "callback_data": "notice:close"}]]
+        "inline_keyboard": [[{"text": "Заявки", "callback_data": "admin:requests:0"}], [{"text": "✖️ Закрыть", "callback_data": "notice:close"}]]
     }
 
 

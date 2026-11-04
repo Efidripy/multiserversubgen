@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -153,6 +154,17 @@ class TelegramRegistrationService:
             amount /= 1024
             unit += 1
         return f"{amount:.1f} {units[unit]}" if unit else f"{int(amount)} {units[unit]}"
+
+    @staticmethod
+    def _format_traffic_updated(value: str, locale: str = "ru") -> str:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parsed.astimezone(timezone.utc)
+            return parsed.strftime("%d.%m %H:%M UTC")
+        except (TypeError, ValueError):
+            return "время неизвестно" if locale != "en" else "time unavailable"
 
     @staticmethod
     def _inbound_one_supports_bot_contract(node_id: int, inbound_options: list[dict[str, Any]]) -> bool:
@@ -1466,10 +1478,13 @@ class TelegramRegistrationService:
             if show_readiness:
                 rows.append([{"text": button(locale, "check_ready"), "callback_data": "setup:diagnostics"}])
             rows.extend([
+                [{"text": button(locale, "connection"), "callback_data": "setup:menu"}],
                 [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
-                [{"text": button(locale, "notifications"), "callback_data": "preferences:menu"}],
                 [{"text": button(locale, "help"), "callback_data": "help"}],
-                [{"text": button(locale, "language"), "callback_data": "language:menu"}],
+                [
+                    {"text": button(locale, "notifications"), "callback_data": "preferences:menu"},
+                    {"text": button(locale, "language"), "callback_data": "language:menu"},
+                ],
             ])
         return {"inline_keyboard": rows}
 
@@ -1619,7 +1634,12 @@ class TelegramRegistrationService:
         delivery = TelegramSubscriptionDelivery(user_id, token_digest)
         callback = "subscription:qr:primary" if subscription_device_id is None else f"subscription:qr:device:{subscription_device_id}"
         markup = self._approved_menu(locale)
-        markup["inline_keyboard"].insert(0, [{"text": button(locale, "show_qr"), "callback_data": callback}])
+        if len(url) <= 256:
+            markup["inline_keyboard"].insert(0, [{"text": button(locale, "copy_link"), "copy_text": {"text": url}}])
+            qr_row = 1
+        else:
+            qr_row = 0
+        markup["inline_keyboard"].insert(qr_row, [{"text": button(locale, "show_qr"), "callback_data": callback}])
         return TelegramOutboundMessage(
             chat_id,
             f"{tr(locale, 'subscription_prefix')}\n{url}",
@@ -1663,8 +1683,8 @@ class TelegramRegistrationService:
             chat_id,
             tr(locale, "setup_menu"),
             {"inline_keyboard": [
-                [{"text": "Android", "callback_data": "setup:android"}, {"text": "iPhone / iPad", "callback_data": "setup:ios"}],
-                [{"text": "Компьютер" if locale == "ru" else "Computer", "callback_data": "setup:desktop"}],
+                [{"text": "🤖 Android", "callback_data": "setup:android"}, {"text": "🍏 iPhone / iPad", "callback_data": "setup:ios"}],
+                [{"text": "💻 Компьютер" if locale == "ru" else "💻 Computer", "callback_data": "setup:desktop"}],
                 [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
             ]},
         )
@@ -1739,18 +1759,35 @@ class TelegramRegistrationService:
         if lifetime is None or not lifetime.last_observed_at:
             traffic_line = tr(locale, "traffic_empty")
         else:
-            traffic_line = (
-                tr(locale, "traffic_known", traffic=self._format_bytes(lifetime.lifetime_bytes, locale), updated=lifetime.last_observed_at)
+            traffic_line = tr(
+                locale,
+                "traffic_known",
+                traffic=html.escape(self._format_bytes(lifetime.lifetime_bytes, locale)),
+                updated=html.escape(self._format_traffic_updated(lifetime.last_observed_at, locale)),
+            )
+        status_labels = {
+            "active": ("✅ <b>Доступ работает</b>", "✅ <b>Access is working</b>"),
+            "suspended": ("⏸ <b>Доступ приостановлен</b>", "⏸ <b>Access is suspended</b>"),
+            "suspend_partial": ("⏸ <b>Доступ приостановлен частично</b>", "⏸ <b>Access is partially suspended</b>"),
+            "provisioning": ("⏳ <b>Доступ готовится</b>", "⏳ <b>Access is being prepared</b>"),
+        }
+        status_key = access.customer_status if access.customer_status in status_labels else "unknown"
+        status_text = status_labels.get(status_key, ("😕 <b>Доступ сейчас недоступен</b>", "😕 <b>Access is unavailable right now</b>"))[0 if locale != "en" else 1]
+        hint = ""
+        if access.customer_status == "active":
+            hint = (
+                "\n\n<b>Подключаетесь в первый раз?</b>\n1️⃣ «📖 Как подключить»: поставьте приложение\n2️⃣ «🔑 Мой доступ»: возьмите ссылку\n3️⃣ Добавьте ссылку в приложение и включите его"
+                if locale != "en"
+                else "\n\n<b>Connecting for the first time?</b>\n1️⃣ “📖 How to connect”: install an app\n2️⃣ “🔑 My access”: get the link\n3️⃣ Add the link in the app and turn it on"
             )
         return TelegramOutboundMessage(
             chat_id,
             tr(
                 locale,
                 "status_access",
-                status=tr(locale, f"status_{access.customer_status}")
-                if access.customer_status in {"active", "suspended", "suspend_partial", "provisioning"}
-                else tr(locale, "status_unknown"),
+                status=status_text,
                 traffic=traffic_line,
+                hint=hint,
             ),
             self._approved_menu(
                 locale,
@@ -1827,9 +1864,9 @@ class TelegramRegistrationService:
             chat_id,
             tr(locale, "diagnostics_menu"),
             {"inline_keyboard": [
-                [{"text": "Не импортируется" if locale == "ru" else "Will not import", "callback_data": "diagnostics:import"}],
-                [{"text": "Не подключается" if locale == "ru" else "Will not connect", "callback_data": "diagnostics:connection"}],
-                [{"text": "Работает не везде" if locale == "ru" else "Does not work everywhere", "callback_data": "diagnostics:routes"}],
+                [{"text": "📲 Приложение не принимает ссылку" if locale == "ru" else "📲 The app does not accept the link", "callback_data": "diagnostics:import"}],
+                [{"text": "🔌 Не подключается" if locale == "ru" else "🔌 Will not connect", "callback_data": "diagnostics:connection"}],
+                [{"text": "🌐 Работает, но не всё открывается" if locale == "ru" else "🌐 Works, but some things do not open", "callback_data": "diagnostics:routes"}],
                 [{"text": button(locale, "back_help"), "callback_data": "help"}],
             ]},
         )
@@ -1872,15 +1909,19 @@ class TelegramRegistrationService:
         assert guest.token is not None
         expires_at = datetime.fromtimestamp(guest.expires_at, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
         url = f"{self._public_base_url}/api/v1/guest-sub/{guest.token}"
+        rows: list[list[dict[str, Any]]] = []
+        if len(url) <= 256:
+            rows.append([{"text": button(locale, "copy_link"), "copy_text": {"text": url}}])
+        rows.extend([
+            [{"text": button(locale, "show_qr"), "callback_data": f"guest:qr:{guest.guest_link_id}"}],
+            [{"text": button(locale, "revoke"), "callback_data": f"guest:revoke:{guest.guest_link_id}"}],
+            [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
+            [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
+        ])
         return TelegramOutboundMessage(
             chat_id,
             tr(locale, "guest_link_ready", expires_at=expires_at, url=url),
-            {"inline_keyboard": [
-                [{"text": button(locale, "show_qr"), "callback_data": f"guest:qr:{guest.guest_link_id}"}],
-                [{"text": button(locale, "revoke"), "callback_data": f"guest:revoke:{guest.guest_link_id}"}],
-                [{"text": button(locale, "devices"), "callback_data": "devices:menu"}],
-                [{"text": button(locale, "menu"), "callback_data": "menu:home"}],
-            ]},
+            {"inline_keyboard": rows},
         )
 
     def _guest_link_message(
@@ -1919,9 +1960,9 @@ class TelegramRegistrationService:
         self, *, user_id: int, chat_id: int, locale: str
     ) -> TelegramOutboundMessage:
         devices = self._registry.list_subscription_devices(user_id)
-        buttons = [[{"text": "⊙ " + ("Основное устройство" if locale == "ru" else "Primary device"), "callback_data": "subscription:link:primary"}]]
+        buttons = [[{"text": "📱 " + ("Основное устройство" if locale == "ru" else "Primary device"), "callback_data": "subscription:link:primary"}]]
         buttons.extend(
-            [{"text": f"⊙ {item.label[:40]}", "callback_data": f"subscription:link:device:{item.device_id}"}]
+            [{"text": f"📱 {item.label[:40]}", "callback_data": f"subscription:link:device:{item.device_id}"}]
             for item in devices
         )
         buttons.extend((
@@ -1934,9 +1975,9 @@ class TelegramRegistrationService:
         self, *, user_id: int, chat_id: int, locale: str
     ) -> TelegramOutboundMessage:
         devices = self._registry.list_subscription_devices(user_id)
-        buttons = [[{"text": "↻ " + ("Основное устройство" if locale == "ru" else "Primary device"), "callback_data": "subscription:rotate:primary"}]]
+        buttons = [[{"text": "📱 " + ("Основное устройство" if locale == "ru" else "Primary device"), "callback_data": "subscription:rotate:primary"}]]
         buttons.extend(
-            [{"text": f"↻ {item.label[:40]}", "callback_data": f"subscription:rotate:device:{item.device_id}"}]
+            [{"text": f"📱 {item.label[:40]}", "callback_data": f"subscription:rotate:device:{item.device_id}"}]
             for item in devices
         )
         buttons.extend((
@@ -1953,22 +1994,22 @@ class TelegramRegistrationService:
         devices = self._registry.list_logical_devices(user_id, include_inactive=False)
         subscription_devices = self._registry.list_subscription_devices(user_id)
         active_label = "активно" if locale == "ru" else "active"
-        lines = [tr(locale, "devices")]
+        lines = [tr(locale, "devices"), ""]
         buttons: list[list[dict[str, str]]] = []
         for item in devices:
             if item.kind == "primary":
                 details = active_label
-                prefix = "⊙"
+                prefix = "📱"
             elif item.status == "active" and item.expires_at is not None:
                 details = (
                     ("активно до " if locale == "ru" else "active until ")
                     + datetime.fromtimestamp(item.expires_at, tz=timezone.utc).strftime("%d.%m %H:%M UTC")
                 )
-                prefix = "↗"
+                prefix = "👋"
             lines.append(f"{prefix} {item.label} — {details}")
             if item.kind == "primary":
                 buttons.append([{
-                    "text": f"⊙ {item.label[:30]}",
+                    "text": f"📱 {item.label[:30]}",
                     "callback_data": "subscription-primary:menu",
                 }])
             else:
@@ -1990,9 +2031,9 @@ class TelegramRegistrationService:
                     "callback_data": f"guest:revoke:{item.guest_link_id}",
                 }])
         for item in subscription_devices:
-            lines.append(f"⊙ {item.label} — {active_label}")
+            lines.append(f"📱 {item.label} — {active_label}")
             buttons.append([{
-                "text": f"⊙ {item.label[:30]}",
+                "text": f"📱 {item.label[:30]}",
                 "callback_data": f"subscription-device:menu:{item.device_id}",
             }])
         buttons.extend((
@@ -2068,10 +2109,10 @@ class TelegramRegistrationService:
     @staticmethod
     def _quality_menu(chat_id: int, locale: str) -> TelegramOutboundMessage:
         labels = {
-            "ok": "Всё хорошо" if locale == "ru" else "Everything is good",
-            "slow": "Медленно" if locale == "ru" else "Slow",
-            "connection": "Не подключается" if locale == "ru" else "Will not connect",
-            "routes": "Работает не везде" if locale == "ru" else "Does not work everywhere",
+            "ok": "👍 Всё хорошо" if locale == "ru" else "👍 Everything is good",
+            "slow": "🐢 Медленно" if locale == "ru" else "🐢 Slow",
+            "connection": "🔌 Не подключается" if locale == "ru" else "🔌 Will not connect",
+            "routes": "🌐 Работает не везде" if locale == "ru" else "🌐 Does not work everywhere",
         }
         rows = [[{"text": labels[kind], "callback_data": f"quality:kind:{kind}"}] for kind in labels]
         rows.append([{"text": button(locale, "back_help"), "callback_data": "help"}])
@@ -2080,9 +2121,9 @@ class TelegramRegistrationService:
     @staticmethod
     def _quality_platform_menu(chat_id: int, kind: str, locale: str) -> TelegramOutboundMessage:
         rows = [
-            [{"text": "Android", "callback_data": f"quality:platform:{kind}:android"}],
-            [{"text": "iPhone / iPad", "callback_data": f"quality:platform:{kind}:ios"}],
-            [{"text": "Компьютер" if locale == "ru" else "Computer", "callback_data": f"quality:platform:{kind}:desktop"}],
+            [{"text": "🤖 Android", "callback_data": f"quality:platform:{kind}:android"}],
+            [{"text": "🍏 iPhone / iPad", "callback_data": f"quality:platform:{kind}:ios"}],
+            [{"text": "💻 Компьютер" if locale == "ru" else "💻 Computer", "callback_data": f"quality:platform:{kind}:desktop"}],
             [{"text": "Другое" if locale == "ru" else "Other", "callback_data": f"quality:platform:{kind}:other"}],
             [{"text": button(locale, "quality"), "callback_data": "quality:menu"}],
         ]
@@ -2288,7 +2329,22 @@ class TelegramRegistrationService:
     def _retry_safe_message(message: TelegramOutboundMessage, locale: str) -> TelegramOutboundMessage:
         """Never persist subscription URLs, QR bytes or mutable edit targets."""
 
-        if message.subscription_delivery is None and message.photo_png is None and message.delete_message_id is None:
+        has_copy_button = False
+        has_subscription_url = "/api/v1/sub/" in message.text or "/api/v1/guest-sub/" in message.text
+        markup = message.reply_markup
+        if isinstance(markup, dict) and isinstance(markup.get("inline_keyboard"), list):
+            has_copy_button = any(
+                isinstance(item, dict) and isinstance(item.get("copy_text"), dict)
+                for row in markup["inline_keyboard"] if isinstance(row, list)
+                for item in row
+            )
+        if (
+            message.subscription_delivery is None
+            and message.photo_png is None
+            and message.delete_message_id is None
+            and not has_copy_button
+            and not has_subscription_url
+        ):
             if message.edit_message_id is not None:
                 return replace(message, edit_message_id=None)
             return message
