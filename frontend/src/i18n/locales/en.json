@@ -1021,7 +1021,7 @@
       "webPageUrl": "Web Page URL",
       "announce": "Announcement",
       "updateIntervalHours": "Update Interval (hours)",
-      "updateIntervalHoursHint": "Empty = use SUB_PROFILE_UPDATE_INTERVAL_HOURS from environment (default: 24)"
+      "updateIntervalHoursHint": "Empty = use SUB_PROFILE_UPDATE_INTERVAL_HOURS from environment (default: 1)"
     },
     "clients": {
       "firstMatchWins": "Rule order determines priority: the first match wins.",

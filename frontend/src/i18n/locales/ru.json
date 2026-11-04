@@ -1021,7 +1021,7 @@
       "webPageUrl": "URL веб-страницы",
       "announce": "Объявление",
       "updateIntervalHours": "Интервал обновления (часы)",
-      "updateIntervalHoursHint": "Пусто = использовать SUB_PROFILE_UPDATE_INTERVAL_HOURS из окружения (по умолчанию 24)"
+      "updateIntervalHoursHint": "Пусто = использовать SUB_PROFILE_UPDATE_INTERVAL_HOURS из окружения (по умолчанию 1)"
     },
     "clients": {
       "firstMatchWins": "Порядок правил определяет приоритет: первое совпадение выигрывает.",
