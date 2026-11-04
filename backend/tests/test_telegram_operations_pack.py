@@ -406,7 +406,7 @@ def test_manual_english_locale_survives_callback_without_language_code_and_local
     assert "Background notifications" in preferences[0].text
     assert not _contains_cyrillic(preferences[0].text)
     assert not _contains_cyrillic(preferences[0].reply_markup)
-    assert "removed from the chat" in qr_deleted[1].text
+    assert "deleted." in qr_deleted[1].text
     assert not _contains_cyrillic(qr_deleted[1].reply_markup)
 
 
@@ -443,6 +443,6 @@ def test_manual_locale_is_not_overwritten_by_the_telegram_client_language_on_cal
     })
 
     assert registry.get_locale(42) == "ru"
-    assert "Язык интерфейса: русский." in changed[0].text
-    assert "Статус доступа" in menu[0].text
+    assert "Язык: русский." in changed[0].text
+    assert "Доступ работает" in menu[0].text
     assert "Access" not in menu[0].text
