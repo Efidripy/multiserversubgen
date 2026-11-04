@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import yaml
 
 
-SUPPORTED_NETWORKS = {"tcp", "ws", "http", "h2", "grpc", "xhttp", "httpupgrade"}
+SUPPORTED_NETWORKS = {"tcp", "ws", "httpupgrade", "http", "h2", "grpc", "xhttp"}
 
 
 def _links(value):
@@ -133,8 +133,9 @@ def to_mihomo(links, *, mode="mihomo", enable_routing=False, rules=None, customi
             continue
         if mode == "clash" and item.get("security") == "reality":
             continue
-        if mode == "clash" and item["network"] == "xhttp":
+        if mode == "clash" and item["network"] in {"xhttp", "httpupgrade"}:
             continue
+        network = item["network"]
         proxy = {
             "name": item["name"],
             "type": item["kind"],
@@ -143,17 +144,17 @@ def to_mihomo(links, *, mode="mihomo", enable_routing=False, rules=None, customi
             "udp": True,
         }
         if item["kind"] == "vless":
-            proxy.update(uuid=item["id"], network=item["network"], tls=True)
+            proxy.update(uuid=item["id"], network=network, tls=True)
         elif item["kind"] == "vmess":
             proxy.update(
                 uuid=item["id"],
                 alterId=0,
                 cipher="auto",
-                network=item["network"],
+                network=network,
                 tls=item.get("_tls", False),
             )
         else:
-            proxy.update(password=item["password"], network=item["network"])
+            proxy.update(password=item["password"], network=network)
         if item.get("sni"):
             proxy["servername" if item["kind"] != "trojan" else "sni"] = item["sni"]
         if item.get("flow"):
@@ -165,12 +166,51 @@ def to_mihomo(links, *, mode="mihomo", enable_routing=False, rules=None, customi
                 "public-key": item["pbk"],
                 "short-id": item.get("sid", ""),
             }
-        if item["network"] == "tcp":
+        if network == "ws":
+            opts = {}
+            if item.get("path"):
+                opts["path"] = item["path"]
+            if item.get("host"):
+                opts["headers"] = {"Host": item["host"]}
+            proxy["ws-opts"] = opts
+        elif network == "httpupgrade":
+            proxy["network"] = "ws"
+            opts = {"v2ray-http-upgrade": True}
+            if item.get("path"):
+                opts["path"] = item["path"]
+            if item.get("host"):
+                opts["headers"] = {"Host": item["host"]}
+            proxy["ws-opts"] = opts
+        elif network == "grpc":
+            opts = {}
+            if item.get("service_name"):
+                opts["grpc-service-name"] = item["service_name"]
+            proxy["grpc-opts"] = opts
+        elif network == "h2":
+            opts = {"host": [item["host"]] if item.get("host") else [], "path": item.get("path", "")}
+            proxy["h2-opts"] = opts
+        elif network == "http":
+            opts = {"path": [item["path"]] if item.get("path") else [], "headers": {"Host": [item["host"]]} if item.get("host") else {}}
+            proxy["http-opts"] = opts
+        elif network == "xhttp":
+            proxy["xhttp-opts"] = {
+                "path": item.get("path", ""),
+                "host": item.get("host", ""),
+                "mode": item.get("mode", ""),
+            }
+        if network == "tcp":
             proxy.pop("network", None)
         proxies.append(proxy)
     if not proxies:
         return ""
     names = [proxy["name"] for proxy in proxies]
+    info_names = [
+        proxy["name"]
+        for proxy in proxies
+        if proxy.get("server") == "127.0.0.1" and proxy.get("port") == 1
+    ]
+    if info_names and len(info_names) < len(names):
+        names = [name for name in names if name not in info_names] + info_names
     if enable_routing:
         clean_rules = [
             rule.strip()
@@ -229,14 +269,46 @@ def to_singbox(links):
         if tls is not None:
             proxy["tls"] = tls
         network = item["network"]
-        if network in {"ws", "grpc", "http", "h2"}:
-            proxy["transport"] = {"type": "http" if network == "h2" else network}
+        if network in {"ws", "grpc", "http", "h2", "httpupgrade"}:
+            transport_type = "http" if network == "h2" else network
+            transport = {"type": transport_type}
+            if network == "httpupgrade":
+                if item.get("path"):
+                    transport["path"] = item["path"]
+                if item.get("host"):
+                    transport["host"] = item["host"]
+            elif network == "ws":
+                if item.get("path"):
+                    transport["path"] = item["path"]
+                if item.get("host"):
+                    transport["headers"] = {"Host": item["host"]}
+            elif network == "grpc":
+                if item.get("service_name"):
+                    transport["service_name"] = item["service_name"]
+            elif network == "http":
+                if item.get("host"):
+                    transport["host"] = [item["host"]]
+                if item.get("path"):
+                    transport["path"] = item["path"]
+            elif network == "h2":
+                if item.get("host"):
+                    transport["host"] = [item["host"]]
+                if item.get("path"):
+                    transport["path"] = item["path"]
+            proxy["transport"] = transport
         elif network != "tcp":
             continue
         proxies.append(proxy)
     if not proxies:
         return ""
     names = [proxy["tag"] for proxy in proxies]
+    info_names = [
+        proxy["tag"]
+        for proxy in proxies
+        if proxy.get("server") == "127.0.0.1" and proxy.get("server_port") == 1
+    ]
+    if info_names and len(info_names) < len(names):
+        names = [name for name in names if name not in info_names] + info_names
     body = {
         "log": {"disabled": True},
         "dns": {
