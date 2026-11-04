@@ -209,7 +209,7 @@ def build_subscriptions_router(
             "total": info.get("total", 0) if info else 0,
             "expire": info.get("expire", 0) if info else 0,
             "now": time.time(),
-            "lang": request.headers.get("accept-language", ""),
+            "lang": request.query_params.get("lang") or request.headers.get("accept-language", ""),
         }
 
     def _apply_rule_headers(headers, rule):

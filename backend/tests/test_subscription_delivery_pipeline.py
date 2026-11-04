@@ -360,6 +360,8 @@ def test_html_delivery_restrictions_custom_redirect_and_cache_exclusion(env):
     assert page_res.status_code == 200
     assert page_res.headers["content-type"].startswith("text/html")
     assert "content-security-policy" in page_res.headers
+    assert 'lang="en"' in sub(env, "curl/1", html="1", lang="en").text
+    assert 'lang="ru"' in sub(env, "curl/1", html="1", lang="ru").text
 
     # 2. When page section disabled, ?html=1 does not give page
     settings["page"]["enabled"] = False
