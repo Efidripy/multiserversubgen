@@ -1,0 +1,289 @@
+import base64
+import json
+import os
+import sys
+from types import SimpleNamespace
+
+import pytest
+import yaml
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from modules.auth.service import AuthService
+from routers import subscriptions as subscriptions_module
+from routers.subscriptions import build_subscriptions_router
+from services.db_bootstrap import init_db
+from services.subscription_client_settings import default_settings
+from services.subscription_tokens import ensure_tokens
+
+EMAIL = "user@example.com"
+VLESS = (
+    "vless://11111111-1111-1111-1111-111111111111@node.example:443?encryption=none&security=reality"
+    "&sni=sni.example&fp=chrome&pbk=PUBKEY&sid=ab&flow=xtls-rprx-vision&type=tcp#Node"
+)
+TROJAN = "trojan://secret@node.example:443?security=tls&sni=sni.example&type=tcp#Node"
+SETTINGS_URL = "/api/v1/subscription-client-settings"
+
+
+class NodeService:
+    def list_nodes(self):
+        return [{"id": 1, "name": "Node", "ip": "node.example"}]
+
+
+@pytest.fixture
+def env(tmp_path, monkeypatch):
+    db_path = str(tmp_path / "admin.db")
+    monkeypatch.setenv("SUB_MANAGER_DB", db_path)
+    init_db(db_path)
+    with subscriptions_module.connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO subscription_groups (name, identifier, email_patterns, node_filters) VALUES (?, ?, ?, ?)",
+            ("Group", "group", json.dumps([EMAIL]), json.dumps([])),
+        )
+        conn.commit()
+
+    invalidators = []
+    state = SimpleNamespace(links=[VLESS, TROJAN], user="admin")
+    app = FastAPI()
+    app.include_router(
+        build_subscriptions_router(
+            check_auth=lambda _request: state.user,
+            db_path=db_path,
+            node_service=NodeService(),
+            check_subscription_rate_limit=lambda _request, _key: (True, 0),
+            get_emails=lambda _nodes: [EMAIL],
+            get_links_filtered=lambda _nodes, _email, _protocol=None: list(state.links),
+            get_subscription_userinfo=lambda _nodes, _emails: {"upload": 1, "download": 2, "total": 3, "expire": 4},
+            subscription_signing_secret="test-secret",
+            invalidate_subscription_cache=lambda: [item() for item in invalidators],
+            register_subscription_response_cache_invalidator=invalidators.append,
+            logger=None,
+        )
+    )
+    state.client = TestClient(app)
+    state.email_token = ensure_tokens(db_path, "email", [EMAIL])[EMAIL]
+    state.group_token = ensure_tokens(db_path, "group", ["group"])["group"]
+    return state
+
+
+def configure(env, client_id, **fields):
+    settings = default_settings()
+    client = next(item for item in settings["clients"] if item["id"] == client_id)
+    client.update({"enabled": True, **fields})
+    response = env.client.put(SETTINGS_URL, json=settings)
+    assert response.status_code == 200, response.text
+    return settings
+
+
+def sub(env, user_agent="", **params):
+    return env.client.get(f"/api/v1/sub/{env.email_token}", headers={"User-Agent": user_agent}, params=params)
+
+
+def test_untouched_panel_keeps_the_base64_response_for_every_client(env):
+    expected = base64.b64encode(f"{VLESS}\n{TROJAN}".encode())
+    for user_agent in ("Happ/1", "clash-verge/2", "SFA/1", "curl/8"):
+        response = sub(env, user_agent)
+        assert response.status_code == 200
+        assert response.content == expected
+        assert response.headers["content-type"].startswith("text/plain")
+        assert response.headers["subscription-userinfo"] == "upload=1; download=2; total=3; expire=4"
+        assert response.headers["profile-update-interval"] == "1"
+        assert "profile-title" not in response.headers
+
+
+def test_enabled_mihomo_rule_serves_valid_yaml_with_reality(env):
+    configure(env, "mihomo")
+    response = sub(env, "clash-verge/2.0")
+    assert response.headers["content-type"].startswith("text/yaml")
+    body = yaml.safe_load(response.text)
+    vless = next(proxy for proxy in body["proxies"] if proxy["type"] == "vless")
+    assert vless["reality-opts"] == {"public-key": "PUBKEY", "short-id": "ab"}
+    assert vless["flow"] == "xtls-rprx-vision"
+    assert "secret" in response.text
+    assert sub(env, "curl/8").headers["content-type"].startswith("text/plain")
+
+
+def test_singbox_rule_serves_valid_json(env):
+    configure(env, "singbox")
+    response = sub(env, "SFA/1.0")
+    assert response.headers["content-type"].startswith("application/json")
+    outbounds = json.loads(response.text)["outbounds"]
+    assert {"vless", "trojan", "selector", "direct"} <= {item["type"] for item in outbounds}
+
+
+def test_disabled_rule_does_not_match_and_format_query_wins(env):
+    assert sub(env, "clash-verge/2.0").headers["content-type"].startswith("text/plain")
+    assert sub(env, "curl/8", format="singbox").headers["content-type"].startswith("application/json")
+    assert sub(env, "curl/8", format="unknown").headers["content-type"].startswith("text/plain")
+
+
+def test_order_decides_which_rule_wins(env):
+    settings = default_settings()
+    settings["clients"] = [
+        {"id": "custom-a", "name": "A", "enabled": True, "user_agent_regex": "same", "format": "singbox"},
+        {"id": "custom-b", "name": "B", "enabled": True, "user_agent_regex": "same", "format": "mihomo"},
+    ]
+    assert env.client.put(SETTINGS_URL, json=settings).status_code == 200
+    assert sub(env, "same/1").headers["content-type"].startswith("application/json")
+    settings["clients"].reverse()
+    assert env.client.put(SETTINGS_URL, json=settings).status_code == 200
+    assert sub(env, "same/1").headers["content-type"].startswith("text/yaml")
+
+
+def test_legacy_clash_falls_back_to_base64_when_nothing_is_convertible(env):
+    configure(env, "clash")
+    env.links = [VLESS]
+    response = sub(env, "clash/1.0")
+    assert response.headers["content-type"].startswith("text/plain")
+    assert base64.b64decode(response.content).decode() == VLESS
+
+
+def test_grouped_cache_never_crosses_clients_and_remembers_fallback(env):
+    configure(env, "mihomo")
+    url = f"/api/v1/sub-grouped/{env.group_token}"
+    plain = env.client.get(url, headers={"User-Agent": "curl/8"})
+    yaml_response = env.client.get(url, headers={"User-Agent": "mihomo/1"})
+    assert plain.headers["x-subscription-cache"] == "miss"
+    assert yaml_response.headers["x-subscription-cache"] == "miss"
+    assert plain.headers["content-type"].startswith("text/plain")
+    assert yaml_response.headers["content-type"].startswith("text/yaml")
+
+    plain_hit = env.client.get(url, headers={"User-Agent": "curl/8"})
+    yaml_hit = env.client.get(url, headers={"User-Agent": "mihomo/1"})
+    assert plain_hit.headers["x-subscription-cache"] == "hit"
+    assert yaml_hit.headers["x-subscription-cache"] == "hit"
+    assert plain_hit.content == plain.content
+    assert yaml_hit.content == yaml_response.content
+    assert yaml_hit.headers["content-type"].startswith("text/yaml")
+
+    configure(env, "clash")
+    env.links = [VLESS]
+    first = env.client.get(url, headers={"User-Agent": "clash/1"})
+    hit = env.client.get(url, headers={"User-Agent": "clash/1"})
+    assert first.headers["content-type"].startswith("text/plain")
+    assert hit.headers["x-subscription-cache"] == "hit"
+    assert hit.headers["content-type"].startswith("text/plain")
+
+
+def test_saving_settings_invalidates_the_grouped_cache(env):
+    url = f"/api/v1/sub-grouped/{env.group_token}"
+    env.client.get(url, headers={"User-Agent": "mihomo/1"})
+    assert env.client.get(url, headers={"User-Agent": "mihomo/1"}).headers["x-subscription-cache"] == "hit"
+    configure(env, "mihomo")
+    fresh = env.client.get(url, headers={"User-Agent": "mihomo/1"})
+    assert fresh.headers["x-subscription-cache"] == "miss"
+    assert fresh.headers["content-type"].startswith("text/yaml")
+
+
+def test_guest_link_gets_the_client_format(env, monkeypatch):
+    guest = SimpleNamespace(email_display=EMAIL)
+    monkeypatch.setattr(subscriptions_module.TelegramRegistry, "resolve_guest_subscription_link", lambda _self, _token: guest)
+    monkeypatch.setattr(subscriptions_module.TelegramRegistry, "safe_subscription_node_ids", lambda _self, _email: None)
+    configure(env, "mihomo")
+    response = env.client.get(f"/api/v1/guest-sub/{'t' * 32}", headers={"User-Agent": "mihomo/1"})
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/yaml")
+
+
+def test_happ_headers_reach_only_happ_and_non_ascii_is_wrapped(env):
+    configure(env, "happ", settings={"sub_info_text": "Привет", "hide_settings": True}, headers=[{"key": "X-Custom", "value": "безопасно\r\nInjected: 1"}])
+    happ = sub(env, "Happ/3.2")
+    assert happ.status_code == 200
+    assert happ.headers["sub-info-text"] == "base64:" + base64.b64encode("Привет".encode()).decode()
+    assert happ.headers["sub-info-color"] == "blue"
+    assert happ.headers["hide-settings"] == "1"
+    assert base64.b64decode(happ.headers["x-custom"].removeprefix("base64:")).decode() == "безопасноInjected: 1"
+    assert "injected" not in happ.headers
+    other = sub(env, "v2rayNG/1.8")
+    assert "sub-info-text" not in other.headers
+    assert "x-custom" not in other.headers
+
+
+def test_incy_routing_goes_to_the_body_not_a_header(env):
+    configure(env, "incy", settings={"routing_enable": True, "routing": "incy://routing/abc"})
+    response = sub(env, "INCY/1")
+    assert base64.b64decode(response.content).decode().endswith("\nincy://routing/abc")
+    assert "routing" not in response.headers
+    assert "routing-enable" not in response.headers
+
+
+def test_panel_profile_overrides_environment_and_zero_interval_drops_header(env):
+    settings = default_settings()
+    settings["profile"].update({"title": "Панель", "update_interval_hours": 0, "support_url": "https://support.example"})
+    assert env.client.put(SETTINGS_URL, json=settings).status_code == 200
+    response = sub(env, "curl/8")
+    assert response.headers["profile-title"] == "base64:" + base64.b64encode("Панель".encode()).decode()
+    assert response.headers["support-url"] == "https://support.example"
+    assert "profile-update-interval" not in response.headers
+
+
+def test_custom_header_case_does_not_duplicate_profile_header(env):
+    settings = default_settings()
+    settings["profile"]["title"] = "Panel"
+    client = next(item for item in settings["clients"] if item["id"] == "happ")
+    client.update({"enabled": True, "headers": [{"key": "profile-title", "value": "Own"}]})
+    assert env.client.put(SETTINGS_URL, json=settings).status_code == 200
+    response = sub(env, "Happ/1")
+    assert response.headers.get_list("profile-title") == ["Own"]
+
+
+@pytest.mark.parametrize(
+    "mutate, detail",
+    [
+        (lambda c: c.update(user_agent_regex="("), "user_agent_regex"),
+        (lambda c: c.update(user_agent_regex="a" * 301), "user_agent_regex"),
+        (lambda c: c.update(headers=[{"key": "Set-Cookie", "value": "x"}]), "headers"),
+        (lambda c: c.update(headers=[{"key": "Bad Name", "value": "x"}]), "headers"),
+        (lambda c: c.update(headers=[{"key": "X-Big", "value": "x" * 4000}]), "headers"),
+        (lambda c: c.update(settings={"new_url": "javascript:alert(1)"}), "new_url"),
+        (lambda c: c.update(settings={"routing": "https://example.com"}), "routing"),
+        (lambda c: c.update(format="xml"), "format"),
+    ],
+)
+def test_invalid_settings_are_rejected_with_the_field_name(env, mutate, detail):
+    settings = default_settings()
+    mutate(settings["clients"][0])
+    response = env.client.put(SETTINGS_URL, json=settings)
+    assert response.status_code == 422
+    assert response.json()["detail"] == detail
+
+
+def test_invalid_mihomo_rules_are_rejected(env):
+    settings = default_settings()
+    client = next(item for item in settings["clients"] if item["id"] == "mihomo")
+    client["settings"] = {"enable_routing": True, "rules": "DOMAIN,example.com,NOWHERE"}
+    assert env.client.put(SETTINGS_URL, json=settings).status_code == 422
+
+
+def test_builtin_rule_cannot_be_deleted_or_change_kind(env):
+    settings = default_settings()
+    settings["clients"] = [{"id": "happ", "name": "Renamed", "kind": "generic", "builtin": False}]
+    saved = env.client.put(SETTINGS_URL, json=settings).json()["settings"]["clients"]
+    happ = next(item for item in saved if item["id"] == "happ")
+    assert (happ["kind"], happ["builtin"], happ["name"]) == ("happ", True, "Renamed")
+    assert {"happ", "incy", "mihomo", "stash", "singbox", "clash"} <= {item["id"] for item in saved}
+
+
+def test_test_endpoint_reports_match_and_profile(env):
+    settings = default_settings()
+    settings["profile"]["title"] = "Panel"
+    next(item for item in settings["clients"] if item["id"] == "mihomo")["enabled"] = True
+    env.client.put(SETTINGS_URL, json=settings)
+    matched = env.client.post(f"{SETTINGS_URL}/test", json={"user_agent": "mihomo/1"}).json()
+    assert (matched["matched"], matched["client_id"], matched["format"]) == (True, "mihomo", "mihomo")
+    unmatched = env.client.post(f"{SETTINGS_URL}/test", json={"user_agent": "curl/8"}).json()
+    assert (unmatched["matched"], unmatched["client_id"], unmatched["format"]) == (False, None, "base64")
+    assert unmatched["headers"]["Profile-Title"] == "Panel"
+    assert env.client.post(f"{SETTINGS_URL}/test", json={"user_agent": "x" * 513}).status_code == 422
+
+
+def test_settings_api_requires_auth_and_admin_role(env):
+    env.user = None
+    assert env.client.get(SETTINGS_URL).status_code == 401
+    assert env.client.put(SETTINGS_URL, json=default_settings()).status_code == 401
+    assert env.client.post(f"{SETTINGS_URL}/test", json={"user_agent": "x"}).status_code == 401
+    for method in ("GET", "PUT", "POST"):
+        assert AuthService.required_role_for_request(method, SETTINGS_URL) == "admin"
+    assert AuthService.required_role_for_request("POST", f"{SETTINGS_URL}/test") == "admin"

@@ -6,6 +6,10 @@ import json
 import re
 import sqlite3
 import time
+import os
+import secrets
+import copy
+import random
 from threading import Lock
 from urllib.parse import quote
 from services.db_bootstrap import connect
@@ -16,13 +20,30 @@ from services.subscription_tokens import (
     regenerate_token,
     resolve_token,
 )
+from services.subscription_client_settings import (
+    build_headers as build_client_headers,
+    load_settings as load_client_settings,
+    match_client,
+    save_settings as save_client_settings,
+    schema as client_settings_schema,
+    section_schema as client_settings_section_schema,
+)
+from services.subscription_formats import convert_links, FORMATS
+from services.subscription_content import apply_content, render_tokens
+from services.subscription_response_rules import parse_rules, evaluate
+from services.subscription_remote_rules import RemoteRulesStore, resolve_client_settings, merge_remote_clash
+from services.subscription_devices import DeviceDecision, check_device, list_devices, delete_device
+from services.subscription_page import wants_page, render_page, page_headers
+from services.subscription_happ_crypto import encrypt_happ_link
+from services.subscription_links import get_link_inbound_remark
+from services.telegram_qr import build_subscription_qr_png
 from services.telegram_access import TelegramSubscriptionAccessGate
 from services.telegram_registry import TelegramRegistry
 from shared.sql import update_by_id_query
 from typing import Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 
 
 # Apps refetch hourly; a fetch is served from local snapshots, never from nodes.
@@ -47,7 +68,7 @@ def build_subscriptions_router(
     subscription_profile_title=None,
 ):
     router = APIRouter()
-    subscription_response_cache: Dict[str, tuple[float, str, Optional[Dict[str, int]]]] = {}
+    subscription_response_cache: Dict[str, tuple[float, str, Optional[Dict[str, int]], str]] = {}
     subscription_response_cache_lock = Lock()
     subscription_response_cache_ttl = 300
     subscription_response_cache_max_size = 1024
@@ -61,11 +82,11 @@ def build_subscriptions_router(
             profile_interval = DEFAULT_PROFILE_UPDATE_INTERVAL_HOURS
     except (TypeError, ValueError):
         profile_interval = DEFAULT_PROFILE_UPDATE_INTERVAL_HOURS
-    profile_update_interval_header = str(profile_interval) if profile_interval else None
     profile_title = (subscription_profile_title or "").replace("\r", "").replace("\n", "")
     if profile_title and not profile_title.isascii():
         profile_title = "base64:" + base64.b64encode(profile_title.encode("utf-8")).decode("ascii")
     profile_title_header = profile_title or None
+    remote_store = RemoteRulesStore(db_path)
 
     def _no_cache_headers():
         return {
@@ -87,16 +108,220 @@ def build_subscriptions_router(
                 f"{key}={userinfo[key]}" for key in ("upload", "download", "total", "expire")
             )
 
-        if profile_update_interval_header is not None:
-            headers["Profile-Update-Interval"] = profile_update_interval_header
-        if profile_title_header is not None:
-            headers["Profile-Title"] = profile_title_header
+        headers["Vary"] = "User-Agent"
         return headers
+
+    def _client_output_details(links, request: Request, *, userinfo=None, nodes=None, emails=None, cache_headers=None, settings=None, selected=None, rule=None, ctx=None):
+        settings = settings or load_client_settings(db_path)
+        selected = selected if selected is not None else match_client(settings, request.headers.get("user-agent"))
+        requested_format = request.query_params.get("format")
+        output_format = requested_format if requested_format in FORMATS else ""
+        if not output_format and rule and rule.get("response") in FORMATS:
+            output_format = rule["response"]
+        if not output_format:
+            output_format = selected.get("format") if selected else "base64"
+        selected_settings = resolve_client_settings(remote_store, selected) if selected else {}
+        selected_settings = copy.deepcopy(selected_settings)
+        if ctx:
+            profile = copy.deepcopy(settings.get("profile", {}))
+            for key in ("title", "support_url", "announce"):
+                profile[key] = render_tokens(profile.get(key, ""), ctx)
+            settings = copy.deepcopy(settings)
+            settings["profile"] = profile
+        extra_text = None
+        if selected and selected.get("kind") == "incy" and output_format == "base64":
+            if selected_settings.get("routing_enable") and selected_settings.get("routing"):
+                extra_text = str(selected_settings["routing"])
+        customize = None
+        remote_document = selected_settings.get("remote_document")
+        if remote_document:
+            def customize(body):
+                try:
+                    merge_remote_clash(body, remote_document, allow_client_config=bool(settings.get("remote_rules", {}).get("use_remote_dns")))
+                except ValueError:
+                    return
+        body = convert_links(
+            links,
+            output_format,
+            enable_routing=bool(selected_settings.get("enable_routing")),
+            rules=selected_settings.get("rules", []),
+            extra_text=extra_text,
+            customize=customize,
+            encode=bool(settings.get("content", {}).get("encode", True)),
+            xray_json=settings.get("xray_json", {}),
+        )
+        if output_format != "base64" and not body:
+            output_format = "base64"
+            body = convert_links(
+                links,
+                output_format,
+                extra_text=extra_text,
+                encode=bool(settings.get("content", {}).get("encode", True)),
+                xray_json=settings.get("xray_json", {}),
+            )
+        headers = cache_headers or _no_cache_headers()
+        headers = _with_subscription_headers(headers, nodes, emails, userinfo)
+        _, client_headers = _client_headers(settings, request.headers.get("user-agent"))
+        for name, value in client_headers.items():
+            for existing in list(headers):
+                if existing.lower() == name.lower():
+                    del headers[existing]
+            headers[name] = value
+        return body, output_format, headers
+
+    def _client_headers(settings, user_agent):
+        settings = copy.deepcopy(settings)
+        client = match_client(settings, user_agent)
+        if client:
+            client["settings"] = resolve_client_settings(remote_store, client)
+        return build_client_headers(settings, user_agent, fallback_title=profile_title_header or "", fallback_interval=profile_interval)
+
+    def _response_from_details(details):
+        body, output_format, headers = details
+        content_type = {
+            "base64": "text/plain",
+            "mihomo": "text/yaml",
+            "clash": "text/yaml",
+            "singbox": "application/json",
+            "xray_json": "application/json",
+        }[output_format]
+        return Response(content=body, media_type=content_type, headers=headers)
+
+    def _client_output(links, request: Request, *, userinfo=None, nodes=None, emails=None, cache_headers=None):
+        return _response_from_details(
+            _client_output_details(
+                links,
+                request,
+                userinfo=userinfo,
+                nodes=nodes,
+                emails=emails,
+                cache_headers=cache_headers,
+            )
+        )
+
+    def _userinfo_ctx(identifier, emails, userinfo, request):
+        info = userinfo or {}
+        url_identifier = request.path_params.get("email") or request.path_params.get("token") or request.path_params.get("identifier") or identifier
+        return {
+            "email": identifier,
+            "sub_id": hashlib.sha256(str(url_identifier).encode()).hexdigest()[:12],
+            "upload": info.get("upload", 0) if info else 0,
+            "download": info.get("download", 0) if info else 0,
+            "total": info.get("total", 0) if info else 0,
+            "expire": info.get("expire", 0) if info else 0,
+            "now": time.time(),
+            "lang": request.headers.get("accept-language", ""),
+        }
+
+    def _apply_rule_headers(headers, rule):
+        for item in (rule or {}).get("headers", []):
+            key = str(item.get("key", "")).replace("\r", "").replace("\n", "").strip()
+            if not key or not key.isascii() or not re.fullmatch(r"[!#$%&'*+\-.0-9A-Za-z^_`|~]+", key):
+                continue
+            value = str(item.get("value", "")).replace("\r", "").replace("\n", "").strip()
+            if not value.isascii():
+                value = "base64:" + base64.b64encode(value.encode()).decode()
+            if not value:
+                continue
+            for old in list(headers):
+                if old.lower() == key.lower():
+                    del headers[old]
+            headers[key] = value
+
+    def _filter_nodes_for_rule(nodes, rule):
+        excluded = {str(value).casefold() for value in (rule or {}).get("exclude_nodes", [])}
+        if not excluded:
+            return list(nodes)
+        return [node for node in nodes if str(node.get("name", "")).casefold() not in excluded]
+
+    def _prepare_delivery(links, request, *, identifier, emails, nodes, userinfo=None, grouped=False, rule=None, state=None, as_details=False):
+        if state is None:
+            settings = load_client_settings(db_path)
+            rules = parse_rules(settings.get("response_rules", {}).get("rules", ""))
+            rule = rule if rule is not None else evaluate(rules, request.headers)
+            if rule and rule.get("response") in {"block", "not_found", "unavailable"}:
+                code = {"block": 403, "not_found": 404, "unavailable": 451}[rule["response"]]
+                headers = _no_cache_headers()
+                _apply_rule_headers(headers, rule)
+                return Response(status_code=code, headers=headers)
+            info = userinfo
+            if info is None and get_subscription_userinfo and nodes is not None and emails is not None:
+                info = get_subscription_userinfo(nodes, emails)
+            ctx = _userinfo_ctx(identifier, emails, info, request)
+            if rule and rule.get("skip_device_limit"):
+                decision = DeviceDecision(True, {})
+            else:
+                subject = f"group:{identifier}" if grouped else f"email:{identifier}"
+                decision = check_device(db_path, subject, request.headers, settings.get("devices", {}), now=ctx["now"])
+            state = (settings, rule, ctx, decision, info)
+        else:
+            settings, rule, ctx, decision, info = state
+        if rule and rule.get("response") in {"block", "not_found", "unavailable"}:
+            code = {"block": 403, "not_found": 404, "unavailable": 451}[rule["response"]]
+            headers = _no_cache_headers()
+            _apply_rule_headers(headers, rule)
+            return Response(status_code=code, headers=headers)
+        if not decision.allowed:
+            headers = _no_cache_headers()
+            headers.update(decision.headers)
+            _apply_rule_headers(headers, rule)
+            return Response(status_code=404, headers=headers)
+        if links is None:
+            return state
+        links = list(links or [])
+        content_section = copy.deepcopy(settings.get("content", {}))
+        if rule and rule.get("remark_template"):
+            content_section["remark_template"] = rule["remark_template"]
+        links = apply_content(links, content_section, ctx, now=ctx["now"], shuffle=random.shuffle, inbound_remark=get_link_inbound_remark)
+        page = wants_page(request.headers, request.query_params, settings.get("page", {}), client_matched=bool(match_client(settings, request.headers.get("user-agent"))))
+        if rule and rule.get("response") == "page" and settings.get("page", {}).get("enabled"):
+            page = True
+        if page:
+            page_section = settings.get("page", {})
+            if page_section.get("profile_mode") == "custom" and page_section.get("profile_url"):
+                return RedirectResponse(page_section["profile_url"], status_code=302, headers=page_headers(secrets.token_urlsafe(16)))
+            # nginx terminates TLS and uvicorn runs with --no-proxy-headers; base_url already carries root_path.
+            forwarded_proto = request.headers.get("x-forwarded-proto")
+            scheme = forwarded_proto if forwarded_proto in {"http", "https"} else request.url.scheme
+            sub_url = str(request.base_url.replace(scheme=scheme)).rstrip("/") + request.url.path
+            qr = ""
+            try:
+                qr = "data:image/png;base64," + base64.b64encode(build_subscription_qr_png(sub_url)).decode()
+            except Exception:
+                pass
+            happ = ""
+            if settings.get("encryption", {}).get("happ_links"):
+                try:
+                    happ = encrypt_happ_link(sub_url)
+                except ValueError:
+                    happ = ""
+            nonce = secrets.token_urlsafe(16)
+            page_profile = copy.deepcopy(settings.get("profile", {}))
+            for key in ("title", "support_url", "announce"):
+                page_profile[key] = render_tokens(page_profile.get(key, ""), ctx)
+            html = render_page(ctx, page_section, profile=page_profile, sub_url=sub_url, links=links, qr_data_url=qr, happ_link=happ, themes_root=os.getenv("SUBSCRIPTION_THEMES_DIR"), nonce=nonce)
+            headers = page_headers(nonce)
+            headers.update(decision.headers)
+            _apply_rule_headers(headers, rule)
+            return Response(content=html, media_type="text/html", headers=headers)
+        details = _client_output_details(links, request, userinfo=info, nodes=nodes, emails=emails, settings=settings, selected=match_client(settings, request.headers.get("user-agent")), rule=rule, ctx=ctx)
+        headers = details[2]
+        headers.update(decision.headers)
+        _apply_rule_headers(headers, rule)
+        if grouped:
+            headers["X-Subscription-Cache"] = headers.get("X-Subscription-Cache", "miss")
+        if as_details:
+            return details
+        return _response_from_details((details[0], details[1], headers))
 
     def _subscription_cache_key(request: Request, identifier: str) -> str:
         query_items = sorted((key, value) for key, value in request.query_params.multi_items())
+        settings = load_client_settings(db_path)
+        selected = match_client(settings, request.headers.get("user-agent"))
+        requested_format = request.query_params.get("format")
+        final_format = requested_format if requested_format in FORMATS else (selected.get("format") if selected else "base64")
         raw_key = json.dumps(
-            {"identifier": identifier, "query": query_items},
+            {"identifier": identifier, "query": query_items, "client_id": selected.get("id") if selected else None, "format": final_format},
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
@@ -109,18 +334,18 @@ def build_subscriptions_router(
             cached = subscription_response_cache.get(cache_key)
             if not cached:
                 return None
-            ts, content, userinfo = cached
+            ts, content, userinfo, final_format = cached
             if now - ts > subscription_response_cache_ttl:
                 subscription_response_cache.pop(cache_key, None)
                 return None
-            return content, userinfo
+            return content, userinfo, final_format
 
-    def _set_subscription_response_cache(cache_key: str, content: str, userinfo=None) -> None:
+    def _set_subscription_response_cache(cache_key: str, content: str, userinfo=None, final_format: str = "base64") -> None:
         with subscription_response_cache_lock:
             if len(subscription_response_cache) >= subscription_response_cache_max_size and cache_key not in subscription_response_cache:
                 oldest_key = min(subscription_response_cache, key=lambda item: subscription_response_cache[item][0])
                 subscription_response_cache.pop(oldest_key, None)
-            subscription_response_cache[cache_key] = (time.time(), content, userinfo)
+            subscription_response_cache[cache_key] = (time.time(), content, userinfo, final_format)
 
     def _clear_subscription_response_cache() -> None:
         with subscription_response_cache_lock:
@@ -320,6 +545,18 @@ def build_subscriptions_router(
                 node_names = [n.strip() for n in nodes.split(",")]
                 all_nodes = [n for n in all_nodes if n["name"] in node_names]
 
+            state = _prepare_delivery(
+                None,
+                request,
+                identifier=resolved_email,
+                emails=[resolved_email],
+                nodes=all_nodes,
+            )
+            if isinstance(state, Response):
+                return state
+            settings, rule, _ctx, _decision, _info = state
+            all_nodes = _filter_nodes_for_rule(all_nodes, rule)
+
             links = get_links_filtered(all_nodes, resolved_email, protocol)
             if links:
                 now = datetime.datetime.now().strftime("%d.%m %H:%M")
@@ -330,10 +567,7 @@ def build_subscriptions_router(
                         (resolved_email, now, now),
                     )
                     db.commit()
-                return PlainTextResponse(
-                    content=base64.b64encode("\n".join(links).encode()).decode(),
-                    headers=_with_subscription_headers(no_cache_headers, all_nodes, [resolved_email]),
-                )
+                return _prepare_delivery(links, request, identifier=resolved_email, emails=[resolved_email], nodes=all_nodes, state=state)
 
         return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
 
@@ -360,6 +594,17 @@ def build_subscriptions_router(
             safe_node_ids = telegram_registry.safe_subscription_node_ids(guest_link.email_display)
             if safe_node_ids is not None:
                 all_nodes = [node for node in all_nodes if int(node.get("id", 0)) in safe_node_ids]
+            state = _prepare_delivery(
+                None,
+                request,
+                identifier=guest_link.email_display,
+                emails=[guest_link.email_display],
+                nodes=all_nodes,
+            )
+            if isinstance(state, Response):
+                return state
+            _settings, rule, _ctx, _decision, _info = state
+            all_nodes = _filter_nodes_for_rule(all_nodes, rule)
             links = get_links_filtered(all_nodes, guest_link.email_display, protocol)
             if links:
                 now = datetime.datetime.now().strftime("%d.%m %H:%M")
@@ -370,10 +615,7 @@ def build_subscriptions_router(
                         (guest_link.email_display, now, now),
                     )
                     db.commit()
-                return PlainTextResponse(
-                    content=base64.b64encode("\n".join(links).encode()).decode(),
-                    headers=_with_subscription_headers(_no_cache_headers(), all_nodes, [guest_link.email_display]),
-                )
+                return _prepare_delivery(links, request, identifier=guest_link.email_display, emails=[guest_link.email_display], nodes=all_nodes, state=state)
         return PlainTextResponse(content="Not found", status_code=404, headers=_no_cache_headers())
 
     @router.get("/api/v1/sub-grouped/{identifier}")
@@ -402,14 +644,53 @@ def build_subscriptions_router(
                 headers={"Retry-After": str(retry_after)},
             )
 
-        cache_key = _subscription_cache_key(request, resolved_identifier)
-        cached_response = _get_subscription_response_cache(cache_key)
+        settings_for_group = load_client_settings(db_path)
+        rule_for_group = evaluate(parse_rules(settings_for_group.get("response_rules", {}).get("rules", "")), request.headers)
+        pre_state = _prepare_delivery(
+            None,
+            request,
+            identifier=resolved_identifier,
+            emails=[],
+            nodes=[],
+            userinfo={},
+            grouped=True,
+            rule=rule_for_group,
+        )
+        if isinstance(pre_state, Response):
+            return pre_state
+        cache_key = _subscription_cache_key(request, resolved_identifier) + ":" + str((rule_for_group or {}).get("rule", "")) + ":" + str((rule_for_group or {}).get("response", "default"))
+        page_requested = wants_page(request.headers, request.query_params, settings_for_group.get("page", {}), client_matched=bool(match_client(settings_for_group, request.headers.get("user-agent")))) or (rule_for_group and rule_for_group.get("response") == "page" and settings_for_group.get("page", {}).get("enabled"))
+        content_settings = settings_for_group.get("content", {})
+        status_dependent_content = any(
+            content_settings.get(key)
+            for key in ("expired_template", "depleted_template", "remark_template", "info_node")
+        ) or bool((rule_for_group or {}).get("remark_template"))
+        cached_response = None if page_requested or status_dependent_content else _get_subscription_response_cache(cache_key)
         if cached_response is not None:
-            cached_content, cached_userinfo = cached_response
-            return PlainTextResponse(
-                content=cached_content,
-                headers=_with_subscription_headers(_subscription_headers("hit"), userinfo=cached_userinfo),
-            )
+            cached_content, cached_userinfo, cached_format = cached_response
+            settings = settings_for_group
+            ctx = _userinfo_ctx(resolved_identifier, [], cached_userinfo, request)
+            decision = pre_state[3]
+            if not decision.allowed:
+                headers = _subscription_headers("hit")
+                headers.update(decision.headers)
+                _apply_rule_headers(headers, rule_for_group)
+                return Response(status_code=404, headers=headers)
+            headers = _with_subscription_headers(_subscription_headers("hit"), userinfo=cached_userinfo)
+            profile_copy = copy.deepcopy(settings.get("profile", {}))
+            for key in ("title", "support_url", "announce"):
+                profile_copy[key] = render_tokens(profile_copy.get(key, ""), ctx)
+            settings_for_headers = copy.deepcopy(settings)
+            settings_for_headers["profile"] = profile_copy
+            _, selected_headers = _client_headers(settings_for_headers, request.headers.get("user-agent"))
+            for name, value in selected_headers.items():
+                for existing in list(headers):
+                    if existing.lower() == name.lower():
+                        del headers[existing]
+                headers[name] = value
+            headers.update(decision.headers)
+            _apply_rule_headers(headers, rule_for_group)
+            return _response_from_details((cached_content, cached_format, headers))
 
         no_cache_headers = _subscription_headers("miss")
         with connect(db_path) as conn:
@@ -450,13 +731,17 @@ def build_subscriptions_router(
                     headers=no_cache_headers,
                 )
 
+            info = get_subscription_userinfo(all_nodes, matching_emails) if get_subscription_userinfo else None
+            state = (pre_state[0], pre_state[1], _userinfo_ctx(resolved_identifier, matching_emails, info, request), pre_state[3], info)
+            _settings, _rule, _ctx, _decision, _info = state
+            all_nodes = _filter_nodes_for_rule(all_nodes, _rule)
+
             all_links = []
             for matched_email in matching_emails:
                 all_links.extend(get_links_filtered(all_nodes, matched_email, protocol))
 
             if all_links:
                 now = datetime.datetime.now().strftime("%d.%m %H:%M")
-                content = base64.b64encode("\n".join(all_links).encode()).decode()
                 with connect(db_path) as db:
                     for matched_email in matching_emails:
                         db.execute(
@@ -465,14 +750,89 @@ def build_subscriptions_router(
                             (matched_email, now, now),
                         )
                     db.commit()
-                userinfo = get_subscription_userinfo(all_nodes, matching_emails) if get_subscription_userinfo else None
-                _set_subscription_response_cache(cache_key, content, userinfo)
-                return PlainTextResponse(
-                    content=content,
-                    headers=_with_subscription_headers(no_cache_headers, userinfo=userinfo),
+                if page_requested:
+                    return _prepare_delivery(
+                        all_links,
+                        request,
+                        identifier=resolved_identifier,
+                        emails=matching_emails,
+                        nodes=all_nodes,
+                        grouped=True,
+                        state=state,
+                    )
+                details = _prepare_delivery(
+                    all_links,
+                    request,
+                    identifier=resolved_identifier,
+                    emails=matching_emails,
+                    nodes=all_nodes,
+                    grouped=True,
+                    state=state,
+                    as_details=True,
                 )
+                content, final_format, _headers = details
+                if not status_dependent_content:
+                    _set_subscription_response_cache(cache_key, content, state[4], final_format)
+                return _response_from_details(details)
 
         return PlainTextResponse(content="Not found", status_code=404, headers=no_cache_headers)
+
+    def _settings_payload(value):
+        return {
+            "settings": value,
+            "schema": client_settings_schema(),
+            "section_schema": client_settings_section_schema(),
+            "formats": list(FORMATS),
+        }
+
+    @router.get("/api/v1/subscription-client-settings")
+    def get_subscription_client_settings(request: Request):
+        if not check_auth(request):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        return _settings_payload(load_client_settings(db_path))
+
+    @router.put("/api/v1/subscription-client-settings")
+    def put_subscription_client_settings(request: Request, body: dict):
+        if not check_auth(request):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        try:
+            value = save_client_settings(db_path, body)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        invalidate_subscription_cache()
+        _clear_subscription_response_cache()
+        return _settings_payload(value)
+
+    @router.post("/api/v1/subscription-client-settings/test")
+    def test_subscription_client_settings(request: Request, body: dict):
+        if not check_auth(request):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        ua = body.get("user_agent", "") if isinstance(body, dict) else ""
+        if not isinstance(ua, str) or len(ua) > 512:
+            raise HTTPException(status_code=422, detail="user_agent")
+        settings = load_client_settings(db_path)
+        client = match_client(settings, ua)
+        _, headers = _client_headers(settings, ua)
+        result = {"matched": bool(client), "client_id": client.get("id") if client else None, "name": client.get("name") if client else None, "format": client.get("format") if client else "base64", "headers": headers}
+        if isinstance(body, dict) and isinstance(body.get("headers"), dict):
+            rule = evaluate(parse_rules(settings.get("response_rules", {}).get("rules", "")), body["headers"])
+            result["rule"] = rule.get("rule") if rule else None
+            result["response"] = rule.get("response") if rule else "default"
+        return result
+
+    @router.get("/api/v1/subscription-client-settings/devices")
+    def get_subscription_devices(request: Request):
+        if not check_auth(request):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        return {"devices": list_devices(db_path)}
+
+    @router.delete("/api/v1/subscription-client-settings/devices/{device_id}")
+    def remove_subscription_device(request: Request, device_id: int):
+        if not check_auth(request):
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        if not delete_device(db_path, device_id):
+            raise HTTPException(status_code=404, detail="Device not found")
+        return {"status": "success"}
 
     @router.get("/api/v1/subscription-groups")
     def list_subscription_groups(request: Request):

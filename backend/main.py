@@ -55,6 +55,8 @@ from services.telegram_provisioning import (
 )
 from services.telegram_transport import TelegramApiTransport
 from services.telegram_bot_config import TelegramBotTokenProvider
+from services.subscription_remote_rules import RemoteRulesRefresher
+from services.subscription_client_settings import load_settings as load_subscription_settings
 from shared.http_config import get_requests_verify_value
 
 import sys
@@ -160,6 +162,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 DB_PATH = os.path.join(PROJECT_DIR, "admin.db")
+subscription_remote_rules_refresher = RemoteRulesRefresher(
+    DB_PATH, lambda: load_subscription_settings(DB_PATH)
+)
 
 
 class _PamFallback:
@@ -751,6 +756,7 @@ app.router.lifespan_context = build_lifespan(
         worker_tracker
     ),
     asyncio_module=asyncio,
+    subscription_remote_rules_refresher=subscription_remote_rules_refresher,
     telegram_existing_discovery_worker_loop=(
         (
             lambda worker_tracker: _telegram_existing_discovery_worker_loop(

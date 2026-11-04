@@ -19,6 +19,7 @@ def build_lifespan(
     telegram_retention_worker_loop=None,
     telegram_reminder_worker_loop=None,
     telegram_polling_worker_loop=None,
+    subscription_remote_rules_refresher=None,
 ):
     """Build the one production lifespan with explicit blocking-work ownership."""
 
@@ -35,6 +36,8 @@ def build_lifespan(
             )
 
         await snapshot_collector.start(worker_tracker)
+        if subscription_remote_rules_refresher is not None:
+            subscription_remote_rules_refresher.start()
         worker_loops = [
             audit_worker_loop,
             adguard_collector_loop,
@@ -63,6 +66,8 @@ def build_lifespan(
             if tasks:
                 await asyncio_module.gather(*tasks, return_exceptions=True)
             await snapshot_collector.stop()
+            if subscription_remote_rules_refresher is not None:
+                subscription_remote_rules_refresher.stop()
             if audit_flush is not None:
                 await worker_tracker.run_shutdown("shutdown.audit_flush", audit_flush)
             await worker_tracker.drain()
