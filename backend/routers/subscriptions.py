@@ -161,18 +161,20 @@ def build_subscriptions_router(
             )
         headers = cache_headers or _no_cache_headers()
         headers = _with_subscription_headers(headers, nodes, emails, userinfo)
-        _, client_headers = build_client_headers(
-            settings,
-            request.headers.get("user-agent"),
-            fallback_title=profile_title_header or "",
-            fallback_interval=profile_interval,
-        )
+        _, client_headers = _client_headers(settings, request.headers.get("user-agent"))
         for name, value in client_headers.items():
             for existing in list(headers):
                 if existing.lower() == name.lower():
                     del headers[existing]
             headers[name] = value
         return body, output_format, headers
+
+    def _client_headers(settings, user_agent):
+        settings = copy.deepcopy(settings)
+        client = match_client(settings, user_agent)
+        if client:
+            client["settings"] = resolve_client_settings(remote_store, client)
+        return build_client_headers(settings, user_agent, fallback_title=profile_title_header or "", fallback_interval=profile_interval)
 
     def _response_from_details(details):
         body, output_format, headers = details
@@ -675,12 +677,7 @@ def build_subscriptions_router(
                 profile_copy[key] = render_tokens(profile_copy.get(key, ""), ctx)
             settings_for_headers = copy.deepcopy(settings)
             settings_for_headers["profile"] = profile_copy
-            _, selected_headers = build_client_headers(
-                settings_for_headers,
-                request.headers.get("user-agent"),
-                fallback_title=profile_title_header or "",
-                fallback_interval=profile_interval,
-            )
+            _, selected_headers = _client_headers(settings_for_headers, request.headers.get("user-agent"))
             for name, value in selected_headers.items():
                 for existing in list(headers):
                     if existing.lower() == name.lower():
@@ -809,12 +806,7 @@ def build_subscriptions_router(
             raise HTTPException(status_code=422, detail="user_agent")
         settings = load_client_settings(db_path)
         client = match_client(settings, ua)
-        _, headers = build_client_headers(
-            settings,
-            ua,
-            fallback_title=profile_title_header or "",
-            fallback_interval=profile_interval,
-        )
+        _, headers = _client_headers(settings, ua)
         result = {"matched": bool(client), "client_id": client.get("id") if client else None, "name": client.get("name") if client else None, "format": client.get("format") if client else "base64", "headers": headers}
         if isinstance(body, dict) and isinstance(body.get("headers"), dict):
             rule = evaluate(parse_rules(settings.get("response_rules", {}).get("rules", "")), body["headers"])
