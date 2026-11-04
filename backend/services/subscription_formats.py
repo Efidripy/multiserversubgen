@@ -7,7 +7,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import yaml
 
 
-SUPPORTED_NETWORKS = {"tcp", "ws", "http", "h2", "grpc", "xhttp"}
+SUPPORTED_NETWORKS = {"tcp", "ws", "http", "h2", "grpc", "xhttp", "httpupgrade"}
 
 
 def _links(value):
