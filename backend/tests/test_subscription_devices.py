@@ -1,0 +1,154 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+
+from services.subscription_devices import (
+    check_device,
+    delete_device,
+    device_status,
+    list_devices,
+)
+
+
+def _section(**overrides):
+    value = {
+        "enabled": True,
+        "max_devices": 2,
+        "block_unsupported": False,
+        "limit_announce": "",
+    }
+    value.update(overrides)
+    return value
+
+
+def test_disabled_section_is_noop(tmp_path):
+    path = str(tmp_path / "devices.sqlite")
+    result = check_device(path, "alice", {"X-HWID": "a"}, {"enabled": False}, now=1)
+    assert result.allowed is True
+    assert result.headers == {}
+    assert not (tmp_path / "devices.sqlite").exists()
+
+
+def test_unsupported_hwid_and_blocking(tmp_path):
+    path = str(tmp_path / "devices.sqlite")
+    allowed = check_device(path, "alice", {}, _section(), now=1)
+    assert allowed.allowed is True
+    assert allowed.headers["X-Hwid-Active"] == "true"
+    assert allowed.headers["X-Hwid-Not-Supported"] == "true"
+    assert allowed.headers["X-Hwid-Limit"] == "true"
+    assert list_devices(path) == []
+
+    blocked = check_device(path, "alice", {"X-HWID": "x" * 257}, _section(block_unsupported=True), now=2)
+    assert blocked.allowed is False
+    assert blocked.headers["X-Hwid-Not-Supported"] == "true"
+    assert list_devices(path) == []
+
+
+def test_registration_metadata_hash_and_known_device_update(tmp_path):
+    path = str(tmp_path / "devices.sqlite")
+    first = check_device(
+        path,
+        "alice",
+        {
+            "X-HWID": "phone-1",
+            "X-Device-OS": "Android\n" + "x" * 80,
+            "X-Ver-OS": "14",
+            "X-Device-Model": "Pixel",
+        },
+        _section(max_devices=1),
+        now=10,
+    )
+    assert first.allowed is True
+    assert first.headers["X-Hwid-Limit"] == "true"
+    second = check_device(
+        path,
+        "alice",
+        {"x-hwid": "phone-1", "X-Device-OS": "iOS", "X-Ver-OS": "17", "X-Device-Model": "iPhone"},
+        _section(max_devices=1),
+        now=20,
+    )
+    assert second.allowed is True
+    devices = list_devices(path, subject="alice")
+    assert len(devices) == 1
+    assert devices[0]["first_seen"] == 10
+    assert devices[0]["last_seen"] == 20
+    assert devices[0]["device_os"] == "iOS"
+    assert "hwid" not in {key.lower() for key in devices[0]}
+    with sqlite3.connect(path) as conn:
+        row = conn.execute("SELECT hwid_hash FROM subscription_devices").fetchone()
+    assert row[0] == hashlib.sha256(b"alice\0phone-1").hexdigest()
+
+
+def test_hwid_boundary_and_metadata_sanitising(tmp_path):
+    path = str(tmp_path / "devices.sqlite")
+    hwid = "h" * 256
+    result = check_device(
+        path,
+        "alice",
+        {"X-HWID": hwid, "X-Device-OS": "a\x00b\n" + "x" * 100},
+        _section(max_devices=1),
+        now=1,
+    )
+    assert result.allowed is True
+    row = list_devices(path)[0]
+    assert row["device_os"] == "ab" + "x" * 62
+
+    oversized = check_device(path, "bob", {"X-HWID": "h" * 257}, _section(max_devices=1), now=2)
+    assert oversized.headers["X-Hwid-Not-Supported"] == "true"
+    assert list_devices(path, subject="bob") == []
+
+
+def test_limit_refusal_announce_and_unlimited_mode(tmp_path):
+    path = str(tmp_path / "devices.sqlite")
+    check_device(path, "alice", {"X-HWID": "a"}, _section(max_devices=1), now=1)
+    refused = check_device(
+        path,
+        "alice",
+        {"X-HWID": "b"},
+        _section(max_devices=1, limit_announce="Лимит"),
+        now=2,
+    )
+    assert refused.allowed is False
+    assert refused.headers["X-Hwid-Max-Devices-Reached"] == "true"
+    assert refused.headers["X-Hwid-Limit"] == "true"
+    assert refused.headers["Announce"] == "base64:" + base64.b64encode("Лимит".encode()).decode()
+
+    unlimited_path = str(tmp_path / "unlimited.sqlite")
+    for value in ("a", "b", "c"):
+        assert check_device(unlimited_path, "alice", {"X-HWID": value}, _section(max_devices=0), now=1).allowed
+    assert device_status(unlimited_path, "alice", _section(max_devices=0)) == {
+        "count": 3,
+        "max_devices": 0,
+        "reached": False,
+    }
+
+    lowered = check_device(path, "alice", {"X-HWID": "a"}, _section(max_devices=0), now=3)
+    assert lowered.allowed is True
+
+
+def test_status_listing_limit_and_delete(tmp_path):
+    path = str(tmp_path / "devices.sqlite")
+    for index in range(3):
+        check_device(path, "alice", {"X-HWID": str(index)}, _section(max_devices=0), now=index)
+    check_device(path, "bob", {"X-HWID": "b"}, _section(max_devices=0), now=4)
+    assert len(list_devices(path, subject="alice", limit=2)) == 2
+    assert device_status(path, "alice", _section(max_devices=2))["reached"] is True
+    assert delete_device(path, 2) is True
+    assert delete_device(path, 2) is False
+    assert len(list_devices(path, subject="alice")) == 2
+
+
+def test_concurrent_new_devices_never_exceed_limit(tmp_path):
+    path = str(tmp_path / "devices.sqlite")
+    section = _section(max_devices=2)
+
+    def register(index):
+        return check_device(path, "alice", {"X-HWID": f"device-{index}"}, section, now=index)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        decisions = list(pool.map(register, range(8)))
+    assert sum(decision.allowed for decision in decisions) == 2
+    assert device_status(path, "alice", section)["count"] == 2
