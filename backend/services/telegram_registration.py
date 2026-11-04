@@ -1534,18 +1534,36 @@ class TelegramRegistrationService:
             )
         if not decision.can_receive_subscription:
             return None, TelegramOutboundMessage(chat_id, tr(locale, "not_ready"), self._approved_menu(locale))
-        if not self._list_nodes or not self._get_links_filtered:
-            return None, TelegramOutboundMessage(chat_id, tr(locale, "link_preparing"), self._approved_menu(locale))
         try:
-            nodes = self._list_nodes()
             safe_node_ids = self._registry.safe_subscription_node_ids(access.email_display)
-            if safe_node_ids is not None:
-                nodes = [node for node in nodes if int(node.get("id", 0)) in safe_node_ids]
-            links = self._get_links_filtered(nodes, access.email_display, None)
         except Exception:
-            links = []
-        if not links:
             return None, TelegramOutboundMessage(chat_id, tr(locale, "link_preparing"), self._approved_menu(locale))
+        use_local_link = False
+        if safe_node_ids is not None:
+            try:
+                has_enabled_target = bool(safe_node_ids) and bool(
+                    safe_node_ids.intersection(self._registry.enabled_node_ids())
+                )
+            except Exception:
+                has_enabled_target = False
+            if not has_enabled_target:
+                return None, TelegramOutboundMessage(chat_id, tr(locale, "link_preparing"), self._approved_menu(locale))
+            use_local_link = True
+        else:
+            try:
+                use_local_link = self._registry.has_confirmed_enabled_subscription_binding(access.email_display)
+            except Exception:
+                use_local_link = False
+        if not use_local_link:
+            if not self._list_nodes or not self._get_links_filtered:
+                return None, TelegramOutboundMessage(chat_id, tr(locale, "link_preparing"), self._approved_menu(locale))
+            try:
+                nodes = self._list_nodes()
+                links = self._get_links_filtered(nodes, access.email_display, None)
+            except Exception:
+                links = []
+            if not links:
+                return None, TelegramOutboundMessage(chat_id, tr(locale, "link_preparing"), self._approved_menu(locale))
         try:
             if subscription_device_id is None:
                 token_kind, token_identifier = "email", access.email_display

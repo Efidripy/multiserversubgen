@@ -8,17 +8,39 @@ endpoint and raises instead of falling back to a direct Telegram connection.
 from __future__ import annotations
 
 import socket
+import io
+import threading
 from dataclasses import dataclass
 from ipaddress import ip_address
 from typing import Any
 from urllib.parse import urlparse
-from urllib.request import OpenerDirector, ProxyHandler, Request, build_opener
+from urllib.error import HTTPError, URLError
+from urllib.request import Request
+
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from services.telegram_registry import TelegramRegistry
 
 
 class TelegramTransportError(RuntimeError):
     """The selected Bot API transport cannot safely deliver a request."""
+
+
+class _TelegramResponse:
+    def __init__(self, response: requests.Response):
+        self._response = response
+        self.status = response.status_code
+
+    def read(self) -> bytes:
+        return self._response.content
+
+    def __enter__(self) -> "_TelegramResponse":
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self._response.close()
 
 
 def validate_local_proxy_url(value: str) -> str:
@@ -78,6 +100,8 @@ class TelegramApiTransport:
     def __init__(self, *, db_path: str, local_proxy_url: str):
         self._registry = TelegramRegistry(db_path)
         self._local_proxy_url = validate_local_proxy_url(local_proxy_url)
+        self._sessions: dict[tuple[str, str | None], requests.Session] = {}
+        self._sessions_lock = threading.Lock()
 
     def status(self) -> TelegramTransportStatus:
         preference = self._registry.get_transport_preference()
@@ -97,13 +121,39 @@ class TelegramApiTransport:
     def open(self, request: Request, *, timeout: float) -> Any:
         preference = self._registry.get_transport_preference()
         if preference.mode == "direct":
-            return self._opener(proxy_url=None).open(request, timeout=timeout)
-        proxy_url = self._effective_proxy_url(preference)
-        if preference.mode != "local_proxy" or not proxy_url or not self._is_local_proxy_reachable(proxy_url):
+            proxy_url = None
+        else:
+            proxy_url = self._effective_proxy_url(preference)
+        if preference.mode != "direct" and (
+            preference.mode != "local_proxy" or not proxy_url or not self._is_local_proxy_reachable(proxy_url)
+        ):
             raise TelegramTransportError("Telegram local proxy mode is unavailable")
-        # There is intentionally no direct retry: a selected local proxy must
-        # fail closed if the sidecar is stopped or its EU route is unavailable.
-        return self._opener(proxy_url=proxy_url).open(request, timeout=timeout)
+        session = self._session(mode=preference.mode, proxy_url=proxy_url)
+        kwargs: dict[str, Any] = {
+            "data": request.data,
+            "headers": dict(request.header_items()),
+            "timeout": timeout,
+            "allow_redirects": False,
+        }
+        method = request.get_method()
+        request_error_name: str | None = None
+        try:
+            response = session.request(method, request.full_url, **kwargs)
+        except requests.exceptions.RequestException as exc:
+            request_error_name = type(exc).__name__
+        if request_error_name is not None:
+            raise URLError(request_error_name) from None
+        if response.status_code < 200 or response.status_code >= 300:
+            body = response.content
+            response.close()
+            raise HTTPError(
+                request.full_url,
+                response.status_code,
+                response.reason or "HTTP error",
+                response.headers,
+                io.BytesIO(body),
+            )
+        return _TelegramResponse(response)
 
     def require_local_proxy_ready(self, proxy_url: str | None = None) -> None:
         candidate = proxy_url or self._effective_proxy_url(self._registry.get_transport_preference())
@@ -115,12 +165,22 @@ class TelegramApiTransport:
             return build_local_proxy_url(preference.proxy_host, preference.proxy_port)
         return self._local_proxy_url
 
-    @staticmethod
-    def _opener(*, proxy_url: str | None) -> OpenerDirector:
-        # Explicit empty handlers suppress ambient HTTP(S)_PROXY variables for
-        # the direct mode. No other application HTTP clients are affected.
-        proxies = {"https": proxy_url} if proxy_url else {}
-        return build_opener(ProxyHandler(proxies))
+    def _session(self, *, mode: str, proxy_url: str | None) -> requests.Session:
+        key = (mode, proxy_url)
+        with self._sessions_lock:
+            session = self._sessions.get(key)
+            if session is not None:
+                return session
+            session = requests.Session()
+            session.trust_env = False
+            retry = Retry(total=0, connect=0, read=0, redirect=0, status=0, allowed_methods=False)
+            adapter = HTTPAdapter(pool_connections=4, pool_maxsize=4, max_retries=retry)
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+            if proxy_url:
+                session.proxies = {"http": proxy_url, "https": proxy_url}
+            self._sessions[key] = session
+            return session
 
     def _is_local_proxy_reachable(self, proxy_url: str) -> bool:
         if not proxy_url:

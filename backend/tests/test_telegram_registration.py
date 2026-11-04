@@ -3008,3 +3008,128 @@ def test_notice_close_does_not_change_interface_window(tmp_path):
     response = service.handle_update(_callback_with_message_id(1, "notice:close", 906))
     assert response[0].delete_message_id == 906
     assert registry.get_interface_window(42) == (777, True)
+
+
+def test_subscription_url_fast_path_uses_local_safe_node_without_panel_calls(tmp_path):
+    db_path = str(tmp_path / "fast-link.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="fast_link")
+    registry.safe_subscription_node_ids = lambda _email: frozenset({1})
+    registry.enabled_node_ids = lambda: frozenset({1})
+    panel_calls = []
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: panel_calls.append("list") or [],
+        get_links_filtered=lambda *_args: panel_calls.append("links") or [],
+    )
+
+    url, unavailable = service._subscription_url(user_id=42, chat_id=42)
+
+    assert url and unavailable is None
+    assert panel_calls == []
+
+
+def test_subscription_url_empty_safe_nodes_returns_link_preparing_without_panel_calls(tmp_path):
+    db_path = str(tmp_path / "empty-safe-link.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="empty_safe")
+    registry.safe_subscription_node_ids = lambda _email: frozenset()
+    registry.enabled_node_ids = lambda: frozenset({1})
+    panel_calls = []
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: panel_calls.append("list") or [],
+        get_links_filtered=lambda *_args: panel_calls.append("links") or [],
+    )
+
+    url, unavailable = service._subscription_url(user_id=42, chat_id=42)
+
+    assert url is None
+    assert unavailable is not None and "готов" in unavailable.text.lower()
+    assert panel_calls == []
+
+
+def test_subscription_url_safe_node_lookup_failure_returns_link_preparing_without_panel_calls(tmp_path):
+    db_path = str(tmp_path / "safe-error-link.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="safe_error")
+
+    def fail_safe_lookup(_email):
+        raise RuntimeError("lookup failed")
+
+    registry.safe_subscription_node_ids = fail_safe_lookup
+    panel_calls = []
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: panel_calls.append("list") or [],
+        get_links_filtered=lambda *_args: panel_calls.append("links") or [],
+    )
+
+    url, unavailable = service._subscription_url(user_id=42, chat_id=42)
+
+    assert url is None
+    assert unavailable is not None and "готов" in unavailable.text.lower()
+    assert panel_calls == []
+
+
+def test_subscription_url_legacy_customer_with_local_binding_skips_panel_calls(tmp_path):
+    db_path = str(tmp_path / "legacy-bound-link.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = _approved_telegram_customer(registry, db_path, username="legacy_bound")
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (1, 'edge-a', 1, 0)")
+        conn.execute(
+            """
+            INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 1, 1, 'client-1', 'sub-1', 'legacy_bound',
+                    'existing_bound', 'confirmed', 1, 1)
+            """,
+            (customer_id,),
+        )
+    registry.safe_subscription_node_ids = lambda _email: None
+    panel_calls = []
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: panel_calls.append("list") or [],
+        get_links_filtered=lambda *_args: panel_calls.append("links") or [],
+    )
+
+    url, unavailable = service._subscription_url(user_id=42, chat_id=42)
+
+    assert url and unavailable is None
+    assert panel_calls == []
+
+
+def test_subscription_url_legacy_customer_without_binding_uses_panels(tmp_path):
+    db_path = str(tmp_path / "legacy-unbound-link.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    _approved_telegram_customer(registry, db_path, username="legacy_unbound")
+    registry.safe_subscription_node_ids = lambda _email: None
+    panel_calls = []
+    service = TelegramRegistrationService(
+        registry,
+        introduction_max_chars=700,
+        public_base_url="https://bot.example.test",
+        list_nodes=lambda: panel_calls.append("list") or [{"id": 1}],
+        get_links_filtered=lambda *_args: panel_calls.append("links") or ["vless://opaque-link"],
+    )
+
+    url, unavailable = service._subscription_url(user_id=42, chat_id=42)
+
+    assert url and unavailable is None
+    assert panel_calls == ["list", "links"]
