@@ -30,7 +30,7 @@ DEFAULT_CLIENTS = [
 
 FIELD_SPECS = {
     "happ": [
-        ("routing_enable", "Routing-Enable", "bool", "routing", None), ("routing", "Routing", "text", "routing", None),
+        ("routing_enable", "Routing-Enable", "bool", "routing", None), ("routing", "Routing", "text", "routing", None), ("routing_url", None, "url", "routing", None),
         ("no_limit", "No-Limit-Enabled", "bool", "routing", None), ("hide_settings", "Hide-Settings", "bool", "routing", None),
         ("color_profile", "Color-Profile", "text", "appearance", None), ("sub_info_text", "Sub-Info-Text", "text", "appearance", None),
         ("sub_info_color", "Sub-Info-Color", "enum", "appearance", ["blue", "green", "red"]), ("sub_info_button_text", "Sub-Info-Button-Text", "text", "appearance", None),
@@ -48,9 +48,9 @@ FIELD_SPECS = {
         ("banner_text", "Banner-Text", "text", "banners", None), ("banner_button_text", "Banner-Button-Text", "text", "banners", None), ("banner_button_url", "Banner-Button-Url", "url", "banners", None), ("banner_bg_color", "Banner-Bg-Color", "text", "banners", None), ("banner_button_color", "Banner-Button-Color", "text", "banners", None),
         ("hide_url", "Hide-Url", "tristate", "privacy", None), ("hide_check", "Hide-Check", "tristate", "privacy", None), ("no_limit_enabled", "No-Limit-Enabled", "tristate", "privacy", None), ("per_app_proxy_enable", "Per-App-Proxy-Enable", "tristate", "privacy", None), ("per_app_proxy_mode", "Per-App-Proxy-Mode", "enum", "privacy", ["bypass", "proxy"]), ("per_app_proxy_list", "Per-App-Proxy-List", "text", "privacy", None),
         ("fragmentation_enable", "Fragmentation-Enable", "tristate", "network", None), ("fragmentation_length", "Fragmentation-Length", "text", "network", None), ("fragmentation_interval", "Fragmentation-Interval", "text", "network", None), ("fragmentation_packets", "Fragmentation-Packets", "text", "network", None), ("noises_enable", "Noises-Enable", "tristate", "network", None), ("noises_type", "Noises-Type", "enum", "network", ["rand", "str", "hex"]), ("noises_packet", "Noises-Packet", "text", "network", None), ("noises_delay", "Noises-Delay", "text", "network", None), ("server_address_resolve_enable", "Server-Address-Resolve-Enable", "tristate", "network", None), ("server_address_resolve_dns_domain", "Server-Address-Resolve-Dns-Domain", "text", "network", None), ("server_address_resolve_dns_ip", "Server-Address-Resolve-Dns-Ip", "text", "network", None),
-        ("routing_enable", None, "bool", "routing", None), ("routing", None, "text", "routing", None),
+        ("routing_enable", None, "bool", "routing", None), ("routing", None, "text", "routing", None), ("routing_url", None, "url", "routing", None),
     ],
-    "mihomo": [("enable_routing", None, "bool", "routing", None), ("rules", None, "lines", "routing", None)],
+    "mihomo": [("enable_routing", None, "bool", "routing", None), ("rules", None, "lines", "routing", None), ("rules_url", None, "url", "routing", None)],
 }
 
 
@@ -63,7 +63,6 @@ SECTION_SPECS = {
         ("info_node", "bool", "body", None, False),
         ("expired_template", "text", "status", None, ""),
         ("depleted_template", "text", "status", None, ""),
-        ("month_end_expiry", "bool", "status", None, False),
         ("host_order", "enum", "body", ["name", "random"], ""),
     ],
     "remote_rules": [

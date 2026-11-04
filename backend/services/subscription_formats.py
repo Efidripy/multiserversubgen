@@ -108,6 +108,10 @@ def _normalised(links):
                 "pbk": query.get("pbk", obj.get("pbk", "")),
                 "sid": query.get("sid", obj.get("sid", "")),
                 "flow": query.get("flow", obj.get("flow", "")),
+                "path": query.get("path", obj.get("path", "")),
+                "host": query.get("host", obj.get("host", "")),
+                "service_name": query.get("serviceName", obj.get("path", "") if kind == "vmess" and network == "grpc" else ""),
+                "mode": query.get("mode", ""),
             }
         )
         result.append(obj)
@@ -122,7 +126,7 @@ def _rule_lines(rules):
     return []
 
 
-def to_mihomo(links, *, mode="mihomo", enable_routing=False, rules=None):
+def to_mihomo(links, *, mode="mihomo", enable_routing=False, rules=None, customize=None):
     proxies = []
     for item in _normalised(links):
         if mode == "clash" and item["kind"] == "vless":
@@ -187,6 +191,8 @@ def to_mihomo(links, *, mode="mihomo", enable_routing=False, rules=None):
         ],
         "rules": clean_rules,
     }
+    if customize:
+        customize(body)
     return yaml.safe_dump(body, allow_unicode=True, sort_keys=False)
 
 
@@ -269,17 +275,19 @@ def to_singbox(links):
     return json.dumps(body, ensure_ascii=False, indent=2)
 
 
-def convert_links(links, format="base64", *, enable_routing=False, rules=None, extra_text=None):
+def convert_links(links, format="base64", *, enable_routing=False, rules=None, extra_text=None, customize=None, encode=True):
     if format in {"mihomo", "clash"}:
         return to_mihomo(
             links,
             mode=format,
             enable_routing=enable_routing,
             rules=rules,
+            customize=customize,
         )
     if format == "singbox":
         return to_singbox(links)
     lines = list(links or [])
     if extra_text:
         lines.append(extra_text)
-    return base64.b64encode("\n".join(lines).encode()).decode()
+    text = "\n".join(lines)
+    return base64.b64encode(text.encode()).decode() if encode else text
