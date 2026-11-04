@@ -278,7 +278,10 @@ def build_subscriptions_router(
             page_section = settings.get("page", {})
             if page_section.get("profile_mode") == "custom" and page_section.get("profile_url"):
                 return RedirectResponse(page_section["profile_url"], status_code=302, headers=page_headers(secrets.token_urlsafe(16)))
-            sub_url = str(request.base_url).rstrip("/") + request.url.path
+            # nginx terminates TLS and uvicorn runs with --no-proxy-headers; base_url already carries root_path.
+            forwarded_proto = request.headers.get("x-forwarded-proto")
+            scheme = forwarded_proto if forwarded_proto in {"http", "https"} else request.url.scheme
+            sub_url = str(request.base_url.replace(scheme=scheme)).rstrip("/") + request.url.path
             qr = ""
             try:
                 qr = "data:image/png;base64," + base64.b64encode(build_subscription_qr_png(sub_url)).decode()

@@ -140,6 +140,20 @@ def test_html_accept_returns_csp_page_and_happ_client_stays_subscription(env):
     assert sub(env, "Happ/1").headers["content-type"].startswith("text/plain")
 
 
+def test_page_subscription_url_is_public_address_behind_nginx(env):
+    settings = default_settings()
+    settings["page"]["enabled"] = True
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+    env.client.app.root_path = "/panel"
+    page = env.client.get(
+        f"/api/v1/sub/{env.email_token}",
+        headers={"Host": "panel.example", "X-Forwarded-Proto": "https", "User-Agent": "curl/1"},
+        params={"html": "1"},
+    )
+    assert page.status_code == 200
+    assert f"https://panel.example/panel/api/v1/sub/{env.email_token}" in page.text
+
+
 def test_excluded_node_is_removed_before_link_generation(env):
     settings = _rules(default_settings(), [{"name": "exclude", "response": "default", "conditions": [], "modifications": {"exclude_nodes": ["Node"]}}])
     assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
