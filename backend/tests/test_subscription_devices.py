@@ -11,6 +11,7 @@ from services.subscription_devices import (
     device_status,
     list_devices,
 )
+from services.subscription_client_settings import default_settings, device_app_name
 from services.db_bootstrap import connect
 
 
@@ -194,3 +195,134 @@ def test_list_devices_ceiling_raised_to_5000(tmp_path):
     assert len(list_devices(path)) == 200
     # Ceiling raised beyond 200 up to 5000
     assert len(list_devices(path, limit=300)) == 250
+
+
+def test_migration_of_old_table_preserves_data(tmp_path):
+    path = str(tmp_path / "devices.sqlite")
+    # Old table schema without user_agent column
+    with connect(path) as conn:
+        conn.execute(
+            """CREATE TABLE subscription_devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL,
+                hwid_hash TEXT NOT NULL,
+                device_os TEXT NOT NULL DEFAULT '',
+                os_version TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                first_seen REAL NOT NULL,
+                last_seen REAL NOT NULL,
+                UNIQUE(subject, hwid_hash)
+            )"""
+        )
+        conn.execute(
+            """INSERT INTO subscription_devices
+               (subject, hwid_hash, device_os, os_version, model, first_seen, last_seen)
+               VALUES ('alice', 'old-hash', 'iOS', '17.0', 'iPhone 15', 10, 20)"""
+        )
+        conn.commit()
+
+    # list_devices on old table without user_agent column must not fail
+    devices = list_devices(path)
+    assert len(devices) == 1
+    assert devices[0]["subject"] == "alice"
+    assert devices[0]["device_os"] == "iOS"
+    assert devices[0]["user_agent"] == ""
+
+    # check_device migrates the table (via _ensure_table)
+    result = check_device(
+        path,
+        "bob",
+        {"X-HWID": "bob-phone", "User-Agent": "Happ/3.6.1"},
+        _section(max_devices=5),
+        now=30,
+    )
+    assert result.allowed is True
+
+    # Existing alice record is preserved and bob record has user_agent
+    migrated = list_devices(path)
+    assert len(migrated) == 2
+    alice = next(d for d in migrated if d["subject"] == "alice")
+    bob = next(d for d in migrated if d["subject"] == "bob")
+    assert alice["device_os"] == "iOS"
+    assert alice["model"] == "iPhone 15"
+    assert alice["user_agent"] == ""
+    assert bob["user_agent"] == "Happ/3.6.1"
+
+
+def test_user_agent_recording_and_non_overwriting_on_empty_update(tmp_path):
+    path = str(tmp_path / "devices.sqlite")
+    # 1. Insert with User-Agent
+    res1 = check_device(
+        path,
+        "alice",
+        {"X-HWID": "hwid-1", "User-Agent": "Happ/3.6.1 (iPhone 15; iOS 18.0)"},
+        _section(max_devices=2),
+        now=10,
+    )
+    assert res1.allowed is True
+    devs = list_devices(path, subject="alice")
+    assert len(devs) == 1
+    assert devs[0]["user_agent"] == "Happ/3.6.1 (iPhone 15; iOS 18.0)"
+
+    # 2. Update with empty User-Agent: saved user_agent must NOT be overwritten
+    res2 = check_device(
+        path,
+        "alice",
+        {"X-HWID": "hwid-1", "User-Agent": ""},
+        _section(max_devices=2),
+        now=20,
+    )
+    assert res2.allowed is True
+    devs2 = list_devices(path, subject="alice")
+    assert devs2[0]["user_agent"] == "Happ/3.6.1 (iPhone 15; iOS 18.0)"
+    assert devs2[0]["last_seen"] == 20
+
+    # 3. Update without User-Agent header at all
+    res3 = check_device(
+        path,
+        "alice",
+        {"X-HWID": "hwid-1"},
+        _section(max_devices=2),
+        now=30,
+    )
+    assert res3.allowed is True
+    devs3 = list_devices(path, subject="alice")
+    assert devs3[0]["user_agent"] == "Happ/3.6.1 (iPhone 15; iOS 18.0)"
+
+    # 4. Update with a new non-empty User-Agent: updates the value
+    res4 = check_device(
+        path,
+        "alice",
+        {"X-HWID": "hwid-1", "User-Agent": "ClashMeta/v1.18.1"},
+        _section(max_devices=2),
+        now=40,
+    )
+    assert res4.allowed is True
+    devs4 = list_devices(path, subject="alice")
+    assert devs4[0]["user_agent"] == "ClashMeta/v1.18.1"
+
+
+def test_device_app_name_resolution():
+    settings = default_settings()
+    # Built-in clients are disabled by default
+    assert all(not c["enabled"] for c in settings["clients"])
+
+    # Disabled built-in clients still match
+    assert device_app_name(settings, "Happ/3.6.1 (iPhone)") == "Happ"
+    assert device_app_name(settings, "ClashMeta/v1.18.1") == "Mihomo/Clash"
+    assert device_app_name(settings, "Flclash/0.14.0") == "Mihomo/Clash"
+    assert device_app_name(settings, "sing-box 1.9.0") == "sing-box"
+    assert device_app_name(settings, "Stash/2.6.2") == "Stash"
+    assert device_app_name(settings, "Incy/1.0.0") == "Incy"
+
+    # Unknown User-Agent -> first token before '/' or ' '
+    assert device_app_name(settings, "curl/8.1.2") == "curl"
+    assert device_app_name(settings, "CustomApp 2.0") == "CustomApp"
+    assert device_app_name(settings, "StandaloneApp") == "StandaloneApp"
+    assert device_app_name(settings, "foo/bar baz") == "foo"
+
+    # Empty User-Agent -> empty string
+    assert device_app_name(settings, "") == ""
+    assert device_app_name(settings, None) == ""
+    assert device_app_name(settings, "   ") == ""
+    assert device_app_name({}, "") == ""

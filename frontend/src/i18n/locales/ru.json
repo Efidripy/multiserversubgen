@@ -998,6 +998,8 @@
       "retry": "Повторить",
       "empty": "Нет зарегистрированных устройств",
       "subject": "Подписка / Email",
+      "app": "Приложение",
+      "used": "Занято",
       "os": "ОС",
       "version": "Версия",
       "model": "Модель",
@@ -1012,7 +1014,13 @@
       "deviceCountLimit": "{{count}} из {{max}}",
       "deviceCount": "{{count}}",
       "expandGroup": "Раскрыть устройства: {{subject}}",
-      "collapseGroup": "Свернуть устройства: {{subject}}"
+      "collapseGroup": "Свернуть устройства: {{subject}}",
+      "sortBy": "Сортировка",
+      "sortDirection": "Направление сортировки",
+      "sortAscending": "По возрастанию",
+      "sortDescending": "По убыванию",
+      "directionAsc": "Возр.",
+      "directionDesc": "Убыв."
     },
     "save": "Сохранить",
     "saving": "Сохранение...",

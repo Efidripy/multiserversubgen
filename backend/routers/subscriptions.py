@@ -21,6 +21,7 @@ from services.subscription_tokens import (
 )
 from services.subscription_client_settings import (
     build_headers as build_client_headers,
+    device_app_name,
     load_settings as load_client_settings,
     match_client,
     save_settings as save_client_settings,
@@ -852,8 +853,16 @@ def build_subscriptions_router(
         if max_devices < 0:
             max_devices = 0
         # shortcut: 5000, перейти на пагинацию при росте базы устройств
+        raw_devices = list_devices(db_path, limit=5000)
+        devices = [
+            {
+                **dev,
+                "app": device_app_name(settings, dev.get("user_agent", "")),
+            }
+            for dev in raw_devices
+        ]
         return {
-            "devices": list_devices(db_path, limit=5000),
+            "devices": devices,
             "max_devices": max_devices,
         }
 

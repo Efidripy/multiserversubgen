@@ -998,6 +998,8 @@
       "retry": "Retry",
       "empty": "No registered devices",
       "subject": "Subscription / Email",
+      "app": "Application",
+      "used": "Used",
       "os": "OS",
       "version": "Version",
       "model": "Model",
@@ -1012,7 +1014,13 @@
       "deviceCountLimit": "{{count}} of {{max}}",
       "deviceCount": "{{count}}",
       "expandGroup": "Expand devices: {{subject}}",
-      "collapseGroup": "Collapse devices: {{subject}}"
+      "collapseGroup": "Collapse devices: {{subject}}",
+      "sortBy": "Sort by",
+      "sortDirection": "Sort direction",
+      "sortAscending": "Ascending",
+      "sortDescending": "Descending",
+      "directionAsc": "Asc",
+      "directionDesc": "Desc"
     },
     "save": "Save",
     "saving": "Saving...",
