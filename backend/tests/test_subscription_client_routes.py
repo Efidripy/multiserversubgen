@@ -132,12 +132,11 @@ def test_order_decides_which_rule_wins(env):
     assert sub(env, "same/1").headers["content-type"].startswith("text/yaml")
 
 
-def test_legacy_clash_falls_back_to_base64_when_nothing_is_convertible(env):
-    configure(env, "clash")
-    env.links = [VLESS]
-    response = sub(env, "clash/1.0")
-    assert response.headers["content-type"].startswith("text/plain")
-    assert base64.b64decode(response.content).decode() == VLESS
+def test_format_clash_excludes_vless(env):
+    configure(env, "mihomo")
+    response = sub(env, "curl/1.0", format="clash")
+    assert response.headers["content-type"].startswith("text/yaml")
+    assert "vless" not in response.text
 
 
 def test_grouped_cache_never_crosses_clients_and_remembers_fallback(env):
@@ -158,13 +157,13 @@ def test_grouped_cache_never_crosses_clients_and_remembers_fallback(env):
     assert yaml_hit.content == yaml_response.content
     assert yaml_hit.headers["content-type"].startswith("text/yaml")
 
-    configure(env, "clash")
+    configure(env, "mihomo")
     env.links = [VLESS]
     first = env.client.get(url, headers={"User-Agent": "clash/1"})
     hit = env.client.get(url, headers={"User-Agent": "clash/1"})
-    assert first.headers["content-type"].startswith("text/plain")
+    assert first.headers["content-type"].startswith("text/yaml")
     assert hit.headers["x-subscription-cache"] == "hit"
-    assert hit.headers["content-type"].startswith("text/plain")
+    assert hit.headers["content-type"].startswith("text/yaml")
 
 
 def test_saving_settings_invalidates_the_grouped_cache(env):
@@ -304,7 +303,7 @@ def test_builtin_rule_cannot_be_deleted_or_change_kind(env):
     saved = env.client.put(SETTINGS_URL, json=settings).json()["settings"]["clients"]
     happ = next(item for item in saved if item["id"] == "happ")
     assert (happ["kind"], happ["builtin"], happ["name"]) == ("happ", True, "Renamed")
-    assert {"happ", "incy", "mihomo", "stash", "singbox", "clash"} <= {item["id"] for item in saved}
+    assert {"happ", "incy", "mihomo", "stash", "singbox"} <= {item["id"] for item in saved}
 
 
 def test_test_endpoint_reports_match_and_profile(env):
@@ -318,6 +317,145 @@ def test_test_endpoint_reports_match_and_profile(env):
     assert (unmatched["matched"], unmatched["client_id"], unmatched["format"]) == (False, None, "base64")
     assert unmatched["headers"]["Profile-Title"] == "Panel"
     assert env.client.post(f"{SETTINGS_URL}/test", json={"user_agent": "x" * 513}).status_code == 422
+
+
+def test_legacy_clash_settings_migrate_to_mihomo(env):
+    settings = default_settings()
+    settings["clients"] = [
+        {
+            "id": "clash",
+            "name": "Clash",
+            "kind": "mihomo",
+            "builtin": True,
+            "enabled": True,
+            "format": "clash",
+            "settings": {"enable_routing": True, "rules": "DOMAIN,a,DIRECT"},
+            "headers": [{"key": "X-Legacy", "value": "1"}],
+        },
+        {
+            "id": "mihomo",
+            "name": "Mihomo",
+            "kind": "mihomo",
+            "builtin": True,
+            "enabled": False,
+            "user_agent_regex": r"^(?:flclash|rabbit|flowvy|murge|mihomo|prizrak-box|koala-clash|clash(?:-verge|-nyanpasu|x meta|[-.]?meta))",
+            "settings": {},
+            "headers": [],
+        },
+    ]
+    saved = env.client.put(SETTINGS_URL, json=settings).json()["settings"]["clients"]
+    assert "clash" not in {item["id"] for item in saved}
+    mihomo = next(item for item in saved if item["id"] == "mihomo")
+    assert mihomo["enabled"] is True
+    assert mihomo["settings"]["rules"] == "DOMAIN,a,DIRECT"
+    assert mihomo["headers"] == [{"key": "X-Legacy", "value": "1"}]
+    assert mihomo["name"] == "Mihomo/Clash"
+
+
+def test_clash_user_agents_match_mihomo(env):
+    settings = default_settings()
+    next(item for item in settings["clients"] if item["id"] == "mihomo")["enabled"] = True
+    env.client.put(SETTINGS_URL, json=settings)
+    for user_agent in ("clash/1", "clash.meta/1"):
+        matched = env.client.post(f"{SETTINGS_URL}/test", json={"user_agent": user_agent}).json()
+        assert (matched["matched"], matched["client_id"]) == (True, "mihomo")
+
+
+MIHOMO_TEMPLATE = """# kept comment
+x-anchors:
+  dns_ru: &dns_ru
+    - 77.88.8.8
+  rp: &rp
+    type: http
+    behavior: domain
+    proxy: VPN
+mixed-port: 7890
+tun:
+  enable: true
+dns:
+  default-nameserver: *dns_ru
+  fallback: *dns_ru
+proxy-providers:
+  sub:
+    type: http
+    url: https://${DOMAIN}/${SUB_PATH}/${SUB_ID}?provider=1
+    interval: 3600
+proxies:
+  - name: DNS-OUT
+    type: dns
+proxy-groups:
+  - name: VPN
+    type: select
+    use:
+      - sub
+rule-providers:
+  ads: {<<: *rp, url: https://example.com/ads.mrs}
+rules:
+  - DST-PORT,53,DNS-OUT
+  - OR,((RULE-SET,ads),(DOMAIN,a.example.com)),REJECT-DROP
+  - MATCH,VPN
+"""
+
+
+def test_mihomo_template_is_saved_as_is(env):
+    configure(env, "mihomo", settings={"enable_routing": True, "rules": MIHOMO_TEMPLATE})
+    saved = next(item for item in env.client.get(SETTINGS_URL).json()["settings"]["clients"] if item["id"] == "mihomo")
+    assert saved["settings"]["rules"] == MIHOMO_TEMPLATE.rstrip("\n")
+
+
+@pytest.mark.parametrize(
+    "rules,detail",
+    [
+        (MIHOMO_TEMPLATE.replace("MATCH,VPN", "MATCH,NOWHERE"), 'target "NOWHERE"'),
+        (MIHOMO_TEMPLATE.replace("MATCH,VPN", "MATCH,PROXY"), 'target "PROXY"'),
+        ("x-anchors:\n  a: [\n", "YAML error at line"),
+        (MIHOMO_TEMPLATE + "#" * (512 * 1024), "larger than 512 KiB"),
+    ],
+    ids=["unknown-target", "proxy-with-provider", "broken-yaml", "too-large"],
+)
+def test_invalid_mihomo_template_is_rejected(env, rules, detail):
+    settings = default_settings()
+    client = next(item for item in settings["clients"] if item["id"] == "mihomo")
+    client["settings"] = {"enable_routing": True, "rules": rules}
+    response = env.client.put(SETTINGS_URL, json=settings)
+    assert response.status_code == 422
+    assert detail in response.json()["detail"]
+
+
+def test_mihomo_template_with_provider_is_served(env):
+    configure(env, "mihomo", settings={"enable_routing": True, "rules": MIHOMO_TEMPLATE})
+    response = sub(env, "clash-verge/2.0")
+    assert response.headers["content-type"].startswith("text/yaml")
+    assert "${" not in response.text and "&id" not in response.text
+    body = yaml.safe_load(response.text)
+    assert "x-anchors" not in body
+    assert body["proxy-providers"]["sub"]["url"] == f"https://testserver/api/v1/sub/{env.email_token}?provider=1"
+    assert body["proxies"] == [{"name": "DNS-OUT", "type": "dns"}]
+    assert body["proxy-groups"] == [{"name": "VPN", "type": "select", "use": ["sub"]}]
+    assert body["rules"][-1] == "MATCH,VPN"
+    assert body["tun"] == {"enable": True}
+    assert body["dns"]["fallback"] == ["77.88.8.8"]
+    assert body["rule-providers"]["ads"]["proxy"] == "VPN"
+
+    nodes = sub(env, "clash-verge/2.0", provider="1")
+    assert not nodes.text.lstrip().startswith(("#", "mixed-port"))
+    assert "://" in base64.b64decode(nodes.text).decode()
+
+
+def test_mihomo_template_without_provider_gets_generated_nodes(env):
+    template = "mixed-port: 7890\nproxy-groups:\n  - name: VPN\n    type: select\n    proxies: [PROXY]\nrules:\n  - MATCH,VPN\n"
+    configure(env, "mihomo", settings={"enable_routing": True, "rules": template})
+    body = yaml.safe_load(sub(env, "clash-verge/2.0").text)
+    assert any(proxy["type"] == "vless" for proxy in body["proxies"])
+    assert [group["name"] for group in body["proxy-groups"]] == ["PROXY", "VPN"]
+    assert body["rules"] == ["MATCH,VPN"]
+
+
+def test_mihomo_template_needs_enable_routing(env):
+    configure(env, "mihomo", settings={"enable_routing": False, "rules": MIHOMO_TEMPLATE})
+    body = yaml.safe_load(sub(env, "clash-verge/2.0").text)
+    assert "proxy-providers" not in body
+    assert body["rules"] == ["MATCH,PROXY"]
 
 
 def test_settings_api_requires_auth_and_admin_role(env):

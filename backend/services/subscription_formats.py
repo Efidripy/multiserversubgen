@@ -126,6 +126,13 @@ def _rule_lines(rules):
     return []
 
 
+class _NoAliasDumper(yaml.SafeDumper):
+    """Templates reuse lists through YAML anchors; clients get them written out in full."""
+
+    def ignore_aliases(self, data):
+        return True
+
+
 def to_mihomo(links, *, mode="mihomo", enable_routing=False, rules=None, customize=None):
     proxies = []
     for item in _normalised(links):
@@ -233,7 +240,7 @@ def to_mihomo(links, *, mode="mihomo", enable_routing=False, rules=None, customi
     }
     if customize:
         customize(body)
-    return yaml.safe_dump(body, allow_unicode=True, sort_keys=False)
+    return yaml.dump(body, Dumper=_NoAliasDumper, allow_unicode=True, sort_keys=False)
 
 
 def to_singbox(links):
