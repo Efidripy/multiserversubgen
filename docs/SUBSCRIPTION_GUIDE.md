@@ -322,6 +322,7 @@ curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN?nodes=US,UK"
 
 Параметры секции:
 - `always_array` — всегда оборачивать конфигурацию в массив JSON (по умолчанию `false`, одиночный узел отдаётся как объект).
+- `template` — полный JSON-конфиг клиента. Для каждого узла он копируется, узел добавляется как `outbound` с тегом `proxy`, а остальные поля шаблона сохраняются. При использовании шаблона поля `dns`, `routing`, `rules`, `observatory` и `balancers` секции не используются.
 - `mux` — JSON-объект параметров мультиплексирования (`streamSettings.mux`).
 - `dns` — JSON-объект серверов DNS.
 - `routing` — JSON-объект маршрутизации (`domainStrategy`, правила и др.).

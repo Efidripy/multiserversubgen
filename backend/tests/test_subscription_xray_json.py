@@ -54,6 +54,84 @@ def test_multiple_proxies_without_balancers_returns_array_of_configs():
         assert outbound_tags == ["proxy", "direct", "block"]
 
 
+def test_template_inserts_each_node_and_preserves_template_sections():
+    links = [
+        "vless://u1@node1.example.test:443?type=tcp#Node-A",
+        "trojan://pw2@node2.example.test:443?type=tcp#Node-B",
+    ]
+    template = {
+        "dns": {"servers": ["template.example.test"]},
+        "inbounds": [{"tag": "custom-in", "protocol": "socks"}],
+        "outbounds": [
+            {"tag": "direct", "protocol": "freedom", "settings": {}},
+            {"tag": "proxy", "protocol": "old", "settings": {}},
+            {"tag": "block", "protocol": "blackhole", "settings": {}},
+        ],
+        "routing": {
+            "domainStrategy": "IPIfNonMatch",
+            "rules": [{"type": "field", "outboundTag": "direct"}],
+        },
+        "other": {"keep": True},
+    }
+    original = json.loads(json.dumps(template))
+    section = {
+        "template": template,
+        "dns": json.dumps({"servers": ["ignored.example.test"]}),
+        "routing": json.dumps({"domainStrategy": "AsIs"}),
+        "rules": json.dumps([{"type": "field", "outboundTag": "block"}]),
+        "observatory": json.dumps({"probeUrl": "https://ignored.example.test"}),
+        "balancers": json.dumps([{"tag": "ignored", "strategy": {"type": "random"}}]),
+        "mux": {"enabled": True},
+        "final_mask": {"udp": {"header": "mptcp"}},
+    }
+
+    configs = json.loads(to_xray_json(links, section))
+
+    assert [config["remarks"] for config in configs] == ["Node-A", "Node-B"]
+    for config in configs:
+        assert [outbound["tag"] for outbound in config["outbounds"]] == ["proxy", "direct", "block"]
+        assert config["outbounds"][0]["mux"] == {"enabled": True}
+        assert config["outbounds"][0]["streamSettings"]["finalmask"] == {"udp": {"header": "mptcp"}}
+        assert config["dns"] == template["dns"]
+        assert config["routing"] == template["routing"]
+        assert config["inbounds"] == template["inbounds"]
+        assert config["other"] == template["other"]
+    assert template == original
+
+
+def test_template_without_outbounds_and_inbounds_gets_defaults():
+    link = "vless://u@example.test:443?type=tcp#Node"
+    config = json.loads(to_xray_json([link], {"template": {"log": {"loglevel": "debug"}}}))
+
+    assert [outbound["tag"] for outbound in config["outbounds"]] == ["proxy", "direct", "block"]
+    assert [inbound["tag"] for inbound in config["inbounds"]] == ["socks", "http"]
+    assert config["routing"] == {
+        "domainStrategy": "AsIs",
+        "rules": [{"type": "field", "outboundTag": "proxy"}],
+    }
+    assert config["log"] == {"loglevel": "debug"}
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "not json",
+        "[]",
+        {"inbounds": [{} , "bad"]},
+        {"outbounds": {}},
+        {"routing": []},
+    ],
+)
+def test_invalid_xray_template_is_rejected(template):
+    with pytest.raises(ValueError, match="template"):
+        validate_xray_json_section({"template": template})
+
+
+def test_empty_template_keeps_existing_output():
+    link = "vless://u@example.test:443?type=tcp#Node"
+    assert to_xray_json([link], {"template": ""}) == to_xray_json([link], {})
+
+
 def test_config_structure_log_inbounds_and_system_outbounds():
     link = "vless://uuid@node.test:443?type=tcp#TestNode"
     res = to_xray_json([link], {})
@@ -404,6 +482,7 @@ def test_validate_xray_json_section_valid_inputs():
     # Empty strings for all fields
     validate_xray_json_section({
         "always_array": False,
+        "template": "",
         "mux": "",
         "dns": "",
         "routing": "",
@@ -415,6 +494,7 @@ def test_validate_xray_json_section_valid_inputs():
     # Valid JSON strings
     validate_xray_json_section({
         "always_array": True,
+        "template": json.dumps({"inbounds": [], "outbounds": [], "routing": {}}),
         "mux": '{"enabled": true}',
         "dns": '{"servers": ["1.1.1.1"]}',
         "routing": '{"domainStrategy": "AsIs"}',

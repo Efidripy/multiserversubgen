@@ -911,6 +911,8 @@
         "title": "Xray JSON",
         "always_array": "Always Array",
         "always_arrayHint": "Always wrap configuration in a JSON array",
+        "template": "Full Config (JSON)",
+        "templateHint": "Paste a complete config; subscription nodes are inserted as an outbound with the proxy tag. DNS, Routing, Rules, Observatory, and Balancers fields are ignored",
         "mux": "Mux (JSON)",
         "muxHint": "Multiplexing configuration",
         "dns": "DNS (JSON)",

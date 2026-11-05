@@ -911,6 +911,8 @@
         "title": "Xray JSON",
         "always_array": "Всегда массив",
         "always_arrayHint": "Всегда оборачивать конфигурацию в массив JSON",
+        "template": "Полный конфиг (JSON)",
+        "templateHint": "Вставьте цельный конфиг; узлы подписки подставляются как outbound с тегом proxy. Поля DNS, Routing, Rules, Observatory и Balancers при этом не используются",
         "mux": "Mux (JSON)",
         "muxHint": "Конфигурация мультиплексирования",
         "dns": "DNS (JSON)",
