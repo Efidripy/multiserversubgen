@@ -441,6 +441,12 @@ def test_remnawave_page_does_not_list_nodes():
     assert "NL Server" not in html
 
 
+def test_3xui_page_has_no_3x_badge():
+    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub", links=[])
+    assert 'class="logo"' not in html
+    assert ">3X<" not in html
+
+
 def test_3xui_page_empty_links_message():
     section = {"theme": "3xui"}
     html_ru = render_page({}, section, profile={}, sub_url="https://vpn/sub", links=[])

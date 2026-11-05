@@ -312,7 +312,6 @@ THREEXUI_CSS = """
 body{background:var(--bg);color:var(--text);transition:background .15s}
 .wrap{width:min(760px,100%);margin:auto;padding:20px 14px 34px}
 .top{display:flex;align-items:center;gap:12px;margin-bottom:16px}
-.logo{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--accent);color:white;font-weight:800}
 .headtext{flex:1;min-width:0}
 .headtext h1{margin:0;font-size:20px;overflow-wrap:anywhere}
 .headtext small{color:var(--muted)}
@@ -366,7 +365,6 @@ white-space:nowrap}
 .qr-card p{color:var(--muted)}
 .update{color:var(--muted);font-size:12px;text-align:center}
 @media(max-width:520px){.top{gap:8px}
-.logo{display:none}
 .headtext h1{font-size:17px;overflow-wrap:normal}
 .stats{gap:12px}
 .ring{width:88px;height:88px}
@@ -628,7 +626,7 @@ def render_3xui(data: dict[str, object]) -> str:
         f'<!DOCTYPE html><html lang="{lang}"><head><meta charset="utf-8">'
         f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>'
         f'{_theme_init_script(str(data.get("nonce", "")))}<style nonce="{nonce}">{BASE_CSS}{THREEXUI_CSS}</style></head><body><main class="wrap">'
-        f'<header class="top"><div class="logo">3X</div><div class="headtext"><h1>{_e(data.get("info_title"))}</h1>'
+        f'<header class="top"><div class="headtext"><h1>{_e(data.get("info_title"))}</h1>'
         f'<small>{identifier}</small></div>{_lang_switch(data)}<button type="button" class="icon-btn" data-open-qr aria-label="QR">{_ui_icon("qr")}</button>'
         f'<button type="button" class="icon-btn" data-theme-toggle aria-label="Theme">{_ui_icon("moon")}</button></header>'
         f'<section class="card stats"><svg class="ring" viewBox="0 0 120 120">'
