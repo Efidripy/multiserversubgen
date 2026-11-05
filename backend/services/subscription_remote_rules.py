@@ -308,9 +308,17 @@ def apply_mihomo_template(base: dict, text: str, sub_url: str) -> None:
         if not isinstance(groups, list):
             groups = []
             document["proxy-groups"] = groups
-        if base_proxy_group is not None and not any(
-            isinstance(group, dict) and group.get("name") == "PROXY" for group in groups
-        ):
+        own_proxy_group = next(
+            (group for group in groups if isinstance(group, dict) and group.get("name") == "PROXY"),
+            None,
+        )
+        if own_proxy_group is not None:
+            members = own_proxy_group.get("proxies")
+            members = members if isinstance(members, list) else []
+            own_proxy_group["proxies"] = members + [
+                proxy["name"] for proxy in generated if proxy["name"] not in members
+            ]
+        elif base_proxy_group is not None:
             groups.insert(0, copy.deepcopy(base_proxy_group))
     base.clear()
     base.update(document)

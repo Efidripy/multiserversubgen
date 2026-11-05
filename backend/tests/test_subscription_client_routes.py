@@ -451,6 +451,15 @@ def test_mihomo_template_without_provider_gets_generated_nodes(env):
     assert body["rules"] == ["MATCH,VPN"]
 
 
+def test_mihomo_template_own_proxy_group_gets_generated_nodes(env):
+    template = "proxy-groups:\n  - name: PROXY\n    type: select\n    proxies: [DIRECT]\nrules:\n  - MATCH,PROXY\n"
+    configure(env, "mihomo", settings={"enable_routing": True, "rules": template})
+    body = yaml.safe_load(sub(env, "clash-verge/2.0").text)
+    assert [group["name"] for group in body["proxy-groups"]] == ["PROXY"]
+    names = [proxy["name"] for proxy in body["proxies"]]
+    assert names and body["proxy-groups"][0]["proxies"] == ["DIRECT", *names]
+
+
 def test_mihomo_template_needs_enable_routing(env):
     configure(env, "mihomo", settings={"enable_routing": False, "rules": MIHOMO_TEMPLATE})
     body = yaml.safe_load(sub(env, "clash-verge/2.0").text)
