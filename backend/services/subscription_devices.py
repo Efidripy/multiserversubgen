@@ -108,8 +108,6 @@ def check_device(
     if not hwid or len(hwid) > 256:
         response["X-Hwid-Not-Supported"] = "true"
         allowed = not bool(section.get("block_unsupported", False))
-        if allowed and _max_devices(section) > 0:
-            response["X-Hwid-Limit"] = "true"
         return DeviceDecision(allowed, response)
 
     device_hash = _hash_hwid(subject, hwid)
@@ -158,11 +156,10 @@ def check_device(
                 )
 
     if allowed:
-        if maximum > 0:
-            response["X-Hwid-Limit"] = "true"
         return DeviceDecision(True, response)
 
     response["X-Hwid-Max-Devices-Reached"] = "true"
+    # Clients read X-Hwid-Limit as "limit reached", so it must not appear on allowed responses.
     response["X-Hwid-Limit"] = "true"
     announce = _announce(section.get("limit_announce", ""))
     if announce:

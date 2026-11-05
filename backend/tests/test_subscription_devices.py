@@ -40,7 +40,7 @@ def test_unsupported_hwid_and_blocking(tmp_path):
     assert allowed.allowed is True
     assert allowed.headers["X-Hwid-Active"] == "true"
     assert allowed.headers["X-Hwid-Not-Supported"] == "true"
-    assert allowed.headers["X-Hwid-Limit"] == "true"
+    assert "X-Hwid-Limit" not in allowed.headers
     assert list_devices(path) == []
 
     blocked = check_device(path, "alice", {"X-HWID": "x" * 257}, _section(block_unsupported=True), now=2)
@@ -64,7 +64,9 @@ def test_registration_metadata_hash_and_known_device_update(tmp_path):
         now=10,
     )
     assert first.allowed is True
-    assert first.headers["X-Hwid-Limit"] == "true"
+    # Max 1 is now taken, yet this request succeeded: no "limit reached" signal.
+    assert "X-Hwid-Limit" not in first.headers
+    assert "X-Hwid-Max-Devices-Reached" not in first.headers
     second = check_device(
         path,
         "alice",
