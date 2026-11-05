@@ -602,7 +602,6 @@ def render_3xui(data: dict[str, object]) -> str:
     lang = _e(data.get("lang", "ru"))
     nonce = _e(data.get("nonce", ""))
     title = _e(data.get("title", "Subscription"))
-    links_count = int(data.get("links_count") or 0)
     percent = str(data.get("percent", "∞"))
     offset = _e(data.get("ring_offset", "301.6"))
     identifier = _e(data.get("identifier") or "—")
@@ -634,7 +633,7 @@ def render_3xui(data: dict[str, object]) -> str:
         f'<div class="tile"><b>{_e(data.get("download_label"))}</b><span>{_e(data.get("download"))}</span></div>'
         f'<div class="tile"><b>{_e(data.get("upload_label"))}</b><span>{_e(data.get("upload"))}</span></div>'
         f'<div class="tile"><b>{_e(data.get("total_label"))}</b><span>{_e(data.get("total"))}</span></div></section>'
-        f'<section class="card"><nav class="tabs"><button type="button" class="tab active" data-tab="sub">{_e(data.get("sub_tab"))} ({links_count})</button>'
+        f'<section class="card"><nav class="tabs"><button type="button" class="tab active" data-tab="sub">{_e(data.get("sub_tab"))}</button>'
         f'<button type="button" class="tab" data-tab="apps">{_e(data.get("apps_tab"))}</button></nav>'
         f'<div data-tab-panel="sub"><ul class="format-list">{_format_rows(data)}</ul><div class="qr-card">'
         f"{qr_image}<p>{_e(data.get('qr_hint'))}</p></div></div>"

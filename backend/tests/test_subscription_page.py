@@ -168,7 +168,6 @@ def test_render_page_title_resolution():
         {"brand_title": "Brand VPN"},
         profile={"title": "Profile VPN"},
         sub_url=sub_url,
-        links=[],
     )
     assert "<title>Brand VPN</title>" in html1
     assert "<h1>Brand VPN</h1>" in html1
@@ -179,7 +178,6 @@ def test_render_page_title_resolution():
         {"brand_title": ""},
         profile={"title": "Profile VPN"},
         sub_url=sub_url,
-        links=[],
     )
     assert "<title>Profile VPN</title>" in html2
     assert "<h1>Profile VPN</h1>" in html2
@@ -190,7 +188,6 @@ def test_render_page_title_resolution():
         {},
         profile={},
         sub_url=sub_url,
-        links=[],
     )
     assert "<title>Subscription</title>" in html3
     assert "<h1>Subscription</h1>" in html3
@@ -201,7 +198,6 @@ def test_render_page_title_resolution():
         {"brand_title": "<script>alert(1)</script>"},
         profile={},
         sub_url=sub_url,
-        links=[],
     )
     assert "<script>alert(1)</script>" not in html_xss
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html_xss
@@ -221,7 +217,6 @@ def test_render_page_traffic_progress_and_expiry():
         {},
         profile={},
         sub_url="https://vpn.example.com/sub/token",
-        links=[],
     )
     assert "1.5 GB" in rendered
     assert "10 GB" in rendered
@@ -239,7 +234,6 @@ def test_render_page_traffic_progress_and_expiry():
         {},
         profile={},
         sub_url="https://vpn.example.com/sub/token",
-        links=[],
     )
     assert "300 MB" in rendered_unlimited
     assert "∞" in rendered_unlimited
@@ -255,7 +249,7 @@ def test_render_page_statuses():
         "now": 1000,
         "lang": "ru",
     }
-    active_html = render_page(active_ctx, {}, profile={}, sub_url="https://example.com", links=[])
+    active_html = render_page(active_ctx, {}, profile={}, sub_url="https://example.com")
     assert "status-active" in active_html
     assert "Активна" in active_html
 
@@ -268,7 +262,7 @@ def test_render_page_statuses():
         "now": 2000,
         "lang": "ru",
     }
-    expired_html = render_page(expired_ctx, {}, profile={}, sub_url="https://example.com", links=[])
+    expired_html = render_page(expired_ctx, {}, profile={}, sub_url="https://example.com")
     assert "status-expired" in expired_html
     assert "Истекла" in expired_html
 
@@ -281,7 +275,7 @@ def test_render_page_statuses():
         "now": 2000,
         "lang": "ru",
     }
-    depleted_html = render_page(depleted_ctx, {}, profile={}, sub_url="https://example.com", links=[])
+    depleted_html = render_page(depleted_ctx, {}, profile={}, sub_url="https://example.com")
     assert "status-depleted" in depleted_html
     assert "Лимит исчерпан" in depleted_html
 
@@ -294,7 +288,6 @@ def test_render_page_import_buttons():
         {},
         profile={"title": "My Config"},
         sub_url=sub_url,
-        links=[],
     )
     escaped_sub = quote(sub_url, safe="")
     assert 'href="happ://add/https://vpn.example.com/sub/tok?test=1&amp;foo=bar"' in html
@@ -310,7 +303,6 @@ def test_render_page_import_buttons():
         {},
         profile={},
         sub_url=sub_url,
-        links=[],
         happ_link=custom_happ,
     )
     assert f'href="{custom_happ}"' in html_custom_happ
@@ -321,7 +313,6 @@ def test_render_page_import_buttons():
         {"theme": "3xui"},
         profile={},
         sub_url=sub_url,
-        links=[],
         happ_link=custom_happ,
     )
     assert f'href="{custom_happ}"' in html_3xui
@@ -338,7 +329,6 @@ def test_render_page_security_offline_and_data_attributes():
         {},
         profile={},
         sub_url=sub_url,
-        links=[],
         qr_data_url=qr_data,
         nonce=nonce,
     )
@@ -361,12 +351,12 @@ def test_render_page_security_offline_and_data_attributes():
 
 
 def test_render_page_localization_russian_and_english():
-    html_ru = render_page({"lang": "ru"}, {}, profile={}, sub_url="https://vpn/sub", links=[])
+    html_ru = render_page({"lang": "ru"}, {}, profile={}, sub_url="https://vpn/sub")
     assert 'lang="ru"' in html_ru
     for label in ("Установка", "Статус", "Срок действия", "Копировать", "Добавить подписку"):
         assert label in html_ru
 
-    html_en = render_page({"lang": "en"}, {}, profile={}, sub_url="https://vpn/sub", links=[])
+    html_en = render_page({"lang": "en"}, {}, profile={}, sub_url="https://vpn/sub")
     assert 'lang="en"' in html_en
     for label in ("Installation", "Status", "Expires", "Copy", "Add Subscription"):
         assert label in html_en
@@ -375,20 +365,20 @@ def test_render_page_localization_russian_and_english():
 
 def test_pages_offer_language_switch_and_multi_row_app_tabs():
     for theme in ("remnawave", "3xui"):
-        page = render_page({"lang": "en"}, {"theme": theme}, profile={}, sub_url="https://vpn/sub", links=[])
+        page = render_page({"lang": "en"}, {"theme": theme}, profile={}, sub_url="https://vpn/sub")
         assert 'href="?html=1&amp;lang=ru" data-lang="ru">RU</a>' in page
         assert 'href="?html=1&amp;lang=en" data-lang="en" class="active"' in page
     query = [("protocol", "vless"), ("nodes", "a,b"), ("view", "html"), ("lang", "en"), ("x", '"><script>')]
-    page = render_page({}, {}, profile={}, sub_url="https://vpn/sub", links=[], query=query)
+    page = render_page({}, {}, profile={}, sub_url="https://vpn/sub", query=query)
     assert 'href="?protocol=vless&amp;nodes=a%2Cb&amp;x=%22%3E%3Cscript%3E&amp;html=1&amp;lang=en"' in page
     assert "repeat(auto-fill,minmax(126px,1fr))" in page
     assert ".app-tabs{display:flex" not in page
 
 
 def test_3xui_format_links_keep_subscription_filters():
-    page = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub?protocol=vless", links=[])
+    page = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub?protocol=vless")
     assert 'data-copy="https://vpn/sub?protocol=vless&amp;format=clash"' in page
-    page = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub", links=[])
+    page = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub")
     assert 'data-copy="https://vpn/sub?format=clash"' in page
 
 
@@ -403,32 +393,29 @@ def test_catalog_lists_main_apps_first():
     assert names["linux"][0] == "v2rayN"
 
 
-def test_remnawave_page_does_not_list_nodes():
-    link = "vless://uuid-1@1.1.1.1:443#NL%20Server"
-    html = render_page({}, {}, profile={}, sub_url="https://vpn/sub", links=[link])
-    assert "uuid-1" not in html
-    assert "NL Server" not in html
-
-
 def test_3xui_page_has_no_3x_badge():
-    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub", links=[])
+    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub")
     assert 'class="logo"' not in html
     assert ">3X<" not in html
 
 
 def test_3xui_page_has_no_configurations_section():
-    link = "vless://11111111-1111-1111-1111-111111111111@example.test:443#node-one"
-    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub", links=[link])
+    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub")
     assert "Конфигурации" not in html
     assert 'data-tab="nodes"' not in html
-    assert link not in html
+    assert "vless://" not in html
+
+
+def test_3xui_subscription_tab_has_no_count():
+    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub")
+    assert '<button type="button" class="tab active" data-tab="sub">Подписка</button>' in html
 
 
 def test_render_page_expire_timestamp_in_milliseconds():
     # Timestamp in milliseconds (> 1e11)
     ms_timestamp = 1762281600000
     ctx = {"expire": ms_timestamp}
-    html = render_page(ctx, {}, profile={}, sub_url="https://sub", links=[])
+    html = render_page(ctx, {}, profile={}, sub_url="https://sub")
     assert "2025-11-04" in html
 
 
@@ -438,7 +425,6 @@ def test_builtin_page_has_no_inline_style_attributes_blocked_by_csp():
         {},
         profile={},
         sub_url="https://example.com/s",
-        links=[],
         nonce="n",
     )
     assert ' style="' not in page
@@ -450,7 +436,7 @@ def test_builtin_themes_security_and_fallback():
         page = render_page(
             {"email": '<img src=x onerror=1>', "upload": 1, "download": 2, "total": 10},
             {"theme": theme, "brand_title": '<script>alert(1)</script>'},
-            profile={}, sub_url="https://example.com/sub", links=["vless://x#<bad>"], nonce="preview",
+            profile={}, sub_url="https://example.com/sub", nonce="preview",
         )
         assert "<script>alert(1)</script>" not in page
         assert "&lt;script&gt;alert(1)&lt;/script&gt;" in page
@@ -462,14 +448,14 @@ def test_builtin_themes_security_and_fallback():
 
 
 def test_3xui_apps_tab_shows_app_names():
-    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub", links=[])
+    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub")
     assert '<span>Happ</span>' in html
 
 
 def test_active_status_label_is_translated():
     for theme in ("remnawave", "3xui"):
         section = {"theme": theme}
-        html_en = render_page({"lang": "en"}, section, profile={}, sub_url="https://vpn/sub", links=[])
+        html_en = render_page({"lang": "en"}, section, profile={}, sub_url="https://vpn/sub")
         assert ">Active<" in html_en
-        html_ru = render_page({"lang": "ru"}, section, profile={}, sub_url="https://vpn/sub", links=[])
+        html_ru = render_page({"lang": "ru"}, section, profile={}, sub_url="https://vpn/sub")
         assert ">Активна<" in html_ru

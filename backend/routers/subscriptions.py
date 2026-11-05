@@ -317,7 +317,7 @@ def build_subscriptions_router(
             page_profile = copy.deepcopy(settings.get("profile", {}))
             for key in ("title", "support_url", "announce"):
                 page_profile[key] = render_tokens(page_profile.get(key, ""), ctx)
-            html = render_page(ctx, page_section, profile=page_profile, sub_url=sub_url, links=links, qr_data_url=qr, happ_link=happ, nonce=nonce, query=request.query_params.multi_items())
+            html = render_page(ctx, page_section, profile=page_profile, sub_url=sub_url, qr_data_url=qr, happ_link=happ, nonce=nonce, query=request.query_params.multi_items())
             headers = page_headers(nonce)
             headers.update(decision.headers)
             _apply_rule_headers(headers, rule)
