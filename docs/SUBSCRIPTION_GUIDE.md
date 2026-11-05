@@ -438,7 +438,7 @@ curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN?nodes=US,UK"
 Параметры секции:
 - `enabled` — включение веб-страницы (по умолчанию `false`).
 - `brand_title` — заголовок бренда, отображаемый на странице.
-- `theme` — встроенная тема оформления: `remnawave` (по умолчанию) или `3xui`.
+- `theme` — встроенная тема оформления: `remnawave` (по умолчанию) или `3xui` (в панели называется Default).
 - `profile_mode` — режим профиля: `builtin` (встроенная страница) или `custom` (внешний URL).
 - `profile_url` — URL для редиректа при режиме `custom` (схемы `http://` или `https://`).
 

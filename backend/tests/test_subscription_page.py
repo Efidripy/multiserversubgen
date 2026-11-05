@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import json
 from pathlib import Path
 from urllib.parse import quote
@@ -329,36 +328,6 @@ def test_render_page_import_buttons():
     assert 'href="happ://add/' not in html_3xui
 
 
-def test_render_page_links_list_and_copy():
-    # vmess encoded
-    vmess_dict = {"v": "2", "ps": "Vmess Frankfurt", "add": "1.2.3.4", "port": "443"}
-    vmess_b64 = base64.b64encode(json.dumps(vmess_dict).encode()).decode()
-    vmess_link = f"vmess://{vmess_b64}"
-
-    vless_link = "vless://uuid-1@1.1.1.1:443?security=reality#NL%20Server"
-    trojan_link = "trojan://pass@2.2.2.2:443#Trojan%20US"
-
-    links = [vless_link, trojan_link, vmess_link]
-    html = render_page(
-        {},
-        {"theme": "3xui"},
-        profile={},
-        sub_url="https://vpn.example.com/sub",
-        links=links,
-    )
-
-    assert "NL Server" in html
-    assert "VLESS" in html
-    assert "Trojan US" in html
-    assert "TROJAN" in html
-    assert "Vmess Frankfurt" in html
-    assert "VMESS" in html
-
-    # Verify data-copy attribute contains exact link
-    for link in links:
-        assert f'data-copy="{link}"' in html
-
-
 def test_render_page_security_offline_and_data_attributes():
     nonce = "safe-random-nonce-xyz"
     sub_url = "https://vpn.example.com/sub/token"
@@ -441,20 +410,18 @@ def test_remnawave_page_does_not_list_nodes():
     assert "NL Server" not in html
 
 
-def test_3xui_page_empty_links_message():
-    section = {"theme": "3xui"}
-    html_ru = render_page({}, section, profile={}, sub_url="https://vpn/sub", links=[])
-    assert "Список узлов пуст" in html_ru
-    html_en = render_page({"lang": "en"}, section, profile={}, sub_url="https://vpn/sub", links=[])
-    assert "No nodes available" in html_en
+def test_3xui_page_has_no_3x_badge():
+    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub", links=[])
+    assert 'class="logo"' not in html
+    assert ">3X<" not in html
 
 
-def test_render_page_node_parsing_formats():
-    # shadowsocks without fragment
-    ss_link = "ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ=@1.2.3.4:8388"
-    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://sub", links=[ss_link])
-    assert "SS #1" in html
-    assert "SS" in html
+def test_3xui_page_has_no_configurations_section():
+    link = "vless://11111111-1111-1111-1111-111111111111@example.test:443#node-one"
+    html = render_page({}, {"theme": "3xui"}, profile={}, sub_url="https://vpn/sub", links=[link])
+    assert "Конфигурации" not in html
+    assert 'data-tab="nodes"' not in html
+    assert link not in html
 
 
 def test_render_page_expire_timestamp_in_milliseconds():

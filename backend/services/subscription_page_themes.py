@@ -312,7 +312,6 @@ THREEXUI_CSS = """
 body{background:var(--bg);color:var(--text);transition:background .15s}
 .wrap{width:min(760px,100%);margin:auto;padding:20px 14px 34px}
 .top{display:flex;align-items:center;gap:12px;margin-bottom:16px}
-.logo{display:grid;place-items:center;width:38px;height:38px;border-radius:11px;background:var(--accent);color:white;font-weight:800}
 .headtext{flex:1;min-width:0}
 .headtext h1{margin:0;font-size:20px;overflow-wrap:anywhere}
 .headtext small{color:var(--muted)}
@@ -338,13 +337,10 @@ color:var(--text)}
 .tabs{display:flex;flex-wrap:wrap;gap:6px;margin:-2px -16px 14px;padding:0 16px;border-bottom:1px solid var(--border)}
 .tab{border:0;border-bottom:2px solid transparent;padding:10px 8px;background:none;color:var(--muted);white-space:nowrap}
 .tab.active{border-color:var(--accent);color:var(--accent)}
-.format-list,.nodes{display:grid;gap:8px;margin:0;padding:0;list-style:none}
-.format-list li,.nodes li{display:flex;align-items:center;gap:8px;min-width:0;padding:9px 0;border-bottom:1px solid var(--border)}
+.format-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.format-list li{display:flex;align-items:center;gap:8px;min-width:0;padding:9px 0;border-bottom:1px solid var(--border)}
 .fmt{width:64px;color:var(--accent);font-size:11px;font-weight:700}
 code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
-.nodes li span{flex:1;min-width:0}
-.nodes b,.nodes small{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.nodes small{margin-top:2px;color:var(--muted)}
 .btn,.app-action,.action{display:inline-flex;
 align-items:center;
 gap:5px;
@@ -366,7 +362,6 @@ white-space:nowrap}
 .qr-card p{color:var(--muted)}
 .update{color:var(--muted);font-size:12px;text-align:center}
 @media(max-width:520px){.top{gap:8px}
-.logo{display:none}
 .headtext h1{font-size:17px;overflow-wrap:normal}
 .stats{gap:12px}
 .ring{width:88px;height:88px}
@@ -607,12 +602,7 @@ def render_3xui(data: dict[str, object]) -> str:
     lang = _e(data.get("lang", "ru"))
     nonce = _e(data.get("nonce", ""))
     title = _e(data.get("title", "Subscription"))
-    links = data.get("links", []) or []
-    node_rows = "".join(
-        f"<li><span><b>{_e(name)}</b><small>{_e(proto)}</small></span>"
-        f'<button type="button" class="btn" data-copy="{_e(link)}">{_e(data.get("copy_label"))}</button></li>'
-        for name, proto, link in links
-    )
+    links_count = int(data.get("links_count") or 0)
     percent = str(data.get("percent", "∞"))
     offset = _e(data.get("ring_offset", "301.6"))
     identifier = _e(data.get("identifier") or "—")
@@ -620,7 +610,6 @@ def render_3xui(data: dict[str, object]) -> str:
     update_html = ""
     if update:
         update_html = f'<div class="update">{_e(data.get("update_label"))}: {int(update)} {_e(data.get("hours_label"))}</div>'
-    nodes_html = node_rows or f"<li>{_e(data.get('no_nodes'))}</li>"
     qr_image = ""
     if data.get("qr_data_url"):
         qr_image = f'<img class="qr-img" src="{_e(data.get("qr_data_url"))}" alt="QR">'
@@ -628,7 +617,7 @@ def render_3xui(data: dict[str, object]) -> str:
         f'<!DOCTYPE html><html lang="{lang}"><head><meta charset="utf-8">'
         f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>'
         f'{_theme_init_script(str(data.get("nonce", "")))}<style nonce="{nonce}">{BASE_CSS}{THREEXUI_CSS}</style></head><body><main class="wrap">'
-        f'<header class="top"><div class="logo">3X</div><div class="headtext"><h1>{_e(data.get("info_title"))}</h1>'
+        f'<header class="top"><div class="headtext"><h1>{_e(data.get("info_title"))}</h1>'
         f'<small>{identifier}</small></div>{_lang_switch(data)}<button type="button" class="icon-btn" data-open-qr aria-label="QR">{_ui_icon("qr")}</button>'
         f'<button type="button" class="icon-btn" data-theme-toggle aria-label="Theme">{_ui_icon("moon")}</button></header>'
         f'<section class="card stats"><svg class="ring" viewBox="0 0 120 120">'
@@ -645,13 +634,11 @@ def render_3xui(data: dict[str, object]) -> str:
         f'<div class="tile"><b>{_e(data.get("download_label"))}</b><span>{_e(data.get("download"))}</span></div>'
         f'<div class="tile"><b>{_e(data.get("upload_label"))}</b><span>{_e(data.get("upload"))}</span></div>'
         f'<div class="tile"><b>{_e(data.get("total_label"))}</b><span>{_e(data.get("total"))}</span></div></section>'
-        f'<section class="card"><nav class="tabs"><button type="button" class="tab active" data-tab="sub">{_e(data.get("sub_tab"))} ({len(links)})</button>'
-        f'<button type="button" class="tab" data-tab="apps">{_e(data.get("apps_tab"))}</button>'
-        f'<button type="button" class="tab" data-tab="nodes">{_e(data.get("nodes_tab"))} ({len(links)})</button></nav>'
+        f'<section class="card"><nav class="tabs"><button type="button" class="tab active" data-tab="sub">{_e(data.get("sub_tab"))} ({links_count})</button>'
+        f'<button type="button" class="tab" data-tab="apps">{_e(data.get("apps_tab"))}</button></nav>'
         f'<div data-tab-panel="sub"><ul class="format-list">{_format_rows(data)}</ul><div class="qr-card">'
         f"{qr_image}<p>{_e(data.get('qr_hint'))}</p></div></div>"
-        f'<div data-tab-panel="apps" hidden><div class="apps">{_three_apps(data)}</div></div>'
-        f'<div data-tab-panel="nodes" hidden><ul class="nodes">{nodes_html}</ul></div></section>{update_html}</main>'
+        f'<div data-tab-panel="apps" hidden><div class="apps">{_three_apps(data)}</div></div></section>{update_html}</main>'
         f"{_qr_dialog(data, include_qr=True)}{_script(str(data.get('nonce', '')))}</body></html>"
     )
 
