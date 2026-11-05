@@ -31,6 +31,18 @@ def validate_xray_json_section(section: dict[str, Any]) -> None:
         if not isinstance(section["always_array"], bool):
             raise ValueError("always_array")
 
+    template = _parse_field(section, "template")
+    if template is not None:
+        if not isinstance(template, dict):
+            raise ValueError("template")
+        for field in ("inbounds", "outbounds"):
+            if field in template:
+                value = template[field]
+                if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+                    raise ValueError("template")
+        if "routing" in template and not isinstance(template["routing"], dict):
+            raise ValueError("template")
+
     for field in OBJECT_FIELDS:
         parsed = _parse_field(section, field)
         if parsed is not None and not isinstance(parsed, dict):
@@ -268,6 +280,7 @@ def to_xray_json(links: list[str], section: dict[str, Any]) -> str:
         return ""
 
     always_array = bool(section.get("always_array", False))
+    template = _parse_field(section, "template")
     mux = _parse_field(section, "mux")
     dns = _parse_field(section, "dns")
     routing_overlay = _parse_field(section, "routing")
@@ -277,6 +290,34 @@ def to_xray_json(links: list[str], section: dict[str, Any]) -> str:
     final_mask = _parse_field(section, "final_mask")
     observatory_override = _parse_field(section, "observatory")
     balancers = _parse_field(section, "balancers")
+
+    if template is not None:
+        configs = []
+        for item in proxies:
+            config = copy.deepcopy(template)
+            config["remarks"] = item["name"]
+            proxy_outbound = _build_proxy_outbound(item, "proxy", mux, final_mask)
+            if "outbounds" in config:
+                template_outbounds = config["outbounds"]
+                config["outbounds"] = [
+                    proxy_outbound,
+                    *[outbound for outbound in template_outbounds if outbound.get("tag") != "proxy"],
+                ]
+            else:
+                config["outbounds"] = [proxy_outbound, *_system_outbounds()]
+            if "inbounds" not in config:
+                config["inbounds"] = _default_inbounds()
+            if "routing" not in config:
+                config["routing"] = _build_routing(
+                    None,
+                    {"type": "field", "outboundTag": "proxy"},
+                    None,
+                )
+            configs.append(config)
+
+        if len(configs) == 1 and not always_array:
+            return json.dumps(configs[0], ensure_ascii=False, indent=2)
+        return json.dumps(configs, ensure_ascii=False, indent=2)
 
     if balancers:
         # Xray matches selectors by tag prefix; an empty selector would leave the balancer with no outbounds.

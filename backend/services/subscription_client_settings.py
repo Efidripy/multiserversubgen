@@ -76,6 +76,7 @@ SECTION_SPECS = {
     ],
     "xray_json": [
         ("always_array", "bool", "format", None, False),
+        ("template", "json", "format", None, ""),
         ("mux", "json", "format", None, ""),
         ("dns", "json", "format", None, ""),
         ("routing", "json", "format", None, ""),

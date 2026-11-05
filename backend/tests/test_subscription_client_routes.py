@@ -176,6 +176,22 @@ def test_saving_settings_invalidates_the_grouped_cache(env):
     assert fresh.headers["content-type"].startswith("text/yaml")
 
 
+def test_xray_json_template_is_saved_through_settings_api(env):
+    settings = default_settings()
+    template = {
+        "inbounds": [],
+        "outbounds": [{"tag": "direct", "protocol": "freedom", "settings": {}}],
+        "routing": {"rules": []},
+    }
+    settings["xray_json"]["template"] = json.dumps(template)
+
+    response = env.client.put(SETTINGS_URL, json=settings)
+
+    assert response.status_code == 200, response.text
+    saved = env.client.get(SETTINGS_URL).json()["settings"]["xray_json"]
+    assert json.loads(saved["template"]) == template
+
+
 def test_guest_link_gets_the_client_format(env, monkeypatch):
     guest = SimpleNamespace(email_display=EMAIL)
     monkeypatch.setattr(subscriptions_module.TelegramRegistry, "resolve_guest_subscription_link", lambda _self, _token: guest)
