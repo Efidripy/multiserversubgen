@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import base64
 from datetime import datetime, timezone
-import json
 import re
 import time
 from typing import Any, Mapping, Sequence
-from urllib.parse import parse_qsl, unquote
+from urllib.parse import parse_qsl
 
 
 def validate_page_section(section: dict[str, Any]) -> None:
@@ -210,35 +208,6 @@ def _format_expire(expire: Any) -> str:
         return str(expire)
 
 
-def _link_name_and_proto(link: str, index: int) -> tuple[str, str]:
-    proto = "NODE"
-    if "://" in link:
-        proto_part = link.split("://", 1)[0].upper()
-        if proto_part:
-            proto = proto_part
-
-    name = ""
-    if "#" in link:
-        frag = link.split("#", 1)[1]
-        name = unquote(frag).strip()
-
-    if not name and link.startswith("vmess://"):
-        try:
-            b64_part = link[len("vmess://") :]
-            b64_part += "=" * (-len(b64_part) % 4)
-            raw = base64.b64decode(b64_part).decode("utf-8")
-            data = json.loads(raw)
-            if "ps" in data and str(data["ps"]).strip():
-                name = str(data["ps"]).strip()
-        except Exception:
-            pass
-
-    if not name:
-        name = f"{proto} #{index + 1}"
-
-    return name, proto
-
-
 def render_page(
     ctx: dict[str, Any],
     section: dict[str, Any],
@@ -307,10 +276,8 @@ def render_page(
         "uploaded": "Uploaded" if is_en else "Отправлено",
         "subscription": "Subscription" if is_en else "Подписка",
         "applications": "Applications" if is_en else "Приложения",
-        "configurations": "Configurations" if is_en else "Конфигурации",
         "nodes": "Nodes" if is_en else "Узлы",
         "info_title": "Subscription information" if is_en else "Информация о подписке",
-        "no_nodes": "No nodes available" if is_en else "Список узлов пуст",
         "update": "Auto-update" if is_en else "Автообновление",
         "hours": "hours" if is_en else "ч",
     }
@@ -322,10 +289,6 @@ def render_page(
     username = ctx.get("username") or ctx.get("user") or ctx.get("email") or title
     support_url = str((profile or {}).get("support_url") or "")
     announce = str((profile or {}).get("announce") or "")
-    node_data = []
-    for index, link in enumerate(links):
-        name, proto = _link_name_and_proto(link, index)
-        node_data.append((name, proto, link))
     remaining = "—"
     if ctx.get("expire"):
         try:
@@ -359,7 +322,7 @@ def render_page(
         "ring_offset": f"{301.6 * (1 - percent / 100):.1f}",
         "remaining": remaining,
         "identifier": ctx.get("sub_id") or ctx.get("email") or "",
-        "links": node_data,
+        "links_count": len(links),
         "happ_link": happ_link,
         "update_interval": (profile or {}).get("update_interval_hours"),
         "copy_label": labels["copy"],
@@ -385,8 +348,6 @@ def render_page(
         "sub_url_label": "Subscription URL" if is_en else "Адрес подписки",
         "sub_tab": labels["subscription"],
         "apps_tab": labels["applications"],
-        "nodes_tab": labels["configurations"],
-        "no_nodes": labels["no_nodes"],
         "update_label": labels["update"],
         "hours_label": labels["hours"],
         "info_title": labels["info_title"],
