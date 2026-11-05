@@ -466,7 +466,7 @@ curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN?nodes=US,UK"
   - `X-Device-OS`, `X-Ver-OS`, `X-Device-Model` — метаданные операционной системы и модели устройства (очищаются от управляющих символов и обрезаются до 64 символов).
 - Исходящие HTTP-заголовки сервера:
   - `X-Hwid-Active: true` — функционал проверки устройств активен на сервере.
-  - `X-Hwid-Limit: true` — для подписки задан лимит `max_devices > 0`.
+  - `X-Hwid-Limit: true` — лимит устройств исчерпан, отправляется только вместе с `X-Hwid-Max-Devices-Reached` (совместимость с v2RayTun).
   - `X-Hwid-Not-Supported: true` — клиент не передал заголовок `X-HWID`.
   - `X-Hwid-Max-Devices-Reached: true` — лимит устройств исчерпан (возвращается статус `404`).
   - `Announce` — текст сообщения о превышении лимита (если задан в `limit_announce`).
