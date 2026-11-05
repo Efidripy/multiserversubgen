@@ -7,6 +7,8 @@ import re
 import sqlite3
 from typing import Any, Dict, Optional
 
+import yaml
+
 from services.db_bootstrap import connect
 
 
@@ -23,11 +25,12 @@ _FORBIDDEN_HEADERS = {
 DEFAULT_CLIENTS = [
     {"id": "happ", "name": "Happ", "kind": "happ", "builtin": True, "enabled": False, "user_agent_regex": r"\bhapp\b", "format": "base64", "settings": {}, "headers": []},
     {"id": "incy", "name": "Incy", "kind": "incy", "builtin": True, "enabled": False, "user_agent_regex": r"\bincy\b", "format": "base64", "settings": {}, "headers": []},
-    {"id": "mihomo", "name": "Mihomo", "kind": "mihomo", "builtin": True, "enabled": False, "user_agent_regex": r"^(?:flclash|rabbit|flowvy|murge|mihomo|prizrak-box|koala-clash|clash(?:-verge|-nyanpasu|x meta|[-.]?meta))", "format": "mihomo", "settings": {}, "headers": []},
+    {"id": "mihomo", "name": "Mihomo/Clash", "kind": "mihomo", "builtin": True, "enabled": False, "user_agent_regex": r"^(?:flclash|rabbit|flowvy|murge|mihomo|prizrak-box|koala-clash|clash)", "format": "mihomo", "settings": {}, "headers": []},
     {"id": "stash", "name": "Stash", "kind": "mihomo", "builtin": True, "enabled": False, "user_agent_regex": r"^stash", "format": "mihomo", "settings": {}, "headers": []},
     {"id": "singbox", "name": "sing-box", "kind": "generic", "builtin": True, "enabled": False, "user_agent_regex": r"^(?:sfa|sfi|sfm|sft|karing|sing-?box)", "format": "singbox", "settings": {}, "headers": []},
-    {"id": "clash", "name": "Clash", "kind": "mihomo", "builtin": True, "enabled": False, "user_agent_regex": r"^clash", "format": "clash", "settings": {}, "headers": []},
 ]
+
+_OLD_MIHOMO_REGEX = r"^(?:flclash|rabbit|flowvy|murge|mihomo|prizrak-box|koala-clash|clash(?:-verge|-nyanpasu|x meta|[-.]?meta))"
 
 FIELD_SPECS = {
     "happ": [
@@ -142,7 +145,17 @@ def _validate_url(value: str) -> bool:
 
 
 # PROXY is the only proxy group the generated config has; the rest are built into Mihomo.
-MIHOMO_RULE_TARGETS = ("PROXY", "DIRECT", "REJECT", "REJECT-DROP", "PASS")
+MIHOMO_RULE_TARGETS = ("PROXY", "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE")
+
+
+def is_mihomo_config(text: Any) -> bool:
+    if not isinstance(text, str):
+        return False
+    try:
+        document = yaml.safe_load(text)
+    except Exception:
+        return False
+    return isinstance(document, dict) and any(key != "rules" for key in document)
 
 
 def _split_rule(rule: str) -> list[str]:
@@ -167,6 +180,61 @@ def _validate_rule_lines(value: Any) -> str:
         lines = value
     else:
         raise ValueError("rules")
+    text = "\n".join(lines)
+    if is_mihomo_config(text):
+        if len(text.encode("utf-8")) > 512 * 1024:
+            raise ValueError("rules: config is larger than 512 KiB")
+        try:
+            document = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            mark = getattr(exc, "problem_mark", None)
+            line_number = mark.line + 1 if mark is not None else 1
+            problem = getattr(exc, "problem", None) or str(exc)
+            raise ValueError(f"rules: YAML error at line {line_number}: {problem}") from exc
+        if not isinstance(document, dict):
+            raise ValueError("rules: config must be a YAML mapping")
+        if "rules" in document and not isinstance(document["rules"], list):
+            raise ValueError("rules: rules must be a list")
+        if "proxy-groups" in document and not isinstance(document["proxy-groups"], list):
+            raise ValueError("rules: proxy-groups must be a list")
+        if "proxy-providers" in document and not isinstance(document["proxy-providers"], dict):
+            raise ValueError("rules: proxy-providers must be a mapping")
+        groups = {
+            item.get("name")
+            for item in document.get("proxy-groups", [])
+            if isinstance(item, dict) and isinstance(item.get("name"), str)
+        }
+        proxies = {
+            item.get("name") if isinstance(item, dict) else item
+            for item in document.get("proxies", []) or []
+            if isinstance(item, (dict, str))
+        }
+        providers = document.get("proxy-providers") or {}
+        allowed = groups | proxies | (set(MIHOMO_RULE_TARGETS) - {"PROXY"})
+        if not providers:
+            allowed.add("PROXY")
+        for rule in document.get("rules", []) or []:
+            if not isinstance(rule, str):
+                raise ValueError("rules: every config rule must be a string")
+            stripped = rule.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            parts = _split_rule(stripped)
+            if not re.fullmatch(r"[A-Z][A-Z0-9-]*", parts[0]):
+                raise ValueError(f"rules: expected TYPE,VALUE,TARGET: {stripped}")
+            target = parts[1] if parts[0] == "MATCH" and len(parts) > 1 else (parts[2] if len(parts) > 2 else "")
+            if target not in allowed:
+                raise ValueError(f'rules: target "{target}" is not a group or proxy in the config: {stripped}')
+        return text
+    try:
+        yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        first = next(((number, line.strip()) for number, line in enumerate(lines, 1) if line.strip()), (1, ""))
+        if re.fullmatch(r"[\w-]+:\s*", first[1]) and first[1] != "rules:":
+            mark = getattr(exc, "problem_mark", None)
+            line_number = mark.line + 1 if mark is not None else first[0]
+            problem = getattr(exc, "problem", None) or str(exc)
+            raise ValueError(f"rules: YAML error at line {line_number}: {problem}") from exc
     if len(lines) > 500:
         raise ValueError("rules: more than 500 lines")
     result = []
@@ -193,6 +261,37 @@ def _validate_rule_lines(value: Any) -> str:
             raise ValueError(f'rules: line {number}: target "{target}" is not one of {allowed}: {stripped}')
         result.append(stripped)
     return "\n".join(result)
+
+
+def _migrate_legacy_clients(raw: Any) -> Any:
+    if not isinstance(raw, dict):
+        return raw
+    result = copy.deepcopy(raw)
+    clients = result.get("clients")
+    if not isinstance(clients, list):
+        return result
+    for item in clients:
+        if isinstance(item, dict) and item.get("id") == "mihomo":
+            if item.get("name") == "Mihomo":
+                item["name"] = "Mihomo/Clash"
+            if item.get("user_agent_regex") == _OLD_MIHOMO_REGEX:
+                item["user_agent_regex"] = DEFAULT_CLIENTS[2]["user_agent_regex"]
+    legacy = next((item for item in clients if isinstance(item, dict) and item.get("id") == "clash" and item.get("builtin") is True), None)
+    if legacy is None:
+        return result
+    clients = [item for item in clients if not (isinstance(item, dict) and item.get("id") == "clash" and item.get("builtin") is True)]
+    mihomo = next((item for item in clients if isinstance(item, dict) and item.get("id") == "mihomo"), None)
+    if mihomo is None:
+        mihomo = {"id": "mihomo"}
+        clients.append(mihomo)
+    if legacy.get("enabled") and not mihomo.get("enabled"):
+        mihomo["enabled"] = True
+    if not mihomo.get("settings") and isinstance(legacy.get("settings"), dict):
+        mihomo["settings"] = copy.deepcopy(legacy["settings"])
+    if not mihomo.get("headers") and isinstance(legacy.get("headers"), list):
+        mihomo["headers"] = copy.deepcopy(legacy["headers"])
+    result["clients"] = clients
+    return result
 
 
 def _validate_field(kind: str, key: str, value: Any, spec: tuple) -> Any:
@@ -357,6 +456,7 @@ def _headers_for_limit(settings: Dict[str, Any], client: Dict[str, Any]) -> Dict
 
 
 def validate_settings(raw: Any) -> Dict[str, Any]:
+    raw = _migrate_legacy_clients(raw)
     if not isinstance(raw, dict):
         raise ValueError("settings")
     result = default_settings()

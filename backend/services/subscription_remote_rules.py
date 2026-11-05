@@ -12,7 +12,7 @@ import yaml
 
 from services.adguard_runtime import _get_pinned
 from services.db_bootstrap import connect
-from services.subscription_client_settings import _validate_rule_lines
+from services.subscription_client_settings import _validate_rule_lines, is_mihomo_config
 from shared.security import validate_and_resolve_outbound_url
 
 
@@ -265,7 +265,55 @@ def resolve_client_settings(store: RemoteRulesStore, client: dict) -> dict:
             else:
                 result["rules"] = body
             result["enable_routing"] = True
+        if result.get("enable_routing") and "remote_document" not in result and is_mihomo_config(result.get("rules")):
+            result["mihomo_template"] = result["rules"]
     return result
+
+
+def apply_mihomo_template(base: dict, text: str, sub_url: str) -> None:
+    parsed = urlparse(sub_url)
+    path = parsed.path.strip("/").split("/")
+    sub_id = path[-1] if path else ""
+    parent = "/".join(path[:-1])
+    replacements = {
+        "${DOMAIN}": parsed.netloc,
+        "${SUB_PATH}": parent,
+        "${SUB_ID}": sub_id,
+    }
+    rendered = text
+    for source, target in replacements.items():
+        rendered = rendered.replace(source, target)
+    try:
+        document = yaml.safe_load(rendered)
+    except Exception as exc:
+        raise ValueError("yaml") from exc
+    if not isinstance(document, dict):
+        raise ValueError("yaml")
+    for key in list(document):
+        if isinstance(key, str) and key.startswith("x-"):
+            del document[key]
+    providers = document.get("proxy-providers")
+    if not isinstance(providers, dict) or not providers:
+        template_proxies = document.get("proxies")
+        if not isinstance(template_proxies, list):
+            template_proxies = []
+        generated = base.get("proxies") if isinstance(base.get("proxies"), list) else []
+        document["proxies"] = copy.deepcopy(generated) + copy.deepcopy(template_proxies)
+        base_groups = base.get("proxy-groups") if isinstance(base.get("proxy-groups"), list) else []
+        base_proxy_group = next(
+            (group for group in base_groups if isinstance(group, dict) and group.get("name") == "PROXY"),
+            None,
+        )
+        groups = document.get("proxy-groups")
+        if not isinstance(groups, list):
+            groups = []
+            document["proxy-groups"] = groups
+        if base_proxy_group is not None and not any(
+            isinstance(group, dict) and group.get("name") == "PROXY" for group in groups
+        ):
+            groups.insert(0, copy.deepcopy(base_proxy_group))
+    base.clear()
+    base.update(document)
 
 
 def merge_remote_clash(base: dict, text: str, *, allow_client_config: bool) -> None:

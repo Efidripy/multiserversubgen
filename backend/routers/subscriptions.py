@@ -30,7 +30,7 @@ from services.subscription_client_settings import (
 from services.subscription_formats import convert_links, FORMATS
 from services.subscription_content import apply_content, render_tokens
 from services.subscription_response_rules import parse_rules, evaluate
-from services.subscription_remote_rules import RemoteRulesStore, resolve_client_settings, merge_remote_clash
+from services.subscription_remote_rules import RemoteRulesStore, resolve_client_settings, merge_remote_clash, apply_mihomo_template
 from services.subscription_devices import DeviceDecision, check_device, list_devices, delete_device
 from services.subscription_page import wants_page, render_page, page_headers
 from services.subscription_happ_crypto import encrypt_happ_link
@@ -110,11 +110,21 @@ def build_subscriptions_router(
         headers["Vary"] = "User-Agent"
         return headers
 
+    def _subscription_url(request: Request, *, include_filters: bool = True) -> str:
+        forwarded_proto = request.headers.get("x-forwarded-proto")
+        scheme = forwarded_proto if forwarded_proto in {"http", "https"} else request.url.scheme
+        sub_url = str(request.base_url.replace(scheme=scheme)).rstrip("/") + request.url.path
+        if include_filters:
+            filters = [(key, value) for key, value in request.query_params.multi_items() if key in {"protocol", "nodes"}]
+            if filters:
+                sub_url += "?" + urlencode(filters)
+        return sub_url
+
     def _client_output_details(links, request: Request, *, userinfo=None, nodes=None, emails=None, cache_headers=None, settings=None, selected=None, rule=None, ctx=None):
         settings = settings or load_client_settings(db_path)
         selected = selected if selected is not None else match_client(settings, request.headers.get("user-agent"))
         requested_format = request.query_params.get("format")
-        output_format = requested_format if requested_format in FORMATS else ""
+        output_format = "base64" if request.query_params.get("provider") == "1" else (requested_format if requested_format in FORMATS else "")
         if not output_format and rule and rule.get("response") in FORMATS:
             output_format = rule["response"]
         if not output_format:
@@ -137,6 +147,16 @@ def build_subscriptions_router(
             def customize(body):
                 try:
                     merge_remote_clash(body, remote_document, allow_client_config=bool(settings.get("remote_rules", {}).get("use_remote_dns")))
+                except ValueError:
+                    return
+        mihomo_template = selected_settings.get("mihomo_template")
+        if mihomo_template and output_format in {"mihomo", "clash"}:
+            # shortcut: template providers use the canonical subscription URL; improve when provider filters are supported.
+            sub_url = _subscription_url(request, include_filters=False)
+
+            def customize(body):
+                try:
+                    apply_mihomo_template(body, mihomo_template, sub_url)
                 except ValueError:
                     return
         body = convert_links(
@@ -279,14 +299,8 @@ def build_subscriptions_router(
             page_section = settings.get("page", {})
             if page_section.get("profile_mode") == "custom" and page_section.get("profile_url"):
                 return RedirectResponse(page_section["profile_url"], status_code=302, headers=page_headers(secrets.token_urlsafe(16)))
-            # nginx terminates TLS and uvicorn runs with --no-proxy-headers; base_url already carries root_path.
-            forwarded_proto = request.headers.get("x-forwarded-proto")
-            scheme = forwarded_proto if forwarded_proto in {"http", "https"} else request.url.scheme
-            sub_url = str(request.base_url.replace(scheme=scheme)).rstrip("/") + request.url.path
             # QR, Happ and the page buttons must return the same filtered subscription.
-            filters = [(key, value) for key, value in request.query_params.multi_items() if key in {"protocol", "nodes"}]
-            if filters:
-                sub_url += "?" + urlencode(filters)
+            sub_url = _subscription_url(request)
             qr = ""
             try:
                 qr = "data:image/png;base64," + base64.b64encode(build_subscription_qr_png(sub_url)).decode()
@@ -322,7 +336,7 @@ def build_subscriptions_router(
         settings = load_client_settings(db_path)
         selected = match_client(settings, request.headers.get("user-agent"))
         requested_format = request.query_params.get("format")
-        final_format = requested_format if requested_format in FORMATS else (selected.get("format") if selected else "base64")
+        final_format = "base64" if request.query_params.get("provider") == "1" else (requested_format if requested_format in FORMATS else (selected.get("format") if selected else "base64"))
         raw_key = json.dumps(
             {"identifier": identifier, "query": query_items, "client_id": selected.get("id") if selected else None, "format": final_format},
             ensure_ascii=False,
