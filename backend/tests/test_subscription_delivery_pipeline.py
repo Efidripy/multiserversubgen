@@ -141,6 +141,74 @@ def test_devices_api_requires_auth_and_hides_hwid(env):
     assert all("hwid_hash" not in item for item in result.json()["devices"])
 
 
+def test_devices_api_returns_app_field_and_hides_hwid(env):
+    env.user = "admin"
+    settings = default_settings()
+    settings["devices"].update({"enabled": True, "max_devices": 5})
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+
+    # 1. Device with Happ User-Agent
+    r1 = env.client.get(
+        f"/api/v1/sub/{env.email_token}",
+        headers={"User-Agent": "Happ/3.6.1 (iPhone 15; iOS 18.0)", "X-HWID": "hwid-happ"},
+    )
+    assert r1.status_code == 200
+
+    # 2. Device with curl User-Agent (unknown client)
+    r2 = env.client.get(
+        f"/api/v1/sub/{env.email_token}",
+        headers={"User-Agent": "curl/8.1.2", "X-HWID": "hwid-curl"},
+    )
+    assert r2.status_code == 200
+
+    # 3. Device with empty User-Agent
+    r3 = env.client.get(
+        f"/api/v1/sub/{env.email_token}",
+        headers={"User-Agent": "", "X-HWID": "hwid-empty"},
+    )
+    assert r3.status_code == 200
+
+    res = env.client.get("/api/v1/subscription-client-settings/devices")
+    assert res.status_code == 200
+    devices = res.json()["devices"]
+    assert len(devices) >= 3
+
+    # Check app and user_agent fields, and verify HWID is never returned
+    dev_happ = next(d for d in devices if d.get("user_agent") == "Happ/3.6.1 (iPhone 15; iOS 18.0)")
+    assert dev_happ["app"] == "Happ"
+
+    dev_curl = next(d for d in devices if d.get("user_agent") == "curl/8.1.2")
+    assert dev_curl["app"] == "curl"
+
+    dev_empty = next(d for d in devices if d.get("user_agent") == "")
+    assert dev_empty["app"] == ""
+
+    for d in devices:
+        assert "hwid" not in d
+        assert "hwid_hash" not in d
+        assert "app" in d
+        assert "user_agent" in d
+
+
+def test_devices_api_returns_max_devices_when_enabled_and_disabled(env):
+    env.user = "admin"
+    settings = default_settings()
+
+    # Enabled with limit
+    settings["devices"].update({"enabled": True, "max_devices": 3})
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+    res = env.client.get("/api/v1/subscription-client-settings/devices")
+    assert res.status_code == 200
+    assert res.json()["max_devices"] == 3
+
+    # Disabled -> returns 0 even though max_devices is 3 in settings
+    settings["devices"]["enabled"] = False
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+    res_disabled = env.client.get("/api/v1/subscription-client-settings/devices")
+    assert res_disabled.status_code == 200
+    assert res_disabled.json()["max_devices"] == 0
+
+
 def test_default_delivery_bytes_remain_base64(env):
     result = sub(env, "curl/1")
     assert result.content == base64.b64encode((env.links[0] + "\n" + env.links[1]).encode())

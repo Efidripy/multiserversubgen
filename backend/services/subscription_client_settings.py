@@ -537,6 +537,22 @@ def match_client(settings: Dict[str, Any], user_agent: Optional[str]) -> Optiona
     return None
 
 
+def device_app_name(settings: Any, user_agent: Optional[str]) -> str:
+    raw = (user_agent or "").strip()
+    if not raw:
+        return ""
+    value = raw[:512]
+    clients = settings.get("clients", []) if isinstance(settings, dict) else []
+    for client in clients:
+        if isinstance(client, dict) and client.get("user_agent_regex"):
+            try:
+                if re.search(client["user_agent_regex"], value, re.IGNORECASE):
+                    return str(client.get("name") or "")
+            except re.error:
+                continue
+    return re.split(r"[/ ]", raw, maxsplit=1)[0]
+
+
 def _put_header(result: Dict[str, str], key: str, value: str) -> None:
     for existing in list(result):
         if existing.lower() == key.lower():

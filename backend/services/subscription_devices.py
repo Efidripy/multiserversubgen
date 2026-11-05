@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS subscription_devices (
     model TEXT NOT NULL DEFAULT '',
     first_seen REAL NOT NULL,
     last_seen REAL NOT NULL,
+    user_agent TEXT NOT NULL DEFAULT '',
     UNIQUE(subject, hwid_hash)
 )
 """
@@ -78,6 +79,9 @@ def _hash_hwid(subject: str, hwid: str) -> str:
 
 def _ensure_table(conn: sqlite3.Connection) -> None:
     conn.execute(_TABLE_SQL)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(subscription_devices)").fetchall()}
+    if "user_agent" not in cols:
+        conn.execute("ALTER TABLE subscription_devices ADD COLUMN user_agent TEXT NOT NULL DEFAULT ''")
 
 
 def _announce(value: Any) -> str:
@@ -114,6 +118,7 @@ def check_device(
         _clean_metadata(_header_value(headers, "X-Ver-OS")),
         _clean_metadata(_header_value(headers, "X-Device-Model")),
     )
+    ua = _clean_metadata(_header_value(headers, "User-Agent"))
     maximum = _max_devices(section)
 
     with connect(db_path) as conn:
@@ -124,12 +129,20 @@ def check_device(
             (subject, device_hash),
         ).fetchone()
         if row is not None:
-            conn.execute(
-                """UPDATE subscription_devices
-                   SET device_os = ?, os_version = ?, model = ?, last_seen = ?
-                 WHERE id = ?""",
-                (*metadata, now, row[0]),
-            )
+            if ua:
+                conn.execute(
+                    """UPDATE subscription_devices
+                       SET device_os = ?, os_version = ?, model = ?, user_agent = ?, last_seen = ?
+                     WHERE id = ?""",
+                    (*metadata, ua, now, row[0]),
+                )
+            else:
+                conn.execute(
+                    """UPDATE subscription_devices
+                       SET device_os = ?, os_version = ?, model = ?, last_seen = ?
+                     WHERE id = ?""",
+                    (*metadata, now, row[0]),
+                )
             allowed = True
         else:
             count = conn.execute(
@@ -139,9 +152,9 @@ def check_device(
             if allowed:
                 conn.execute(
                     """INSERT INTO subscription_devices
-                       (subject, hwid_hash, device_os, os_version, model, first_seen, last_seen)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (subject, device_hash, *metadata, now, now),
+                       (subject, hwid_hash, device_os, os_version, model, first_seen, last_seen, user_agent)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (subject, device_hash, *metadata, now, now, ua),
                 )
 
     if allowed:
@@ -166,26 +179,29 @@ def list_devices(
     """Return public device metadata; the HWID digest is intentionally omitted."""
     if limit <= 0:
         return []
+    # shortcut: 5000, перейти на пагинацию при росте базы устройств
     try:
-        bounded_limit = min(int(limit), 200)
+        bounded_limit = min(int(limit), 5000)
     except (TypeError, ValueError):
         bounded_limit = 200
     with connect(db_path) as conn:
         if not _table_exists(conn):
             return []
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(subscription_devices)").fetchall()}
+        ua_select = "user_agent" if "user_agent" in cols else "'' AS user_agent"
         if subject is None:
             rows = conn.execute(
-                """SELECT id, subject, device_os, os_version, model, first_seen, last_seen
+                f"""SELECT id, subject, device_os, os_version, model, first_seen, last_seen, {ua_select}
                    FROM subscription_devices ORDER BY id LIMIT ?""",
                 (bounded_limit,),
             ).fetchall()
         else:
             rows = conn.execute(
-                """SELECT id, subject, device_os, os_version, model, first_seen, last_seen
+                f"""SELECT id, subject, device_os, os_version, model, first_seen, last_seen, {ua_select}
                    FROM subscription_devices WHERE subject = ? ORDER BY id LIMIT ?""",
                 (subject, bounded_limit),
             ).fetchall()
-    keys = ("id", "subject", "device_os", "os_version", "model", "first_seen", "last_seen")
+    keys = ("id", "subject", "device_os", "os_version", "model", "first_seen", "last_seen", "user_agent")
     return [dict(zip(keys, row)) for row in rows]
 
 
