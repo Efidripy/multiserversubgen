@@ -141,6 +141,23 @@ def _validate_url(value: str) -> bool:
     return bool(re.fullmatch(r"(?:https?://|tg://)[^\s]+", value, re.IGNORECASE))
 
 
+# PROXY is the only proxy group the generated config has; the rest are built into Mihomo.
+MIHOMO_RULE_TARGETS = ("PROXY", "DIRECT", "REJECT", "REJECT-DROP", "PASS")
+
+
+def _split_rule(rule: str) -> list[str]:
+    """Split on top-level commas: AND,((DOMAIN,a),(NETWORK,UDP)),DIRECT has three parts."""
+    parts, current, depth = [], "", 0
+    for char in rule:
+        depth += {"(": 1, ")": -1}.get(char, 0)
+        if char == "," and depth == 0:
+            parts.append(current.strip())
+            current = ""
+        else:
+            current += char
+    return [*parts, current.strip()]
+
+
 def _validate_rule_lines(value: Any) -> str:
     if isinstance(value, str):
         lines = value.splitlines()
@@ -150,19 +167,32 @@ def _validate_rule_lines(value: Any) -> str:
         lines = value
     else:
         raise ValueError("rules")
-    if len(lines) > 500 or any(len(line) > 512 for line in lines):
-        raise ValueError("rules")
-    for line in lines:
+    if len(lines) > 500:
+        raise ValueError("rules: more than 500 lines")
+    result = []
+    for number, line in enumerate(lines, 1):
+        if len(line) > 512:
+            raise ValueError(f"rules: line {number}: longer than 512 characters")
         stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+        # Rules are often pasted from a YAML config: "rules:" and "- 'DOMAIN,a,DIRECT'".
+        if stripped == "rules:":
             continue
-        parts = [part.strip() for part in stripped.split(",")]
-        if not parts or not re.fullmatch(r"[A-Z][A-Z0-9-]*", parts[0]):
-            raise ValueError("rules")
+        if stripped.startswith("- "):
+            stripped = stripped[2:].strip()
+            if len(stripped) > 1 and stripped[0] == stripped[-1] and stripped[0] in "'\"":
+                stripped = stripped[1:-1].strip()
+        if not stripped or stripped.startswith("#"):
+            result.append(line)
+            continue
+        parts = _split_rule(stripped)
+        if not re.fullmatch(r"[A-Z][A-Z0-9-]*", parts[0]):
+            raise ValueError(f"rules: line {number}: expected TYPE,VALUE,TARGET: {stripped}")
         target = parts[1] if parts[0] == "MATCH" and len(parts) > 1 else (parts[2] if len(parts) > 2 else "")
-        if target not in {"PROXY", "DIRECT", "REJECT"}:
-            raise ValueError("rules")
-    return "\n".join(lines)
+        if target not in MIHOMO_RULE_TARGETS:
+            allowed = ", ".join(MIHOMO_RULE_TARGETS)
+            raise ValueError(f'rules: line {number}: target "{target}" is not one of {allowed}: {stripped}')
+        result.append(stripped)
+    return "\n".join(result)
 
 
 def _validate_field(kind: str, key: str, value: Any, spec: tuple) -> Any:

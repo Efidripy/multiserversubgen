@@ -254,7 +254,48 @@ def test_invalid_mihomo_rules_are_rejected(env):
     settings = default_settings()
     client = next(item for item in settings["clients"] if item["id"] == "mihomo")
     client["settings"] = {"enable_routing": True, "rules": "DOMAIN,example.com,NOWHERE"}
-    assert env.client.put(SETTINGS_URL, json=settings).status_code == 422
+    response = env.client.put(SETTINGS_URL, json=settings)
+    assert response.status_code == 422
+    assert 'line 1: target "NOWHERE"' in response.json()["detail"]
+
+    client["settings"]["rules"] = "DOMAIN,a.com,DIRECT\nexample.com"
+    response = env.client.put(SETTINGS_URL, json=settings)
+    assert response.status_code == 422
+    assert "line 2" in response.json()["detail"]
+
+
+def test_mihomo_rules_accept_real_config_syntax(env):
+    settings = default_settings()
+    client = next(item for item in settings["clients"] if item["id"] == "mihomo")
+    client["settings"] = {
+        "enable_routing": True,
+        "rules": "\n".join(
+            [
+                "rules:",
+                "  - DOMAIN-SUFFIX,ru,DIRECT",
+                "  - 'GEOIP,RU,DIRECT,no-resolve'",
+                "AND,((NETWORK,UDP),(DST-PORT,443)),REJECT-DROP",
+                "# comment",
+                "MATCH,PROXY",
+            ]
+        ),
+    }
+    response = env.client.put(SETTINGS_URL, json=settings)
+    assert response.status_code == 200, response.text
+    saved = next(item for item in response.json()["settings"]["clients"] if item["id"] == "mihomo")
+    assert saved["settings"]["rules"].splitlines() == [
+        "DOMAIN-SUFFIX,ru,DIRECT",
+        "GEOIP,RU,DIRECT,no-resolve",
+        "AND,((NETWORK,UDP),(DST-PORT,443)),REJECT-DROP",
+        "# comment",
+        "MATCH,PROXY",
+    ]
+
+
+def test_remote_mihomo_rule_list_is_normalized():
+    from services.subscription_remote_rules import _validate_body
+
+    assert _validate_body("mihomo", "- DOMAIN,a.com,DIRECT\n- MATCH,PROXY\n") == "DOMAIN,a.com,DIRECT\nMATCH,PROXY"
 
 
 def test_builtin_rule_cannot_be_deleted_or_change_kind(env):
