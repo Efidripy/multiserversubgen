@@ -168,3 +168,29 @@ def test_concurrent_new_devices_never_exceed_limit(tmp_path):
         decisions = list(pool.map(register, range(8)))
     assert sum(decision.allowed for decision in decisions) == 2
     assert device_status(path, "alice", section)["count"] == 2
+
+
+def test_list_devices_ceiling_raised_to_5000(tmp_path):
+    path = str(tmp_path / "devices.sqlite")
+    with connect(path) as conn:
+        conn.execute(
+            """CREATE TABLE subscription_devices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject TEXT NOT NULL,
+                hwid_hash TEXT NOT NULL,
+                device_os TEXT NOT NULL DEFAULT '',
+                os_version TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL DEFAULT '',
+                first_seen REAL NOT NULL,
+                last_seen REAL NOT NULL,
+                UNIQUE(subject, hwid_hash)
+            )"""
+        )
+        conn.executemany(
+            "INSERT INTO subscription_devices (subject, hwid_hash, first_seen, last_seen) VALUES (?, ?, 1, 1)",
+            [(f"sub-{i}", f"hash-{i}") for i in range(250)],
+        )
+    # Default limit is 200
+    assert len(list_devices(path)) == 200
+    # Ceiling raised beyond 200 up to 5000
+    assert len(list_devices(path, limit=300)) == 250

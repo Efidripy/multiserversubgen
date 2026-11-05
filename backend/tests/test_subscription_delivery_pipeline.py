@@ -141,6 +141,25 @@ def test_devices_api_requires_auth_and_hides_hwid(env):
     assert all("hwid_hash" not in item for item in result.json()["devices"])
 
 
+def test_devices_api_returns_max_devices_when_enabled_and_disabled(env):
+    env.user = "admin"
+    settings = default_settings()
+
+    # Enabled with limit
+    settings["devices"].update({"enabled": True, "max_devices": 3})
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+    res = env.client.get("/api/v1/subscription-client-settings/devices")
+    assert res.status_code == 200
+    assert res.json()["max_devices"] == 3
+
+    # Disabled -> returns 0 even though max_devices is 3 in settings
+    settings["devices"]["enabled"] = False
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+    res_disabled = env.client.get("/api/v1/subscription-client-settings/devices")
+    assert res_disabled.status_code == 200
+    assert res_disabled.json()["max_devices"] == 0
+
+
 def test_default_delivery_bytes_remain_base64(env):
     result = sub(env, "curl/1")
     assert result.content == base64.b64encode((env.links[0] + "\n" + env.links[1]).encode())

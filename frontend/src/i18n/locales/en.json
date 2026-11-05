@@ -1007,7 +1007,12 @@
       "delete": "Delete device",
       "deleted": "Device deleted",
       "deleteFailed": "Failed to delete device",
-      "failed": "Failed to load device list"
+      "failed": "Failed to load device list",
+      "groupBadge": "Group",
+      "deviceCountLimit": "{{count}} of {{max}}",
+      "deviceCount": "{{count}}",
+      "expandGroup": "Expand devices: {{subject}}",
+      "collapseGroup": "Collapse devices: {{subject}}"
     },
     "save": "Save",
     "saving": "Saving...",

@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { ChevronRight } from 'lucide-react';
 import api from '../api';
 import { useToast } from './Toast';
 import { UIIcon } from './UIIcon';
@@ -23,6 +24,57 @@ export interface SubscriptionDeviceItem {
 
 export interface SubscriptionDevicesApiResponse {
   devices: SubscriptionDeviceItem[];
+  max_devices?: number;
+}
+
+export interface DeviceGroup {
+  key: string;
+  label: string;
+  isGroup: boolean;
+  devices: SubscriptionDeviceItem[];
+}
+
+export function groupDevices(devices: SubscriptionDeviceItem[]): DeviceGroup[] {
+  if (!Array.isArray(devices) || devices.length === 0) {
+    return [];
+  }
+
+  const groupMap = new Map<string, DeviceGroup>();
+
+  for (const device of devices) {
+    const rawSubject = (device?.subject ?? '').trim();
+    const groupKey = rawSubject;
+
+    let existing = groupMap.get(groupKey);
+    if (!existing) {
+      let label = rawSubject;
+      let isGroup = false;
+
+      if (/^email:/i.test(rawSubject)) {
+        label = rawSubject.slice(6);
+        isGroup = false;
+      } else if (/^group:/i.test(rawSubject)) {
+        label = rawSubject.slice(6);
+        isGroup = true;
+      }
+
+      existing = {
+        key: groupKey,
+        label,
+        isGroup,
+        devices: [],
+      };
+      groupMap.set(groupKey, existing);
+    }
+
+    existing.devices.push(device);
+  }
+
+  return Array.from(groupMap.values()).sort((a, b) => {
+    const cmp = a.label.localeCompare(b.label);
+    if (cmp !== 0) return cmp;
+    return a.key.localeCompare(b.key);
+  });
 }
 
 export const SubscriptionDevicesPanel: React.FC = () => {
@@ -30,9 +82,11 @@ export const SubscriptionDevicesPanel: React.FC = () => {
   const { toast } = useToast();
 
   const [devices, setDevices] = useState<SubscriptionDeviceItem[]>([]);
+  const [maxDevices, setMaxDevices] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
 
   const fetchDevices = async (signal?: AbortSignal) => {
     setLoading(true);
@@ -44,6 +98,11 @@ export const SubscriptionDevicesPanel: React.FC = () => {
         setDevices(data.devices);
       } else {
         setDevices([]);
+      }
+      if (typeof data?.max_devices === 'number' && data.max_devices >= 0) {
+        setMaxDevices(data.max_devices);
+      } else {
+        setMaxDevices(0);
       }
     } catch (err: any) {
       if (signal?.aborted) return;
@@ -78,6 +137,20 @@ export const SubscriptionDevicesPanel: React.FC = () => {
     }
   };
 
+  const toggleGroupExpanded = (key: string) => {
+    setExpandedKeys((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const groups = useMemo(() => groupDevices(devices), [devices]);
+
   const formatTimestamp = (ts: number): string => {
     if (!ts || typeof ts !== 'number' || ts <= 0) return '—';
     try {
@@ -86,6 +159,105 @@ export const SubscriptionDevicesPanel: React.FC = () => {
       return String(ts);
     }
   };
+
+  const renderMobileChild = (device: SubscriptionDeviceItem) => (
+    <article
+      key={device.id}
+      className="ml-4 min-w-0 overflow-hidden rounded-lg border border-cyan-500/10 bg-[#0a0e1a] p-3"
+    >
+      <div className="flex min-w-0 items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <span className="truncate text-xs font-semibold text-slate-100">
+              {device.device_os || '—'}
+            </span>
+            {device.os_version && (
+              <span className="shrink-0 rounded border border-cyan-500/20 bg-[#0f1420] px-1.5 py-0.5 font-mono text-[11px] text-slate-300">
+                {device.os_version}
+              </span>
+            )}
+          </div>
+          <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs">
+            <span className="shrink-0 text-slate-500">
+              {t('subscriptionClients.devices.model')}:
+            </span>
+            <span
+              className="truncate text-slate-300"
+              title={device.model || '—'}
+            >
+              {device.model || '—'}
+            </span>
+          </div>
+        </div>
+        <button
+          type="button"
+          className={cn(
+            iconButtonClass,
+            'h-8 w-8 shrink-0 text-rose-400 hover:text-rose-300'
+          )}
+          disabled={deletingId === device.id}
+          aria-label={t('subscriptionClients.devices.delete')}
+          title={t('subscriptionClients.devices.delete')}
+          onClick={() => void handleDelete(device.id)}
+        >
+          <UIIcon
+            name={deletingId === device.id ? 'spinner' : 'trash'}
+            size={14}
+          />
+        </button>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] text-slate-500">
+        <div className="min-w-0">
+          <span className="block uppercase tracking-wider">
+            {t('subscriptionClients.devices.firstSeen')}
+          </span>
+          <span
+            className="mt-1 block break-words font-mono tabular-nums text-slate-300"
+            title={formatTimestamp(device.first_seen)}
+          >
+            {formatTimestamp(device.first_seen)}
+          </span>
+        </div>
+        <div className="min-w-0 text-right">
+          <span className="block uppercase tracking-wider">
+            {t('subscriptionClients.devices.lastSeen')}
+          </span>
+          <span
+            className="mt-1 block break-words font-mono tabular-nums text-slate-300"
+            title={formatTimestamp(device.last_seen)}
+          >
+            {formatTimestamp(device.last_seen)}
+          </span>
+        </div>
+      </div>
+    </article>
+  );
+
+  const renderDesktopChild = (device: SubscriptionDeviceItem) => (
+    <tr
+      key={device.id}
+      className="hover:bg-slate-800/30"
+    >
+      <td className="py-2 pr-3 pl-8 text-slate-200">{device.device_os || '—'}</td>
+      <td className="py-2 pr-3 font-mono">{device.os_version || '—'}</td>
+      <td className="py-2 pr-3">{device.model || '—'}</td>
+      <td className="py-2 pr-3 text-slate-400">{formatTimestamp(device.first_seen)}</td>
+      <td className="py-2 pr-3 text-slate-400">{formatTimestamp(device.last_seen)}</td>
+      <td className="py-2 text-right pr-2">
+        <button
+          type="button"
+          className={cn(iconButtonClass, 'h-8 w-8 text-rose-400 hover:text-rose-300')}
+          disabled={deletingId === device.id}
+          aria-label={t('subscriptionClients.devices.delete')}
+          title={t('subscriptionClients.devices.delete')}
+          onClick={() => void handleDelete(device.id)}
+        >
+          <UIIcon name={deletingId === device.id ? 'spinner' : 'trash'} size={14} />
+        </button>
+      </td>
+    </tr>
+  );
 
   return (
     <div className="mt-4 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4 shadow-sm">
@@ -133,54 +305,167 @@ export const SubscriptionDevicesPanel: React.FC = () => {
         </div>
       )}
 
-      {!loading && !error && devices.length === 0 && (
+      {!loading && !error && groups.length === 0 && (
         <div className="py-8 text-center text-sm text-slate-400">
           {t('subscriptionClients.devices.empty')}
         </div>
       )}
 
-      {!loading && !error && devices.length > 0 && (
-        <div className="mt-4 overflow-x-auto">
-          <table className="w-full text-left text-xs text-slate-300">
-            <thead className="border-b border-cyan-500/20 text-[11px] uppercase tracking-wider text-slate-400">
-              <tr>
-                <th className="py-2 pr-3">{t('subscriptionClients.devices.subject')}</th>
-                <th className="py-2 pr-3">{t('subscriptionClients.devices.os')}</th>
-                <th className="py-2 pr-3">{t('subscriptionClients.devices.version')}</th>
-                <th className="py-2 pr-3">{t('subscriptionClients.devices.model')}</th>
-                <th className="py-2 pr-3">{t('subscriptionClients.devices.firstSeen')}</th>
-                <th className="py-2 pr-3">{t('subscriptionClients.devices.lastSeen')}</th>
-                <th className="py-2 text-right">{t('subscriptionClients.devices.actions')}</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-cyan-500/10">
-              {devices.map((device) => (
-                <tr key={device.id} className="hover:bg-slate-800/30">
-                  <td className="py-2 pr-3 font-mono font-medium text-slate-200">
-                    {device.subject || '—'}
-                  </td>
-                  <td className="py-2 pr-3">{device.device_os || '—'}</td>
-                  <td className="py-2 pr-3 font-mono">{device.os_version || '—'}</td>
-                  <td className="py-2 pr-3">{device.model || '—'}</td>
-                  <td className="py-2 pr-3 text-slate-400">{formatTimestamp(device.first_seen)}</td>
-                  <td className="py-2 pr-3 text-slate-400">{formatTimestamp(device.last_seen)}</td>
-                  <td className="py-2 text-right">
+      {!loading && !error && groups.length > 0 && (
+        <>
+          {/* Mobile view (< lg) */}
+          <div className="mt-4 grid min-w-0 grid-cols-1 gap-3 lg:hidden">
+            {groups.map((group) => {
+              const expanded = expandedKeys.has(group.key);
+              const count = group.devices.length;
+              const isWarning = maxDevices > 0 && count >= maxDevices;
+              const counterText =
+                maxDevices > 0
+                  ? t('subscriptionClients.devices.deviceCountLimit', { count, max: maxDevices })
+                  : t('subscriptionClients.devices.deviceCount', { count });
+
+              return (
+                <article
+                  key={group.key}
+                  className="min-w-0 overflow-hidden rounded-lg bg-cyan-500/5 p-3 ring-1 ring-cyan-500/10"
+                >
+                  <div className="flex min-w-0 items-center gap-2">
                     <button
                       type="button"
-                      className={cn(iconButtonClass, 'h-8 w-8 text-rose-400 hover:text-rose-300')}
-                      disabled={deletingId === device.id}
-                      aria-label={t('subscriptionClients.devices.delete')}
-                      title={t('subscriptionClients.devices.delete')}
-                      onClick={() => void handleDelete(device.id)}
+                      className="flex w-full min-w-0 items-center justify-between gap-2 text-left focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400"
+                      aria-expanded={expanded}
+                      aria-label={
+                        expanded
+                          ? t('subscriptionClients.devices.collapseGroup', { subject: group.label })
+                          : t('subscriptionClients.devices.expandGroup', { subject: group.label })
+                      }
+                      onClick={() => toggleGroupExpanded(group.key)}
                     >
-                      <UIIcon name={deletingId === device.id ? 'spinner' : 'trash'} size={14} />
+                      <div className="flex min-w-0 flex-1 items-center gap-2">
+                        <ChevronRight
+                          className={cn(
+                            'h-4 w-4 shrink-0 text-cyan-300 transition-transform duration-150',
+                            expanded && 'rotate-90'
+                          )}
+                          aria-hidden="true"
+                        />
+                        <span
+                          className="min-w-0 truncate font-mono text-xs font-medium text-slate-200"
+                          title={group.label}
+                        >
+                          {group.label || '—'}
+                        </span>
+                        {group.isGroup && (
+                          <span className="shrink-0 rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-medium text-cyan-300">
+                            {t('subscriptionClients.devices.groupBadge')}
+                          </span>
+                        )}
+                      </div>
+                      <div className="shrink-0">
+                        <span
+                          className={cn(
+                            'inline-flex items-center rounded px-2 py-0.5 font-mono text-xs tabular-nums',
+                            isWarning
+                              ? 'border border-amber-400/40 bg-amber-400/15 text-amber-300 font-medium'
+                              : 'border border-cyan-500/20 bg-[#0f1420] text-slate-400'
+                          )}
+                        >
+                          {counterText}
+                        </span>
+                      </div>
                     </button>
-                  </td>
+                  </div>
+                  {expanded && (
+                    <div className="mt-3 grid min-w-0 grid-cols-1 gap-2">
+                      {group.devices.map(renderMobileChild)}
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+
+          {/* Desktop view (>= lg) */}
+          <div className="mt-4 hidden min-w-0 overflow-x-auto lg:block">
+            <table className="w-full text-left text-xs text-slate-300">
+              <thead className="border-b border-cyan-500/20 text-[11px] uppercase tracking-wider text-slate-400">
+                <tr>
+                  <th className="py-2 pr-3 pl-8">{t('subscriptionClients.devices.os')}</th>
+                  <th className="py-2 pr-3">{t('subscriptionClients.devices.version')}</th>
+                  <th className="py-2 pr-3">{t('subscriptionClients.devices.model')}</th>
+                  <th className="py-2 pr-3">{t('subscriptionClients.devices.firstSeen')}</th>
+                  <th className="py-2 pr-3">{t('subscriptionClients.devices.lastSeen')}</th>
+                  <th className="py-2 text-right pr-2">{t('subscriptionClients.devices.actions')}</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody className="divide-y divide-cyan-500/10">
+                {groups.map((group) => {
+                  const expanded = expandedKeys.has(group.key);
+                  const count = group.devices.length;
+                  const isWarning = maxDevices > 0 && count >= maxDevices;
+                  const counterText =
+                    maxDevices > 0
+                      ? t('subscriptionClients.devices.deviceCountLimit', { count, max: maxDevices })
+                      : t('subscriptionClients.devices.deviceCount', { count });
+
+                  return (
+                    <React.Fragment key={group.key}>
+                      <tr className="bg-cyan-500/5 text-slate-100">
+                        <td colSpan={6} className="p-0">
+                          <button
+                            type="button"
+                            className="flex w-full min-w-0 items-center justify-between gap-3 px-3 py-2.5 text-left transition-colors hover:bg-cyan-500/10 focus:outline-none focus-visible:ring-1 focus-visible:ring-cyan-400"
+                            aria-expanded={expanded}
+                            aria-label={
+                              expanded
+                                ? t('subscriptionClients.devices.collapseGroup', { subject: group.label })
+                                : t('subscriptionClients.devices.expandGroup', { subject: group.label })
+                            }
+                            onClick={() => toggleGroupExpanded(group.key)}
+                          >
+                            <div className="flex min-w-0 flex-1 items-center gap-2">
+                              <ChevronRight
+                                className={cn(
+                                  'h-4 w-4 shrink-0 text-cyan-300 transition-transform duration-150',
+                                  expanded && 'rotate-90'
+                                )}
+                                aria-hidden="true"
+                              />
+                              <span
+                                className="truncate font-mono text-xs font-medium text-slate-200"
+                                title={group.label}
+                              >
+                                {group.label || '—'}
+                              </span>
+                              {group.isGroup && (
+                                <span className="shrink-0 rounded border border-cyan-500/30 bg-cyan-500/10 px-1.5 py-0.5 text-[10px] font-medium text-cyan-300">
+                                  {t('subscriptionClients.devices.groupBadge')}
+                                </span>
+                              )}
+                            </div>
+                            <div className="shrink-0">
+                              <span
+                                className={cn(
+                                  'inline-flex items-center rounded px-2 py-0.5 font-mono text-xs tabular-nums',
+                                  isWarning
+                                    ? 'border border-amber-400/40 bg-amber-400/15 text-amber-300 font-medium'
+                                    : 'border border-cyan-500/20 bg-[#0f1420] text-slate-400'
+                                )}
+                              >
+                                {counterText}
+                              </span>
+                            </div>
+                          </button>
+                        </td>
+                      </tr>
+                      {expanded && group.devices.map(renderDesktopChild)}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );

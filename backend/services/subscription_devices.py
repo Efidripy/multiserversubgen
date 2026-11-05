@@ -166,8 +166,9 @@ def list_devices(
     """Return public device metadata; the HWID digest is intentionally omitted."""
     if limit <= 0:
         return []
+    # shortcut: 5000, перейти на пагинацию при росте базы устройств
     try:
-        bounded_limit = min(int(limit), 200)
+        bounded_limit = min(int(limit), 5000)
     except (TypeError, ValueError):
         bounded_limit = 200
     with connect(db_path) as conn:

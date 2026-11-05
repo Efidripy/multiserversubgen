@@ -476,20 +476,24 @@ describe('SubscriptionSettingsSections and Client Subscriptions Stage 2', () => 
     render(<SubscriptionDevicesPanel />);
 
     await waitFor(() => {
-      expect(screen.getByText('client-user@example.com')).toBeTruthy();
+      expect(screen.getAllByText('client-user@example.com').length).toBeGreaterThan(0);
     });
 
-    expect(screen.getByText('iOS')).toBeTruthy();
-    expect(screen.getByText('18.1')).toBeTruthy();
-    expect(screen.getByText('iPhone 16 Pro')).toBeTruthy();
+    // Groups start collapsed; phone and desktop layouts are both in the DOM
+    expect(screen.queryByText('iPhone 16 Pro')).toBeNull();
+    fireEvent.click(screen.getAllByRole('button', { name: 'subscriptionClients.devices.expandGroup' })[0]);
+
+    expect(screen.getAllByText('iOS').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('18.1').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('iPhone 16 Pro').length).toBeGreaterThan(0);
 
     // Verify HWID is not displayed anywhere in document
     expect(screen.queryByText(/hwid/i)).toBeNull();
 
     // Click Delete button
-    const deleteBtn = screen.getByRole('button', {
+    const deleteBtn = screen.getAllByRole('button', {
       name: 'subscriptionClients.devices.delete',
-    });
+    })[0];
     fireEvent.click(deleteBtn);
 
     await waitFor(() => {

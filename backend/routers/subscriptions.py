@@ -841,7 +841,21 @@ def build_subscriptions_router(
     def get_subscription_devices(request: Request):
         if not check_auth(request):
             raise HTTPException(status_code=401, detail="Unauthorized")
-        return {"devices": list_devices(db_path)}
+        settings = load_client_settings(db_path)
+        devices_cfg = settings.get("devices", {}) if isinstance(settings, dict) else {}
+        enabled = bool(devices_cfg.get("enabled", False))
+        try:
+            raw_max = devices_cfg.get("max_devices", 0)
+            max_devices = int(raw_max) if enabled else 0
+        except (TypeError, ValueError):
+            max_devices = 0
+        if max_devices < 0:
+            max_devices = 0
+        # shortcut: 5000, перейти на пагинацию при росте базы устройств
+        return {
+            "devices": list_devices(db_path, limit=5000),
+            "max_devices": max_devices,
+        }
 
     @router.delete("/api/v1/subscription-client-settings/devices/{device_id}")
     def remove_subscription_device(request: Request, device_id: int):
