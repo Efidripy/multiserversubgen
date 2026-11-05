@@ -141,7 +141,7 @@ def _validate_body(kind: str, body: str) -> str:
             key in document for key in ("rules", "rule-providers", "proxy-groups")
         ):
             return body
-        _validate_rule_lines(body)
+        return _validate_rule_lines(body)
     else:
         raise ValueError("kind")
     return body
