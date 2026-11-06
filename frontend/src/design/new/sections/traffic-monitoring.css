@@ -29,3 +29,13 @@
   :root[data-design="new"] [data-ln="monitoring-filters"] > div { flex-direction: column; gap: 4px; }
   :root[data-design="new"] [data-ln="monitoring-filters"] > div > span { width: auto; padding-top: 0; }
 }
+
+/* "Open Grafana" is a link styled as the primary button; global link styles must not win. */
+:root[data-design="new"] [data-ln="monitoring"] a[target="_blank"] {
+  height: 30px;
+  padding-inline: 12px;
+  border: 1px solid var(--ln-accent);
+  background: var(--ln-accent);
+  color: var(--ln-accent-ink);
+  text-decoration: none;
+}
