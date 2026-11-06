@@ -2861,7 +2861,7 @@ export const ClientManager: React.FC = () => {
       {showBatchModal && (
         <div className={modalBackdropClass}>
           <div className="my-8 w-full max-w-3xl">
-            <div className={modalPanelClass}>
+            <div data-ln="client-modal" className={modalPanelClass}>
               <div className={modalHeaderClass}>
                 <h6 className={modalTitleClass}>{t('clients.batchAddTitle')}</h6>
                 <button
@@ -3018,7 +3018,7 @@ export const ClientManager: React.FC = () => {
       {showAddForm && (
         <div className={modalBackdropClass}>
           <div className="my-8 w-full max-w-5xl">
-            <div className={modalPanelClass}>
+            <div data-ln="client-modal" className={modalPanelClass}>
               <div className={modalHeaderClass}>
                 <h6 className={modalTitleClass}>{t('common.add')}</h6>
                 <button
@@ -3051,7 +3051,7 @@ export const ClientManager: React.FC = () => {
       {showBulkAdjust && (
         <div className={modalBackdropClass} onClick={(e) => { if (e.target === e.currentTarget) setShowBulkAdjust(false); }}>
           <div className="my-8 w-full max-w-xl">
-            <div className={modalPanelClass}>
+            <div data-ln="client-modal" className={modalPanelClass}>
               <div className={modalHeaderClass}>
                 <h6 className={modalTitleClass}>{t('messages.bulkAdjustTitle')}</h6>
                 <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setShowBulkAdjust(false)}>
@@ -3101,7 +3101,7 @@ export const ClientManager: React.FC = () => {
       {showAttachModal && attachClient && (
         <div className={modalBackdropClass} onClick={e => { if (e.target === e.currentTarget) setShowAttachModal(false); }}>
           <div className="my-8 w-full max-w-xl">
-            <div className={modalPanelClass}>
+            <div data-ln="client-modal" className={modalPanelClass}>
               <div className={modalHeaderClass}>
                 <h6 className={modalTitleClass}>Inbounds - {attachClient.email}</h6>
                 <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setShowAttachModal(false)}>
@@ -3153,7 +3153,7 @@ export const ClientManager: React.FC = () => {
       {showGroupsModal && (
         <div className={modalBackdropClass} onClick={(e) => { if (e.target === e.currentTarget) setShowGroupsModal(false); }}>
           <div className="my-8 w-full max-w-3xl">
-            <div className={modalPanelClass}>
+            <div data-ln="client-modal" className={modalPanelClass}>
               <div className={modalHeaderClass}>
                 <h6 className={modalTitleClass}>Client Groups{groupsNodeName ? ` - ${groupsNodeName}` : ''}</h6>
                 <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setShowGroupsModal(false)}>
@@ -3266,7 +3266,7 @@ export const ClientManager: React.FC = () => {
       {ipHistoryClient && (
         <div className={modalBackdropClass} onClick={e => { if (e.target === e.currentTarget) setIpHistoryClient(null); }}>
           <div className="my-8 w-full max-w-xl">
-            <div className={modalPanelClass}>
+            <div data-ln="client-modal" className={modalPanelClass}>
               <div className={modalHeaderClass}>
                 <h6 className={modalTitleClass}>{t('clients.ipHistoryTitle')} - {ipHistoryClient.email}</h6>
                 <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => setIpHistoryClient(null)}>
@@ -3332,7 +3332,7 @@ export const ClientManager: React.FC = () => {
       {showIpSearch && (
         <div className={modalBackdropClass} onClick={e => { if (e.target === e.currentTarget) { cancelIpSearch(); setShowIpSearch(false); } }}>
           <div className="my-8 w-full max-w-3xl">
-            <div className={modalPanelClass}>
+            <div data-ln="client-modal" className={modalPanelClass}>
               <div className={modalHeaderClass}>
                 <h6 className={modalTitleClass}>{t('clients.findByIpModalTitle')}</h6>
                 <button type="button" className={buttonIconClass} aria-label={t('common.close')} onClick={() => { cancelIpSearch(); setShowIpSearch(false); }}>

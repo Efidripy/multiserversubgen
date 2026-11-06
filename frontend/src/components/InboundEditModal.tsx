@@ -73,7 +73,7 @@ const Toggle: React.FC<{ id: string; checked: boolean; onChange: (v: boolean) =>
 );
 
 const Field: React.FC<{ label: string; children: React.ReactNode; colors: any; hint?: string }> = ({ label, children, colors, hint }) => (
-  <div className="row align-items-center mb-2">
+  <div data-ln="field" className="row align-items-center mb-2">
     <div className="col-4 text-end">
       <span style={{ fontSize: '0.8rem', color: colors.text.secondary }}>{label}</span>
       {hint && <span title={hint} style={{ fontSize: '0.68rem', color: colors.text.tertiary, marginLeft: '3px' }}>ⓘ</span>}
@@ -431,7 +431,7 @@ export const InboundEditModal: React.FC<Props> = ({ inbound, nodeId, onClose, on
   }, [onClose]);
 
   return (
-    <div className="drawer" role="dialog" aria-modal="true" aria-label={t('inbounds.modifyInbound')}>
+    <div data-ln="inbound-edit" className="drawer" role="dialog" aria-modal="true" aria-label={t('inbounds.modifyInbound')}>
       <div className="drawer__backdrop" onClick={onClose} />
       <div className="drawer__panel">
 
