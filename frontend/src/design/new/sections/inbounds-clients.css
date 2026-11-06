@@ -77,34 +77,107 @@
   }
 }
 
-/* Keep card actions aligned and allow wide desktop tables to scroll. */
+/* Keep the desktop table within its container, including all row actions. */
 :root[data-design="new"] [data-inbound-manager-root] article > div:first-child button,
 :root[data-design="new"] [data-inbound-manager-root] article > div:nth-child(2) button {
   min-height: 32px;
 }
 
 :root[data-design="new"] [data-inbound-manager-root] table {
-  min-width: 1240px;
+  min-width: 0;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table th,
+:root[data-design="new"] [data-inbound-manager-root] table td {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table th:first-child {
+  width: 32px;
 }
 
 :root[data-design="new"] [data-inbound-manager-root] table th:last-child {
-  width: 312px;
+  width: 260px;
 }
 
 :root[data-design="new"] [data-inbound-manager-root] table td:last-child > div {
   flex-wrap: nowrap;
 }
 
-:root[data-design="new"] [data-inbound-manager-root] table {
-  min-width: 1380px;
+:root[data-design="new"] [data-inbound-manager-root] table td:last-child button {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
 }
 
-:root[data-design="new"] [data-inbound-manager-root] table th:nth-child(4) {
-  width: 120px;
+:root[data-design="new"] [data-inbound-manager-root] table td button {
+  white-space: nowrap;
+}
+
+:root[data-design="new"] [data-ln="inbound-edit"] [data-ln="field"] {
+  display: block;
+  margin-bottom: 12px;
+}
+
+:root[data-design="new"] [data-ln="inbound-edit"] [data-ln="field"] > div {
+  width: 100%;
+  max-width: 100%;
+  text-align: left;
+}
+
+:root[data-design="new"] [data-ln="inbound-edit"] [data-ln="field"] > div:first-child {
+  margin-bottom: 4px;
+}
+
+:root[data-design="new"] [data-ln="inbound-edit"] [data-ln="field"] input:not([type="checkbox"]),
+:root[data-design="new"] [data-ln="inbound-edit"] [data-ln="field"] select {
+  width: 100% !important;
+  height: 30px;
+  min-height: 30px;
+}
+
+:root[data-design="new"] [data-ln="client-modal"] {
+  max-height: calc(100dvh - 32px);
+  margin: 0;
+  border-color: var(--ln-line);
+  border-radius: var(--ln-r-md);
+  background: var(--ln-surface);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 0.5);
+}
+
+:root[data-design="new"] [data-ln="client-modal"] > div:nth-child(2) {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+:root[data-design="new"] [data-ln="client-modal"] > div:first-child,
+:root[data-design="new"] [data-ln="client-modal"] > div:last-child:not(:nth-child(2)) {
+  flex-shrink: 0;
 }
 
 @media (min-width: 1280px) {
   :root[data-design="new"] [data-inbound-manager-root] .grid[class*="xl:grid-cols-"] > div:first-child > div:nth-child(2) {
     margin-top: 4px;
   }
+}
+
+:root[data-design="new"] [data-ln="inbound-edit"] .drawer__header .seg-tab {
+  height: 30px;
+  min-height: 30px;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table th:nth-child(4) {
+  width: 105px;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table th:nth-child(5),
+:root[data-design="new"] [data-inbound-manager-root] table th:nth-child(8) {
+  width: 55px;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table th:nth-child(6),
+:root[data-design="new"] [data-inbound-manager-root] table th:nth-child(7) {
+  width: 75px;
 }
