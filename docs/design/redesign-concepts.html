@@ -1,0 +1,427 @@
+<title>Новый дизайн Sub Manager</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&family=Commissioner:wght@500;700;800&family=Barlow+Semi+Condensed:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Geologica:wght@300;400;500;600;700&display=swap">
+<style>
+/* Page chrome: a neutral working document. The three concepts live inside .mock specimens with their own fixed palettes. */
+:root {
+  --bg: #F5F6F7;
+  --surface: #FFFFFF;
+  --ink: #1A1D21;
+  --muted: #5B636D;
+  --rule: #D9DCE1;
+  --mark: #2B47C7;
+  --font: "Golos Text", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #131518; --surface: #1B1E22; --ink: #E7E9EC; --muted: #9AA2AC; --rule: #2E3238; --mark: #8EA2FF;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #131518; --surface: #1B1E22; --ink: #E7E9EC; --muted: #9AA2AC; --rule: #2E3238; --mark: #8EA2FF;
+}
+
+body { background: var(--bg); color: var(--ink); font-family: var(--font); font-size: 15px; line-height: 1.55; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 40px 80px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 56px; }
+h1 { font-size: clamp(28px, 4vw, 40px); line-height: 1.15; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; margin: 0; }
+h2 { font-size: 26px; line-height: 1.2; font-weight: 700; margin: 0; text-wrap: balance; }
+h3 { font-size: 15px; font-weight: 600; margin: 0; }
+p { margin: 0; max-width: 68ch; }
+.lead { color: var(--muted); font-size: 17px; }
+.intro { display: grid; gap: 14px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 32px; padding-top: 8px; }
+.facts div { border-top: 1px solid var(--rule); padding-top: 10px; display: grid; gap: 2px; }
+.facts b { font-weight: 600; }
+.facts span { color: var(--muted); font-size: 14px; }
+
+.concept { display: grid; gap: 22px; }
+.concept-head { display: grid; gap: 6px; }
+.concept-head .tag { color: var(--muted); font-size: 14px; }
+.spec { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px 36px; }
+.spec section { display: grid; gap: 6px; align-content: start; }
+.spec p, .spec li { color: var(--ink); font-size: 14.5px; }
+.spec ul { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; }
+.sw { display: grid; gap: 4px; font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.sw i { display: block; width: 64px; height: 40px; border-radius: 6px; border: 1px solid var(--rule); }
+
+.stage { overflow-x: auto; border: 1px solid var(--rule); border-radius: 10px; background: var(--surface); }
+.stage-note { color: var(--muted); font-size: 13px; }
+
+/* ---------- Shared specimen markup ---------- */
+.mock { min-width: 860px; display: grid; font-variant-numeric: tabular-nums; }
+.mock * { box-sizing: border-box; }
+.mock table { border-collapse: collapse; width: 100%; }
+.mock th, .mock td { text-align: left; white-space: nowrap; }
+.mock .num { text-align: right; }
+.mock button, .mock input, .mock select { font: inherit; color: inherit; }
+.mock ul { list-style: none; margin: 0; padding: 0; }
+.chips { display: inline-flex; }
+.chips button { cursor: pointer; white-space: nowrap; }
+.mock .brand { white-space: nowrap; }
+
+/* ---------- A · Маршрут ---------- */
+.mA { --paper:#EEF1F4; --card:#FFFFFF; --ink:#13202B; --slate:#5B6B78; --hair:#D3D9DF; --cobalt:#2346D9;
+  --l1:#2346D9; --l2:#0E9384; --l3:#7A4FD6; --l4:#D98C10; --l5:#C2387A;
+  background: var(--paper); color: var(--ink); font-family: "Golos Text", sans-serif; font-size: 14px;
+  grid-template-rows: auto 1fr; }
+.mA .m-side { display: flex; align-items: center; gap: 28px; padding: 0 28px; height: 60px; background: var(--card); border-bottom: 1px solid var(--hair); }
+.mA .brand { font-family: "Commissioner", sans-serif; font-weight: 800; font-size: 17px; letter-spacing: -0.02em; }
+.mA .nav { display: flex; gap: 2px; position: relative; }
+.mA .nav li { padding: 19px 12px; color: var(--slate); font-weight: 500; position: relative; }
+.mA .nav li.on { color: var(--ink); }
+.mA .nav li.on::after { content: ""; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0; background: var(--cobalt); }
+.mA .side-foot { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.mA .chips { border: 1px solid var(--hair); border-radius: 999px; padding: 2px; background: var(--paper); }
+.mA .chips button { border: 0; background: none; padding: 2px 10px; border-radius: 999px; font-size: 12px; color: var(--slate); }
+.mA .chips button.on { background: var(--ink); color: #fff; }
+.mA .m-main { padding: 28px; display: grid; gap: 22px; }
+.mA .m-top { display: flex; align-items: flex-end; gap: 16px; }
+.mA .m-top h4 { font-family: "Commissioner", sans-serif; font-weight: 800; font-size: 34px; letter-spacing: -0.03em; margin: 0; line-height: 1; }
+.mA .m-top p { color: var(--slate); }
+.mA .actions { margin-left: auto; display: flex; gap: 8px; }
+.mA .btn { border-radius: 8px; padding: 9px 16px; font-weight: 600; border: 1px solid var(--hair); background: var(--card); }
+.mA .btn.primary { background: var(--cobalt); color: #fff; border-color: var(--cobalt); }
+.mA .route { background: var(--card); border: 1px solid var(--hair); border-radius: 12px; padding: 18px 22px; display: grid; gap: 10px; }
+.mA .route svg { width: 100%; height: 64px; display: block; }
+.mA .route-legend { display: flex; justify-content: space-between; color: var(--slate); font-size: 12.5px; }
+.mA .kpis { display: flex; gap: 40px; }
+.mA .kpi b { display: block; font-family: "Commissioner", sans-serif; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+.mA .kpi span { color: var(--slate); font-size: 13px; }
+.mA .m-table { background: var(--card); border: 1px solid var(--hair); border-radius: 12px; overflow: hidden; }
+.mA .filters { display: flex; gap: 8px; padding: 12px; border-bottom: 1px solid var(--hair); }
+.mA .filters input, .mA .filters select { border: 1px solid var(--hair); border-radius: 8px; padding: 7px 11px; background: var(--paper); }
+.mA .filters input { width: 260px; }
+.mA th { font-weight: 500; color: var(--slate); font-size: 12.5px; padding: 10px 16px; border-bottom: 1px solid var(--hair); }
+.mA td { padding: 12px 16px; border-bottom: 1px solid var(--hair); }
+.mA tr:last-child td { border-bottom: 0; }
+.mA .node { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; }
+.mA .node i { width: 22px; height: 6px; border-radius: 3px; background: var(--c); }
+.mA .stn { display: inline-flex; align-items: center; gap: 8px; }
+.mA .stn i { width: 12px; height: 12px; border-radius: 50%; border: 3px solid var(--ink); background: #fff; }
+.mA .stn.off i { border-color: var(--slate); border-style: dashed; }
+.mA .stn.off { color: var(--slate); }
+
+/* ---------- B · Стойка ---------- */
+.mB { --gr:#1B1A18; --panel:#24221F; --rule:#3A3733; --bone:#E9E4DA; --dim:#9C958A; --amber:#F2A93B; --ok:#7BD88F; --bad:#FF6B5B;
+  --u: 44px;
+  background: var(--gr); color: var(--bone); font-family: "Barlow Semi Condensed", sans-serif; font-size: 15px;
+  grid-template-columns: 64px 1fr; }
+.mB .m-side { background: #151412; border-right: 1px solid var(--rule); display: flex; flex-direction: column; align-items: center; padding: 12px 0; gap: 6px; }
+.mB .brand { width: 36px; height: 36px; border: 1px solid var(--amber); color: var(--amber); display: grid; place-items: center; font-weight: 700; font-size: 13px; letter-spacing: 0.06em; margin-bottom: 10px; }
+.mB .nav { display: grid; gap: 4px; }
+.mB .nav li { width: 40px; height: 40px; display: grid; place-items: center; color: var(--dim); font-size: 11px; border-radius: 2px; position: relative; }
+.mB .nav li.on { background: var(--panel); color: var(--amber); box-shadow: inset 0 1px 0 rgba(255,255,255,.05); }
+.mB .nav li.on::before { content: ""; position: absolute; left: -12px; top: 10px; bottom: 10px; width: 3px; background: var(--amber); }
+.mB .side-foot { margin-top: auto; display: grid; gap: 6px; justify-items: center; }
+.mB .chips { flex-direction: column; border: 1px solid var(--rule); }
+.mB .chips button { border: 0; background: none; color: var(--dim); font-size: 11px; padding: 4px 6px; width: 48px; }
+.mB .chips button + button { border-top: 1px solid var(--rule); }
+.mB .chips button.on { color: var(--gr); background: var(--amber); font-weight: 700; }
+.mB .m-main { display: grid; grid-auto-rows: min-content; }
+.mB .m-top { height: var(--u); display: flex; align-items: center; gap: 14px; padding: 0 18px; border-bottom: 1px solid var(--rule); background: var(--panel); }
+.mB .m-top h4 { margin: 0; font-size: 17px; font-weight: 700; letter-spacing: 0.02em; }
+.mB .m-top p { color: var(--dim); font-size: 14px; }
+.mB .kbd { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 12px; color: var(--dim); border: 1px solid var(--rule); padding: 3px 8px; }
+.mB .actions { display: flex; gap: 6px; }
+.mB .btn { border-radius: 2px; padding: 5px 12px; font-weight: 600; border: 1px solid var(--rule); background: #2D2A26; box-shadow: inset 0 1px 0 rgba(255,255,255,.06); }
+.mB .btn.primary { background: var(--amber); color: var(--gr); border-color: var(--amber); }
+.mB .kpis { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--rule); }
+.mB .kpi { height: calc(var(--u) * 2); padding: 12px 18px; border-right: 1px solid var(--rule); display: grid; align-content: space-between; }
+.mB .kpi span { color: var(--dim); font-size: 13px; }
+.mB .kpi b { font-family: "JetBrains Mono", monospace; font-size: 26px; font-weight: 600; }
+.mB .meter { height: 4px; background: var(--rule); position: relative; }
+.mB .meter i { position: absolute; inset: 0 auto 0 0; background: var(--amber); }
+.mB .route { display: none; }
+.mB .filters { display: flex; gap: 6px; padding: 8px 18px; height: var(--u); border-bottom: 1px solid var(--rule); }
+.mB .filters input, .mB .filters select { background: #151412; border: 1px solid var(--rule); border-radius: 2px; padding: 4px 10px; }
+.mB .filters input { width: 240px; }
+.mB th { height: 32px; padding: 0 18px; color: var(--dim); font-weight: 500; font-size: 13px; border-bottom: 1px solid var(--rule); }
+.mB td { height: var(--u); padding: 0 18px; border-bottom: 1px solid var(--rule); }
+.mB tbody tr:nth-child(even) td { background: rgba(255,255,255,.018); }
+.mB td.num, .mB td.mono { font-family: "JetBrains Mono", monospace; font-size: 13.5px; }
+.mB .node i { display: none; }
+.mB .node { font-weight: 600; }
+.mB .stn { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; }
+.mB .stn i { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 3px rgba(123,216,143,.15); }
+.mB .stn.off i { background: var(--bad); box-shadow: 0 0 0 3px rgba(255,107,91,.18); }
+.mB .stn.off { color: var(--bad); }
+
+/* ---------- C · Атлас ---------- */
+.mC { --fog:#EDF0EB; --card:#FBFCFA; --pine:#143D35; --moss:#5E7C6B; --line:#D5DCD5; --sky:#BFD9EA; --ember:#C8503B;
+  background: var(--fog); color: var(--pine); font-family: "Geologica", sans-serif; font-size: 14.5px; font-weight: 400;
+  grid-template-columns: 236px 1fr; padding: 14px; gap: 14px; }
+.mC .m-side { background: var(--pine); color: #DDE8E2; border-radius: 22px; padding: 22px 14px; display: flex; flex-direction: column; gap: 18px; }
+.mC .brand { font-weight: 600; font-size: 18px; padding: 0 10px; color: #fff; }
+.mC .nav { display: grid; gap: 2px; }
+.mC .nav li { padding: 10px 12px; border-radius: 12px; color: #B5C8BE; }
+.mC .nav li.on { background: #FBFCFA; color: var(--pine); font-weight: 500; }
+.mC .side-foot { margin-top: auto; display: grid; gap: 8px; padding: 0 4px; }
+.mC .chips { background: rgba(255,255,255,.08); border-radius: 12px; padding: 3px; }
+.mC .chips button { flex: 1; border: 0; background: none; color: #B5C8BE; padding: 6px 8px; border-radius: 9px; font-size: 12.5px; }
+.mC .chips button.on { background: var(--sky); color: var(--pine); font-weight: 500; }
+.mC .m-main { display: grid; gap: 14px; align-content: start; }
+.mC .m-top { display: flex; align-items: center; gap: 14px; padding: 8px 6px 0; }
+.mC .m-top h4 { margin: 0; font-weight: 300; font-size: 36px; letter-spacing: -0.02em; line-height: 1.05; }
+.mC .m-top p { color: var(--moss); }
+.mC .actions { margin-left: auto; display: flex; gap: 8px; }
+.mC .btn { border-radius: 999px; padding: 10px 18px; font-weight: 500; border: 1px solid var(--line); background: var(--card); }
+.mC .btn.primary { background: var(--pine); color: #fff; border-color: var(--pine); }
+.mC .kpis { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px; }
+.mC .kpi { background: var(--card); border-radius: 20px; padding: 18px 20px; display: grid; gap: 4px; }
+.mC .kpi:first-child { background: var(--sky); }
+.mC .kpi span { color: var(--moss); font-size: 13.5px; }
+.mC .kpi:first-child span { color: var(--pine); }
+.mC .kpi b { font-size: 30px; font-weight: 500; letter-spacing: -0.02em; }
+.mC .meter { display: none; }
+.mC .route { display: none; }
+.mC .m-table { background: var(--card); border-radius: 20px; padding: 8px; }
+.mC .filters { display: flex; gap: 8px; padding: 6px 6px 10px; }
+.mC .filters input, .mC .filters select { border: 1px solid var(--line); border-radius: 12px; padding: 9px 14px; background: var(--fog); }
+.mC .filters input { width: 280px; }
+.mC table { border-collapse: separate; border-spacing: 0 4px; }
+.mC th { font-weight: 400; color: var(--moss); font-size: 13px; padding: 4px 14px; }
+.mC td { padding: 12px 14px; background: var(--fog); }
+.mC td:first-child { border-radius: 14px 0 0 14px; }
+.mC td:last-child { border-radius: 0 14px 14px 0; }
+.mC .node i { display: none; }
+.mC .node { font-weight: 500; }
+.mC .cc { display: inline-block; min-width: 30px; text-align: center; font-size: 11.5px; font-weight: 600; padding: 2px 6px; border-radius: 6px; background: #fff; color: var(--moss); margin-right: 8px; }
+.mC .stn { display: inline-flex; padding: 3px 10px; border-radius: 999px; background: #D7E9DD; color: #1D5B44; font-size: 12.5px; font-weight: 500; }
+.mC .stn i { display: none; }
+.mC .stn.off { background: #F4DCD5; color: var(--ember); }
+.mA .cc, .mB .cc { display: none; }
+.mA .meter, .mA .kbd, .mC .kbd { display: none; }
+
+/* Sections for architecture */
+.arch { display: grid; gap: 18px; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 18px 36px; }
+.cols section { display: grid; gap: 6px; align-content: start; }
+.cols ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14.5px; }
+code { font-family: "JetBrains Mono", Consolas, monospace; font-size: 0.88em; background: color-mix(in srgb, var(--rule) 55%, transparent); padding: 1px 5px; border-radius: 4px; }
+.who { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+.who th, .who td { text-align: left; vertical-align: top; padding: 10px 12px; border-top: 1px solid var(--rule); }
+.who th { font-weight: 600; white-space: nowrap; }
+.choice { border: 1px solid var(--rule); border-radius: 10px; padding: 18px 20px; background: var(--surface); display: grid; gap: 6px; }
+:focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }
+</style>
+
+<div class="wrap">
+  <header class="intro">
+    <h1>Новый дизайн Sub Manager: три направления</h1>
+    <p class="lead">Панель управления VPN-флотом: ноды 3x-ui, инбаунды, клиенты, трафик, подписки и Telegram-бот. Админ заходит сюда каждый день, с ноутбука и с телефона, и в первую очередь проверяет: живы ли ноды, сколько людей онлайн и не кончается ли трафик.</p>
+    <div class="facts">
+      <div><b>Сейчас</b><span>Одна тёмная тема: navy #0A0E1A, cyan #22D3EE, IBM Plex Sans, радиус 8px. Её не трогаем.</span></div>
+      <div><b>Стек</b><span>React 18, Vite, Tailwind v4, i18next (ru, en), lucide-react. Стили в <code>App.css</code> и около 190 inline-стилях из <code>ThemeContext</code>.</span></div>
+      <div><b>Принцип</b><span>Одна разметка и одна логика, две «кожи». Новый дизайн подключается атрибутом <code>data-design="new"</code>.</span></div>
+    </div>
+  </header>
+
+  <!-- A -->
+  <article class="concept" id="a">
+    <div class="concept-head">
+      <h2>A. Маршрут</h2>
+      <p class="tag">Светлая, точная, как схема метро. Каждая нода — своя «линия» со своим цветом, статус показан формой станции, а не цветом.</p>
+    </div>
+    <div class="stage"><div class="mock mA">
+      <aside class="m-side">
+        <span class="brand">Sub Manager</span>
+        <ul class="nav"><li>Дашборд</li><li class="on">Ноды</li><li>Инбаунды</li><li>Клиенты</li><li>Трафик</li><li>Подписки</li><li>Telegram</li></ul>
+        <div class="side-foot">
+          <span class="chips"><button class="on">RU</button><button>EN</button></span>
+          <span class="chips"><button>Старый дизайн</button><button class="on">Новый дизайн</button></span>
+        </div>
+      </aside>
+      <main class="m-main">
+        <div class="m-top"><div><h4>Ноды</h4><p>5 серверов, 4 в сети</p></div><div class="actions"><button class="btn">Обновить</button><button class="btn primary">Добавить ноду</button></div></div>
+        <div class="route">
+          <svg viewBox="0 0 800 64" preserveAspectRatio="none" aria-label="Трафик по нодам за 30 дней">
+            <path d="M0 40 C120 40 140 18 260 18 S420 30 520 26 S700 12 800 14" fill="none" stroke="#2346D9" stroke-width="4" stroke-linecap="round"/>
+            <path d="M0 52 C140 52 200 40 320 42 S520 50 640 44 S760 36 800 36" fill="none" stroke="#0E9384" stroke-width="4" stroke-linecap="round"/>
+            <path d="M0 58 C160 58 260 56 380 50 S600 58 800 54" fill="none" stroke="#7A4FD6" stroke-width="4" stroke-linecap="round"/>
+            <circle cx="800" cy="14" r="5" fill="#fff" stroke="#13202B" stroke-width="3"/>
+          </svg>
+          <div class="route-legend"><span>7 окт</span><span>Трафик по линиям, 30 дней</span><span>6 ноя</span></div>
+        </div>
+        <div class="kpis">
+          <div class="kpi"><b>1,84 ТБ</b><span>трафик за 30 дней</span></div>
+          <div class="kpi"><b>312</b><span>клиентов онлайн</span></div>
+          <div class="kpi"><b>4 из 5</b><span>нод в сети</span></div>
+        </div>
+        <div class="m-table">
+          <div class="filters"><input value="Поиск по ноде или клиенту" aria-label="Поиск"><select aria-label="Протокол"><option>Все протоколы</option></select></div>
+          <table>
+            <thead><tr><th>Нода</th><th>Локация</th><th class="num">Инбаунды</th><th class="num">Онлайн</th><th class="num">Трафик</th><th>Статус</th></tr></thead>
+            <tbody>
+              <tr><td><span class="node" style="--c:#2346D9"><i></i>fra-01</span></td><td><span class="cc">DE</span>Франкфурт</td><td class="num">4</td><td class="num">128</td><td class="num">742 ГБ</td><td><span class="stn"><i></i>В сети</span></td></tr>
+              <tr><td><span class="node" style="--c:#0E9384"><i></i>ams-02</span></td><td><span class="cc">NL</span>Амстердам</td><td class="num">3</td><td class="num">96</td><td class="num">515 ГБ</td><td><span class="stn"><i></i>В сети</span></td></tr>
+              <tr><td><span class="node" style="--c:#7A4FD6"><i></i>hel-01</span></td><td><span class="cc">FI</span>Хельсинки</td><td class="num">2</td><td class="num">61</td><td class="num">388 ГБ</td><td><span class="stn"><i></i>В сети</span></td></tr>
+              <tr><td><span class="node" style="--c:#D98C10"><i></i>waw-01</span></td><td><span class="cc">PL</span>Варшава</td><td class="num">2</td><td class="num">27</td><td class="num">196 ГБ</td><td><span class="stn"><i></i>В сети</span></td></tr>
+              <tr><td><span class="node" style="--c:#C2387A"><i></i>ist-01</span></td><td><span class="cc">TR</span>Стамбул</td><td class="num">2</td><td class="num">0</td><td class="num">—</td><td><span class="stn off"><i></i>Нет связи 14 мин</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </main>
+    </div></div>
+    <div class="spec">
+      <section><h3>Типографика</h3><p>Commissioner 800 для заголовков страниц и крупных чисел, плотный трекинг −0.03em. Golos Text 400/500/600 для всего остального: шрифт сделан под русский интерфейс госуслуг и хорошо держит мелкий кегль. Шкала 12.5 / 14 / 17 / 26 / 34. Цифры табличные.</p></section>
+      <section><h3>Палитра и контраст</h3>
+        <div class="swatches">
+          <span class="sw"><i style="background:#EEF1F4"></i>paper</span><span class="sw"><i style="background:#13202B"></i>ink</span><span class="sw"><i style="background:#5B6B78"></i>slate</span><span class="sw"><i style="background:#2346D9"></i>cobalt</span><span class="sw"><i style="background:linear-gradient(90deg,#2346D9 20%,#0E9384 20% 40%,#7A4FD6 40% 60%,#D98C10 60% 80%,#C2387A 80%)"></i>линии</span>
+        </div>
+        <p>Холодная бумага вместо кремового фона. Кобальт только для действий. Цвета линий только для идентификации нод. Ink на paper 15.4:1, slate на белом 5.6:1.</p></section>
+      <section><h3>Сетка и отступы</h3><p>Навигация горизонтальной строкой вверху, контент на всю ширину, 12 колонок, шаг 4px, ритм 8 / 12 / 16 / 22 / 28. Таблицы во всю ширину, панели с радиусом 12px, кнопки и поля 8px, статусы-«пилюли» круглые.</p></section>
+      <section><h3>Иерархия</h3><ul><li>Заголовок страницы и одна схема-«маршрут» трафика.</li><li>Три числа строкой, без плиток.</li><li>Таблица, главный рабочий объект.</li></ul></section>
+      <section><h3>Кнопки, формы, таблицы, навигация</h3><ul><li>Основная кнопка кобальтовая, вторичная белая с тонкой рамкой.</li><li>Поля на серой бумаге, при фокусе кольцо кобальта 2px.</li><li>Строки таблиц разделены тонкими линиями, без зебры.</li><li>Активная вкладка отмечена полосой снизу.</li></ul></section>
+      <section><h3>Анимация</h3><p>Один заметный момент: линии трафика прорисовываются при открытии дашборда за 600 мс. Остальное короткое, 120–160 мс: подсветка строки, смещение полосы вкладки. При <code>prefers-reduced-motion</code> линии появляются сразу.</p></section>
+      <section><h3>Адаптив</h3><p>1440: всё как на макете. 768: вкладки прокручиваются вбок, числа в две строки. 375: внизу панель из 5 вкладок плюс «Ещё», таблицы превращаются в списки «станций», модальные окна открываются на весь экран.</p></section>
+    </div>
+  </article>
+
+  <!-- B -->
+  <article class="concept" id="b">
+    <div class="concept-head">
+      <h2>B. Стойка</h2>
+      <p class="tag">Тёмная, плотная, как приборная панель серверной стойки. Всё выровнено по модулю 44px (высота строки), статусы показаны индикаторами, работа с клавиатуры через Ctrl+K.</p>
+    </div>
+    <div class="stage"><div class="mock mB">
+      <aside class="m-side">
+        <span class="brand">SM</span>
+        <ul class="nav"><li>DSH</li><li class="on">NOD</li><li>INB</li><li>CLI</li><li>TRF</li><li>SUB</li><li>TG</li></ul>
+        <div class="side-foot">
+          <span class="chips"><button class="on">RU</button><button>EN</button></span>
+          <span class="chips"><button>Старый</button><button class="on">Новый</button></span>
+        </div>
+      </aside>
+      <main class="m-main">
+        <div class="m-top"><h4>Ноды</h4><p>5 серверов, 4 в сети</p><span class="kbd">Ctrl K</span><div class="actions"><button class="btn">Обновить</button><button class="btn primary">Добавить ноду</button></div></div>
+        <div class="kpis">
+          <div class="kpi"><span>Трафик, 30 дней</span><b>1.84 TB</b><div class="meter"><i style="width:61%"></i></div></div>
+          <div class="kpi"><span>Клиенты онлайн</span><b>312</b><div class="meter"><i style="width:44%"></i></div></div>
+          <div class="kpi"><span>Ноды в сети</span><b>4/5</b><div class="meter"><i style="width:80%"></i></div></div>
+        </div>
+        <div class="m-table">
+          <div class="filters"><input value="Поиск: нода, клиент, UUID" aria-label="Поиск"><select aria-label="Протокол"><option>Все протоколы</option></select></div>
+          <table>
+            <thead><tr><th>Нода</th><th>Локация</th><th class="num">Инб.</th><th class="num">Онлайн</th><th class="num">Трафик</th><th>Статус</th></tr></thead>
+            <tbody>
+              <tr><td class="mono"><span class="node"><i></i>fra-01</span></td><td>Франкфурт</td><td class="num">4</td><td class="num">128</td><td class="num">742 GB</td><td><span class="stn"><i></i>онлайн</span></td></tr>
+              <tr><td class="mono"><span class="node"><i></i>ams-02</span></td><td>Амстердам</td><td class="num">3</td><td class="num">96</td><td class="num">515 GB</td><td><span class="stn"><i></i>онлайн</span></td></tr>
+              <tr><td class="mono"><span class="node"><i></i>hel-01</span></td><td>Хельсинки</td><td class="num">2</td><td class="num">61</td><td class="num">388 GB</td><td><span class="stn"><i></i>онлайн</span></td></tr>
+              <tr><td class="mono"><span class="node"><i></i>waw-01</span></td><td>Варшава</td><td class="num">2</td><td class="num">27</td><td class="num">196 GB</td><td><span class="stn"><i></i>онлайн</span></td></tr>
+              <tr><td class="mono"><span class="node"><i></i>ist-01</span></td><td>Стамбул</td><td class="num">2</td><td class="num">0</td><td class="num">—</td><td><span class="stn off"><i></i>нет связи 14:02</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </main>
+    </div></div>
+    <div class="spec">
+      <section><h3>Типографика</h3><p>Barlow Semi Condensed 500/600/700 для интерфейса: узкий шрифт вмещает больше колонок без сокращений. JetBrains Mono только для данных: байты, порты, UUID, счётчики. Шкала 13 / 15 / 17 / 26.</p></section>
+      <section><h3>Палитра и контраст</h3>
+        <div class="swatches">
+          <span class="sw"><i style="background:#1B1A18"></i>graphite</span><span class="sw"><i style="background:#24221F"></i>panel</span><span class="sw"><i style="background:#E9E4DA"></i>bone</span><span class="sw"><i style="background:#F2A93B"></i>amber</span><span class="sw"><i style="background:#7BD88F"></i>led ok</span><span class="sw"><i style="background:#FF6B5B"></i>led fail</span>
+        </div>
+        <p>Тёплый графит вместо холодного navy, чтобы не повторять старую тему. Янтарь как цвет активного выбора и основной кнопки. Зелёный и красный только у индикаторов. Bone на graphite 13.9:1.</p></section>
+      <section><h3>Сетка и отступы</h3><p>Модуль 44px: строка таблицы, шапка и фильтры ровно 1U, плашка метрики 2U. Узкая иконочная колонка 64px. Радиус 2px, глубина задаётся светлой линией 1px по верхней грани, как у металлической панели.</p></section>
+      <section><h3>Иерархия</h3><ul><li>Метрики с индикаторами-шкалами.</li><li>Таблица во всю ширину, зебра по строкам.</li><li>Командная палитра (Ctrl+K) для переходов и действий.</li></ul></section>
+      <section><h3>Кнопки, формы, таблицы, навигация</h3><ul><li>Кнопки прямоугольные, утапливаются при нажатии.</li><li>Поля тёмные, при фокусе рамка янтарная.</li><li>Числа в таблицах моноширинные, выровнены вправо.</li><li>Навигация в виде иконок с подписью при наведении, активный пункт отмечен янтарной меткой.</li></ul></section>
+      <section><h3>Анимация</h3><p>Быстро и механически, 80–120 мс, без пружин. Индикатор мигает один раз, когда меняется статус ноды. Шкалы плавно доезжают до нового значения при обновлении данных.</p></section>
+      <section><h3>Адаптив</h3><p>1440: две колонки панелей. 768: колонка иконок остаётся, метрики в ряд по 3. 375: колонка уходит в нижнюю панель, у таблиц первая колонка закреплена, остальные прокручиваются вбок. Цель: максимум данных на экране.</p></section>
+    </div>
+  </article>
+
+  <!-- C -->
+  <article class="concept" id="c">
+    <div class="concept-head">
+      <h2>C. Атлас</h2>
+      <p class="tag">Спокойная, просторная, удобная для телефона. Ноды сгруппированы по странам, крупные мягкие поверхности, нижние панели вместо модальных окон.</p>
+    </div>
+    <div class="stage"><div class="mock mC">
+      <aside class="m-side">
+        <span class="brand">Sub Manager</span>
+        <ul class="nav"><li>Дашборд</li><li class="on">Ноды</li><li>Инбаунды</li><li>Клиенты</li><li>Трафик</li><li>Подписки</li><li>Telegram</li></ul>
+        <div class="side-foot">
+          <span class="chips"><button class="on">Русский</button><button>English</button></span>
+          <span class="chips"><button>Старый дизайн</button><button class="on">Новый дизайн</button></span>
+        </div>
+      </aside>
+      <main class="m-main">
+        <div class="m-top"><div><h4>Ноды</h4><p>5 серверов в 5 странах, 4 в сети</p></div><div class="actions"><button class="btn">Обновить</button><button class="btn primary">Добавить ноду</button></div></div>
+        <div class="kpis">
+          <div class="kpi"><span>Трафик за 30 дней</span><b>1,84 ТБ</b></div>
+          <div class="kpi"><span>Клиентов онлайн</span><b>312</b></div>
+          <div class="kpi"><span>Нод в сети</span><b>4 из 5</b></div>
+        </div>
+        <div class="m-table">
+          <div class="filters"><input value="Найти ноду или клиента" aria-label="Поиск"><select aria-label="Страна"><option>Все страны</option></select></div>
+          <table>
+            <thead><tr><th>Нода</th><th>Страна</th><th class="num">Инбаунды</th><th class="num">Онлайн</th><th class="num">Трафик</th><th>Статус</th></tr></thead>
+            <tbody>
+              <tr><td><span class="node"><i></i>fra-01</span></td><td><span class="cc">DE</span>Германия</td><td class="num">4</td><td class="num">128</td><td class="num">742 ГБ</td><td><span class="stn"><i></i>Работает</span></td></tr>
+              <tr><td><span class="node"><i></i>ams-02</span></td><td><span class="cc">NL</span>Нидерланды</td><td class="num">3</td><td class="num">96</td><td class="num">515 ГБ</td><td><span class="stn"><i></i>Работает</span></td></tr>
+              <tr><td><span class="node"><i></i>hel-01</span></td><td><span class="cc">FI</span>Финляндия</td><td class="num">2</td><td class="num">61</td><td class="num">388 ГБ</td><td><span class="stn"><i></i>Работает</span></td></tr>
+              <tr><td><span class="node"><i></i>waw-01</span></td><td><span class="cc">PL</span>Польша</td><td class="num">2</td><td class="num">27</td><td class="num">196 ГБ</td><td><span class="stn"><i></i>Работает</span></td></tr>
+              <tr><td><span class="node"><i></i>ist-01</span></td><td><span class="cc">TR</span>Турция</td><td class="num">2</td><td class="num">0</td><td class="num">—</td><td><span class="stn off"><i></i>Нет связи 14 мин</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </main>
+    </div></div>
+    <div class="spec">
+      <section><h3>Типографика</h3><p>Одна семья, Geologica (вариативный шрифт с хорошей кириллицей). Заголовки страниц тонкие, 300, 36px. Текст 400, акценты 500. Характер задаётся контрастом толщины, а не вторым шрифтом. Шкала 13 / 14.5 / 18 / 30 / 36.</p></section>
+      <section><h3>Палитра и контраст</h3>
+        <div class="swatches">
+          <span class="sw"><i style="background:#EDF0EB"></i>fog</span><span class="sw"><i style="background:#FBFCFA"></i>card</span><span class="sw"><i style="background:#143D35"></i>pine</span><span class="sw"><i style="background:#5E7C6B"></i>moss</span><span class="sw"><i style="background:#BFD9EA"></i>sky</span><span class="sw"><i style="background:#C8503B"></i>ember</span>
+        </div>
+        <p>Сосновый тёмно-зелёный как основной цвет навигации и действий, небесный для выбранного. Ember только для ошибок. Pine на fog 11.6:1. Для тёмного режима есть парная палитра (pine-night #0E1A17).</p></section>
+      <section><h3>Сетка и отступы</h3><p>Боковая панель 236px как отдельный плавающий блок. Отступы крупные: 14 / 20 / 28. Три уровня радиуса: 22px оболочка, 20px панели, 12–14px строки и поля, кнопки круглые.</p></section>
+      <section><h3>Иерархия</h3><ul><li>Главная метрика (трафик) выделена цветом, две остальные спокойнее.</li><li>Строки таблиц выглядят как отдельные плашки, их удобно нажимать пальцем.</li><li>Ноды можно сгруппировать по странам.</li></ul></section>
+      <section><h3>Кнопки, формы, таблицы, навигация</h3><ul><li>Кнопки-пилюли, основная сосновая.</li><li>Поля 44px высотой, удобно для касания.</li><li>Таблица строится из плашек с отступом 4px.</li><li>Активный пункт меню выглядит как светлая вкладка на тёмной панели.</li></ul></section>
+      <section><h3>Анимация</h3><p>Мягкие пружины 220–280 мс для того, что пользователь открыл сам: панели, раскрытие строки, переключатели. Фоновой анимации нет.</p></section>
+      <section><h3>Адаптив</h3><p>Задумана с телефона. 375: нижняя панель вкладок, каждая нода как карточка, формы и подтверждения выезжают снизу. 768: боковая панель сворачивается в иконки. 1440: как на макете, таблица в полной ширине.</p></section>
+    </div>
+  </article>
+
+  <!-- Architecture -->
+  <section class="arch" id="arch">
+    <h2>Как это встроится в проект</h2>
+    <div class="cols">
+      <section><h3>Изоляция двух дизайнов</h3><ul>
+        <li>На <code>&lt;html&gt;</code> ставится атрибут <code>data-design="classic"</code> или <code>"new"</code>. Если значение не сохранено, используется <code>classic</code>.</li>
+        <li><code>App.css</code> не меняется. Новые стили лежат в <code>src/design/new/*.css</code>, каждый селектор начинается с <code>:root[data-design="new"]</code>, слой <code>design-new</code> подключается после <code>components</code>.</li>
+        <li>Токены нового дизайна хранятся в одном файле <code>tokens.css</code>: цвета, шрифты, отступы, радиусы, длительности.</li>
+        <li>Inline-цвета из <code>ThemeContext.colors</code> берутся по текущему дизайну. Для classic объект остаётся прежним байт в байт.</li>
+      </ul></section>
+      <section><h3>Переключатель</h3><ul>
+        <li>Компонент на базе существующего <code>ChoiceChips</code>, ставится в <code>Sidebar</code> сразу под выбором языка и в мобильном меню.</li>
+        <li>Срабатывает без перезагрузки: меняется атрибут на <code>&lt;html&gt;</code> и контекст.</li>
+        <li>Выбор хранится в <code>localStorage</code> (<code>msm.ui.design</code>). На бэкенде нет хранилища пользовательских настроек, проверено по <code>backend/routers/auth.py</code>.</li>
+        <li>Новые ключи <code>design.*</code> в <code>ru.json</code> и <code>en.json</code>. Язык при переключении не меняется.</li>
+        <li>Светлая или тёмная тема — отдельная настройка, этот переключатель её не затрагивает.</li>
+      </ul></section>
+      <section><h3>Защита старого дизайна</h3><ul>
+        <li>Перед правками снимаются эталонные скриншоты classic на 375, 768 и 1440 по всем вкладкам.</li>
+        <li>После каждого этапа выполняется попиксельное сравнение с эталоном.</li>
+        <li>Логика, API и маршруты общие. В разметку компонентов добавляются только классы-зацепки, старый CSS их не использует.</li>
+      </ul></section>
+    </div>
+    <h3>Распределение работы после выбора</h3>
+    <div class="stage">
+      <table class="who">
+        <tr><th>Claude Code</th><td>Архитектура, <code>tokens.css</code>, оболочка (сайдбар, топбар, раскладка), технические задания, приёмка, интеграция, git, визуальная проверка.</td></tr>
+        <tr><th>Codex</th><td>Ветка <code>codex/design-switch</code>: контекст дизайна, переключатель, i18n-ключи, цвета <code>ThemeContext</code> для нового дизайна, тесты vitest (по умолчанию classic, сохранение выбора, язык не меняется). Затем стили экранов дашборда и мониторинга.</td></tr>
+        <tr><th>Antigravity (agy)</th><td>Ветка <code>agy/design-components</code>: стили таблиц, форм, модальных окон, кнопок, чипов в <code>src/design/new/components.css</code>. Затем проход по адаптивности и предложения по композиции.</td></tr>
+        <tr><th>Пересечения</th><td>Каждый агент работает в своём worktree со своими файлами. Общие файлы (<code>tokens.css</code>, <code>Sidebar.tsx</code>, <code>main.tsx</code>) меняет только Claude. Вливание по одной ветке, после каждой прогоняются тесты.</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section class="choice">
+    <h3>Что нужно от вас</h3>
+    <p>Выберите A, B или C. Можно с правками: например, «A, но тёмная по умолчанию» или «C с плотными таблицами из B». До выбора реализацию не начинаю.</p>
+  </section>
+</div>
