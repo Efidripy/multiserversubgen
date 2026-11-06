@@ -1,1 +1,71 @@
-/* Design "new": section polish (backup-subs-telegram). Every selector starts with :root[data-design="new"]. */
+/* Section-specific rhythm; all rules are limited to Linear Core. */
+:root[data-design="new"] :is([data-ln="backup"], [data-ln="subscriptions"], [data-ln="telegram"]) {
+  min-width: 0;
+}
+
+:root[data-design="new"] :is([data-ln="backup"], [data-ln="subscriptions"], [data-ln="telegram"]) :is(section, article) {
+  min-width: 0;
+}
+
+:root[data-design="new"] :is([data-ln="backup"], [data-ln="subscriptions"], [data-ln="telegram"]) :is(button:not(table button), input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select) {
+  box-sizing: border-box;
+  min-height: 32px;
+  border-radius: 5px;
+}
+
+:root[data-design="new"] :is([data-ln="backup"], [data-ln="subscriptions"], [data-ln="telegram"]) button:not(table button):not(nav button) {
+  height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+:root[data-design="new"] :is([data-ln="subscriptions"], [data-ln="telegram"]) nav > div {
+  gap: 16px;
+}
+
+:root[data-design="new"] :is([data-ln="subscriptions"], [data-ln="telegram"]) nav button {
+  height: 36px;
+  padding-bottom: 0;
+}
+
+:root[data-design="new"] :is([data-ln="backup"], [data-ln="subscriptions"], [data-ln="telegram"]) :is(.grid.gap-3, .grid.gap-4, .grid.gap-6) {
+  gap: 8px;
+}
+
+:root[data-design="new"] :is([data-ln="backup"], [data-ln="subscriptions"], [data-ln="telegram"]) table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+:root[data-design="new"] :is([data-ln="backup"], [data-ln="subscriptions"], [data-ln="telegram"]) table :is(th, td) {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+:root[data-design="new"] :is([data-ln="backup"], [data-ln="subscriptions"], [data-ln="telegram"]) table tbody tr {
+  min-height: 36px;
+}
+
+@media (max-width: 639px) {
+  :root[data-design="new"] :is([data-ln="backup"], [data-ln="subscriptions"], [data-ln="telegram"]) button:not(table button) {
+    max-width: 100%;
+  }
+
+  :root[data-design="new"] [data-ln="backup"] .grid.grid-cols-3 {
+    grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  }
+}
+
+/* Dashboard metrics are card-sized navigation, not compact action buttons. */
+:root[data-design="new"] [data-ln="telegram"] section.grid > button[aria-pressed] {
+  height: 66px;
+  min-height: 66px;
+}
+
+:root[data-design="new"] [data-ln="subscriptions"] input[type="text"],
+:root[data-design="new"] [data-ln="subscriptions"] input:not([type]) {
+  height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
+}

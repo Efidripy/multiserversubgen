@@ -620,7 +620,7 @@ export const SubscriptionManager: React.FC<{
   const totalLoading = loading || emailsLoading || groupsLoading || nodesLoading;
 
   return (
-    <div className={shellClass}>
+    <div className={shellClass} data-ln="subscriptions">
       <nav className="mb-4 overflow-x-auto border-b border-cyan-400/14" aria-label={t('subscriptions.tabs.label')}>
         <div className="flex min-w-max gap-6">
           {subscriptionTabs.map((tab) => {

@@ -921,7 +921,7 @@ export const TelegramAdmin: React.FC = () => {
   ];
   return (
     <>
-    <div className={shellClass} data-testid="telegram-admin">
+    <div className={shellClass} data-testid="telegram-admin" data-ln="telegram">
       <div className="mb-5 border-b border-cyan-400/13 pb-5">
         <div className="flex flex-wrap items-end justify-between gap-4">
         <div>

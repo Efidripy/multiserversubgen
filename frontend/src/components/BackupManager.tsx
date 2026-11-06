@@ -210,7 +210,7 @@ export const BackupManager: React.FC<BackupManagerProps> = ({ onHeaderProjection
   };
 
   return (
-    <div className={shellClass}>
+    <div className={shellClass} data-ln="backup">
       <section className={cn(panelClass, 'mb-4')}>
         <div className="mb-4 flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div className="min-w-0">
