@@ -1,0 +1,198 @@
+/* Important classic shell declarations live in the later components layer. */
+@layer theme {
+  :root[data-design="new"] .sidebar { background: var(--ln-nav) !important; }
+  :root[data-design="new"] .sidebar__language-label { color: var(--ln-muted) !important; }
+  :root[data-design="new"] .sidebar__user { color: var(--ln-text-2) !important; }
+  :root[data-design="new"] .sidebar__username { color: var(--ln-text) !important; }
+  :root[data-design="new"] .sidebar__footer-btn {
+    background: transparent !important;
+    color: var(--ln-text-2) !important;
+    border-color: var(--ln-line) !important;
+  }
+  :root[data-design="new"] .sidebar__footer-btn:hover:not(:disabled),
+  :root[data-design="new"] .sidebar__footer-btn:active:not(:disabled) {
+    background: var(--ln-surface-hover) !important;
+    color: var(--ln-text) !important;
+  }
+  :root[data-design="new"] .app-topbar__command-btn,
+  :root[data-design="new"] .app-topbar__fleet-pill {
+    border: 1px solid var(--ln-line) !important;
+    background: transparent !important;
+    color: var(--ln-text-2) !important;
+    font-size: 11px !important;
+  }
+  :root[data-design="new"] .app-topbar__command-btn:hover:not(:disabled),
+  :root[data-design="new"] .app-topbar__command-btn:active:not(:disabled),
+  :root[data-design="new"] .app-topbar__command-btn.is-active,
+  :root[data-design="new"] .app-topbar__fleet-pill:hover:not(:disabled),
+  :root[data-design="new"] .app-topbar__fleet-pill:active:not(:disabled),
+  :root[data-design="new"] .app-topbar__fleet-pill.is-open {
+    border-color: var(--ln-line) !important;
+    background: var(--ln-surface-hover) !important;
+    color: var(--ln-text) !important;
+  }
+}
+
+:root[data-design="new"] .app-layout,
+:root[data-design="new"] .app-main,
+:root[data-design="new"] .app-content { background: var(--ln-bg); }
+
+:root[data-design="new"] .sidebar {
+  flex-basis: var(--ln-sidebar-w);
+  width: var(--ln-sidebar-w);
+  border-right: 1px solid var(--ln-line);
+  font-family: var(--ln-font);
+  box-shadow: none;
+}
+:root[data-design="new"] .sidebar--collapsed {
+  flex-basis: var(--ln-sidebar-collapsed);
+  width: var(--ln-sidebar-collapsed);
+}
+:root[data-design="new"] .sidebar-overlay,
+:root[data-design="new"] .sidebar-overlay.is-visible {
+  background: rgb(0 0 0 / 0.6);
+  backdrop-filter: none;
+}
+:root[data-design="new"] .sidebar__logo {
+  min-height: var(--ln-topbar-h);
+  padding: 8px;
+  border-color: var(--ln-line);
+}
+:root[data-design="new"] .sidebar__version-badge {
+  border: 1px solid var(--ln-line);
+  border-radius: var(--ln-r-xs);
+  background: transparent;
+  color: var(--ln-text-2);
+  font-family: monospace;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: normal;
+}
+:root[data-design="new"] .sidebar__collapse-btn,
+:root[data-design="new"] .sidebar__collapsed-card,
+:root[data-design="new"] .sidebar__collapsed-back,
+:root[data-design="new"] .sidebar__back-selector,
+:root[data-design="new"] .app-topbar__menu-btn {
+  border: 1px solid var(--ln-line);
+  border-radius: var(--ln-r-sm);
+  background: transparent;
+  color: var(--ln-text-2);
+  box-shadow: none;
+}
+:root[data-design="new"] .sidebar__nav { gap: 4px; padding: 8px; }
+:root[data-design="new"] .sidebar__nav-item {
+  height: 32px;
+  min-height: 32px;
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--ln-r-sm);
+  background: transparent;
+  color: var(--ln-text-2);
+  font-size: 13px;
+  letter-spacing: normal;
+  text-transform: none;
+  box-shadow: none;
+}
+:root[data-design="new"] .sidebar__nav-item::before { content: none; }
+:root[data-design="new"] .sidebar__nav-item:hover:not(:disabled) { background: var(--ln-surface-hover); color: var(--ln-text); }
+:root[data-design="new"] .sidebar__nav-item--active { background: var(--ln-surface-2); color: var(--ln-text); }
+:root[data-design="new"] .sidebar__footer { padding: 8px; border-top: 1px solid var(--ln-line); }
+:root[data-design="new"] .sidebar__footer-expanded { gap: 8px; }
+:root[data-design="new"] .sidebar__user { font-size: 11px; letter-spacing: normal; }
+:root[data-design="new"] .sidebar__language-label { font-size: 11px; letter-spacing: normal; text-transform: none; }
+:root[data-design="new"] .sidebar__language-tabs button {
+  height: 26px;
+  min-height: 26px;
+  border: 1px solid var(--ln-line);
+  border-radius: var(--ln-r-xs);
+  background: transparent;
+  color: var(--ln-text-2);
+  font-family: var(--ln-font);
+  letter-spacing: normal;
+  text-transform: none;
+}
+:root[data-design="new"] .sidebar__language-tabs button[aria-pressed="true"] {
+  border-color: var(--ln-line-strong);
+  background: var(--ln-surface-2);
+  color: var(--ln-text);
+}
+:root[data-design="new"] .sidebar__footer-btn {
+  height: 30px;
+  min-height: 30px;
+  border-radius: var(--ln-r-sm);
+  font-family: var(--ln-font);
+  letter-spacing: normal;
+}
+:root[data-design="new"] .sidebar--collapsed .sidebar__footer { padding: 8px; }
+:root[data-design="new"] .sidebar__footer-collapsed { gap: 8px; }
+:root[data-design="new"] .sidebar__collapsed-card,
+:root[data-design="new"] .sidebar__collapsed-back { width: 34px; height: 30px; }
+
+:root[data-design="new"] .app-topbar {
+  box-sizing: border-box;
+  height: var(--ln-topbar-h);
+  min-height: var(--ln-topbar-h);
+  padding: 0 16px;
+  border-bottom: 1px solid var(--ln-line);
+  background: var(--ln-bg);
+  font-family: var(--ln-font);
+}
+:root[data-design="new"] .app-topbar__title {
+  color: var(--ln-text);
+  font-family: var(--ln-font);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow: none;
+}
+:root[data-design="new"] .app-topbar__title svg { filter: none; flex-shrink: 0; }
+:root[data-design="new"] .app-topbar__activity-dot { background: var(--ln-info); box-shadow: none; animation: none; }
+:root[data-design="new"] .app-topbar__command-btn,
+:root[data-design="new"] .app-topbar__fleet-pill {
+  box-sizing: border-box;
+  height: 28px;
+  min-height: 28px;
+  border-radius: var(--ln-r-sm);
+  font-family: var(--ln-font);
+  letter-spacing: normal;
+  box-shadow: none;
+}
+:root[data-design="new"] .app-topbar__fleet-count { background: var(--ln-surface-2); color: var(--ln-text-2); border-radius: var(--ln-r-xs); }
+:root[data-design="new"] .app-pull-refresh { top: var(--ln-topbar-h); border-color: var(--ln-line); border-radius: var(--ln-r-sm); background: var(--ln-surface); color: var(--ln-text-2); box-shadow: none; }
+:root[data-design="new"] .app-content { box-sizing: border-box; padding: 16px; }
+:root[data-design="new"] .notif-panel { top: var(--ln-topbar-h); background: var(--ln-surface); border: 1px solid var(--ln-line); border-radius: var(--ln-r-md); box-shadow: 0 16px 48px rgb(0 0 0 / 0.5); }
+
+:root[data-design="new"] .sidebar :is(button, a):hover:not(:disabled),
+:root[data-design="new"] .sidebar :is(button, a):active:not(:disabled),
+:root[data-design="new"] .app-topbar__menu-btn:hover:not(:disabled),
+:root[data-design="new"] .app-topbar__menu-btn:active:not(:disabled),
+:root[data-design="new"] .notif-panel button:hover:not(:disabled),
+:root[data-design="new"] .notif-panel button:active:not(:disabled) {
+  background: var(--ln-surface-hover);
+  color: var(--ln-text);
+  box-shadow: none;
+  transform: none;
+}
+:root[data-design="new"] .sidebar :is(button, a):focus-visible,
+:root[data-design="new"] .app-topbar button:focus-visible,
+:root[data-design="new"] .notif-panel button:focus-visible { outline: 2px solid var(--ln-accent); outline-offset: 2px; }
+:root[data-design="new"] .sidebar button:disabled,
+:root[data-design="new"] .app-topbar button:disabled,
+:root[data-design="new"] .notif-panel button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+@media (max-width: 1024px) {
+  :root[data-design="new"] .sidebar,
+  :root[data-design="new"] .sidebar--collapsed { width: 218px; max-width: calc(100vw - 32px); flex-basis: auto; }
+  :root[data-design="new"] .app-topbar { height: var(--ln-topbar-h); min-height: var(--ln-topbar-h); padding: 0 12px; }
+  :root[data-design="new"] .app-topbar__menu-btn { width: 28px; height: 28px; flex: 0 0 28px; }
+  :root[data-design="new"] .app-topbar__command-btn { width: 28px; min-width: 28px; }
+  :root[data-design="new"] .app-topbar__actions { flex-shrink: 0; }
+}
+@media (max-width: 520px) {
+  :root[data-design="new"] .app-topbar { padding: 0 8px; gap: 8px; }
+  :root[data-design="new"] .app-topbar__title { font-size: 11px; overflow: hidden; white-space: nowrap; }
+  :root[data-design="new"] .app-topbar__title-content { overflow: hidden; }
+  :root[data-design="new"] .app-topbar__title-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+}

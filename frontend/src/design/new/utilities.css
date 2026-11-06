@@ -1,0 +1,54 @@
+/*
+ * Design "new": overrides for Tailwind utilities that components hard-code
+ * (gradients, glows, mono headings). Scoped to :root[data-design="new"].
+ */
+
+/* Linear Core has no decorative gradients: keep the first stop as a solid fill,
+   so status-coloured progress bars keep their hue and cyan ones turn neutral. */
+:root[data-design="new"] [class*="bg-gradient-to-"] {
+  background-image: none;
+  background-color: var(--tw-gradient-from, var(--ln-accent));
+}
+
+/* Gradient CTA buttons: neutral primary with dark text. */
+:root[data-design="new"] [class*="bg-gradient-to-"][class~="text-white"] {
+  color: var(--ln-accent-ink);
+}
+
+/* Icon tiles next to metrics: quiet surface instead of a coloured block. */
+:root[data-design="new"] [class*="bg-gradient-to-"]:has(> svg) {
+  background-color: var(--ln-surface-2);
+  border-color: var(--ln-line);
+  color: var(--ln-text-2);
+}
+
+/* Cyan glow shadows from the classic look. */
+:root[data-design="new"] [class*="shadow-[0_"],
+:root[data-design="new"] [class*="shadow-cyan"] {
+  box-shadow: none;
+}
+
+/* No glassmorphism: overlays dim instead of blurring. */
+:root[data-design="new"] [class*="backdrop-blur"] {
+  backdrop-filter: none;
+}
+
+/* Section headings use the UI face; numbers, IPs and versions stay monospace. */
+:root[data-design="new"] :is(h1, h2, h3, h4)[class~="font-mono"] {
+  font-family: var(--ln-font);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--ln-text-2);
+}
+
+/* Old/new design chips stay on one line in the narrow sidebar. */
+:root[data-design="new"] .sidebar__design-tabs > button,
+:root[data-design="new"] .sidebar__language-tabs > button {
+  flex: 1 1 0;
+  min-width: 0;
+  padding-inline: 6px;
+  white-space: nowrap;
+  text-transform: none;
+  letter-spacing: 0;
+}
