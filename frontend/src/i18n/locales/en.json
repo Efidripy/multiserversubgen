@@ -912,7 +912,7 @@
         "always_array": "Always Array",
         "always_arrayHint": "Always wrap configuration in a JSON array",
         "enabled": "Use Template",
-        "enabledHint": "When disabled, a minimal config without DNS or routing is returned",
+        "enabledHint": "When disabled, no Xray JSON is sent: clients get the plain subscription with server links",
         "template": "Xray JSON Template",
         "jsonEditor": "Selected template JSON",
         "templateHint": "Nodes are inserted into the selected template. Built-in Default is read-only",
