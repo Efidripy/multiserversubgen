@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { Activity, CheckCircle, Download, RefreshCw, Server, Upload, Users } from 'lucide-react';
 import { ChoiceChips } from './ChoiceChips';
 import type { DashboardSummaryData, DashboardTrafficPeriod } from '../api/dashboard';
+import { useDesign } from '../contexts/ThemeContext';
+import { TrafficComparison } from './TrafficComparison';
 import { useDashboardData } from '../services/DashboardDataContext';
 
 interface DashboardSummaryProps {
@@ -96,6 +98,7 @@ export function DashboardSummary({
 }: DashboardSummaryProps) {
   // Legacy contract marker: dashboardData?.refresh()
   const { t } = useTranslation();
+  const design = useDesign();
   const dashboardData = useDashboardData();
   useEffect(() => {
     if (dashboardData?.summary) onOnlineClientsChange?.(dashboardData.summary.online_clients_total);
@@ -286,7 +289,7 @@ export function DashboardSummary({
           ))}
         </div>
 
-        <div>
+        {design === 'new' ? <TrafficComparison nodes={activeNodes} /> : <div>
           <div className="mb-2 font-mono text-xs font-medium uppercase tracking-widest text-gray-500">{t('dashboardSummary.topByTraffic').toUpperCase()}</div>
           <div className="scrollbar-none overflow-x-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] p-3 shadow-[inset_0_1px_0_rgba(103,232,249,0.05)] sm:p-4">
             <div className="space-y-2 scrollbar-none sm:space-y-3">
@@ -330,7 +333,7 @@ export function DashboardSummary({
               })}
             </div>
           </div>
-        </div>
+        </div>}
       </div>
     </section>
   );

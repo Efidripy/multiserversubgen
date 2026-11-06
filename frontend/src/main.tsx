@@ -9,6 +9,7 @@ import './design/new/utilities.css';
 import './design/new/sections/inbounds-clients.css';
 import './design/new/sections/traffic-monitoring.css';
 import './design/new/sections/backup-subs-telegram.css';
+import './design/new/traffic-comparison.css';
 import './i18n/config';
 import i18next from 'i18next';
 import { App } from './App';
