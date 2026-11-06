@@ -34,6 +34,8 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
+export const useDesign = (): DesignId => useContext(ThemeContext)?.design ?? 'classic';
+
 export const useTheme = () => {
   const context = useContext(ThemeContext);
   if (!context) throw new Error('useTheme must be used within ThemeProvider');

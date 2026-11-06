@@ -6,6 +6,7 @@ import './design/new/tokens.css';
 import './design/new/shell.css';
 import './design/new/components.css';
 import './design/new/utilities.css';
+import './design/new/traffic-comparison.css';
 import './i18n/config';
 import i18next from 'i18next';
 import { App } from './App';
