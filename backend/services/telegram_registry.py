@@ -581,6 +581,8 @@ class TelegramAdminMessageDraft:
     customer_id: int | None
     page: int
     body: str | None
+    photo_file_ids: tuple[str, ...] | None = None
+    media_group_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1127,6 +1129,8 @@ class TelegramRegistry:
         customer_id: int | None = None,
         page: int = 0,
         body: str | None = None,
+        photo_file_ids: tuple[str, ...] | None = None,
+        media_group_id: str | None = None,
     ) -> TelegramAdminMessageDraft:
         """Store only the owner's bounded, confirmation-gated composition."""
 
@@ -1141,29 +1145,36 @@ class TelegramRegistry:
         if isinstance(page, bool) or not isinstance(page, int) or page < 0:
             raise TelegramRegistryError("admin message draft page is invalid")
         normalized_body = _normalize_admin_message_body(body) if body is not None else None
+        if photo_file_ids and (mode != "broadcast" or len(photo_file_ids) > 10 or
+                               any(not isinstance(item, str) or not item for item in photo_file_ids) or
+                               (normalized_body is not None and len(normalized_body) > 1024)):
+            raise TelegramRegistryError("invalid broadcast photos")
+        photos_json = json.dumps(photo_file_ids, ensure_ascii=False) if photo_file_ids else None
         with connect(self._db_path) as conn:
             conn.execute(
                 """
                 INSERT INTO telegram_admin_message_drafts
-                    (admin_telegram_user_id, mode, customer_id, page, body)
-                VALUES (?, ?, ?, ?, ?)
+                    (admin_telegram_user_id, mode, customer_id, page, body, photo_file_ids, media_group_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(admin_telegram_user_id) DO UPDATE SET
                     mode = excluded.mode,
                     customer_id = excluded.customer_id,
                     page = excluded.page,
                     body = excluded.body,
+                    photo_file_ids = excluded.photo_file_ids,
+                    media_group_id = excluded.media_group_id,
                     updated_at = CURRENT_TIMESTAMP
                 """,
-                (admin_id, mode, target_customer, page, normalized_body),
+                (admin_id, mode, target_customer, page, normalized_body, photos_json, media_group_id),
             )
-        return TelegramAdminMessageDraft(admin_id, mode, target_customer, page, normalized_body)
+        return TelegramAdminMessageDraft(admin_id, mode, target_customer, page, normalized_body, photo_file_ids, media_group_id)
 
     def get_admin_message_draft(self, admin_telegram_user_id: int) -> TelegramAdminMessageDraft | None:
         admin_id = _positive_int(admin_telegram_user_id, "admin_telegram_user_id")
         with connect(self._db_path) as conn:
             row = conn.execute(
                 """
-                SELECT admin_telegram_user_id, mode, customer_id, page, body
+                SELECT admin_telegram_user_id, mode, customer_id, page, body, photo_file_ids, media_group_id
                 FROM telegram_admin_message_drafts
                 WHERE admin_telegram_user_id = ?
                 """,
@@ -1175,6 +1186,8 @@ class TelegramRegistry:
             admin_telegram_user_id=int(row[0]), mode=str(row[1]),
             customer_id=int(row[2]) if row[2] is not None else None,
             page=int(row[3]), body=str(row[4]) if row[4] is not None else None,
+            photo_file_ids=tuple(json.loads(row[5])) if row[5] else None,
+            media_group_id=str(row[6]) if row[6] is not None else None,
         )
 
     def clear_admin_message_draft(self, admin_telegram_user_id: int) -> None:
@@ -5400,13 +5413,15 @@ class TelegramRegistry:
         self,
         *,
         update_id: int,
-        responses: list[tuple[int, str, dict[str, Any] | None]],
+        responses: list[tuple],
     ) -> None:
         """Store retry-safe replies keyed by Telegram's immutable update id."""
 
         normalized_update_id = _positive_int(update_id, "update_id")
         rows: list[tuple[int, int, str, str | None]] = []
-        for index, (chat_id, text, markup) in enumerate(responses):
+        for index, response in enumerate(responses):
+            chat_id, text, markup = response[:3]
+            photos = response[3] if len(response) > 3 else None
             normalized_chat_id = _positive_int(chat_id, "chat_id")
             normalized_text = _nonempty(text, "response_text")
             if len(normalized_text) > 4096:
@@ -5420,15 +5435,16 @@ class TelegramRegistry:
             )
             if markup_json is not None and len(markup_json) > 16384:
                 raise TelegramRegistryError("response_markup is too long")
-            rows.append((normalized_update_id, index, normalized_chat_id, normalized_text, markup_json))
+            rows.append((normalized_update_id, index, normalized_chat_id, normalized_text, markup_json,
+                         json.dumps(photos) if photos else None))
         if not rows:
             return
         with connect(self._db_path) as conn:
             conn.executemany(
                 """
                 INSERT OR IGNORE INTO telegram_update_responses
-                    (update_id, response_index, chat_id, text, reply_markup_json)
-                VALUES (?, ?, ?, ?, ?)
+                    (update_id, response_index, chat_id, text, reply_markup_json, photo_file_ids)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -5440,7 +5456,7 @@ class TelegramRegistry:
         with connect(self._db_path) as conn:
             rows = conn.execute(
                 """
-                SELECT response_index, chat_id, text, reply_markup_json
+                SELECT response_index, chat_id, text, reply_markup_json, photo_file_ids
                 FROM telegram_update_responses
                 WHERE update_id = ?
                   AND (
@@ -5462,7 +5478,8 @@ class TelegramRegistry:
                 if not isinstance(decoded, dict):
                     raise TelegramRegistryError("stored response markup is invalid")
                 markup = decoded
-            result.append((int(row[0]), int(row[1]), str(row[2]), markup))
+            result.append((int(row[0]), int(row[1]), str(row[2]), markup,
+                           tuple(json.loads(row[4])) if row[4] else None))
         return result
 
     def mark_update_response_delivered(self, *, update_id: int, response_index: int) -> None:
@@ -7019,7 +7036,8 @@ class TelegramRegistry:
         return outbox_id
 
     def queue_registered_broadcast(
-        self, *, body: str, created_by: int, idempotency_key: str
+        self, *, body: str, created_by: int, idempotency_key: str,
+        photo_file_ids: tuple[str, ...] | None = None,
     ) -> BroadcastQueueResult:
         """Snapshot opted-in registered users into durable per-recipient outbox rows."""
 
@@ -7028,7 +7046,11 @@ class TelegramRegistry:
         key = str(idempotency_key or "").strip()
         if not key or len(key) > 180:
             raise TelegramRegistryError("idempotency key is invalid")
-        digest = hashlib.sha256(normalized_body.encode("utf-8")).hexdigest()
+        if photo_file_ids and (len(photo_file_ids) > 10 or len(normalized_body) > 1024 or
+                               any(not isinstance(item, str) or not item for item in photo_file_ids)):
+            raise TelegramRegistryError("invalid broadcast photos")
+        photos_json = json.dumps(photo_file_ids, ensure_ascii=False) if photo_file_ids else None
+        digest = hashlib.sha256((normalized_body + (photos_json or "")).encode("utf-8")).hexdigest()
         with connect(self._db_path) as conn:
             recipient_ids = self._registered_broadcast_recipient_ids(conn)
             if not recipient_ids:
@@ -7041,10 +7063,10 @@ class TelegramRegistry:
                 return BroadcastQueueResult(int(existing[0]), int(existing[1]))
             cursor = conn.execute(
                 """
-                INSERT INTO telegram_broadcast_jobs (created_by, idempotency_key, body, recipient_count)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO telegram_broadcast_jobs (created_by, idempotency_key, body, recipient_count, photo_file_ids)
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (admin_id, key, normalized_body, len(recipient_ids)),
+                (admin_id, key, normalized_body, len(recipient_ids), photos_json),
             )
             broadcast_id = int(cursor.lastrowid)
             conn.executemany(

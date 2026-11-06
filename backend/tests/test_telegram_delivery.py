@@ -224,3 +224,26 @@ def test_sender_answer_callback_query_sends_correct_payload():
     assert request.get_header("Content-type") == "application/json"
     assert json.loads(request.data) == {"callback_query_id": "cb_query_123"}
     assert timeout == 10
+
+
+def test_sender_uses_file_ids_for_photo_and_album():
+    class AlbumTransport(_Transport):
+        def open(self, request, *, timeout):
+            self.requests.append((request, timeout))
+            response = _Response()
+            response._body = json.dumps({"ok": True, "result": [{"message_id": 123}, {"message_id": 124}]}).encode()
+            return response
+
+    transport = AlbumTransport()
+    sender = TelegramApiSender("test-token", transport=transport)
+    assert sender.send(TelegramOutboundMessage(42, "caption", photo_file_ids=("one", "two"), parse_mode="HTML")) == 123
+    request = transport.requests[-1][0]
+    assert request.full_url.endswith("/sendMediaGroup")
+    assert json.loads(request.data)["media"] == [
+        {"type": "photo", "media": "one", "caption": "caption", "parse_mode": "HTML"},
+        {"type": "photo", "media": "two"},
+    ]
+    sender.send(TelegramOutboundMessage(42, "caption", photo_file_ids=("one",)))
+    request = transport.requests[-1][0]
+    assert request.full_url.endswith("/sendPhoto")
+    assert json.loads(request.data)["photo"] == "one"

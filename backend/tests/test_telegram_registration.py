@@ -3161,3 +3161,155 @@ def test_subscription_url_legacy_customer_without_binding_uses_panels(tmp_path):
 
     assert url and unavailable is None
     assert panel_calls == ["list", "links"]
+
+
+def test_broadcast_album_composition_and_preview(tmp_path):
+    db_path = str(tmp_path / "album.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=100000001)
+    service.handle_update(_admin_callback(500, "admin:broadcast:new"))
+    registry.set_interface_window(telegram_user_id=100000001, message_id=123, has_text=True)
+
+    def photo(update_id, file_id, group=None, caption=None):
+        update = _admin_message(update_id, "")
+        message = update["message"]
+        message.pop("text")
+        message["photo"] = [{"file_id": "small"}, {"file_id": file_id}]
+        if group:
+            message["media_group_id"] = group
+        if caption:
+            message["caption"] = caption
+        return service.handle_update(update)
+
+    for i in range(3):
+        result = photo(501 + i, f"photo-{i}", "album", "Announcement" if i == 1 else None)
+        assert result[0].edit_message_id == 123
+    draft = registry.get_admin_message_draft(100000001)
+    assert draft.photo_file_ids == ("photo-0", "photo-1", "photo-2")
+    assert draft.body == "Announcement"
+    preview = service.handle_update(_admin_callback(504, "admin:broadcast-preview"))
+    assert preview[0].photo_file_ids == draft.photo_file_ids
+    assert "Картинок: 3" in preview[1].text
+    service.retry_update_response(preview[0])
+    repeated = service.handle_update(_admin_callback(504, "admin:broadcast-preview"))
+    assert repeated[0].photo_file_ids == draft.photo_file_ids
+    photo(505, "replacement")
+    assert registry.get_admin_message_draft(100000001).photo_file_ids == ("replacement",)
+    for i in range(11):
+        result = photo(506 + i, f"new-{i}", "new-group")
+    assert len(registry.get_admin_message_draft(100000001).photo_file_ids) == 10
+    assert "10 картинок" in result[0].text
+    before = registry.get_admin_message_draft(100000001)
+    rejected = service.handle_update(_admin_message(520, "x" * 1025))
+    assert "до 1024 символов" in rejected[0].text
+    doc = _admin_message(521, "")
+    doc["message"]["document"] = {"file_id": "document"}
+    assert "как фото" in service.handle_update(doc)[0].text
+    assert registry.get_admin_message_draft(100000001) == before
+    service.handle_update(_admin_callback(522, "admin:broadcast:new"))
+    photo(523, "bare")
+    draft = registry.get_admin_message_draft(100000001)
+    assert draft.body is None and draft.photo_file_ids == ("bare",)
+    result = service.handle_update(_admin_message(524, "Separate text"))
+    draft = registry.get_admin_message_draft(100000001)
+    assert draft.body == "Separate text" and draft.photo_file_ids == ("bare",)
+    assert any(button["callback_data"] == "admin:broadcast-confirm"
+               for row in result[0].reply_markup["inline_keyboard"] for button in row)
+
+
+def _broadcast_photo_update(update_id, file_id, *, group=None, caption=None, admin=True):
+    update = _admin_message(update_id, "") if admin else _message(update_id, "")
+    message = update["message"]
+    message.pop("text")
+    message["photo"] = [{"file_id": "small"}, {"file_id": file_id}]
+    if group is not None:
+        message["media_group_id"] = group
+    if caption is not None:
+        message["caption"] = caption
+    return update
+
+
+def _broadcast_photo_setup(tmp_path):
+    db_path = str(tmp_path / "broadcast-acceptance.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=100000001)
+    service.handle_update(_admin_callback(1, "admin:broadcast:new"))
+    registry.set_interface_window(telegram_user_id=100000001, message_id=123, has_text=True)
+    return registry, service
+
+
+def test_broadcast_document_is_rejected_without_changing_draft(tmp_path):
+    registry, service = _broadcast_photo_setup(tmp_path)
+    service.handle_update(_broadcast_photo_update(2, "saved", caption="News"))
+    before = registry.get_admin_message_draft(100000001)
+    update = _admin_message(3, "")
+    update["message"].pop("text")
+    update["message"]["document"] = {"file_id": "file", "mime_type": "image/jpeg"}
+    response = service.handle_update(update)
+    assert "Отправьте картинку как фото, а не файлом." in response[0].text
+    assert registry.get_admin_message_draft(100000001) == before
+
+
+def test_broadcast_long_separate_text_preserves_photo_draft(tmp_path):
+    registry, service = _broadcast_photo_setup(tmp_path)
+    service.handle_update(_broadcast_photo_update(2, "saved", caption="News"))
+    before = registry.get_admin_message_draft(100000001)
+    response = service.handle_update(_admin_message(3, "x" * 1025))
+    assert "С картинками текст может быть до 1024 символов. Сократите его и отправьте ещё раз." in response[0].text
+    assert registry.get_admin_message_draft(100000001) == before
+
+
+def test_broadcast_photos_then_separate_text_enables_launch(tmp_path):
+    registry, service = _broadcast_photo_setup(tmp_path)
+    response = service.handle_update(_broadcast_photo_update(2, "first", group="album"))
+    response = service.handle_update(_broadcast_photo_update(3, "second", group="album"))
+    assert all(button["text"] != "✓ Запустить рассылку" for row in response[0].reply_markup["inline_keyboard"] for button in row)
+    response = service.handle_update(_admin_message(4, "News"))
+    draft = registry.get_admin_message_draft(100000001)
+    assert draft.body == "News" and draft.photo_file_ids == ("first", "second")
+    assert any(button["text"] == "✓ Запустить рассылку" for row in response[0].reply_markup["inline_keyboard"] for button in row)
+
+
+def test_broadcast_single_photo_replaces_album(tmp_path):
+    registry, service = _broadcast_photo_setup(tmp_path)
+    service.handle_update(_broadcast_photo_update(2, "first", group="album", caption="News"))
+    service.handle_update(_broadcast_photo_update(3, "second", group="album"))
+    service.handle_update(_broadcast_photo_update(4, "replacement"))
+    draft = registry.get_admin_message_draft(100000001)
+    assert draft.photo_file_ids == ("replacement",) and draft.body == "News"
+    assert draft.media_group_id is None
+
+
+def test_photos_outside_broadcast_keep_direct_draft_and_user_response(tmp_path):
+    db_path = str(tmp_path / "direct-photo.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = _approved_telegram_customer(registry, db_path)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=100000001)
+    service.handle_update(_admin_callback(1, f"admin:message:{customer_id}:0"))
+    before = registry.get_admin_message_draft(100000001)
+    direct_response = service.handle_update(_broadcast_photo_update(2, "admin-photo"))
+    assert registry.get_admin_message_draft(100000001) == before
+    assert before.mode == "direct" and before.photo_file_ids is None
+    user_response = service.handle_update(_broadcast_photo_update(3, "user-photo", admin=False))
+    assert registry.get_admin_message_draft(42) is None
+    assert registry.get_admin_message_draft(100000001) == before
+    direct_baseline = service.handle_update(_admin_message(4, ""))
+    user_baseline = service.handle_update(_message(5, ""))
+    assert [(m.text, m.reply_markup) for m in direct_response] == [(m.text, m.reply_markup) for m in direct_baseline]
+    assert [(m.text, m.reply_markup) for m in user_response] == [(m.text, m.reply_markup) for m in user_baseline]
+
+
+def test_broadcast_each_album_photo_returns_one_window_message(tmp_path):
+    registry, service = _broadcast_photo_setup(tmp_path)
+    for i in range(3):
+        response = service.handle_update(_broadcast_photo_update(2 + i, f"photo-{i}", group="album", caption="News" if i == 1 else None))
+        windows = [message for message in response if message.delete_message_id is None]
+        assert len(windows) == 1
+        assert windows[0].edit_message_id == 123
+        assert windows[0].window_user_id == 100000001
+        assert windows[0].photo_file_ids is None
+        assert all(message.delete_message_id == 2 + i for message in response if message.delete_message_id is not None)
+    assert registry.get_admin_message_draft(100000001).photo_file_ids == ("photo-0", "photo-1", "photo-2")

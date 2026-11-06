@@ -1797,3 +1797,20 @@ def test_service_notice_is_versioned_idempotent_and_can_be_cleared(tmp_path):
             body="Устаревшая запись", expected_row_version=created.row_version,
             idempotency_key="notice-stale", updated_by="admin"
         )
+
+
+def test_broadcast_photo_columns_are_added_to_existing_tables(tmp_path):
+    db_path = str(tmp_path / "legacy-broadcast.db")
+    init_db(db_path)
+    with connect(db_path) as conn:
+        conn.execute("ALTER TABLE telegram_admin_message_drafts DROP COLUMN photo_file_ids")
+        conn.execute("ALTER TABLE telegram_admin_message_drafts DROP COLUMN media_group_id")
+        conn.execute("ALTER TABLE telegram_broadcast_jobs DROP COLUMN photo_file_ids")
+        conn.execute("ALTER TABLE telegram_update_responses DROP COLUMN photo_file_ids")
+    init_db(db_path)
+    with connect(db_path) as conn:
+        for table, expected in (("telegram_admin_message_drafts", {"photo_file_ids", "media_group_id"}),
+                                ("telegram_broadcast_jobs", {"photo_file_ids"}),
+                                ("telegram_update_responses", {"photo_file_ids"})):
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+            assert expected <= columns
