@@ -326,7 +326,7 @@ def to_xray_json(links: list[str], section: dict[str, Any]) -> str:
                 "outbounds": [_build_proxy_outbound(item, "proxy", None, None), *_system_outbounds()],
                 "routing": {
                     "domainStrategy": "AsIs",
-                    "rules": [{"type": "field", "outboundTag": "proxy"}],
+                    "rules": [{"type": "field", "network": "tcp,udp", "outboundTag": "proxy"}],
                 },
             }
             configs.append(config)
@@ -400,7 +400,7 @@ def to_xray_json(links: list[str], section: dict[str, Any]) -> str:
         if "routing" not in config:
             config["routing"] = {
                 "domainStrategy": "AsIs",
-                "rules": [{"type": "field", "outboundTag": "proxy"}],
+                "rules": [{"type": "field", "network": "tcp,udp", "outboundTag": "proxy"}],
             }
         configs.append(config)
 
