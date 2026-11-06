@@ -784,6 +784,10 @@ def init_db(db_path: str) -> None:
                       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                       FOREIGN KEY(customer_id) REFERENCES customers(id) ON DELETE CASCADE)"""
         )
+        draft_columns = {row[1] for row in conn.execute("PRAGMA table_info(telegram_admin_message_drafts)")}
+        for column in ("photo_file_ids", "media_group_id"):
+            if column not in draft_columns:
+                conn.execute(f"ALTER TABLE telegram_admin_message_drafts ADD COLUMN {column} TEXT DEFAULT NULL")
         conn.execute(
             """CREATE TABLE IF NOT EXISTS telegram_customer_note_drafts
                      (admin_telegram_user_id INTEGER PRIMARY KEY,
@@ -822,6 +826,8 @@ def init_db(db_path: str) -> None:
         broadcast_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(telegram_broadcast_jobs)").fetchall()
         }
+        if "photo_file_ids" not in broadcast_columns:
+            conn.execute("ALTER TABLE telegram_broadcast_jobs ADD COLUMN photo_file_ids TEXT DEFAULT NULL")
         if "idempotency_key" not in broadcast_columns:
             conn.execute("ALTER TABLE telegram_broadcast_jobs ADD COLUMN idempotency_key TEXT DEFAULT NULL")
             conn.execute(
@@ -1325,6 +1331,9 @@ def init_db(db_path: str) -> None:
                       FOREIGN KEY(update_id) REFERENCES telegram_updates(update_id)
                         ON DELETE CASCADE)"""
         )
+        response_columns = {row[1] for row in conn.execute("PRAGMA table_info(telegram_update_responses)")}
+        if "photo_file_ids" not in response_columns:
+            conn.execute("ALTER TABLE telegram_update_responses ADD COLUMN photo_file_ids TEXT DEFAULT NULL")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_telegram_update_responses_pending "
             "ON telegram_update_responses(update_id, status)"

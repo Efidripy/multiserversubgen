@@ -22,7 +22,8 @@ from services.telegram_transport import TelegramApiTransport, TelegramTransportE
 
 
 class TelegramDeliveryPort(Protocol):
-    def send(self, *, chat_id: int, text: str, reply_markup: dict[str, Any] | None = None) -> None: ...
+    def send(self, *, chat_id: int, text: str, reply_markup: dict[str, Any] | None = None,
+             photo_file_ids: tuple[str, ...] | None = None) -> None: ...
 
 
 class OutboxPermanentError(RuntimeError):
@@ -40,12 +41,22 @@ class TelegramApiOutboxPort:
         self._token_provider = bot_token if callable(bot_token) else lambda: bot_token
         self._transport = transport
 
-    def send(self, *, chat_id: int, text: str, reply_markup: dict[str, Any] | None = None) -> None:
+    def send(self, *, chat_id: int, text: str, reply_markup: dict[str, Any] | None = None,
+             photo_file_ids: tuple[str, ...] | None = None) -> None:
+        method = "sendMessage"
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
-        if reply_markup is not None:
+        if photo_file_ids and len(photo_file_ids) == 1:
+            method = "sendPhoto"
+            payload = {"chat_id": chat_id, "photo": photo_file_ids[0], "caption": text}
+        elif photo_file_ids:
+            method = "sendMediaGroup"
+            media = [{"type": "photo", "media": photo} for photo in photo_file_ids]
+            media[0]["caption"] = text
+            payload = {"chat_id": chat_id, "media": media}
+        if reply_markup is not None and method != "sendMediaGroup":
             payload["reply_markup"] = reply_markup
         request = UrlRequest(
-            f"https://api.telegram.org/bot{self._token_provider()}/sendMessage",
+            f"https://api.telegram.org/bot{self._token_provider()}/{method}",
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
             headers={"Content-Type": "application/json"},
             method="POST",
@@ -118,7 +129,7 @@ class TelegramOutboxWorker:
         if claimed is None:
             return OutboxRunResult(processed=False)
         try:
-            chat_id, text, markup = self._render(claimed)
+            chat_id, text, markup, photos = self._render(claimed)
         except OutboxSuppressed:
             self._cancel(claimed)
             return OutboxRunResult(True, claimed.event_id, "cancelled")
@@ -127,7 +138,10 @@ class TelegramOutboxWorker:
             return OutboxRunResult(True, claimed.event_id, "dead_letter")
         markup = self._with_close_button(chat_id, markup)
         try:
-            self._port.send(chat_id=chat_id, text=text, reply_markup=markup)
+            if photos:
+                self._port.send(chat_id=chat_id, text=text, reply_markup=markup, photo_file_ids=photos)
+            else:
+                self._port.send(chat_id=chat_id, text=text, reply_markup=markup)
         except OutboxPermanentError as exc:
             self._dead_letter(claimed, str(exc))
             return OutboxRunResult(True, claimed.event_id, "dead_letter")
@@ -192,7 +206,37 @@ class TelegramOutboxWorker:
             payload_json=str(row[3]), attempt_count=int(row[4]) + 1,
         )
 
-    def _render(self, event: ClaimedOutboxEvent) -> tuple[int, str, dict[str, Any] | None]:
+    def _render(
+        self, event: ClaimedOutboxEvent
+    ) -> tuple[int, str, dict[str, Any] | None, tuple[str, ...] | None]:
+        if event.event_type == "registered_broadcast":
+            try:
+                broadcast_id_text, user_id_text = event.entity_id.split(":", 1)
+                broadcast_id, user_id = int(broadcast_id_text), int(user_id_text)
+            except ValueError as exc:
+                raise OutboxPermanentError("invalid_broadcast_reference") from exc
+            with connect(self._db_path) as conn:
+                row = conn.execute(
+                    """
+                    SELECT i.chat_id, b.body, COALESCE(p.background_notifications_enabled, 1), b.photo_file_ids
+                    FROM telegram_broadcast_jobs AS b
+                    JOIN telegram_identities AS i ON i.telegram_user_id = ?
+                    JOIN customers AS c ON c.id = i.customer_id
+                    LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
+                    WHERE b.id = ? AND i.access_status = 'approved'
+                      AND c.deleted_at IS NULL AND c.status NOT IN ('deleting', 'delete_partial', 'deleted')
+                    """,
+                    (user_id, broadcast_id),
+                ).fetchone()
+            if row is None:
+                raise OutboxSuppressed("recipient_is_no_longer_registered")
+            if not bool(row[2]):
+                raise OutboxSuppressed("notifications_disabled")
+            return int(row[0]), str(row[1]), None, tuple(json.loads(row[3])) if row[3] else None
+        chat_id, text, markup = self._render_other(event)
+        return chat_id, text, markup, None
+
+    def _render_other(self, event: ClaimedOutboxEvent) -> tuple[int, str, dict[str, Any] | None]:
         if event.event_type == "admin_direct_message":
             try:
                 user_id = int(event.entity_id)
@@ -216,30 +260,6 @@ class TelegramOutboxWorker:
             if row is None:
                 raise OutboxSuppressed("recipient_is_no_longer_registered")
             return int(row[0]), body.strip(), None
-        if event.event_type == "registered_broadcast":
-            try:
-                broadcast_id_text, user_id_text = event.entity_id.split(":", 1)
-                broadcast_id, user_id = int(broadcast_id_text), int(user_id_text)
-            except ValueError as exc:
-                raise OutboxPermanentError("invalid_broadcast_reference") from exc
-            with connect(self._db_path) as conn:
-                row = conn.execute(
-                    """
-                    SELECT i.chat_id, b.body, COALESCE(p.background_notifications_enabled, 1)
-                    FROM telegram_broadcast_jobs AS b
-                    JOIN telegram_identities AS i ON i.telegram_user_id = ?
-                    JOIN customers AS c ON c.id = i.customer_id
-                    LEFT JOIN telegram_notification_preferences AS p ON p.telegram_user_id = i.telegram_user_id
-                    WHERE b.id = ? AND i.access_status = 'approved'
-                      AND c.deleted_at IS NULL AND c.status NOT IN ('deleting', 'delete_partial', 'deleted')
-                    """,
-                    (user_id, broadcast_id),
-                ).fetchone()
-            if row is None:
-                raise OutboxSuppressed("recipient_is_no_longer_registered")
-            if not bool(row[2]):
-                raise OutboxSuppressed("notifications_disabled")
-            return int(row[0]), str(row[1]), None
         if event.event_type == "admin_request_created":
             return self._primary_admin_id, f"Новая заявка: #{event.entity_id}.", {"inline_keyboard": [[{"text": "Заявки", "callback_data": "admin:requests:0"}]]}
         if event.event_type == "admin_introduction_submitted":

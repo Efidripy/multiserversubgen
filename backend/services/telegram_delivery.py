@@ -78,8 +78,30 @@ class TelegramApiSender:
                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
                 method="POST",
             )
+        elif message.photo_file_ids:
+            photos = message.photo_file_ids
+            payload: dict[str, Any] = {"chat_id": message.chat_id}
+            if len(photos) == 1:
+                method = "sendPhoto"
+                payload.update(photo=photos[0], caption=message.text)
+                if message.parse_mode:
+                    payload["parse_mode"] = message.parse_mode
+                if message.reply_markup is not None:
+                    payload["reply_markup"] = message.reply_markup
+            else:
+                method = "sendMediaGroup"
+                media = [{"type": "photo", "media": photo} for photo in photos]
+                media[0]["caption"] = message.text
+                if message.parse_mode:
+                    media[0]["parse_mode"] = message.parse_mode
+                payload["media"] = media
+            request = UrlRequest(
+                f"{self._endpoint()}/{method}",
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={"Content-Type": "application/json"}, method="POST",
+            )
         else:
-            payload: dict[str, Any] = {"chat_id": message.chat_id, "text": message.text}
+            payload = {"chat_id": message.chat_id, "text": message.text}
             if message.parse_mode:
                 payload["parse_mode"] = message.parse_mode
             if message.reply_markup is not None:
@@ -188,6 +210,8 @@ class TelegramApiSender:
         if not isinstance(body, dict) or body.get("ok") is not True:
             raise TelegramDeliveryError("Telegram delivery was rejected")
         result = body.get("result")
+        if isinstance(result, list):
+            result = result[0] if result else None
         if isinstance(result, dict):
             message_id = result.get("message_id")
             if isinstance(message_id, int) and not isinstance(message_id, bool) and message_id > 0:

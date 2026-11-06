@@ -561,3 +561,93 @@ def test_traffic_reminder_delivery_is_opt_in_and_uses_its_specific_preference(tm
         )
     assert _worker(db_path, port).run_once().outcome == "sent"
     assert port.messages == [(777, "Напоминание: использовано примерно 95% доступного трафика.", _close_markup())]
+
+
+def test_broadcast_photos_survive_queue_and_reach_outbox(tmp_path):
+    db_path = str(tmp_path / "photos.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer = registry.create_customer(email_display="target", origin="telegram", email_source="telegram_username", public_code="target")
+    registry.get_or_create_identity(telegram_user_id=42, chat_id=42, username="target", first_name="Target", last_name=None)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42", (customer,))
+    result = registry.queue_registered_broadcast(body="News", created_by=100000001, idempotency_key="photos", photo_file_ids=("a", "b"))
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT photo_file_ids FROM telegram_broadcast_jobs WHERE id = ?", (result.broadcast_id,)).fetchone()[0] == '["a", "b"]'
+
+    class PhotoPort:
+        def __init__(self):
+            self.messages = []
+
+        def send(self, **kwargs):
+            self.messages.append(kwargs)
+
+    port = PhotoPort()
+    worker = _worker(db_path, port)
+    assert worker.run_once().outcome == "sent"
+    assert port.messages[0]["photo_file_ids"] == ("a", "b")
+    assert port.messages[0]["text"] == "News"
+    assert not worker.run_once().processed
+
+
+def _broadcast_transport_setup(tmp_path, photos=None, *, legacy=False):
+    db_path = str(tmp_path / "broadcast-transport.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer = registry.create_customer(email_display="target", origin="telegram", email_source="telegram_username", public_code="target")
+    registry.get_or_create_identity(telegram_user_id=42, chat_id=777, username="target", first_name="Target", last_name=None)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_identities SET customer_id = ?, access_status = 'approved' WHERE telegram_user_id = 42", (customer,))
+    registry.queue_registered_broadcast(body="News", created_by=100000001, idempotency_key="transport", photo_file_ids=photos)
+    if legacy:
+        with connect(db_path) as conn:
+            conn.execute("ALTER TABLE telegram_broadcast_jobs DROP COLUMN photo_file_ids")
+        init_db(db_path)
+
+    class RecordingTransport:
+        def __init__(self):
+            self.requests = []
+
+        def open(self, request, *, timeout):
+            self.requests.append(request)
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        status = 200
+
+    transport = RecordingTransport()
+    assert _worker(db_path, TelegramApiOutboxPort("token", transport=transport)).run_once().outcome == "sent"
+    assert len(transport.requests) == 1
+    return transport.requests[0]
+
+
+def test_broadcast_outbox_single_photo_sends_caption(tmp_path):
+    import json
+
+    request = _broadcast_transport_setup(tmp_path, ("photo-id",))
+    assert request.full_url.endswith("/sendPhoto")
+    payload = json.loads(request.data)
+    assert payload["chat_id"] == 777 and payload["photo"] == "photo-id" and payload["caption"] == "News"
+
+
+def test_broadcast_outbox_text_sends_message(tmp_path):
+    import json
+
+    request = _broadcast_transport_setup(tmp_path)
+    assert request.full_url.endswith("/sendMessage")
+    payload = json.loads(request.data)
+    assert payload["chat_id"] == 777 and payload["text"] == "News"
+
+
+def test_broadcast_outbox_legacy_job_after_migration_sends_message(tmp_path):
+    import json
+
+    request = _broadcast_transport_setup(tmp_path, legacy=True)
+    assert request.full_url.endswith("/sendMessage")
+    payload = json.loads(request.data)
+    assert payload["chat_id"] == 777 and payload["text"] == "News"
