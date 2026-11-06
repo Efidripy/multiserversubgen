@@ -1930,7 +1930,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
   ];
 
   return (
-    <div className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-2 text-slate-100 sm:p-4 lg:p-6">
+    <div data-ln="monitoring" className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-2 text-slate-100 sm:p-4 lg:p-6">
       <div className="mb-3 sm:mb-6 flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <h2 className="text-sm font-medium uppercase tracking-[0.16em] text-cyan-300">{t('nav.monitoring')}</h2>
@@ -1965,7 +1965,7 @@ export const MonitoringDashboard: React.FC<MonitoringDashboardProps> = ({ onHead
                 />
               </div>
             </div>
-          <div className="grid min-w-0 grid-cols-1 gap-x-6 gap-y-3 border-t border-cyan-500/15 pt-3 md:grid-cols-2 xl:grid-cols-3">
+          <div data-ln="monitoring-filters" className="grid min-w-0 grid-cols-1 gap-x-6 gap-y-3 border-t border-cyan-500/15 pt-3 md:grid-cols-2 xl:grid-cols-3">
             <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
               <span className={cn(sectionTitleClass, 'w-24 shrink-0')}>{t('monitoringDashboard.range')}</span>
               <div className="flex min-w-0 flex-wrap items-center gap-2">
