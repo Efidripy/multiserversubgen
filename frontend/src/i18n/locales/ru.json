@@ -1518,6 +1518,11 @@
     "en": "English",
     "ru": "Русский"
   },
+  "design": {
+    "title": "Дизайн",
+    "classic": "Старый дизайн",
+    "new": "Новый дизайн"
+  },
   "sidebar": {
     "themeLabel": "Тема",
     "themeChoose": "Выбрать режим темы",

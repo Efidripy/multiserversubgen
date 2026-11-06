@@ -35,7 +35,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen,
   onMobileClose,
 }) => {
-  const { colors } = useTheme();
+  const { colors, design, setDesign } = useTheme();
   const { t, i18n } = useTranslation();
   const currentLang = (i18n.resolvedLanguage || i18n.language || 'en').toLowerCase();
   const safeItems = Array.isArray(items) ? items : [];
@@ -145,6 +145,21 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   ]}
                   value={currentLang.startsWith('ru') ? 'ru' : 'en'}
                   onChange={(value) => i18n.changeLanguage(value)}
+                />
+              </div>
+
+              <div className="sidebar__language sidebar__design">
+                <label className="sidebar__language-label" style={{ color: colors.text.secondary }}>
+                  {t('design.title')}
+                </label>
+                <ChoiceChips
+                  className="sidebar__language-tabs sidebar__design-tabs"
+                  options={[
+                    { value: 'classic', label: t('design.classic') },
+                    { value: 'new', label: t('design.new') },
+                  ]}
+                  value={design}
+                  onChange={(value) => setDesign(value === 'new' ? 'new' : 'classic')}
                 />
               </div>
 

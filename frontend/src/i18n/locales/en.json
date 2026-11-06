@@ -1543,6 +1543,11 @@
     "en": "English",
     "ru": "Русский"
   },
+  "design": {
+    "title": "Design",
+    "classic": "Old design",
+    "new": "New design"
+  },
   "sidebar": {
     "themeLabel": "Theme",
     "themeChoose": "Choose theme mode",
