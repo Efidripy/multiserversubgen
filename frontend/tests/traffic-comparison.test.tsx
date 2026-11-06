@@ -1,4 +1,4 @@
-﻿import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 const state = vi.hoisted(() => ({ design: 'classic' }));
 vi.mock('../src/contexts/ThemeContext', () => ({ useDesign: () => state.design }));

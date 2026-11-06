@@ -1,4 +1,4 @@
-﻿import sqlite3
+import sqlite3
 import sys
 from pathlib import Path
 
