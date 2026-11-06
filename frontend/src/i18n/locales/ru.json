@@ -911,8 +911,18 @@
         "title": "Xray JSON",
         "always_array": "Всегда массив",
         "always_arrayHint": "Всегда оборачивать конфигурацию в массив JSON",
+        "enabled": "Использовать шаблон",
+        "enabledHint": "Если выключено, отдаётся минимальный конфиг без DNS и маршрутизации",
         "template": "Шаблон Xray JSON",
-        "templateHint": "Цельный конфиг: узлы подставляются outbound с тегом proxy, по конфигу на узел. Заготовка outbound с тегом proxy задаёт mux, sockopt и finalmask для всех узлов. Если в routing есть balancers, все узлы идут в один конфиг как proxy-1..N"
+        "jsonEditor": "JSON выбранного шаблона",
+        "templateHint": "Узлы подставляются в выбранный шаблон. Встроенный Default доступен только для чтения",
+        "defaultTemplate": "Default",
+        "newName": "Имя нового шаблона",
+        "add": "Добавить",
+        "delete": "Удалить",
+        "confirmDelete": "Подтвердить удаление",
+        "cancel": "Отмена",
+        "invalidTemplateName": "Введите уникальное имя до 64 символов"
       },
       "response_rules": {
         "title": "Правила ответа",

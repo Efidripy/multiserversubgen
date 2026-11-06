@@ -183,13 +183,14 @@ def test_xray_json_template_is_saved_through_settings_api(env):
         "outbounds": [{"tag": "direct", "protocol": "freedom", "settings": {}}],
         "routing": {"rules": []},
     }
-    settings["xray_json"]["template"] = json.dumps(template)
+    settings["xray_json"].update(enabled=True, active="Custom", templates=[{"name": "Custom", "template": json.dumps(template)}])
 
     response = env.client.put(SETTINGS_URL, json=settings)
 
     assert response.status_code == 200, response.text
     saved = env.client.get(SETTINGS_URL).json()["settings"]["xray_json"]
-    assert json.loads(saved["template"]) == template
+    assert saved["active"] == "Custom"
+    assert json.loads(saved["templates"][0]["template"]) == template
 
 
 def test_guest_link_gets_the_client_format(env, monkeypatch):

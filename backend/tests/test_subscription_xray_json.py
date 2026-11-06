@@ -21,8 +21,8 @@ def _vmess_link(payload: dict) -> str:
     return "vmess://" + encoded
 
 
-def test_default_template_for_empty_template():
-    configs = json.loads(to_xray_json(LINKS, {"template": ""}))
+def test_default_template_when_enabled():
+    configs = json.loads(to_xray_json(LINKS, {"enabled": True}))
     assert len(configs) == 2
     assert [config["remarks"] for config in configs] == ["Node-A", "Node-B"]
     assert configs[0]["dns"]["servers"] == ["1.1.1.1", "1.0.0.1"]
@@ -43,7 +43,7 @@ def test_proxy_skeleton_applies_mux_sockopt_and_finalmask_without_template_proxy
         ]
     }
     original = copy.deepcopy(template)
-    config = json.loads(to_xray_json([LINKS[0]], {"template": template}))
+    config = json.loads(to_xray_json([LINKS[0]], {"enabled": True, "active": "Custom", "templates": [{"name": "Custom", "template": json.dumps(template)}]}))
     proxy = config["outbounds"][0]
     assert proxy["tag"] == "proxy"
     assert proxy["mux"] == {"enabled": True}
@@ -58,7 +58,7 @@ def test_balancer_mode_uses_one_config_and_defaults():
         "routing": {"balancers": [{"tag": "best", "strategy": {"type": "leastPing"}}]},
         "outbounds": [{"tag": "direct", "protocol": "freedom"}],
     }
-    config = json.loads(to_xray_json(LINKS, {"template": template}))
+    config = json.loads(to_xray_json(LINKS, {"enabled": True, "active": "Custom", "templates": [{"name": "Custom", "template": json.dumps(template)}]}))
     assert config["remarks"] == "best"
     assert [item["tag"] for item in config["outbounds"][:2]] == ["proxy-1", "proxy-2"]
     assert config["routing"]["balancers"][0]["selector"] == ["proxy-"]
@@ -73,7 +73,7 @@ def test_balancer_observatory_is_not_added_when_template_has_one():
         "observatory": {"subjectSelector": ["custom"]},
         "routing": {"balancers": [{"tag": "best", "strategy": {"type": "leastLoad"}}]},
     }
-    config = json.loads(to_xray_json([LINKS[0]], {"template": template}))
+    config = json.loads(to_xray_json([LINKS[0]], {"enabled": True, "active": "Custom", "templates": [{"name": "Custom", "template": json.dumps(template)}]}))
     assert config["observatory"] == {"subjectSelector": ["custom"]}
 
 
@@ -83,8 +83,8 @@ def test_balancer_observatory_is_not_added_when_template_has_one():
     {"routing": {"balancers": [{"tag": "b", "strategy": {"type": "bad"}}]}},
 ])
 def test_invalid_templates_raise_template(template):
-    with pytest.raises(ValueError, match="template"):
-        validate_xray_json_section({"template": template})
+    with pytest.raises(ValueError, match="templates"):
+        validate_xray_json_section({"templates": [{"name": "Custom", "template": template if isinstance(template, str) else json.dumps(template)}]})
 
 
 def test_old_keys_are_ignored_and_empty_template_gets_default():
@@ -95,14 +95,13 @@ def test_old_keys_are_ignored_and_empty_template_gets_default():
         "clients": [],
     })
     section = settings["xray_json"]
-    assert set(section) == {"always_array", "template"}
-    assert json.loads(section["template"]) == DEFAULT_XRAY_TEMPLATE
+    assert section == {"always_array": False, "enabled": False, "active": "Default", "templates": []}
 
 
 def test_always_array_controls_single_config_shape():
     link = [LINKS[0]]
-    assert isinstance(json.loads(to_xray_json(link, {"template": "", "always_array": False})), dict)
-    assert isinstance(json.loads(to_xray_json(link, {"template": "", "always_array": True})), list)
+    assert isinstance(json.loads(to_xray_json(link, {"enabled": False, "always_array": False})), dict)
+    assert isinstance(json.loads(to_xray_json(link, {"enabled": False, "always_array": True})), list)
 
 
 def test_vless_outbound_with_reality_and_flow():
@@ -266,3 +265,44 @@ def test_transports_ws_grpc_httpupgrade_xhttp_h2():
         "path": "/h2path",
         "host": ["h2.domain"],
     }
+
+
+def test_disabled_is_minimal_and_has_no_dns():
+    config = json.loads(to_xray_json([LINKS[0]], {"enabled": False}))
+    assert "dns" not in config
+    assert config["log"] == {"loglevel": "warning"}
+    assert config["routing"] == {"domainStrategy": "AsIs", "rules": [{"type": "field", "outboundTag": "proxy"}]}
+    assert [outbound["tag"] for outbound in config["outbounds"]] == ["proxy", "direct", "block"]
+    assert "mux" not in config["outbounds"][0]
+    assert "finalmask" not in config["outbounds"][0]["streamSettings"]
+
+
+@pytest.mark.parametrize("legacy", ["", json.dumps(DEFAULT_XRAY_TEMPLATE, sort_keys=True)])
+def test_legacy_default_is_disabled(legacy):
+    from services.subscription_client_settings import validate_settings
+    section = validate_settings({"xray_json": {"template": legacy, "routing": "bad", "rules": "bad", "final_mask": "bad", "observatory": "bad"}})["xray_json"]
+    assert section == {"always_array": False, "enabled": False, "active": "Default", "templates": []}
+
+
+def test_legacy_custom_is_migrated():
+    from services.subscription_client_settings import validate_settings
+    template = json.dumps({"dns": {"servers": ["example.test"]}})
+    section = validate_settings({"xray_json": {"template": template}})["xray_json"]
+    assert section == {"always_array": False, "enabled": True, "active": "Custom", "templates": [{"name": "Custom", "template": template}]}
+    assert json.loads(to_xray_json([LINKS[0]], section))["dns"]["servers"] == ["example.test"]
+
+
+@pytest.mark.parametrize("templates", [
+    [{"name": "One", "template": "{}"}, {"name": "one", "template": "{}"}],
+    [{"name": "Default", "template": "{}"}],
+    [{"name": "  ", "template": "{}"}],
+    [{"name": "A", "template": "not-json"}],
+])
+def test_invalid_template_lists(templates):
+    with pytest.raises(ValueError, match="templates"):
+        validate_xray_json_section({"templates": templates})
+
+
+def test_unknown_active_rejected():
+    with pytest.raises(ValueError, match="active"):
+        validate_xray_json_section({"active": "missing", "templates": []})

@@ -8,6 +8,7 @@ import {
   inputClass,
   titleClass,
 } from './SubscriptionManager';
+import { XrayTemplatesEditor } from './XrayTemplatesEditor';
 
 export interface SectionFieldSchema {
   key: string;
@@ -39,6 +40,7 @@ export const SubscriptionSettingsSections: React.FC<SubscriptionSettingsSections
   const [jsonErrors, setJsonErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    if (sectionKey === 'xray_json') return;
     const initialErrors: Record<string, string> = {};
     for (const field of fields) {
       if (field.type === 'json') {
@@ -89,6 +91,16 @@ export const SubscriptionSettingsSections: React.FC<SubscriptionSettingsSections
 
   const sectionTitleKey = `subscriptionClients.sections.${sectionKey}.title`;
   const sectionTitle = t(sectionTitleKey);
+
+  if (sectionKey === 'xray_json') {
+    return (
+      <XrayTemplatesEditor
+        values={values}
+        onChange={onChange}
+        onValidityChange={onValidityChange}
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">

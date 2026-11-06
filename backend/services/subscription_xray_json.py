@@ -34,16 +34,49 @@ DEFAULT_XRAY_TEMPLATE: dict[str, Any] = {
 }
 
 
-def _parse_field(section: dict[str, Any], key: str) -> Any:
-    val = section.get(key)
-    if val is None or val == "":
-        return None
-    if isinstance(val, str):
+def _validate_template(template: Any, error_key: str = "template") -> None:
+    if isinstance(template, str):
         try:
-            return json.loads(val)
+            template = json.loads(template)
         except Exception as exc:
-            raise ValueError(key) from exc
-    return val
+            raise ValueError(error_key) from exc
+    if not isinstance(template, dict):
+        raise ValueError(error_key)
+    for field in ("inbounds", "outbounds"):
+        if field in template and (
+            not isinstance(template[field], list)
+            or any(not isinstance(item, dict) for item in template[field])
+        ):
+            raise ValueError(error_key)
+    routing = template.get("routing")
+    if routing is not None and not isinstance(routing, dict):
+        raise ValueError(error_key)
+    if isinstance(routing, dict):
+        rules = routing.get("rules")
+        if rules is not None and (
+            not isinstance(rules, list) or any(not isinstance(item, dict) for item in rules)
+        ):
+            raise ValueError(error_key)
+        balancers = routing.get("balancers")
+        if balancers is not None:
+            if not isinstance(balancers, list):
+                raise ValueError(error_key)
+            seen_tags: set[str] = set()
+            for balancer in balancers:
+                if not isinstance(balancer, dict):
+                    raise ValueError(error_key)
+                tag = balancer.get("tag")
+                if not isinstance(tag, str) or not tag.strip() or tag in seen_tags:
+                    raise ValueError(error_key)
+                seen_tags.add(tag)
+                selector = balancer.get("selector")
+                if selector is not None and (
+                    not isinstance(selector, list) or any(not isinstance(item, str) for item in selector)
+                ):
+                    raise ValueError(error_key)
+                strategy = balancer.get("strategy")
+                if not isinstance(strategy, dict) or strategy.get("type") not in VALID_BALANCER_STRATEGIES:
+                    raise ValueError(error_key)
 
 
 def validate_xray_json_section(section: dict[str, Any]) -> None:
@@ -54,46 +87,34 @@ def validate_xray_json_section(section: dict[str, Any]) -> None:
         if not isinstance(section["always_array"], bool):
             raise ValueError("always_array")
 
-    template = _parse_field(section, "template")
-    if template is None:
-        return
-    if not isinstance(template, dict):
-        raise ValueError("template")
-    for field in ("inbounds", "outbounds"):
-        if field in template and (
-            not isinstance(template[field], list)
-            or any(not isinstance(item, dict) for item in template[field])
-        ):
-            raise ValueError("template")
-    routing = template.get("routing")
-    if routing is not None and not isinstance(routing, dict):
-        raise ValueError("template")
-    if isinstance(routing, dict):
-        rules = routing.get("rules")
-        if rules is not None and (
-            not isinstance(rules, list) or any(not isinstance(item, dict) for item in rules)
-        ):
-            raise ValueError("template")
-        balancers = routing.get("balancers")
-        if balancers is not None:
-            if not isinstance(balancers, list):
-                raise ValueError("template")
-            seen_tags: set[str] = set()
-            for balancer in balancers:
-                if not isinstance(balancer, dict):
-                    raise ValueError("template")
-                tag = balancer.get("tag")
-                if not isinstance(tag, str) or not tag.strip() or tag in seen_tags:
-                    raise ValueError("template")
-                seen_tags.add(tag)
-                selector = balancer.get("selector")
-                if selector is not None and (
-                    not isinstance(selector, list) or any(not isinstance(item, str) for item in selector)
-                ):
-                    raise ValueError("template")
-                strategy = balancer.get("strategy")
-                if not isinstance(strategy, dict) or strategy.get("type") not in VALID_BALANCER_STRATEGIES:
-                    raise ValueError("template")
+    if "enabled" in section and not isinstance(section["enabled"], bool):
+        raise ValueError("enabled")
+    if "active" in section and not isinstance(section["active"], str):
+        raise ValueError("active")
+
+    templates = section.get("templates", [])
+    if not isinstance(templates, list) or len(templates) > 20:
+        raise ValueError("templates")
+    names: set[str] = set()
+    exact_names: set[str] = set()
+    for item in templates:
+        if not isinstance(item, dict):
+            raise ValueError("templates")
+        name = item.get("name")
+        template = item.get("template")
+        if not isinstance(name, str):
+            raise ValueError("templates")
+        name = name.strip()
+        if not name or len(name) > 64 or name.lower() == "default" or name.casefold() in names:
+            raise ValueError("templates")
+        names.add(name.casefold())
+        exact_names.add(name)
+        if not isinstance(template, str):
+            raise ValueError("templates")
+        _validate_template(template, "templates")
+    active = section.get("active", "Default")
+    if active != "Default" and active not in exact_names:
+        raise ValueError("active")
 
 
 def _build_proxy_outbound(
@@ -294,11 +315,31 @@ def to_xray_json(links: list[str], section: dict[str, Any]) -> str:
         return ""
 
     always_array = bool(section.get("always_array", False))
-    template = _parse_field(section, "template")
-    if not template:
-        template = copy.deepcopy(DEFAULT_XRAY_TEMPLATE)
-    else:
-        template = copy.deepcopy(template)
+    enabled = bool(section.get("enabled", False))
+    if not enabled:
+        configs = []
+        for item in proxies:
+            config = {
+                "remarks": item["name"],
+                "log": {"loglevel": "warning"},
+                "inbounds": _default_inbounds(),
+                "outbounds": [_build_proxy_outbound(item, "proxy", None, None), *_system_outbounds()],
+                "routing": {
+                    "domainStrategy": "AsIs",
+                    "rules": [{"type": "field", "outboundTag": "proxy"}],
+                },
+            }
+            configs.append(config)
+        result = configs if always_array or len(configs) != 1 else configs[0]
+        return json.dumps(result, ensure_ascii=False, indent=2)
+
+    active = section.get("active", "Default")
+    selected = DEFAULT_XRAY_TEMPLATE
+    for entry in section.get("templates", []):
+        if entry["name"].strip() == active:
+            selected = json.loads(entry["template"])
+            break
+    template = copy.deepcopy(selected)
     mux, sockopt, finalmask = _proxy_skeleton(template)
     template_outbounds = [
         copy.deepcopy(outbound)
