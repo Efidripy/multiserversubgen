@@ -137,7 +137,9 @@ describe('SubscriptionSettingsSections and Client Subscriptions Stage 2', () => 
       clients: [],
       xray_json: {
         always_array: false,
-        template: '{"outbounds": []}',
+        enabled: true,
+        active: 'Custom',
+        templates: [{ name: 'Custom', template: '{"outbounds": []}' }],
       },
     };
 
@@ -159,7 +161,7 @@ describe('SubscriptionSettingsSections and Client Subscriptions Stage 2', () => 
     // Switch to xray_json tab
     fireEvent.click(screen.getByText('subscriptionClients.tabs.xray_json'));
 
-    const templateTextarea = screen.getByLabelText('subscriptionClients.sections.xray_json.template');
+    const templateTextarea = screen.getByLabelText('subscriptionClients.sections.xray_json.jsonEditor');
     expect((templateTextarea as HTMLTextAreaElement).value).toBe('{"outbounds": []}');
 
     // Save button should initially be disabled because there are no changes

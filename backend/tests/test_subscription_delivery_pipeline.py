@@ -852,9 +852,9 @@ def test_put_settings_422_on_malformed_rules_balancers_and_path_traversal(env):
 
     # 2. template balancers with invalid strategy
     s2 = default_settings()
-    s2["xray_json"]["template"] = json.dumps({
+    s2["xray_json"]["templates"] = [{"name": "Custom", "template": json.dumps({
         "routing": {"balancers": [{"tag": "b1", "selector": ["proxy-"], "strategy": {"type": "invalidStrategy"}}]},
-    })
+    })}]
     assert env.client.put("/api/v1/subscription-client-settings", json=s2).status_code == 422
 
     # 3. legacy page.theme_dir is ignored and dropped

@@ -80,7 +80,8 @@ SECTION_SPECS = {
     ],
     "xray_json": [
         ("always_array", "bool", "format", None, False),
-        ("template", "json", "format", None, json.dumps(DEFAULT_XRAY_TEMPLATE, ensure_ascii=False, indent=2)),
+        ("enabled", "bool", "format", None, False),
+        ("active", "text", "format", None, "Default"),
     ],
     "response_rules": [
         ("rules", "json", "rules", None, ""),
@@ -111,7 +112,7 @@ def ensure_subscription_client_settings_table(conn: sqlite3.Connection) -> None:
 
 
 def default_settings() -> Dict[str, Any]:
-    return {
+    result = {
         "profile": {
             "title": "",
             "support_url": "",
@@ -125,6 +126,8 @@ def default_settings() -> Dict[str, Any]:
             for section, specs in SECTION_SPECS.items()
         },
     }
+    result["xray_json"]["templates"] = []
+    return result
 
 
 def _clean_header_value(value: Any) -> str:
@@ -365,8 +368,30 @@ def _validate_sections(raw: Dict[str, Any], result: Dict[str, Any]) -> None:
         for key, field_type, _group, options, _default in specs:
             if key in values:
                 result[section][key] = _validate_section_value(key, values[key], field_type, options)
-    if not result["xray_json"].get("template", "").strip():
-        result["xray_json"]["template"] = json.dumps(DEFAULT_XRAY_TEMPLATE, ensure_ascii=False, indent=2)
+    xray_raw = raw.get("xray_json", {})
+    if isinstance(xray_raw, dict):
+        xray_result = result["xray_json"]
+        if "templates" in xray_raw:
+            xray_result["templates"] = copy.deepcopy(xray_raw["templates"])
+        elif "template" in xray_raw:
+            legacy = xray_raw.get("template")
+            if isinstance(legacy, str) and legacy.strip():
+                try:
+                    parsed = json.loads(legacy)
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise ValueError("templates") from exc
+                if parsed != DEFAULT_XRAY_TEMPLATE:
+                    xray_result["templates"] = [{"name": "Custom", "template": legacy}]
+                    xray_result["active"] = "Custom"
+                    xray_result["enabled"] = True
+                else:
+                    xray_result["templates"] = []
+                    xray_result["active"] = "Default"
+                    xray_result["enabled"] = False
+            else:
+                xray_result["templates"] = []
+                xray_result["active"] = "Default"
+                xray_result["enabled"] = False
     # Feature validators are imported lazily to avoid the intentional dependency
     # from the feature modules back to this module's header/rule helpers.
     from services.subscription_xray_json import validate_xray_json_section
@@ -374,6 +399,8 @@ def _validate_sections(raw: Dict[str, Any], result: Dict[str, Any]) -> None:
     from services.subscription_page import validate_page_section
 
     validate_xray_json_section(result.get("xray_json", {}))
+    for item in result["xray_json"]["templates"]:
+        item["name"] = item["name"].strip()
     validate_response_rules(result.get("response_rules", {}).get("rules", ""))
     validate_page_section(result.get("page", {}))
 

@@ -911,8 +911,18 @@
         "title": "Xray JSON",
         "always_array": "Always Array",
         "always_arrayHint": "Always wrap configuration in a JSON array",
+        "enabled": "Use Template",
+        "enabledHint": "When disabled, a minimal config without DNS or routing is returned",
         "template": "Xray JSON Template",
-        "templateHint": "Complete config: subscription nodes are inserted as proxy-tagged outbounds, one config per node. A proxy outbound template sets mux, sockopt, and finalmask for all nodes. If routing contains balancers, all nodes go into one config as proxy-1..N"
+        "jsonEditor": "Selected template JSON",
+        "templateHint": "Nodes are inserted into the selected template. Built-in Default is read-only",
+        "defaultTemplate": "Default",
+        "newName": "New template name",
+        "add": "Add",
+        "delete": "Delete",
+        "confirmDelete": "Confirm deletion",
+        "cancel": "Cancel",
+        "invalidTemplateName": "Enter a unique name up to 64 characters"
       },
       "response_rules": {
         "title": "Response Rules",
