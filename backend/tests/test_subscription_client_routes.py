@@ -216,6 +216,15 @@ def test_happ_headers_reach_only_happ_and_non_ascii_is_wrapped(env):
     assert "x-custom" not in other.headers
 
 
+def test_happ_routing_link_of_several_kilobytes_is_saved_and_delivered(env):
+    # Real routing links with geosite lists run 3-5 KB; the old 3 KB limit rejected them.
+    routing = "happ://routing/onadd/" + base64.b64encode(b"x" * 3600).decode()
+    configure(env, "happ", settings={"routing_enable": True, "routing": routing})
+    response = sub(env, "Happ/3.6")
+    assert response.status_code == 200
+    assert response.headers["routing"] == routing
+
+
 def test_incy_routing_goes_to_the_body_not_a_header(env):
     configure(env, "incy", settings={"routing_enable": True, "routing": "incy://routing/abc"})
     response = sub(env, "INCY/1")
@@ -251,7 +260,7 @@ def test_custom_header_case_does_not_duplicate_profile_header(env):
         (lambda c: c.update(user_agent_regex="a" * 301), "user_agent_regex"),
         (lambda c: c.update(headers=[{"key": "Set-Cookie", "value": "x"}]), "headers"),
         (lambda c: c.update(headers=[{"key": "Bad Name", "value": "x"}]), "headers"),
-        (lambda c: c.update(headers=[{"key": "X-Big", "value": "x" * 4000}]), "headers"),
+        (lambda c: c.update(headers=[{"key": "X-Big", "value": "x" * 13000}]), "headers"),
         (lambda c: c.update(settings={"new_url": "javascript:alert(1)"}), "new_url"),
         (lambda c: c.update(settings={"routing": "https://example.com"}), "routing"),
         (lambda c: c.update(format="xml"), "format"),

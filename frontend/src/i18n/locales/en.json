@@ -1028,6 +1028,7 @@
     "saving": "Saving...",
     "saveSuccess": "Settings saved successfully",
     "saveFailed": "Failed to save settings",
+    "errorHeaders": "Client or response rule headers are too large (over 12 KB together) or use a forbidden name. Shorten the routing or custom headers.",
     "noChanges": "No unsaved changes",
     "loadFailed": "Failed to load client settings",
     "retry": "Retry",

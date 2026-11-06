@@ -15,6 +15,9 @@ from services.db_bootstrap import connect
 from services.subscription_formats import FORMATS
 from services.subscription_regex import validate_admin_regex
 _HEADER_NAME = re.compile(r"^[!#$%&'*+\-.0-9A-Za-z^_`|~]+$")
+# Must stay below proxy_buffer_size (16k) in the installer's nginx snippet,
+# or nginx answers 502 "upstream sent too big header".
+_HEADERS_LIMIT = 12288
 _FORBIDDEN_HEADERS = {
     "content-type", "content-length", "content-encoding", "transfer-encoding", "connection",
     "keep-alive", "upgrade", "te", "trailer", "set-cookie", "location", "cache-control",
@@ -483,7 +486,7 @@ def validate_settings(raw: Any) -> Dict[str, Any]:
     result["clients"] = ordered
     for client in ordered:
         headers = _headers_for_limit(result, client)
-        if sum(len(name.encode()) + len(value.encode()) for name, value in headers.items()) > 3072:
+        if sum(len(name.encode()) + len(value.encode()) for name, value in headers.items()) > _HEADERS_LIMIT:
             raise ValueError("headers")
     try:
         rules = json.loads(result.get("response_rules", {}).get("rules", "") or "[]")
@@ -495,10 +498,10 @@ def validate_settings(raw: Any) -> Dict[str, Any]:
                 len(str(item.get("key", "")).encode()) + len(str(item.get("value", "")).encode())
                 for item in (rule.get("modifications", {}).get("headers", []) if isinstance(rule, dict) else [])
             )
-            if rule_total > 3072:
+            if rule_total > _HEADERS_LIMIT:
                 raise ValueError("headers")
             for client in ordered:
-                if rule_total + sum(len(k.encode()) + len(v.encode()) for k, v in _headers_for_limit(result, client).items()) > 3072:
+                if rule_total + sum(len(k.encode()) + len(v.encode()) for k, v in _headers_for_limit(result, client).items()) > _HEADERS_LIMIT:
                     raise ValueError("headers")
     return result
 
