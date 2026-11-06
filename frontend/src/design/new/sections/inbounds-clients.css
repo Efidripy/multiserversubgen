@@ -1,1 +1,110 @@
-/* Design "new": section polish (inbounds-clients). Every selector starts with :root[data-design="new"]. */
+/* Inbound and client managers share a compact, eight-pixel layout rhythm. */
+:root[data-design="new"] [data-inbound-manager-root] > div:first-child,
+:root[data-design="new"] [data-client-manager-root] > div:first-child {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+:root[data-design="new"] [data-client-manager-root] input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+:root[data-design="new"] [data-inbound-manager-root] select,
+:root[data-design="new"] [data-client-manager-root] select {
+  box-sizing: border-box;
+  height: 32px;
+  min-height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] button.h-7,
+:root[data-design="new"] [data-client-manager-root] button.h-7 {
+  height: 32px;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] .panel-grid,
+:root[data-design="new"] [data-client-manager-root] .panel-grid {
+  gap: 8px;
+  align-items: stretch;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] .panel-block,
+:root[data-design="new"] [data-client-manager-root] .panel-block {
+  padding: 16px;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] .panel-block__header,
+:root[data-design="new"] [data-client-manager-root] .panel-block__header {
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] .panel-inline-actions,
+:root[data-design="new"] [data-client-manager-root] .panel-inline-actions {
+  gap: 8px;
+  align-items: center;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table thead th,
+:root[data-design="new"] [data-client-manager-root] table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--ln-surface);
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table tbody td,
+:root[data-design="new"] [data-client-manager-root] table tbody td {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table tbody tr,
+:root[data-design="new"] [data-client-manager-root] table tbody tr {
+  height: 38px;
+}
+
+@media (max-width: 767px) {
+  :root[data-design="new"] [data-inbound-manager-root] .panel-block,
+  :root[data-design="new"] [data-client-manager-root] .panel-block {
+    padding: 12px;
+  }
+
+  :root[data-design="new"] [data-inbound-manager-root] .panel-grid--2col,
+  :root[data-design="new"] [data-client-manager-root] .panel-grid--2col {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Keep card actions aligned and allow wide desktop tables to scroll. */
+:root[data-design="new"] [data-inbound-manager-root] article > div:first-child button,
+:root[data-design="new"] [data-inbound-manager-root] article > div:nth-child(2) button {
+  min-height: 32px;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table {
+  min-width: 1240px;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table th:last-child {
+  width: 312px;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table td:last-child > div {
+  flex-wrap: nowrap;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table {
+  min-width: 1380px;
+}
+
+:root[data-design="new"] [data-inbound-manager-root] table th:nth-child(4) {
+  width: 120px;
+}
+
+@media (min-width: 1280px) {
+  :root[data-design="new"] [data-inbound-manager-root] .grid[class*="xl:grid-cols-"] > div:first-child > div:nth-child(2) {
+    margin-top: 4px;
+  }
+}
