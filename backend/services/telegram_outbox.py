@@ -234,6 +234,10 @@ class TelegramOutboxWorker:
                 raise OutboxSuppressed("notifications_disabled")
             return int(row[0]), str(row[1]), None, tuple(json.loads(row[3])) if row[3] else None
         chat_id, text, markup = self._render_other(event)
+        if event.event_type == "admin_direct_message":
+            payload = json.loads(event.payload_json)
+            photos = payload.get("photo_file_ids")
+            return chat_id, text, markup, tuple(photos) if photos else None
         return chat_id, text, markup, None
 
     def _render_other(self, event: ClaimedOutboxEvent) -> tuple[int, str, dict[str, Any] | None]:

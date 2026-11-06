@@ -1145,7 +1145,7 @@ class TelegramRegistry:
         if isinstance(page, bool) or not isinstance(page, int) or page < 0:
             raise TelegramRegistryError("admin message draft page is invalid")
         normalized_body = _normalize_admin_message_body(body) if body is not None else None
-        if photo_file_ids and (mode != "broadcast" or len(photo_file_ids) > 10 or
+        if photo_file_ids and (len(photo_file_ids) > 10 or
                                any(not isinstance(item, str) or not item for item in photo_file_ids) or
                                (normalized_body is not None and len(normalized_body) > 1024)):
             raise TelegramRegistryError("invalid broadcast photos")
@@ -6977,6 +6977,7 @@ class TelegramRegistry:
         body: str,
         created_by: int | str,
         idempotency_key: str,
+        photo_file_ids: tuple[str, ...] | None = None,
     ) -> int:
         """Queue one admin message to an already approved, live Telegram user."""
 
@@ -6993,7 +6994,11 @@ class TelegramRegistry:
         key = str(idempotency_key or "").strip()
         if not key or len(key) > 180:
             raise TelegramRegistryError("idempotency key is invalid")
-        digest = hashlib.sha256(normalized_body.encode("utf-8")).hexdigest()
+        if photo_file_ids and (len(photo_file_ids) > 10 or len(normalized_body) > 1024 or
+                               any(not isinstance(item, str) or not item for item in photo_file_ids)):
+            raise TelegramRegistryError("invalid direct message photos")
+        photos_json = json.dumps(photo_file_ids, ensure_ascii=False) if photo_file_ids else None
+        digest = hashlib.sha256((normalized_body + (photos_json or "")).encode("utf-8")).hexdigest()
         with connect(self._db_path) as conn:
             recipient = conn.execute(
                 """
@@ -7016,7 +7021,7 @@ class TelegramRegistry:
                 VALUES ('admin_direct_message', ?, ?, ?)
                 ON CONFLICT(dedupe_key) DO NOTHING
                 """,
-                (str(recipient_id), f"admin-direct:{key}", json.dumps({"body": normalized_body}, ensure_ascii=False)),
+                (str(recipient_id), f"admin-direct:{key}", json.dumps({"body": normalized_body, **({"photo_file_ids": photo_file_ids} if photo_file_ids else {})}, ensure_ascii=False)),
             )
             if cursor.rowcount == 0:
                 row = conn.execute(

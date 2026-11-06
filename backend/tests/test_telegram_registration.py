@@ -3289,16 +3289,14 @@ def test_photos_outside_broadcast_keep_direct_draft_and_user_response(tmp_path):
     customer_id = _approved_telegram_customer(registry, db_path)
     service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=100000001)
     service.handle_update(_admin_callback(1, f"admin:message:{customer_id}:0"))
-    before = registry.get_admin_message_draft(100000001)
     direct_response = service.handle_update(_broadcast_photo_update(2, "admin-photo"))
-    assert registry.get_admin_message_draft(100000001) == before
-    assert before.mode == "direct" and before.photo_file_ids is None
+    before = registry.get_admin_message_draft(100000001)
+    assert before.mode == "direct" and before.photo_file_ids == ("admin-photo",)
+    assert "Картинок: 1" in direct_response[0].text
     user_response = service.handle_update(_broadcast_photo_update(3, "user-photo", admin=False))
     assert registry.get_admin_message_draft(42) is None
     assert registry.get_admin_message_draft(100000001) == before
-    direct_baseline = service.handle_update(_admin_message(4, ""))
     user_baseline = service.handle_update(_message(5, ""))
-    assert [(m.text, m.reply_markup) for m in direct_response] == [(m.text, m.reply_markup) for m in direct_baseline]
     assert [(m.text, m.reply_markup) for m in user_response] == [(m.text, m.reply_markup) for m in user_baseline]
 
 
@@ -3313,3 +3311,136 @@ def test_broadcast_each_album_photo_returns_one_window_message(tmp_path):
         assert windows[0].photo_file_ids is None
         assert all(message.delete_message_id == 2 + i for message in response if message.delete_message_id is not None)
     assert registry.get_admin_message_draft(100000001).photo_file_ids == ("photo-0", "photo-1", "photo-2")
+
+
+
+def _direct_photo_setup(tmp_path):
+    db_path = str(tmp_path / "direct-acceptance.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = _approved_telegram_customer(registry, db_path)
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=100000001)
+    service.handle_update(_admin_callback(1, f"admin:message:{customer_id}:0"))
+    registry.set_interface_window(telegram_user_id=100000001, message_id=123, has_text=True)
+    return db_path, registry, service, customer_id
+
+
+def _direct_transport(db_path):
+    import json
+    from services.telegram_outbox import TelegramApiOutboxPort, TelegramOutboxWorker
+
+    class Transport:
+        status = 200
+        def __init__(self):
+            self.requests = []
+        def open(self, request, *, timeout):
+            self.requests.append(request)
+            return self
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    transport = Transport()
+    worker = TelegramOutboxWorker(db_path=db_path, primary_admin_id=100000001,
+        port=TelegramApiOutboxPort("token", transport=transport), worker_id="direct-test")
+    assert worker.run_once().outcome == "sent"
+    request = transport.requests[0]
+    return request.full_url, json.loads(request.data)
+
+
+def test_direct_album_each_photo_updates_window_and_preview_sends_album(tmp_path):
+    import json
+    from services.telegram_delivery import TelegramApiSender
+
+    _, registry, service, _ = _direct_photo_setup(tmp_path)
+    for i in range(3):
+        response = service.handle_update(_broadcast_photo_update(2 + i, f"photo-{i}", group="group", caption="News" if i == 0 else None))
+        windows = [m for m in response if m.delete_message_id is None]
+        assert len(windows) == 1 and windows[0].edit_message_id == 123
+    draft = registry.get_admin_message_draft(100000001)
+    assert draft.photo_file_ids == ("photo-0", "photo-1", "photo-2")
+    preview = service.handle_update(_admin_callback(5, "admin:message-preview"))
+    assert preview[0].photo_file_ids == draft.photo_file_ids and "Картинок: 3" in preview[1].text
+
+    class Transport:
+        def open(self, request, *, timeout):
+            self.request = request
+            return self
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def read(self):
+            return json.dumps({"ok": True, "result": [{"message_id": 1}]}).encode()
+        status = 200
+    transport = Transport()
+    TelegramApiSender("token", transport=transport).send(preview[0])
+    assert transport.request.full_url.endswith("/sendMediaGroup")
+    assert json.loads(transport.request.data)["media"][0]["caption"] == "News"
+
+
+def test_direct_single_photo_confirm_and_delivery(tmp_path):
+    import json
+    db_path, _, service, _ = _direct_photo_setup(tmp_path)
+    service.handle_update(_broadcast_photo_update(2, "photo", caption="News"))
+    service.handle_update(_admin_callback(3, "admin:message-confirm"))
+    with connect(db_path) as conn:
+        payload = json.loads(conn.execute("SELECT payload_json FROM telegram_outbox WHERE event_type = 'admin_direct_message'").fetchone()[0])
+    assert payload == {"body": "News", "photo_file_ids": ["photo"]}
+    url, payload = _direct_transport(db_path)
+    assert url.endswith("/sendPhoto") and payload["photo"] == "photo" and payload["caption"] == "News"
+
+
+def test_direct_album_delivery_caption_on_first_photo(tmp_path):
+    db_path, _, service, _ = _direct_photo_setup(tmp_path)
+    for i in range(3):
+        service.handle_update(_broadcast_photo_update(2 + i, f"photo-{i}", group="group", caption="News" if i == 0 else None))
+    service.handle_update(_admin_callback(5, "admin:message-confirm"))
+    url, payload = _direct_transport(db_path)
+    assert url.endswith("/sendMediaGroup")
+    assert payload["media"] == [{"type": "photo", "media": "photo-0", "caption": "News"},
+                                {"type": "photo", "media": "photo-1"}, {"type": "photo", "media": "photo-2"}]
+
+
+def test_direct_photos_then_separate_text_enables_send(tmp_path):
+    _, registry, service, _ = _direct_photo_setup(tmp_path)
+    response = service.handle_update(_broadcast_photo_update(2, "photo", group="group"))
+    assert all(b["callback_data"] != "admin:message-confirm" for row in response[0].reply_markup["inline_keyboard"] for b in row)
+    response = service.handle_update(_admin_message(3, "News"))
+    assert registry.get_admin_message_draft(100000001).photo_file_ids == ("photo",)
+    assert any(b["callback_data"] == "admin:message-confirm" for row in response[0].reply_markup["inline_keyboard"] for b in row)
+
+
+def test_direct_long_text_and_document_leave_draft_unchanged(tmp_path):
+    _, registry, service, _ = _direct_photo_setup(tmp_path)
+    service.handle_update(_broadcast_photo_update(2, "photo", caption="News"))
+    before = registry.get_admin_message_draft(100000001)
+    assert "до 1024 символов" in service.handle_update(_admin_message(3, "x" * 1025))[0].text
+    doc = _admin_message(4, "")
+    doc["message"]["document"] = {"file_id": "document"}
+    assert "как фото" in service.handle_update(doc)[0].text
+    assert registry.get_admin_message_draft(100000001) == before
+
+
+def test_direct_text_and_legacy_event_use_send_message(tmp_path):
+    db_path, _, service, _ = _direct_photo_setup(tmp_path)
+    service.handle_update(_admin_message(2, "News"))
+    service.handle_update(_admin_callback(3, "admin:message-confirm"))
+    url, payload = _direct_transport(db_path)
+    assert url.endswith("/sendMessage") and payload["text"] == "News"
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO telegram_outbox (event_type, entity_id, dedupe_key, payload_json) VALUES (?, ?, ?, ?)",
+                     ("admin_direct_message", "42", "legacy", '{"body":"Legacy"}'))
+    url, payload = _direct_transport(db_path)
+    assert url.endswith("/sendMessage") and payload["text"] == "Legacy"
+
+
+def test_direct_and_broadcast_drafts_do_not_share_photos(tmp_path):
+    _, registry, service, customer_id = _direct_photo_setup(tmp_path)
+    service.handle_update(_broadcast_photo_update(2, "direct"))
+    service.handle_update(_admin_callback(3, "admin:broadcast:new"))
+    assert registry.get_admin_message_draft(100000001).photo_file_ids is None
+    service.handle_update(_broadcast_photo_update(4, "broadcast"))
+    service.handle_update(_admin_callback(5, f"admin:message:{customer_id}:0"))
+    assert registry.get_admin_message_draft(100000001).photo_file_ids is None
