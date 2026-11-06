@@ -1,0 +1,178 @@
+/*
+ * Design "new" — Linear Core (docs/design/linear-core).
+ * Every rule here is scoped to :root[data-design="new"]; the classic design never matches it.
+ * App.css lives in cascade layers, so these unlayered rules win without !important.
+ */
+
+:root[data-design="new"] {
+  color-scheme: dark;
+
+  /* Linear Core tokens: the only colors the new design may use. */
+  --ln-bg: #0b0b0c;
+  --ln-nav: #0e0e0f;
+  --ln-surface: #111112;
+  --ln-surface-2: #19191b;
+  --ln-surface-hover: #1d1d20;
+  --ln-line: #27272a;
+  --ln-line-strong: #3f3f46;
+  --ln-text: #f4f4f5;
+  --ln-text-2: #a1a1aa;
+  --ln-muted: #71717a;
+  --ln-accent: #e4e4e7;
+  --ln-accent-ink: #09090b;
+  --ln-success: #5ee59b;
+  --ln-warning: #f5bd2e;
+  --ln-danger: #fb7185;
+  --ln-info: #67e8f9;
+  --ln-r-xs: 3px;
+  --ln-r-sm: 5px;
+  --ln-r-md: 7px;
+  --ln-control-h: 30px;
+  --ln-topbar-h: 49px;
+  --ln-sidebar-w: 174px;
+  --ln-sidebar-collapsed: 52px;
+  --ln-gap: 8px;
+  --ln-font: Inter, "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+
+  /* App.css semantic variables. */
+  --font-sans: var(--ln-font);
+  --background: var(--ln-bg);
+  --foreground: var(--ln-text);
+  --card: var(--ln-surface);
+  --card-foreground: var(--ln-text);
+  --popover: var(--ln-surface);
+  --popover-foreground: var(--ln-text);
+  --primary: var(--ln-accent);
+  --primary-foreground: var(--ln-accent-ink);
+  --secondary: var(--ln-surface-2);
+  --secondary-foreground: var(--ln-text);
+  --muted: var(--ln-surface-2);
+  --muted-foreground: var(--ln-muted);
+  --accent: var(--ln-accent);
+  --accent-foreground: var(--ln-accent-ink);
+  --destructive: var(--ln-danger);
+  --destructive-foreground: var(--ln-accent-ink);
+  --border: var(--ln-line);
+  --input: var(--ln-bg);
+  --input-background: var(--ln-bg);
+  --switch-background: var(--ln-line-strong);
+  --ring: var(--ln-accent);
+  --radius: var(--ln-r-md);
+  --sidebar: var(--ln-nav);
+  --sidebar-foreground: var(--ln-text-2);
+  --sidebar-primary: var(--ln-accent);
+  --sidebar-primary-foreground: var(--ln-accent-ink);
+  --sidebar-accent: var(--ln-surface-2);
+  --sidebar-accent-foreground: var(--ln-text);
+  --sidebar-border: var(--ln-line);
+  --sidebar-ring: var(--ln-accent);
+  --radius-sm: var(--ln-r-xs);
+  --radius-md: var(--ln-r-sm);
+  --radius-lg: var(--ln-r-md);
+  --radius-xl: var(--ln-r-md);
+
+  /*
+   * Tailwind palette remap. Utilities read var(--color-*), so the ~260 hard-coded
+   * color classes in components follow the new design without touching components.
+   * Classic cyan, slate, gray, sky and the fuchsia/violet CTA gradient become neutral zinc.
+   * Status hues (emerald/green, amber/yellow, rose/red) keep Tailwind defaults.
+   */
+  --color-cyan-50: #fafafa;
+  --color-cyan-100: #f4f4f5;
+  --color-cyan-200: #e4e4e7;
+  --color-cyan-300: #d4d4d8;
+  --color-cyan-400: #e4e4e7;
+  --color-cyan-500: #a1a1aa;
+  --color-cyan-600: #71717a;
+  --color-cyan-700: #52525b;
+  --color-cyan-800: #3f3f46;
+  --color-cyan-900: #27272a;
+  --color-cyan-950: #18181b;
+  --color-sky-300: #d4d4d8;
+  --color-sky-400: #e4e4e7;
+  --color-sky-500: #a1a1aa;
+  --color-slate-50: #fafafa;
+  --color-slate-100: #f4f4f5;
+  --color-slate-200: #e4e4e7;
+  --color-slate-300: #d4d4d8;
+  --color-slate-400: #a1a1aa;
+  --color-slate-500: #8b8b94;
+  --color-slate-600: #71717a;
+  --color-slate-700: #3f3f46;
+  --color-slate-800: #27272a;
+  --color-slate-900: #18181b;
+  --color-slate-950: #09090b;
+  --color-gray-300: #d4d4d8;
+  --color-gray-400: #a1a1aa;
+  --color-gray-500: #8b8b94;
+  --color-gray-600: #71717a;
+  --color-fuchsia-400: #e4e4e7;
+  --color-fuchsia-500: #d4d4d8;
+  --color-violet-400: #e4e4e7;
+  --color-violet-500: #d4d4d8;
+  --color-purple-400: #e4e4e7;
+  --color-purple-500: #d4d4d8;
+  --color-indigo-400: #e4e4e7;
+  --color-indigo-500: #d4d4d8;
+}
+
+:root[data-design="new"] body {
+  background: var(--ln-bg);
+  color: var(--ln-text);
+  font-family: var(--ln-font);
+  font-feature-settings: "cv11", "ss01";
+}
+
+/* Arbitrary-hex Tailwind classes from the classic palette, matched by exact class token. */
+:root[data-design="new"] [class~="bg-[#0a0e1a]"],
+:root[data-design="new"] [class~="bg-[#0a0f19]"],
+:root[data-design="new"] [class~="bg-[#080d16]"],
+:root[data-design="new"] [class~="bg-[#07101d]"],
+:root[data-design="new"] [class~="bg-[#080c15]"],
+:root[data-design="new"] [class~="bg-[#070b14]"],
+:root[data-design="new"] [class~="bg-[#060a11]"],
+:root[data-design="new"] [class~="bg-[#0b101b]"],
+:root[data-design="new"] [class~="bg-[#0b111d]"] {
+  background-color: var(--ln-bg);
+}
+
+:root[data-design="new"] [class~="bg-[#0f1420]"],
+:root[data-design="new"] [class~="bg-[#0d131f]"],
+:root[data-design="new"] [class~="bg-[#111827]"],
+:root[data-design="new"] [class~="bg-[#101827]"],
+:root[data-design="new"] [class~="bg-[#0d1b2b]"] {
+  background-color: var(--ln-surface);
+}
+
+:root[data-design="new"] [class~="bg-[#182133]"],
+:root[data-design="new"] [class~="bg-[#151d2a]"],
+:root[data-design="new"] [class~="bg-[#1b2638]"] {
+  background-color: var(--ln-surface-2);
+}
+
+:root[data-design="new"] [class~="hover:bg-[#182133]"]:hover,
+:root[data-design="new"] [class~="hover:bg-[#0f1420]"]:hover,
+:root[data-design="new"] [class~="hover:bg-[#111827]"]:hover {
+  background-color: var(--ln-surface-hover);
+}
+
+:root[data-design="new"] [class~="bg-[#02050bd9]"],
+:root[data-design="new"] [class~="bg-[#02050bcc]"],
+:root[data-design="new"] [class~="bg-[#02050be8]"] {
+  background-color: rgb(0 0 0 / 0.72);
+}
+
+:root[data-design="new"] [class~="text-[#06111f]"],
+:root[data-design="new"] [class~="text-[#07111c]"] {
+  color: var(--ln-accent-ink);
+}
+
+:root[data-design="new"] [class~="text-[#e9f1f8]"] {
+  color: var(--ln-text);
+}
+
+/* Focus stays visible on every control. */
+:root[data-design="new"] :is(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--ln-accent);
+  outline-offset: 2px;
+}
