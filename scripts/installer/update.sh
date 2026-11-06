@@ -759,6 +759,11 @@ ${mtls_directives}${allowlist_directives}    limit_req zone=sub_grouped_zone bur
     proxy_set_header X-Forwarded-Host \$host;
     proxy_intercept_errors off;
     proxy_buffering off;
+    # Happ routing links travel as response headers and can exceed the 4k default.
+    proxy_buffer_size 16k;
+    # nginx -t rejects a 16k header buffer next to the default 4k proxy_buffers.
+    proxy_buffers 8 16k;
+    proxy_busy_buffers_size 32k;
     proxy_request_buffering off;
     add_header Cache-Control "no-store" always;
     add_header X-Content-Type-Options "nosniff" always;
@@ -776,6 +781,11 @@ ${mtls_directives}${allowlist_directives}    proxy_pass http://127.0.0.1:$APP_PO
     proxy_set_header X-Forwarded-Host \$host;
     proxy_intercept_errors off;
     proxy_buffering off;
+    # Happ routing links travel as response headers and can exceed the 4k default.
+    proxy_buffer_size 16k;
+    # nginx -t rejects a 16k header buffer next to the default 4k proxy_buffers.
+    proxy_buffers 8 16k;
+    proxy_busy_buffers_size 32k;
     proxy_request_buffering off;
     add_header Cache-Control "no-store" always;
     add_header X-Content-Type-Options "nosniff" always;

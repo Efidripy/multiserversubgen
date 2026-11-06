@@ -220,7 +220,9 @@ export const SubscriptionClientSettings: React.FC = () => {
     } catch (err: any) {
       const detail = err.response?.data?.detail;
       let formattedDetail = '';
-      if (typeof detail === 'string') {
+      if (detail === 'headers') {
+        formattedDetail = t('subscriptionClients.errorHeaders');
+      } else if (typeof detail === 'string') {
         formattedDetail = detail;
       } else if (Array.isArray(detail)) {
         formattedDetail = detail
