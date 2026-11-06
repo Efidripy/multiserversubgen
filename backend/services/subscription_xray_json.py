@@ -7,8 +7,31 @@ from typing import Any
 from services.subscription_formats import _normalised
 
 VALID_BALANCER_STRATEGIES = {"leastLoad", "leastPing", "random", "roundRobin"}
-OBJECT_FIELDS = {"mux", "dns", "routing", "final_mask", "observatory"}
-ARRAY_FIELDS = {"rules", "balancers"}
+
+DEFAULT_XRAY_TEMPLATE: dict[str, Any] = {
+    "dns": {"servers": ["1.1.1.1", "1.0.0.1"], "queryStrategy": "UseIP"},
+    "routing": {
+        "domainMatcher": "hybrid",
+        "domainStrategy": "IPIfNonMatch",
+        "rules": [{"type": "field", "protocol": ["bittorrent"], "outboundTag": "direct"}],
+    },
+    "inbounds": [
+        {
+            "tag": "socks", "port": 10808, "listen": "127.0.0.1", "protocol": "socks",
+            "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
+            "settings": {"auth": "noauth", "udp": True},
+        },
+        {
+            "tag": "http", "port": 10809, "listen": "127.0.0.1", "protocol": "http",
+            "sniffing": {"enabled": True, "destOverride": ["http", "tls"]},
+            "settings": {"allowTransparent": False},
+        },
+    ],
+    "outbounds": [
+        {"tag": "direct", "protocol": "freedom"},
+        {"tag": "block", "protocol": "blackhole"},
+    ],
+}
 
 
 def _parse_field(section: dict[str, Any], key: str) -> Any:
@@ -32,52 +55,45 @@ def validate_xray_json_section(section: dict[str, Any]) -> None:
             raise ValueError("always_array")
 
     template = _parse_field(section, "template")
-    if template is not None:
-        if not isinstance(template, dict):
+    if template is None:
+        return
+    if not isinstance(template, dict):
+        raise ValueError("template")
+    for field in ("inbounds", "outbounds"):
+        if field in template and (
+            not isinstance(template[field], list)
+            or any(not isinstance(item, dict) for item in template[field])
+        ):
             raise ValueError("template")
-        for field in ("inbounds", "outbounds"):
-            if field in template:
-                value = template[field]
-                if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+    routing = template.get("routing")
+    if routing is not None and not isinstance(routing, dict):
+        raise ValueError("template")
+    if isinstance(routing, dict):
+        rules = routing.get("rules")
+        if rules is not None and (
+            not isinstance(rules, list) or any(not isinstance(item, dict) for item in rules)
+        ):
+            raise ValueError("template")
+        balancers = routing.get("balancers")
+        if balancers is not None:
+            if not isinstance(balancers, list):
+                raise ValueError("template")
+            seen_tags: set[str] = set()
+            for balancer in balancers:
+                if not isinstance(balancer, dict):
                     raise ValueError("template")
-        if "routing" in template and not isinstance(template["routing"], dict):
-            raise ValueError("template")
-
-    for field in OBJECT_FIELDS:
-        parsed = _parse_field(section, field)
-        if parsed is not None and not isinstance(parsed, dict):
-            raise ValueError(field)
-
-    for field in ARRAY_FIELDS:
-        parsed = _parse_field(section, field)
-        if parsed is not None:
-            if not isinstance(parsed, list):
-                raise ValueError(field)
-            if field == "rules":
-                for r in parsed:
-                    if not isinstance(r, dict):
-                        raise ValueError("rules")
-            elif field == "balancers":
-                seen_tags: set[str] = set()
-                for b in parsed:
-                    if not isinstance(b, dict):
-                        raise ValueError("balancers")
-                    tag = b.get("tag")
-                    if not isinstance(tag, str) or not tag.strip():
-                        raise ValueError("balancers")
-                    if tag in seen_tags:
-                        raise ValueError("balancers")
-                    seen_tags.add(tag)
-
-                    if "selector" in b and not isinstance(b["selector"], list):
-                        raise ValueError("balancers")
-
-                    strategy = b.get("strategy")
-                    if not isinstance(strategy, dict):
-                        raise ValueError("balancers")
-                    st_type = strategy.get("type")
-                    if st_type not in VALID_BALANCER_STRATEGIES:
-                        raise ValueError("balancers")
+                tag = balancer.get("tag")
+                if not isinstance(tag, str) or not tag.strip() or tag in seen_tags:
+                    raise ValueError("template")
+                seen_tags.add(tag)
+                selector = balancer.get("selector")
+                if selector is not None and (
+                    not isinstance(selector, list) or any(not isinstance(item, str) for item in selector)
+                ):
+                    raise ValueError("template")
+                strategy = balancer.get("strategy")
+                if not isinstance(strategy, dict) or strategy.get("type") not in VALID_BALANCER_STRATEGIES:
+                    raise ValueError("template")
 
 
 def _build_proxy_outbound(
@@ -245,154 +261,107 @@ def _system_outbounds() -> list[dict[str, Any]]:
     ]
 
 
-def _build_routing(
-    user_rules: list[dict[str, Any]] | None,
-    fallback_rule: dict[str, Any],
-    routing_overlay: dict[str, Any] | None,
-    balancers: list[dict[str, Any]] | None = None,
+def _proxy_skeleton(template: dict[str, Any]) -> tuple[dict[str, Any] | None, dict[str, Any] | None, dict[str, Any] | None]:
+    for outbound in template.get("outbounds", []):
+        if outbound.get("tag") != "proxy":
+            continue
+        stream = outbound.get("streamSettings")
+        stream = stream if isinstance(stream, dict) else {}
+        mux = copy.deepcopy(outbound.get("mux")) if "mux" in outbound else None
+        sockopt = copy.deepcopy(stream.get("sockopt")) if "sockopt" in stream else None
+        finalmask = copy.deepcopy(stream.get("finalmask")) if "finalmask" in stream else None
+        return mux, sockopt, finalmask
+    return None, None, None
+
+
+def _node_outbound(
+    item: dict[str, Any],
+    tag: str,
+    mux: dict[str, Any] | None,
+    sockopt: dict[str, Any] | None,
+    finalmask: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    rules: list[dict[str, Any]] = []
-    if user_rules:
-        rules.extend(copy.deepcopy(user_rules))
-    rules.append(copy.deepcopy(fallback_rule))
-
-    routing: dict[str, Any] = {
-        "domainStrategy": "AsIs",
-        "rules": rules,
-    }
-    if balancers:
-        routing["balancers"] = copy.deepcopy(balancers)
-
-    if routing_overlay:
-        for k, v in routing_overlay.items():
-            if k == "rules":
-                continue
-            routing[k] = copy.deepcopy(v)
-
-    return routing
+    outbound = _build_proxy_outbound(item, tag, mux, finalmask)
+    if sockopt is not None:
+        outbound.setdefault("streamSettings", {})["sockopt"] = copy.deepcopy(sockopt)
+    return outbound
 
 
 def to_xray_json(links: list[str], section: dict[str, Any]) -> str:
     validate_xray_json_section(section)
-
     proxies = _normalised(links)
     if not proxies:
         return ""
 
     always_array = bool(section.get("always_array", False))
     template = _parse_field(section, "template")
-    mux = _parse_field(section, "mux")
-    dns = _parse_field(section, "dns")
-    routing_overlay = _parse_field(section, "routing")
-    user_rules = _parse_field(section, "rules")
-    if user_rules is None and routing_overlay and "rules" in routing_overlay:
-        user_rules = routing_overlay["rules"]
-    final_mask = _parse_field(section, "final_mask")
-    observatory_override = _parse_field(section, "observatory")
-    balancers = _parse_field(section, "balancers")
+    if not template:
+        template = copy.deepcopy(DEFAULT_XRAY_TEMPLATE)
+    else:
+        template = copy.deepcopy(template)
+    mux, sockopt, finalmask = _proxy_skeleton(template)
+    template_outbounds = [
+        copy.deepcopy(outbound)
+        for outbound in template.get("outbounds", [])
+        if outbound.get("tag") != "proxy"
+    ]
 
-    if template is not None:
-        configs = []
-        for item in proxies:
-            config = copy.deepcopy(template)
-            config["remarks"] = item["name"]
-            proxy_outbound = _build_proxy_outbound(item, "proxy", mux, final_mask)
-            if "outbounds" in config:
-                template_outbounds = config["outbounds"]
-                config["outbounds"] = [
-                    proxy_outbound,
-                    *[outbound for outbound in template_outbounds if outbound.get("tag") != "proxy"],
-                ]
-            else:
-                config["outbounds"] = [proxy_outbound, *_system_outbounds()]
-            if "inbounds" not in config:
-                config["inbounds"] = _default_inbounds()
-            if "routing" not in config:
-                config["routing"] = _build_routing(
-                    None,
-                    {"type": "field", "outboundTag": "proxy"},
-                    None,
-                )
-            configs.append(config)
-
-        if len(configs) == 1 and not always_array:
-            return json.dumps(configs[0], ensure_ascii=False, indent=2)
-        return json.dumps(configs, ensure_ascii=False, indent=2)
-
-    if balancers:
-        # Xray matches selectors by tag prefix; an empty selector would leave the balancer with no outbounds.
-        balancers = [{**b, "selector": b.get("selector") or ["proxy-"]} for b in balancers]
-        proxy_outbounds = [
-            _build_proxy_outbound(item, f"proxy-{idx + 1}", mux, final_mask)
-            for idx, item in enumerate(proxies)
+    routing_template = template.get("routing")
+    balancers = routing_template.get("balancers") if isinstance(routing_template, dict) else None
+    if isinstance(balancers, list) and balancers:
+        balancers = [copy.deepcopy(item) for item in balancers]
+        for balancer in balancers:
+            if not balancer.get("selector"):
+                balancer["selector"] = ["proxy-"]
+        config = copy.deepcopy(template)
+        config["remarks"] = template.get("remarks") or balancers[0]["tag"]
+        config["outbounds"] = [
+            _node_outbound(item, f"proxy-{index + 1}", mux, sockopt, finalmask)
+            for index, item in enumerate(proxies)
         ]
-        fallback_rule = {
-            "type": "field",
-            "balancerTag": balancers[0]["tag"],
-        }
-        routing = _build_routing(user_rules, fallback_rule, routing_overlay, balancers)
-
-        remarks = section.get("remarks") or balancers[0]["tag"]
-        config: dict[str, Any] = {
-            "remarks": remarks,
-            "log": {
-                "loglevel": "warning",
-            },
-            "inbounds": _default_inbounds(),
-            "outbounds": [*proxy_outbounds, *_system_outbounds()],
-            "routing": routing,
-        }
-        if dns is not None:
-            config["dns"] = copy.deepcopy(dns)
-
+        config["outbounds"].extend(template_outbounds or _system_outbounds())
+        if "inbounds" not in config:
+            config["inbounds"] = _default_inbounds()
+        routing = copy.deepcopy(routing_template)
+        routing["balancers"] = balancers
+        rules = routing.get("rules")
+        if not isinstance(rules, list):
+            rules = []
+        if not any(isinstance(rule, dict) and "balancerTag" in rule for rule in rules):
+            rules.append({"type": "field", "network": "tcp,udp", "balancerTag": balancers[0]["tag"]})
+        routing["rules"] = rules
+        config["routing"] = routing
         needs_observatory = any(
-            b.get("strategy", {}).get("type") in {"leastLoad", "leastPing"}
-            for b in balancers
+            item.get("strategy", {}).get("type") in {"leastLoad", "leastPing"} for item in balancers
         )
-        if observatory_override is not None:
-            config["observatory"] = copy.deepcopy(observatory_override)
-        elif needs_observatory:
-            all_selectors: list[str] = []
-            for b in balancers:
-                for s in b.get("selector", []):
-                    if s not in all_selectors:
-                        all_selectors.append(s)
+        if needs_observatory and "observatory" not in config and "burstObservatory" not in config:
+            selectors: list[str] = []
+            for balancer in balancers:
+                for selector in balancer.get("selector", []):
+                    if selector not in selectors:
+                        selectors.append(selector)
             config["observatory"] = {
-                "subjectSelector": all_selectors,
+                "subjectSelector": selectors,
                 "probeUrl": "https://www.gstatic.com/generate_204",
                 "probeInterval": "5m",
             }
-
-        result = [config] if always_array else config
+        result: Any = [config] if always_array else config
         return json.dumps(result, ensure_ascii=False, indent=2)
 
     configs = []
     for item in proxies:
-        proxy_outbound = _build_proxy_outbound(item, "proxy", mux, final_mask)
-        fallback_rule = {
-            "type": "field",
-            "outboundTag": "proxy",
-        }
-        routing = _build_routing(user_rules, fallback_rule, routing_overlay)
-
-        remarks = item["name"]
-        config = {
-            "remarks": remarks,
-            "log": {
-                "loglevel": "warning",
-            },
-            "inbounds": _default_inbounds(),
-            "outbounds": [proxy_outbound, *_system_outbounds()],
-            "routing": routing,
-        }
-        if dns is not None:
-            config["dns"] = copy.deepcopy(dns)
-        if observatory_override is not None:
-            config["observatory"] = copy.deepcopy(observatory_override)
-
+        config = copy.deepcopy(template)
+        config["remarks"] = item["name"]
+        config["outbounds"] = [_node_outbound(item, "proxy", mux, sockopt, finalmask)]
+        config["outbounds"].extend(template_outbounds or _system_outbounds())
+        if "inbounds" not in config:
+            config["inbounds"] = _default_inbounds()
+        if "routing" not in config:
+            config["routing"] = {
+                "domainStrategy": "AsIs",
+                "rules": [{"type": "field", "outboundTag": "proxy"}],
+            }
         configs.append(config)
 
-    if len(configs) == 1 and not always_array:
-        return json.dumps(configs[0], ensure_ascii=False, indent=2)
-
-    return json.dumps(configs, ensure_ascii=False, indent=2)
+    result = configs if always_array or len(configs) != 1 else configs[0]
+    return json.dumps(result, ensure_ascii=False, indent=2)

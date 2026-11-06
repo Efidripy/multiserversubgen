@@ -128,7 +128,7 @@ describe('SubscriptionSettingsSections and Client Subscriptions Stage 2', () => 
     const mockSectionSchema = {
       xray_json: [
         { key: 'always_array', type: 'bool' as const, group: 'format' },
-        { key: 'mux', type: 'json' as const, group: 'format' },
+        { key: 'template', type: 'json' as const, group: 'format' },
       ],
     };
 
@@ -137,7 +137,7 @@ describe('SubscriptionSettingsSections and Client Subscriptions Stage 2', () => 
       clients: [],
       xray_json: {
         always_array: false,
-        mux: '{"enabled": true}',
+        template: '{"outbounds": []}',
       },
     };
 
@@ -159,15 +159,15 @@ describe('SubscriptionSettingsSections and Client Subscriptions Stage 2', () => 
     // Switch to xray_json tab
     fireEvent.click(screen.getByText('subscriptionClients.tabs.xray_json'));
 
-    const muxTextarea = screen.getByLabelText('subscriptionClients.sections.xray_json.mux');
-    expect((muxTextarea as HTMLTextAreaElement).value).toBe('{"enabled": true}');
+    const templateTextarea = screen.getByLabelText('subscriptionClients.sections.xray_json.template');
+    expect((templateTextarea as HTMLTextAreaElement).value).toBe('{"outbounds": []}');
 
     // Save button should initially be disabled because there are no changes
     const saveButton = screen.getByRole('button', { name: 'subscriptionClients.save' });
     expect((saveButton as HTMLButtonElement).disabled).toBe(true);
 
     // Enter broken JSON
-    fireEvent.change(muxTextarea, { target: { value: '{ broken json: true' } });
+    fireEvent.change(templateTextarea, { target: { value: '{ broken json: true' } });
 
     // Error message must appear under the field
     await waitFor(() => {
@@ -183,7 +183,7 @@ describe('SubscriptionSettingsSections and Client Subscriptions Stage 2', () => 
     expect(apiPut).not.toHaveBeenCalled();
 
     // Fix the JSON
-    fireEvent.change(muxTextarea, { target: { value: '{"enabled": false, "concurrency": 8}' } });
+    fireEvent.change(templateTextarea, { target: { value: '{"outbounds": [{"tag": "direct"}]}' } });
 
     // Error message should disappear and save button should now be enabled
     await waitFor(() => {
@@ -198,7 +198,7 @@ describe('SubscriptionSettingsSections and Client Subscriptions Stage 2', () => 
           ...mockInitialSettings,
           xray_json: {
             always_array: false,
-            mux: '{"enabled": false, "concurrency": 8}',
+            template: '{"outbounds": [{"tag": "direct"}]}',
           },
         },
       },
