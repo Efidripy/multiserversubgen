@@ -905,15 +905,15 @@ class TelegramRegistrationService:
         message = message or {}
         photos = draft.photo_file_ids
         group = draft.media_group_id
-        photo = message.get("photo") if draft.mode == "broadcast" else None
-        if draft.mode == "broadcast" and message.get("document"):
-            return [self._broadcast_draft_window(chat_id, draft, "Отправьте картинку как фото, а не файлом.")]
+        photo = message.get("photo")
+        if message.get("document"):
+            return [self._admin_message_draft_window(chat_id, draft, "Отправьте картинку как фото, а не файлом.")]
         if isinstance(photo, list) and photo and isinstance(photo[-1], dict) and isinstance(photo[-1].get("file_id"), str):
             group_value = message.get("media_group_id")
             new_group = group_value if isinstance(group_value, str) and group_value else None
             if new_group and new_group == group:
                 if len(photos or ()) >= 10:
-                    return [self._broadcast_draft_window(chat_id, draft, "Можно добавить не больше 10 картинок.")]
+                    return [self._admin_message_draft_window(chat_id, draft, "Можно добавить не больше 10 картинок.")]
                 photos = (photos or ()) + (photo[-1]["file_id"],)
             else:
                 photos = (photo[-1]["file_id"],)
@@ -923,7 +923,7 @@ class TelegramRegistrationService:
         elif not text or text.strip().startswith("/"):
             return None
         if photos and text and len(text.strip()) > 1024:
-            return [self._broadcast_draft_window(chat_id, draft, "С картинками текст может быть до 1024 символов. Сократите его и отправьте ещё раз.")]
+            return [self._admin_message_draft_window(chat_id, draft, "С картинками текст может быть до 1024 символов. Сократите его и отправьте ещё раз.")]
         try:
             saved = self._registry.set_admin_message_draft(
                 admin_telegram_user_id=user_id,
@@ -942,17 +942,24 @@ class TelegramRegistrationService:
                 "Текст не принят. Допустимо от 1 до 2000 символов.",
                 keep_user_message=True,
             )]
-        if saved.mode == "direct" and saved.customer_id is not None:
-            customer = self._registry.get_customer(saved.customer_id)
-            return [TelegramOutboundMessage(
-                chat_id,
-                f"Отправить сообщение пользователю {customer.email_display}?\n\n{saved.body}",
-                {"inline_keyboard": [
-                    [{"text": "✓ Отправить", "callback_data": "admin:message-confirm"}],
-                    [{"text": "Отмена", "callback_data": f"admin:message-cancel:{saved.customer_id}:{saved.page}"}],
-                ]},
-            )]
-        return [self._broadcast_draft_window(chat_id, saved)]
+        return [self._admin_message_draft_window(chat_id, saved)]
+
+    def _admin_message_draft_window(self, chat_id: int, draft: Any, notice: str = "") -> TelegramOutboundMessage:
+        if draft.mode == "broadcast":
+            return self._broadcast_draft_window(chat_id, draft, notice)
+        customer = self._registry.get_customer(draft.customer_id)
+        photos = draft.photo_file_ids or ()
+        rows = []
+        if photos and draft.body:
+            rows.append([{"text": "👀 Предпросмотр", "callback_data": "admin:message-preview"}])
+        if draft.body:
+            rows.append([{"text": "✓ Отправить", "callback_data": "admin:message-confirm"}])
+        rows.append([{"text": "Отмена", "callback_data": f"admin:message-cancel:{draft.customer_id}:{draft.page}"}])
+        body = draft.body or "Текст ещё не добавлен: отправьте его подписью к картинке или отдельным сообщением"
+        count = f"Картинок: {len(photos)}\n" if photos else ""
+        prefix = f"{notice}\n\n" if notice else ""
+        return TelegramOutboundMessage(chat_id, f"{prefix}Отправить сообщение пользователю {customer.email_display}?\n"
+            f"{count}\n{body}", {"inline_keyboard": rows})
 
     def _broadcast_draft_window(self, chat_id: int, draft: Any, notice: str = "") -> TelegramOutboundMessage:
         recipients = self._registry.registered_broadcast_recipient_count()
@@ -1183,12 +1190,18 @@ class TelegramRegistrationService:
                 )
                 return [TelegramOutboundMessage(
                     chat_id,
-                    "Отправьте текст пользователю одним сообщением. До подтверждения ничего не будет отправлено.",
+                    "Отправьте текст, одну картинку или альбом до 10 картинок. Текст можно отправить одним сообщением отдельно или добавить подписью. До подтверждения ничего не будет отправлено.",
                     {"inline_keyboard": [[{
                         "text": "Отмена",
                         "callback_data": f"admin:message-cancel:{customer_id}:{page}",
                     }]]},
                 )]
+            if callback_data == "admin:message-preview":
+                draft = self._registry.get_admin_message_draft(user_id)
+                if draft is None or draft.mode != "direct" or not draft.body or not draft.photo_file_ids:
+                    raise VersionConflictError("direct-message draft is missing")
+                return [TelegramOutboundMessage(chat_id, draft.body, photo_file_ids=draft.photo_file_ids),
+                        self._admin_message_draft_window(chat_id, draft)]
             if callback_data == "admin:message-confirm":
                 draft = self._registry.get_admin_message_draft(user_id)
                 if draft is None or draft.mode != "direct" or draft.customer_id is None or not draft.body:
@@ -1197,6 +1210,7 @@ class TelegramRegistrationService:
                 self._registry.queue_admin_direct_message(
                     customer_id=customer_id,
                     body=draft.body,
+                    photo_file_ids=draft.photo_file_ids,
                     created_by=user_id,
                     idempotency_key=f"telegram-admin-direct:{update_id}:{customer_id}",
                 )
@@ -2321,7 +2335,7 @@ class TelegramRegistrationService:
             source_has_text = isinstance(source.get("text"), str) and bool(source.get("text"))
             source_already_deleted = source_message_id is not None and source_message_id in delete_ids
             if source_message_id is not None and not source_already_deleted:
-                if callback_data == "admin:broadcast-preview":
+                if callback_data in {"admin:broadcast-preview", "admin:message-preview"}:
                     messages[target_index] = replace(target, edit_message_id=None)
                     append_delete(source_message_id)
                 elif source_has_text and target.photo_png is None:
