@@ -317,21 +317,8 @@ def to_xray_json(links: list[str], section: dict[str, Any]) -> str:
     always_array = bool(section.get("always_array", False))
     enabled = bool(section.get("enabled", False))
     if not enabled:
-        configs = []
-        for item in proxies:
-            config = {
-                "remarks": item["name"],
-                "log": {"loglevel": "warning"},
-                "inbounds": _default_inbounds(),
-                "outbounds": [_build_proxy_outbound(item, "proxy", None, None), *_system_outbounds()],
-                "routing": {
-                    "domainStrategy": "AsIs",
-                    "rules": [{"type": "field", "network": "tcp,udp", "outboundTag": "proxy"}],
-                },
-            }
-            configs.append(config)
-        result = configs if always_array or len(configs) != 1 else configs[0]
-        return json.dumps(result, ensure_ascii=False, indent=2)
+        # Switched off: no Xray JSON at all; the router falls back to the plain subscription.
+        return ""
 
     active = section.get("active", "Default")
     selected = DEFAULT_XRAY_TEMPLATE

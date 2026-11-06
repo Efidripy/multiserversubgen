@@ -501,3 +501,11 @@ def test_settings_api_requires_auth_and_admin_role(env):
     for method in ("GET", "PUT", "POST"):
         assert AuthService.required_role_for_request(method, SETTINGS_URL) == "admin"
     assert AuthService.required_role_for_request("POST", f"{SETTINGS_URL}/test") == "admin"
+
+
+def test_xray_json_link_gives_plain_subscription_while_template_is_off(env):
+    # Clients that cannot read Xray JSON must still get working links.
+    response = sub(env, "v2rayNG/1.9.30", format="xray_json")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/plain")
+    assert base64.b64decode(response.content).decode().startswith(("vless://", "vmess://", "trojan://", "ss://"))

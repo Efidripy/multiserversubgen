@@ -100,8 +100,8 @@ def test_old_keys_are_ignored_and_empty_template_gets_default():
 
 def test_always_array_controls_single_config_shape():
     link = [LINKS[0]]
-    assert isinstance(json.loads(to_xray_json(link, {"enabled": False, "always_array": False})), dict)
-    assert isinstance(json.loads(to_xray_json(link, {"enabled": False, "always_array": True})), list)
+    assert isinstance(json.loads(to_xray_json(link, {"enabled": True, "always_array": False})), dict)
+    assert isinstance(json.loads(to_xray_json(link, {"enabled": True, "always_array": True})), list)
 
 
 def test_vless_outbound_with_reality_and_flow():
@@ -110,7 +110,7 @@ def test_vless_outbound_with_reality_and_flow():
         "?type=tcp&security=reality&sni=sni.net&fp=chrome&pbk=pubkey123&sid=sid456&flow=xtls-rprx-vision"
         "#VLESS-Reality"
     )
-    res = to_xray_json([link], {})
+    res = to_xray_json([link], {"enabled": True})
     cfg = json.loads(res)
     ob = cfg["outbounds"][0]
 
@@ -158,7 +158,7 @@ def test_vmess_outbound_with_tls():
         "fp": "firefox",
     }
     link = _vmess_link(payload)
-    res = to_xray_json([link], {})
+    res = to_xray_json([link], {"enabled": True})
     cfg = json.loads(res)
     ob = cfg["outbounds"][0]
 
@@ -187,7 +187,7 @@ def test_vmess_outbound_with_tls():
 
 def test_trojan_outbound_settings():
     link = "trojan://secretpw@trojan.net:443?type=tcp&sni=trojan.net&fp=safari#Trojan-Node"
-    res = to_xray_json([link], {})
+    res = to_xray_json([link], {"enabled": True})
     cfg = json.loads(res)
     ob = cfg["outbounds"][0]
 
@@ -211,7 +211,7 @@ def test_trojan_outbound_settings():
 def test_transports_ws_grpc_httpupgrade_xhttp_h2():
     # WebSocket
     ws_link = "vless://u@srv:443?type=ws&path=%2Fwebsocket&host=ws.domain#WS"
-    cfg_ws = json.loads(to_xray_json([ws_link], {}))
+    cfg_ws = json.loads(to_xray_json([ws_link], {"enabled": True}))
     ss_ws = cfg_ws["outbounds"][0]["streamSettings"]
     assert ss_ws["network"] == "ws"
     assert ss_ws["wsSettings"] == {
@@ -221,7 +221,7 @@ def test_transports_ws_grpc_httpupgrade_xhttp_h2():
 
     # gRPC with mode=multi
     grpc_multi = "vless://u@srv:443?type=grpc&serviceName=my-grpc&mode=multi#GRPC-Multi"
-    cfg_gm = json.loads(to_xray_json([grpc_multi], {}))
+    cfg_gm = json.loads(to_xray_json([grpc_multi], {"enabled": True}))
     ss_gm = cfg_gm["outbounds"][0]["streamSettings"]
     assert ss_gm["network"] == "grpc"
     assert ss_gm["grpcSettings"] == {
@@ -231,13 +231,13 @@ def test_transports_ws_grpc_httpupgrade_xhttp_h2():
 
     # gRPC gun mode
     grpc_gun = "vless://u@srv:443?type=grpc&serviceName=my-gun&mode=gun#GRPC-Gun"
-    cfg_gg = json.loads(to_xray_json([grpc_gun], {}))
+    cfg_gg = json.loads(to_xray_json([grpc_gun], {"enabled": True}))
     ss_gg = cfg_gg["outbounds"][0]["streamSettings"]
     assert ss_gg["grpcSettings"]["multiMode"] is False
 
     # httpupgrade
     upgrade_link = "vless://u@srv:443?type=httpupgrade&path=%2Fup&host=up.domain#Upgrade"
-    cfg_up = json.loads(to_xray_json([upgrade_link], {}))
+    cfg_up = json.loads(to_xray_json([upgrade_link], {"enabled": True}))
     ss_up = cfg_up["outbounds"][0]["streamSettings"]
     assert ss_up["network"] == "httpupgrade"
     assert ss_up["httpupgradeSettings"] == {
@@ -247,7 +247,7 @@ def test_transports_ws_grpc_httpupgrade_xhttp_h2():
 
     # xhttp
     xhttp_link = "vless://u@srv:443?type=xhttp&path=%2Fxhttp&host=x.domain&mode=packet-up#XHTTP"
-    cfg_x = json.loads(to_xray_json([xhttp_link], {}))
+    cfg_x = json.loads(to_xray_json([xhttp_link], {"enabled": True}))
     ss_x = cfg_x["outbounds"][0]["streamSettings"]
     assert ss_x["network"] == "xhttp"
     assert ss_x["xhttpSettings"] == {
@@ -258,7 +258,7 @@ def test_transports_ws_grpc_httpupgrade_xhttp_h2():
 
     # h2 / http
     h2_link = "vless://u@srv:443?type=h2&path=%2Fh2path&host=h2.domain#H2"
-    cfg_h2 = json.loads(to_xray_json([h2_link], {}))
+    cfg_h2 = json.loads(to_xray_json([h2_link], {"enabled": True}))
     ss_h2 = cfg_h2["outbounds"][0]["streamSettings"]
     assert ss_h2["network"] == "http"
     assert ss_h2["httpSettings"] == {
@@ -267,14 +267,9 @@ def test_transports_ws_grpc_httpupgrade_xhttp_h2():
     }
 
 
-def test_disabled_is_minimal_and_has_no_dns():
-    config = json.loads(to_xray_json([LINKS[0]], {"enabled": False}))
-    assert "dns" not in config
-    assert config["log"] == {"loglevel": "warning"}
-    assert config["routing"] == {"domainStrategy": "AsIs", "rules": [{"type": "field", "network": "tcp,udp", "outboundTag": "proxy"}]}
-    assert [outbound["tag"] for outbound in config["outbounds"]] == ["proxy", "direct", "block"]
-    assert "mux" not in config["outbounds"][0]
-    assert "finalmask" not in config["outbounds"][0]["streamSettings"]
+def test_disabled_returns_nothing():
+    assert to_xray_json([LINKS[0]], {"enabled": False}) == ""
+    assert to_xray_json([LINKS[0]], {}) == ""
 
 
 @pytest.mark.parametrize("legacy", ["", json.dumps(DEFAULT_XRAY_TEMPLATE, sort_keys=True)])
@@ -311,7 +306,7 @@ def test_every_generated_routing_rule_has_a_condition():
     # Xray-core rejects a rule without conditions ("this rule has no effective fields").
     link = "vless://11111111-1111-1111-1111-111111111111@example.test:443?type=tcp&security=tls&sni=example.test#one"
     conditions = {"domain", "ip", "port", "sourcePort", "network", "source", "user", "inboundTag", "protocol", "attrs", "process"}
-    for section in ({}, {"enabled": True, "active": "Custom", "templates": [{"name": "Custom", "template": "{}"}]}):
+    for section in ({"enabled": True}, {"enabled": True, "active": "Custom", "templates": [{"name": "Custom", "template": "{}"}]}):
         config = json.loads(to_xray_json([link], section))
         for rule in config["routing"]["rules"]:
             assert conditions & set(rule), rule

@@ -102,13 +102,23 @@ def test_query_format_has_priority_over_response_rule(env):
 
 
 def test_xray_json_query_and_client_format_are_json(env):
+    settings = default_settings()
+    settings["xray_json"]["enabled"] = True
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
     result = sub(env, "curl/1", format="xray_json")
     assert result.status_code == 200
     payload = json.loads(result.text)
     assert (payload[0] if isinstance(payload, list) else payload)["outbounds"]
-    configure(env, "singbox", format="xray_json")
+    client = next(item for item in settings["clients"] if item["id"] == "singbox")
+    client.update({"enabled": True, "format": "xray_json"})
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
     result = sub(env, "SFA/1")
     assert result.headers["content-type"].startswith("application/json")
+    # Template switched off: the same client gets the plain subscription instead.
+    settings["xray_json"]["enabled"] = False
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+    result = sub(env, "SFA/1")
+    assert result.headers["content-type"].startswith("text/plain")
 
 
 def test_encode_false_returns_plain_subscription_text(env):
