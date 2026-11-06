@@ -37,6 +37,15 @@
 :root[data-design="new"] .app-main,
 :root[data-design="new"] .app-content { background: var(--ln-bg); }
 
+/* Section page wrappers add p-2..p-6 on top of .app-content's gutter; one gutter is enough. */
+:root[data-design="new"] .tab-panel > section > div[class~="min-h-screen"] { padding: 0; }
+
+/* overflow:hidden on the layout breaks the sticky sidebar; clip keeps the
+   horizontal guard without creating a scroll container. */
+:root[data-design="new"] .app-layout,
+:root[data-design="new"] .app-main,
+:root[data-design="new"] body { overflow: visible; overflow-x: clip; }
+
 :root[data-design="new"] .sidebar {
   flex-basis: var(--ln-sidebar-w);
   width: var(--ln-sidebar-w);

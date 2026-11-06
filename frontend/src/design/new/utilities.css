@@ -42,6 +42,37 @@
   color: var(--ln-text-2);
 }
 
+/* Kit: uppercase only for service labels. Buttons and filter chips use the
+   label's own case; !important beats the inline styles some buttons carry. */
+:root[data-design="new"] .app-content button,
+:root[data-design="new"] .app-content th,
+:root[data-design="new"] .app-content th * {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
+/* Service labels keep uppercase, with the kit's 0.08em tracking instead of 0.14-0.2em. */
+:root[data-design="new"] .app-content :is([class*="tracking-[0.1"], [class*="tracking-[0.2"], .tracking-widest, .tracking-wider)[class~="uppercase"] {
+  letter-spacing: 0.08em;
+}
+
+/* Uppercase monospace badges (e.g. "Snapshot received") are labels, not data. */
+:root[data-design="new"] .app-content [class~="font-mono"][class~="uppercase"] {
+  font-family: var(--ln-font);
+}
+
+/* Kit: no large colour fills. Solid green primary buttons become the neutral primary. */
+:root[data-design="new"] .app-content button:is(.bg-emerald-500, .bg-emerald-600, .bg-green-500, .bg-green-600) {
+  background-color: var(--ln-accent);
+  border-color: var(--ln-accent);
+  color: var(--ln-accent-ink);
+}
+
+/* Tinted warning/danger actions: quiet surface, status colour stays on text and border. */
+:root[data-design="new"] .app-content button:is([class*="bg-amber-"], [class*="bg-rose-"], [class*="bg-red-"], [class*="bg-yellow-"])[class*="/"] {
+  background-color: var(--ln-surface-2);
+}
+
 /* Old/new design chips stay on one line in the narrow sidebar. */
 :root[data-design="new"] .sidebar__design-tabs > button,
 :root[data-design="new"] .sidebar__language-tabs > button {

@@ -137,6 +137,8 @@
 }
 
 :root[data-design="new"] [class~="bg-[#0f1420]"],
+:root[data-design="new"] [class*="bg-[#0f1420]/"],
+:root[data-design="new"] [class*="bg-[#0a0e1a]/"],
 :root[data-design="new"] [class~="bg-[#0d131f]"],
 :root[data-design="new"] [class~="bg-[#111827]"],
 :root[data-design="new"] [class~="bg-[#101827]"],
