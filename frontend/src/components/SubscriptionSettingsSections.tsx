@@ -192,7 +192,7 @@ export const SubscriptionSettingsSections: React.FC<SubscriptionSettingsSections
                     {field.type === 'json' && (
                       <div>
                         <textarea
-                          rows={5}
+                          rows={sectionKey === 'xray_json' && field.key === 'template' ? 24 : 5}
                           className={cn(
                             codeInputClass,
                             jsonErrors[field.key] ? 'border-rose-500/80 focus:border-rose-400' : '',

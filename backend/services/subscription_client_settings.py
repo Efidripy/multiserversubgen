@@ -14,6 +14,7 @@ from services.db_bootstrap import connect
 
 from services.subscription_formats import FORMATS
 from services.subscription_regex import validate_admin_regex
+from services.subscription_xray_json import DEFAULT_XRAY_TEMPLATE
 _HEADER_NAME = re.compile(r"^[!#$%&'*+\-.0-9A-Za-z^_`|~]+$")
 _FORBIDDEN_HEADERS = {
     "content-type", "content-length", "content-encoding", "transfer-encoding", "connection",
@@ -76,14 +77,7 @@ SECTION_SPECS = {
     ],
     "xray_json": [
         ("always_array", "bool", "format", None, False),
-        ("template", "json", "format", None, ""),
-        ("mux", "json", "format", None, ""),
-        ("dns", "json", "format", None, ""),
-        ("routing", "json", "format", None, ""),
-        ("rules", "json", "format", None, ""),
-        ("final_mask", "json", "format", None, ""),
-        ("observatory", "json", "format", None, ""),
-        ("balancers", "json", "format", None, ""),
+        ("template", "json", "format", None, json.dumps(DEFAULT_XRAY_TEMPLATE, ensure_ascii=False, indent=2)),
     ],
     "response_rules": [
         ("rules", "json", "rules", None, ""),
@@ -368,6 +362,8 @@ def _validate_sections(raw: Dict[str, Any], result: Dict[str, Any]) -> None:
         for key, field_type, _group, options, _default in specs:
             if key in values:
                 result[section][key] = _validate_section_value(key, values[key], field_type, options)
+    if not result["xray_json"].get("template", "").strip():
+        result["xray_json"]["template"] = json.dumps(DEFAULT_XRAY_TEMPLATE, ensure_ascii=False, indent=2)
     # Feature validators are imported lazily to avoid the intentional dependency
     # from the feature modules back to this module's header/rule helpers.
     from services.subscription_xray_json import validate_xray_json_section

@@ -316,39 +316,39 @@ curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN?nodes=US,UK"
 - **Последнее удачное значение**: загруженные правила сохраняются в локальной таблице SQLite `subscription_remote_rules`. Если внешний сервер недоступен, возвращает HTTP-ошибку или документ некорректен, в базе сохраняется последнее успешное значение (`body`), фиксируется код ошибки (`last_error`) и время попытки (`attempted_at`). Выдача подписок клиентам не прерывается.
 - **Защита от внутренних адресов (SSRF)**: функция `validate_and_resolve_outbound_url` с параметром `allow_private=False` блокирует обращения к приватным и локальным IP-адресам (`127.0.0.1`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, link-local и broadcast). Применяется DNS pinning: запрос отправляется строго на проверенный IP-адрес для исключения атак DNS rebinding. HTTP-редиректы запрещены. Максимальный размер загружаемого документа ограничен 1 МБ.
 
-#### 5. Xray JSON и балансировщики (`xray_json`)
+#### 5. Xray JSON (`xray_json`)
 
-Генерация полной клиентской конфигурации Xray JSON на основе доступных узлов подписки.
+Секция содержит один редактор цельного JSON-шаблона. В шаблон подставляются узлы подписки; остальные поля конфигурации сохраняются без изменений.
 
-Параметры секции:
-- `always_array` — всегда оборачивать конфигурацию в массив JSON (по умолчанию `false`, одиночный узел отдаётся как объект).
-- `template` — полный JSON-конфиг клиента. Для каждого узла он копируется, узел добавляется как `outbound` с тегом `proxy`, а остальные поля шаблона сохраняются. При использовании шаблона поля `dns`, `routing`, `rules`, `observatory` и `balancers` секции не используются.
-- `mux` — JSON-объект параметров мультиплексирования (`streamSettings.mux`).
-- `dns` — JSON-объект серверов DNS.
-- `routing` — JSON-объект маршрутизации (`domainStrategy`, правила и др.).
-- `rules` — JSON-массив дополнительных правил маршрутизации.
-- `final_mask` — JSON-объект маскирования `streamSettings.finalmask`.
-- `observatory` — JSON-объект настроек модуля мониторинга доступности серверов.
-- `balancers` — JSON-массив конфигураций балансировщиков.
+Параметры:
+- `always_array` — всегда оборачивать результат в массив JSON (по умолчанию `false`; один узел возвращается объектом).
+- `template` — цельный конфиг Xray. В обычном режиме для каждого узла создаётся копия шаблона с `remarks` имени узла и outbound с тегом `proxy`. Если в `outbounds` шаблона есть заготовка с тегом `proxy`, её `mux`, `streamSettings.sockopt` и `streamSettings.finalmask` применяются к outbound всех узлов, а сама заготовка удаляется.
 
-Балансировщики (`balancers`):
-- Поддерживаемые стратегии (`strategy.type`): `leastLoad`, `leastPing`, `random`, `roundRobin`.
-- При наличии балансировщиков сервер автоматически создаёт исходящие узлы с тегами `proxy-1`, `proxy-2`, ... и селектором по умолчанию `["proxy-"]`.
-- Если выбрана стратегия `leastPing` или `leastLoad`, сервер автоматически генерирует секцию `observatory` с проверкой по адресу `https://www.gstatic.com/generate_204` с интервалом `5m` (если `observatory` не переопределён вручную).
-
-Пример JSON-конфигурации балансировщиков:
+Пример обычного шаблона:
 ```json
-[
-  {
-    "tag": "balancer-all",
-    "selector": [
-      "proxy-"
-    ],
-    "strategy": {
-      "type": "leastPing"
-    }
-  }
-]
+{
+  "dns": {"servers": ["1.1.1.1", "1.0.0.1"], "queryStrategy": "UseIP"},
+  "outbounds": [
+    {"tag": "proxy", "mux": {"enabled": true}, "streamSettings": {"sockopt": {"tcpFastOpen": true}}},
+    {"tag": "direct", "protocol": "freedom"},
+    {"tag": "block", "protocol": "blackhole"}
+  ]
+}
+```
+
+Если в `routing.balancers` указан непустой список, создаётся один конфиг: узлы получают теги `proxy-1`, `proxy-2` и так далее. У балансировщика без `selector` используется `["proxy-"]`; для стратегий `leastPing` и `leastLoad` автоматически добавляется `observatory`, если в шаблоне нет `observatory` и `burstObservatory`. При отсутствии правила с `balancerTag` оно добавляется для первого балансировщика.
+
+Пример шаблона с балансировщиком:
+```json
+{
+  "routing": {
+    "balancers": [{"tag": "best", "strategy": {"type": "leastPing"}}]
+  },
+  "outbounds": [
+    {"tag": "direct", "protocol": "freedom"},
+    {"tag": "block", "protocol": "blackhole"}
+  ]
+}
 ```
 
 #### 6. Правила ответа (`response_rules`)
