@@ -1,0 +1,24 @@
+{
+  "projectId": "e502306c-9b80-4b98-9894-7c68bb0d587d",
+  "targets": {
+    "dashboard": {
+      "baselineDraftId": "9758bc4e-77f0-4608-a9f2-379ccaa90a07",
+      "activeDraftId": "9758bc4e-77f0-4608-a9f2-379ccaa90a07",
+      "branches": [
+        { "draftId": "3d76cde4-7874-45e1-8ed4-735798782c34", "description": "Network map, dark ink-navy + amber signal, Golos Text", "model": "gemini-3.1-pro" },
+        { "draftId": "32b76995-a9ca-47bc-96ed-729c7f96578c", "description": "Calm control room, light grey-white + teal, Onest, node rows with sparklines", "model": "gpt-5.6-luna" }
+      ],
+      "contextFiles": [
+        ".superdesign/design-system.md",
+        ".superdesign/init/theme.md",
+        "frontend/src/components/Sidebar.tsx",
+        "frontend/src/App.tsx:915:1062",
+        "frontend/src/components/DashboardSummary.tsx",
+        "frontend/src/components/ServerStatus.tsx",
+        "frontend/src/components/ChoiceChips.tsx",
+        "frontend/src/components/UIIcon.tsx"
+      ],
+      "baseCommit": "442ad75"
+    }
+  }
+}

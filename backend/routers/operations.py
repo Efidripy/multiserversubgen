@@ -371,6 +371,16 @@ def build_operations_router(
         }
         return Response(content=mem.getvalue(), media_type="application/zip", headers=headers)
 
+    @router.get("/api/v1/traffic/comparison")
+    async def traffic_comparison(request: Request, range: str = "24h", node_id: int | None = None):
+        if not check_auth(request):
+            raise HTTPException(status_code=401)
+        from services.traffic_comparison import load_comparison
+
+        if range not in ("24h", "7d", "30d"):
+            raise HTTPException(status_code=400, detail="Invalid range")
+        return await _run(load_comparison, db_path, range, node_id, int(time.time()))
+
     @router.get("/api/v1/history/nodes")
     async def all_nodes_history(request: Request, since_sec: int = 86400, limit_per_node: int = 1200):
         """Return bounded fleet history in one SQLite read for monitoring."""

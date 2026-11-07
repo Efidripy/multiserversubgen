@@ -103,7 +103,7 @@ const FLOW_OPTIONS = [
 // ─── Row layout helper ────────────────────────────────────────────────────────
 
 const Row: React.FC<{ label: string; hint?: string; children: React.ReactNode; colors: any }> = ({ label, hint, children, colors }) => (
-  <div className="d-flex align-items-center mb-3">
+  <div data-ln="client-edit-field" className="d-flex align-items-center mb-3">
     <div style={{ width: '130px', flexShrink: 0, textAlign: 'right', paddingRight: '14px' }}>
       <span style={{ fontSize: '0.83rem', color: colors.text.secondary, fontWeight: 500 }}>{label}</span>
       {hint && <span style={{ fontSize: '0.65rem', color: colors.text.tertiary, marginLeft: '3px', cursor: 'default' }} title={hint}>ⓘ</span>}
@@ -300,7 +300,7 @@ export const ClientEditModal: React.FC<Props> = ({ client, onClose, onSaved }) =
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div className="drawer" role="dialog" aria-modal="true" aria-label={t('messages.editClient')}>
+    <div data-ln="client-edit" className="drawer" role="dialog" aria-modal="true" aria-label={t('messages.editClient')}>
       <div className="drawer__backdrop" onClick={onClose} />
       <div className="drawer__panel">
 

@@ -1,0 +1,251 @@
+:root[data-design="new"] .tc-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+:root[data-design="new"] .tc-card {
+  min-width: 0;
+  padding: 16px;
+  background: var(--ln-surface);
+  border: 1px solid var(--ln-line);
+  border-radius: var(--ln-r-md);
+  color: var(--ln-text);
+}
+
+:root[data-design="new"] .tc-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+:root[data-design="new"] .tc-head h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+:root[data-design="new"] .tc-controls, :root[data-design="new"] .tc-segments, :root[data-design="new"] .tc-range {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  color: var(--ln-text-2);
+  font-size: 11px;
+}
+
+:root[data-design="new"] .tc-range {
+  gap: 12px;
+  margin-top: 12px;
+}
+
+:root[data-design="new"] .tc-controls select, :root[data-design="new"] .tc-segments button, :root[data-design="new"] .tc-state button {
+  height: 28px;
+  border: 1px solid var(--ln-line);
+  background: var(--ln-surface-2);
+  color: var(--ln-text-2);
+  border-radius: var(--ln-r-sm);
+  padding: 0 8px;
+}
+
+:root[data-design="new"] .tc-segments button[aria-pressed="true"] {
+  background: var(--ln-line-strong);
+  color: var(--ln-text);
+}
+
+:root[data-design="new"] .tc-chart-wrap {
+  position: relative;
+  margin-top: 12px;
+}
+
+:root[data-design="new"] .tc-chart {
+  display: block;
+  width: 100%;
+  height: 240px;
+  touch-action: pan-y;
+}
+
+:root[data-design="new"] .tc-chart text {
+  fill: var(--ln-muted);
+  font-size: 9px;
+}
+
+:root[data-design="new"] .tc-gridline {
+  stroke: var(--ln-line);
+  stroke-width: 1;
+}
+
+:root[data-design="new"] .tc-current, :root[data-design="new"] .tc-previous {
+  fill: none;
+  stroke: var(--ln-accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+
+:root[data-design="new"] .tc-previous {
+  stroke: var(--ln-muted);
+  stroke-dasharray: 5 5;
+}
+
+:root[data-design="new"] .tc-crosshair {
+  stroke: var(--ln-muted);
+  stroke-width: 1;
+}
+
+:root[data-design="new"] .tc-dot {
+  fill: var(--ln-accent);
+}
+
+:root[data-design="new"] .tc-tooltip {
+  position: absolute;
+  top: 8px;
+  z-index: 2;
+  display: grid;
+  gap: 4px;
+  width: min(180px, 100%);
+  box-sizing: border-box;
+  padding: 8px;
+  background: var(--ln-surface-2);
+  border: 1px solid var(--ln-line);
+  border-radius: var(--ln-r-sm);
+  font-size: 10px;
+  pointer-events: none;
+}
+
+:root[data-design="new"] .tc-tiles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+:root[data-design="new"] .tc-tiles > div {
+  flex: 1 1 100px;
+  min-width: 0;
+  padding: 8px;
+  background: var(--ln-surface-2);
+  border-radius: var(--ln-r-sm);
+}
+
+:root[data-design="new"] .tc-tiles span, :root[data-design="new"] .tc-tiles small {
+  display: block;
+  color: var(--ln-muted);
+  font-size: 11px;
+}
+
+:root[data-design="new"] .tc-tiles strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 14px;
+}
+
+:root[data-design="new"] .tc-positive {
+  color: var(--ln-success);
+}
+
+:root[data-design="new"] .tc-negative {
+  color: var(--ln-danger);
+}
+
+:root[data-design="new"] .tc-card em {
+  font-style: normal;
+  font-size: 11px;
+}
+
+:root[data-design="new"] .tc-card p {
+  color: var(--ln-muted);
+  font-size: 12px;
+  margin-top: 12px;
+}
+
+:root[data-design="new"] .tc-legend {
+  display: inline-block;
+  width: 20px;
+  border-top: 2px solid var(--ln-accent);
+  vertical-align: middle;
+}
+
+:root[data-design="new"] .tc-legend-previous {
+  border-color: var(--ln-muted);
+  border-top-style: dashed;
+}
+
+:root[data-design="new"] .tc-rows {
+  display: grid;
+  margin-top: 12px;
+}
+
+:root[data-design="new"] .tc-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  font-size: 11px;
+  color: var(--ln-text-2);
+}
+
+:root[data-design="new"] .tc-user {
+  min-width: 0;
+}
+
+:root[data-design="new"] .tc-user > span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-design="new"] .tc-bars {
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+:root[data-design="new"] .tc-bars i {
+  display: block;
+  height: 3px;
+  background: var(--ln-accent);
+  border-radius: var(--ln-r-sm);
+}
+
+:root[data-design="new"] .tc-bars i + i {
+  background: var(--ln-muted);
+}
+
+:root[data-design="new"] .tc-value {
+  text-align: right;
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+:root[data-design="new"] .tc-value em {
+  display: block;
+}
+
+:root[data-design="new"] .tc-skeleton {
+  background: var(--ln-surface-2);
+  border-radius: var(--ln-r-sm);
+}
+
+:root[data-design="new"] .tc-skeleton-chart {
+  height: 324px;
+  margin-top: 12px;
+}
+
+:root[data-design="new"] .tc-skeleton-rows {
+  height: 300px;
+  margin-top: 12px;
+}
+
+:root[data-design="new"] .tc-state {
+  min-height: 324px;
+}
+
+@media (max-width: 900px) {
+  :root[data-design="new"] .tc-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

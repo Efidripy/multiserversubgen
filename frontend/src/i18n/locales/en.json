@@ -148,13 +148,13 @@
     "actionFailed": "Operation failed",
     "jobsTitle": "Provisioning jobs",
     "noJobs": "No active jobs.",
-      "jobsHistory": "Full history",
-      "jobsHistoryTitle": "Provisioning job history",
-      "jobsHistoryHint": "All local jobs are shown. Active and partial jobs are never deleted.",
-      "clearJobsHistory": "Clear history",
-      "clearJobsHistoryTitle": "Clear completed history?",
-      "clearJobsHistoryHint": "Only succeeded, failed, and cancelled jobs will be deleted. Queued, running, and partial jobs remain. Audit records are retained.",
-      "clearJobsHistoryDone": "Deleted records: {{count}}",
+    "jobsHistory": "Full history",
+    "jobsHistoryTitle": "Provisioning job history",
+    "jobsHistoryHint": "All local jobs are shown. Active and partial jobs are never deleted.",
+    "clearJobsHistory": "Clear history",
+    "clearJobsHistoryTitle": "Clear completed history?",
+    "clearJobsHistoryHint": "Only succeeded, failed, and cancelled jobs will be deleted. Queued, running, and partial jobs remain. Audit records are retained.",
+    "clearJobsHistoryDone": "Deleted records: {{count}}",
     "nodesReady": "Nodes ready: {{ready}}/{{total}}",
     "appealsTitle": "User appeals",
     "noAppeals": "No open appeals.",
@@ -175,65 +175,65 @@
     "requestName": "Name",
     "requestTelegramId": "Telegram ID",
     "requestSuggestedName": "Suggested name",
-    "requestIntroduction": "Introduction"
-    ,"dashboardTitle": "Operational status"
-    ,"dashboardPending": "requests"
-    ,"dashboardActive": "active"
-    ,"dashboardSuspended": "suspended"
-    ,"dashboardProvisioning": "provisioning"
-    ,"dashboardLifecycle": "lifecycle"
-    ,"dashboardDrift": "drift"
-    ,"tagsTitle": "Tags"
-    ,"tagsPlaceholder": "for example: vip, paid"
-    ,"tagsSaved": "Tags saved"
-    ,"timelineTitle": "Timeline"
-    ,"timelineEmpty": "No events yet"
-    ,"scheduleAt": "Do not execute before"
-    ,"scheduleAction": "Schedule"
-    ,"scheduleCreated": "Operation scheduled"
-    ,"schedulesTitle": "Scheduled actions"
-    ,"noSchedules": "No scheduled actions"
-    ,"scheduleCancelConfirm": "Cancel this scheduled action?"
-    ,"scheduleCancelled": "Scheduled action cancelled"
-    ,"bulkSelectCustomer": "Select customer {{email}} for a bulk operation"
-    ,"bulkTitle": "Bulk operations"
-    ,"bulkHint": "Suspend/Resume only. An immutable preview is created first, then one safe operation per customer."
-    ,"bulkSelected": "selected: {{count}}"
-    ,"bulkPreviewText": "Preview: {{operation}}, customers: {{count}}."
-    ,"bulkConfirm": "Queue separate operations for {{count}} customers?"
-    ,"driftTitle": "Record reconciliation"
-      ,"driftHint": "Read-only only. A customer intentionally present on only some TG nodes is not drift. Ignore hides this finding but never changes the node."
-    ,"driftScan": "Scan"
-    ,"driftScanDone": "Reconciliation complete"
-    ,"noDrift": "No open findings"
-      ,"driftIgnore": "Ignore"
-    ,"driftAdopt": "Adopt record"
-    ,"driftAdoptConfirm": "Adopt this remote record as a locally confirmed binding? The remote node will not be changed."
-    ,"supportTitle": "Support requests"
-    ,"supportHint": "The list keeps every customer who contacted support. Red means an unanswered request; green means every request is answered."
-    ,"supportOpenCount": "unanswered: {{count}}"
-    ,"supportOpenTitle": "Unanswered"
-    ,"noOpenSupport": "There are no unanswered requests."
-    ,"supportCustomersTitle": "Customers"
-    ,"noSupportCustomers": "There are no support requests yet."
-    ,"supportRequestCount": "{{count}} requests"
-    ,"supportRequestCountHeader": "Requests"
-    ,"supportStatusOpen": "Unanswered request"
-    ,"supportStatusAnswered": "All requests answered"
-    ,"supportLatestRequest": "Latest request"
-    ,"directMessage": "Message customer"
-    ,"directMessageHint": "The message will be queued for Telegram. It is not tied to a support request."
-    ,"directMessageBody": "Message"
-    ,"directMessageConfirm": "Send this message to the customer?"
-    ,"directMessageQueued": "Message queued for delivery"
-    ,"supportHistoryTitle": "Request history"
-    ,"noSupportHistory": "The request history is empty."
-    ,"supportReply": "Reply"
-    ,"supportReplyLabel": "Reply to customer"
-    ,"supportSendReply": "Send reply"
-    ,"supportNoReply": "No reply was added"
-    ,"supportResolved": "Reply queued for delivery"
-    ,"supportCategory": {
+    "requestIntroduction": "Introduction",
+    "dashboardTitle": "Operational status",
+    "dashboardPending": "requests",
+    "dashboardActive": "active",
+    "dashboardSuspended": "suspended",
+    "dashboardProvisioning": "provisioning",
+    "dashboardLifecycle": "lifecycle",
+    "dashboardDrift": "drift",
+    "tagsTitle": "Tags",
+    "tagsPlaceholder": "for example: vip, paid",
+    "tagsSaved": "Tags saved",
+    "timelineTitle": "Timeline",
+    "timelineEmpty": "No events yet",
+    "scheduleAt": "Do not execute before",
+    "scheduleAction": "Schedule",
+    "scheduleCreated": "Operation scheduled",
+    "schedulesTitle": "Scheduled actions",
+    "noSchedules": "No scheduled actions",
+    "scheduleCancelConfirm": "Cancel this scheduled action?",
+    "scheduleCancelled": "Scheduled action cancelled",
+    "bulkSelectCustomer": "Select customer {{email}} for a bulk operation",
+    "bulkTitle": "Bulk operations",
+    "bulkHint": "Suspend/Resume only. An immutable preview is created first, then one safe operation per customer.",
+    "bulkSelected": "selected: {{count}}",
+    "bulkPreviewText": "Preview: {{operation}}, customers: {{count}}.",
+    "bulkConfirm": "Queue separate operations for {{count}} customers?",
+    "driftTitle": "Record reconciliation",
+    "driftHint": "Read-only only. A customer intentionally present on only some TG nodes is not drift. Ignore hides this finding but never changes the node.",
+    "driftScan": "Scan",
+    "driftScanDone": "Reconciliation complete",
+    "noDrift": "No open findings",
+    "driftIgnore": "Ignore",
+    "driftAdopt": "Adopt record",
+    "driftAdoptConfirm": "Adopt this remote record as a locally confirmed binding? The remote node will not be changed.",
+    "supportTitle": "Support requests",
+    "supportHint": "The list keeps every customer who contacted support. Red means an unanswered request; green means every request is answered.",
+    "supportOpenCount": "unanswered: {{count}}",
+    "supportOpenTitle": "Unanswered",
+    "noOpenSupport": "There are no unanswered requests.",
+    "supportCustomersTitle": "Customers",
+    "noSupportCustomers": "There are no support requests yet.",
+    "supportRequestCount": "{{count}} requests",
+    "supportRequestCountHeader": "Requests",
+    "supportStatusOpen": "Unanswered request",
+    "supportStatusAnswered": "All requests answered",
+    "supportLatestRequest": "Latest request",
+    "directMessage": "Message customer",
+    "directMessageHint": "The message will be queued for Telegram. It is not tied to a support request.",
+    "directMessageBody": "Message",
+    "directMessageConfirm": "Send this message to the customer?",
+    "directMessageQueued": "Message queued for delivery",
+    "supportHistoryTitle": "Request history",
+    "noSupportHistory": "The request history is empty.",
+    "supportReply": "Reply",
+    "supportReplyLabel": "Reply to customer",
+    "supportSendReply": "Send reply",
+    "supportNoReply": "No reply was added",
+    "supportResolved": "Reply queued for delivery",
+    "supportCategory": {
       "link": "Link does not open",
       "connection": "Connection does not work",
       "device": "Changed device",
@@ -1543,6 +1543,11 @@
     "en": "English",
     "ru": "Русский"
   },
+  "design": {
+    "title": "Design",
+    "classic": "Old design",
+    "new": "New design"
+  },
   "sidebar": {
     "themeLabel": "Theme",
     "themeChoose": "Choose theme mode",
@@ -1789,5 +1794,31 @@
     "offlineHint": "No connection. Some features are unavailable.",
     "tryAgain": "Try again",
     "errorDetails": "Error details"
+  },
+  "comparison": {
+    "totalTraffic": "Total traffic",
+    "nodes": "Nodes",
+    "allNodes": "All nodes",
+    "previousPeriod": "Previous period",
+    "currentPeriod": "Current period",
+    "current": "Current",
+    "previous": "Previous",
+    "growth": "Growth",
+    "range_24h": "24 hours",
+    "range_7d": "7 days",
+    "range_30d": "30 days",
+    "legend": "Legend",
+    "topUsers": "Users ? Top by traffic",
+    "topUse": "Top 10 use",
+    "share": "Share of total traffic",
+    "shareSourceHint": "Client snapshots and node counters are separate data sources, so the top-10 sum can exceed the total.",
+    "loading": "Loading…",
+    "error": "Could not load traffic comparison",
+    "noClients": "Client history is not available for this period",
+    "nodeClientsUnavailable": "Client history by node is unavailable",
+    "toComparison": "vs comparison",
+    "comparedPeriod": "Compared with previous {{period}}",
+    "historyHint": "History available: {{days}} days; comparison requires {{required}} days.",
+    "retry": "Retry"
   }
 }

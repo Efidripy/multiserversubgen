@@ -1,6 +1,15 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import './App.css';
+// "New" design (Linear Core): every rule is scoped to :root[data-design="new"].
+import './design/new/tokens.css';
+import './design/new/shell.css';
+import './design/new/components.css';
+import './design/new/utilities.css';
+import './design/new/sections/inbounds-clients.css';
+import './design/new/sections/traffic-monitoring.css';
+import './design/new/sections/backup-subs-telegram.css';
+import './design/new/traffic-comparison.css';
 import './i18n/config';
 import i18next from 'i18next';
 import { App } from './App';

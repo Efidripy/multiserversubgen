@@ -1,0 +1,41 @@
+/* Linear Core section layout; scoped to the new design. */
+:root[data-design="new"] [data-ln="traffic"] > div { row-gap: 8px; }
+:root[data-design="new"] [data-ln="traffic"] section.grid,
+:root[data-design="new"] [data-ln="traffic-tables"],
+:root[data-design="new"] [data-ln="monitoring"] section.grid { gap: 8px; }
+:root[data-design="new"] [data-ln="traffic-tables"] { align-items: stretch; }
+:root[data-design="new"] [data-ln="traffic"] article,
+:root[data-design="new"] [data-ln="monitoring"] article { min-width: 0; }
+:root[data-design="new"] [data-ln="monitoring"] > section { margin-bottom: 8px; }
+:root[data-design="new"] [data-ln="monitoring"] > div.grid { gap: 8px; }
+:root[data-design="new"] [data-ln="monitoring-filters"] { align-items: start; gap: 8px 16px; }
+:root[data-design="new"] [data-ln="monitoring-filters"] > div { align-items: flex-start; }
+:root[data-design="new"] [data-ln="monitoring-filters"] > div > span { padding-top: 6px; }
+:root[data-design="new"] [data-ln="monitoring-filters"] button { height: 28px; min-height: 28px; }
+:root[data-design="new"] [data-ln="traffic"] th,
+:root[data-design="new"] [data-ln="traffic"] td,
+:root[data-design="new"] [data-ln="monitoring"] th,
+:root[data-design="new"] [data-ln="monitoring"] td { padding: 8px 12px; }
+:root[data-design="new"] [data-ln="traffic"] thead th,
+:root[data-design="new"] [data-ln="monitoring"] thead th { position: sticky; top: 0; z-index: 1; background: var(--ln-surface); }
+:root[data-design="new"] [data-ln="traffic"] .text-emerald-300,
+:root[data-design="new"] [data-ln="traffic"] .text-indigo-200,
+:root[data-design="new"] [data-ln="traffic"] .text-cyan-300 { color: var(--ln-text); }
+:root[data-design="new"] [data-ln="traffic"] .bg-gradient-to-r { background: var(--ln-muted); }
+@media (min-width: 1280px) {
+  :root[data-design="new"] [data-ln="traffic-tables"] { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+}
+@media (max-width: 1023px) {
+  :root[data-design="new"] [data-ln="monitoring-filters"] > div { flex-direction: column; gap: 4px; }
+  :root[data-design="new"] [data-ln="monitoring-filters"] > div > span { width: auto; padding-top: 0; }
+}
+
+/* "Open Grafana" is a link styled as the primary button; global link styles must not win. */
+:root[data-design="new"] [data-ln="monitoring"] a[target="_blank"] {
+  height: 30px;
+  padding-inline: 12px;
+  border: 1px solid var(--ln-accent);
+  background: var(--ln-accent);
+  color: var(--ln-accent-ink);
+  text-decoration: none;
+}
