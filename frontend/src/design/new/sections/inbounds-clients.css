@@ -152,6 +152,39 @@
   flex: 1 1 auto;
 }
 
+:root[data-design="new"] [data-ln="client-modal"] textarea {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+}
+
+:root[data-design="new"] [data-ln="client-edit-field"] {
+  display: block !important;
+  margin-bottom: 12px;
+}
+
+:root[data-design="new"] [data-ln="client-edit-field"] > div:first-child {
+  width: 100% !important;
+  margin-bottom: 4px;
+  padding-right: 0 !important;
+  text-align: left !important;
+}
+
+:root[data-design="new"] [data-ln="client-edit-field"] .form-control,
+:root[data-design="new"] [data-ln="client-edit-field"] .form-select {
+  box-sizing: border-box;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+:root[data-design="new"] [data-ln="client-edit-field"] input:not([type="checkbox"]),
+:root[data-design="new"] [data-ln="client-edit-field"] select,
+:root[data-design="new"] [data-ln="client-edit-field"] button,
+:root[data-design="new"] [data-ln="client-edit"] .drawer__footer button {
+  height: 32px;
+  min-height: 32px;
+}
+
 :root[data-design="new"] [data-ln="client-modal"] > div:first-child,
 :root[data-design="new"] [data-ln="client-modal"] > div:last-child:not(:nth-child(2)) {
   flex-shrink: 0;
