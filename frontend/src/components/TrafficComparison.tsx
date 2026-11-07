@@ -20,9 +20,10 @@ function change(current: number, previous: number | null) {
 }
 
 function niceTicks(maximum: number) {
-  const raw = Math.max(maximum, 1) / 4;
+  const unit = 1024 ** Math.min(Math.floor(Math.log(Math.max(maximum, 1)) / Math.log(1024)), 4);
+  const raw = Math.max(maximum, 1) / unit / 4;
   const magnitude = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 2.5, 5, 10].find(n => n * magnitude >= raw)! * magnitude;
+  const step = [1, 2, 2.5, 5, 10].find(n => n * magnitude >= raw)! * magnitude * unit;
   return Array.from({ length: Math.ceil(maximum / step) + 1 || 2 }, (_, i) => i * step);
 }
 
@@ -77,7 +78,7 @@ function ComparisonChart({ current, previous, range }: { current: Point[]; previ
       <circle className="tc-dot" cx={x} cy={y} r="4" />
       </>}
     </svg>
-    {point && <div className="tc-tooltip" style={{ left: `${Math.max(2, Math.min(67, x / 6))}%` }}>
+    {point && <div className="tc-tooltip" style={{ left: `${x / 6}%`, transform: `translateX(-${x / 6}%)` }}>
       <strong>
       {new Date(point.ts * 1000).toLocaleString(i18n.language)}
       </strong>
@@ -154,8 +155,8 @@ function TopUsers({ data, node, sort, setSort, error }: { data: TrafficCompariso
       </strong>
       </StatTile>
       <StatTile label={t('comparison.share')}>
-      <strong>
-      {data?.totals.current && !node ? `${(topTotal / data.totals.current * 100).toFixed(1)}%` : '—'}
+      <strong title={data && topTotal > data.totals.current && !node ? t('comparison.shareSourceHint') : undefined}>
+      {data?.totals.current && !node ? topTotal > data.totals.current ? '≈100%' : `${Math.min(100, topTotal / data.totals.current * 100).toFixed(1)}%` : '—'}
       </strong>
       </StatTile>
       </div>
