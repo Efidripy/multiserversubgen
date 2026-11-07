@@ -49,6 +49,8 @@
 :root[data-design="new"] .sidebar {
   flex-basis: var(--ln-sidebar-w);
   width: var(--ln-sidebar-w);
+  height: auto;
+  min-height: 100dvh;
   border-right: 1px solid var(--ln-line);
   font-family: var(--ln-font);
   box-shadow: none;

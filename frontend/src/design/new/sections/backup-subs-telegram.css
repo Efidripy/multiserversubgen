@@ -47,6 +47,11 @@
   min-height: 36px;
 }
 
+:root[data-design="new"] [data-ln="subscriptions"] table.table-fixed tbody td:nth-child(3) {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
 @media (max-width: 639px) {
   :root[data-design="new"] :is([data-ln="backup"], [data-ln="subscriptions"], [data-ln="telegram"]) button:not(table button) {
     max-width: 100%;
@@ -92,6 +97,12 @@
 
 :root[data-design="new"] [data-ln="subscription-group-editor"] :is(input, select, textarea) {
   width: 100%;
+}
+
+:root[data-design="new"] [data-ln="subscription-group-editor"] select {
+  height: 32px;
+  padding-top: 0;
+  padding-bottom: 0;
 }
 
 :root[data-design="new"] [data-ln="backup"] input[type="file"] {
