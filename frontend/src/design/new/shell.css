@@ -205,3 +205,8 @@
   :root[data-design="new"] .app-topbar__title-content { overflow: hidden; }
   :root[data-design="new"] .app-topbar__title-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 }
+
+@media (min-width: 1280px) {
+  :root[data-design="new"] .app-layout[data-ln-fleet="open"] .app-content { padding-right: 436px; }
+  :root[data-design="new"] .app-layout[data-ln-fleet="open"] .fleet-panel > div { border-color: var(--ln-line); box-shadow: none; }
+}

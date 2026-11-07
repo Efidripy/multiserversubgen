@@ -916,7 +916,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="app-layout">
+    <div className="app-layout" data-ln-fleet={registeredFleetCollapsed ? 'closed' : 'open'}>
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}

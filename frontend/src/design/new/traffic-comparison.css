@@ -104,7 +104,8 @@
   z-index: 2;
   display: grid;
   gap: 4px;
-  max-width: 31%;
+  width: min(180px, 100%);
+  box-sizing: border-box;
   padding: 8px;
   background: var(--ln-surface-2);
   border: 1px solid var(--ln-line);
