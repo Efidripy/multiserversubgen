@@ -69,3 +69,33 @@
   padding-top: 0;
   padding-bottom: 0;
 }
+
+/* Keep the group editor usable when its form exceeds the viewport. */
+:root[data-design="new"] [data-ln="subscription-group-editor"] {
+  display: flex;
+  max-height: calc(100dvh - 48px);
+  flex-direction: column;
+}
+
+:root[data-design="new"] [data-ln="subscription-group-editor"] > :nth-child(2) {
+  min-height: 0;
+  overflow-y: auto;
+  gap: 8px;
+  padding: 16px;
+}
+
+:root[data-design="new"] [data-ln="subscription-group-editor"] > :is(:first-child, :last-child) {
+  flex-shrink: 0;
+  padding: 12px 16px;
+  background: var(--ln-surface);
+}
+
+:root[data-design="new"] [data-ln="subscription-group-editor"] :is(input, select, textarea) {
+  width: 100%;
+}
+
+:root[data-design="new"] [data-ln="backup"] input[type="file"] {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+}
