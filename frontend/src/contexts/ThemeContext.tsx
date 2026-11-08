@@ -1,9 +1,13 @@
-import React, { createContext, useContext, useEffect, ReactNode } from 'react';
+import React, { createContext, useCallback, useContext, useLayoutEffect, useState, ReactNode } from 'react';
 
 // Theme 3 only — dark OLED. Theme switching removed.
 type Theme = 'dark';
 type StylePreset = '3';
 type ThemeMode = '3';
+// Two parallel designs: classic (default) and the Linear Core "new" design.
+export type DesignId = 'classic' | 'new';
+
+export const DESIGN_STORAGE_KEY = 'msm.ui.design';
 
 interface ThemeContextType {
   theme: Theme;
@@ -24,9 +28,13 @@ interface ThemeContextType {
     info: string;
     infoText: string;
   };
+  design: DesignId;
+  setDesign: (design: DesignId) => void;
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
+
+export const useDesign = (): DesignId => useContext(ThemeContext)?.design ?? 'classic';
 
 export const useTheme = () => {
   const context = useContext(ThemeContext);
@@ -34,7 +42,7 @@ export const useTheme = () => {
   return context;
 };
 
-const COLORS: ThemeContextType['colors'] = {
+const CLASSIC_COLORS: ThemeContextType['colors'] = {
   bg: {
     primary:   '#0a0e1a',
     secondary: '#0f1420',
@@ -58,13 +66,60 @@ const COLORS: ThemeContextType['colors'] = {
   infoText:    '#000000',
 };
 
+// Linear Core palette (docs/design/linear-core) for the "new" design.
+const NEW_COLORS: ThemeContextType['colors'] = {
+  bg: {
+    primary:   '#0b0b0c',
+    secondary: '#111112',
+    tertiary:  '#19191b',
+  },
+  text: {
+    primary:   '#f4f4f5',
+    secondary: '#a1a1aa',
+    tertiary:  '#71717a',
+  },
+  border:      '#27272a',
+  accent:      '#e4e4e7',
+  accentText:  '#09090b',
+  success:     '#5ee59b',
+  successText: '#09090b',
+  warning:     '#f5bd2e',
+  warningText: '#09090b',
+  danger:      '#fb7185',
+  dangerText:  '#09090b',
+  info:        '#67e8f9',
+  infoText:    '#09090b',
+};
+
+export function readStoredDesign(): DesignId {
+  try {
+    return localStorage.getItem(DESIGN_STORAGE_KEY) === 'new' ? 'new' : 'classic';
+  } catch {
+    return 'classic';
+  }
+}
+
 function hexToRgba(hex: string, alpha: number): string {
   const n = parseInt(hex.replace('#', ''), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 }
 
 export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  useEffect(() => {
+  const [design, setDesignState] = useState<DesignId>(readStoredDesign);
+  const COLORS = design === 'new' ? NEW_COLORS : CLASSIC_COLORS;
+
+  const setDesign = useCallback((next: DesignId) => {
+    setDesignState(next);
+    try {
+      localStorage.setItem(DESIGN_STORAGE_KEY, next);
+    } catch {
+      // Storage may be unavailable; the choice still applies for this session.
+    }
+  }, []);
+
+  // Layout effect: the palette and data-design land before paint, so switching does not flash.
+  useLayoutEffect(() => {
+    document.documentElement.dataset.design = design;
     document.body.style.backgroundColor = COLORS.bg.primary;
     document.body.style.color = COLORS.text.primary;
     document.body.classList.remove('theme-light', 'style-preset-1', 'theme-mode-1', 'theme-mode-2');
@@ -105,10 +160,10 @@ export const ThemeProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     localStorage.removeItem('app_theme');
     localStorage.removeItem('app_style_preset');
     localStorage.removeItem('app_theme_mode');
-  }, []);
+  }, [design, COLORS]);
 
   return (
-    <ThemeContext.Provider value={{ theme: 'dark', stylePreset: '3', themeMode: '3', colors: COLORS }}>
+    <ThemeContext.Provider value={{ theme: 'dark', stylePreset: '3', themeMode: '3', colors: COLORS, design, setDesign }}>
       {children}
     </ThemeContext.Provider>
   );

@@ -74,3 +74,6 @@ frontend/.env
 !.env.example
 *.har
 *.trace
+
+# graphify knowledge graph (local)
+graphify-out/

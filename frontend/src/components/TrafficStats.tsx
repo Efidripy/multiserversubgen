@@ -750,7 +750,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
   );
 
   return (
-    <div className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-2 text-slate-100 sm:p-4 lg:p-6">
+    <div data-ln="traffic" className="min-h-screen min-w-0 overflow-hidden bg-[#0a0e1a] p-2 text-slate-100 sm:p-4 lg:p-6">
       <div className="min-w-0 space-y-4 overflow-hidden">
         {error && <div className="rounded-lg border border-rose-400/30 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div>}
 
@@ -820,7 +820,7 @@ export const TrafficStats: React.FC<{ onNavigateToClient?: (email: string) => vo
 
         {groupBy === 'client' && trafficNodeNames.length > 1 && <section className={panelClass}><h6 className={titleClass}>{t('traffic.trafficByNode')}</h6><div className="mt-4 grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">{trafficNodeNames.map(nodeName => { const nodeTotal = trafficData.filter(d => d.node_name === nodeName).reduce((s, d) => s + d.total, 0); const pct = totalTraffic > 0 ? (nodeTotal / totalTraffic * 100).toFixed(0) : '0'; return <button key={nodeName} type="button" className={cn('min-w-0 rounded-lg border px-3 py-3 text-left transition', filterNodeName === nodeName ? 'border-amber-300/50 bg-amber-300/10 text-amber-200' : 'border-cyan-500/20 bg-[#0a0e1a] text-slate-300 hover:border-cyan-300/40')} onClick={() => setFilterNodeName(prev => prev === nodeName ? '' : (nodeName ?? ''))}><div className="truncate text-xs font-medium uppercase tracking-[0.14em]">{nodeName}</div><div className="mt-2 flex min-w-0 items-center justify-between gap-3"><span className={cn(valueClass, 'text-slate-100')}>{formatBytes(nodeTotal)}</span><span className="whitespace-nowrap font-mono text-xs text-slate-500">{pct}%</span></div><div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[#0a0e1a]"><div className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-emerald-300" style={{ width: `${pct}%` }} /></div></button>; })}</div></section>}
 
-        <div className="grid min-w-0 grid-cols-1 items-start gap-4 xl:grid-cols-2">
+        <div data-ln="traffic-tables" className="grid min-w-0 grid-cols-1 items-start gap-4 xl:grid-cols-2">
           <section className={panelClass}>
             <div className="mb-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><h6 className={titleClass}>{t('traffic.onlineClients')} ({onlineClients.length})</h6><div className="flex items-center gap-2"><div className="text-xs text-slate-500">{onlineLoading ? t('traffic.loadingOnline') : t('traffic.sortHint')}</div>{!onlineDetailsRequested && <button type="button" className={controlButtonClass} onClick={() => void loadOnlineDetails()}>{t('common.refresh')}</button>}</div></div>
             {onlineLoading && <div className="mb-4 h-1 overflow-hidden rounded-full bg-[#0a0e1a]"><div className="h-full w-1/2 animate-pulse rounded-full bg-cyan-300" /></div>}

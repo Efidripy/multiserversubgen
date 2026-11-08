@@ -620,7 +620,7 @@ export const SubscriptionManager: React.FC<{
   const totalLoading = loading || emailsLoading || groupsLoading || nodesLoading;
 
   return (
-    <div className={shellClass}>
+    <div className={shellClass} data-ln="subscriptions">
       <nav className="mb-4 overflow-x-auto border-b border-cyan-400/14" aria-label={t('subscriptions.tabs.label')}>
         <div className="flex min-w-max gap-6">
           {subscriptionTabs.map((tab) => {
@@ -955,7 +955,7 @@ export const SubscriptionManager: React.FC<{
             if (e.target === e.currentTarget) setGroupEditorOpen(false);
           }}
         >
-          <div className="w-full max-w-2xl overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
+          <div data-ln="subscription-group-editor" className="w-full max-w-2xl overflow-hidden rounded-lg border border-cyan-500/20 bg-[#0f1420] shadow-[0_24px_80px_rgba(0,0,0,0.45)]">
             <div className="flex items-center justify-between border-b border-cyan-500/20 px-5 py-4">
               <div className="min-w-0">
                 <h4 className="flex items-center gap-2 text-sm font-medium uppercase tracking-[0.14em] text-slate-100">

@@ -1,0 +1,31 @@
+/* Sub Manager — Design 02 / Linear Core */
+.theme-linear {
+  color-scheme: dark;
+  --bg: #0b0b0c;
+  --nav: #0e0e0f;
+  --surface: #111112;
+  --surface-2: #19191b;
+  --surface-hover: #1d1d20;
+  --line: #27272a;
+  --line-strong: #3f3f46;
+  --text: #f4f4f5;
+  --text-secondary: #a1a1aa;
+  --muted: #71717a;
+  --accent: #e4e4e7;
+  --accent-2: #71717a;
+  --success: #5ee59b;
+  --warning: #f5bd2e;
+  --danger: #fb7185;
+  --info: #67e8f9;
+  --accent-button-text: #09090b;
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius-md: 7px;
+  --control-height: 28px;
+  --topbar-height: 49px;
+  --sidebar-width: 174px;
+  --sidebar-collapsed: 52px;
+  --layout-gap: 8px;
+  --shadow: none;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
