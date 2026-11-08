@@ -106,9 +106,9 @@ function StatTile({ label, children }: { label: string; children: React.ReactNod
 
 function TopUsers({ data, node, sort, setSort, error }: { data: TrafficComparisonData | null; node: string; sort: string; setSort: (s: string) => void; error: boolean }) {
   const { t } = useTranslation();
-  const top = [...(data?.top_clients ?? [])].sort((a, b) => sort === 'growth' ? (b.delta_pct ?? -Infinity) - (a.delta_pct ?? -Infinity) : b.current - a.current);
+  const top = (sort === 'growth' ? data?.top_growth : data?.top_clients) ?? [];
   const max = Math.max(1, ...top.flatMap((c: Client) => [c.current, c.previous ?? 0]));
-  const topTotal = top.reduce((sum, c) => sum + c.current, 0);
+  const topTotal = (data?.top_clients ?? []).reduce((sum, c) => sum + c.current, 0);
   return <section className="tc-card">
       <div className="tc-head">
       <h3>

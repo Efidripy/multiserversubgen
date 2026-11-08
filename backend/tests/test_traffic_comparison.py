@@ -56,3 +56,46 @@ def test_service_aggregation_alignment_filter_and_incomplete_history(tmp_path):
     assert all(p['ts'] % 3600 == 0 for p in data['series_current'])
     assert load_comparison(str(db), '24h', 2, now)['previous_available'] is False
     assert all(p['ts'] % 86400 == 0 for p in load_comparison(str(db), '7d', 1, now)['series_current'])
+
+
+def test_comparison_counts_each_reset_inside_bucket(tmp_path):
+    from services.traffic_comparison import load_comparison
+
+    db = tmp_path / 'history.db'
+    now = 2_000_000
+    end = (now // 3600 + 1) * 3600
+    start = end - 48 * 3600
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE node_history (ts INTEGER, node_id INTEGER, traffic_total INTEGER)')
+        conn.execute('CREATE TABLE traffic_stats_snapshots (group_by TEXT, bucket_kind TEXT, snapshot_ts INTEGER, stats_json TEXT)')
+        conn.executemany('INSERT INTO node_history VALUES (?, 1, ?)', [
+            (start - 1, 100), (start + 24 * 3600 + 10, 100), (start + 24 * 3600 + 20, 120),
+            (start + 24 * 3600 + 30, 5), (start + 24 * 3600 + 40, 150),
+        ])
+    data = load_comparison(str(db), '24h', 1, now)
+    assert data['series_current'][0]['value'] == 170
+
+
+def test_comparison_client_equal_windows_and_growth_ranking(tmp_path):
+    import json
+
+    from services.traffic_comparison import load_comparison
+
+    db = tmp_path / 'history.db'
+    day = 86400
+    now = 100 * day + 12 * 3600
+    with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE node_history (ts INTEGER, node_id INTEGER, traffic_total INTEGER)')
+        conn.execute('CREATE TABLE traffic_stats_snapshots (group_by TEXT, bucket_kind TEXT, snapshot_ts INTEGER, stats_json TEXT)')
+        for days_ago in (14, 7, 0):
+            elapsed = 14 - days_ago
+            clients = {f'large{i}': {'total': elapsed * 100} for i in range(10)}
+            clients['outside'] = {'total': {14: 0, 7: 10, 0: 40}[days_ago]}
+            conn.execute('INSERT INTO traffic_stats_snapshots VALUES (?, ?, ?, ?)',
+                         ('client', 'day', (100 - days_ago) * day, json.dumps(clients)))
+    data = load_comparison(str(db), '7d', None, now)
+    assert data['top_clients'][0]['delta_pct'] == 0
+    assert data['top_clients'][0]['current'] == data['top_clients'][0]['previous'] == 700
+    assert all(client['email'] != 'outside' for client in data['top_clients'])
+    assert data['top_growth'][0]['email'] == 'outside'
+    assert data['top_growth'][0]['delta_pct'] == 200

@@ -4,7 +4,7 @@ const state = vi.hoisted(() => ({ design: 'classic' }));
 vi.mock('../src/contexts/ThemeContext', () => ({ useDesign: () => state.design }));
 vi.mock('../src/services/DashboardDataContext', () => ({ useDashboardData: () => null }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key, i18n: { language: 'en' } }) }));
-vi.mock('../src/api/trafficComparison', () => ({ getTrafficComparison: vi.fn().mockResolvedValue({ series_current: [], series_previous: [], totals: { current: 200, previous: 100 }, top_clients: [{ email: 'a@example.test', current: 50, previous: null, delta_pct: null }, { email: 'b@example.test', current: 40, previous: 20, delta_pct: 100 }] }) }));
+vi.mock('../src/api/trafficComparison', () => ({ getTrafficComparison: vi.fn().mockResolvedValue({ series_current: [], series_previous: [], totals: { current: 200, previous: 100 }, top_clients: [{ email: 'a@example.test', current: 50, previous: null, delta_pct: null }, { email: 'b@example.test', current: 40, previous: 20, delta_pct: 100 }], top_growth: [{ email: 'outside@example.test', current: 10, previous: 1, delta_pct: 900 }] }) }));
 import { getTrafficComparison } from '../src/api/trafficComparison';
 import { DashboardSummary } from '../src/components/DashboardSummary';
 afterEach(cleanup);
@@ -25,17 +25,21 @@ it('sorts clients by growth', async () => {
   await waitFor(() => expect(screen.getByText('b@example.test')).toBeTruthy());
   fireEvent.click(screen.getByRole('button', { name: 'comparison.growth' }));
   const rows = view.container.querySelectorAll('.tc-row');
-  expect(rows[0].textContent).toContain('b@example.test');
+  expect(rows[0].textContent).toContain('outside@example.test');
+  expect(screen.queryByText('a@example.test')).toBeNull();
 });
 
 
 it('uses round byte-unit ticks and caps a share from mismatched sources', async () => {
   const gb = 1024 ** 3;
   vi.mocked(getTrafficComparison).mockResolvedValueOnce({
+    history_days: 2,
+    previous_available: true,
     series_current: [{ ts: 1, value: 93.1 * gb }],
     series_previous: [{ ts: 1, value: 80 * gb }],
     totals: { current: 100, previous: 50 },
     top_clients: [{ email: 'over@example.test', current: 150, previous: null, delta_pct: null }],
+    top_growth: [],
   } as Awaited<ReturnType<typeof getTrafficComparison>>);
   state.design = 'new';
   render(<DashboardSummary />);
