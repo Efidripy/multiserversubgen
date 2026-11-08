@@ -249,6 +249,9 @@ curl "https://your-domain/api/v1/sub-grouped/$GROUP_TOKEN?nodes=US,UK"
 Встроенные клиенты:
 - **Happ** (`id: happ`, kind: `happ`, regex: `\bhapp\b`, формат по умолчанию: `base64`):
   - *Маршрутизация*: `routing_enable` (включение маршрутизации), `routing` (текст правил, должен начинаться с `happ://`), `routing_url` (внешний URL для скачивания правил), `no_limit` (`No-Limit-Enabled`), `hide_settings` (`Hide-Settings`). В панели доступен визуальный редактор маршрутизации Happ с готовыми пресетами (глобальный, обход LAN, обход РФ, обход Китая).
+
+  The `routing_ios`, `routing_android` and `routing_windows` switches control routing delivery to those platforms and default to enabled. Happ platform detection uses `X-Device-OS`, or User-Agent when the header is absent. Other and unknown platforms receive routing as usual.
+
   - *Внешний вид*: `color_profile` (`Color-Profile`), `sub_info_text` (`Sub-Info-Text`), `sub_info_color` (`Sub-Info-Color`: `blue`, `green`, `red`), `sub_info_button_text` (`Sub-Info-Button-Text`), `sub_info_button_link` (`Sub-Info-Button-Link`), `sub_expire` (`Sub-Expire`), `sub_expire_button_link` (`Sub-Expire-Button-Link`), `notification_expire` (`Notification-Subs-Expire`).
   - *Сеть*: `tun_mode` (`Tun-Mode`: `system`, `gvisor`), `tun_type` (`Tun-Type`: `singbox`, `tun2proxy`, `default`, `xray`), `exclude_routes` (`Exclude-Routes`), `exclude_apns` (`Exclude-Apns-Enable`), `ping_type` (`Ping-Type`: `proxy`, `proxy-head`, `tcp`, `icmp`), `autoconnect` (`Subscription-Autoconnect`), `autoconnect_type` (`Subscription-Autoconnect-Type`: `lowestdelay`, `lastused`, `random`), `per_app_mode` (`Per-App-Proxy-Mode`: `on`, `bypass`), `per_app_list` (`Per-App-Proxy-List`), `local_proxy_auth` (`Socks-Auth-Mode` и `Http-Auth-Mode`: `auto`, `disable`).
   - *Управление*: `provider_id` (`ProviderID`), `new_url` (`New-Url`), `fallback_url` (`Fallback-Url`).

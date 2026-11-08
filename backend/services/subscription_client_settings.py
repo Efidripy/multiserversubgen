@@ -27,7 +27,7 @@ _FORBIDDEN_HEADERS = {
 }
 
 DEFAULT_CLIENTS = [
-    {"id": "happ", "name": "Happ", "kind": "happ", "builtin": True, "enabled": False, "user_agent_regex": r"\bhapp\b", "format": "base64", "settings": {}, "headers": []},
+    {"id": "happ", "name": "Happ", "kind": "happ", "builtin": True, "enabled": False, "user_agent_regex": r"\bhapp\b", "format": "base64", "settings": {"routing_ios": True, "routing_android": True, "routing_windows": True}, "headers": []},
     {"id": "incy", "name": "Incy", "kind": "incy", "builtin": True, "enabled": False, "user_agent_regex": r"\bincy\b", "format": "base64", "settings": {}, "headers": []},
     {"id": "mihomo", "name": "Mihomo/Clash", "kind": "mihomo", "builtin": True, "enabled": False, "user_agent_regex": r"^(?:flclash|rabbit|flowvy|murge|mihomo|prizrak-box|koala-clash|clash)", "format": "mihomo", "settings": {}, "headers": []},
     {"id": "stash", "name": "Stash", "kind": "mihomo", "builtin": True, "enabled": False, "user_agent_regex": r"^stash", "format": "mihomo", "settings": {}, "headers": []},
@@ -39,6 +39,7 @@ _OLD_MIHOMO_REGEX = r"^(?:flclash|rabbit|flowvy|murge|mihomo|prizrak-box|koala-c
 FIELD_SPECS = {
     "happ": [
         ("routing_enable", "Routing-Enable", "bool", "routing", None), ("routing", "Routing", "text", "routing", None), ("routing_url", None, "url", "routing", None),
+        ("routing_ios", None, "bool", "routing", None), ("routing_android", None, "bool", "routing", None), ("routing_windows", None, "bool", "routing", None),
         ("no_limit", "No-Limit-Enabled", "bool", "routing", None), ("hide_settings", "Hide-Settings", "bool", "routing", None),
         ("color_profile", "Color-Profile", "text", "appearance", None), ("sub_info_text", "Sub-Info-Text", "text", "appearance", None),
         ("sub_info_color", "Sub-Info-Color", "enum", "appearance", ["blue", "green", "red"]), ("sub_info_button_text", "Sub-Info-Button-Text", "text", "appearance", None),
@@ -469,6 +470,9 @@ def _validate_client(item: Any, builtins: dict[str, dict[str, Any]]) -> dict[str
         if spec is None:
             continue
         clean_settings[key] = _validate_field(base["kind"], key, value, spec)
+    if base["kind"] == "happ":
+        for key in ("routing_ios", "routing_android", "routing_windows"):
+            clean_settings.setdefault(key, True)
     base["settings"] = clean_settings
     base["headers"] = _validate_headers(base["headers"])
     return base

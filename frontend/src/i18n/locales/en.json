@@ -965,6 +965,7 @@
       "insertToken": "Insert"
     },
     "happRouting": {
+      "platformHint": "Send routing rules to this platform.",
       "openEditor": "Happ Routing Editor",
       "closeEditor": "Close Editor",
       "presetsTitle": "Presets",
@@ -1117,6 +1118,9 @@
     },
     "fields": {
       "happ": {
+        "routing_ios": "Send routing to iOS",
+        "routing_android": "Send routing to Android",
+        "routing_windows": "Send routing to Windows",
         "routing_enable": "Enable Routing",
         "routing": "Routing Rule",
         "routing_url": "Routing Rules URL",

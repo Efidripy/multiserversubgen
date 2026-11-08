@@ -819,6 +819,11 @@ def test_remote_rules_delivered_to_happ_routing_incy_body_and_mihomo_yaml(env, m
     res_happ = sub(env, "Happ/1")
     assert res_happ.status_code == 200
     assert res_happ.headers.get("Routing") == happ_body
+    happ_client["settings"]["routing_ios"] = False
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+    disabled = env.client.get(f"/api/v1/sub/{env.email_token}", headers={"User-Agent": "Happ/1", "X-Device-OS": "iOS"})
+    assert "Routing" not in disabled.headers
+    assert "Routing-Enable" not in disabled.headers
 
 
 # 12. CRLF и кириллица в заголовке правила: нет 500, CRLF не попал в значение, кириллица как base64:.
@@ -908,3 +913,46 @@ def test_subscription_devices_rbac_and_deletion(env):
     # Repeated deletion -> 404
     res_del_again = env.client.delete(f"/api/v1/subscription-client-settings/devices/{device_id}")
     assert res_del_again.status_code == 404
+
+
+@pytest.mark.parametrize("platform,device_os,ua", [
+    ("ios", "iOS", "Happ/1 iPhone"),
+    ("android", "Android", "Happ/1 Android"),
+    ("windows", "Windows", "Happ/1 Windows"),
+])
+def test_happ_platform_routing(env, platform, device_os, ua):
+    settings = default_settings()
+    client = next(c for c in settings["clients"] if c["id"] == "happ")
+    client["enabled"] = True
+    client["settings"].update({"routing": "happ://rule", "routing_enable": True, "hide_settings": True})
+    # Simulate settings saved before platform switches existed.
+    for name in ("ios", "android", "windows"):
+        client["settings"].pop(f"routing_{name}")
+    saved = env.client.put("/api/v1/subscription-client-settings", json=settings)
+    assert saved.status_code == 200
+    loaded = env.client.get("/api/v1/subscription-client-settings").json()["settings"]
+    happ = next(c for c in loaded["clients"] if c["id"] == "happ")
+    assert all(happ["settings"][f"routing_{name}"] for name in ("ios", "android", "windows"))
+    url = f"/api/v1/sub/{env.email_token}"
+    assert env.client.get(url, headers={"User-Agent": ua, "X-Device-OS": device_os}).headers["Routing"] == "happ://rule"
+    client["settings"][f"routing_{platform}"] = False
+    assert env.client.put("/api/v1/subscription-client-settings", json=settings).status_code == 200
+    for headers in ({"User-Agent": ua, "X-Device-OS": device_os.swapcase()}, {"User-Agent": ua}):
+        response = env.client.get(url, headers=headers)
+        assert "Routing" not in response.headers
+        assert "Routing-Enable" not in response.headers
+        assert response.headers["Hide-Settings"] == "1"
+    other = "Android" if platform != "android" else "iOS"
+    for headers in ({"User-Agent": ua, "X-Device-OS": other}, {"User-Agent": "Happ/1 mystery"}, {"User-Agent": ua, "X-Device-OS": "Linux"}):
+        assert env.client.get(url, headers=headers).headers["Routing"] == "happ://rule"
+
+
+def test_happ_platform_routing_on_group_cache_hit(env):
+    configure(env, "happ", settings={"routing": "happ://rule", "routing_enable": True, "routing_ios": False})
+    url = f"/api/v1/sub-grouped/{env.group_token}"
+    android = env.client.get(url, headers={"User-Agent": "Happ/1", "X-Device-OS": "Android"})
+    ios = env.client.get(url, headers={"User-Agent": "Happ/1", "X-Device-OS": "iOS"})
+    assert android.headers["Routing"] == "happ://rule"
+    assert ios.headers["X-Subscription-Cache"] == "hit"
+    assert "Routing" not in ios.headers
+    assert "Routing-Enable" not in ios.headers

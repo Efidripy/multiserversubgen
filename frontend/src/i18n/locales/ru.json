@@ -965,6 +965,7 @@
       "insertToken": "Вставить"
     },
     "happRouting": {
+      "platformHint": "Отправлять правила маршрутизации этой платформе.",
       "openEditor": "Редактор маршрутизации Happ",
       "closeEditor": "Закрыть редактор",
       "presetsTitle": "Пресеты",
@@ -1117,6 +1118,9 @@
     },
     "fields": {
       "happ": {
+        "routing_ios": "Отдавать маршрутизацию на iOS",
+        "routing_android": "Отдавать маршрутизацию на Android",
+        "routing_windows": "Отдавать маршрутизацию на Windows",
         "routing_enable": "Включить маршрутизацию",
         "routing": "Правило маршрутизации",
         "routing_url": "URL правил маршрутизации",
