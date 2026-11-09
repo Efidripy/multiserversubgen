@@ -379,7 +379,10 @@ def build_operations_router(
 
         if range not in ("24h", "7d", "30d"):
             raise HTTPException(status_code=400, detail="Invalid range")
-        return await _run(load_comparison, db_path, range, node_id, int(time.time()))
+        from services.live_stats_runtime import LiveStatsRuntime
+
+        system_emails = LiveStatsRuntime._snapshot_system_client_emails(_latest_snapshot_payload())
+        return await _run(load_comparison, db_path, range, node_id, int(time.time()), system_emails)
 
     @router.get("/api/v1/history/nodes")
     async def all_nodes_history(request: Request, since_sec: int = 86400, limit_per_node: int = 1200):
