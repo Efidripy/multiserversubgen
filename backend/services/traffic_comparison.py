@@ -51,6 +51,14 @@ def build_comparison(snapshots, client_snapshots, step, count, now, history_star
     for sample_node, ts, inbound_raw, client_raw in samples:
         sample_streams.setdefault(str(sample_node), []).append((ts, _stats(inbound_raw), _stats(client_raw)))
     cutoffs = {key: rows[0][0] for key, rows in sample_streams.items()}
+    bridges = {}
+    for sample_node, rows in sample_streams.items():
+        node_prefix = f"node:{sample_node}:inbound:"
+        preceding = [(ts, stats) for ts, stats in parsed if ts < rows[0][0]]
+        if preceding:
+            ts, stats = preceding[-1]
+            bridges[sample_node] = (ts, {key: value for key, value in stats.items()
+                                         if key.startswith(node_prefix)})
 
     def distribute(t0, t1, delta, limit=None):
         if t1 <= t0:
@@ -71,8 +79,16 @@ def build_comparison(snapshots, client_snapshots, step, count, now, history_star
                 continue
             parts = key.split(":", 3)
             cutoff = cutoffs.get(parts[1]) if len(parts) >= 4 and parts[0] == "node" else None
+            if cutoff is not None and parts[1] in bridges:
+                cutoff = bridges[parts[1]][0]
             distribute(t0, t1, _delta(_metric(before[key]), _metric(item)), cutoff)
-    for rows in sample_streams.values():
+    for sample_node, rows in sample_streams.items():
+        if sample_node in bridges:
+            t0, before = bridges[sample_node]
+            t1, after, _ = rows[0]
+            delta = sum(_delta(_metric(before[key]), _metric(item))
+                        for key, item in after.items() if key in before)
+            distribute(t0, t1, delta)
         for (t0, before, _), (t1, after, _) in zip(rows, rows[1:]):
             delta = sum(_delta(_metric(before[key]), _metric(item))
                         for key, item in after.items() if key in before)
@@ -96,7 +112,7 @@ def build_comparison(snapshots, client_snapshots, step, count, now, history_star
         system = {normalize_email(email) for email in system_client_emails}
         client_data = [(ts, _stats(raw)) for ts, raw in client_snapshots]
         amounts = {}
-        def add_client_pairs(data, limit=None):
+        def add_client_pairs(data, limit=None, lower_limit=None):
             for (t0, before), (t1, after) in zip(data, data[1:]):
                 if t1 <= t0:
                     continue
@@ -110,15 +126,16 @@ def build_comparison(snapshots, client_snapshots, step, count, now, history_star
                     entry = amounts.setdefault(email, [0.0, 0.0, False, False, None])
                     for index, left in enumerate((start, start + duration)):
                         right = min(t1, left + duration, limit if limit is not None else t1)
-                        overlap = max(0, right - max(t0, left))
+                        overlap = max(0, right - max(t0, left, lower_limit if lower_limit is not None else t0))
                         if overlap:
                             entry[index] += delta * overlap / (t1 - t0)
                             entry[index + 2] = True
                             entry[4] = t0 if entry[4] is None else min(entry[4], t0)
 
-        add_client_pairs(client_data, min(cutoffs.values()) if cutoffs else None)
+        client_cutoff = max(cutoffs.values()) if cutoffs else None
+        add_client_pairs(client_data, client_cutoff)
         for rows in sample_streams.values():
-            add_client_pairs([(ts, clients) for ts, _, clients in rows])
+            add_client_pairs([(ts, clients) for ts, _, clients in rows], lower_limit=client_cutoff)
         for email, (prev, cur, has_prev, has_cur, earliest) in amounts.items():
             if not has_cur:
                 continue
