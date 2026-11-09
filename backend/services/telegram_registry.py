@@ -6404,6 +6404,8 @@ class TelegramRegistry:
         for customer_id, node_id, enabled, read_only, desired_enabled, management_state in bound_rows:
             local_customer_id = int(customer_id)
             local_node_id = int(node_id)
+            if management_state == "missing" and local_node_id not in eligible_node_ids:
+                continue
             state = _classify_customer_node_state(
                 binding_present=True,
                 management_state=str(management_state) if management_state is not None else None,
@@ -6457,6 +6459,8 @@ class TelegramRegistry:
 
         result: list[CustomerNodeMatrixRow] = []
         for binding_id, node_id, name, enabled, read_only, desired_enabled, management_state in bound_rows:
+            if management_state == "missing" and int(node_id) not in eligible_node_ids:
+                continue
             state = _classify_customer_node_state(
                 binding_present=True,
                 management_state=str(management_state) if management_state is not None else None,

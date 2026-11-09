@@ -905,6 +905,54 @@ def test_customer_node_matrix_hides_technical_nodes_but_keeps_problem_bindings(t
     assert rows[1].binding_id is None
 
 
+def _matrix_binding_fixture(tmp_path, *, management_state, provisioning_enabled, enabled=1, read_only=0):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    _insert_node(db_path, 1, "test-node", enabled=enabled, read_only=read_only)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(
+        email_display="test-user", origin="telegram", email_source="admin", public_code="test-user"
+    )
+    with connect(db_path) as conn:
+        conn.execute(
+            "INSERT INTO telegram_node_policies (node_id, provisioning_enabled) VALUES (1, ?)",
+            (provisioning_enabled,),
+        )
+        conn.execute(
+            """INSERT INTO customer_node_bindings
+               (customer_id, node_id, remote_email, source, desired_enabled, management_state)
+               VALUES (?, 1, 'test-user', 'bot_provisioned', 1, ?)""",
+            (customer_id, management_state),
+        )
+    return registry, customer_id
+
+
+@pytest.mark.parametrize("provisioning_enabled,enabled,read_only", [(0, 1, 0), (1, 0, 0), (1, 1, 1)])
+def test_customer_node_matrix_hides_missing_ineligible_binding(tmp_path, provisioning_enabled, enabled, read_only):
+    registry, customer_id = _matrix_binding_fixture(
+        tmp_path, management_state="missing", provisioning_enabled=provisioning_enabled,
+        enabled=enabled, read_only=read_only,
+    )
+    assert registry.customer_node_matrix(customer_id) == []
+    item = registry.list_customers(query="test-user", page=1, page_size=10).items[0]
+    assert item.nodes_problem == 0
+    assert item.nodes_available == 0
+
+
+def test_customer_node_matrix_keeps_missing_eligible_binding_available(tmp_path):
+    registry, customer_id = _matrix_binding_fixture(tmp_path, management_state="missing", provisioning_enabled=1)
+    rows = registry.customer_node_matrix(customer_id)
+    assert [(row.node_id, row.state) for row in rows] == [(1, "available_to_add")]
+    assert registry.list_customers(query="test-user", page=1, page_size=10).items[0].nodes_available == 1
+
+
+def test_customer_node_matrix_keeps_confirmed_binding_without_provisioning(tmp_path):
+    registry, customer_id = _matrix_binding_fixture(tmp_path, management_state="confirmed", provisioning_enabled=0)
+    rows = registry.customer_node_matrix(customer_id)
+    assert [(row.node_id, row.state) for row in rows] == [(1, "active")]
+    assert registry.list_customers(query="test-user", page=1, page_size=10).items[0].nodes_active == 1
+
+
 def test_customer_list_node_state_counts_match_matrix_and_keep_binding_count(tmp_path):
     db_path = str(tmp_path / "admin.db")
     init_db(db_path)
