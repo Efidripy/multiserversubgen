@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Protocol
 
 from services.db_bootstrap import connect
-from services.telegram_registry import BOT_CLIENT_FLOW, BOT_INBOUND_ID, canonicalize_email
+from services.telegram_registry import BOT_CLIENT_FLOW, BOT_INBOUND_ID, TelegramRegistry, canonicalize_email
 
 
 class ProvisioningRemoteError(RuntimeError):
@@ -423,6 +423,8 @@ class ProvisioningPort(Protocol):
 
     def add_client(self, *, node: dict[str, Any], inbound_id: int, client: dict[str, Any]) -> None: ...
 
+    def set_client_enabled(self, *, node: dict[str, Any], inbound_id: int, client_id: str, enabled: bool) -> None: ...
+
 
 class ClientManagerProvisioningPort:
     """Strict adapter over the existing XUI client manager.
@@ -579,7 +581,7 @@ class TelegramProvisioningWorker:
             return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "skipped")
 
         try:
-            matches = self._find_matches(claimed, node)
+            matches, remote, summary = self._find_matches(claimed, node)
         except ProvisioningPermanentError as exc:
             self._finish_attempt(claimed, status="failed", error_code="remote_read_rejected", error_summary=str(exc))
             return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "failed")
@@ -589,8 +591,10 @@ class TelegramProvisioningWorker:
 
         if matches == "exact":
             return self._confirm_or_fail(claimed)
+        if matches == "adopt" and remote is not None:
+            return self._adopt_or_fail(claimed, node, remote)
         if matches == "conflict":
-            self._finish_attempt(claimed, status="failed", error_code="identity_conflict")
+            self._finish_attempt(claimed, status="failed", error_code="identity_conflict", error_summary=summary)
             return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "failed")
 
         client = {
@@ -615,14 +619,14 @@ class TelegramProvisioningWorker:
             return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "ambiguous")
 
         try:
-            matches = self._find_matches(claimed, node)
+            matches, _remote, summary = self._find_matches(claimed, node)
         except Exception:
             self._defer_reconcile(claimed, "read_after_write_uncertain")
             return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "ambiguous")
         if matches == "exact":
             return self._confirm_or_fail(claimed)
         if matches == "conflict":
-            self._finish_attempt(claimed, status="failed", error_code="identity_conflict")
+            self._finish_attempt(claimed, status="failed", error_code="identity_conflict", error_summary=summary)
             return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "failed")
         self._defer_reconcile(claimed, "read_after_write_missing")
         return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "ambiguous")
@@ -631,8 +635,10 @@ class TelegramProvisioningWorker:
     def _node_is_writable(node: dict[str, Any] | None) -> bool:
         return bool(node) and bool(node.get("enabled", True)) and not bool(node.get("read_only", False))
 
-    def _find_matches(self, claimed: ClaimedAttempt, node: dict[str, Any]) -> str:
+    def _find_matches(self, claimed: ClaimedAttempt, node: dict[str, Any]) -> tuple[str, RemoteClient | None, str | None]:
         clients = self._port.list_clients(node=node, inbound_id=claimed.inbound_id, email=claimed.email)
+        if len(clients) > 1:
+            return "conflict", None, f"На ноде уже есть {len(clients)} записей с этим email"
         exact = [
             client
             for client in clients
@@ -642,10 +648,44 @@ class TelegramProvisioningWorker:
             and client.flow == claimed.desired_flow
         ]
         if len(exact) == 1:
-            return "exact"
+            return "exact", exact[0], None
         if exact or clients:
-            return "conflict"
-        return "missing"
+            remote = clients[0]
+            if remote.flow != BOT_CLIENT_FLOW:
+                # Remote values are untrusted and may contain secrets.
+                return "conflict", None, "Запись на ноде не подходит боту (flow неподходящий)"
+            with connect(self._db_path) as conn:
+                trigger = conn.execute("SELECT trigger FROM telegram_provisioning_jobs WHERE id = ?", (claimed.job_id,)).fetchone()
+            if trigger and trigger[0] == "node_backfill":
+                return "adopt", remote, None
+            return "conflict", None, "На ноде уже есть запись с этим email"
+        return "missing", None, None
+
+    def _adopt_or_fail(self, claimed: ClaimedAttempt, node: dict[str, Any], remote: RemoteClient) -> ProvisioningRunResult:
+        if remote.enabled != claimed.desired_client_enabled:
+            try:
+                self._port.set_client_enabled(node=node, inbound_id=claimed.inbound_id,
+                                              client_id=remote.client_id, enabled=claimed.desired_client_enabled)
+                matches = self._port.list_clients(node=node, inbound_id=claimed.inbound_id, email=claimed.email)
+                if len(matches) != 1 or matches[0] != RemoteClient(remote.client_id, remote.email, remote.sub_id, remote.flow, claimed.desired_client_enabled):
+                    raise ProvisioningRemoteError("remote update not confirmed")
+            except Exception:
+                self._defer_reconcile(claimed, "remote_update_uncertain")
+                return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "ambiguous")
+        try:
+            with connect(self._db_path) as conn:
+                TelegramRegistry._insert_adopted_binding(
+                    conn, customer_id=claimed.customer_id, node_id=claimed.node_id,
+                    remote_client_id=remote.client_id, remote_sub_id=remote.sub_id,
+                    remote_email=remote.email, remote_enabled=claimed.desired_client_enabled,
+                )
+                conn.execute("INSERT INTO telegram_audit_log (event_type, actor_type, actor_id, entity_type, entity_id) VALUES ('drift_binding_adopted', 'system', 'node_backfill', 'provisioning_attempt', ?)", (str(claimed.attempt_id),))
+                conn.execute("UPDATE telegram_provisioning_attempts SET status = 'succeeded', remote_client_id = ?, error_code = NULL, error_summary = NULL, last_checked_at = CURRENT_TIMESTAMP, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (remote.client_id, claimed.attempt_id))
+                self._finalize_job(conn, claimed.job_id)
+        except sqlite3.IntegrityError:
+            self._finish_attempt(claimed, status="failed", error_code="local_binding_conflict", error_summary="local binding conflict")
+            return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "failed")
+        return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "succeeded")
 
     def _claim_next_attempt(self) -> ClaimedAttempt | None:
         current = self._now()

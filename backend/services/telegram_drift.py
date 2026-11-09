@@ -43,11 +43,11 @@ class TelegramDriftScanner:
             email = str(row.get("email") or "").strip()
             sub_id = str(row.get("subId") or "").strip()
             if not client_id or not email:
-                continue
+                raise RuntimeError("strict client reader returned an incomplete inbound client")
             try:
                 canonicalize_email(email)
-            except Exception:
-                continue
+            except Exception as exc:
+                raise RuntimeError("strict client reader returned an invalid email") from exc
             result.append({
                 "remote_client_id": client_id,
                 "remote_email": email,

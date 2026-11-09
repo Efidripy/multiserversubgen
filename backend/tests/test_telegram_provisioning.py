@@ -48,6 +48,67 @@ class FakeProvisioningPort:
             )
         )
 
+    def set_client_enabled(self, *, node, inbound_id, client_id, enabled):
+        self.clients = [RemoteClient(c.client_id, c.email, c.sub_id, c.flow, enabled)
+                        if c.client_id == client_id else c for c in self.clients]
+
+
+def _backfill_job(tmp_path):
+    db_path, approval, attempt = _queued_job(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_provisioning_jobs SET trigger = 'node_backfill' WHERE id = ?", (approval.job_id,))
+    return db_path, approval, attempt
+
+
+def test_node_backfill_adopts_existing_client_and_subscription_link(tmp_path, monkeypatch):
+    from services import subscription_links
+
+    db_path, approval, _ = _backfill_job(tmp_path)
+    port = FakeProvisioningPort()
+    port.clients.append(RemoteClient("existing-id", "worker-user", "existing-sub", "xtls-rprx-vision", False))
+    assert _worker(db_path, port).run_once().outcome == "succeeded"
+    assert port.add_calls == []
+    assert port.clients[0].enabled is True
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT remote_client_id, remote_sub_id, source, desired_enabled, last_enabled FROM customer_node_bindings").fetchone() == ("existing-id", "existing-sub", "admin_confirmed", 1, 1)
+        assert conn.execute("SELECT event_type FROM telegram_audit_log WHERE event_type = 'drift_binding_adopted'").fetchone()
+    assert TelegramRegistry(db_path).get_provisioning_job(approval.job_id).attempts[0].status == "succeeded"
+    monkeypatch.setattr(subscription_links, "fetch_inbounds", lambda node: [{
+        "protocol": "vless", "port": 443, "settings": {"clients": [{"id": "existing-id", "email": "worker-user", "flow": "xtls-rprx-vision"}]},
+        "streamSettings": {"security": "tls"},
+    }])
+    subscription_links.invalidate_subscription_cache()
+    links = subscription_links.get_links_filtered([{"id": 1, "name": "edge-test", "ip": "example.test"}], "worker-user")
+    assert any("vless://existing-id@example.test:" in link for link in links)
+
+
+def test_node_backfill_duplicate_email_reports_count(tmp_path):
+    db_path, approval, _ = _backfill_job(tmp_path)
+    port = FakeProvisioningPort()
+    port.clients = [RemoteClient(str(i), "worker-user", "sub", "xtls-rprx-vision", True) for i in range(2)]
+    assert _worker(db_path, port).run_once().outcome == "failed"
+    attempt = TelegramRegistry(db_path).get_provisioning_job(approval.job_id).attempts[0]
+    assert attempt.error_code == "identity_conflict"
+    assert "2 записей" in attempt.error_summary
+    assert not port.add_calls
+
+
+def test_node_backfill_wrong_flow_reports_safe_reason(tmp_path):
+    db_path, approval, _ = _backfill_job(tmp_path)
+    port = FakeProvisioningPort()
+    port.clients = [RemoteClient("id", "worker-user", "sub", "private-value", True)]
+    assert _worker(db_path, port).run_once().outcome == "failed"
+    attempt = TelegramRegistry(db_path).get_provisioning_job(approval.job_id).attempts[0]
+    assert attempt.error_code == "identity_conflict"
+    assert "flow" in attempt.error_summary and "private-value" not in attempt.error_summary
+
+
+def test_node_backfill_creates_missing_client(tmp_path):
+    db_path, _, _ = _backfill_job(tmp_path)
+    port = FakeProvisioningPort()
+    assert _worker(db_path, port).run_once().outcome == "succeeded"
+    assert len(port.add_calls) == 1
+
 
 def test_legacy_discovery_fails_closed_when_any_enabled_node_cannot_be_read():
     class ClientManager:
