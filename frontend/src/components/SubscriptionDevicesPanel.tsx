@@ -161,6 +161,11 @@ export function groupDeviceCount(group: DeviceGroup): number {
   return group.devices.length;
 }
 
+// The enforced limit counts HWID devices only, so the limit warning does too.
+export function groupHwidCount(group: DeviceGroup): number {
+  return group.devices.filter((device) => device.has_hwid !== false).length;
+}
+
 export function sortDeviceGroups(
   groups: DeviceGroup[],
   key: DeviceSortKey = 'email',
@@ -559,7 +564,7 @@ export const SubscriptionDevicesPanel: React.FC = () => {
               {sortedGroups.map((group) => {
                 const expanded = expandedKeys.has(group.key);
                 const count = groupDeviceCount(group);
-                const isWarning = maxDevices > 0 && count >= maxDevices;
+                const isWarning = maxDevices > 0 && groupHwidCount(group) >= maxDevices;
                 const counterText =
                   maxDevices > 0
                     ? t('subscriptionClients.devices.deviceCountLimit', { count, max: maxDevices })
@@ -723,7 +728,7 @@ export const SubscriptionDevicesPanel: React.FC = () => {
                 {sortedGroups.map((group) => {
                   const expanded = expandedKeys.has(group.key);
                   const count = groupDeviceCount(group);
-                  const isWarning = maxDevices > 0 && count >= maxDevices;
+                  const isWarning = maxDevices > 0 && groupHwidCount(group) >= maxDevices;
                   const counterText =
                     maxDevices > 0
                       ? t('subscriptionClients.devices.deviceCountLimit', { count, max: maxDevices })
