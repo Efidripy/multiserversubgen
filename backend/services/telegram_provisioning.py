@@ -590,6 +590,12 @@ class TelegramProvisioningWorker:
             return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "ambiguous")
 
         if matches == "exact":
+            with connect(self._db_path) as conn:
+                trigger = conn.execute(
+                    "SELECT trigger FROM telegram_provisioning_jobs WHERE id = ?", (claimed.job_id,)
+                ).fetchone()
+            if trigger and trigger[0] == "node_backfill" and remote is not None:
+                return self._adopt_or_fail(claimed, node, remote)
             return self._confirm_or_fail(claimed)
         if matches == "adopt" and remote is not None:
             return self._adopt_or_fail(claimed, node, remote)
@@ -662,6 +668,38 @@ class TelegramProvisioningWorker:
         return "missing", None, None
 
     def _adopt_or_fail(self, claimed: ClaimedAttempt, node: dict[str, Any], remote: RemoteClient) -> ProvisioningRunResult:
+        try:
+            with connect(self._db_path) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                existing = conn.execute(
+                    "SELECT id, remote_client_id, management_state FROM customer_node_bindings "
+                    "WHERE customer_id = ? AND node_id = ? AND inbound_id = ?",
+                    (claimed.customer_id, claimed.node_id, claimed.inbound_id),
+                ).fetchone()
+                if existing and existing[2] == "confirmed" and existing[1] != remote.client_id:
+                    raise ProvisioningPermanentError("Confirmed local binding refers to a different remote client")
+                if existing is None:
+                    TelegramRegistry._insert_adopted_binding(
+                        conn, customer_id=claimed.customer_id, node_id=claimed.node_id,
+                        remote_client_id=remote.client_id, remote_sub_id=remote.sub_id,
+                        remote_email=remote.email, remote_enabled=remote.enabled,
+                    )
+                conn.execute(
+                    """UPDATE customer_node_bindings
+                    SET remote_client_id = ?, remote_sub_id = ?, remote_email = ?,
+                        management_state = 'confirmed', desired_enabled = ?, last_enabled = ?,
+                        suspended_by_operation_id = NULL, last_confirmed_at = CURRENT_TIMESTAMP,
+                        row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE customer_id = ? AND node_id = ? AND inbound_id = ?""",
+                    (remote.client_id, remote.sub_id, remote.email, int(claimed.desired_client_enabled),
+                     int(remote.enabled), claimed.customer_id, claimed.node_id, claimed.inbound_id),
+                )
+        except ProvisioningPermanentError as exc:
+            self._finish_attempt(claimed, status="failed", error_code="identity_conflict", error_summary=str(exc))
+            return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "failed")
+        except sqlite3.IntegrityError:
+            self._finish_attempt(claimed, status="failed", error_code="local_binding_conflict", error_summary="local binding conflict")
+            return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "failed")
         if remote.enabled != claimed.desired_client_enabled:
             try:
                 self._port.set_client_enabled(node=node, inbound_id=claimed.inbound_id,
@@ -674,11 +712,16 @@ class TelegramProvisioningWorker:
                 return ProvisioningRunResult(True, claimed.job_id, claimed.attempt_id, "ambiguous")
         try:
             with connect(self._db_path) as conn:
-                TelegramRegistry._insert_adopted_binding(
-                    conn, customer_id=claimed.customer_id, node_id=claimed.node_id,
-                    remote_client_id=remote.client_id, remote_sub_id=remote.sub_id,
-                    remote_email=remote.email, remote_enabled=claimed.desired_client_enabled,
+                updated = conn.execute(
+                    """UPDATE customer_node_bindings SET last_enabled = ?, last_confirmed_at = CURRENT_TIMESTAMP,
+                       row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
+                       WHERE customer_id = ? AND node_id = ? AND inbound_id = ?
+                         AND remote_client_id = ? AND management_state = 'confirmed'""",
+                    (int(claimed.desired_client_enabled), claimed.customer_id, claimed.node_id,
+                     claimed.inbound_id, remote.client_id),
                 )
+                if updated.rowcount != 1:
+                    raise sqlite3.IntegrityError("local binding changed")
                 conn.execute("INSERT INTO telegram_audit_log (event_type, actor_type, actor_id, entity_type, entity_id) VALUES ('drift_binding_adopted', 'system', 'node_backfill', 'provisioning_attempt', ?)", (str(claimed.attempt_id),))
                 conn.execute("UPDATE telegram_provisioning_attempts SET status = 'succeeded', remote_client_id = ?, error_code = NULL, error_summary = NULL, last_checked_at = CURRENT_TIMESTAMP, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (remote.client_id, claimed.attempt_id))
                 self._finalize_job(conn, claimed.job_id)

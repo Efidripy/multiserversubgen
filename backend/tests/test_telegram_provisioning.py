@@ -60,6 +60,94 @@ def _backfill_job(tmp_path):
     return db_path, approval, attempt
 
 
+def _add_backfill_binding(db_path, state):
+    with connect(db_path) as conn:
+        customer_id = conn.execute("SELECT customer_id FROM telegram_provisioning_jobs").fetchone()[0]
+        conn.execute(
+            """INSERT INTO customer_node_bindings
+               (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                source, management_state, desired_enabled, last_enabled)
+               VALUES (?, 1, 1, 'old-id', 'old-sub', 'worker-user', 'bot_provisioned', ?, 0, 0)""",
+            (customer_id, state),
+        )
+
+
+def test_backfill_adopts_over_missing_binding(tmp_path):
+    db_path, approval, _ = _backfill_job(tmp_path)
+    _add_backfill_binding(db_path, "missing")
+    port = FakeProvisioningPort()
+    port.clients = [RemoteClient("existing-id", "worker-user", "existing-sub", "xtls-rprx-vision", True)]
+
+    assert _worker(db_path, port).run_once().outcome == "succeeded"
+    with connect(db_path) as conn:
+        rows = conn.execute(
+            "SELECT remote_client_id, remote_sub_id, remote_email, management_state, "
+            "desired_enabled, last_enabled, last_confirmed_at FROM customer_node_bindings"
+        ).fetchall()
+    assert len(rows) == 1
+    assert rows[0][:6] == ("existing-id", "existing-sub", "worker-user", "confirmed", 1, 1)
+    assert rows[0][6] is not None
+    assert TelegramRegistry(db_path).get_provisioning_job(approval.job_id).attempts[0].status == "succeeded"
+
+
+def test_backfill_enables_disabled_client_with_missing_binding(tmp_path):
+    db_path, _, _ = _backfill_job(tmp_path)
+    _add_backfill_binding(db_path, "missing")
+    port = FakeProvisioningPort()
+    port.clients = [RemoteClient("existing-id", "worker-user", "existing-sub", "xtls-rprx-vision", False)]
+
+    assert _worker(db_path, port).run_once().outcome == "succeeded"
+    assert port.clients[0].enabled is True
+    with connect(db_path) as conn:
+        assert conn.execute(
+            "SELECT management_state, desired_enabled, last_enabled FROM customer_node_bindings"
+        ).fetchone() == ("confirmed", 1, 1)
+
+
+def test_backfill_rejects_different_confirmed_binding_without_panel_write(tmp_path):
+    db_path, approval, _ = _backfill_job(tmp_path)
+    _add_backfill_binding(db_path, "confirmed")
+
+    class NoWritesPort(FakeProvisioningPort):
+        def set_client_enabled(self, **kwargs):
+            pytest.fail("panel must not be modified")
+
+    port = NoWritesPort()
+    port.clients = [RemoteClient("existing-id", "worker-user", "existing-sub", "xtls-rprx-vision", False)]
+    assert _worker(db_path, port).run_once().outcome == "failed"
+    attempt = TelegramRegistry(db_path).get_provisioning_job(approval.job_id).attempts[0]
+    assert attempt.error_code == "identity_conflict"
+    assert "different remote client" in attempt.error_summary
+    assert port.add_calls == []
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT remote_client_id FROM customer_node_bindings").fetchone()[0] == "old-id"
+
+
+def test_backfill_local_write_failure_does_not_change_panel(tmp_path):
+    db_path, approval, _ = _backfill_job(tmp_path)
+    _add_backfill_binding(db_path, "missing")
+    with connect(db_path) as conn:
+        conn.execute("""CREATE TRIGGER reject_binding_update BEFORE UPDATE ON customer_node_bindings
+                        BEGIN SELECT RAISE(ABORT, 'binding update rejected'); END""")
+    port = FakeProvisioningPort()
+    port.clients = [RemoteClient("existing-id", "worker-user", "existing-sub", "xtls-rprx-vision", False)]
+
+    assert _worker(db_path, port).run_once().outcome == "failed"
+    assert port.clients[0].enabled is False
+    assert TelegramRegistry(db_path).get_provisioning_job(approval.job_id).attempts[0].error_code == "local_binding_conflict"
+
+
+def test_backfill_exact_remote_rejects_different_confirmed_binding(tmp_path):
+    db_path, approval, desired = _backfill_job(tmp_path)
+    _add_backfill_binding(db_path, "confirmed")
+    port = FakeProvisioningPort()
+    port.clients = [RemoteClient(desired[1], "worker-user", desired[2], "xtls-rprx-vision", False)]
+
+    assert _worker(db_path, port).run_once().outcome == "failed"
+    assert port.clients[0].enabled is False
+    assert TelegramRegistry(db_path).get_provisioning_job(approval.job_id).attempts[0].error_code == "identity_conflict"
+
+
 def test_node_backfill_adopts_existing_client_and_subscription_link(tmp_path, monkeypatch):
     from services import subscription_links
 
