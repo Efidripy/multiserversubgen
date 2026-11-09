@@ -1801,6 +1801,7 @@
     "errorDetails": "Error details"
   },
   "comparison": {
+    "estimated": "estimated by interpolation",
     "totalTraffic": "Total traffic",
     "nodes": "Nodes",
     "allNodes": "All nodes",

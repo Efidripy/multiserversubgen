@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from routers.operations import build_operations_router
-from services.traffic_comparison import load_comparison
+from services.traffic_comparison import build_comparison, load_comparison
 
 DAY = 86400
 
@@ -73,7 +73,7 @@ def test_missing_inbound_reset_noise_and_missing_day(tmp_path):
     save(db, 'inbound', 6 * DAY, {'node:1:inbound:1': {'total': gb + 15}, 'node:1:inbound:2': {'total': 135}})
     data = load_comparison(str(db), '7d', None, 6 * DAY)
     values = [point['value'] for point in data['series_current']]
-    assert values == [0, 10, 10, gb, 15, 0, 20]
+    assert values == [0, 10, 10, gb, 15, 10, 10]
     assert data['totals']['current'] == gb + 55
 
 
@@ -105,3 +105,37 @@ def test_hour_snapshots_and_empty_history(tmp_path):
     save(db, 'inbound', 7200, {'node:1:inbound:1': {'total': 25}}, 'hour')
     data = load_comparison(str(db), '24h', None, 7200)
     assert data['totals']['current'] == 15
+
+
+def test_ten_day_gap_is_distributed_and_estimated():
+    snapshots = [(0, json.dumps({'node:1:inbound:1': {'total': 0}})),
+                 (10 * DAY, json.dumps({'node:1:inbound:1': {'total': 1000}}))]
+    data = build_comparison(snapshots, [], DAY, 10, 10 * DAY, 0, '30d', None)
+    assert [p['value'] for p in data['series_current']] == [100] * 10
+    assert all(p['estimated'] for p in data['series_current'])
+    assert data['totals']['current'] == 1000
+
+
+def test_hour_gap_and_previous_availability(tmp_path):
+    db = database(tmp_path)
+    for hour in list(range(21)) + list(range(26, 51)):
+        save(db, 'inbound', hour * 3600, {'node:1:inbound:1': {'total': hour * 60}}, 'hour')
+    data = load_comparison(str(db), '24h', None, 50 * 3600)
+    assert data['previous_available'] is True
+    assert max(p['value'] for p in data['series_current'] + data['series_previous']) <= 60
+    assert sum(p.get('estimated', False) for p in data['series_previous']) == 6
+
+
+def test_clients_interpolate_boundaries_and_account_for_reset(tmp_path):
+    db = database(tmp_path)
+    for day, value in [(0, 0), (6, 60), (8, 80), (13, 130), (15, 150)]:
+        save(db, 'inbound', day * DAY, {'node:1:inbound:1': {'total': value}})
+        save(db, 'client', day * DAY, {'user': {'total': value}})
+    data = load_comparison(str(db), '7d', None, 15 * DAY)
+    assert data['top_clients'][0]['current'] == 70
+    assert data['top_clients'][0]['previous'] == 70
+    save(db, 'inbound', 16 * DAY, {'node:1:inbound:1': {'total': 10}})
+    save(db, 'client', 16 * DAY, {'user': {'total': 10}})
+    data = load_comparison(str(db), '7d', None, 16 * DAY)
+    assert data['top_clients'][0]['current'] == 70
+    assert data['totals']['current'] == 70
