@@ -223,9 +223,9 @@ export function TrafficComparison({ nodes }: { nodes: { id: number; name: string
         <div className="tc-tiles">
       <StatTile label={t('comparison.currentPeriod')}>
       <strong>
-      {formatBytes(total)} <em className={delta === null ? '' : delta < 0 ? 'tc-negative' : 'tc-positive'}>
+      {formatBytes(total)} {delta !== null && <em className={delta < 0 ? 'tc-negative' : 'tc-positive'}>
       {percent(delta)}
-      </em>
+      </em>}
       </strong>
       </StatTile>
       <StatTile label={t('comparison.previousPeriod')}>

@@ -47,3 +47,20 @@ it('uses round byte-unit ticks and caps a share from mismatched sources', async 
   for (const tick of ['25.0 GB', '50.0 GB', '75.0 GB', '100.0 GB']) expect(screen.getByText(tick)).toBeTruthy();
   expect(screen.getByText('\u2248100%').getAttribute('title')).toBeTruthy();
 });
+
+it('hides the current period delta when there is no previous period and bounds the curve', async () => {
+  vi.mocked(getTrafficComparison).mockResolvedValueOnce({
+    history_days: 1, previous_available: false,
+    series_current: [{ ts: 1, value: 0 }, { ts: 2, value: 100 }, { ts: 3, value: 0 }],
+    series_previous: [], totals: { current: 100, previous: null }, top_clients: [], top_growth: [],
+  } as Awaited<ReturnType<typeof getTrafficComparison>>);
+  state.design = 'new';
+  const view = render(<DashboardSummary />);
+  await screen.findByText('comparison.currentPeriod');
+  const tile = screen.getByText('comparison.currentPeriod').parentElement!;
+  expect(tile.querySelector('em')).toBeNull();
+  const path = view.container.querySelector('.tc-current')!.getAttribute('d')!;
+  const ys = [...path.matchAll(/(?:M |C |, )(?:[\d.]+) ([\d.]+)/g)].map(match => Number(match[1]));
+  expect(ys.length).toBeGreaterThan(2);
+  expect(ys.every(y => y >= 20 && y <= 210)).toBe(true);
+});
