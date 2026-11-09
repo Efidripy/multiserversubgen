@@ -44,6 +44,21 @@ def _serialize_tags(value) -> str:
     return "[]"
 
 
+def _check_panel_duplicate(conn, hostname, port, base_path, exclude_id=None):
+    duplicate = conn.execute(
+        """
+        SELECT id, name FROM nodes
+        WHERE lower(ip) = lower(?) AND CAST(port AS TEXT) = ?
+          AND rtrim(COALESCE(base_path, ''), '/') = ?
+          AND (? IS NULL OR id != ?)
+        LIMIT 1
+        """,
+        (hostname, port, base_path.rstrip("/"), exclude_id, exclude_id),
+    ).fetchone()
+    if duplicate:
+        raise HTTPException(status_code=409, detail=f"Another node already uses this panel: #{duplicate[0]} {duplicate[1]}")
+
+
 def build_nodes_router(
     *,
     check_auth: Callable[[Request], str | None],
@@ -140,6 +155,8 @@ def build_nodes_router(
                 encrypted_password = encrypt(str(password))
                 stored_user = node_user
             with connect(db_path) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                _check_panel_duplicate(conn, parsed.hostname, port, base_path)
                 conn.execute(
                     """
                     INSERT INTO nodes (
@@ -166,6 +183,8 @@ def build_nodes_router(
                     ),
                 )
                 conn.commit()
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.error(f"Error adding node: {exc}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -373,6 +392,7 @@ def build_nodes_router(
         node_panel_url: str | None = None
         try:
             with connect(db_path) as conn:
+                conn.execute("BEGIN IMMEDIATE")
                 existing = conn.execute(
                     """
                     SELECT name, panel_url, username, ip, port, base_path, access_path, scheme
@@ -394,6 +414,15 @@ def build_nodes_router(
                     "access_path": existing[6],
                     "scheme": existing[7],
                 }
+                if updated_connection:
+                    old_url = urlparse(str(existing[1] or ""))
+                    old_endpoint = (
+                        old_url.scheme.lower(), (old_url.hostname or "").lower(),
+                        str(old_url.port or 443), old_url.path.strip("/"),
+                    )
+                    new_endpoint = (scheme.lower(), parsed_url.hostname.lower(), port, base_path)
+                    if old_endpoint != new_endpoint:
+                        _check_panel_duplicate(conn, parsed_url.hostname, port, base_path, node_id)
                 update_fields = []
                 update_values = []
 
