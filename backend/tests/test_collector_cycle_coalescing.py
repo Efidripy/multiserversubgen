@@ -76,13 +76,15 @@ def _metrics_runtime(db_path: str, state: dict) -> MetricsRuntime:
 
 
 def test_default_cadence_keeps_active_freshness_and_bounded_idle_polling(monkeypatch):
-    collector = _collector()
+    collector = _collector(ultra_idle_interval_sec=86400, max_interval_sec=86400, poll_interval_ceiling_sec=86400)
 
     assert collector.active_interval_sec == 90
     assert collector.idle_interval_sec == 300
 
+    snapshot = _snapshot(1)
+
     async def fake_run_blocking(_label, _function, node):
-        return _snapshot(node["id"])
+        return dict(snapshot)
 
     monkeypatch.setattr(collector, "_run_blocking", fake_run_blocking)
     node = {"id": 1, "name": "alpha"}
@@ -96,6 +98,13 @@ def test_default_cadence_keeps_active_freshness_and_bounded_idle_polling(monkeyp
     collector._mode = CollectorMode.IDLE
     asyncio.run(collector._poll_node(node, key))
     assert collector._node_state[key]["interval"] == 300.0
+
+    collector._mode = CollectorMode.ULTRA_IDLE
+    assert collector._get_current_interval() == 600.0
+    for _ in range(12):
+        asyncio.run(collector._poll_node(node, key))
+        assert collector._node_state[key]["interval"] == 600.0
+    assert collector._node_state[key]["stable_cycles"] >= 9
 
 
 def test_snapshot_publication_replaces_node_mapping_without_mutating_reader_view(monkeypatch):

@@ -384,7 +384,8 @@ class LiveStatsRuntime:
                 previous = conn.execute(
                     "SELECT MAX(ts) FROM traffic_samples WHERE node_id=? AND tier='raw'", (node_id,)
                 ).fetchone()[0]
-                if previous is not None and ts - previous < self._TRAFFIC_SAMPLE_INTERVAL:
+                # Allow timer jitter so a slightly early poll does not skip a sample.
+                if previous is not None and ts - previous < self._TRAFFIC_SAMPLE_INTERVAL * 0.9:
                     continue
                 inbound_totals, client_totals = {}, {}
                 for inbound in inbounds:
