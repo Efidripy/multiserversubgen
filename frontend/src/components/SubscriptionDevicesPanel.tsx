@@ -156,10 +156,16 @@ function getDeviceFieldValue(device: SubscriptionDeviceItem, key: DeviceSortKey)
   }
 }
 
+// With a device limit only HWID devices count toward it, so "Used" shows (and sorts by) that number.
+export function groupDeviceCount(group: DeviceGroup, maxDevices = 0): number {
+  return maxDevices > 0 ? group.devices.filter((device) => device.has_hwid !== false).length : group.devices.length;
+}
+
 export function sortDeviceGroups(
   groups: DeviceGroup[],
   key: DeviceSortKey = 'email',
-  direction: SortDirection = 'asc'
+  direction: SortDirection = 'asc',
+  maxDevices = 0
 ): DeviceGroup[] {
   if (!Array.isArray(groups)) return [];
 
@@ -191,7 +197,7 @@ export function sortDeviceGroups(
     if (key === 'email') {
       cmp = compareFieldValues(groupA.label, groupB.label, 'email', direction);
     } else if (key === 'count') {
-      cmp = compareFieldValues(groupA.devices.length, groupB.devices.length, 'count', direction);
+      cmp = compareFieldValues(groupDeviceCount(groupA, maxDevices), groupDeviceCount(groupB, maxDevices), 'count', direction);
     } else {
       const firstA = groupA.devices[0];
       const firstB = groupB.devices[0];
@@ -317,8 +323,8 @@ export const SubscriptionDevicesPanel: React.FC = () => {
 
   const rawGroups = useMemo(() => groupDevices(devices), [devices]);
   const sortedGroups = useMemo(
-    () => sortDeviceGroups(rawGroups, sortKey, sortDirection),
-    [rawGroups, sortKey, sortDirection]
+    () => sortDeviceGroups(rawGroups, sortKey, sortDirection, maxDevices),
+    [rawGroups, sortKey, sortDirection, maxDevices]
   );
 
   const formatTimestamp = (ts: number): string => {
@@ -553,7 +559,7 @@ export const SubscriptionDevicesPanel: React.FC = () => {
             <div className="grid min-w-0 grid-cols-1 gap-3">
               {sortedGroups.map((group) => {
                 const expanded = expandedKeys.has(group.key);
-                const count = maxDevices > 0 ? group.devices.filter((device) => device.has_hwid !== false).length : group.devices.length;
+                const count = groupDeviceCount(group, maxDevices);
                 const isWarning = maxDevices > 0 && count >= maxDevices;
                 const counterText =
                   maxDevices > 0
@@ -717,7 +723,7 @@ export const SubscriptionDevicesPanel: React.FC = () => {
               <tbody className="divide-y divide-cyan-500/10">
                 {sortedGroups.map((group) => {
                   const expanded = expandedKeys.has(group.key);
-                  const count = maxDevices > 0 ? group.devices.filter((device) => device.has_hwid !== false).length : group.devices.length;
+                  const count = groupDeviceCount(group, maxDevices);
                   const isWarning = maxDevices > 0 && count >= maxDevices;
                   const counterText =
                     maxDevices > 0
