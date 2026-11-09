@@ -145,6 +145,50 @@ def test_node_add_rejects_duplicate_panel(node_client):
         assert conn.execute("SELECT COUNT(*) FROM nodes").fetchone()[0] == 1
 
 
+def test_node_add_rejects_legacy_base_path_with_slashes(node_client):
+    client, db_path, _ = node_client
+    with connect(db_path) as conn:
+        conn.execute("UPDATE nodes SET base_path = '/old-panel/' WHERE id = 1")
+    response = client.post("/api/v1/nodes", json={
+        "name": "new", "url": "https://old.example.test:8443/old-panel", "user": "root", "password": "x",
+    })
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Another node already uses this panel: #1 edge-1"
+
+
+def test_node_add_rejects_legacy_panel_url_without_ip(node_client):
+    client, db_path, _ = node_client
+    with connect(db_path) as conn:
+        conn.execute("UPDATE nodes SET ip = '', base_path = '', access_path = '' WHERE id = 1")
+    response = client.post("/api/v1/nodes", json={
+        "name": "new", "url": "https://old.example.test:8443/old-panel", "user": "root", "password": "x",
+    })
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Another node already uses this panel: #1 edge-1"
+
+
+def test_node_edit_rejects_legacy_panel_url_without_ip(node_client):
+    client, db_path, _ = node_client
+    _insert_duplicate(db_path)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE nodes SET ip = '', base_path = '/old-panel/' WHERE id = 2")
+        conn.execute("UPDATE nodes SET ip = 'other.example.test', panel_url = 'https://other.example.test:8443/old-panel' WHERE id = 1")
+    before = _node_row(db_path)
+    response = client.put("/api/v1/nodes/1", json={"url": "https://old.example.test:8443/old-panel"})
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Another node already uses this panel: #2 duplicate"
+    assert _node_row(db_path) == before
+
+
+def test_node_edit_unchanged_legacy_address_allows_existing_duplicate(node_client):
+    client, db_path, _ = node_client
+    _insert_duplicate(db_path)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE nodes SET ip = '', base_path = '/old-panel/' WHERE id = 1")
+    response = client.put("/api/v1/nodes/1", json={"url": "https://OLD.EXAMPLE.TEST:8443/old-panel/"})
+    assert response.status_code == 200
+
+
 def test_node_edit_rejects_duplicate_panel_without_changes(node_client):
     client, db_path, _ = node_client
     _insert_duplicate(db_path)

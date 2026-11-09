@@ -12,6 +12,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
 
 from xui_session import (
+    build_panel_base_url,
     diagnose_xui_failure,
     invalidate_auth_method_cache,
     invalidate_node_capabilities,
@@ -44,19 +45,28 @@ def _serialize_tags(value) -> str:
     return "[]"
 
 
-def _check_panel_duplicate(conn, hostname, port, base_path, exclude_id=None):
-    duplicate = conn.execute(
+def _panel_url_key(url):
+    parsed = urlparse(url)
+    return parsed.scheme.lower(), parsed.hostname.lower(), parsed.port, parsed.path.strip("/")
+
+
+def _check_panel_duplicate(conn, new_connection, exclude_id=None):
+    new_key = _panel_url_key(build_panel_base_url(new_connection))
+    rows = conn.execute(
         """
-        SELECT id, name FROM nodes
-        WHERE lower(ip) = lower(?) AND CAST(port AS TEXT) = ?
-          AND rtrim(COALESCE(base_path, ''), '/') = ?
-          AND (? IS NULL OR id != ?)
-        LIMIT 1
+        SELECT id, name, ip, port, base_path, access_path, panel_url, scheme FROM nodes
+        WHERE (? IS NULL OR id != ?)
         """,
-        (hostname, port, base_path.rstrip("/"), exclude_id, exclude_id),
-    ).fetchone()
-    if duplicate:
-        raise HTTPException(status_code=409, detail=f"Another node already uses this panel: #{duplicate[0]} {duplicate[1]}")
+        (exclude_id, exclude_id),
+    ).fetchall()
+    for row in rows:
+        node = dict(zip(("id", "name", "ip", "port", "base_path", "access_path", "panel_url", "scheme"), row))
+        try:
+            node_key = _panel_url_key(build_panel_base_url(node))
+        except ValueError:
+            continue
+        if node_key == new_key:
+            raise HTTPException(status_code=409, detail=f"Another node already uses this panel: #{row[0]} {row[1]}")
 
 
 def build_nodes_router(
@@ -156,7 +166,7 @@ def build_nodes_router(
                 stored_user = node_user
             with connect(db_path) as conn:
                 conn.execute("BEGIN IMMEDIATE")
-                _check_panel_duplicate(conn, parsed.hostname, port, base_path)
+                _check_panel_duplicate(conn, {"panel_url": canonical_panel_url})
                 conn.execute(
                     """
                     INSERT INTO nodes (
@@ -415,14 +425,13 @@ def build_nodes_router(
                     "scheme": existing[7],
                 }
                 if updated_connection:
-                    old_url = urlparse(str(existing[1] or ""))
-                    old_endpoint = (
-                        old_url.scheme.lower(), (old_url.hostname or "").lower(),
-                        str(old_url.port or 443), old_url.path.strip("/"),
-                    )
-                    new_endpoint = (scheme.lower(), parsed_url.hostname.lower(), port, base_path)
+                    try:
+                        old_endpoint = _panel_url_key(build_panel_base_url(existing_connection))
+                    except ValueError:
+                        old_endpoint = None
+                    new_endpoint = _panel_url_key(build_panel_base_url(updated_connection))
                     if old_endpoint != new_endpoint:
-                        _check_panel_duplicate(conn, parsed_url.hostname, port, base_path, node_id)
+                        _check_panel_duplicate(conn, updated_connection, node_id)
                 update_fields = []
                 update_values = []
 
