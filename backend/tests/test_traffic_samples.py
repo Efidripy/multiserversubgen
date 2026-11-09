@@ -25,11 +25,11 @@ def test_record_per_node_and_interval(tmp_path):
     node = {"node_id": 1, "available": True, "inbounds_available": True,
             "inbounds": [{"id": 2, "up": 3, "down": 4, "clientStats": [{"email": "x", "up": 5, "down": 6}]}]}
     snapshot = {"nodes": [node, {"node_id": 2, "available": False, "inbounds_available": True}]}
-    for ts in (1000, 1599, 1600):
+    for ts in (1000, 1500, 1560, 2099, 2100):
         obj.record_traffic_samples(snapshot, ts)
     with sqlite3.connect(db) as conn:
         rows = conn.execute("SELECT node_id, ts, inbounds_json, clients_json FROM traffic_samples ORDER BY ts").fetchall()
-    assert [(row[0], row[1]) for row in rows] == [("1", 1000), ("1", 1600)]
+    assert [(row[0], row[1]) for row in rows] == [("1", 1000), ("1", 1560), ("1", 2100)]
     assert json.loads(rows[0][2]) == {"node:1:inbound:2": 7}
     assert json.loads(rows[0][3]) == {"x": 11}
     assert obj._ROLLING_SNAPSHOT_CONFIG["day"]["ttl_seconds"] == 730 * DAY

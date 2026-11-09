@@ -67,6 +67,8 @@ _TRANSPORT_DIAGNOSTIC_INTERVAL_SEC = 900.0
 _INVENTORY_RECHECK_SEC = 60.0
 # Keep route reads bounded while allowing collector snapshots to serve briefly.
 _SNAPSHOT_READ_MAX_AGE_SEC = 600.0
+# Traffic samples are recorded from collector cycles every 10 minutes.
+TRAFFIC_SAMPLE_POLL_CEILING_SEC = 600
 REFRESH_WAIT_TIMEOUT_SEC = 45.0
 
 
@@ -798,7 +800,7 @@ class SnapshotCollector:
         time_in_mode = now - self._mode_started_at
 
         if self._mode == CollectorMode.ULTRA_IDLE:
-            return float(self.ultra_idle_interval_sec)
+            return float(min(self.ultra_idle_interval_sec, TRAFFIC_SAMPLE_POLL_CEILING_SEC))
 
         elif self._mode == CollectorMode.IDLE:
             return float(self.idle_interval_sec)
@@ -1117,14 +1119,14 @@ class SnapshotCollector:
             # Adaptive interval per node based on current mode and stability.
             current_interval = self._get_current_interval()
             stable_boost = min(4, 1 + state["stable_cycles"] // 3)
-            # Active and idle modes keep their configured freshness/cadence
-            # bounds even after stable snapshots. Ultra-idle remains bounded by
-            # its own configured interval or an explicit global ceiling.
+            # Keep mode cadence bounds even after stable snapshots.
             interval_ceiling = self.poll_interval_ceiling_sec
             if self._mode == CollectorMode.ACTIVE:
                 interval_ceiling = min(interval_ceiling, self.active_interval_sec)
             elif self._mode == CollectorMode.IDLE:
                 interval_ceiling = min(interval_ceiling, self.idle_interval_sec)
+            elif self._mode == CollectorMode.ULTRA_IDLE:
+                interval_ceiling = min(interval_ceiling, TRAFFIC_SAMPLE_POLL_CEILING_SEC)
             interval = min(
                 self.max_interval_sec,
                 interval_ceiling,
