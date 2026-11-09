@@ -8503,9 +8503,8 @@ class TelegramRegistry:
         with connect(self._db_path) as conn:
             nodes = conn.execute(
                 f"""
-                SELECT n.id, n.name FROM telegram_node_policies AS policy
-                JOIN nodes AS n ON n.id = policy.node_id
-                WHERE policy.provisioning_enabled = 1 AND n.enabled = 1 AND n.read_only = 0{clause}
+                SELECT n.id, n.name FROM nodes AS n
+                WHERE n.enabled = 1{clause}
                 ORDER BY n.name COLLATE NOCASE, n.id
                 """,
                 tuple(parameters),
@@ -8520,8 +8519,7 @@ class TelegramRegistry:
                        b.desired_enabled, c.email_display, c.email_canonical
                 FROM customer_node_bindings AS b
                 JOIN customers AS c ON c.id = b.customer_id
-                WHERE b.management_state IN ('confirmed', 'missing', 'conflict')
-                  AND b.inbound_id = 1 AND b.node_id IN ({placeholders})
+                WHERE b.inbound_id = 1 AND b.node_id IN ({placeholders})
                 """,
                 node_id_values,
             ).fetchall()
@@ -8622,6 +8620,20 @@ class TelegramRegistry:
             # here, so a transport failure never makes a client look absent.
             conn.execute(
                 f"""
+                INSERT INTO telegram_audit_log (event_type, actor_type, actor_id, entity_type, entity_id)
+                SELECT 'drift_binding_missing', 'system', 'drift_scan', 'customer_node_binding', CAST(b.id AS TEXT)
+                FROM customer_node_bindings AS b
+                JOIN telegram_drift_findings AS f ON f.customer_id = b.customer_id AND f.node_id = b.node_id
+                    AND f.remote_client_id = COALESCE(b.remote_client_id, '')
+                    AND f.remote_sub_id = COALESCE(b.remote_sub_id, '')
+                    AND lower(f.remote_email) = lower(b.remote_email)
+                WHERE b.node_id IN ({placeholders}) AND b.inbound_id = 1 AND b.desired_enabled = 0
+                    AND b.management_state != 'missing' AND f.kind = 'binding_missing'
+                    AND f.status IN ('open', 'ignored')
+                """, node_ids,
+            )
+            conn.execute(
+                f"""
                 UPDATE customer_node_bindings
                 SET management_state = 'confirmed', row_version = row_version + 1,
                     updated_at = CURRENT_TIMESTAMP
@@ -8646,8 +8658,8 @@ class TelegramRegistry:
                   AND customer_node_bindings.customer_id = finding.customer_id
                   AND customer_node_bindings.node_id = finding.node_id
                   AND customer_node_bindings.inbound_id = 1
-                  AND customer_node_bindings.remote_client_id = finding.remote_client_id
-                  AND customer_node_bindings.remote_sub_id = finding.remote_sub_id
+                  AND COALESCE(customer_node_bindings.remote_client_id, '') = finding.remote_client_id
+                  AND COALESCE(customer_node_bindings.remote_sub_id, '') = finding.remote_sub_id
                   AND lower(customer_node_bindings.remote_email) = lower(finding.remote_email)
                 """,
                 node_ids,
@@ -8713,6 +8725,21 @@ class TelegramRegistry:
             )
         return next(item for item in self.list_drift_findings(status="all", limit=200) if item.finding_id == local_finding_id)
 
+    @staticmethod
+    def _insert_adopted_binding(conn, *, customer_id, node_id, remote_client_id, remote_sub_id, remote_email, remote_enabled):
+        conn.execute(
+            """INSERT INTO customer_node_bindings
+                (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                 source, management_state, desired_enabled, last_enabled, last_confirmed_at)
+                VALUES (?, ?, 1, ?, ?, ?, 'admin_confirmed', 'confirmed', ?, ?, CURRENT_TIMESTAMP)""",
+            (customer_id, node_id, remote_client_id, remote_sub_id, remote_email,
+             int(remote_enabled), int(remote_enabled)),
+        )
+        conn.execute(
+            "UPDATE customers SET row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (customer_id,),
+        )
+
     def adopt_drift_binding(
         self,
         *,
@@ -8753,19 +8780,9 @@ class TelegramRegistry:
             ).fetchone()
             if exists is not None:
                 raise VersionConflictError("customer already has an inbound 1 binding on this node")
-            conn.execute(
-                """
-                INSERT INTO customer_node_bindings
-                    (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
-                     source, management_state, desired_enabled, last_enabled, last_confirmed_at)
-                VALUES (?, ?, 1, ?, ?, ?, 'admin_confirmed', 'confirmed', ?, ?, CURRENT_TIMESTAMP)
-                """,
-                (int(finding[0]), int(finding[1]), str(remote_client_id), str(remote_sub_id), remote_email,
-                 int(remote_enabled), int(remote_enabled)),
-            )
-            conn.execute(
-                "UPDATE customers SET row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                (int(finding[0]),),
+            self._insert_adopted_binding(
+                conn, customer_id=int(finding[0]), node_id=int(finding[1]), remote_client_id=str(remote_client_id),
+                remote_sub_id=str(remote_sub_id), remote_email=remote_email, remote_enabled=remote_enabled,
             )
             updated = conn.execute(
                 """

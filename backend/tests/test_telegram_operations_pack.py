@@ -196,6 +196,43 @@ def test_missing_remote_binding_becomes_addable_after_a_completed_drift_scan(tmp
     assert queued.status == "queued"
 
 
+def test_disabled_provisioning_node_marks_absent_suspended_binding_and_audits(tmp_path):
+    db_path, registry, customer_id = _customer_with_binding(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_node_policies SET provisioning_enabled = 0")
+        conn.execute("UPDATE customer_node_bindings SET desired_enabled = 0")
+
+    class Manager:
+        def get_node_clients_strict(self, node):
+            return []
+
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager())
+    assert scanner.scan().scanned_node_ids == (1,)
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT management_state FROM customer_node_bindings").fetchone()[0] == "missing"
+        assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type = 'drift_binding_missing'").fetchone()[0] == 1
+    customer = registry.get_customer(customer_id)
+    assert customer.nodes_active == customer.nodes_suspended == customer.nodes_available == 0
+    scanner.scan()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type = 'drift_binding_missing'").fetchone()[0] == 1
+
+
+def test_failed_drift_read_does_not_mark_suspended_binding_missing(tmp_path):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE customer_node_bindings SET desired_enabled = 0")
+
+    class Manager:
+        def get_node_clients_strict(self, node):
+            raise RuntimeError("offline")
+
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager())
+    assert scanner.scan().unavailable_node_ids == (1,)
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT management_state FROM customer_node_bindings").fetchone()[0] == "confirmed"
+
+
 def test_panel_bot_token_is_write_only_encrypted_and_versioned(tmp_path):
     db_path = str(tmp_path / "bot-token.db")
     init_db(db_path)
