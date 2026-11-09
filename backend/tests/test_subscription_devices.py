@@ -41,12 +41,12 @@ def test_unsupported_hwid_and_blocking(tmp_path):
     assert allowed.headers["X-Hwid-Active"] == "true"
     assert allowed.headers["X-Hwid-Not-Supported"] == "true"
     assert "X-Hwid-Limit" not in allowed.headers
-    assert list_devices(path) == []
+    assert list_devices(path)[0]["has_hwid"] is False
 
     blocked = check_device(path, "alice", {"X-HWID": "x" * 257}, _section(block_unsupported=True), now=2)
     assert blocked.allowed is False
     assert blocked.headers["X-Hwid-Not-Supported"] == "true"
-    assert list_devices(path) == []
+    assert len(list_devices(path)) == 1
 
 
 def test_registration_metadata_hash_and_known_device_update(tmp_path):
@@ -102,7 +102,7 @@ def test_hwid_boundary_and_metadata_sanitising(tmp_path):
 
     oversized = check_device(path, "bob", {"X-HWID": "h" * 257}, _section(max_devices=1), now=2)
     assert oversized.headers["X-Hwid-Not-Supported"] == "true"
-    assert list_devices(path, subject="bob") == []
+    assert list_devices(path, subject="bob")[0]["has_hwid"] is False
 
 
 def test_limit_refusal_announce_and_unlimited_mode(tmp_path):
@@ -229,6 +229,8 @@ def test_migration_of_old_table_preserves_data(tmp_path):
     assert devices[0]["subject"] == "alice"
     assert devices[0]["device_os"] == "iOS"
     assert devices[0]["user_agent"] == ""
+    assert devices[0]["has_hwid"] is True
+    assert device_status(path, "alice", _section())["count"] == 1
 
     # check_device migrates the table (via _ensure_table)
     result = check_device(
@@ -328,3 +330,46 @@ def test_device_app_name_resolution():
     assert device_app_name(settings, None) == ""
     assert device_app_name(settings, "   ") == ""
     assert device_app_name({}, "") == ""
+
+
+def test_no_hwid_tracking_limit_and_metadata(tmp_path):
+    path = str(tmp_path / "devices.sqlite")
+    section = _section(max_devices=1)
+    check_device(path, "alice", {"User-Agent": "  okhttp/4.0  "}, section, now=1)
+    check_device(path, "alice", {"User-Agent": "okhttp/4.0", "X-Device-OS": "Android"}, section, now=2)
+    row = list_devices(path)[0]
+    assert (row["first_seen"], row["last_seen"], row["device_os"], row["has_hwid"]) == (1, 2, "Android", False)
+    assert device_status(path, "alice", section)["count"] == 0
+    assert check_device(path, "alice", {"X-HWID": "valid"}, section, now=3).allowed
+    blocked = check_device(path, "alice", {"User-Agent": "blocked"}, _section(block_unsupported=True), now=4)
+    assert not blocked.allowed and blocked.headers["X-Hwid-Not-Supported"] == "true"
+    for i in range(21):
+        check_device(path, "alice", {"User-Agent": f"client/{i}"}, section, now=10 + i)
+    rows = list_devices(path)
+    assert len([row for row in rows if not row["has_hwid"]]) == 20
+    assert any(row["has_hwid"] for row in rows)
+    assert not any(row["user_agent"] in ("okhttp/4.0", "blocked", "client/0") for row in rows)
+
+
+def test_user_agent_parsing_and_header_precedence(tmp_path):
+    from services.subscription_devices import _parse_user_agent
+
+    cases = [
+        ("v2rayNG/1.8 (Linux; Android 13; SM-G991B Build/TP1)", ("Android", "13", "SM-G991B")),
+        ("Happ/3 (iPhone14,2; iPhone OS 17_4)", ("iOS", "17.4", "iPhone14,2")),
+        ("Happ/3 (Android 14; Pixel 8 Build/AB)", ("Android", "14", "Pixel 8")),
+        ("Hiddify/2 (Windows NT 10.0)", ("Windows", "10.0", "")),
+        ("Clash Meta mihomo (Linux)", ("Linux", "", "")),
+        ("Streisand/1 (iOS 17.2)", ("iOS", "17.2", "")),
+        ("V2Box/1 (Mac OS X 14_2)", ("macOS", "14.2", "")),
+        ("Mozilla/5.0 (Linux; Android 13; Pixel 7 Build/TQ) Chrome/120", ("Android", "13", "Pixel 7")),
+        ("okhttp/4.12", ("", "", "")),
+    ]
+    for ua, expected in cases:
+        assert _parse_user_agent(ua) == expected
+    path = str(tmp_path / "devices.sqlite")
+    check_device(path, "alice", {"X-HWID": "x", "User-Agent": cases[0][0],
+        "X-Device-OS": "Custom", "Sec-CH-UA-Platform-Version": '"15"',
+        "Sec-CH-UA-Model": '"Pixel"'}, _section(), now=1)
+    row = list_devices(path)[0]
+    assert (row["device_os"], row["os_version"], row["model"], row["has_hwid"]) == ("Custom", "15", "Pixel", True)

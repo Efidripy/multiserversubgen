@@ -21,6 +21,7 @@ export interface SubscriptionDeviceItem {
   first_seen: number;
   last_seen: number;
   user_agent?: string;
+  has_hwid?: boolean;
   app?: string;
 }
 
@@ -137,7 +138,7 @@ function getDeviceFieldValue(device: SubscriptionDeviceItem, key: DeviceSortKey)
     case 'email':
       return device.subject;
     case 'app':
-      return device.app ?? '';
+      return device.app || device.user_agent || '';
     case 'os':
       return device.device_os ?? '';
     case 'version':
@@ -155,10 +156,16 @@ function getDeviceFieldValue(device: SubscriptionDeviceItem, key: DeviceSortKey)
   }
 }
 
+// With a device limit only HWID devices count toward it, so "Used" shows (and sorts by) that number.
+export function groupDeviceCount(group: DeviceGroup, maxDevices = 0): number {
+  return maxDevices > 0 ? group.devices.filter((device) => device.has_hwid !== false).length : group.devices.length;
+}
+
 export function sortDeviceGroups(
   groups: DeviceGroup[],
   key: DeviceSortKey = 'email',
-  direction: SortDirection = 'asc'
+  direction: SortDirection = 'asc',
+  maxDevices = 0
 ): DeviceGroup[] {
   if (!Array.isArray(groups)) return [];
 
@@ -190,7 +197,7 @@ export function sortDeviceGroups(
     if (key === 'email') {
       cmp = compareFieldValues(groupA.label, groupB.label, 'email', direction);
     } else if (key === 'count') {
-      cmp = compareFieldValues(groupA.devices.length, groupB.devices.length, 'count', direction);
+      cmp = compareFieldValues(groupDeviceCount(groupA, maxDevices), groupDeviceCount(groupB, maxDevices), 'count', direction);
     } else {
       const firstA = groupA.devices[0];
       const firstB = groupB.devices[0];
@@ -316,8 +323,8 @@ export const SubscriptionDevicesPanel: React.FC = () => {
 
   const rawGroups = useMemo(() => groupDevices(devices), [devices]);
   const sortedGroups = useMemo(
-    () => sortDeviceGroups(rawGroups, sortKey, sortDirection),
-    [rawGroups, sortKey, sortDirection]
+    () => sortDeviceGroups(rawGroups, sortKey, sortDirection, maxDevices),
+    [rawGroups, sortKey, sortDirection, maxDevices]
   );
 
   const formatTimestamp = (ts: number): string => {
@@ -340,11 +347,10 @@ export const SubscriptionDevicesPanel: React.FC = () => {
             <span className="truncate text-xs font-semibold text-slate-100">
               {device.device_os || '—'}
             </span>
-            {device.os_version && (
-              <span className="shrink-0 rounded border border-cyan-500/20 bg-[#0f1420] px-1.5 py-0.5 font-mono text-[11px] text-slate-300">
-                {device.os_version}
-              </span>
-            )}
+            <span className="shrink-0 rounded border border-cyan-500/20 bg-[#0f1420] px-1.5 py-0.5 font-mono text-[11px] text-slate-300">
+              {device.os_version || '—'}
+            </span>
+            {device.has_hwid === false && <span>{t('subscriptionClients.devices.noHwid')}</span>}
           </div>
           <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs">
             <span className="shrink-0 text-slate-500">
@@ -354,7 +360,7 @@ export const SubscriptionDevicesPanel: React.FC = () => {
               className="truncate text-slate-300"
               title={device.user_agent || undefined}
             >
-              {device.app || '—'}
+              {device.app || device.user_agent || '—'}
             </span>
           </div>
           <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs">
@@ -423,7 +429,8 @@ export const SubscriptionDevicesPanel: React.FC = () => {
         className="py-2 pr-3 pl-8 text-slate-200"
         title={device.user_agent || undefined}
       >
-        {device.app || '—'}
+        {device.app || device.user_agent || '—'}
+        {device.has_hwid === false && <span className="ml-2">{t('subscriptionClients.devices.noHwid')}</span>}
       </td>
       <td className="py-2 pr-3 text-slate-200">{device.device_os || '—'}</td>
       <td className="py-2 pr-3 font-mono">{device.os_version || '—'}</td>
@@ -446,7 +453,7 @@ export const SubscriptionDevicesPanel: React.FC = () => {
   );
 
   return (
-    <div className="mt-4 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4 shadow-sm">
+    <div className="mt-4 min-w-0 rounded-lg border border-cyan-500/20 bg-[#0a0e1a] p-3 sm:p-4 shadow-sm">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h4 className={cn(titleClass, 'text-cyan-300')}>
@@ -552,7 +559,7 @@ export const SubscriptionDevicesPanel: React.FC = () => {
             <div className="grid min-w-0 grid-cols-1 gap-3">
               {sortedGroups.map((group) => {
                 const expanded = expandedKeys.has(group.key);
-                const count = group.devices.length;
+                const count = groupDeviceCount(group, maxDevices);
                 const isWarning = maxDevices > 0 && count >= maxDevices;
                 const counterText =
                   maxDevices > 0
@@ -716,7 +723,7 @@ export const SubscriptionDevicesPanel: React.FC = () => {
               <tbody className="divide-y divide-cyan-500/10">
                 {sortedGroups.map((group) => {
                   const expanded = expandedKeys.has(group.key);
-                  const count = group.devices.length;
+                  const count = groupDeviceCount(group, maxDevices);
                   const isWarning = maxDevices > 0 && count >= maxDevices;
                   const counterText =
                     maxDevices > 0
