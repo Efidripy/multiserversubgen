@@ -3,8 +3,8 @@ import api from './client';
 export interface TrafficComparisonData {
   history_days: number;
   previous_available: boolean;
-  series_current: { ts: number; value: number }[];
-  series_previous: { ts: number; value: number }[];
+  series_current: { ts: number; value: number; estimated?: boolean }[];
+  series_previous: { ts: number; value: number; estimated?: boolean }[];
   totals: { current: number; previous: number | null };
   top_clients: { email: string; current: number; previous: number | null; delta_pct: number | null }[];
   top_growth: TrafficComparisonData['top_clients'];

@@ -1801,6 +1801,7 @@
     "errorDetails": "Детали ошибки"
   },
   "comparison": {
+    "estimated": "оценка по интерполяции",
     "totalTraffic": "Общий трафик",
     "nodes": "Ноды",
     "allNodes": "Все ноды",

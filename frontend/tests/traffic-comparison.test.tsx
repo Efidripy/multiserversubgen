@@ -64,3 +64,22 @@ it('hides the current period delta when there is no previous period and bounds t
   expect(ys.length).toBeGreaterThan(2);
   expect(ys.every(y => y >= 20 && y <= 210)).toBe(true);
 });
+
+
+it('marks interpolated segments and tooltip values', async () => {
+  vi.mocked(getTrafficComparison).mockResolvedValueOnce({
+    history_days: 2, previous_available: true,
+    series_current: [{ ts: 1, value: 10, estimated: true }, { ts: 2, value: 20 }],
+    series_previous: [{ ts: 1, value: 5, estimated: true }, { ts: 2, value: 10 }],
+    totals: { current: 30, previous: 15 }, top_clients: [], top_growth: [],
+  });
+  state.design = 'new';
+  const view = render(<DashboardSummary />);
+  await screen.findByText('comparison.currentPeriod');
+  expect(view.container.querySelector('.tc-current[opacity="0.4"]')).toBeTruthy();
+  expect(view.container.querySelector('.tc-previous[opacity="0.4"]')).toBeTruthy();
+  const chart = screen.getByRole('img', { name: 'comparison.totalTraffic' });
+  vi.spyOn(chart, 'getBoundingClientRect').mockReturnValue({ left: 0, width: 600 } as DOMRect);
+  fireEvent(chart, new MouseEvent('pointermove', { bubbles: true, clientX: 60 }));
+  expect(screen.getAllByTitle('comparison.estimated')).toHaveLength(2);
+});

@@ -2,7 +2,7 @@ import { useEffect, useState, type PointerEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { getTrafficComparison, type TrafficComparisonData } from '../api/trafficComparison';
 
-type Point = { ts: number; value: number };
+type Point = TrafficComparisonData['series_current'][number];
 type Client = TrafficComparisonData['top_clients'][number];
 
 function formatBytes(value: number) {
@@ -36,6 +36,21 @@ function chartPath(series: Point[], maximum: number) {
   }).join(' ');
 }
 
+function chartLines(series: Point[], maximum: number, className: string) {
+  if (!series.some(point => point.estimated) || series.length === 0 || series.length === 1) {
+    return <path className={className} d={chartPath(series, maximum)} />;
+  }
+  return series.slice(1).map((point, index) => {
+    const x0 = 60 + index * 530 / (series.length - 1);
+    const x1 = 60 + (index + 1) * 530 / (series.length - 1);
+    const y0 = 210 - series[index].value / maximum * 190;
+    const y1 = 210 - point.value / maximum * 190;
+    const mid = (x0 + x1) / 2;
+    return <path key={index} className={className} opacity={series[index].estimated || point.estimated ? 0.4 : 1}
+      d={`M ${x0} ${y0} C ${mid} ${y0}, ${mid} ${y1}, ${x1} ${y1}`} />;
+  });
+}
+
 function ComparisonChart({ current, previous, range }: { current: Point[]; previous: Point[]; range: string }) {
   const { t, i18n } = useTranslation();
   const [hover, setHover] = useState<number | null>(null);
@@ -43,7 +58,8 @@ function ComparisonChart({ current, previous, range }: { current: Point[]; previ
   const max = ticks[ticks.length - 1];
   const path = chartPath(current, max);
   const point = hover === null ? null : current[hover];
-  const prior = hover === null ? null : previous[hover]?.value ?? null;
+  const priorPoint = hover === null ? null : previous[hover] ?? null;
+  const prior = priorPoint?.value ?? null;
   const x = hover === null ? 0 : 60 + hover * 530 / Math.max(current.length - 1, 1);
   const y = point ? 210 - point.value / max * 190 : 0;
   const move = (event: PointerEvent<SVGSVGElement>) => {
@@ -70,8 +86,8 @@ function ComparisonChart({ current, previous, range }: { current: Point[]; previ
       {new Date(current[i].ts * 1000).toLocaleString(i18n.language, range === '24h' ? { hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'short' })}
       </text>)}
       {path && <path fill="url(#tc-fill)" d={`${path} L 590 210 L 60 210 Z`} />}
-      <path className="tc-previous" d={chartPath(previous, max)} />
-      <path className="tc-current" d={path} />
+      {chartLines(previous, max, 'tc-previous')}
+      {chartLines(current, max, 'tc-current')}
       {current.length > 0 && <circle className="tc-dot" cx="590" cy={210 - current[current.length - 1].value / max * 190} r="3" />}
       {point && <>
       <line className="tc-crosshair" x1={x} x2={x} y1="20" y2="210" />
@@ -83,10 +99,10 @@ function ComparisonChart({ current, previous, range }: { current: Point[]; previ
       {new Date(point.ts * 1000).toLocaleString(i18n.language)}
       </strong>
       <span>
-      {t('comparison.current')}: {formatBytes(point.value)}
+      {t('comparison.current')}: {point.estimated && <span title={t('comparison.estimated')}>{'\u2248'}</span>}{formatBytes(point.value)}
       </span>
       <span>
-      {t('comparison.previous')}: {prior === null ? '—' : formatBytes(prior)}
+      {t('comparison.previous')}: {priorPoint?.estimated && <span title={t('comparison.estimated')}>{'\u2248'}</span>}{prior === null ? '—' : formatBytes(prior)}
       </span>
       <span>
       {percent(change(point.value, prior))} {t('comparison.toComparison')}
