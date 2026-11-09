@@ -128,6 +128,13 @@
   background: var(--ln-surface-2);
   color: var(--ln-text);
 }
+:root[data-design="new"] .sidebar__design-tabs > button {
+  box-sizing: border-box;
+  height: 30px;
+  min-height: 30px;
+  padding-inline: 8px;
+  font-size: 11px;
+}
 :root[data-design="new"] .sidebar__footer-btn {
   height: 30px;
   min-height: 30px;
@@ -173,6 +180,11 @@
 :root[data-design="new"] .app-topbar__fleet-count { background: var(--ln-surface-2); color: var(--ln-text-2); border-radius: var(--ln-r-xs); }
 :root[data-design="new"] .app-pull-refresh { top: var(--ln-topbar-h); border-color: var(--ln-line); border-radius: var(--ln-r-sm); background: var(--ln-surface); color: var(--ln-text-2); box-shadow: none; }
 :root[data-design="new"] .app-content { box-sizing: border-box; padding: 16px; }
+/* Let the fleet overview controls wrap within the space beside the fleet rail. */
+:root[data-design="new"] [data-ln="fleet-controls"] {
+  min-width: 0;
+  max-width: 100%;
+}
 :root[data-design="new"] .notif-panel { top: var(--ln-topbar-h); background: var(--ln-surface); border: 1px solid var(--ln-line); border-radius: var(--ln-r-md); box-shadow: 0 16px 48px rgb(0 0 0 / 0.5); }
 
 :root[data-design="new"] .sidebar :is(button, a):hover:not(:disabled),
@@ -195,11 +207,11 @@
 
 @media (max-width: 1024px) {
   :root[data-design="new"] .sidebar,
-  :root[data-design="new"] .sidebar--collapsed { width: 218px; max-width: calc(100vw - 32px); flex-basis: auto; }
+  :root[data-design="new"] .sidebar--collapsed { width: var(--ln-sidebar-w); max-width: calc(100vw - 32px); flex-basis: auto; }
   :root[data-design="new"] .app-topbar { height: var(--ln-topbar-h); min-height: var(--ln-topbar-h); padding: 0 12px; }
   :root[data-design="new"] .app-topbar__menu-btn { width: 28px; height: 28px; flex: 0 0 28px; }
   :root[data-design="new"] .app-topbar__command-btn { width: 28px; min-width: 28px; }
-  :root[data-design="new"] .app-topbar__actions { flex-shrink: 0; }
+  :root[data-design="new"] .app-topbar__actions { flex-shrink: 0; overflow-x: auto; overflow-y: hidden; }
 }
 @media (max-width: 520px) {
   :root[data-design="new"] .app-topbar { padding: 0 8px; gap: 8px; }
