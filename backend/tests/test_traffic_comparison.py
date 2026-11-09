@@ -37,6 +37,27 @@ def test_sixty_daily_snapshots_and_node_filter(tmp_path):
     assert load_comparison(str(db), '30d', None, 59 * DAY)['totals']['current'] == 900
 
 
+
+def test_recent_node_uses_its_own_history(tmp_path):
+    db = database(tmp_path)
+    for day in range(60):
+        data = {'node:1:inbound:1': {'total': day * 10}}
+        if day >= 50:
+            data['node:2:inbound:1'] = {'total': (day - 50) * 20}
+        save(db, 'inbound', day * DAY, data)
+
+    node = load_comparison(str(db), '30d', 2, 59 * DAY)
+    assert node['previous_available'] is False
+    assert node['history_days'] == 9
+    assert node['totals']['previous'] is None
+    assert node['series_previous'] == []
+
+    fleet = load_comparison(str(db), '30d', None, 59 * DAY)
+    assert fleet['previous_available'] is True
+    assert fleet['history_days'] == 59
+    assert fleet['totals'] == {'current': 480, 'previous': 290}
+
+
 def test_missing_inbound_reset_noise_and_missing_day(tmp_path):
     db = database(tmp_path)
     tb, gb = 1024 ** 4, 1024 ** 3

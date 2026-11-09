@@ -55,8 +55,15 @@ def build_comparison(snapshots, client_snapshots, step, count, now, history_star
         previous_stats = stats
     series = [{"ts": start + i * step, "value": value} for i, value in enumerate(values)]
     # Sixty daily samples cover 59 intervals; permit the missing first boundary.
-    previous_available = bool(snapshots and snapshots[0][0] // step * step <= start + step
-                              and any(ts // step * step == start + count * step for ts, _ in snapshots))
+    availability_snapshots = snapshots
+    if node_id is not None:
+        prefix = f"node:{node_id}:inbound:"
+        availability_snapshots = [(ts, raw) for ts, raw in snapshots
+                                  if any(key.startswith(prefix) for key in _stats(raw))]
+    previous_available = bool(availability_snapshots
+                              and availability_snapshots[0][0] // step * step <= start + step
+                              and any(ts // step * step == start + count * step
+                                      for ts, _ in availability_snapshots))
     clients, growth = [], []
     if client_snapshots and node_id is None and snapshots:
         by_bucket = {ts // step * step: _stats(raw) for ts, raw in client_snapshots}
@@ -91,6 +98,13 @@ def load_comparison(db_path, range_name, node_id, now, system_client_emails=()):
             "WHERE group_by = 'inbound' AND bucket_kind = ? AND snapshot_ts <= ?", (kind, now)
         ).fetchone()
         snapshots, clients = [], []
+        if node_id is not None:
+            prefix = f"node:{node_id}:inbound:"
+            history_start = next((ts for ts, raw in conn.execute(
+                "SELECT snapshot_ts, stats_json FROM traffic_stats_snapshots "
+                "WHERE group_by = 'inbound' AND bucket_kind = ? AND snapshot_ts <= ? "
+                "ORDER BY snapshot_ts", (kind, now)
+            ) if any(key.startswith(prefix) for key in _stats(raw))), None)
         if latest is not None:
             start = (latest // step - 2 * count) * step
             for group, target in (("inbound", snapshots), ("client", clients)):
