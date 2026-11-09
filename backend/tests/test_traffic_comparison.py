@@ -1,3 +1,4 @@
+﻿import json
 import sqlite3
 import sys
 from pathlib import Path
@@ -7,95 +8,100 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from routers.operations import build_operations_router
+from services.traffic_comparison import load_comparison
+
+DAY = 86400
 
 
-def test_traffic_comparison_buckets_reset_empty_and_auth(tmp_path, monkeypatch):
+def database(tmp_path):
     db = tmp_path / 'history.db'
-    now = 2_000_000
-    monkeypatch.setattr('routers.operations.time.time', lambda: now)
     with sqlite3.connect(db) as conn:
-        conn.execute('CREATE TABLE node_history (ts INTEGER, node_id INTEGER, traffic_total INTEGER)')
         conn.execute('CREATE TABLE traffic_stats_snapshots (group_by TEXT, bucket_kind TEXT, snapshot_ts INTEGER, stats_json TEXT)')
+    return db
+
+
+def save(db, group, ts, data, kind='day'):
+    with sqlite3.connect(db) as conn:
+        conn.execute('INSERT INTO traffic_stats_snapshots VALUES (?, ?, ?, ?)', (group, kind, ts, json.dumps(data)))
+
+
+def test_sixty_daily_snapshots_and_node_filter(tmp_path):
+    db = database(tmp_path)
+    for day in range(60):
+        save(db, 'inbound', day * DAY, {'node:1:inbound:1': {'total': day * 10},
+                                         'node:2:inbound:1': {'total': day * 20}})
+    data = load_comparison(str(db), '30d', 1, 59 * DAY)
+    assert data['previous_available'] is True
+    assert data['history_days'] >= 59
+    assert data['totals'] == {'current': 300, 'previous': 290}
+    assert load_comparison(str(db), '30d', None, 59 * DAY)['totals']['current'] == 900
+
+
+
+def test_recent_node_uses_its_own_history(tmp_path):
+    db = database(tmp_path)
+    for day in range(60):
+        data = {'node:1:inbound:1': {'total': day * 10}}
+        if day >= 50:
+            data['node:2:inbound:1'] = {'total': (day - 50) * 20}
+        save(db, 'inbound', day * DAY, data)
+
+    node = load_comparison(str(db), '30d', 2, 59 * DAY)
+    assert node['previous_available'] is False
+    assert node['history_days'] == 9
+    assert node['totals']['previous'] is None
+    assert node['series_previous'] == []
+
+    fleet = load_comparison(str(db), '30d', None, 59 * DAY)
+    assert fleet['previous_available'] is True
+    assert fleet['history_days'] == 59
+    assert fleet['totals'] == {'current': 480, 'previous': 290}
+
+
+def test_missing_inbound_reset_noise_and_missing_day(tmp_path):
+    db = database(tmp_path)
+    tb, gb = 1024 ** 4, 1024 ** 3
+    readings = [
+        {'node:1:inbound:1': 10 * tb, 'node:1:inbound:2': 100},
+        {'node:1:inbound:2': 110},
+        {'node:1:inbound:1': 10 * tb + 20, 'node:1:inbound:2': 120},
+        {'node:1:inbound:1': gb, 'node:1:inbound:2': 115},
+        {'node:1:inbound:1': gb + 5, 'node:1:inbound:2': 125},
+    ]
+    for day, reading in enumerate(readings):
+        save(db, 'inbound', day * DAY, {key: {'total': value} for key, value in reading.items()})
+    save(db, 'inbound', 6 * DAY, {'node:1:inbound:1': {'total': gb + 15}, 'node:1:inbound:2': {'total': 135}})
+    data = load_comparison(str(db), '7d', None, 6 * DAY)
+    values = [point['value'] for point in data['series_current']]
+    assert values == [0, 10, 10, gb, 15, 0, 20]
+    assert data['totals']['current'] == gb + 55
+
+
+def test_system_clients_excluded_from_rankings_but_in_totals(tmp_path, monkeypatch):
+    db = database(tmp_path)
+    for day in range(15):
+        save(db, 'inbound', day * DAY, {'node:1:inbound:1': {'total': day * 100}})
+        save(db, 'client', day * DAY, {' YT-OUT ': {'total': day * 80}, 'user': {'total': day * 20}})
+    class Collector:
+        def latest_snapshot(self):
+            return {'nodes': [{'system_client_emails': ['yt-out']}]}
+    monkeypatch.setattr('routers.operations.time.time', lambda: 14 * DAY)
     app = FastAPI()
-    app.include_router(build_operations_router(check_auth=lambda request: request.headers.get('authorization'), db_path=str(db), node_service=None, client_mgr=None, server_monitor=None, get_node_or_404=None, snapshot_collector=None))
+    app.include_router(build_operations_router(check_auth=lambda request: request.headers.get('authorization'), db_path=str(db), node_service=None, client_mgr=None, server_monitor=None, get_node_or_404=None, snapshot_collector=Collector()))
     client = TestClient(app)
     assert client.get('/api/v1/traffic/comparison').status_code == 401
-    assert client.get('/api/v1/traffic/comparison?range=bad', headers={'Authorization': 'test'}).status_code == 400
-    headers = {'Authorization': 'test'}
-    empty = client.get('/api/v1/traffic/comparison', headers=headers).json()
-    assert len(empty['series_current']) == 24
-    assert empty['totals']['current'] == 0
-    with sqlite3.connect(db) as conn:
-        conn.executemany('INSERT INTO node_history VALUES (?, ?, ?)', [(now - 172900, 1, 100), (now - 172700, 1, 110), (now - 86500, 1, 120), (now - 80000, 1, 10), (now - 100, 1, 25)])
-    data = client.get('/api/v1/traffic/comparison', headers=headers).json()
-    assert data['totals'] == {'current': 25, 'previous': 10}
-    assert sum(x['value'] for x in data['series_current']) == 25
-    assert len(client.get('/api/v1/traffic/comparison?range=7d', headers=headers).json()['series_current']) == 7
-    assert len(client.get('/api/v1/traffic/comparison?range=30d', headers=headers).json()['series_current']) == 30
+    assert client.get('/api/v1/traffic/comparison?range=bad', headers={'Authorization': 'yes'}).status_code == 400
+    data = client.get('/api/v1/traffic/comparison?range=7d', headers={'Authorization': 'yes'}).json()
+    assert data['totals'] == {'current': 700, 'previous': 700}
+    assert [item['email'] for item in data['top_clients']] == ['user']
+    assert [item['email'] for item in data['top_growth']] == ['user']
 
 
-def test_service_aggregation_alignment_filter_and_incomplete_history(tmp_path):
-    from services.traffic_comparison import load_comparison
-
-    db = tmp_path / 'history.db'
-    now = 2_000_000
-    end = (now // 3600 + 1) * 3600
-    start = end - 48 * 3600
-    with sqlite3.connect(db) as conn:
-        conn.execute('CREATE TABLE node_history (ts INTEGER, node_id INTEGER, traffic_total INTEGER)')
-        conn.execute('CREATE TABLE traffic_stats_snapshots (group_by TEXT, bucket_kind TEXT, snapshot_ts INTEGER, stats_json TEXT)')
-        conn.executemany('INSERT INTO node_history VALUES (?, ?, ?)', [
-            (start - 1, 1, 100), (start + 10, 1, 110),
-            (start + 23 * 3600, 1, 120), (start + 24 * 3600, 1, 130),
-            (start + 25 * 3600, 1, 5), (start + 25 * 3600 + 10, 1, 9),
-            (start + 25 * 3600, 2, 500), (start + 26 * 3600, 2, 900),
-        ])
-    data = load_comparison(str(db), '24h', 1, now)
-    assert data['previous_available'] is True
-    assert data['totals'] == {'current': 19, 'previous': 20}
-    assert all(p['ts'] % 3600 == 0 for p in data['series_current'])
-    assert load_comparison(str(db), '24h', 2, now)['previous_available'] is False
-    assert all(p['ts'] % 86400 == 0 for p in load_comparison(str(db), '7d', 1, now)['series_current'])
-
-
-def test_comparison_counts_each_reset_inside_bucket(tmp_path):
-    from services.traffic_comparison import load_comparison
-
-    db = tmp_path / 'history.db'
-    now = 2_000_000
-    end = (now // 3600 + 1) * 3600
-    start = end - 48 * 3600
-    with sqlite3.connect(db) as conn:
-        conn.execute('CREATE TABLE node_history (ts INTEGER, node_id INTEGER, traffic_total INTEGER)')
-        conn.execute('CREATE TABLE traffic_stats_snapshots (group_by TEXT, bucket_kind TEXT, snapshot_ts INTEGER, stats_json TEXT)')
-        conn.executemany('INSERT INTO node_history VALUES (?, 1, ?)', [
-            (start - 1, 100), (start + 24 * 3600 + 10, 100), (start + 24 * 3600 + 20, 120),
-            (start + 24 * 3600 + 30, 5), (start + 24 * 3600 + 40, 150),
-        ])
-    data = load_comparison(str(db), '24h', 1, now)
-    assert data['series_current'][0]['value'] == 170
-
-
-def test_comparison_client_equal_windows_and_growth_ranking(tmp_path):
-    import json
-
-    from services.traffic_comparison import load_comparison
-
-    db = tmp_path / 'history.db'
-    day = 86400
-    now = 100 * day + 12 * 3600
-    with sqlite3.connect(db) as conn:
-        conn.execute('CREATE TABLE node_history (ts INTEGER, node_id INTEGER, traffic_total INTEGER)')
-        conn.execute('CREATE TABLE traffic_stats_snapshots (group_by TEXT, bucket_kind TEXT, snapshot_ts INTEGER, stats_json TEXT)')
-        for days_ago in (14, 7, 0):
-            elapsed = 14 - days_ago
-            clients = {f'large{i}': {'total': elapsed * 100} for i in range(10)}
-            clients['outside'] = {'total': {14: 0, 7: 10, 0: 40}[days_ago]}
-            conn.execute('INSERT INTO traffic_stats_snapshots VALUES (?, ?, ?, ?)',
-                         ('client', 'day', (100 - days_ago) * day, json.dumps(clients)))
-    data = load_comparison(str(db), '7d', None, now)
-    assert data['top_clients'][0]['delta_pct'] == 0
-    assert data['top_clients'][0]['current'] == data['top_clients'][0]['previous'] == 700
-    assert all(client['email'] != 'outside' for client in data['top_clients'])
-    assert data['top_growth'][0]['email'] == 'outside'
-    assert data['top_growth'][0]['delta_pct'] == 200
+def test_hour_snapshots_and_empty_history(tmp_path):
+    db = database(tmp_path)
+    empty = load_comparison(str(db), '24h', None, 5000)
+    assert empty['totals'] == {'current': 0, 'previous': None}
+    save(db, 'inbound', 3600, {'node:1:inbound:1': {'total': 10}}, 'hour')
+    save(db, 'inbound', 7200, {'node:1:inbound:1': {'total': 25}}, 'hour')
+    data = load_comparison(str(db), '24h', None, 7200)
+    assert data['totals']['current'] == 15

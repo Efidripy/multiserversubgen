@@ -193,7 +193,7 @@ export function DashboardSummary({
       <div className="mb-4 sm:mb-6">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <h2 className="font-mono text-sm sm:text-base font-medium uppercase tracking-[0.18em] text-cyan-300">{t('dashboardSummary.fleetOverview').toUpperCase()}</h2>
-          <div className="flex flex-wrap items-center justify-end gap-2">
+          <div data-ln="fleet-controls" className="flex flex-wrap items-center justify-end gap-2">
             <ChoiceChips
               options={[
                 { value: 'day', label: t('traffic.periodDay') },

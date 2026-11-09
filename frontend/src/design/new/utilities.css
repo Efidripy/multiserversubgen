@@ -78,7 +78,7 @@
 :root[data-design="new"] .sidebar__language-tabs > button {
   flex: 1 1 0;
   min-width: 0;
-  padding-inline: 6px;
+  padding-inline: 8px;
   white-space: nowrap;
   text-transform: none;
   letter-spacing: 0;
