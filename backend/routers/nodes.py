@@ -12,6 +12,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import ORJSONResponse
 
 from xui_session import (
+    build_panel_base_url,
     diagnose_xui_failure,
     invalidate_auth_method_cache,
     invalidate_node_capabilities,
@@ -42,6 +43,30 @@ def _serialize_tags(value) -> str:
         tags = [tag.strip() for tag in stripped.split(",") if tag.strip()]
         return json.dumps(tags, ensure_ascii=False)
     return "[]"
+
+
+def _panel_url_key(url):
+    parsed = urlparse(url)
+    return parsed.scheme.lower(), parsed.hostname.lower(), parsed.port, parsed.path.strip("/")
+
+
+def _check_panel_duplicate(conn, new_connection, exclude_id=None):
+    new_key = _panel_url_key(build_panel_base_url(new_connection))
+    rows = conn.execute(
+        """
+        SELECT id, name, ip, port, base_path, access_path, panel_url, scheme FROM nodes
+        WHERE (? IS NULL OR id != ?)
+        """,
+        (exclude_id, exclude_id),
+    ).fetchall()
+    for row in rows:
+        node = dict(zip(("id", "name", "ip", "port", "base_path", "access_path", "panel_url", "scheme"), row))
+        try:
+            node_key = _panel_url_key(build_panel_base_url(node))
+        except ValueError:
+            continue
+        if node_key == new_key:
+            raise HTTPException(status_code=409, detail=f"Another node already uses this panel: #{row[0]} {row[1]}")
 
 
 def build_nodes_router(
@@ -140,6 +165,8 @@ def build_nodes_router(
                 encrypted_password = encrypt(str(password))
                 stored_user = node_user
             with connect(db_path) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                _check_panel_duplicate(conn, {"panel_url": canonical_panel_url})
                 conn.execute(
                     """
                     INSERT INTO nodes (
@@ -166,6 +193,8 @@ def build_nodes_router(
                     ),
                 )
                 conn.commit()
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.error(f"Error adding node: {exc}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -373,6 +402,7 @@ def build_nodes_router(
         node_panel_url: str | None = None
         try:
             with connect(db_path) as conn:
+                conn.execute("BEGIN IMMEDIATE")
                 existing = conn.execute(
                     """
                     SELECT name, panel_url, username, ip, port, base_path, access_path, scheme
@@ -394,6 +424,14 @@ def build_nodes_router(
                     "access_path": existing[6],
                     "scheme": existing[7],
                 }
+                if updated_connection:
+                    try:
+                        old_endpoint = _panel_url_key(build_panel_base_url(existing_connection))
+                    except ValueError:
+                        old_endpoint = None
+                    new_endpoint = _panel_url_key(build_panel_base_url(updated_connection))
+                    if old_endpoint != new_endpoint:
+                        _check_panel_duplicate(conn, updated_connection, node_id)
                 update_fields = []
                 update_values = []
 
