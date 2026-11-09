@@ -91,3 +91,26 @@ describe('design switch', () => {
     expect(i18nMock.changeLanguage).not.toHaveBeenCalled();
   });
 });
+
+it('keeps classic home controls and moves both new home controls to the header', () => {
+  const setActiveTab = vi.fn();
+  const { container } = render(
+    <ThemeProvider>
+      <Sidebar activeTab="traffic" setActiveTab={setActiveTab} items={[]} user="admin" onLogout={vi.fn()} onOpenLog={vi.fn()} mobileOpen={false} onMobileClose={vi.fn()} />
+    </ThemeProvider>,
+  );
+  expect(container.querySelector('.sidebar__version-badge')?.tagName).toBe('SPAN');
+  expect(container.querySelector('.sidebar__back-selector')).not.toBeNull();
+  expect(container.querySelector('.sidebar__home-btn')).toBeNull();
+  fireEvent.click(screen.getByText('design.new'));
+  expect(container.querySelector('.sidebar__back-selector')).toBeNull();
+  fireEvent.click(screen.getByText('v3.1'));
+  fireEvent.click(container.querySelector('.sidebar__home-btn')!);
+  expect(setActiveTab).toHaveBeenCalledTimes(2);
+  expect(setActiveTab).toHaveBeenNthCalledWith(1, 'dashboard');
+  expect(setActiveTab).toHaveBeenNthCalledWith(2, 'dashboard');
+  fireEvent.click(container.querySelector('.sidebar__collapse-btn')!);
+  expect(container.querySelector('.sidebar__version-badge')).toBeNull();
+  expect(container.querySelector('.sidebar__home-btn')).not.toBeNull();
+  expect(container.querySelector('.sidebar__collapsed-back')).toBeNull();
+});
