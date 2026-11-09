@@ -156,16 +156,20 @@ function getDeviceFieldValue(device: SubscriptionDeviceItem, key: DeviceSortKey)
   }
 }
 
-// With a device limit only HWID devices count toward it, so "Used" shows (and sorts by) that number.
-export function groupDeviceCount(group: DeviceGroup, maxDevices = 0): number {
-  return maxDevices > 0 ? group.devices.filter((device) => device.has_hwid !== false).length : group.devices.length;
+// "Used" counts every device of the subscription, clients without HWID included.
+export function groupDeviceCount(group: DeviceGroup): number {
+  return group.devices.length;
+}
+
+// The enforced limit counts HWID devices only, so the limit warning does too.
+export function groupHwidCount(group: DeviceGroup): number {
+  return group.devices.filter((device) => device.has_hwid !== false).length;
 }
 
 export function sortDeviceGroups(
   groups: DeviceGroup[],
   key: DeviceSortKey = 'email',
-  direction: SortDirection = 'asc',
-  maxDevices = 0
+  direction: SortDirection = 'asc'
 ): DeviceGroup[] {
   if (!Array.isArray(groups)) return [];
 
@@ -197,7 +201,7 @@ export function sortDeviceGroups(
     if (key === 'email') {
       cmp = compareFieldValues(groupA.label, groupB.label, 'email', direction);
     } else if (key === 'count') {
-      cmp = compareFieldValues(groupDeviceCount(groupA, maxDevices), groupDeviceCount(groupB, maxDevices), 'count', direction);
+      cmp = compareFieldValues(groupDeviceCount(groupA), groupDeviceCount(groupB), 'count', direction);
     } else {
       const firstA = groupA.devices[0];
       const firstB = groupB.devices[0];
@@ -323,8 +327,8 @@ export const SubscriptionDevicesPanel: React.FC = () => {
 
   const rawGroups = useMemo(() => groupDevices(devices), [devices]);
   const sortedGroups = useMemo(
-    () => sortDeviceGroups(rawGroups, sortKey, sortDirection, maxDevices),
-    [rawGroups, sortKey, sortDirection, maxDevices]
+    () => sortDeviceGroups(rawGroups, sortKey, sortDirection),
+    [rawGroups, sortKey, sortDirection]
   );
 
   const formatTimestamp = (ts: number): string => {
@@ -559,8 +563,8 @@ export const SubscriptionDevicesPanel: React.FC = () => {
             <div className="grid min-w-0 grid-cols-1 gap-3">
               {sortedGroups.map((group) => {
                 const expanded = expandedKeys.has(group.key);
-                const count = groupDeviceCount(group, maxDevices);
-                const isWarning = maxDevices > 0 && count >= maxDevices;
+                const count = groupDeviceCount(group);
+                const isWarning = maxDevices > 0 && groupHwidCount(group) >= maxDevices;
                 const counterText =
                   maxDevices > 0
                     ? t('subscriptionClients.devices.deviceCountLimit', { count, max: maxDevices })
@@ -723,8 +727,8 @@ export const SubscriptionDevicesPanel: React.FC = () => {
               <tbody className="divide-y divide-cyan-500/10">
                 {sortedGroups.map((group) => {
                   const expanded = expandedKeys.has(group.key);
-                  const count = groupDeviceCount(group, maxDevices);
-                  const isWarning = maxDevices > 0 && count >= maxDevices;
+                  const count = groupDeviceCount(group);
+                  const isWarning = maxDevices > 0 && groupHwidCount(group) >= maxDevices;
                   const counterText =
                     maxDevices > 0
                       ? t('subscriptionClients.devices.deviceCountLimit', { count, max: maxDevices })

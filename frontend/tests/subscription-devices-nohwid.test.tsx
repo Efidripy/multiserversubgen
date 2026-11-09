@@ -7,7 +7,7 @@ vi.mock('../src/api', () => ({ default: { get: apiGet, delete: apiDelete } }));
 vi.mock('../src/components/Toast', () => ({ useToast: () => ({ toast: vi.fn() }) }));
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 
-import { SubscriptionDevicesPanel, sortDeviceGroups as sortGroups } from '../src/components/SubscriptionDevicesPanel';
+import { SubscriptionDevicesPanel, sortDeviceGroups as sortGroups, groupDeviceCount, groupHwidCount } from '../src/components/SubscriptionDevicesPanel';
 
 afterEach(cleanup);
 
@@ -30,10 +30,16 @@ it('shows and deletes a device without HWID and displays empty metadata', async 
 
 
 
-it('count sort uses HWID devices only when a limit is set', () => {
+it('count sort includes devices without HWID', () => {
   const dev = (id: number, has_hwid: boolean) => ({ id, subject: 's', device_os: '', os_version: '', model: '', first_seen: 0, last_seen: 0, has_hwid });
   const a = { key: 'a', label: 'a', devices: [dev(1, true), ...Array.from({ length: 5 }, (_, i) => dev(10 + i, false))] };
   const b = { key: 'b', label: 'b', devices: [dev(2, true), dev(3, true)] };
-  const sorted = sortGroups([a, b] as never, 'count', 'desc', 3);
-  expect(sorted.map((g) => g.key)).toEqual(['b', 'a']);
+  const sorted = sortGroups([a, b] as never, 'count', 'desc');
+  expect(sorted.map((g) => g.key)).toEqual(['a', 'b']);
+});
+
+it('counts all devices but only HWID devices for the limit', () => {
+  const group = { key: 'g', label: 'g', devices: [{ has_hwid: true }, { has_hwid: false }, { has_hwid: false }] };
+  expect(groupDeviceCount(group as never)).toBe(3);
+  expect(groupHwidCount(group as never)).toBe(1);
 });
