@@ -16,6 +16,7 @@ DAY = 86400
 def database(tmp_path):
     db = tmp_path / 'history.db'
     with sqlite3.connect(db) as conn:
+        conn.execute('CREATE TABLE traffic_samples (node_id TEXT, ts INTEGER, tier TEXT, inbounds_json TEXT, clients_json TEXT)')
         conn.execute('CREATE TABLE traffic_stats_snapshots (group_by TEXT, bucket_kind TEXT, snapshot_ts INTEGER, stats_json TEXT)')
     return db
 
@@ -172,3 +173,64 @@ def test_clients_with_full_history_keep_growth(tmp_path):
     assert data['top_clients'][0]['previous'] == 70
     assert data['top_clients'][0]['delta_pct'] == 100
     assert data['top_growth'] == data['top_clients']
+
+
+def test_samples_per_node_and_snapshot_boundary(tmp_path):
+    db = database(tmp_path)
+    for hour in range(49):
+        save(db, 'inbound', hour * 3600, {'node:1:inbound:1': {'total': hour * 60}}, 'hour')
+    with sqlite3.connect(db) as conn:
+        for hour in range(24, 49):
+            for node in (1, 2):
+                if node == 2 and 30 < hour < 36:
+                    continue
+                inbound = json.dumps({f'node:{node}:inbound:1': hour * (60 if node == 1 else 120)})
+                clients = json.dumps({'user': hour * 10})
+                conn.execute('INSERT INTO traffic_samples VALUES (?, ?, ?, ?, ?)',
+                             (str(node), hour * 3600, 'raw', inbound, clients))
+    first = load_comparison(str(db), '24h', 1, 48 * 3600)
+    assert first['totals'] == {'current': 1440, 'previous': 1440}
+    assert all(not p.get('estimated') for p in first['series_current'])
+    fleet = load_comparison(str(db), '24h', None, 48 * 3600)
+    assert fleet['totals'] == {'current': 4320, 'previous': 1440}
+    assert sum(p.get('estimated', False) for p in fleet['series_current']) == 6
+    assert fleet['top_clients'][0]['current'] == 480
+
+
+def test_clients_switch_at_latest_node_cutoff(tmp_path):
+    db = database(tmp_path)
+    for hour in range(49):
+        save(db, 'inbound', hour * 3600, {'node:2:inbound:1': hour * 10}, 'hour')
+        save(db, 'client', hour * 3600, {'user': hour * 10, 'other': hour * 10}, 'hour')
+    with sqlite3.connect(db) as conn:
+        for node, hours in ((1, (24, 35, 38, 48)), (2, (36, 48))):
+            for hour in hours:
+                clients = {('user' if node == 2 else 'other'): hour * 10}
+                conn.execute('INSERT INTO traffic_samples VALUES (?, ?, ?, ?, ?)',
+                             (str(node), hour * 3600, 'raw', '{}', json.dumps(clients)))
+    data = load_comparison(str(db), '24h', None, 48 * 3600)
+    assert {item['email']: item['current'] for item in data['top_clients']} == {'user': 240, 'other': 240}
+
+
+def test_inbound_bridge_fills_gap_before_first_sample(tmp_path):
+    db = database(tmp_path)
+    for hour in range(25):
+        save(db, 'inbound', hour * 3600, {'node:1:inbound:1': hour * 10}, 'hour')
+    with sqlite3.connect(db) as conn:
+        for hour in range(25, 49):
+            conn.execute('INSERT INTO traffic_samples VALUES (?, ?, ?, ?, ?)',
+                         ('1', hour * 3600, 'raw', json.dumps({'node:1:inbound:1': hour * 10}), '{}'))
+    data = load_comparison(str(db), '24h', 1, 48 * 3600)
+    assert data['totals']['current'] == 240
+
+
+def test_inbound_bridge_does_not_overlap_later_snapshots(tmp_path):
+    db = database(tmp_path)
+    for hour in list(range(25)) + list(range(26, 49)):
+        save(db, 'inbound', hour * 3600, {'node:1:inbound:1': hour * 10}, 'hour')
+    with sqlite3.connect(db) as conn:
+        for hour in range(25, 49):
+            conn.execute('INSERT INTO traffic_samples VALUES (?, ?, ?, ?, ?)',
+                         ('1', hour * 3600, 'raw', json.dumps({'node:1:inbound:1': hour * 10}), '{}'))
+    data = load_comparison(str(db), '24h', 1, 48 * 3600)
+    assert data['totals']['current'] == 240

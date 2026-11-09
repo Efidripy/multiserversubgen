@@ -233,6 +233,10 @@ def _on_snapshots(snapshots: list[dict]) -> None:
         live_stats_runtime.seed_period_snapshots_from_collector()
     except Exception as exc:
         logger.warning("Traffic snapshot auto-seed failed: %s", exc)
+    try:
+        live_stats_runtime.record_traffic_samples(snapshot_collector.latest_snapshot())
+    except Exception as exc:
+        logger.warning("Traffic sample recording failed: %s", exc)
     if telegram_traffic_reconciler is not None:
         try:
             # A local reconciliation only consumes the already completed

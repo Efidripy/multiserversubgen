@@ -12,10 +12,11 @@ from shared.observability import record_cache
 class LiveStatsRuntime:
     # Redis and SQLite keep the long period history. The process-local fallback
     # must remain a small hot set instead of retaining every full fleet snapshot.
+    _TRAFFIC_SAMPLE_INTERVAL = 600
     _MEMORY_SNAPSHOT_MAX_ENTRIES = 96
     _ROLLING_SNAPSHOT_CONFIG = {
         "hour": {"bucket_seconds": 3600, "ttl_seconds": 3 * 86400, "max_search_buckets": 48},
-        "day": {"bucket_seconds": 86400, "ttl_seconds": 400 * 86400, "max_search_buckets": 400},
+        "day": {"bucket_seconds": 86400, "ttl_seconds": 730 * 86400, "max_search_buckets": 730},
     }
 
     _PERIOD_SNAPSHOT_KIND = {
@@ -64,6 +65,8 @@ class LiveStatsRuntime:
         self._snapshot_cleanup_ts = 0.0
         self._snapshot_seed_check_ts = 0.0
         self._snapshot_seed_lock = Lock()
+        self._traffic_sample_lock = Lock()
+        self._traffic_sample_cleanup_ts = None
         self._traffic_cold_load_locks: Dict[str, Lock] = {}
         self._cache_state_lock = Lock()
         self._cache_generation = 0
@@ -363,6 +366,57 @@ class LiveStatsRuntime:
                 client = matching_clients[0]
                 total += self._metric(client.get("up")) + self._metric(client.get("down"))
         return total
+
+    def record_traffic_samples(self, snapshot: Dict, now: Optional[float] = None) -> None:
+        """Store per-node counters from the completed collector snapshot."""
+        if not self.db_path:
+            return
+        ts = int(time.time() if now is None else now)
+        nodes = snapshot.get("nodes", []) if isinstance(snapshot, dict) else []
+        with self._traffic_sample_lock, connect(self.db_path) as conn:
+            for node in nodes if isinstance(nodes, list) else []:
+                if not isinstance(node, dict) or not node.get("available") or not node.get("inbounds_available"):
+                    continue
+                node_id = str(node.get("node_id") or "").strip()
+                inbounds = node.get("inbounds")
+                if not node_id or not isinstance(inbounds, list):
+                    continue
+                previous = conn.execute(
+                    "SELECT MAX(ts) FROM traffic_samples WHERE node_id=? AND tier='raw'", (node_id,)
+                ).fetchone()[0]
+                if previous is not None and ts - previous < self._TRAFFIC_SAMPLE_INTERVAL:
+                    continue
+                inbound_totals, client_totals = {}, {}
+                for inbound in inbounds:
+                    if not isinstance(inbound, dict):
+                        continue
+                    key = self._stable_inbound_key(node_id, inbound.get("id"), "")
+                    if key:
+                        inbound_totals[key] = inbound_totals.get(key, 0) + self._metric(inbound.get("up")) + self._metric(inbound.get("down"))
+                    for client in inbound.get("clientStats") or []:
+                        if not isinstance(client, dict):
+                            continue
+                        email = str(client.get("email") or "")
+                        if email:
+                            client_totals[email] = client_totals.get(email, 0) + self._metric(client.get("up")) + self._metric(client.get("down"))
+                conn.execute("INSERT OR IGNORE INTO traffic_samples VALUES (?, ?, 'raw', ?, ?)",
+                             (node_id, ts, json.dumps(inbound_totals), json.dumps(client_totals)))
+            if self._traffic_sample_cleanup_ts is None or ts - self._traffic_sample_cleanup_ts >= 3600:
+                for source, target, age, bucket in (("raw", "hour", 3, 3600), ("hour", "day", 60, 86400)):
+                    cutoff = ts - age * 86400
+                    conn.execute(
+                        "INSERT OR IGNORE INTO traffic_samples "
+                        "SELECT s.node_id, s.ts, ?, s.inbounds_json, s.clients_json FROM traffic_samples s "
+                        "JOIN (SELECT node_id, MIN(ts) AS first_ts FROM traffic_samples "
+                        "WHERE tier=? AND ts<? GROUP BY node_id, ts / ?) first "
+                        "ON s.node_id=first.node_id AND s.ts=first.first_ts WHERE s.tier=? "
+                        "AND NOT EXISTS (SELECT 1 FROM traffic_samples existing WHERE existing.node_id=s.node_id "
+                        "AND existing.tier=? AND existing.ts / ? = s.ts / ?)",
+                        (target, source, cutoff, bucket, source, target, bucket, bucket),
+                    )
+                    conn.execute("DELETE FROM traffic_samples WHERE tier=? AND ts<?", (source, cutoff))
+                conn.execute("DELETE FROM traffic_samples WHERE tier='day' AND ts<?", (ts - 730 * 86400,))
+                self._traffic_sample_cleanup_ts = ts
 
     def seed_period_snapshots_from_collector(self, now_ts: Optional[float] = None) -> Dict[str, bool]:
         """Persist current period baselines from collector data, never a fleet read."""

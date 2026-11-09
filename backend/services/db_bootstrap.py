@@ -1457,6 +1457,14 @@ def init_db(db_path: str) -> None:
             "ON traffic_stats_snapshots(group_by, bucket_kind, bucket_start)"
         )
         conn.execute(
+            """CREATE TABLE IF NOT EXISTS traffic_samples
+                     (node_id TEXT NOT NULL, ts INTEGER NOT NULL,
+                      tier TEXT NOT NULL CHECK(tier IN ('raw','hour','day')),
+                      inbounds_json TEXT NOT NULL, clients_json TEXT NOT NULL,
+                      PRIMARY KEY(node_id, tier, ts)) WITHOUT ROWID"""
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_traffic_samples_tier_ts ON traffic_samples(tier, ts)")
+        conn.execute(
             """CREATE TABLE IF NOT EXISTS adguard_sources
                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
                       name TEXT NOT NULL,
