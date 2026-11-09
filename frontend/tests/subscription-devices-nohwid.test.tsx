@@ -30,10 +30,10 @@ it('shows and deletes a device without HWID and displays empty metadata', async 
 
 
 
-it('count sort uses HWID devices only when a limit is set', () => {
+it('count sort includes devices without HWID', () => {
   const dev = (id: number, has_hwid: boolean) => ({ id, subject: 's', device_os: '', os_version: '', model: '', first_seen: 0, last_seen: 0, has_hwid });
   const a = { key: 'a', label: 'a', devices: [dev(1, true), ...Array.from({ length: 5 }, (_, i) => dev(10 + i, false))] };
   const b = { key: 'b', label: 'b', devices: [dev(2, true), dev(3, true)] };
-  const sorted = sortGroups([a, b] as never, 'count', 'desc', 3);
-  expect(sorted.map((g) => g.key)).toEqual(['b', 'a']);
+  const sorted = sortGroups([a, b] as never, 'count', 'desc');
+  expect(sorted.map((g) => g.key)).toEqual(['a', 'b']);
 });
