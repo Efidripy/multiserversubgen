@@ -40,6 +40,7 @@ const mockSchema = {
   happ: [
     { key: 'routing_enable', header: 'Routing-Enable', type: 'bool' as const, group: 'routing' },
     { key: 'routing', header: 'Routing', type: 'text' as const, group: 'routing' },
+    ...['routing_ios', 'routing_android', 'routing_windows'].map(key => ({ key, header: null, type: 'bool' as const, group: 'routing' })),
     { key: 'tun_mode', header: 'Tun-Mode', type: 'enum' as const, group: 'network', options: ['system', 'gvisor'] },
   ],
   mihomo: [
@@ -123,6 +124,19 @@ describe('SubscriptionClientSettings', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+  });
+
+  it('shows and toggles all Happ platform switches', async () => {
+    render(<SubscriptionClientSettings />);
+    fireEvent.click(await screen.findByText('subscriptionClients.tabs.clients'));
+    for (const platform of ['ios', 'android', 'windows']) {
+      const control = screen.getByRole('switch', { name: `subscriptionClients.fields.happ.routing_${platform}` });
+      expect(control.getAttribute('aria-checked')).toBe('true');
+      fireEvent.click(control);
+      expect(control.getAttribute('aria-checked')).toBe('false');
+      fireEvent.click(control);
+      expect(control.getAttribute('aria-checked')).toBe('true');
+    }
   });
 
   it('поля строятся из schema', async () => {

@@ -726,6 +726,8 @@ export const SubscriptionClientSettings: React.FC = () => {
                               const fieldLabel = t(`subscriptionClients.fields.${selectedClient.kind}.${field.key}`);
                               const currentValue = selectedClient.settings?.[field.key];
                               const isHappRouting = selectedClient.kind === 'happ' && field.key === 'routing';
+                              const isHappPlatform = selectedClient.kind === 'happ' && ['routing_ios', 'routing_android', 'routing_windows'].includes(field.key);
+                              const checked = Boolean(currentValue ?? (isHappPlatform ? true : false));
 
                               return (
                                 <div key={field.key} className={cn('min-w-0', isHappRouting ? 'sm:col-span-2' : '')}>
@@ -805,14 +807,17 @@ export const SubscriptionClientSettings: React.FC = () => {
                                           className="form-check-input"
                                           type="checkbox"
                                           role="switch"
-                                          checked={Boolean(currentValue)}
-                                          aria-checked={Boolean(currentValue)}
+                                          checked={checked}
+                                          aria-checked={checked}
                                           aria-label={fieldLabel}
                                           title={fieldLabel}
                                           onChange={(e) =>
                                             updateClientSetting(selectedIndex, field.key, e.target.checked)
                                           }
                                         />
+                                        {isHappPlatform && (
+                                          <span className="ml-2 min-w-0 text-xs text-gray-400">{t('subscriptionClients.happRouting.platformHint')}</span>
+                                        )}
                                       </div>
                                     )}
 

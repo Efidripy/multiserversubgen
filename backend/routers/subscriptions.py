@@ -189,6 +189,22 @@ def build_subscriptions_router(
             headers[name] = value
         return body, output_format, headers
 
+    def _filter_happ_routing(headers, settings, request):
+        client = match_client(settings, request.headers.get("user-agent"))
+        if not client or client.get("kind") != "happ":
+            return
+        device_os = request.headers.get("x-device-os")
+        platform_hint = device_os if device_os is not None else request.headers.get("user-agent", "")
+        platform = None
+        for pattern, name in ((r"\b(?:ios|ipados|iphone|ipad)\b", "ios"), (r"\bandroid\b", "android"), (r"\bwindows\b", "windows")):
+            if re.search(pattern, platform_hint, re.IGNORECASE):
+                platform = name
+                break
+        if platform and not client.get("settings", {}).get(f"routing_{platform}", True):
+            for name in list(headers):
+                if name.lower() in {"routing", "routing-enable"}:
+                    del headers[name]
+
     def _client_headers(settings, user_agent):
         settings = copy.deepcopy(settings)
         client = match_client(settings, user_agent)
@@ -326,6 +342,7 @@ def build_subscriptions_router(
         headers = details[2]
         headers.update(decision.headers)
         _apply_rule_headers(headers, rule)
+        _filter_happ_routing(headers, settings, request)
         if grouped:
             headers["X-Subscription-Cache"] = headers.get("X-Subscription-Cache", "miss")
         if as_details:
@@ -708,6 +725,7 @@ def build_subscriptions_router(
                 headers[name] = value
             headers.update(decision.headers)
             _apply_rule_headers(headers, rule_for_group)
+            _filter_happ_routing(headers, settings, request)
             return _response_from_details((cached_content, cached_format, headers))
 
         no_cache_headers = _subscription_headers("miss")
