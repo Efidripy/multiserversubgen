@@ -38,48 +38,70 @@ def _delta(previous, current):
 def build_comparison(snapshots, client_snapshots, step, count, now, history_start,
                      range_name, node_id, system_client_emails=()):
     latest = snapshots[-1][0] if snapshots else now
-    end = (latest // step) * step
-    start = end - 2 * step * count
-    values = [0] * (count * 2)
-    previous_stats = None
-    for timestamp, raw in snapshots:
-        bucket = (timestamp // step) * step
-        stats = _stats(raw)
-        if previous_stats is not None and start < bucket <= end:
-            prefix = f"node:{node_id}:inbound:"
-            values[(bucket - start) // step - 1] = sum(
-                _delta(_metric(previous_stats[key]), _metric(value))
-                for key, value in stats.items()
-                if key in previous_stats and (node_id is None or key.startswith(prefix))
-            )
-        previous_stats = stats
-    series = [{"ts": start + i * step, "value": value} for i, value in enumerate(values)]
-    # Sixty daily samples cover 59 intervals; permit the missing first boundary.
-    availability_snapshots = snapshots
-    if node_id is not None:
-        prefix = f"node:{node_id}:inbound:"
-        availability_snapshots = [(ts, raw) for ts, raw in snapshots
-                                  if any(key.startswith(prefix) for key in _stats(raw))]
-    previous_available = bool(availability_snapshots
-                              and availability_snapshots[0][0] // step * step <= start + step
-                              and any(ts // step * step == start + count * step
-                                      for ts, _ in availability_snapshots))
+    end = latest
+    duration = step * count
+    start = end - 2 * duration
+    values = [0.0] * (count * 2)
+    estimates = [0.0] * (count * 2)
+    prefix = f"node:{node_id}:inbound:"
+    parsed = [(ts, _stats(raw)) for ts, raw in snapshots]
+    for (t0, before), (t1, after) in zip(parsed, parsed[1:]):
+        if t1 <= t0:
+            continue
+        delta = sum(_delta(_metric(before[key]), _metric(item))
+                    for key, item in after.items()
+                    if key in before and (node_id is None or key.startswith(prefix)))
+        first = max(0, (t0 - start) // step)
+        last = min(count * 2 - 1, (t1 - start - 1) // step)
+        for i in range(first, last + 1):
+            overlap = max(0, min(t1, start + (i + 1) * step) - max(t0, start + i * step))
+            part = delta * overlap / (t1 - t0)
+            values[i] += part
+            if t1 - t0 > 2 * step:
+                estimates[i] += part
+    series = []
+    for i, value in enumerate(values):
+        point = {"ts": start + i * step, "value": value}
+        if estimates[i] > value / 2:
+            point["estimated"] = True
+        series.append(point)
+    availability = [(ts, stats) for ts, stats in parsed
+                    if any(node_id is None or key.startswith(prefix) for key in stats)]
+    previous_available = bool(availability
+                              and availability[0][0] <= start + max(step, duration * 0.1)
+                              and any(ts > start + duration for ts, _ in availability))
     clients, growth = [], []
     if client_snapshots and node_id is None and snapshots:
-        by_bucket = {ts // step * step: _stats(raw) for ts, raw in client_snapshots}
-        old, mid, current = (by_bucket.get(target) for target in (start, start + count * step, end))
         system = {normalize_email(email) for email in system_client_emails}
-        if mid is not None and current is not None:
-            for email, item in current.items():
-                if normalize_email(email) in system or email not in mid or _metric(item) is None:
+        client_data = [(ts, _stats(raw)) for ts, raw in client_snapshots]
+        amounts = {}
+        for (t0, before), (t1, after) in zip(client_data, client_data[1:]):
+            if t1 <= t0:
+                continue
+            for email, item in after.items():
+                if email not in before or normalize_email(email) in system:
                     continue
-                cur = _delta(_metric(mid[email]), _metric(item))
-                prev = _delta(_metric(old[email]), _metric(mid[email])) if old is not None and email in old else None
-                clients.append({"email": email, "current": cur, "previous": prev,
-                                "delta_pct": round((cur - prev) * 100 / prev, 1) if prev else None})
-            growth = sorted((item for item in clients if item["previous"] and item["previous"] > 0),
-                            key=lambda item: (-item["delta_pct"], -item["current"], item["email"]))[:10]
-            clients = sorted(clients, key=lambda item: (-item["current"], item["email"]))[:10]
+                old_metric, new_metric = _metric(before[email]), _metric(item)
+                if old_metric is None or new_metric is None:
+                    continue
+                delta = _delta(old_metric, new_metric)
+                entry = amounts.setdefault(email, [0.0, 0.0, False, False, None])
+                for index, left in enumerate((start, start + duration)):
+                    overlap = max(0, min(t1, left + duration) - max(t0, left))
+                    if overlap:
+                        entry[index] += delta * overlap / (t1 - t0)
+                        entry[index + 2] = True
+                        entry[4] = t0 if entry[4] is None else min(entry[4], t0)
+        for email, (prev, cur, has_prev, has_cur, earliest) in amounts.items():
+            if not has_cur:
+                continue
+            prev = prev if (has_prev and previous_available
+                            and earliest <= start + max(step, duration * 0.1)) else None
+            clients.append({"email": email, "current": cur, "previous": prev,
+                            "delta_pct": round((cur - prev) * 100 / prev, 1) if prev else None})
+        growth = sorted((item for item in clients if item["previous"] and item["previous"] > 0),
+                        key=lambda item: (-item["delta_pct"], -item["current"], item["email"]))[:10]
+        clients = sorted(clients, key=lambda item: (-item["current"], item["email"]))[:10]
     previous, current = series[:count], series[count:]
     return {"range": range_name, "node_id": node_id, "series_current": current,
             "series_previous": previous if previous_available else [],
@@ -106,14 +128,17 @@ def load_comparison(db_path, range_name, node_id, now, system_client_emails=()):
                 "ORDER BY snapshot_ts", (kind, now)
             ) if any(key.startswith(prefix) for key in _stats(raw))), None)
         if latest is not None:
-            start = (latest // step - 2 * count) * step
+            start = latest - 2 * count * step
             for group, target in (("inbound", snapshots), ("client", clients)):
                 if group == "client" and node_id is not None:
                     continue
                 target.extend(conn.execute(
                     "SELECT snapshot_ts, stats_json FROM traffic_stats_snapshots "
-                    "WHERE group_by = ? AND bucket_kind = ? AND snapshot_ts >= ? AND snapshot_ts <= ? "
-                    "ORDER BY snapshot_ts", (group, kind, start, min(now, (latest // step + 1) * step - 1))
+                    "WHERE group_by = ? AND bucket_kind = ? AND snapshot_ts >= COALESCE( "
+                    "(SELECT MAX(snapshot_ts) FROM traffic_stats_snapshots "
+                    "WHERE group_by = ? AND bucket_kind = ? AND snapshot_ts < ?), ?) "
+                    "AND snapshot_ts <= ? ORDER BY snapshot_ts",
+                    (group, kind, group, kind, start, start, latest)
                 ).fetchall())
     return build_comparison(snapshots, clients, step, count, now, history_start,
                             range_name, node_id, system_client_emails)

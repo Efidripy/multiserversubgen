@@ -69,6 +69,33 @@
   padding: 8px;
   border-color: var(--ln-line);
 }
+:root[data-design="new"] .sidebar__brand-lockup { gap: 8px; }
+:root[data-design="new"] .sidebar__home-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--ln-line);
+  border-radius: var(--ln-r-sm);
+  background: transparent;
+  color: var(--ln-text-2);
+}
+:root[data-design="new"] .sidebar--collapsed .sidebar__logo {
+  flex-direction: column;
+  justify-content: center;
+  gap: 0;
+  padding: 1px 0;
+}
+:root[data-design="new"] .sidebar--collapsed .sidebar__brand-lockup {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  width: auto;
+  min-height: 28px;
+  overflow: visible;
+}
+:root[data-design="new"] .sidebar--collapsed .sidebar__collapse-btn { width: 28px; height: 16px; }
 :root[data-design="new"] .sidebar__version-badge {
   border: 1px solid var(--ln-line);
   border-radius: var(--ln-r-xs);
@@ -180,6 +207,7 @@
 :root[data-design="new"] .app-topbar__fleet-count { background: var(--ln-surface-2); color: var(--ln-text-2); border-radius: var(--ln-r-xs); }
 :root[data-design="new"] .app-pull-refresh { top: var(--ln-topbar-h); border-color: var(--ln-line); border-radius: var(--ln-r-sm); background: var(--ln-surface); color: var(--ln-text-2); box-shadow: none; }
 :root[data-design="new"] .app-content { box-sizing: border-box; padding: 16px; }
+:root[data-design="new"] .app-layout[data-ln-fleet="closed"] .app-content { padding-right: 48px; }
 /* Let the fleet overview controls wrap within the space beside the fleet rail. */
 :root[data-design="new"] [data-ln="fleet-controls"] {
   min-width: 0;
@@ -221,6 +249,7 @@
 }
 
 @media (min-width: 1280px) {
+  :root[data-design="new"] .app-layout[data-ln-fleet="closed"] .app-content { padding-right: 40px; }
   :root[data-design="new"] .app-layout[data-ln-fleet="open"] .app-content { padding-right: 436px; }
   :root[data-design="new"] .app-layout[data-ln-fleet="open"] .fleet-panel > div { border-color: var(--ln-line); box-shadow: none; }
 }

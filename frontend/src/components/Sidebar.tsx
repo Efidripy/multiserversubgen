@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BookOpen, ChevronLeft, ChevronRight, ClipboardList, Home, Keyboard, LogOut } from 'lucide-react';
-import { useTheme } from '../contexts/ThemeContext';
+import { useDesign, useTheme } from '../contexts/ThemeContext';
 import { ChoiceChips } from './ChoiceChips';
 import { IconName, UIIcon } from './UIIcon';
 import { API_BASE } from '../api/client';
@@ -35,7 +35,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen,
   onMobileClose,
 }) => {
-  const { colors, design, setDesign } = useTheme();
+  const { colors, setDesign } = useTheme();
+  const design = useDesign();
   const { t, i18n } = useTranslation();
   const currentLang = (i18n.resolvedLanguage || i18n.language || 'en').toLowerCase();
   const safeItems = Array.isArray(items) ? items : [];
@@ -92,9 +93,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
         className={`sidebar${mobileOpen ? ' sidebar--open' : ''}${effectiveCollapsed ? ' sidebar--collapsed' : ''}`}
       >
         <div className="sidebar__logo">
-          <div className="sidebar__brand-lockup" aria-label={t('sidebar.logoAria')}>
-            <span className="sidebar__version-badge">v3.1</span>
-          </div>
+          {design === 'new' ? (
+            <div className="sidebar__brand-lockup" aria-label={t('sidebar.logoAria')}>
+              {!effectiveCollapsed && (
+                <button className="sidebar__version-badge" type="button" onClick={handleHome} title={t('sidebar.backToSelector')} aria-label={t('sidebar.backToSelector')}>v3.1</button>
+              )}
+              <button className="sidebar__home-btn" type="button" onClick={handleHome} title={t('sidebar.backToSelector')} aria-label={t('sidebar.backToSelector')}>
+                <Home className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <div className="sidebar__brand-lockup" aria-label={t('sidebar.logoAria')}>
+              <span className="sidebar__version-badge">v3.1</span>
+            </div>
+          )}
           <button
             className="sidebar__collapse-btn"
             type="button"
@@ -199,7 +211,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 </button>
               </div>
 
-              <button
+              {design !== 'new' && <button
                 className="sidebar__back-selector"
                 type="button"
                 title={t('sidebar.backToSelector')}
@@ -207,7 +219,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <Home className="w-3.5 h-3.5" />
                 <span>{t('sidebar.backToSelector')}</span>
-              </button>
+              </button>}
             </div>
           )}
 
@@ -224,7 +236,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               >
                 <LogOut className="w-4 h-4" />
               </button>
-              <button
+              {design !== 'new' && <button
                 className="sidebar__collapsed-back"
                 type="button"
                 title={t('sidebar.backToSelector')}
@@ -232,7 +244,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 onClick={handleHome}
               >
                 <Home className="w-4 h-4" />
-              </button>
+              </button>}
             </div>
           )}
         </div>
