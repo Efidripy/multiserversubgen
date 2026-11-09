@@ -85,16 +85,18 @@ def build_comparison(snapshots, client_snapshots, step, count, now, history_star
                 if old_metric is None or new_metric is None:
                     continue
                 delta = _delta(old_metric, new_metric)
-                entry = amounts.setdefault(email, [0.0, 0.0, False, False])
+                entry = amounts.setdefault(email, [0.0, 0.0, False, False, None])
                 for index, left in enumerate((start, start + duration)):
                     overlap = max(0, min(t1, left + duration) - max(t0, left))
                     if overlap:
                         entry[index] += delta * overlap / (t1 - t0)
                         entry[index + 2] = True
-        for email, (prev, cur, has_prev, has_cur) in amounts.items():
+                        entry[4] = t0 if entry[4] is None else min(entry[4], t0)
+        for email, (prev, cur, has_prev, has_cur, earliest) in amounts.items():
             if not has_cur:
                 continue
-            prev = prev if has_prev else None
+            prev = prev if (has_prev and previous_available
+                            and earliest <= start + max(step, duration * 0.1)) else None
             clients.append({"email": email, "current": cur, "previous": prev,
                             "delta_pct": round((cur - prev) * 100 / prev, 1) if prev else None})
         growth = sorted((item for item in clients if item["previous"] and item["previous"] > 0),

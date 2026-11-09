@@ -139,3 +139,36 @@ def test_clients_interpolate_boundaries_and_account_for_reset(tmp_path):
     data = load_comparison(str(db), '7d', None, 16 * DAY)
     assert data['top_clients'][0]['current'] == 70
     assert data['totals']['current'] == 70
+
+
+def test_clients_require_previous_window_history(tmp_path):
+    db = database(tmp_path)
+    for day in range(6, 15):
+        save(db, 'inbound', day * DAY, {'node:1:inbound:1': {'total': day * 10}})
+        save(db, 'client', day * DAY, {'user': {'total': day * 10}})
+    data = load_comparison(str(db), '7d', None, 14 * DAY)
+    assert data['previous_available'] is False
+    assert data['top_clients'][0]['current'] == 70
+    assert data['top_clients'][0]['previous'] is None
+    assert data['top_clients'][0]['delta_pct'] is None
+    assert data['top_growth'] == []
+
+    for day in range(6):
+        save(db, 'inbound', day * DAY, {'node:1:inbound:1': {'total': day * 10}})
+    data = load_comparison(str(db), '7d', None, 14 * DAY)
+    assert data['previous_available'] is True
+    assert data['top_clients'][0]['previous'] is None
+    assert data['top_growth'] == []
+
+
+def test_clients_with_full_history_keep_growth(tmp_path):
+    db = database(tmp_path)
+    for day in range(15):
+        value = day * 10 if day <= 7 else 70 + (day - 7) * 20
+        save(db, 'inbound', day * DAY, {'node:1:inbound:1': {'total': value}})
+        save(db, 'client', day * DAY, {'user': {'total': value}})
+    data = load_comparison(str(db), '7d', None, 14 * DAY)
+    assert data['previous_available'] is True
+    assert data['top_clients'][0]['previous'] == 70
+    assert data['top_clients'][0]['delta_pct'] == 100
+    assert data['top_growth'] == data['top_clients']
