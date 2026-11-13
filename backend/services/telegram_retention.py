@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -58,3 +60,40 @@ class TelegramRetentionService:
                 (decided_cutoff,),
             ).rowcount
         return RetentionResult(len(pending), int(deleted), int(redacted))
+
+
+def maintain_database_batch(db_path: str, retention_days: int = 30, batch_size: int = 500) -> int:
+    """Remove a bounded batch of terminal Telegram records per transaction."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, retention_days))).strftime("%Y-%m-%d %H:%M:%S")
+    statements = (
+        "DELETE FROM telegram_updates WHERE update_id IN (SELECT update_id FROM telegram_updates u "
+        "WHERE status IN ('processed', 'rejected') AND processed_at < ? "
+        "AND NOT EXISTS (SELECT 1 FROM telegram_update_responses r WHERE r.update_id = u.update_id AND r.status != 'sent') LIMIT ?)",
+        "DELETE FROM telegram_outbox WHERE id IN (SELECT id FROM telegram_outbox "
+        "WHERE status IN ('sent', 'cancelled') AND updated_at < ? LIMIT ?)",
+        "DELETE FROM telegram_provisioning_attempts WHERE id IN (SELECT a.id FROM telegram_provisioning_attempts a "
+        "JOIN telegram_provisioning_jobs j ON j.id = a.job_id "
+        "WHERE j.status IN ('succeeded', 'cancelled') AND j.finished_at < ? "
+        "AND a.status IN ('succeeded', 'skipped') LIMIT ?)",
+        "DELETE FROM telegram_provisioning_jobs WHERE id IN (SELECT id FROM telegram_provisioning_jobs j "
+        "WHERE status IN ('succeeded', 'cancelled') AND finished_at < ? "
+        "AND NOT EXISTS (SELECT 1 FROM telegram_provisioning_attempts a WHERE a.job_id = j.id) LIMIT ?)",
+    )
+    total = 0
+    for sql in statements:
+        with connect(db_path) as conn:
+            total += conn.execute(sql, (cutoff, max(1, batch_size))).rowcount
+    return total
+
+
+def checkpoint_database(db_path: str) -> None:
+    with connect(db_path) as conn:
+        result = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    def size(path: str) -> int:
+        try:
+            return os.path.getsize(path)
+        except FileNotFoundError:
+            return 0
+    logging.getLogger("sub_manager").info(
+        "SQLite size: db=%s bytes wal=%s bytes checkpoint_busy=%s", size(db_path), size(db_path + "-wal"), result[0]
+    )

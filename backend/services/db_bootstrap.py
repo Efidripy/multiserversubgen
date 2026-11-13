@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
+import sys
 import time
 
 from shared.observability import record_sqlite
@@ -16,10 +18,54 @@ class _ManagedConnection(sqlite3.Connection):
     normal transaction semantics while also releasing the descriptor.
     """
 
+    _write_started = None
+    _write_origin = "unknown"
+
+    def _track_transaction(self):
+        if self.in_transaction and self._write_started is None:
+            self._write_started = time.monotonic()
+            frame = sys._getframe(1)
+            while frame is not None and frame.f_code.co_filename == __file__:
+                frame = frame.f_back
+            if frame is not None:
+                self._write_origin = f"{os.path.basename(frame.f_code.co_filename)}:{frame.f_lineno}"
+        elif not self.in_transaction:
+            self._report_transaction()
+
+    def _report_transaction(self):
+        if self._write_started is not None:
+            elapsed = time.monotonic() - self._write_started
+            self._write_started = None
+            if elapsed >= float(os.getenv("DB_WRITE_WARNING_SECONDS", "5")):
+                logging.getLogger("sub_manager").warning(
+                    "SQLite write transaction held for %.2f seconds (origin=%s)", elapsed, self._write_origin
+                )
+
+    def executemany(self, sql, parameters, /):
+        try:
+            return super().executemany(sql, parameters)
+        finally:
+            self._track_transaction()
+
+    def commit(self):
+        try:
+            return super().commit()
+        finally:
+            if not self.in_transaction:
+                self._report_transaction()
+
+    def rollback(self):
+        try:
+            return super().rollback()
+        finally:
+            if not self.in_transaction:
+                self._report_transaction()
+
     def __exit__(self, exc_type, exc_value, traceback):
         try:
             return super().__exit__(exc_type, exc_value, traceback)
         finally:
+            self._report_transaction()
             self.close()
 
     def execute(self, sql, parameters=(), /):
@@ -31,6 +77,7 @@ class _ManagedConnection(sqlite3.Connection):
             record_sqlite(sql, started_at=started_at, outcome="locked" if "locked" in message or "busy" in message else "error")
             raise
         record_sqlite(sql, started_at=started_at, outcome="ok")
+        self._track_transaction()
         return result
 
 

@@ -46,7 +46,9 @@ from services.telegram_registration import TelegramRegistrationService
 from services.telegram_traffic import TelegramTrafficService
 from services.telegram_registry import TelegramRegistry
 from services.telegram_drift import TelegramDriftScanner
-from services.telegram_retention import TelegramRetentionService
+from services.telegram_retention import (
+    TelegramRetentionService, checkpoint_database, maintain_database_batch,
+)
 from services.telegram_reminders import TelegramReminderService
 from services.telegram_schedules import TelegramScheduleWorker
 from services.telegram_provisioning import (
@@ -648,6 +650,32 @@ async def _telegram_outbox_worker_loop(worker_tracker) -> None:
             return
 
 
+async def _database_maintenance_worker_loop(worker_tracker) -> None:
+    retention_days = max(1, int(os.getenv("DB_TERMINAL_RETENTION_DAYS", "30")))
+    while worker_tracker.accepting:
+        try:
+            while worker_tracker.accepting:
+                count = await worker_tracker.run(
+                    "database.retention", maintain_database_batch, DB_PATH, retention_days
+                )
+                if count < 500:
+                    break
+                if not await worker_tracker.wait_or_stop(1):
+                    return
+        except LifecycleWorkAdmissionClosed:
+            return
+        except Exception:
+            logger.exception("Database retention failed")
+        try:
+            await worker_tracker.run("database.checkpoint", checkpoint_database, DB_PATH)
+        except LifecycleWorkAdmissionClosed:
+            return
+        except Exception:
+            logger.exception("Database checkpoint failed")
+        if not await worker_tracker.wait_or_stop(86400):
+            return
+
+
 async def _telegram_retention_worker_loop(worker_tracker) -> None:
     """Run local-only Telegram data retention on its own opt-in schedule."""
 
@@ -782,6 +810,7 @@ app.router.lifespan_context = build_lifespan(
         if SETTINGS.telegram.outbox_worker_enabled
         else None
     ),
+    database_maintenance_worker_loop=_database_maintenance_worker_loop,
     telegram_retention_worker_loop=(
         (lambda worker_tracker: _telegram_retention_worker_loop(worker_tracker))
         if SETTINGS.telegram.retention_worker_enabled
