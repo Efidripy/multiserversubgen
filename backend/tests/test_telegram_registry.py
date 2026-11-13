@@ -2023,3 +2023,35 @@ def test_repair_recognises_client_id_field_of_inbound_settings_snapshots(tmp_pat
             (_json.dumps({"inbounds": [{"settings": {"clients": [{"id": "RC-1", "email": "repair-user"}]}}]}),),
         )
     assert registry.repair_customer(customer_id, "admin")["healed_nodes"] == ["node-two"]
+
+
+def test_forget_missing_bindings_removes_only_missing_and_keeps_busy(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_client_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 2, 'rc-gone', 'repair-user', 'bot_provisioned', 'missing', 1)""", (customer_id,))
+        confirmed_before = conn.execute(
+            "SELECT COUNT(*) FROM customer_node_bindings WHERE customer_id = ? AND management_state = 'confirmed'",
+            (customer_id,),
+        ).fetchone()[0]
+    result = registry.forget_missing_bindings(customer_id, "admin")
+    assert result == {"forgotten": ["node-two"], "busy": []}
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM customer_node_bindings WHERE management_state = 'missing'").fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM customer_node_bindings WHERE customer_id = ? AND management_state = 'confirmed'", (customer_id,)
+        ).fetchone()[0] == confirmed_before
+    assert registry.forget_missing_bindings(customer_id, "admin") == {"forgotten": [], "busy": []}
+
+
+def test_repair_treats_missing_binding_on_disabled_node_as_note(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_client_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 2, 'rc-gone', 'repair-user', 'bot_provisioned', 'missing', 1)""", (customer_id,))
+        conn.execute("UPDATE nodes SET enabled = 0 WHERE id = 2")
+    result = registry.repair_customer(customer_id, "admin")
+    assert {"code": "binding_absent", "node_name": "node-two"} in result["notes"]
+    assert not any(p["code"] == "binding_missing" for p in result["problems"])

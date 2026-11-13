@@ -7167,6 +7167,49 @@ class TelegramRegistry:
             raise TelegramRegistryError("unsupported customer lifecycle operation")
         return value
 
+    def forget_missing_bindings(self, customer_id: int, actor: str) -> dict[str, Any]:
+        """Drop bindings marked 'missing' (client is gone from the panel and the admin does not want it back).
+
+        Traffic totals live in separate ledgers keyed by customer/node, so nothing is lost; a client that
+        reappears on the panel is found by the drift scan as an unknown remote client again.
+        """
+        customer_id = _positive_int(customer_id, "customer_id")
+        forgotten: list[str] = []
+        busy: list[str] = []
+        with connect(self._db_path) as conn:
+            if conn.execute("SELECT 1 FROM customers WHERE id = ?", (customer_id,)).fetchone() is None:
+                raise TelegramRegistryError("customer was not found")
+            rows = conn.execute(
+                "SELECT b.id, b.node_id, b.remote_email, n.name FROM customer_node_bindings b "
+                "JOIN nodes n ON n.id = b.node_id WHERE b.customer_id = ? AND b.management_state = 'missing'",
+                (customer_id,),
+            ).fetchall()
+            for binding_id, node_id, remote_email, name in rows:
+                in_flight = conn.execute(
+                    "SELECT 1 FROM telegram_customer_operation_attempts a "
+                    "JOIN telegram_customer_operations o ON o.id = a.operation_id "
+                    "WHERE a.binding_id = ? AND o.status IN ('queued', 'running', 'partial') "
+                    "AND o.dismissed_at IS NULL LIMIT 1", (binding_id,),
+                ).fetchone()
+                if in_flight is not None:
+                    busy.append(str(name))
+                    continue
+                conn.execute("DELETE FROM telegram_customer_operation_attempts WHERE binding_id = ?", (binding_id,))
+                conn.execute(
+                    "UPDATE telegram_drift_findings SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP, "
+                    "row_version = row_version + 1 WHERE customer_id = ? AND node_id = ? "
+                    "AND kind = 'binding_missing' AND status IN ('open', 'ignored') "
+                    "AND lower(remote_email) = lower(?)", (customer_id, node_id, remote_email or ""),
+                )
+                conn.execute("DELETE FROM customer_node_bindings WHERE id = ?", (binding_id,))
+                conn.execute(
+                    "INSERT INTO telegram_audit_log (event_type, actor_type, actor_id, entity_type, entity_id) "
+                    "VALUES ('binding_forgotten', 'admin', ?, 'customer_node_binding', ?)",
+                    (str(actor), str(binding_id)),
+                )
+                forgotten.append(str(name))
+        return {"forgotten": forgotten, "busy": busy}
+
     def repair_customer(self, customer_id: int, actor: str) -> dict[str, Any]:
         customer_id = _positive_int(customer_id, "customer_id")
         with connect(self._db_path) as conn:
@@ -7204,7 +7247,7 @@ class TelegramRegistry:
             for (target_id,) in unresolved:
                 problems.append({"code": "unfinished_discovery", "target_id": int(target_id)})
             bindings = conn.execute(
-                "SELECT b.management_state, n.name, b.id, b.node_id, b.remote_client_id "
+                "SELECT b.management_state, n.name, b.id, b.node_id, b.remote_client_id, COALESCE(n.enabled, 1) "
                 "FROM customer_node_bindings b "
                 "JOIN nodes n ON n.id = b.node_id WHERE b.customer_id = ?", (customer_id,)
             ).fetchall()
@@ -7214,7 +7257,7 @@ class TelegramRegistry:
             healed: list[str] = []
             notes: list[dict[str, Any]] = []
             resolved: list[tuple] = []
-            for state, name, binding_id, node_id, remote_client_id in bindings:
+            for state, name, binding_id, node_id, remote_client_id, node_enabled in bindings:
                 if state == 'missing':
                     present = _fresh_snapshot_has_client(conn, int(node_id), str(remote_client_id or ""))
                     if present is True:
@@ -7226,7 +7269,8 @@ class TelegramRegistry:
                         )
                         healed.append(str(name))
                         state = 'confirmed'
-                    elif present is False:
+                    elif present is False or (present is None and not node_enabled):
+                        # A node taken out of service has no fresh snapshot: that is an expected note too.
                         notes.append({"code": "binding_absent", "node_name": str(name)})
                         state = 'absent'
                 resolved.append((state, name))

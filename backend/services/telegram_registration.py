@@ -1270,7 +1270,7 @@ class TelegramRegistrationService:
                 for note in result.get("notes", []):
                     lines.append(
                         f"На ноде {note.get('node_name') or 'неизвестной ноде'} клиента нет на панели "
-                        "(по свежим данным ноды) — это не ошибка; добавьте его на ноду, если он там нужен."
+                        "(по свежим данным ноды) — это не ошибка. Нужен там — добавьте на ноду, не нужен — нажмите «Забыть»."
                     )
                 for problem in result["problems"]:
                     code = problem["code"]
@@ -1288,8 +1288,24 @@ class TelegramRegistrationService:
                         "snapshot_incomplete": "Первичная настройка не завершена — устраните указанные проблемы.",
                     }
                     lines.append(messages.get(code, "Проверьте состояние клиента в админке."))
+                markup = self._admin_customer_message(chat_id, customer_id, page).reply_markup
+                if result.get("notes") or any(p["code"] == "binding_missing" for p in result["problems"]):
+                    markup = {"inline_keyboard": [[{
+                        "text": "🧹 Забыть «нет на панели»",
+                        "callback_data": f"admin:customer-forget:{customer_id}:{page}",
+                    }]] + list(markup["inline_keyboard"])}
+                return [TelegramOutboundMessage(chat_id, "\n".join(lines), markup)]
+            if len(parts) == 4 and parts[:2] == ["admin", "customer-forget"]:
+                customer_id, page = int(parts[2]), int(parts[3])
+                result = self._registry.forget_missing_bindings(customer_id, str(user_id))
+                if result["forgotten"]:
+                    text = "Убрал записи «нет на панели»: " + ", ".join(result["forgotten"]) + "."
+                else:
+                    text = "Записей «нет на панели» нет."
+                if result["busy"]:
+                    text += " Не тронул (есть незавершённая операция): " + ", ".join(result["busy"]) + "."
                 return [TelegramOutboundMessage(
-                    chat_id, "\n".join(lines), self._admin_customer_message(chat_id, customer_id, page).reply_markup,
+                    chat_id, text, self._admin_customer_message(chat_id, customer_id, page).reply_markup,
                 )]
             if len(parts) == 4 and parts[:2] == ["admin", "customer-note"]:
                 customer_id, page = int(parts[2]), int(parts[3])
