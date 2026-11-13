@@ -133,6 +133,7 @@ class AuditQueueRuntime:
         self._memory_lock = threading.RLock()
         self._persist_lock = threading.Lock()
         self._retry_payloads: list[Dict] = []
+        self._locked_failures = 0
         self._accepting_events = True
         self.accepted_events = 0
         self.dropped_events = 0
@@ -207,28 +208,35 @@ class AuditQueueRuntime:
             if not payloads:
                 return 0
 
-            try:
-                with connect(self.db_path) as conn:
-                    conn.executemany(
-                        "INSERT INTO audit_events (payload) VALUES (?)",
-                        [
-                            (json.dumps(payload, ensure_ascii=False),)
-                            for payload in payloads
-                        ],
+            for attempt in range(3):
+                try:
+                    with connect(self.db_path) as conn:
+                        conn.executemany(
+                            "INSERT INTO audit_events (payload) VALUES (?)",
+                            [(json.dumps(payload, ensure_ascii=False),) for payload in payloads],
+                        )
+                        conn.commit()
+                    with self._memory_lock:
+                        self._retry_payloads.clear()
+                    self._record_queue_depth()
+                    self._observe_sqlite_batch_rows("audit_memory_persist", len(payloads))
+                    return len(payloads)
+                except sqlite3.OperationalError as exc:
+                    if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+                        self.logger.error("Failed to persist audit events; batch retained")
+                        return 0
+                    if attempt < 2:
+                        time.sleep(0.1 * (attempt + 1))
+                        continue
+                    self._locked_failures += 1
+                    self.logger.warning(
+                        "Audit database locked; retaining %s events (failed batches=%s)",
+                        len(payloads), self._locked_failures,
                     )
-                    conn.commit()
-                with self._memory_lock:
-                    self._retry_payloads.clear()
-                self._record_queue_depth()
-                self._observe_sqlite_batch_rows("audit_memory_persist", len(payloads))
-                return len(payloads)
-            except Exception as exc:
-                self.logger.error(
-                    "Failed to persist %s audit events; retaining the bounded batch for retry: %s",
-                    len(payloads),
-                    exc,
-                )
-                return 0
+                    return 0
+                except Exception:
+                    self.logger.exception("Failed to persist audit events; batch retained")
+                    return 0
 
     def drain_batch(self, limit: int) -> int:
         with connect(self.db_path) as conn:
