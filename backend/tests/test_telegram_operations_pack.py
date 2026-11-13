@@ -509,7 +509,7 @@ def test_repeated_missing_scan_preserves_binding_and_audit(tmp_path):
         def get_node_clients_strict(self, node):
             return []
 
-    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager())
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager(), auto_sync=False)
     scanner.scan()
     with connect(db_path) as conn:
         conn.execute("UPDATE customer_node_bindings SET updated_at = '2000-01-01 00:00:00'")
@@ -846,3 +846,12 @@ def test_auto_drift_defers_adoption_while_lifecycle_operation_is_pending(tmp_pat
     scanner.scan_if_idle()
     with connect(db_path) as conn:
         assert conn.execute("SELECT management_state FROM customer_node_bindings").fetchone()[0] == "confirmed"
+
+
+def test_manual_scan_also_auto_forgets_after_two_scans(tmp_path):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=_AutoDriftManager())
+    scanner.scan()
+    scanner.scan()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 0

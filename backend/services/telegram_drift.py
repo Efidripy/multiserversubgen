@@ -70,7 +70,11 @@ class TelegramDriftScanner:
 
     def scan(self, *, node_ids: object = None) -> DriftScanResult:
         with _scan_lock:
-            return self._scan(node_ids=node_ids)
+            result = self._scan(node_ids=node_ids)
+            # Refresh and node reconcile run this path: they must adopt/forget exactly like the scheduled scan.
+            if self._auto_sync and result.scanned_node_ids:
+                self._auto_sync_findings(result.scanned_node_ids)
+            return result
 
     def scan_if_idle(self) -> tuple[DriftScanResult, int] | None:
         """Skip scheduled work when any scan is already running."""
