@@ -287,3 +287,16 @@ def test_reminder_worker_requires_enabled_bot_but_not_remote_write_permission(mo
     settings = load_app_settings(parse_mfa_users=_parse_mfa_users)
     assert settings.telegram.reminder_worker_enabled is True
     assert settings.telegram.provisioning_worker_enabled is False
+
+
+def test_telegram_drift_scan_interval_settings(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_ENABLED", "true")
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-runtime-token")
+    monkeypatch.setenv("TELEGRAM_PRIMARY_ADMIN_ID", "100000001")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "test-webhook-secret")
+    monkeypatch.setenv("TELEGRAM_WEBHOOK_PATH_SUFFIX", "test-path-suffix")
+    monkeypatch.setenv("TELEGRAM_PUBLIC_BASE_URL", "https://bot.example.test")
+    monkeypatch.delenv("TELEGRAM_DRIFT_SCAN_INTERVAL_SEC", raising=False)
+    assert load_app_settings(parse_mfa_users=_parse_mfa_users).telegram.drift_scan_interval_sec == 900
+    monkeypatch.setenv("TELEGRAM_DRIFT_SCAN_INTERVAL_SEC", "0")
+    assert load_app_settings(parse_mfa_users=_parse_mfa_users).telegram.drift_scan_interval_sec == 0

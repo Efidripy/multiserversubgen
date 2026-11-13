@@ -185,3 +185,63 @@ def test_snapshot_collector_does_not_start_node_mutation_after_shutdown_closes_a
         assert polled == []
 
     asyncio.run(exercise())
+
+
+def test_telegram_drift_worker_schedule_and_disabled():
+    from types import SimpleNamespace
+    from core.telegram_drift_worker import run_drift_worker
+
+    class Tracker:
+        accepting = True
+        def __init__(self):
+            self.delays = []
+        async def wait_or_stop(self, delay):
+            self.delays.append(delay)
+            return len(self.delays) < 3
+        async def run(self, label, func):
+            return func()
+
+    class Scanner:
+        calls = 0
+        def scan_if_idle(self):
+            self.calls += 1
+            return SimpleNamespace(scanned_node_ids=(1,), unavailable_node_ids=()), 1
+
+    scanner, tracker = Scanner(), Tracker()
+    asyncio.run(run_drift_worker(tracker, scanner, 900, logging.getLogger(__name__)))
+    assert tracker.delays == [60, 900, 900]
+    assert scanner.calls == 2
+    disabled = Tracker()
+    asyncio.run(run_drift_worker(disabled, scanner, 0, logging.getLogger(__name__)))
+    assert disabled.delays == []
+    assert scanner.calls == 2
+
+
+def test_telegram_drift_worker_continues_after_exception(caplog):
+    from types import SimpleNamespace
+    from core.telegram_drift_worker import run_drift_worker
+
+    class Tracker:
+        accepting = True
+        calls = 0
+        async def wait_or_stop(self, delay):
+            self.calls += 1
+            return self.calls < 3
+        async def run(self, label, func):
+            return func()
+
+    class Scanner:
+        calls = 0
+        def scan_if_idle(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError('sensitive detail')
+            return SimpleNamespace(scanned_node_ids=(1,), unavailable_node_ids=()), 0
+
+    scanner = Scanner()
+    with caplog.at_level(logging.INFO):
+        asyncio.run(run_drift_worker(Tracker(), scanner, 900, logging.getLogger(__name__)))
+    assert scanner.calls == 2
+    assert 'sensitive detail' not in caplog.text
+    assert 'Telegram drift scan failed' in caplog.text
+    assert 'nodes=1 findings=0' in caplog.text

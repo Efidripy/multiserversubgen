@@ -490,6 +490,57 @@ def test_repeated_missing_scan_preserves_binding_and_audit(tmp_path):
     with connect(db_path) as conn:
         conn.execute("UPDATE customer_node_bindings SET desired_enabled = 0")
 
+def test_drift_unavailable_node_does_not_block_other_nodes(tmp_path):
+    db_path, registry, customer_id = _customer_with_binding(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes(id, name, enabled, read_only) VALUES (2, 'edge-2', 1, 0)")
+        conn.execute("INSERT INTO telegram_node_policies(node_id, provisioning_enabled) VALUES (2, 1)")
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+             source, management_state, desired_enabled, last_enabled)
+            VALUES (?, 2, 1, 'remote-2', 'sub-2', 'ops-user', 'admin_confirmed', 'confirmed', 1, 1)""", (customer_id,))
+
+    class Manager:
+        def get_node_clients_strict(self, node):
+            if node['id'] == 2:
+                raise RuntimeError('offline')
+            return []
+
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{'id': 1}, {'id': 2}], client_manager=Manager())
+    result = scanner.scan()
+    assert result.scanned_node_ids == (1,)
+    assert result.unavailable_node_ids == (2,)
+    with connect(db_path) as conn:
+        assert [tuple(row) for row in conn.execute('SELECT node_id, management_state FROM customer_node_bindings ORDER BY node_id')] == [(1, 'missing'), (2, 'confirmed')]
+
+
+def test_drift_scheduled_scan_skips_while_manual_scan_is_running(tmp_path):
+    from threading import Event, Thread
+
+    _db_path, registry, _ = _customer_with_binding(tmp_path)
+    entered, release = Event(), Event()
+
+    class Manager:
+        def get_node_clients_strict(self, node):
+            entered.set()
+            assert release.wait(5)
+            return []
+
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{'id': 1}], client_manager=Manager())
+    thread = Thread(target=scanner.scan)
+    thread.start()
+    try:
+        assert entered.wait(5)
+        assert scanner.scan_if_idle() is None
+    finally:
+        release.set()
+        thread.join(5)
+    assert not thread.is_alive()
+
+
+def test_telegram_scheduled_drift_counts_only_new_findings(tmp_path):
+    _db_path, registry, _ = _customer_with_binding(tmp_path)
+
     class Manager:
         def get_node_clients_strict(self, node):
             return []
@@ -503,3 +554,7 @@ def test_repeated_missing_scan_preserves_binding_and_audit(tmp_path):
     with connect(db_path) as conn:
         assert conn.execute("SELECT management_state, row_version, updated_at FROM customer_node_bindings").fetchone() == before
         assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type = 'drift_binding_missing'").fetchone()[0] == 1
+
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{'id': 1}], client_manager=Manager())
+    assert scanner.scan_if_idle()[1] == 1
+    assert scanner.scan_if_idle()[1] == 0
