@@ -519,3 +519,10 @@ def test_ops_backup_check_uses_consistent_runtime_database_backup():
     update = (REPO / "scripts/installer/update.sh").read_text(encoding="utf-8")
     assert "backup-restore-check.sh list" in update
     assert "prune-verify-artifacts --older-than 30" in update
+
+
+def test_server_deploy_carries_metrics_db_into_the_new_project_dir():
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "deploy" / "server-deploy.sh").read_text(encoding="utf-8")
+    assert 'METRICS_DB="${PROJECT_DIR}/metrics.db"' in script
+    assert "\".backup '$STAGE_DIR/metrics.db'\"" in script
+    assert script.index("$STAGE_DIR/metrics.db'") < script.index('mv -- "$STAGE_DIR" "$PROJECT_DIR"')
