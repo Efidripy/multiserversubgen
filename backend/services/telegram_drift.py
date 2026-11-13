@@ -9,12 +9,13 @@ an already-present remote record without a local binding is reported.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from threading import Lock
 from typing import Any, Callable
 
 from services.db_bootstrap import connect
-from services.telegram_registry import TelegramRegistry, canonicalize_email
+from services.telegram_registry import TelegramRegistry, VersionConflictError, canonicalize_email
 
 
 @dataclass(frozen=True)
@@ -28,10 +29,15 @@ _scan_lock = Lock()
 
 
 class TelegramDriftScanner:
-    def __init__(self, *, registry: TelegramRegistry, list_nodes: Callable[[], list[dict[str, Any]]], client_manager: Any):
+    def __init__(self, *, registry: TelegramRegistry, list_nodes: Callable[[], list[dict[str, Any]]], client_manager: Any, auto_sync: bool | None = None):
         self._registry = registry
         self._list_nodes = list_nodes
         self._client_manager = client_manager
+        # None = follow TELEGRAM_DRIFT_AUTO_SYNC, so every scanner (scheduled, Refresh, node reconcile) obeys the opt-out.
+        self._auto_sync = (
+            os.getenv("TELEGRAM_DRIFT_AUTO_SYNC", "1").strip().lower() in ("1", "true", "yes", "on")
+            if auto_sync is None else auto_sync
+        )
 
     @staticmethod
     def _inbound_one_rows(rows: object) -> list[dict[str, Any]]:
@@ -64,7 +70,11 @@ class TelegramDriftScanner:
 
     def scan(self, *, node_ids: object = None) -> DriftScanResult:
         with _scan_lock:
-            return self._scan(node_ids=node_ids)
+            result = self._scan(node_ids=node_ids)
+            # Refresh and node reconcile run this path: they must adopt/forget exactly like the scheduled scan.
+            if self._auto_sync and result.scanned_node_ids:
+                self._auto_sync_findings(result.scanned_node_ids)
+            return result
 
     def scan_if_idle(self) -> tuple[DriftScanResult, int] | None:
         """Skip scheduled work when any scan is already running."""
@@ -76,6 +86,8 @@ class TelegramDriftScanner:
                     "SELECT id FROM telegram_drift_findings WHERE status = 'open'"
                 )}
             result = self._scan()
+            if self._auto_sync and result.scanned_node_ids:
+                self._auto_sync_findings(result.scanned_node_ids)
             with connect(self._registry.database_path) as conn:
                 current = {row[0] for row in conn.execute(
                     "SELECT id FROM telegram_drift_findings WHERE status = 'open'"
@@ -83,6 +95,50 @@ class TelegramDriftScanner:
             return result, len(current - previous)
         finally:
             _scan_lock.release()
+
+    def _auto_sync_findings(self, node_ids: tuple[int, ...]) -> None:
+        placeholders = ",".join("?" for _ in node_ids)
+        with connect(self._registry.database_path) as conn:
+            rows = conn.execute(
+                f"SELECT id, kind, row_version FROM telegram_drift_findings "
+                f"WHERE status = 'open' AND node_id IN ({placeholders}) "
+                "AND kind IN ('binding_missing', 'orphan_remote') "
+                "AND COALESCE(json_extract(details_json, '$.seen_scans'), 0) >= 2",
+                node_ids,
+            ).fetchall()
+        with connect(self._registry.database_path) as conn:
+            # An email that canonicalizes to the same customer on two remote clients is ambiguous: manual only.
+            ambiguous = {
+                (row[0], row[1]) for row in conn.execute(
+                    "SELECT customer_id, node_id FROM telegram_drift_findings "
+                    "WHERE status = 'open' AND kind = 'orphan_remote' AND customer_id IS NOT NULL "
+                    "GROUP BY customer_id, node_id HAVING COUNT(*) > 1"
+                )
+            }
+            owner = dict(conn.execute(
+                "SELECT id, customer_id || ':' || node_id FROM telegram_drift_findings WHERE kind = 'orphan_remote'"
+            ).fetchall())
+        ambiguous_keys = {f"{c}:{n}" for c, n in ambiguous}
+        for finding_id, kind, version in rows:
+            if kind == "orphan_remote" and owner.get(finding_id) in ambiguous_keys:
+                continue
+            if kind == "binding_missing":
+                self._registry.auto_forget_drift_binding(finding_id, version)
+                continue
+            try:
+                remote = self.re_read_orphan(finding_id)
+            except Exception:
+                continue
+            try:
+                if remote is not None:
+                    self._registry.adopt_drift_binding(
+                        finding_id=finding_id, expected_row_version=version,
+                        remote_email=remote["remote_email"], remote_client_id=remote["remote_client_id"],
+                        remote_sub_id=remote["remote_sub_id"], remote_enabled=remote["remote_enabled"],
+                        adopted_by="drift_scan", automatic=True,
+                    )
+            except VersionConflictError:
+                continue
 
     def _scan(self, *, node_ids: object = None) -> DriftScanResult:
         inventory = self._registry.drift_inventory(node_ids=node_ids)
@@ -96,6 +152,7 @@ class TelegramDriftScanner:
         scanned: list[int] = []
         unavailable: list[int] = []
         findings: list[dict[str, Any]] = []
+        enabled_candidates: list[dict[str, Any]] = []
         for node_id in desired_nodes:
             node = live_nodes.get(node_id)
             if node is None:
@@ -123,6 +180,14 @@ class TelegramDriftScanner:
                 )
                 local_binding_ids.add(identity)
                 local_bound_customer_ids.add(int(binding["customer_id"]))
+                matches = [row for row in remote_rows if (
+                    row["remote_client_id"] == binding["remote_client_id"]
+                    and row["remote_sub_id"] == binding["remote_sub_id"]
+                    and row["remote_email"] == binding["remote_email"]
+                )]
+                if (self._auto_sync and binding["management_state"] == "confirmed" and len(matches) == 1
+                        and matches[0]["remote_enabled"] != binding["desired_enabled"]):
+                    enabled_candidates.append({**binding, "remote_enabled": matches[0]["remote_enabled"]})
                 if identity not in remote_by_identity:
                     same_email = remote_by_email.get(identity[2], [])
                     findings.append({
@@ -151,6 +216,8 @@ class TelegramDriftScanner:
                     "details": {"remote_enabled": remote["remote_enabled"], "flow": remote["flow"]},
                 })
         recorded = self._registry.record_drift_findings(scanned_node_ids=scanned, findings=findings) if scanned else ()
+        if self._auto_sync and enabled_candidates:
+            self._registry.sync_drift_binding_enabled(enabled_candidates)
         return DriftScanResult(
             scanned_node_ids=tuple(scanned), unavailable_node_ids=tuple(unavailable), finding_count=len(recorded)
         )
@@ -158,18 +225,21 @@ class TelegramDriftScanner:
     def re_read_orphan(self, finding_id: int) -> dict[str, Any] | None:
         """Return the exact current remote record for an adoption re-check."""
 
-        finding = next((item for item in self._registry.list_drift_findings(status="open", limit=200)
-                        if item.finding_id == finding_id and item.kind == "orphan_remote"), None)
+        with connect(self._registry.database_path) as conn:
+            finding = conn.execute(
+                "SELECT node_id, remote_client_id, remote_sub_id, remote_email FROM telegram_drift_findings "
+                "WHERE id = ? AND status = 'open' AND kind = 'orphan_remote'", (finding_id,),
+            ).fetchone()
         if finding is None:
             return None
-        node = next((item for item in self._list_nodes() if isinstance(item, dict) and item.get("id") == finding.node_id), None)
+        node = next((item for item in self._list_nodes() if isinstance(item, dict) and item.get("id") == finding[0]), None)
         if node is None:
             return None
         for remote in self._inbound_one_rows(self._client_manager.get_node_clients_strict(node)):
             if (
-                remote["remote_client_id"] == finding.remote_client_id
-                and remote["remote_sub_id"] == finding.remote_sub_id
-                and canonicalize_email(remote["remote_email"]) == canonicalize_email(finding.remote_email)
+                remote["remote_client_id"] == finding[1]
+                and remote["remote_sub_id"] == finding[2]
+                and canonicalize_email(remote["remote_email"]) == canonicalize_email(finding[3])
                 and remote["flow"] == "xtls-rprx-vision"
             ):
                 return remote
