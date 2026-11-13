@@ -21,7 +21,7 @@ from services.telegram_registration import (
     TelegramRegistrationService,
     TelegramSubscriptionDelivery,
 )
-from services.telegram_registry import TelegramRegistry
+from services.telegram_registry import LifecycleUnavailableError, TelegramRegistry
 from services.telegram_provisioning import ExistingRemoteBinding, ProvisioningRemoteError
 from services.telegram_qr import TelegramQrError
 
@@ -3444,3 +3444,38 @@ def test_direct_and_broadcast_drafts_do_not_share_photos(tmp_path):
     service.handle_update(_broadcast_photo_update(4, "broadcast"))
     service.handle_update(_admin_callback(5, f"admin:message:{customer_id}:0"))
     assert registry.get_admin_message_draft(100000001).photo_file_ids is None
+
+
+def test_admin_issues_excludes_cancelled_jobs_with_failed_attempts(tmp_path):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(email_display="test-user", origin="manual", email_source="admin", public_code="test-user")
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name) VALUES (1, 'test-node')")
+        for status in ("cancelled", "partial"):
+            cursor = conn.execute("INSERT INTO telegram_provisioning_jobs (customer_id, trigger, idempotency_key, status, policy_snapshot_digest, created_by) VALUES (?, 'approve_new', ?, ?, 'snapshot', 'test')", (customer_id, status, status))
+            conn.execute("INSERT INTO telegram_provisioning_attempts (job_id, node_id, status, desired_client_id, desired_sub_id, policy_version) VALUES (?, 1, 'failed', 'client', 'sub', 1)", (cursor.lastrowid,))
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=100000001)
+    message = service.handle_update(_admin_callback(301, "admin:issues"))[0]
+    assert "#2" in message.text
+    assert "#1" not in message.text
+
+
+def test_admin_node_errors_are_explained_and_logged(tmp_path, monkeypatch, caplog):
+    db_path = str(tmp_path / "admin.db")
+    init_db(db_path)
+    registry = TelegramRegistry(db_path)
+    customer_id = registry.create_customer(email_display="test-user", origin="manual", email_source="admin", public_code="test-user")
+    service = TelegramRegistrationService(registry, introduction_max_chars=700, primary_admin_id=100000001)
+    def reject(**kwargs):
+        raise LifecycleUnavailableError(reject.reason)
+    monkeypatch.setattr(registry, "preview_customer_node_operation", reject)
+    reject.reason = "this node already has an active operation"
+    first = service.handle_update(_admin_callback(302, f"admin:cn:{customer_id}:1:suspend:0"))[0]
+    reject.reason = "node binding has no exact confirmed remote target"
+    second = service.handle_update(_admin_callback(303, f"admin:cn:{customer_id}:1:suspend:0"))[0]
+    assert "уже идёт операция" in first.text
+    assert "Сверку записей" in second.text
+    assert "active operation" in caplog.text and "confirmed remote target" in caplog.text
+    assert "admin:cn" in caplog.text and "100000001" not in caplog.text

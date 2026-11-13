@@ -4,13 +4,15 @@ import os
 import sys
 from datetime import datetime, timezone
 
+import pytest
+
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from services.db_bootstrap import connect, init_db
 from services.telegram_lifecycle import TelegramLifecycleWorker
 from services.telegram_provisioning import ProvisioningRemoteError, RemoteClient
-from services.telegram_registry import TelegramRegistry
+from services.telegram_registry import TelegramRegistry, VersionConflictError
 
 
 class FakeLifecyclePort:
@@ -92,6 +94,77 @@ def _worker(db_path, port, *, now=None, node=None):
         worker_id="lifecycle-test-worker",
         now=now or (lambda: datetime(2026, 1, 1, tzinfo=timezone.utc)),
     )
+
+
+@pytest.mark.parametrize("attempt_status", ["pending", "ambiguous"])
+def test_dismissed_attempt_is_skipped_after_new_operation_on_same_binding(tmp_path, attempt_status):
+    db_path, registry, customer_id, old_id = _queue(tmp_path, "suspend")
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_customer_operations SET status = 'partial' WHERE id = ?", (old_id,))
+        conn.execute(
+            "UPDATE telegram_customer_operation_attempts SET status = ? WHERE operation_id = ?",
+            (attempt_status, old_id),
+        )
+        conn.execute("UPDATE customers SET status = 'active' WHERE id = ?", (customer_id,))
+    old = registry.get_customer_operation(old_id)
+    registry.reschedule_customer_operation(
+        operation_id=old_id, expected_operation_version=old.row_version,
+        idempotency_key="dismiss-old", requested_by="admin", action="dismiss",
+    )
+    preview = registry.preview_customer_node_operation(
+        customer_id=customer_id, node_id=1, operation_type="suspend_node",
+    )
+    new = registry.queue_customer_node_operation(
+        customer_id=customer_id, node_id=1, operation_type="suspend_node",
+        expected_customer_version=preview.expected_customer_version,
+        target_snapshot_digest=preview.target_snapshot_digest,
+        idempotency_key="new-node-operation", created_by="admin",
+    )
+    port = FakeLifecyclePort()
+    port.clients = [RemoteClient("remote-id", "lifecycle-worker", "remote-sub", "", True)]
+    worker = _worker(db_path, port)
+
+    assert worker.run_once().operation_id == new.operation_id
+    assert worker.run_once().processed is False
+    assert registry.get_customer_operation(old_id).attempts[0].status == attempt_status
+    assert port.update_calls == [("remote-id", False)]
+
+
+@pytest.mark.parametrize("attempt_status", ["pending", "ambiguous"])
+def test_undismissed_partial_attempt_is_claimed(tmp_path, attempt_status):
+    db_path, registry, _customer_id, operation_id = _queue(tmp_path, "suspend")
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_customer_operations SET status = 'partial' WHERE id = ?", (operation_id,))
+        conn.execute(
+            "UPDATE telegram_customer_operation_attempts SET status = ? WHERE operation_id = ?",
+            (attempt_status, operation_id),
+        )
+    claimed = _worker(db_path, FakeLifecyclePort())._claim_next_attempt()
+    assert claimed is not None
+    assert claimed.operation_id == operation_id
+    assert registry.get_customer_operation(operation_id).attempts[0].status == "reconciling"
+
+
+@pytest.mark.parametrize("action", ["retry", "reconcile"])
+def test_dismissed_operation_cannot_be_rescheduled(tmp_path, action):
+    db_path, registry, _customer_id, operation_id = _queue(tmp_path, "suspend")
+    with connect(db_path) as conn:
+        conn.execute("UPDATE telegram_customer_operations SET status = 'partial' WHERE id = ?", (operation_id,))
+        conn.execute(
+            "UPDATE telegram_customer_operation_attempts SET status = 'ambiguous' WHERE operation_id = ?",
+            (operation_id,),
+        )
+    operation = registry.get_customer_operation(operation_id)
+    dismissed = registry.reschedule_customer_operation(
+        operation_id=operation_id, expected_operation_version=operation.row_version,
+        idempotency_key="dismiss-operation", requested_by="admin", action="dismiss",
+    )
+    with pytest.raises(VersionConflictError, match="cannot be rescheduled in its current state"):
+        registry.reschedule_customer_operation(
+            operation_id=operation_id, expected_operation_version=dismissed.row_version,
+            idempotency_key=f"closed-{action}", requested_by="admin", action=action,
+        )
+    assert registry.get_customer_operation(operation_id).attempts[0].status == "ambiguous"
 
 
 def test_suspend_then_resume_reconciles_exact_client_and_restores_only_prior_enabled_state(tmp_path):

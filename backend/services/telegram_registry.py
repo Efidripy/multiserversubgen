@@ -6037,6 +6037,7 @@ class TelegramRegistry:
                 FROM telegram_customer_operation_attempts AS a
                 JOIN telegram_customer_operations AS o ON o.id = a.operation_id
                 WHERE a.node_id = ? AND o.status IN ('queued', 'running', 'partial')
+                  AND o.dismissed_at IS NULL
                   AND a.status IN ('pending', 'ambiguous', 'reconciling', 'writing')
                 LIMIT 1
                 """,
@@ -7344,7 +7345,7 @@ class TelegramRegistry:
             FROM telegram_customer_operations AS o
             JOIN telegram_customer_operation_attempts AS a ON a.operation_id = o.id
             WHERE o.customer_id = ? AND a.node_id = ?
-              AND o.status IN ('queued', 'running', 'partial')
+              AND o.status IN ('queued', 'running', 'partial') AND o.dismissed_at IS NULL
             LIMIT 1
             """,
             (customer_id, node_id),
@@ -7722,14 +7723,14 @@ class TelegramRegistry:
                     raise IdempotencyConflictError("idempotency key was already used for another command")
                 return CustomerOperationRescheduleResult(**json.loads(str(receipt[1])))
             operation = conn.execute(
-                "SELECT status, row_version, lease_until FROM telegram_customer_operations WHERE id = ?",
+                "SELECT status, row_version, lease_until, dismissed_at FROM telegram_customer_operations WHERE id = ?",
                 (normalized_operation_id,),
             ).fetchone()
             if operation is None:
                 raise TelegramRegistryError("customer operation was not found")
             if int(operation[1]) != expected_version:
                 raise VersionConflictError("customer operation was updated by another worker or administrator")
-            if str(operation[0]) not in {"partial", "failed"} or operation[2] is not None:
+            if str(operation[0]) not in {"partial", "failed"} or operation[2] is not None or operation[3] is not None:
                 raise VersionConflictError("customer operation cannot be rescheduled in its current state")
             if dismiss:
                 # No status means "abandoned"; hide it from the attention list but keep the history.
@@ -8587,7 +8588,7 @@ class TelegramRegistry:
                     f"""
                     UPDATE telegram_drift_findings SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP,
                         row_version = row_version + 1
-                    WHERE status = 'open' AND node_id IN ({placeholders}) AND finding_key NOT IN ({key_placeholders})
+                    WHERE status IN ('open', 'ignored') AND node_id IN ({placeholders}) AND finding_key NOT IN ({key_placeholders})
                     """,
                     (*node_ids, *current_keys),
                 )
@@ -8596,7 +8597,7 @@ class TelegramRegistry:
                     f"""
                     UPDATE telegram_drift_findings SET status = 'resolved', resolved_at = CURRENT_TIMESTAMP,
                         row_version = row_version + 1
-                    WHERE status = 'open' AND node_id IN ({placeholders})
+                    WHERE status IN ('open', 'ignored') AND node_id IN ({placeholders})
                     """,
                     node_ids,
                 )
@@ -8643,6 +8644,15 @@ class TelegramRegistry:
                     updated_at = CURRENT_TIMESTAMP
                 WHERE node_id IN ({placeholders})
                   AND management_state IN ('missing', 'conflict')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM telegram_drift_findings AS f
+                    WHERE f.status IN ('open', 'ignored') AND f.kind IN ('binding_missing', 'binding_conflict')
+                      AND f.customer_id = customer_node_bindings.customer_id
+                      AND f.node_id = customer_node_bindings.node_id AND customer_node_bindings.inbound_id = 1
+                      AND f.remote_client_id = COALESCE(customer_node_bindings.remote_client_id, '')
+                      AND f.remote_sub_id = COALESCE(customer_node_bindings.remote_sub_id, '')
+                      AND lower(f.remote_email) = lower(customer_node_bindings.remote_email)
+                  )
                 """,
                 node_ids,
             )
@@ -8665,6 +8675,8 @@ class TelegramRegistry:
                   AND COALESCE(customer_node_bindings.remote_client_id, '') = finding.remote_client_id
                   AND COALESCE(customer_node_bindings.remote_sub_id, '') = finding.remote_sub_id
                   AND lower(customer_node_bindings.remote_email) = lower(finding.remote_email)
+                  AND customer_node_bindings.management_state != CASE finding.kind
+                      WHEN 'binding_missing' THEN 'missing' ELSE 'conflict' END
                 """,
                 node_ids,
             )

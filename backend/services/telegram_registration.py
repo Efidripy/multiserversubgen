@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import html
 import json
+import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -25,6 +26,30 @@ from services.telegram_registry import (
 )
 from services.telegram_provisioning import ExistingRemoteBinding, ProvisioningRemoteError
 from services.telegram_locale import button, normalize_telegram_locale, support_category, tr
+
+
+logger = logging.getLogger(__name__)
+
+
+def _admin_error_message(exc: Exception) -> str:
+    reason = str(exc).lower()
+    if isinstance(exc, VersionConflictError):
+        return "Данные устарели. Откройте карточку заново."
+    if isinstance(exc, NodePolicyUnavailableError):
+        return "Нода не подключена к боту или недоступна."
+    if "active operation" in reason or "in-flight remote operation" in reason or "already being added" in reason:
+        return "На этой ноде уже идёт операция. Дождитесь её завершения."
+    if "not assigned to this node" in reason:
+        return "Клиент не назначен на эту ноду."
+    if "confirmed remote target" in reason:
+        return "Привязка не подтверждена или клиента нет на панели. Запустите «Сверку записей» в админке."
+    if "already suspended on this node" in reason:
+        return "Клиент уже приостановлен на этой ноде."
+    if "not suspended by a node operation" in reason:
+        return "Клиент не приостановлен на этой ноде."
+    if "remote snapshot" in reason:
+        return "Первичная сверка клиента не завершена."
+    return "Команда не выполнена: данные устарели или нода не готова."
 
 
 @dataclass(frozen=True)
@@ -625,12 +650,7 @@ class TelegramRegistrationService:
         )
 
     def _admin_issues_message(self, chat_id: int) -> TelegramOutboundMessage:
-        jobs = self._registry.list_provisioning_jobs(limit=100)
-        issues = [
-            job for job in jobs
-            if job.status in {"partial", "failed"}
-            or any(attempt.status in {"failed", "ambiguous", "skipped"} for attempt in job.attempts)
-        ]
+        issues = self._registry.list_attention_items(limit=100)["provisioning"]
         if not issues:
             return TelegramOutboundMessage(
                 chat_id,
@@ -1515,8 +1535,9 @@ class TelegramRegistrationService:
                 preview = self._registry.preview_customer_node_operation(customer_id=customer_id, node_id=node_id, operation_type=operation)
                 self._registry.queue_customer_node_operation(customer_id=customer_id, node_id=node_id, operation_type=operation, expected_customer_version=preview.expected_customer_version, target_snapshot_digest=preview.target_snapshot_digest, idempotency_key=f"telegram-admin-node-{action}:{update_id}:{customer_id}:{node_id}", created_by=f"telegram:{user_id}")
                 return [TelegramOutboundMessage(chat_id, "Операция на ноде поставлена в очередь.", self._admin_customer_message(chat_id, customer_id, page).reply_markup)]
-        except (ValueError, LifecycleUnavailableError, NodePolicyUnavailableError, VersionConflictError, IdempotencyConflictError, TelegramRegistryError):
-            return [TelegramOutboundMessage(chat_id, "Команда не выполнена: данные устарели или нода не готова.", self._admin_home_menu())]
+        except (ValueError, LifecycleUnavailableError, NodePolicyUnavailableError, VersionConflictError, IdempotencyConflictError, TelegramRegistryError) as exc:
+            logger.warning("Admin callback %s: %s", ":".join(parts[:2]), str(exc).replace("\n", " ").replace("\r", " "))
+            return [TelegramOutboundMessage(chat_id, _admin_error_message(exc), self._admin_home_menu())]
         return [TelegramOutboundMessage(chat_id, "Команда администратора не распознана.", self._admin_home_menu())]
 
     @staticmethod

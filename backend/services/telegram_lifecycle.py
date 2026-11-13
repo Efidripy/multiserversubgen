@@ -226,6 +226,7 @@ class TelegramLifecycleWorker:
                 FROM telegram_customer_operations AS o
                 JOIN telegram_customer_operation_attempts AS a ON a.operation_id = o.id
                 WHERE o.status IN ('queued', 'partial', 'running')
+                  AND o.dismissed_at IS NULL
                   AND (o.lease_until IS NULL OR o.lease_until < ?)
                   AND a.status IN ('pending', 'ambiguous', 'reconciling', 'writing')
                   AND (a.next_attempt_at IS NULL OR a.next_attempt_at <= ?)
@@ -243,6 +244,7 @@ class TelegramLifecycleWorker:
                 SET status = 'running', lease_owner = ?, lease_until = ?, attempt_count = attempt_count + 1,
                     row_version = row_version + 1, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND status IN ('queued', 'partial', 'running')
+                  AND dismissed_at IS NULL
                   AND (lease_until IS NULL OR lease_until < ?)
                 """,
                 (self._worker_id, lease_until, operation_id, current_stamp),

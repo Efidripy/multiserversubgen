@@ -485,6 +485,26 @@ def test_manual_locale_is_not_overwritten_by_the_telegram_client_language_on_cal
     assert "Access" not in menu[0].text
 
 
+def test_repeated_missing_scan_preserves_binding_and_audit(tmp_path):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("UPDATE customer_node_bindings SET desired_enabled = 0")
+
+    class Manager:
+        def get_node_clients_strict(self, node):
+            return []
+
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager())
+    scanner.scan()
+    with connect(db_path) as conn:
+        conn.execute("UPDATE customer_node_bindings SET updated_at = '2000-01-01 00:00:00'")
+        before = conn.execute("SELECT management_state, row_version, updated_at FROM customer_node_bindings").fetchone()
+    scanner.scan()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT management_state, row_version, updated_at FROM customer_node_bindings").fetchone() == before
+        assert conn.execute("SELECT count(*) FROM telegram_audit_log WHERE event_type = 'drift_binding_missing'").fetchone()[0] == 1
+
+
 def test_drift_unavailable_node_does_not_block_other_nodes(tmp_path):
     db_path, registry, customer_id = _customer_with_binding(tmp_path)
     with connect(db_path) as conn:
@@ -543,3 +563,25 @@ def test_telegram_scheduled_drift_counts_only_new_findings(tmp_path):
     scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{'id': 1}], client_manager=Manager())
     assert scanner.scan_if_idle()[1] == 1
     assert scanner.scan_if_idle()[1] == 0
+
+
+def test_ignored_missing_finding_does_not_pin_binding_after_client_returns(tmp_path):
+    db_path, registry, _ = _customer_with_binding(tmp_path)
+    remote: list[dict] = []
+
+    class Manager:
+        def get_node_clients_strict(self, node):
+            return list(remote)
+
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=Manager())
+    scanner.scan()
+    finding = registry.list_drift_findings(status="open", limit=10)[0]
+    registry.resolve_drift_finding(
+        finding_id=finding.finding_id, expected_row_version=finding.row_version, status="ignored", resolved_by="admin"
+    )
+    remote.append({"inbound_id": 1, "id": "remote-1", "subId": "sub-1", "email": "ops-user", "flow": "xtls-rprx-vision", "enable": True})
+    scanner.scan()
+    scanner.scan()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT management_state FROM customer_node_bindings").fetchone()[0] == "confirmed"
+        assert conn.execute("SELECT status FROM telegram_drift_findings").fetchone()[0] == "resolved"
