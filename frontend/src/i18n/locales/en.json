@@ -44,6 +44,11 @@
     }
   },
   "telegram": {
+    "repairCustomer": "Repair",
+    "repairFixed": "Initial setup marked complete",
+    "repairNothing": "Nothing to repair",
+    "repairUnknownNode": "an unknown node",
+    "repairProblems": {"customer_inactive": "The customer is inactive — check their status in the admin panel.", "identity_not_approved": "The application has not been approved — check it in the admin panel.", "unfinished_job": "Job #{{job}} is unfinished — wait for it or check it in the admin panel.", "initial_job_incomplete": "The initial job is unfinished — check it in the admin panel.", "unfinished_discovery": "Reconciliation is unfinished — check it in the admin panel.", "no_confirmed_binding": "There are no confirmed bindings — add the customer to a node or run reconciliation.", "binding_missing": "The customer is missing from the panel on {{node}} — add them again or run reconciliation.", "binding_conflict": "There is a data conflict on {{node}} — check the customer and run reconciliation.", "unfinished_operation": "Operation #{{operation}} is in progress on {{node}} — wait for it or close it in the admin panel.", "snapshot_incomplete": "Initial setup is incomplete — resolve the listed problems.", "unknown": "Check the customer status in the admin panel."},
     "title": "Telegram access",
     "hint": "Requests, customers and safe preparation operations without browser-to-node writes.",
     "tabs": {
