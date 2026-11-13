@@ -364,7 +364,7 @@ class TelegramLifecycleWorker:
             conn.execute(
                 """
                 UPDATE telegram_customer_operation_attempts
-                SET status = ?, error_code = ?, error_summary = ?, finished_at = CURRENT_TIMESTAMP,
+                SET status = ?, error_code = ?, error_summary = ?, next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
@@ -398,6 +398,10 @@ class TelegramLifecycleWorker:
             self._finalize_operation(conn, claimed.operation_id)
 
     def _defer_reconcile(self, claimed: ClaimedLifecycleAttempt, error_code: str) -> None:
+        if claimed.attempt_count >= 5:
+            terminal_code = "node_unreachable" if error_code == "remote_read_uncertain" else error_code
+            self._finish_attempt(claimed, status="failed", error_code=terminal_code)
+            return
         delay_seconds = min(300, 2 ** min(claimed.attempt_count, 8)) + secrets.randbelow(1000) / 1000
         next_attempt = _timestamp(self._now() + timedelta(seconds=delay_seconds))
         with connect(self._db_path) as conn:

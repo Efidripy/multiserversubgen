@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -94,6 +94,59 @@ def _worker(db_path, port, *, now=None, node=None):
         worker_id="lifecycle-test-worker",
         now=now or (lambda: datetime(2026, 1, 1, tzinfo=timezone.utc)),
     )
+
+
+def test_unreachable_lifecycle_node_retries_with_backoff_without_blocking_other_node(tmp_path):
+    db_path, _registry, customer_id, operation_id = _queue(tmp_path, "suspend")
+    with connect(db_path) as conn:
+        conn.execute("INSERT INTO nodes (id, name, enabled, read_only) VALUES (2, 'edge-b', 1, 0)")
+        conn.execute(
+            """INSERT INTO customer_node_bindings
+               (customer_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email,
+                source, management_state, desired_enabled, last_enabled)
+               VALUES (?, 2, 1, 'other-id', 'other-sub', 'lifecycle-worker', 'admin_confirmed', 'confirmed', 1, 1)""",
+            (customer_id,),
+        )
+        binding_id = conn.execute("SELECT id FROM customer_node_bindings WHERE node_id = 2").fetchone()[0]
+        conn.execute(
+            """INSERT INTO telegram_customer_operation_attempts
+               (operation_id, binding_id, node_id, inbound_id, remote_client_id, remote_sub_id, remote_email, action)
+               VALUES (?, ?, 2, 1, 'other-id', 'other-sub', 'lifecycle-worker', 'set_enabled_false')""",
+            (operation_id, binding_id),
+        )
+
+    class Port(FakeLifecyclePort):
+        def list_clients(self, *, node, inbound_id, email):
+            if node["id"] == 1:
+                raise ProvisioningRemoteError("offline")
+            return super().list_clients(node=node, inbound_id=inbound_id, email=email)
+
+    port = Port()
+    port.clients = [RemoteClient("other-id", "lifecycle-worker", "other-sub", "", True)]
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    worker = TelegramLifecycleWorker(
+        db_path=db_path, node_loader=lambda node_id: {"id": node_id}, port=port,
+        worker_id="test", now=lambda: now,
+    )
+    delays = []
+    for index in range(5):
+        assert worker.run_once().processed
+        with connect(db_path) as conn:
+            status, code, next_at = conn.execute(
+                "SELECT status, error_code, next_attempt_at FROM telegram_customer_operation_attempts WHERE operation_id = ? AND node_id = 1",
+                (operation_id,),
+            ).fetchone()
+        if index < 4:
+            assert status == "ambiguous"
+            delays.append((datetime.fromisoformat(next_at) - now.replace(tzinfo=None)).total_seconds())
+            if index == 0:
+                assert worker.run_once().outcome == "succeeded"
+            assert not worker.run_once().processed
+            now += timedelta(hours=1)
+    assert delays == sorted(delays) and len(set(delays)) == 4
+    assert (status, code) == ("failed", "node_unreachable")
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT status, finished_at IS NOT NULL FROM telegram_customer_operations WHERE id = ?", (operation_id,)).fetchone() == ("partial", 1)
 
 
 @pytest.mark.parametrize("attempt_status", ["pending", "ambiguous"])

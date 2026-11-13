@@ -917,18 +917,22 @@ class TelegramProvisioningWorker:
                 (claimed.job_id,),
             ).fetchone()
             source_target_id = int(source[0]) if source is not None and source[0] is not None else None
-            if source_target_id is not None and claimed.attempt_count >= TelegramExistingDiscoveryWorker.MAX_RETRYABLE_ATTEMPTS:
+            if claimed.attempt_count >= TelegramExistingDiscoveryWorker.MAX_RETRYABLE_ATTEMPTS:
+                terminal_code = "node_unreachable" if error_code in {
+                    "remote_read_uncertain", "inbound_contract_uncertain"
+                } else error_code
                 conn.execute(
                     "UPDATE telegram_provisioning_attempts SET status = 'failed', error_code = ?, error_summary = NULL, "
                     "next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (error_code, claimed.attempt_id),
+                    (terminal_code, claimed.attempt_id),
                 )
-                conn.execute(
-                    "UPDATE telegram_existing_discovery_targets SET status = 'blocked_after_retry_limit', attempt_count = ?, "
-                    "error_code = ?, error_summary = NULL, next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, "
-                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-                    (claimed.attempt_count, error_code, source_target_id),
-                )
+                if source_target_id is not None:
+                    conn.execute(
+                        "UPDATE telegram_existing_discovery_targets SET status = 'blocked_after_retry_limit', attempt_count = ?, "
+                        "error_code = ?, error_summary = NULL, next_attempt_at = NULL, finished_at = CURRENT_TIMESTAMP, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                        (claimed.attempt_count, terminal_code, source_target_id),
+                    )
                 self._finalize_job(conn, claimed.job_id)
                 return
             conn.execute(
