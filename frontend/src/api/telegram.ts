@@ -87,6 +87,17 @@ export type TelegramCustomer = {
   updated_at: string;
 };
 
+export type CustomerRepairProblem = {
+  code: string;
+  node_name?: string | null;
+  job_id?: number;
+  status?: string;
+  target_id?: number;
+  operation_id?: number;
+};
+
+export type CustomerRepairResult = { fixed: string[]; problems: CustomerRepairProblem[] };
+
 export type CustomerNode = {
   node_id: number;
   node_name: string;
@@ -413,6 +424,11 @@ export async function queueCustomerOperation(preview: CustomerOperationPreview):
     },
     { auth: getAuth() },
   );
+}
+
+export async function repairCustomer(customerId: number): Promise<CustomerRepairResult> {
+  const response = await api.post(`/v1/telegram/customers/${customerId}/repair`, {}, { auth: getAuth() });
+  return response.data as CustomerRepairResult;
 }
 
 export async function addCustomerNode(customer: TelegramCustomer, nodeId: number): Promise<void> {
