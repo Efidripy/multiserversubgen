@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { cn, codeInputClass, hintClass, inputClass, primaryButtonClass, secondaryButtonClass, titleClass } from './SubscriptionManager';
 
 const DEFAULT_XRAY_TEMPLATE = {
-  dns: { servers: ['1.1.1.1', '1.0.0.1'], queryStrategy: 'UseIP' },
+  dns: { servers: ['1.1.1.1', '1.0.0.1'], queryStrategy: 'UseIP' },  // prod-data-ok: public DNS resolvers used by the default template
   routing: { domainMatcher: 'hybrid', domainStrategy: 'IPIfNonMatch', rules: [{ type: 'field', protocol: ['bittorrent'], outboundTag: 'direct' }] },
   inbounds: [
     { tag: 'socks', port: 10808, listen: '127.0.0.1', protocol: 'socks', sniffing: { enabled: true, destOverride: ['http', 'tls'] }, settings: { auth: 'noauth', udp: true } },

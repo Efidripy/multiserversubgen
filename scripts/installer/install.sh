@@ -764,7 +764,7 @@ ensure_tls_material() {
 
         command -v certbot >/dev/null 2>&1 || return 1
 
-        server_ip="$(ip route get 8.8.8.8 2>/dev/null | grep -Po 'src \K\S+' | head -n 1 || true)"
+        server_ip="$(ip route get 8.8.8.8 2>/dev/null | grep -Po 'src \K\S+' | head -n 1 || true)"  # prod-data-ok: public route probe destination
         if [[ ! "$server_ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             server_ip="$(curl -4 -fsS https://ipv4.icanhazip.com 2>/dev/null | tr -d '[:space:]' || true)"
         fi

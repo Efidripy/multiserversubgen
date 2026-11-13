@@ -320,8 +320,8 @@ def to_singbox(links):
         "log": {"disabled": True},
         "dns": {
             "servers": [
-                {"tag": "remote", "type": "tls", "server": "1.1.1.1", "detour": "PROXY"},
-                {"tag": "local", "type": "udp", "server": "1.1.1.1"},
+                {"tag": "remote", "type": "tls", "server": "1.1.1.1", "detour": "PROXY"},  # prod-data-ok: public DNS resolver used by generated configuration
+                {"tag": "local", "type": "udp", "server": "1.1.1.1"},  # prod-data-ok: public DNS resolver used by generated configuration
             ],
             "final": "remote",
         },

@@ -799,7 +799,7 @@ xui_restore_owned_web_root() {
 
 xui_detect_public_ipv4() {
     local ip
-    ip="$(ip route get 8.8.8.8 2>/dev/null | grep -Po 'src \\K\\S+' | head -n 1 || true)"
+    ip="$(ip route get 8.8.8.8 2>/dev/null | grep -Po 'src \\K\\S+' | head -n 1 || true)"  # prod-data-ok: public route probe destination
     if [[ ! "$ip" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
         ip="$(curl -4 -fsS https://ipv4.icanhazip.com 2>/dev/null | tr -d '[:space:]' || true)"
     fi

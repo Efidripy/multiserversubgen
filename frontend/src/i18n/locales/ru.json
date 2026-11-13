@@ -498,7 +498,7 @@
     "noteTitle": "Заметка",
     "noteSaved": "Заметка сохранена",
     "noteSaveFailed": "Не удалось сохранить заметку",
-    "ipPlaceholder": "например, 1.2.3.4",
+    "ipPlaceholder": "например, 192.0.2.2",
     "copyUuid": "Копировать UUID",
     "clearNote": "Очистить заметку",
     "newGroupName": "Название новой группы",

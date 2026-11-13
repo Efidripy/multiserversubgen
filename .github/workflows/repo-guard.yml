@@ -1,0 +1,20 @@
+name: Repository guard
+
+# No paths filter: the scan covers every tracked file, so it must run for any change.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check for production data
+        run: python scripts/ci/check-no-prod-data
