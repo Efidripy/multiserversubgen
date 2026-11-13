@@ -9058,6 +9058,13 @@ class TelegramRegistry:
             ).fetchone()
             if exists is not None:
                 raise VersionConflictError("customer already has an inbound 1 binding on this node")
+            if automatic and conn.execute(
+                "SELECT 1 FROM telegram_customer_operations WHERE customer_id = ? "
+                "AND status IN ('queued', 'running', 'partial') AND dismissed_at IS NULL LIMIT 1",
+                (int(finding[0]),),
+            ).fetchone():
+                # A new binding would fall outside that operation's immutable target snapshot: retry next scan.
+                raise VersionConflictError("customer has a lifecycle operation in progress")
             self._insert_adopted_binding(
                 conn, customer_id=int(finding[0]), node_id=int(finding[1]), remote_client_id=str(remote_client_id),
                 remote_sub_id=str(remote_sub_id), remote_email=remote_email, remote_enabled=remote_enabled,

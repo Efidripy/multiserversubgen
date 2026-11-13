@@ -825,3 +825,24 @@ def test_default_scanner_follows_the_env_opt_out(tmp_path, monkeypatch):
         scanner.scan_if_idle()
     with connect(db_path) as conn:
         assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 1
+
+
+def test_auto_drift_defers_adoption_while_lifecycle_operation_is_pending(tmp_path):
+    db_path, registry, customer_id = _customer_with_binding(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("DELETE FROM customer_node_bindings")
+        conn.execute(
+            "INSERT INTO telegram_customer_operations (customer_id, operation_type, status, target_snapshot_digest, "
+            "expected_customer_version, idempotency_key, created_by) VALUES (?, 'suspend', 'queued', 'd', 1, 'k-pend', 'admin')",
+            (customer_id,),
+        )
+    remote = {"id": "new-client", "subId": "new-sub", "email": "ops-user", "flow": "xtls-rprx-vision", "inbound_id": 1}
+    scanner = TelegramDriftScanner(registry=registry, list_nodes=lambda: [{"id": 1}], client_manager=_AutoDriftManager([remote]))
+    for _ in range(3):
+        scanner.scan_if_idle()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT count(*) FROM customer_node_bindings").fetchone()[0] == 0
+        conn.execute("UPDATE telegram_customer_operations SET status = 'succeeded'")
+    scanner.scan_if_idle()
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT management_state FROM customer_node_bindings").fetchone()[0] == "confirmed"
