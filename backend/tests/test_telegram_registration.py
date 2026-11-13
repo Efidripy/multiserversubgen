@@ -3519,7 +3519,7 @@ def test_admin_customer_repair_button_reports_fixed_and_remaining(tmp_path):
     assert len(button["callback_data"].encode()) <= 64
     result = service.handle_update(_admin_callback(901, button["callback_data"]))[0]
     assert "Первичная настройка отмечена завершённой" in result.text
-    assert "node-two" in result.text and "запустите сверку" in result.text
+    assert "node-two" in result.text and "запустите сверку" not in result.text
 
 
 @pytest.mark.parametrize("callback", [

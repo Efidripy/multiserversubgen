@@ -1263,18 +1263,26 @@ class TelegramRegistrationService:
             if len(parts) == 4 and parts[:2] == ["admin", "customer-repair"]:
                 customer_id, page = int(parts[2]), int(parts[3])
                 result = self._registry.repair_customer(customer_id, str(user_id))
-                lines = ["Первичная настройка отмечена завершённой" if result["fixed"] else "Чинить нечего"]
+                lines = ["Первичная настройка отмечена завершённой" if result["fixed"] else (
+                    "Нужно внимание" if result["problems"] else "Чинить нечего")]
+                for node in result.get("healed_nodes", []):
+                    lines.append(f"На ноде {node} клиент снова найден на панели — статус обновлён.")
+                for note in result.get("notes", []):
+                    lines.append(
+                        f"На ноде {note.get('node_name') or 'неизвестной ноде'} клиента нет на панели "
+                        "(по свежим данным ноды) — это не ошибка; добавьте его на ноду, если он там нужен."
+                    )
                 for problem in result["problems"]:
                     code = problem["code"]
                     node = problem.get("node_name") or "неизвестной ноде"
                     messages = {
-                        "binding_missing": f"На ноде {node} клиента нет на панели — добавьте его заново или запустите сверку.",
-                        "binding_conflict": f"На ноде {node} конфликт данных — проверьте клиента и запустите сверку.",
+                        "binding_missing": f"На ноде {node} клиента нет на панели, свежих данных ноды для проверки нет — повторите позже или добавьте клиента на ноду.",
+                        "binding_conflict": f"На ноде {node} конфликт данных — проверьте клиента на панели.",
                         "unfinished_operation": f"На ноде {node} идёт операция #{problem.get('operation_id')} — дождитесь или закройте её в админке.",
                         "unfinished_job": f"Задание #{problem.get('job_id')} не завершено — дождитесь его или проверьте в админке.",
                         "initial_job_incomplete": "Первичное задание не завершено — проверьте его в админке.",
                         "unfinished_discovery": "Сверка не завершена — проверьте её в админке.",
-                        "no_confirmed_binding": "Нет подтверждённых привязок — добавьте клиента на ноду или запустите сверку.",
+                        "no_confirmed_binding": "Нет подтверждённых привязок — добавьте клиента на ноду.",
                         "identity_not_approved": "Заявка не одобрена — проверьте её в админке.",
                         "customer_inactive": "Клиент не активен — проверьте его статус в админке.",
                         "snapshot_incomplete": "Первичная настройка не завершена — устраните указанные проблемы.",

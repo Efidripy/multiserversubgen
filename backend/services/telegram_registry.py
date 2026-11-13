@@ -96,6 +96,35 @@ def _normalize_traffic_thresholds(value: object) -> tuple[int, ...]:
     return thresholds if set(thresholds).issubset(TRAFFIC_REMINDER_THRESHOLDS) else (80, 95, 100)
 
 
+
+def _fresh_snapshot_has_client(conn, node_id: int, remote_client_id: str) -> bool | None:
+    """True/False from a snapshot of an online node taken in the last 15 minutes, else None."""
+    row = conn.execute(
+        "SELECT status_data FROM node_snapshots WHERE node_id = ? AND is_online = 1 "
+        "AND updated_at >= datetime('now', '-15 minutes')", (node_id,),
+    ).fetchone()
+    if row is None or not remote_client_id:
+        return None
+    try:
+        data = json.loads(row[0] or "{}")
+    except (TypeError, ValueError):
+        return None
+    wanted = remote_client_id.strip().lower()
+    seen_any = False
+    stack = [data]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            if "email" in item and "uuid" in item:
+                seen_any = True
+                if str(item["uuid"]).strip().lower() == wanted:
+                    return True
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    # An empty snapshot proves nothing: only call the client absent when other clients were listed.
+    return False if seen_any else None
+
 class TelegramRegistryError(RuntimeError):
     """Base error for a safely rejectable Telegram-domain command."""
 
@@ -7174,13 +7203,36 @@ class TelegramRegistry:
             for (target_id,) in unresolved:
                 problems.append({"code": "unfinished_discovery", "target_id": int(target_id)})
             bindings = conn.execute(
-                "SELECT b.management_state, n.name FROM customer_node_bindings b "
+                "SELECT b.management_state, n.name, b.id, b.node_id, b.remote_client_id "
+                "FROM customer_node_bindings b "
                 "JOIN nodes n ON n.id = b.node_id WHERE b.customer_id = ?", (customer_id,)
             ).fetchall()
-            confirmed = any(row[0] == 'confirmed' for row in bindings)
+            # Re-check missing bindings against a fresh node snapshot instead of asking the admin
+            # to "run a reconciliation" that does not exist: a client that is back on the panel is
+            # confirmed again; one that is really gone is a note, not a repairable problem.
+            healed: list[str] = []
+            notes: list[dict[str, Any]] = []
+            resolved: list[tuple] = []
+            for state, name, binding_id, node_id, remote_client_id in bindings:
+                if state == 'missing':
+                    present = _fresh_snapshot_has_client(conn, int(node_id), str(remote_client_id or ""))
+                    if present is True:
+                        conn.execute(
+                            "UPDATE customer_node_bindings SET management_state = 'confirmed', "
+                            "last_confirmed_at = CURRENT_TIMESTAMP, row_version = row_version + 1, "
+                            "updated_at = CURRENT_TIMESTAMP WHERE id = ? AND management_state = 'missing'",
+                            (binding_id,),
+                        )
+                        healed.append(str(name))
+                        state = 'confirmed'
+                    elif present is False:
+                        notes.append({"code": "binding_absent", "node_name": str(name)})
+                        state = 'absent'
+                resolved.append((state, name))
+            confirmed = any(row[0] == 'confirmed' for row in resolved)
             if not confirmed:
                 problems.append({"code": "no_confirmed_binding"})
-            for state, name in bindings:
+            for state, name in resolved:
                 if state in ('missing', 'conflict'):
                     problems.append({"code": 'binding_' + str(state), "node_name": str(name)})
             for operation_id, node_name in conn.execute(
@@ -7207,7 +7259,12 @@ class TelegramRegistry:
                     )
             if identity is not None and not bool(identity[0]) and not changed:
                 problems.append({"code": "snapshot_incomplete"})
-        return {"fixed": ["remote_snapshot_ready"] if changed else [], "problems": problems}
+        result: dict[str, Any] = {"fixed": ["remote_snapshot_ready"] if changed else [], "problems": problems}
+        if healed:
+            result["healed_nodes"] = healed
+        if notes:
+            result["notes"] = notes
+        return result
 
     def _customer_operation_snapshot(
         self,

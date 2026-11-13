@@ -1974,3 +1974,38 @@ def test_repair_customer_reports_missing_binding_and_operation(tmp_path):
     assert result["fixed"] == ["remote_snapshot_ready"]
     assert {"code": "binding_missing", "node_name": "node-two"} in result["problems"]
     assert {"code": "unfinished_operation", "operation_id": operation.operation_id, "node_name": "node-one"} in result["problems"]
+
+
+def _snapshot(conn, node_id, uuids):
+    import json as _json
+    clients = [{"email": f"u{i}", "uuid": u} for i, u in enumerate(uuids)]
+    conn.execute(
+        "INSERT OR REPLACE INTO node_snapshots (node_id, status_data, is_online, updated_at) VALUES (?, ?, 1, CURRENT_TIMESTAMP)",
+        (node_id, _json.dumps({"clients": clients})),
+    )
+
+
+def test_repair_confirms_missing_binding_when_client_is_back_on_the_panel(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_client_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 2, 'rc-1', 'repair-user', 'bot_provisioned', 'missing', 1)""", (customer_id,))
+        _snapshot(conn, 2, ["rc-1"])
+    result = registry.repair_customer(customer_id, "admin")
+    assert result["healed_nodes"] == ["node-two"]
+    assert not any(p["code"] == "binding_missing" for p in result["problems"])
+    with connect(db_path) as conn:
+        assert conn.execute("SELECT management_state FROM customer_node_bindings WHERE node_id = 2").fetchone() == ("confirmed",)
+
+
+def test_repair_reports_really_absent_client_as_a_note_not_a_problem(tmp_path):
+    registry, customer_id, db_path = _repair_fixture(tmp_path)
+    with connect(db_path) as conn:
+        conn.execute("""INSERT INTO customer_node_bindings
+            (customer_id, node_id, remote_client_id, remote_email, source, management_state, desired_enabled)
+            VALUES (?, 2, 'rc-gone', 'repair-user', 'bot_provisioned', 'missing', 1)""", (customer_id,))
+        _snapshot(conn, 2, ["someone-else"])
+    result = registry.repair_customer(customer_id, "admin")
+    assert {"code": "binding_absent", "node_name": "node-two"} in result["notes"]
+    assert not any(p["code"] == "binding_missing" for p in result["problems"])
