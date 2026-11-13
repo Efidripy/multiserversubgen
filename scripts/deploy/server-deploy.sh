@@ -369,6 +369,8 @@ if [[ -d "$PROJECT_DIR" ]]; then
 fi
 
 mkdir -m 0700 -- "$STAGE_DIR"
+printf '%s\n' "$DEPLOY_COMMIT" > "$STAGE_DIR/.deploy-source-commit"
+chmod 0644 "$STAGE_DIR/.deploy-source-commit"
 cp "$REPO_DIR"/backend/*.py "$STAGE_DIR/"
 for pkg in core modules integrations routers services shared; do
   [[ -d "$REPO_DIR/backend/$pkg" ]] && cp -a "$REPO_DIR/backend/$pkg" "$STAGE_DIR/$pkg"
