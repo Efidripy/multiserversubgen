@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import sqlite3
+
+import pytest
 from concurrent.futures import ThreadPoolExecutor
 
 from services.subscription_devices import (
@@ -159,7 +161,9 @@ def test_device_writes_begin_immediate_before_any_sql(monkeypatch, tmp_path):
     for headers in ({"X-HWID": "device"}, {}):
         statements.clear()
         check_device(path, "subject", headers, _section(), now=1)
-        assert statements[0] == "BEGIN IMMEDIATE"
+        # Only the lock-free freshness read may precede the write transaction.
+        begin = statements.index("BEGIN IMMEDIATE")
+        assert all(sql.lstrip().upper().startswith("SELECT") or sql.upper().startswith("PRAGMA") for sql in statements[:begin])
 
 
 def test_concurrent_new_devices_never_exceed_limit(tmp_path):
@@ -390,3 +394,21 @@ def test_user_agent_parsing_and_header_precedence(tmp_path):
         "Sec-CH-UA-Model": '"Pixel"'}, _section(), now=1)
     row = list_devices(path)[0]
     assert (row["device_os"], row["os_version"], row["model"], row["has_hwid"]) == ("Custom", "15", "Pixel", True)
+
+
+def test_repeated_poll_of_a_known_device_does_not_take_the_write_lock(tmp_path):
+    path = str(tmp_path / "devices.sqlite")
+    section = _section(max_devices=2)
+    headers = {"X-HWID": "hw-1", "User-Agent": "Happ/3.6.1 (iPhone 15; iOS 18.0)"}
+    check_device(path, "alice", headers, section, now=100)
+    blocker = sqlite3.connect(path, timeout=0.1)
+    blocker.execute("BEGIN IMMEDIATE")
+    try:
+        assert check_device(path, "alice", headers, section, now=110).allowed is True  # no write needed
+        with pytest.raises(sqlite3.OperationalError):
+            check_device(path, "alice", headers, section, now=400)  # stale: must write, so it waits
+    finally:
+        blocker.rollback()
+        blocker.close()
+    check_device(path, "alice", headers, section, now=400)
+    assert list_devices(path, subject="alice")[0]["last_seen"] == 400

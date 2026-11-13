@@ -132,6 +132,26 @@ def _announce(value: Any) -> str:
     return text
 
 
+# A device that polls often must not take the database write lock on every fetch:
+# the lock is shared with every other writer, so a busy window turns into "database is locked".
+_TOUCH_INTERVAL_SEC = 60
+
+
+def _is_fresh(db_path: str, subject: str, device_hash: str, metadata: tuple, ua: str, now: float) -> bool:
+    """True when this exact device was recorded moments ago, so a write would change nothing."""
+    try:
+        with connect(db_path) as conn:
+            row = conn.execute(
+                "SELECT device_os, os_version, model, user_agent, last_seen FROM subscription_devices "
+                "WHERE subject = ? AND hwid_hash = ?", (subject, device_hash),
+            ).fetchone()
+    except sqlite3.Error:
+        return False
+    if row is None or not (0 <= now - float(row[4]) < _TOUCH_INTERVAL_SEC):
+        return False
+    return tuple(row[:3]) == tuple(metadata) and (not ua or row[3] == ua)
+
+
 def check_device(
     db_path: str,
     subject: str,
@@ -153,6 +173,8 @@ def check_device(
     if not hwid or len(hwid) > 256:
         response["X-Hwid-Not-Supported"] = "true"
         device_hash = "nohwid:" + _hash_hwid(subject, normalised_ua)
+        if _is_fresh(db_path, subject, device_hash, metadata, ua, now):
+            return DeviceDecision(not bool(section.get("block_unsupported", False)), response)
         with connect(db_path) as conn:
             conn.execute("BEGIN IMMEDIATE")
             _ensure_table(conn)
@@ -175,6 +197,9 @@ def check_device(
 
     device_hash = _hash_hwid(subject, hwid)
     maximum = _max_devices(section)
+
+    if _is_fresh(db_path, subject, device_hash, metadata, ua, now):
+        return DeviceDecision(True, response)
 
     with connect(db_path) as conn:
         conn.execute("BEGIN IMMEDIATE")
